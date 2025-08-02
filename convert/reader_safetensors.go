@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -115,26 +116,40 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	}
 	defer f.Close()
 
-	if seeker, ok := f.(io.Seeker); ok {
-		if _, err := seeker.Seek(st.offset, io.SeekStart); err != nil {
-			return 0, err
+	r, err := func() (io.Reader, error) {
+		if readerAt, ok := f.(io.ReaderAt); ok {
+			return io.NewSectionReader(readerAt, st.offset, st.size), nil
+		} else if seeker, ok := f.(io.Seeker); ok {
+			_, err := seeker.Seek(st.offset, io.SeekStart)
+			return f, err
+		} else {
+			_, err := io.CopyN(io.Discard, f, st.offset)
+			return f, err
 		}
-	} else {
-		if _, err := io.CopyN(io.Discard, f, st.offset); err != nil {
-			return 0, err
-		}
+	}()
+	if err != nil {
+		return 0, err
+	}
+
+	br := bufio.NewReaderSize(r, min(32<<10, int(st.size)))
+	// special case when input and output are same type and the
+	// tensor doesn't need repacking
+	if (st.repacker == nil) &&
+		((st.dtype == "F32" && st.Kind() == tensorKindF32) ||
+			(st.dtype == "F16" && st.Kind() == tensorKindF16)) {
+		return io.CopyN(w, br, st.size)
 	}
 
 	var f32s []float32
 	switch st.dtype {
 	case "F32":
 		f32s = make([]float32, st.size/4)
-		if err = binary.Read(f, binary.LittleEndian, f32s); err != nil {
+		if err = binary.Read(br, binary.LittleEndian, f32s); err != nil {
 			return 0, err
 		}
 	case "F16":
 		u16s := make([]uint16, st.size/2)
-		if err = binary.Read(f, binary.LittleEndian, u16s); err != nil {
+		if err = binary.Read(br, binary.LittleEndian, u16s); err != nil {
 			return 0, err
 		}
 
@@ -145,7 +160,7 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 
 	case "BF16":
 		u8s := make([]uint8, st.size)
-		if err = binary.Read(f, binary.LittleEndian, u8s); err != nil {
+		if err = binary.Read(br, binary.LittleEndian, u8s); err != nil {
 			return 0, err
 		}
 
