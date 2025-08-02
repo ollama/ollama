@@ -99,7 +99,7 @@ docker run --rm -v ollama:/home/ubuntu/.ollama ubuntu:24.04 \
 ```shell
 docker run -d --cap-drop all --security-opt=no-new-privileges --network isolated-bridge \
 	--read-only --tmpfs /tmp:nosuid,nodev,noexec \
-	-v ollama:/home/ubuntu/.ollama --user ubuntu --name ollama \
+	-v ollama:/home/ubuntu/.ollama --user ubuntu:ubuntu --name ollama \
 	ollama/ollama
 ```
 ### Run the container with additional restrictions (on AMD GPU)
@@ -109,7 +109,7 @@ docker run -d --cap-drop all --security-opt=no-new-privileges --network isolated
 	--device /dev/kfd --device /dev/dri \
 	--read-only --tmpfs /tmp:nosuid,nodev,noexec \
 	-v ollama:/home/ubuntu/.ollama \
-	--user ubuntu --group-add=`getent group render | cut -d: -f3` \
+	--user ubuntu:ubuntu --group-add=`getent group render | cut -d: -f3` \
 	--name ollama ollama/ollama:rocm
 ```
 
