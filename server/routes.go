@@ -394,7 +394,12 @@ func (s *Server) RerankHandler(c *gin.Context) {
 
 	switch {
 	case len(req.Documents) == 0:
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Document cannot be empty"})
+		// Return empty success response for empty documents (matches official behavior)
+		rsp := api.RerankResponse{
+			Model:   req.Model,
+			Results: []api.RerankResponseItem{},
+		}
+		c.JSON(http.StatusOK, rsp)
 		return
 	case req.Query == "":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Query cannot be empty"})
