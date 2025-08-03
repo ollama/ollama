@@ -60,12 +60,12 @@ func TestMXFP4Ops(t *testing.T) {
 				t.Run("exact", func(t *testing.T) {
 					r := rand.New(rand.NewSource(0))
 					ctx := initContextOrSkip(t, b, useGPU)
-					const s00 = 32
-					const s01 = 2
-					const s02 = 8
+					const s00 = 64
+					const s01 = 1
+					const s02 = 2
 					const s10 = s00
 					const s11 = 1
-					const s12 = 16
+					const s12 = 1
 					// const s00 = 2880
 					// const s01 = 5760
 					// const s02 = 32
