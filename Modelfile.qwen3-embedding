@@ -1,0 +1,13 @@
+FROM ./Qwen3-Embedding-0.6B-f16.gguf
+
+# Template for Qwen3 embedding reranker
+TEMPLATE """{{/* Qwen3 reranker for relevance scoring */}} Query: {{ .Query }} Document: {{ .Document }}"""
+
+# System message for reranking tasks
+SYSTEM """You are a Qwen3 embedding model designed for document reranking. Given a query and document, you assess their semantic relevance."""
+
+# Parameters optimized for reranking
+PARAMETER temperature 0.1
+PARAMETER top_p 0.95
+PARAMETER top_k 40
+PARAMETER num_ctx 2048
