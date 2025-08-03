@@ -1,5 +1,0 @@
-FROM ./bge-reranker-v2-m3-Q4_K_M.gguf
-
-TEMPLATE """{{ .Query }} {{ .Document }}"""
-
-PARAMETER stop []
