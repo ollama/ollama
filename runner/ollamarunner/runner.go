@@ -11,6 +11,7 @@ import (
 	"image"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -102,6 +103,14 @@ type NewSequenceParams struct {
 	embedding  bool
 }
 
+// NewEmbeddingSequence creates a new sequence with embedding mode enabled
+func (s *Server) NewEmbeddingSequence(prompt string, images []llm.ImageData) (*Sequence, error) {
+	params := NewSequenceParams{
+		embedding: true,
+	}
+	return s.NewSequence(prompt, images, params)
+}
+
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
@@ -119,7 +128,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// Ensure that at least 1 input can be discarded during shift
-	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
+	params.numKeep = int32(min(int(params.numKeep), int(s.cache.numCtx-1)))
 
 	if int32(len(inputs)) > s.cache.numCtx {
 		discard := int32(len(inputs)) - s.cache.numCtx
@@ -516,8 +525,44 @@ func (s *Server) processBatch() error {
 			vocabSize := len(logits) / len(batch.Outputs)
 			lastTokenLogits := logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize]
 			
-			// Standard embedding extraction - model-specific logic handled at server layer
-			seq.embedding <- lastTokenLogits
+			// For reranking models, extract the relevance score from binary classification logits
+			// Qwen3-Reranker uses yes/no classification, so we need to extract those specific logits
+			textProcessor, ok := s.model.(model.TextProcessor)
+			if ok {
+				// Try to find yes/no tokens
+				yesToken, err := textProcessor.Encode("yes", false)
+				noToken, err2 := textProcessor.Encode("no", false)
+				if err == nil && err2 == nil && len(yesToken) > 0 && len(noToken) > 0 {
+					yesID := yesToken[0]
+					noID := noToken[0]
+					
+					// Extract logits for yes and no tokens
+					if int(yesID) < len(lastTokenLogits) && int(noID) < len(lastTokenLogits) {
+						yesLogit := lastTokenLogits[yesID]
+						noLogit := lastTokenLogits[noID]
+						
+						// Compute softmax probability for "yes" (relevance score)
+						maxLogit := float32(math.Max(float64(yesLogit), float64(noLogit)))
+						yesProb := float32(math.Exp(float64(yesLogit-maxLogit))) /
+							float32(math.Exp(float64(yesLogit-maxLogit))+math.Exp(float64(noLogit-maxLogit)))
+						
+						seq.embedding <- []float32{yesProb}
+						s.removeSequence(i, llm.DoneReasonStop)
+						continue
+					}
+				}
+			}
+			
+			// Fallback: if we can't find yes/no tokens, use the original approach
+			if len(logits) == len(batch.Outputs) {
+				// This is a reranking model - extract score directly
+				score := logits[seq.iBatch]
+				seq.embedding <- []float32{score}
+			} else {
+				// This is an embedding model - extract embedding from vocabulary logits
+				embedding := lastTokenLogits
+				seq.embedding <- embedding
+			}
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
@@ -724,17 +769,58 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 type RerankRequest struct {
-	Model   string   `json:"model"`
-	Prompts []string `json:"prompts"`
+	Model       string   `json:"model"`
+	Query       string   `json:"query,omitempty"`
+	Documents   []string `json:"documents,omitempty"`
+	Instruction string   `json:"instruction,omitempty"`
+	TopN        int      `json:"top_n,omitempty"`
+	Prompts     []string `json:"prompts,omitempty"` // For backward compatibility with server
 }
 
 type RerankResult struct {
 	Index          int     `json:"index"`
+	Document       string  `json:"document,omitempty"`
 	RelevanceScore float64 `json:"relevance_score"`
 }
 
 type RerankResponse struct {
+	Model   string         `json:"model"`
 	Results []RerankResult `json:"results"`
+}
+
+func (s *Server) extractRerankingScore(logits []float32, prompt string) float32 {
+	// For binary classification models, extract yes/no token probabilities
+	textProcessor, ok := s.model.(model.TextProcessor)
+	if ok {
+		// Try to find yes/no tokens for binary classification
+		yesToken, err := textProcessor.Encode("yes", false)
+		noToken, err2 := textProcessor.Encode("no", false)
+		if err == nil && err2 == nil && len(yesToken) > 0 && len(noToken) > 0 {
+			yesID := yesToken[0]
+			noID := noToken[0]
+			
+			// Extract logits for yes and no tokens if they're in range
+			if int(yesID) < len(logits) && int(noID) < len(logits) {
+				yesLogit := logits[yesID]
+				noLogit := logits[noID]
+				
+				// Compute softmax probability for "yes" (relevance score)
+				maxLogit := float32(math.Max(float64(yesLogit), float64(noLogit)))
+				yesProb := float32(math.Exp(float64(yesLogit-maxLogit))) /
+					float32(math.Exp(float64(yesLogit-maxLogit))+math.Exp(float64(noLogit-maxLogit)))
+				
+				return yesProb
+			}
+		}
+	}
+	
+	// Fallback: for other models, use the first logit as the score
+	// This works for models that output a single relevance score
+	if len(logits) > 0 {
+		return logits[0]
+	}
+	
+	return 0.0
 }
 
 func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
@@ -745,73 +831,63 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 
-	// Create appropriate reranker based on template capabilities
-	reranker, err := CreateReranker(s)
+	// Handle both new API format (direct) and old format (from server)
+	var query string
+	var documents []string
+	var instruction string
+
+	if len(req.Prompts) > 0 {
+		// Old format from server - prompts are already templated
+		slog.Info("Using templated prompts from server", "count", len(req.Prompts))
+		
+		// For now, we'll use a simple approach: treat each prompt as a document
+		// and extract query/instruction from the first prompt if possible
+		query = "" // Will be extracted from template if needed
+		documents = req.Prompts
+		instruction = ""
+	} else {
+		// New format - direct API call
+		if len(req.Documents) == 0 {
+			http.Error(w, "no documents provided for reranking", http.StatusBadRequest)
+			return
+		}
+		
+		query = req.Query
+		documents = req.Documents
+		instruction = req.Instruction
+		
+		slog.Info("Using direct API format", "query", query, "doc_count", len(documents), "instruction", instruction)
+	}
+
+	// Use default instruction if none provided
+	if instruction == "" {
+		instruction = "Given a web search query, retrieve relevant passages that answer the query"
+	}
+
+	// Create appropriate reranker based on model name and template
+	reranker, err := CreateReranker(s, req.Model, "")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to create reranker: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Extract query, documents, and instruction from prompts
-	if len(req.Prompts) == 0 {
-		http.Error(w, "no prompts provided for reranking", http.StatusBadRequest)
-		return
-	}
-
-	slog.Info("Rerank prompts received", "count", len(req.Prompts), "first_prompt", req.Prompts[0])
-
-	// Parse the first prompt to extract query and documents
-	// Expected format: {"query": "...", "documents": [...], "instruction": "..."}
-	var rerankData struct {
-		Query       string   `json:"query"`
-		Documents   []string `json:"documents"`
-		Instruction string   `json:"instruction,omitempty"`
-	}
-	
-	if err := json.Unmarshal([]byte(req.Prompts[0]), &rerankData); err != nil {
-		slog.Info("Failed to parse as JSON, trying template format", "error", err)
-		// Fallback: Check if this is BGE template format
-		if len(req.Prompts) > 0 && strings.Contains(req.Prompts[0], "Query:") && strings.Contains(req.Prompts[0], "Document:") {
-			// Parse BGE template format: "Query: <query> Document: <document>"
-			for i, prompt := range req.Prompts {
-				slog.Info("Parsing BGE template prompt", "index", i, "prompt", prompt)
-				parts := strings.Split(prompt, "Document:")
-				if len(parts) == 2 {
-					// Extract query by finding the text after "Query:" and before "Document:"
-					queryPart := strings.TrimSpace(parts[0])
-					// Remove "Query:" prefix if present
-					if idx := strings.Index(queryPart, "Query:"); idx >= 0 {
-						queryPart = strings.TrimSpace(queryPart[idx+6:]) // 6 is len("Query:")
-					}
-					documentPart := strings.TrimSpace(parts[1])
-					
-					slog.Info("Extracted parts", "query", queryPart, "document", documentPart)
-					
-					// Set query from first prompt if not already set
-					if rerankData.Query == "" {
-						rerankData.Query = queryPart
-					}
-					rerankData.Documents = append(rerankData.Documents, documentPart)
-				}
-			}
-		} else {
-			// Final fallback: treat prompts as individual documents with empty query
-			rerankData.Query = ""
-			rerankData.Documents = req.Prompts
-		}
-	}
-	
-	slog.Info("Final rerank data", "query", rerankData.Query, "doc_count", len(rerankData.Documents), "documents", rerankData.Documents)
-
 	// Perform reranking using the appropriate implementation
-	results, err := reranker.Rerank(r.Context(), rerankData.Query, rerankData.Documents, rerankData.Instruction)
+	results, err := reranker.Rerank(r.Context(), query, documents, instruction)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("reranking failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// Apply TopN limit if specified
+	if req.TopN > 0 && len(results) > req.TopN {
+		results = results[:req.TopN]
+	}
+
 	// Build response
-	rsp := RerankResponse{Results: results}
+	rsp := RerankResponse{
+		Model:   req.Model,
+		Results: results,
+	}
 	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}

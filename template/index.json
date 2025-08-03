@@ -150,5 +150,9 @@
   {
     "template": "{{ .Query }} {{ .Document }}",
     "name": "bge-reranker"
+  },
+  {
+    "template": "Query: {{ .Query }}\nDocument: {{ .Document }}\nRelevance: ",
+    "name": "qwen-reranker"
   }
 ]

@@ -179,8 +179,8 @@ var (
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
-	// Enable the new Ollama engine
-	NewEngine = Bool("OLLAMA_NEW_ENGINE")
+	// New Ollama engine always enabled (removed OLLAMA_NEW_ENGINE flag)
+	NewEngine = func() bool { return true }
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
 	// Auth enables authentication between the Ollama client and server

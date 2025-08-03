@@ -50,7 +50,7 @@ func (m *MockRerankingServer) rerank(w http.ResponseWriter, r *http.Request) {
 		score := calculateMockRelevanceScore(prompt)
 		results[i] = RerankResult{
 			Index:          i,
-			RelevanceScore: score,
+			RelevanceScore: float64(score),
 		}
 	}
 
