@@ -19,7 +19,7 @@
 
 ### Model names
 
-Model names follow a `model:tag` format, where `model` can have an optional namespace such as `example/model`. Some examples are `orca-mini:3b-q4_1` and `llama3:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version.
+Model names follow a `model:tag` format, where `model` can have an optional namespace such as `example/model`. Some examples are `orca-mini:3b-q8_0` and `llama3:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version.
 
 ### Durations
 
@@ -43,6 +43,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
+- `think`: (for thinking models) should the model think before responding?
 
 Advanced parameters (optional):
 
@@ -173,7 +174,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ##### Response
 
-```json
+```json5
 {
   "model": "codellama:code",
   "created_at": "2024-07-22T20:47:51.147561Z",
@@ -394,9 +395,6 @@ curl http://localhost:11434/api/generate -d '{
     "repeat_penalty": 1.2,
     "presence_penalty": 1.5,
     "frequency_penalty": 1.0,
-    "mirostat": 1,
-    "mirostat_tau": 0.8,
-    "mirostat_eta": 0.6,
     "penalize_newline": true,
     "stop": ["\n", "user:"],
     "numa": false,
@@ -404,10 +402,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_batch": 2,
     "num_gpu": 1,
     "main_gpu": 0,
-    "low_vram": false,
-    "vocab_only": false,
     "use_mmap": true,
-    "use_mlock": false,
     "num_thread": 8
   }
 }'
@@ -496,20 +491,31 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
+- `think`: (for thinking models) should the model think before responding?
 
 The `message` object has the following fields:
 
 - `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
+- `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
+- `tool_name` (optional): add the name of the tool that was executed to inform the model of the result
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
+- `format`: the format to return a response in. Format can be `json` or a JSON schema.
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Tool calling
+
+Tool calling is supported by providing a list of tools in the `tools` parameter. The model will generate a response that includes a list of tool calls. See the [Chat request (Streaming with tools)](#chat-request-streaming-with-tools) example below.
+
+Models can also explain the result of the tool call in the response. See the [Chat request (With history, with tools)](#chat-request-with-history-with-tools) example below.
+
+[See models with tool calling capabilities](https://ollama.com/search?c=tool).
 
 ### Structured outputs
 
@@ -517,7 +523,7 @@ Structured outputs are supported by providing a JSON schema in the `format` para
 
 ### Examples
 
-#### Chat Request (Streaming)
+#### Chat request (Streaming)
 
 ##### Request
 
@@ -572,6 +578,88 @@ Final response:
 }
 ```
 
+#### Chat request (Streaming with tools)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the weather in tokyo?"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather in a given city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city to get the weather for"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ],
+  "stream": true
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+```json
+{
+    "model": "llama3.2",
+    "created_at": "2025-07-07T20:22:19.184789Z",
+    "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "get_weather",
+                    "arguments": {
+                        "city": "Tokyo"
+                    }
+                },
+            }
+        ]
+    },
+    "done": false
+}
+```
+
+Final response:
+
+```json
+{
+  "model":"llama3.2",
+  "created_at":"2025-07-07T20:22:19.19314Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 182242375,
+  "load_duration": 41295167,
+  "prompt_eval_count": 169,
+  "prompt_eval_duration": 24573166,
+  "eval_count": 15,
+  "eval_duration": 115959084
+}
+```
+
 #### Chat request (No streaming)
 
 ##### Request
@@ -606,6 +694,74 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 383809000,
   "eval_count": 298,
   "eval_duration": 4799921000
+}
+```
+
+#### Chat request (No streaming, with tools)
+
+##### Request
+
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the weather in tokyo?"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather in a given city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city to get the weather for"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ],
+  "stream": false 
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2025-07-07T20:32:53.844124Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_weather",
+          "arguments": {
+            "city": "Tokyo"
+          }
+        },
+      }
+    ]
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 3244883583,
+  "load_duration": 2969184542,
+  "prompt_eval_count": 169,
+  "prompt_eval_duration": 141656333,
+  "eval_count": 18,
+  "eval_duration": 133293625
 }
 ```
 
@@ -714,6 +870,87 @@ Final response:
   "eval_duration": 7701267000
 }
 ```
+
+
+#### Chat request (With history, with tools)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the weather in Toronto?"
+    },
+    // the message from the model appended to history
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "function": {
+            "name": "get_temperature",
+            "arguments": {
+              "city": "Toronto"
+            }
+          },
+        }
+      ]
+    },
+    // the tool call result appended to history
+    {
+      "role": "tool",
+      "content": "11 degrees celsius",
+      "tool_name": "get_temperature",
+    }
+  ],
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather in a given city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city to get the weather for"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ]
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2025-07-07T20:43:37.688511Z",
+  "message": {
+    "role": "assistant",
+    "content": "The current temperature in Toronto is 11°C."
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 890771750,
+  "load_duration": 707634750,
+  "prompt_eval_count": 94,
+  "prompt_eval_duration": 91703208,
+  "eval_count": 11,
+  "eval_duration": 90282125
+}
+
+```
+
 
 #### Chat request (with images)
 
@@ -958,19 +1195,8 @@ If you are creating a model from a safetensors directory or from a GGUF file, yo
 
 | Type | Recommended |
 | --- | :-: |
-| q2_K | |
-| q3_K_L | |
-| q3_K_M | |
-| q3_K_S | |
-| q4_0 | |
-| q4_1 | |
 | q4_K_M | * |
 | q4_K_S | |
-| q5_0 | |
-| q5_1 | |
-| q5_K_M | |
-| q5_K_S | |
-| q6_K | |
 | q8_0 | * |
 
 ### Examples
@@ -1015,8 +1241,8 @@ Quantize a non-quantized model.
 
 ```shell
 curl http://localhost:11434/api/create -d '{
-  "model": "llama3.1:quantized",
-  "from": "llama3.1:8b-instruct-fp16",
+  "model": "llama3.2:quantized",
+  "from": "llama3.2:3b-instruct-fp16",
   "quantize": "q4_K_M"
 }'
 ```
@@ -1026,12 +1252,14 @@ curl http://localhost:11434/api/create -d '{
 A stream of JSON objects is returned:
 
 ```json
-{"status":"quantizing F16 model to Q4_K_M"}
-{"status":"creating new layer sha256:667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"}
-{"status":"using existing layer sha256:11ce4ee3e170f6adebac9a991c22e22ab3f8530e154ee669954c4bc73061c258"}
-{"status":"using existing layer sha256:0ba8f0e314b4264dfd19df045cde9d4c394a52474bf92ed6a3de22a4ca31a177"}
+{"status":"quantizing F16 model to Q4_K_M","digest":"0","total":6433687776,"completed":12302}
+{"status":"quantizing F16 model to Q4_K_M","digest":"0","total":6433687776,"completed":6433687552}
+{"status":"verifying conversion"}
+{"status":"creating new layer sha256:fb7f4f211b89c6c4928ff4ddb73db9f9c0cfca3e000c3e40d6cf27ddc6ca72eb"}
+{"status":"using existing layer sha256:966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396"}
+{"status":"using existing layer sha256:fcc5a6bec9daf9b561a68827b67ab6088e1dba9d1fa2a50d7bbcc8384e0a265d"}
+{"status":"using existing layer sha256:a70ff7e570d97baaf4e62ac6e6ad9975e04caa6d900d3742d37698494479e0cd"}
 {"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
-{"status":"creating new layer sha256:455f34728c9b5dd3376378bfb809ee166c145b0b4c1f1a6feca069055066ef9a"}
 {"status":"writing manifest"}
 {"status":"success"}
 ```
@@ -1169,29 +1397,37 @@ A single JSON object will be returned.
 {
   "models": [
     {
-      "name": "codellama:13b",
-      "modified_at": "2023-11-04T14:56:49.277302595-07:00",
-      "size": 7365960935,
-      "digest": "9f438cb9cd581fc025612d27f7c1a6669ff83a8bb0ed86c94fcf4c5440555697",
+      "name": "deepseek-r1:latest",
+      "model": "deepseek-r1:latest",
+      "modified_at": "2025-05-10T08:06:48.639712648-07:00",
+      "size": 4683075271,
+      "digest": "0a8c266910232fd3291e71e5ba1e058cc5af9d411192cf88b6d30e92b6e73163",
       "details": {
+        "parent_model": "",
         "format": "gguf",
-        "family": "llama",
-        "families": null,
-        "parameter_size": "13B",
-        "quantization_level": "Q4_0"
+        "family": "qwen2",
+        "families": [
+          "qwen2"
+        ],
+        "parameter_size": "7.6B",
+        "quantization_level": "Q4_K_M"
       }
     },
     {
-      "name": "llama3:latest",
-      "modified_at": "2023-12-07T09:32:18.757212583-08:00",
-      "size": 3825819519,
-      "digest": "fe938a131f40e6f6d40083c9f0f430a515233eb2edaa6d72eb85c50d64f2300e",
+      "name": "llama3.2:latest",
+      "model": "llama3.2:latest",
+      "modified_at": "2025-05-04T17:37:44.706015396-07:00",
+      "size": 2019393189,
+      "digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
       "details": {
+        "parent_model": "",
         "format": "gguf",
         "family": "llama",
-        "families": null,
-        "parameter_size": "7B",
-        "quantization_level": "Q4_0"
+        "families": [
+          "llama"
+        ],
+        "parameter_size": "3.2B",
+        "quantization_level": "Q4_K_M"
       }
     }
   ]
@@ -1217,13 +1453,13 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "model": "llama3.2"
+  "model": "llava"
 }'
 ```
 
 #### Response
 
-```json
+```json5
 {
   "modelfile": "# Modelfile generated by \"ollama show\"\n# To build a new Modelfile based on this one, replace the FROM line with:\n# FROM llava:latest\n\nFROM /Users/matt/.ollama/models/blobs/sha256:200765e1283640ffbd013184bf496e261032fa75b99498a9613be4e94d63ad52\nTEMPLATE \"\"\"{{ .System }}\nUSER: {{ .Prompt }}\nASSISTANT: \"\"\"\nPARAMETER num_ctx 4096\nPARAMETER stop \"\u003c/s\u003e\"\nPARAMETER stop \"USER:\"\nPARAMETER stop \"ASSISTANT:\"",
   "parameters": "num_keep                       24\nstop                           \"<|start_header_id|>\"\nstop                           \"<|end_header_id|>\"\nstop                           \"<|eot_id|>\"",
@@ -1260,7 +1496,11 @@ curl http://localhost:11434/api/show -d '{
     "tokenizer.ggml.pre": "llama-bpe",
     "tokenizer.ggml.token_type": [],        // populates if `verbose=true`
     "tokenizer.ggml.tokens": []             // populates if `verbose=true`
-  }
+  },
+  "capabilities": [
+    "completion",
+    "vision"
+  ],
 }
 ```
 

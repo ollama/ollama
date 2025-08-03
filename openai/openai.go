@@ -23,10 +23,10 @@ import (
 var finishReasonToolCalls = "tool_calls"
 
 type Error struct {
-	Message string      `json:"message"`
-	Type    string      `json:"type"`
-	Param   interface{} `json:"param"`
-	Code    *string     `json:"code"`
+	Message string  `json:"message"`
+	Type    string  `json:"type"`
+	Param   any     `json:"param"`
+	Code    *string `json:"code"`
 }
 
 type ErrorResponse struct {
@@ -423,7 +423,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png"}
+					types := []string{"jpeg", "jpg", "png", "webp"}
 					valid := false
 					for _, t := range types {
 						prefix := "data:image/" + t + ";base64,"
@@ -465,7 +465,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	options := make(map[string]interface{})
+	options := make(map[string]any)
 
 	switch stop := r.Stop.(type) {
 	case string:

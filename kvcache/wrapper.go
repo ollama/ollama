@@ -41,9 +41,9 @@ func (c *WrapperCache) Close() {
 	}
 }
 
-func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch) error {
+func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	for i, cache := range c.caches {
-		err := cache.StartForward(ctx, batch)
+		err := cache.StartForward(ctx, batch, reserve)
 		if err != nil {
 			// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail
 			for j := i - 1; j >= 0; j-- {
@@ -85,6 +85,16 @@ func (c *WrapperCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	for _, cache := range c.caches {
 		cache.CopyPrefix(srcSeq, dstSeq, len)
 	}
+}
+
+func (c *WrapperCache) CanResume(seq int, pos int32) bool {
+	for _, cache := range c.caches {
+		if !cache.CanResume(seq, pos) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {

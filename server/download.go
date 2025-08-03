@@ -29,8 +29,9 @@ import (
 const maxRetries = 6
 
 var (
-	errMaxRetriesExceeded = errors.New("max retries exceeded")
-	errPartStalled        = errors.New("part stalled")
+	errMaxRetriesExceeded   = errors.New("max retries exceeded")
+	errPartStalled          = errors.New("part stalled")
+	errMaxRedirectsExceeded = errors.New("maximum redirects exceeded (10) for directURL")
 )
 
 var blobDownloadManager sync.Map
@@ -236,7 +237,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				if len(via) > 10 {
-					return errors.New("maximum redirects exceeded (10) for directURL")
+					return errMaxRedirectsExceeded
 				}
 
 				// if the hostname is the same, allow the redirect
@@ -463,6 +464,10 @@ type downloadOpts struct {
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
+	if opts.digest == "" {
+		return false, fmt.Errorf(("%s: %s"), opts.mp.GetNamespaceRepository(), "digest is is empty")
+	}
+
 	fp, err := GetBlobsPath(opts.digest)
 	if err != nil {
 		return false, err

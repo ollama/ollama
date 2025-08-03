@@ -4,9 +4,12 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/fast"
+	"github.com/ollama/ollama/ml/nn/rope"
 )
 
 type TextSelfAttention struct {
@@ -17,18 +20,17 @@ type TextSelfAttention struct {
 	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
 }
 
-func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
-	ropeType := uint32(0)
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -43,7 +45,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
 	if sa, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
-		return key.RoPE(ctx, shift, sa.SelfAttention.RopeFactors, m.ropeDim, uint32(0), m.ropeBase, m.ropeScale), nil
+		return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(sa.SelfAttention.RopeFactors)), nil
 	}
 
 	return key, nil
@@ -68,11 +70,11 @@ type TextSelfAttentionDecoderLayer struct {
 	MLP     *TextMLP
 }
 
-func (d *TextSelfAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, positions, outputs, mask, _, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (d *TextSelfAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, positions, outputs, _, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = d.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	hiddenState = d.SelfAttention.Forward(ctx, hiddenState, positions, mask, cache, opts)
+	hiddenState = d.SelfAttention.Forward(ctx, hiddenState, positions, cache, opts)
 
 	// In the final layer (outputs != nil), optimize by pruning to just the token positions
 	// we need logits for.
@@ -150,7 +152,7 @@ type TextCrossAttentionDecoderLayer struct {
 	MLPGate ml.Tensor `gguf:"cross_attn_mlp_gate"`
 }
 
-func (d *TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, _, _, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (d *TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, _, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = d.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
@@ -166,17 +168,17 @@ func (d *TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _,
 }
 
 type TextDecoderLayer interface {
-	Forward(ctx ml.Context, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor
+	Forward(ctx ml.Context, hiddenState, positionIDs, outputs, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor
 }
 
 type TextDecoder struct {
 	Layers []TextDecoderLayer
 }
 
-func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	for i, layer := range d.Layers {
 		layerType := selfAttentionLayer
-		if slices.Contains(opts.crossAttentionLayers, uint32(i)) {
+		if slices.Contains(opts.crossAttentionLayers, int32(i)) {
 			layerType = crossAttentionLayer
 		}
 
@@ -189,7 +191,7 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs,
 				lastLayerOutputs = outputs
 			}
 
-			hiddenState = layer.Forward(ctx, hiddenState, positionIDs, lastLayerOutputs, mask, crossAttentionStates, crossAttentionMask, cache, opts)
+			hiddenState = layer.Forward(ctx, hiddenState, positionIDs, lastLayerOutputs, crossAttentionStates, crossAttentionMask, cache, opts)
 		}
 	}
 
@@ -198,10 +200,10 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs,
 
 type TextModelOptions struct {
 	hiddenSize, numHeads, numKVHeads int
+	ropeDim                          int
 	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
 
-	crossAttentionLayers []uint32
+	crossAttentionLayers []int32
 }
 
 type TextModel struct {
@@ -213,18 +215,18 @@ type TextModel struct {
 	*TextModelOptions
 }
 
-func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache) ml.Tensor {
+func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache) ml.Tensor {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputIDs)
-	hiddenState = m.Transformer.Forward(ctx, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask, cache, m.TextModelOptions)
+	hiddenState = m.Transformer.Forward(ctx, hiddenState, positionIDs, outputs, crossAttentionStates, crossAttentionMask, cache, m.TextModelOptions)
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 	return m.Output.Forward(ctx, hiddenState)
 }
 
-func newTextModel(c ml.Config) *TextModel {
+func newTextModel(c fs.Config) *TextModel {
 	var decoderLayers []TextDecoderLayer
 	for i := range c.Uint("block_count") {
 		var textDecoderLayer TextDecoderLayer
-		if slices.Contains(c.Uints("attention.cross_attention_layers"), i) {
+		if slices.Contains(c.Ints("attention.cross_attention_layers"), int32(i)) {
 			textDecoderLayer = &TextCrossAttentionDecoderLayer{}
 		} else {
 			textDecoderLayer = &TextSelfAttentionDecoderLayer{}
@@ -239,11 +241,11 @@ func newTextModel(c ml.Config) *TextModel {
 			hiddenSize:           int(c.Uint("embedding_length")),
 			numHeads:             int(c.Uint("attention.head_count")),
 			numKVHeads:           int(c.Uint("attention.head_count_kv")),
+			ropeDim:              int(c.Uint("rope.dimension_count")),
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:             c.Float("rope.freq_base"),
 			ropeScale:            c.Float("rope.freq_scale", 1),
-			ropeDim:              c.Uint("rope.dimension_count"),
-			crossAttentionLayers: c.Uints("attention.cross_attention_layers"),
+			crossAttentionLayers: c.Ints("attention.cross_attention_layers"),
 		},
 	}
 }

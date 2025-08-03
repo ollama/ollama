@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
-	"golang.org/x/exp/maps"
 )
 
 type safetensorMetadata struct {
@@ -46,8 +46,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 			return nil, err
 		}
 
-		keys := maps.Keys(headers)
-		slices.Sort(keys)
+		keys := slices.Sorted(maps.Keys(headers))
 
 		names := make(map[string]struct{}, len(keys))
 
@@ -92,6 +91,21 @@ type safetensor struct {
 	offset int64
 	size   int64
 	*tensorBase
+}
+
+func (st safetensor) Clone() Tensor {
+	return &safetensor{
+		fs:     st.fs,
+		path:   st.path,
+		dtype:  st.dtype,
+		offset: st.offset,
+		size:   st.size,
+		tensorBase: &tensorBase{
+			name:     st.name,
+			repacker: st.repacker,
+			shape:    slices.Clone(st.shape),
+		},
+	}
 }
 
 func (st safetensor) WriteTo(w io.Writer) (int64, error) {

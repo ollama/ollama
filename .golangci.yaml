@@ -19,8 +19,8 @@ linters:
     - nolintlint
     - nosprintfhostport
     - staticcheck
-    - tenv
     - unconvert
+    - usetesting
     - wastedassign
     - whitespace
   disable:

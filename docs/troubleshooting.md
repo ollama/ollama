@@ -9,7 +9,7 @@ cat ~/.ollama/logs/server.log
 On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
-journalctl -u ollama --no-pager --follow --pager-end 
+journalctl -u ollama --no-pager --follow --pager-end
 ```
 
 When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
@@ -23,10 +23,9 @@ docker logs <container-name>
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
 
 When you run Ollama on **Windows**, there are a few different locations. You can view them in the explorer window by hitting `<cmd>+R` and type in:
-- `explorer %LOCALAPPDATA%\Ollama` to view logs.  The most recent server logs will be in `server.log` and older logs will be in `server-#.log` 
+- `explorer %LOCALAPPDATA%\Ollama` to view logs.  The most recent server logs will be in `server.log` and older logs will be in `server-#.log`
 - `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
-- `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
 
 To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
 
@@ -39,12 +38,12 @@ Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
 ## LLM libraries
 
-Ollama includes multiple LLM libraries compiled for different GPUs and CPU vector features. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library. `cpu_avx2` will perform the best, followed by `cpu_avx` an the slowest but most compatible is `cpu`. Rosetta emulation under MacOS will work with the `cpu` library. 
+Ollama includes multiple LLM libraries compiled for different GPUs and CPU vector features. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library. `cpu_avx2` will perform the best, followed by `cpu_avx` and the slowest but most compatible is `cpu`. Rosetta emulation under MacOS will work with the `cpu` library.
 
 In the server log, you will see a message that looks something like this (varies from release to release):
 
 ```
-Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v11 rocm_v5]
+Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v12 rocm_v5]
 ```
 
 **Experimental LLM Library Override**
@@ -68,10 +67,6 @@ If you run into problems on Linux and want to install an older version, or you'd
 ```shell
 curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
-
-## Linux tmp noexec 
-
-If your system is configured with the "noexec" flag where Ollama stores its temporary executable files, you can specify an alternate location by setting OLLAMA_TMPDIR to a location writable by the user ollama runs as. For example OLLAMA_TMPDIR=/usr/share/ollama/
 
 ## Linux docker
 
@@ -102,7 +97,7 @@ If none of those resolve the problem, gather additional information and file an 
 
 On linux, AMD GPU access typically requires `video` and/or `render` group membership to access the `/dev/kfd` device.  If permissions are not set up correctly, Ollama will detect this and report an error in the server log.
 
-When running in a container, in some Linux distributions and container runtimes, the ollama process may be unable to access the GPU.  Use `ls -lnd /dev/kfd /dev/dri /dev/dri/*` on the host system to determine the **numeric** group IDs on your system, and pass additional `--group-add ...` arguments to the container so it can access the required devices.   For example, in the following output `crw-rw---- 1 0  44 226,   0 Sep 16 16:55 /dev/dri/card0` the group ID column is `44` 
+When running in a container, in some Linux distributions and container runtimes, the ollama process may be unable to access the GPU.  Use `ls -lnd /dev/kfd /dev/dri /dev/dri/*` on the host system to determine the **numeric** group IDs on your system, and pass additional `--group-add ...` arguments to the container so it can access the required devices.   For example, in the following output `crw-rw---- 1 0  44 226,   0 Sep 16 16:55 /dev/dri/card0` the group ID column is `44`
 
 If you are experiencing problems getting Ollama to correctly discover or use your GPU for inference, the following may help isolate the failure.
 - `AMD_LOG_LEVEL=3` Enable info log levels in the AMD HIP/ROCm libraries.  This can help show more detailed error codes that can help troubleshoot problems

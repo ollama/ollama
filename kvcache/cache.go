@@ -56,11 +56,17 @@ type Cache interface {
 
 	// StartForward is called before the start of the model's forward pass.
 	// For each token in the coming batch, there must be a corresponding
-	// entry in positions and seqs.
-	StartForward(ctx ml.Context, batch input.Batch) error
+	// entry in positions and seqs. reserve is to preallocate memory
+	// without actually storing data in the cache.
+	StartForward(ctx ml.Context, batch input.Batch, reserve bool) error
 
 	// CopyPrefix copies tokens in the range [0, len) from srcSeq to dstSeq
 	CopyPrefix(srcSeq, dstSeq int, len int32)
+
+	// CanResume returns true if the cache can continue with the next token at
+	// the given position and sequence. Assumes that the caller has already
+	// verified the contents of the cache.
+	CanResume(seq int, pos int32) bool
 
 	// Remove deletes tokens in the range [beginIndex, endIndex) from seq. Set
 	// endIndex to math.MaxInt32 to remove everything starting at beginIndex.
