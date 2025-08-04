@@ -94,16 +94,12 @@ func (m *Model) Capabilities() []model.Capability {
 				architecture = archKV.String()
 			}
 			
-			// BGE rerankers and other sequence classification models
-			isBGEReranker := strings.Contains(strings.ToLower(modelType), "reranker") ||
-							strings.Contains(strings.ToLower(architecture), "bert") ||
-							strings.Contains(strings.ToLower(modelName), "bge-reranker") ||
-							strings.Contains(strings.ToLower(modelName), "reranker") ||
-							strings.Contains(strings.ToLower(modelName), "bgetest")
+			// Check for BGE rerankers using template patterns instead of model names
+			isBGEReranker := detectBGERerankingFromTemplate(m.Template)
 			
 			if isBGEReranker {
 				capabilities = append(capabilities, model.CapabilityReranking)
-				slog.Info("Detected BGE/sequence classification reranker model", "model", modelName, "type", modelType, "arch", architecture)
+				slog.Info("Detected BGE reranker model from template", "model", modelName, "type", modelType, "arch", architecture)
 			} else {
 				// If no embedding or sequence classification, assume completion model
 				capabilities = append(capabilities, model.CapabilityCompletion)
@@ -161,6 +157,45 @@ func (m *Model) Capabilities() []model.Capability {
 	}
 
 	return capabilities
+}
+
+// detectBGERerankingFromTemplate detects BGE rerankers based on template patterns
+func detectBGERerankingFromTemplate(tmpl *template.Template) bool {
+	if tmpl == nil {
+		return false
+	}
+	
+	vars := tmpl.Vars()
+	hasRerankVars := slices.Contains(vars, "query") && slices.Contains(vars, "document")
+	
+	if !hasRerankVars {
+		return false
+	}
+	
+	templateStr := strings.ToLower(tmpl.String())
+	
+	// Pattern 1: Simple BGE reranker template - just "{{ .Query }} {{ .Document }}"
+	// This is the most distinctive pattern for normal BGE rerankers
+	simpleBGEPattern := strings.TrimSpace(templateStr) == "{{ .query }} {{ .document }}"
+	
+	// Pattern 2: Query/Document/Relevance pattern (common BGE format)
+	// Example: "Query: {{ .Query }}\nDocument: {{ .Document }}\nRelevance:"
+	hasQueryDocRelevance := strings.Contains(templateStr, "query:") &&
+							 strings.Contains(templateStr, "document:") &&
+							 strings.Contains(templateStr, "relevance:")
+	
+	// Pattern 3: LLM-based BGE rerankers with passage/answer instructions
+	// These contain specific BGE instruction patterns
+	hasPassageAnswerPattern := strings.Contains(templateStr, "passage") && 
+							  strings.Contains(templateStr, "answer") &&
+							  strings.Contains(templateStr, "query")
+	
+	// Pattern 4: BGE-specific instruction patterns
+	hasBGEInstruction := strings.Contains(templateStr, "determine whether the passage contains an answer") ||
+						 strings.Contains(templateStr, "providing a prediction of either 'yes' or 'no'") ||
+						 (strings.Contains(templateStr, "passage") && strings.Contains(templateStr, "relevant"))
+	
+	return simpleBGEPattern || hasQueryDocRelevance || hasPassageAnswerPattern || hasBGEInstruction
 }
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing

@@ -53,7 +53,39 @@ type Qwen3Reranker struct {
 	server *Server
 }
 
-// CreateReranker factory function creates appropriate reranker based on model name and template
+// detectBGERerankingFromTemplate detects BGE rerankers based on template patterns
+func detectBGERerankingFromTemplate(template string) bool {
+	if template == "" {
+		return false
+	}
+	
+	templateStr := strings.ToLower(strings.TrimSpace(template))
+	
+	// Pattern 1: Simple BGE reranker template - just "{{ .Query }} {{ .Document }}"
+	// This is the most distinctive pattern for normal BGE rerankers
+	simpleBGEPattern := templateStr == "{{ .query }} {{ .document }}"
+	
+	// Pattern 2: Query/Document/Relevance pattern (common BGE format)
+	// Example: "Query: {{ .Query }}\nDocument: {{ .Document }}\nRelevance:"
+	hasQueryDocRelevance := strings.Contains(templateStr, "query:") &&
+							 strings.Contains(templateStr, "document:") &&
+							 strings.Contains(templateStr, "relevance:")
+	
+	// Pattern 3: LLM-based BGE rerankers with passage/answer instructions
+	// These contain specific BGE instruction patterns
+	hasPassageAnswerPattern := strings.Contains(templateStr, "passage") && 
+							  strings.Contains(templateStr, "answer") &&
+							  strings.Contains(templateStr, "query")
+	
+	// Pattern 4: BGE-specific instruction patterns
+	hasBGEInstruction := strings.Contains(templateStr, "determine whether the passage contains an answer") ||
+						 strings.Contains(templateStr, "providing a prediction of either 'yes' or 'no'") ||
+						 (strings.Contains(templateStr, "passage") && strings.Contains(templateStr, "relevant"))
+	
+	return simpleBGEPattern || hasQueryDocRelevance || hasPassageAnswerPattern || hasBGEInstruction
+}
+
+// CreateReranker factory function creates appropriate reranker based on template patterns
 func CreateReranker(server *Server, modelName, template string) (Reranker, error) {
 	// Check if the model supports text processing (required for all rerankers)
 	if _, ok := server.model.(model.TextProcessor); !ok {
@@ -67,28 +99,18 @@ func CreateReranker(server *Server, modelName, template string) (Reranker, error
 		slog.Info("Extracted template from model", "template", template)
 	}
 	
-	// Determine reranker type based on model name and template content
-	// BGE detection: model name contains "bge" AND (template contains "relevance" keyword OR template is empty)
-	// When template is empty, we'll assume BGE models should use BGE reranker
-	isBGE := strings.Contains(strings.ToLower(modelName), "bge")
-	hasRelevance := strings.Contains(strings.ToLower(template), "relevance")
-	isEmptyTemplate := strings.TrimSpace(template) == ""
+	// Determine reranker type based on template content patterns
+	isBGE := detectBGERerankingFromTemplate(template)
 	
 	slog.Info("Debug reranker detection", 
 		"model", modelName, 
 		"template", template,
-		"modelNameLower", strings.ToLower(modelName),
-		"templateLower", strings.ToLower(template),
-		"is_bge_model", isBGE,
-		"has_relevance_keyword", hasRelevance,
-		"is_empty_template", isEmptyTemplate)
+		"is_bge_template", isBGE)
 	
-	// Use BGE reranker if model name contains "bge" AND (template has relevance OR template is empty)
-	if isBGE && (hasRelevance || isEmptyTemplate) {
-		slog.Info("Creating BGE reranker", 
-			"model", modelName, 
-			"is_bge_model", isBGE,
-			"has_relevance_keyword", hasRelevance)
+	// Use BGE reranker if template matches BGE patterns
+	if isBGE {
+		slog.Info("Creating BGE reranker based on template patterns", 
+			"model", modelName)
 		return &BGEReranker{server: server}, nil
 	}
 	
