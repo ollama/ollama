@@ -670,7 +670,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		for i := range kv {
 			kv[i] = uint64(float64((embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
 			if i%2 == 0 {
-				kv[i] *= (4096 + batch)
+				kv[i] *= (uint64(numParallel)*4096 + batch)
 			} else {
 				kv[i] *= context
 			}
