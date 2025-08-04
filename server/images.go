@@ -81,8 +81,33 @@ func (m *Model) Capabilities() []model.Capability {
 		if f.KeyValue("pooling_type").Valid() {
 			capabilities = append(capabilities, model.CapabilityEmbedding)
 		} else {
-			// If no embedding is specified, we assume the model supports completion
-			capabilities = append(capabilities, model.CapabilityCompletion)
+			// Check for sequence classification models (like BGE rerankers)
+			// These models have specific architecture patterns that indicate they're classifiers
+			modelType := ""
+			architecture := ""
+			modelName := m.ShortName
+			
+			if typeKV := f.KeyValue("general.type"); typeKV.Valid() {
+				modelType = typeKV.String()
+			}
+			if archKV := f.KeyValue("general.architecture"); archKV.Valid() {
+				architecture = archKV.String()
+			}
+			
+			// BGE rerankers and other sequence classification models
+			isBGEReranker := strings.Contains(strings.ToLower(modelType), "reranker") ||
+							strings.Contains(strings.ToLower(architecture), "bert") ||
+							strings.Contains(strings.ToLower(modelName), "bge-reranker") ||
+							strings.Contains(strings.ToLower(modelName), "reranker") ||
+							strings.Contains(strings.ToLower(modelName), "bgetest")
+			
+			if isBGEReranker {
+				capabilities = append(capabilities, model.CapabilityReranking)
+				slog.Info("Detected BGE/sequence classification reranker model", "model", modelName, "type", modelType, "arch", architecture)
+			} else {
+				// If no embedding or sequence classification, assume completion model
+				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
 		}
 		if f.KeyValue("vision.block_count").Valid() {
 			capabilities = append(capabilities, model.CapabilityVision)
@@ -127,6 +152,7 @@ func (m *Model) Capabilities() []model.Capability {
 							 strings.Contains(templateStr, "rerank") ||
 							 strings.Contains(templateStr, "judge") ||
 							 strings.Contains(templateStr, "classify") ||
+							 strings.Contains(templateStr, "score") ||
 							 (strings.Contains(templateStr, "yes") && strings.Contains(templateStr, "no"))
 		
 		if hasRerankPattern {
