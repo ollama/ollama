@@ -112,6 +112,11 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
+	// This model requires a minimum context to function effectively
+	if slices.Contains(model.Config.ModelFamilies, "gptoss") {
+		opts.NumCtx = max(opts.NumCtx, 8192)
+	}
+
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
