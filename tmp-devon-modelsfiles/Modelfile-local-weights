@@ -1,0 +1,6 @@
+FROM /Users/drifkin/Downloads/sha256-14c7c5e8e3b9a312ae89fabe670b711c27a3ff22f778dc8bbe0e8d856ca9fe1e
+
+SYSTEM ""
+PARAMETER stop <|return|>
+PARAMETER stop <|call|>
+PARAMETER temperature 0

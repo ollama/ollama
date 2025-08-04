@@ -1,0 +1,132 @@
+FROM gpt-oss:120b-tmpl
+
+PARAMETER num_predict 4000
+
+TEMPLATE """{{- if .Tools }}{{ end }}<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+Knowledge cutoff: 2024-06
+Current date: {{ currentDate }}
+{{- if and .IsThinkSet .Think (ne .ThinkLevel "") }}
+
+reasoning: {{ .ThinkLevel }}
+{{- else if or (not .IsThinkSet) (and .IsThinkSet .Think) }}
+
+reasoning: medium
+{{- end }}
+
+# Valid channels: analysis, commentary, final. Channel must be included for every message.
+Calls to these tools must go to the commentary channel: 'functions'.{{- $hasNonBuiltinTools := false }}{{- if .Tools }}{{/* Check for all tools */}}
+{{- $hasBrowserSearch := false }}
+{{- $hasBrowserOpen := false }}
+{{- $hasBrowserFind := false }}
+{{- $hasPython := false }}
+{{- range .Tools }}
+  {{- if eq .Function.Name "browser.search" }}{{ $hasBrowserSearch = true }}
+  {{- else if eq .Function.Name "browser.open" }}{{ $hasBrowserOpen = true }}
+  {{- else if eq .Function.Name "browser.find" }}{{ $hasBrowserFind = true }}
+  {{- else if eq .Function.Name "python" }}{{ $hasPython = true }}
+  {{- else }}{{ $hasNonBuiltinTools = true }}
+  {{- end }}
+{{- end }}
+{{- if or $hasBrowserSearch $hasBrowserOpen $hasBrowserFind $hasPython }}
+
+# Tools
+{{- if or $hasBrowserSearch $hasBrowserOpen $hasBrowserFind }}
+
+## browser
+
+// Tool for browsing.
+// The `cursor` appears in brackets before each browsing display: `[{cursor}]`.
+// Cite information from the tool using the following format:
+// `【{cursor}†L{line_start}(-L{line_end})?】`, for example: `【6†L9-L11】` or `【8†L3】`.
+// sources=web_with_bing (default: web_with_bing)
+namespace browser {
+{{- if $hasBrowserSearch }}
+
+// Searches for information related to `query` and displays `topn` results.
+type search = (_: {
+query: string,
+topn?: number, // default: 10
+source?: string,
+}) => any;
+{{- end }}
+{{- if $hasBrowserOpen }}
+
+// Opens the link `id` from the page indicated by `cursor` starting at line number `loc`, showing `num_lines` lines.
+// Valid link ids are displayed with the formatting: `【{id}†.*】`.
+// If `cursor` is not provided, the most recent page is implied.
+// If `id` is a string, it is treated as a fully qualified URL associated with `source`.
+// If `loc` is not provided, the viewport will be positioned at the beginning of the document or centered on the most relevant passage, if available.
+// Use this function without `id` to scroll to a new location of an opened page.
+type open = (_: {
+id?: number | string, // default: -1
+cursor?: number, // default: -1
+loc?: number, // default: -1
+num_lines?: number, // default: -1
+view_source?: boolean, // default: false
+source?: string,
+}) => any;
+{{- end }}
+{{- if $hasBrowserFind }}
+
+// Finds exact matches of `pattern` in the current page, or the page given by `cursor`.
+type find = (_: {
+pattern: string,
+cursor?: number, // default: -1
+}) => any;
+{{- end }}
+
+} // namespace browser
+{{- end }}{{/* end if has browser tools */}}
+{{- if $hasPython }}
+
+## python
+
+Use this tool to execute Python code in your chain of thought. The code will not be shown to the user. This tool should be used for internal reasoning, but not for code that is intended to be visible to the user (e.g. when creating plots, tables, or files).
+
+When you send a message containing Python code to python, it will be executed in a stateful Jupyter notebook environment. python will respond with the output of the execution or time out after 120.0 seconds. The drive at '/mnt/data' can be used to save and persist user files. Internet access for this session is UNKNOWN. Depends on the cluster.
+{{- end }}{{/* end if hasPython */}}
+{{- end }}{{/* end if has any built-in tools */}}
+{{- end }}{{/* end if .Tools */}}<|end|>{{/* end of system */ -}}
+<|start|>developer<|message|>{{- if $hasNonBuiltinTools }}# Tools
+
+## functions
+
+namespace functions {
+{{- range .Tools }}
+{{- if not (or (eq .Function.Name "browser.search") (eq .Function.Name "browser.open") (eq .Function.Name "browser.find") (eq .Function.Name "python")) }}
+{{if .Function.Description }}
+// {{ .Function.Description }}
+{{- end }}
+{{- if and .Function.Parameters.Properties (gt (len .Function.Parameters.Properties) 0) }}
+type {{ .Function.Name }} = (_: {
+{{- range $name, $prop := .Function.Parameters.Properties }}
+{{- if $prop.Description }}
+  // {{ $prop.Description }}
+{{- end }}
+  {{ $name }}: {{ if gt (len $prop.Type) 1 }}{{ range $i, $t := $prop.Type }}{{ if $i }} | {{ end }}{{ $t }}{{ end }}{{ else }}{{ index $prop.Type 0 }}{{ end }},
+{{- end }}
+}) => any;
+{{- else }}
+type {{ .Function.Name }} = () => any;
+{{- end }}
+{{- end }}{{/* end if not browser tool */}}
+{{- end }}{{/* end of range .Tools */}}
+
+} // namespace functions
+{{- end }}{{/* end if hasNonBuiltinTools */}}
+{{- if .System}}
+
+# Instructions
+
+{{ .System }}
+{{- end }}{{/* end of if system */}}<|end|>
+{{- range $i, $msg := .Messages }}{{- if (ne $msg.Role "system") }}{{- if eq $msg.Role "tool" }}{{- if or (eq $msg.ToolName "python") (eq $msg.ToolName "browser.search") (eq $msg.ToolName "browser.open") (eq $msg.ToolName "browser.find") }}<|start|>{{ $msg.ToolName }} to=assistant<|message|>{{ $msg.Content }}<|end|>
+{{- else }}<|start|>functions.{{ $msg.ToolName }} to=assistant<|message|>{{ $msg.Content }}<|end|>
+{{- end }}
+{{- else }}<|start|>{{ $msg.Role }}<|message|>{{ $msg.Content }}<|end|>
+{{- end }}{{- end }}{{- end }}{{/* end of range .Messages */}}
+{{- /* end of developer */ -}}<|start|>assistant"""
+SYSTEM "hey there"
+PARAMETER stop <|return|>
+PARAMETER stop <|call|>
+PARAMETER temperature 0
