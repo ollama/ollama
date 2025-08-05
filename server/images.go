@@ -111,7 +111,8 @@ func (m *Model) Capabilities() []model.Capability {
 
 	// Check for thinking capability
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if openingTag != "" && closingTag != "" {
+	hasTags := openingTag != "" && closingTag != ""
+	if hasTags || m.Config.ModelFamily == "gptoss" {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
