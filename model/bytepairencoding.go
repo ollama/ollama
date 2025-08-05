@@ -22,7 +22,7 @@ var _ TextProcessor = (*BytePairEncoding)(nil)
 
 func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
 	return BytePairEncoding{
-		pre:   regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
+		pre:   regexp2.MustCompile(pre, regexp2.None),
 		vocab: vocab,
 	}
 }

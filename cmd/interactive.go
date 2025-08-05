@@ -272,16 +272,29 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Println("Set 'quiet' mode.")
 				case "think":
-					think := true
-					opts.Think = &think
+					thinkValue := api.ThinkValue{Value: true}
+					var maybeLevel string
+					if len(args) > 2 {
+						maybeLevel = args[2]
+					}
+					if maybeLevel != "" {
+						// TODO(drifkin): validate the level, could be model dependent
+						// though... It will also be validated on the server once a call is
+						// made.
+						thinkValue.Value = maybeLevel
+					}
+					opts.Think = &thinkValue
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model)
 					}
-					fmt.Println("Set 'think' mode.")
+					if maybeLevel != "" {
+						fmt.Printf("Set 'think' mode to '%s'.\n", maybeLevel)
+					} else {
+						fmt.Println("Set 'think' mode.")
+					}
 				case "nothink":
-					think := false
-					opts.Think = &think
+					opts.Think = &api.ThinkValue{Value: false}
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model)
@@ -478,7 +491,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			assistant, err := chat(cmd, opts)
 			if err != nil {
-				if strings.Contains(err.Error(), "does not support thinking") {
+				if strings.Contains(err.Error(), "does not support thinking") ||
+					strings.Contains(err.Error(), "invalid think value") {
 					fmt.Printf("error: %v\n", err)
 					sb.Reset()
 					continue

@@ -276,6 +276,7 @@ type Tensor interface {
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
+	QuickGELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
 	RELU(ctx Context) Tensor
 	Sigmoid(ctx Context) Tensor
@@ -283,7 +284,7 @@ type Tensor interface {
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
-	Contiguous(ctx Context) Tensor
+	Contiguous(ctx Context, shape ...int) Tensor
 	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
@@ -468,4 +469,5 @@ const (
 	DTypeQ80
 	DTypeQ40
 	DTypeI32
+	DTypeMXFP4
 )

@@ -505,6 +505,11 @@ static const struct ggml_backend_reg_i ggml_backend_blas_reg_i = {
 };
 
 ggml_backend_reg_t ggml_backend_blas_reg(void) {
+    // MacOS prior to v14 does not include cblas_sgemm - disable this backend if it isn't available
+    if (&cblas_sgemm == NULL) {
+        GGML_LOG_INFO("Disabling ggml-blas backend on old MacOS version\n");
+        return NULL;
+    }
     static struct ggml_backend_reg ggml_backend_blas_reg = {
         /* .api_version = */ GGML_BACKEND_API_VERSION,
         /* .iface       = */ ggml_backend_blas_reg_i,

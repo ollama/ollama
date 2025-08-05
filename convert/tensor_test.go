@@ -72,236 +72,787 @@ func mul(shape []uint64) int {
 }
 
 func TestSplitDim(t *testing.T) {
-	r := fakeTensor{
-		name:  "a.b",
-		shape: []uint64{3, 4},
-		data:  []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
-	}
-
-	t.Run("no split", func(t *testing.T) {
-		for tt := range splitDim(&r, 0, split{Replacer: strings.NewReplacer("a", "x")}) {
-			if tt.Name != "x.b" {
-				t.Fatalf("expected name 'x', got '%s'", tt.Name)
-			}
-
-			if !slices.Equal(tt.Shape, []uint64{3, 4}) {
-				t.Fatalf("expected shape [3, 4], got %v", tt.Shape)
-			}
-
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
-			}
-
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
-			}
-
-			if !slices.Equal(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}) {
-				t.Fatalf("expected data [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], got %v", f32s)
-			}
+	t.Run("2d", func(t *testing.T) {
+		r := fakeTensor{
+			name:  "a.b",
+			shape: []uint64{3, 4},
+			data:  []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
 		}
+
+		t.Run("no split", func(t *testing.T) {
+			for tt := range splitDim(&r, 0, split{Replacer: strings.NewReplacer("a", "x")}) {
+				if tt.Name != "x.b" {
+					t.Fatalf("expected name 'x', got '%s'", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 4}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("even split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 1,
+				split{Replacer: strings.NewReplacer("a", "x")},
+				split{Replacer: strings.NewReplacer("b", "y")},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 4, 5, 8, 9}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'a.y', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{2, 3, 6, 7, 10, 11}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("uneven split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 0,
+				split{Replacer: strings.NewReplacer("a", "x"), dim: 2},
+				split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{2, 4}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'a.y', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{8, 9, 10, 11}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("three way split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 0,
+				split{Replacer: strings.NewReplacer("a", "x"), dim: 1},
+				split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
+				split{Replacer: strings.NewReplacer("b", "z"), dim: 1},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{4, 5, 6, 7}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.z" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{8, 9, 10, 11}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("uneven three way split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 1,
+				split{Replacer: strings.NewReplacer("a", "x"), dim: 2},
+				split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
+				split{Replacer: strings.NewReplacer("b", "z"), dim: 1},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 4, 5, 8, 9}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 1}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{2, 6, 10}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.z" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 1}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{3, 7, 11}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("split with transpose", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 1,
+				split{Replacer: strings.NewReplacer("a", "x")},
+				split{Replacer: strings.NewReplacer("b", "y"), fn: func(tt tensor.Tensor) (tensor.Tensor, error) {
+					return tensor.Transpose(tt, 1, 0)
+				}},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 4, 5, 8, 9}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'a.y', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{2, 6, 10, 3, 7, 11}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
 	})
-
-	t.Run("even split", func(t *testing.T) {
-		next, stop := iter.Pull(splitDim(&r, 1,
-			split{Replacer: strings.NewReplacer("a", "x")},
-			split{Replacer: strings.NewReplacer("b", "y")},
-		))
-		defer stop()
-
-		{
-			tt, ok := next()
-			if !ok {
-				t.Fatal("expected at least one split")
-			}
-
-			if tt.Name != "x.b" {
-				t.Fatal("expected name 'x.b', got", tt.Name)
-			}
-
-			if !slices.Equal(tt.Shape, []uint64{3, 2}) {
-				t.Fatal("expected shape [3, 2], got", tt.Shape)
-			}
-
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
-			}
-
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
-			}
-
-			if !slices.Equal(f32s, []float32{0, 1, 4, 5, 8, 9}) {
-				t.Fatal("expected data [0, 1, 4, 5, 8, 9], got", f32s)
-			}
+	t.Run("3d", func(t *testing.T) {
+		r := fakeTensor{
+			name:  "a.b",
+			shape: []uint64{3, 4, 2},
+			data:  []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23},
 		}
 
-		{
-			tt, ok := next()
-			if !ok {
-				t.Fatal("expected at least one split")
+		t.Run("no split", func(t *testing.T) {
+			for tt := range splitDim(&r, 0, split{Replacer: strings.NewReplacer("a", "x")}) {
+				if tt.Name != "x.b" {
+					t.Fatalf("expected name 'x', got '%s'", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 4, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("even split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 1,
+				split{Replacer: strings.NewReplacer("a", "x")},
+				split{Replacer: strings.NewReplacer("b", "y")},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
 
-			if tt.Name != "a.y" {
-				t.Fatal("expected name 'a.y', got", tt.Name)
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'a.y', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{4, 5, 6, 7, 12, 13, 14, 15, 20, 21, 22, 23}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("uneven split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 0,
+				split{Replacer: strings.NewReplacer("a", "x"), dim: 2},
+				split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{2, 4, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
 
-			if !slices.Equal(tt.Shape, []uint64{3, 2}) {
-				t.Fatal("expected shape [3, 2], got", tt.Shape)
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'a.y', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{16, 17, 18, 19, 20, 21, 22, 23}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("three way split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 0,
+				split{Replacer: strings.NewReplacer("a", "x"), dim: 1},
+				split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
+				split{Replacer: strings.NewReplacer("b", "z"), dim: 1},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
 
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{8, 9, 10, 11, 12, 13, 14, 15}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
 
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "a.z" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{1, 4, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{16, 17, 18, 19, 20, 21, 22, 23}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
+			}
+		})
+
+		t.Run("uneven three way split", func(t *testing.T) {
+			next, stop := iter.Pull(splitDim(&r, 1,
+				split{Replacer: strings.NewReplacer("a", "x"), dim: 2},
+				split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
+				split{Replacer: strings.NewReplacer("b", "z"), dim: 1},
+			))
+			defer stop()
+
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
+
+				if tt.Name != "x.b" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
+
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 2, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
+
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
+
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(f32s, []float32{0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
 
-			if !slices.Equal(f32s, []float32{2, 3, 6, 7, 10, 11}) {
-				t.Fatal("expected data [2, 3, 6, 7, 10, 11], got", f32s)
-			}
-		}
-	})
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
 
-	t.Run("uneven split", func(t *testing.T) {
-		next, stop := iter.Pull(splitDim(&r, 0,
-			split{Replacer: strings.NewReplacer("a", "x"), dim: 2},
-			split{Replacer: strings.NewReplacer("b", "y"), dim: 1},
-		))
-		defer stop()
+				if tt.Name != "a.y" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
 
-		{
-			tt, ok := next()
-			if !ok {
-				t.Fatal("expected at least one split")
-			}
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 1, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
 
-			if tt.Name != "x.b" {
-				t.Fatal("expected name 'x.b', got", tt.Name)
-			}
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
 
-			if !slices.Equal(tt.Shape, []uint64{2, 4}) {
-				t.Fatal("expected shape [2, 4], got", tt.Shape)
-			}
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
 
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
+				if diff := cmp.Diff(f32s, []float32{4, 5, 12, 13, 20, 21}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
 
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
-			}
+			{
+				tt, ok := next()
+				if !ok {
+					t.Fatal("expected at least one split")
+				}
 
-			if !slices.Equal(f32s, []float32{0, 1, 2, 3, 4, 5, 6, 7}) {
-				t.Fatal("expected data [0, 1, 2, 3, 4, 5, 6, 7], got", f32s)
-			}
-		}
+				if tt.Name != "a.z" {
+					t.Fatal("expected name 'x.b', got", tt.Name)
+				}
 
-		{
-			tt, ok := next()
-			if !ok {
-				t.Fatal("expected at least one split")
-			}
+				if diff := cmp.Diff(tt.Shape, []uint64{3, 1, 2}); diff != "" {
+					t.Errorf("unexpected shape (-want +got):\n%s", diff)
+				}
 
-			if tt.Name != "a.y" {
-				t.Fatal("expected name 'a.y', got", tt.Name)
-			}
+				var b bytes.Buffer
+				if _, err := tt.WriteTo(&b); err != nil {
+					t.Fatal(err)
+				}
 
-			if !slices.Equal(tt.Shape, []uint64{1, 4}) {
-				t.Fatal("expected shape [1, 4], got", tt.Shape)
-			}
+				f32s := make([]float32, mul(tt.Shape))
+				if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
+					t.Fatal(err)
+				}
 
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
+				if diff := cmp.Diff(f32s, []float32{6, 7, 14, 15, 22, 23}); diff != "" {
+					t.Errorf("unexpected data (-want +got):\n%s", diff)
+				}
 			}
-
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
-			}
-
-			if !slices.Equal(f32s, []float32{8, 9, 10, 11}) {
-				t.Fatal("expected data [8, 9, 10, 11], got", f32s)
-			}
-		}
-	})
-
-	t.Run("split with transpose", func(t *testing.T) {
-		next, stop := iter.Pull(splitDim(&r, 1,
-			split{Replacer: strings.NewReplacer("a", "x")},
-			split{Replacer: strings.NewReplacer("b", "y"), fn: func(tt tensor.Tensor) (tensor.Tensor, error) {
-				return tensor.Transpose(tt, 1, 0)
-			}},
-		))
-		defer stop()
-
-		{
-			tt, ok := next()
-			if !ok {
-				t.Fatal("expected at least one split")
-			}
-
-			if tt.Name != "x.b" {
-				t.Fatal("expected name 'x.b', got", tt.Name)
-			}
-
-			if !slices.Equal(tt.Shape, []uint64{3, 2}) {
-				t.Fatal("expected shape [3, 2], got", tt.Shape)
-			}
-
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
-			}
-
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
-			}
-
-			if !slices.Equal(f32s, []float32{0, 1, 4, 5, 8, 9}) {
-				t.Fatal("expected data [0, 1, 4, 5, 8, 9], got", f32s)
-			}
-		}
-
-		{
-			tt, ok := next()
-			if !ok {
-				t.Fatal("expected at least one split")
-			}
-
-			if tt.Name != "a.y" {
-				t.Fatal("expected name 'a.y', got", tt.Name)
-			}
-
-			if !slices.Equal(tt.Shape, []uint64{3, 2}) {
-				t.Fatal("expected shape [3, 2], got", tt.Shape)
-			}
-
-			var b bytes.Buffer
-			if _, err := tt.WriteTo(&b); err != nil {
-				t.Fatal(err)
-			}
-
-			f32s := make([]float32, mul(tt.Shape))
-			if err := binary.Read(&b, binary.LittleEndian, &f32s); err != nil {
-				t.Fatal(err)
-			}
-
-			if !slices.Equal(f32s, []float32{2, 6, 10, 3, 7, 11}) {
-				t.Fatal("expected data [2, 6, 10, 3, 7, 11], got", f32s)
-			}
-		}
+		})
 	})
 }
 

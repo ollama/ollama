@@ -26,6 +26,10 @@ type Parser struct {
 	n      int
 }
 
+func (p *Parser) GetBuffer() []byte {
+	return p.buffer
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {

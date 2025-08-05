@@ -14,9 +14,9 @@ const (
 	FileTypeF16
 	fileTypeQ4_0
 	fileTypeQ4_1
-	fileTypeQ4_1_F16 // unused by GGML
-	fileTypeQ4_2     // unused by GGML
-	fileTypeQ4_3     // unused by GGML
+	fileTypeMXFP4 // originally fileTypeQ4_1_F16 // unused by GGML
+	fileTypeQ4_2  // unused by GGML
+	fileTypeQ4_3  // unused by GGML
 	FileTypeQ8_0
 	fileTypeQ5_0
 	fileTypeQ5_1
@@ -97,6 +97,8 @@ func (t FileType) String() string {
 		return "Q4_0"
 	case fileTypeQ4_1:
 		return "Q4_1"
+	case fileTypeMXFP4:
+		return "MXFP4"
 	case FileTypeQ8_0:
 		return "Q8_0"
 	case fileTypeQ5_0:
@@ -144,6 +146,8 @@ func (ftype FileType) ToTensorType() TensorType {
 		return TensorTypeQ4_0
 	case fileTypeQ4_1:
 		return TensorTypeQ4_1
+	case fileTypeMXFP4:
+		return TensorTypeMXFP4 // Formerly unused tensorTypeQ4_2
 	case FileTypeQ8_0:
 		return TensorTypeQ8_0
 	case fileTypeQ5_0:
@@ -187,8 +191,8 @@ const (
 	TensorTypeF16
 	TensorTypeQ4_0
 	TensorTypeQ4_1
-	tensorTypeQ4_2 // unused by GGML
-	tensorTypeQ4_3 // unused by GGML
+	TensorTypeMXFP4 // Formerly unused tensorTypeQ4_2
+	tensorTypeQ4_3  // unused by GGML
 	TensorTypeQ5_0
 	TensorTypeQ5_1
 	TensorTypeQ8_0
@@ -260,6 +264,8 @@ func ParseTensorType(s string) (TensorType, error) {
 		return TensorTypeF64, nil
 	case "BF16":
 		return TensorTypeBF16, nil
+	case "MXFP4":
+		return TensorTypeMXFP4, nil
 	default:
 		return 0, fmt.Errorf("unsupported quantization type %s", s)
 	}
@@ -312,6 +318,8 @@ func (t TensorType) String() string {
 		return "F64"
 	case TensorTypeBF16:
 		return "BF16"
+	case TensorTypeMXFP4:
+		return "MXFP4"
 	default:
 		return "unknown"
 	}

@@ -150,7 +150,7 @@ func TestGenerateChat(t *testing.T) {
 			Messages: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
-			Think: &think,
+			Think: &api.ThinkValue{Value: think},
 		})
 
 		if w.Code != http.StatusBadRequest {
