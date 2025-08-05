@@ -4,7 +4,7 @@
 
 Ollama’s [Turbo](https://ollama.com/turbo) is a new way to run open-source models with acceleration from datacenter-grade hardware.
 
-During the preview the following models are available:
+Currently, the following models are available in Turbo:
 
 - `gpt-oss:20b`
 - `gpt-oss:120b`
@@ -21,10 +21,20 @@ Download Ollama
 ### Ollama’s CLI
 
 - [Sign up](https://ollama.com/signup) for an Ollama account
-- Add your Ollama key [to ollama.com](https://ollama.com/settings/keys)
+- Add your Ollama key [to ollama.com](https://ollama.com/settings/keys).
+
+  On macOS and Linux:
+
   ```shell
   cat ~/.ollama/id_ed25519.pub
   ```
+
+  On Windows:
+
+  ```
+  type "%USERPROFILE%\.ollama\id_ed25519.pub"
+  ```
+
 - Then run a model setting `OLLAMA_HOST` to `ollama.com`:
   ```shell
   OLLAMA_HOST=ollama.com ollama run gpt-oss:120b
