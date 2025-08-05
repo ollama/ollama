@@ -6,7 +6,8 @@
       "binaryDir": "${sourceDir}/build",
       "installDir": "${sourceDir}/dist",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
       }
     },
     {
