@@ -209,7 +209,7 @@ func TestChatPrompt(t *testing.T) {
 			model := tt.model
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
 			think := false
-			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &think)
+			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, "")
 			if tt.error == nil && err != nil {
 				t.Fatal(err)
 			} else if tt.error != nil && err != tt.error {

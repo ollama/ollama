@@ -85,10 +85,11 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Needs to be a pointer so we can distinguish between false
+	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
+	// for supported models. Needs to be a pointer so we can distinguish between false
 	// (request that thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
-	Think *bool `json:"think,omitempty"`
+	Think *ThinkValue `json:"think,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -116,8 +117,12 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding
-	Think *bool `json:"think,omitempty"`
+	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
+	// for supported models.
+	Think *ThinkValue `json:"think,omitempty"`
+
+	// Template overrides the model's default prompt template.
+	Template string `json:"template"`
 }
 
 type Tools []Tool
@@ -290,12 +295,13 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx          int      `json:"num_ctx,omitempty"`
+	NumBatch        int      `json:"num_batch,omitempty"`
+	NumGPU          int      `json:"num_gpu,omitempty"`
+	MainGPU         int      `json:"main_gpu,omitempty"`
+	UseMMap         *bool    `json:"use_mmap,omitempty"`
+	NumThread       int      `json:"num_thread,omitempty"`
+	ControlStrength []string `json:"control_strength,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -353,14 +359,15 @@ type CreateRequest struct {
 	Stream   *bool  `json:"stream,omitempty"`
 	Quantize string `json:"quantize,omitempty"`
 
-	From       string            `json:"from,omitempty"`
-	Files      map[string]string `json:"files,omitempty"`
-	Adapters   map[string]string `json:"adapters,omitempty"`
-	Template   string            `json:"template,omitempty"`
-	License    any               `json:"license,omitempty"`
-	System     string            `json:"system,omitempty"`
-	Parameters map[string]any    `json:"parameters,omitempty"`
-	Messages   []Message         `json:"messages,omitempty"`
+	From           string              `json:"from,omitempty"`
+	Files          map[string]string   `json:"files,omitempty"`
+	Adapters       map[string]string   `json:"adapters,omitempty"`
+	ControlVectors []map[string]string `json:"controlVectors,omitempty"`
+	Template       string              `json:"template,omitempty"`
+	License        any                 `json:"license,omitempty"`
+	System         string              `json:"system,omitempty"`
+	Parameters     map[string]any      `json:"parameters,omitempty"`
+	Messages       []Message           `json:"messages,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -508,6 +515,8 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // ModelDetails provides details about a model.
@@ -668,13 +677,121 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			NumCtx:          int(envconfig.ContextLength()),
+			NumBatch:        512,
+			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:       0,  // let the runtime decide
+			UseMMap:         nil,
+			ControlStrength: []string{},
 		},
 	}
+}
+
+// ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low")
+type ThinkValue struct {
+	// Value can be a bool or string
+	Value interface{}
+}
+
+// IsValid checks if the ThinkValue is valid
+func (t *ThinkValue) IsValid() bool {
+	if t == nil || t.Value == nil {
+		return true // nil is valid (means not set)
+	}
+
+	switch v := t.Value.(type) {
+	case bool:
+		return true
+	case string:
+		return v == "high" || v == "medium" || v == "low"
+	default:
+		return false
+	}
+}
+
+// IsBool returns true if the value is a boolean
+func (t *ThinkValue) IsBool() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+	_, ok := t.Value.(bool)
+	return ok
+}
+
+// IsString returns true if the value is a string
+func (t *ThinkValue) IsString() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+	_, ok := t.Value.(string)
+	return ok
+}
+
+// AsBool returns the value as a bool (true if enabled in any way)
+func (t *ThinkValue) AsBool() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+
+	switch v := t.Value.(type) {
+	case bool:
+		return v
+	case string:
+		// Any string value ("high", "medium", "low") means thinking is enabled
+		return v == "high" || v == "medium" || v == "low"
+	default:
+		return false
+	}
+}
+
+// AsString returns the value as a string
+func (t *ThinkValue) AsString() string {
+	if t == nil || t.Value == nil {
+		return ""
+	}
+
+	switch v := t.Value.(type) {
+	case string:
+		return v
+	case bool:
+		if v {
+			return "medium" // Default level when just true
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (t *ThinkValue) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as bool first
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		t.Value = b
+		return nil
+	}
+
+	// Try to unmarshal as string
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		// Validate string values
+		if s != "high" && s != "medium" && s != "low" {
+			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", true, or false)", s)
+		}
+		t.Value = s
+		return nil
+	}
+
+	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\")")
+}
+
+// MarshalJSON implements json.Marshaler
+func (t *ThinkValue) MarshalJSON() ([]byte, error) {
+	if t == nil || t.Value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(t.Value)
 }
 
 type Duration struct {
