@@ -80,7 +80,6 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 			case "scales":
 				mxfp4s[name].scales = t
 			}
-
 		} else {
 			out = append(out, &ggml.Tensor{
 				Name:     t.Name(),
