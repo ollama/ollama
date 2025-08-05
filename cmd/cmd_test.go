@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -914,4 +916,161 @@ func TestNewCreateRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSignatureCommandsIntegration(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir, err := os.MkdirTemp("", "signature-cmd-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test sign command validation
+	t.Run("sign command validation", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().Bool("overwrite", false, "")
+		cmd.Flags().String("key", "", "")
+		cmd.Flags().Bool("sigstore", false, "")
+		cmd.Flags().String("identity", "", "")
+
+		// Test with no arguments
+		err := SignHandler(cmd, []string{})
+		if err == nil {
+			t.Error("Expected error for no arguments, got none")
+		}
+		if !strings.Contains(err.Error(), "sign requires exactly one model name") {
+			t.Errorf("Expected 'sign requires exactly one model name' error, got: %v", err)
+		}
+
+		// Test with invalid model name
+		err = SignHandler(cmd, []string{"invalid::model"})
+		if err == nil {
+			t.Error("Expected error for invalid model name, got none")
+		}
+		if !strings.Contains(err.Error(), "invalid model name") {
+			t.Errorf("Expected 'invalid model name' error, got: %v", err)
+		}
+	})
+}
+
+func TestFormatSignatureStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		sig      *api.SignatureStatus
+		expected string
+	}{
+		{
+			name:     "nil signature",
+			sig:      nil,
+			expected: "Unsigned",
+		},
+		{
+			name: "not signed",
+			sig: &api.SignatureStatus{
+				Signed:   false,
+				Verified: false,
+			},
+			expected: "Unsigned",
+		},
+		{
+			name: "signed and verified",
+			sig: &api.SignatureStatus{
+				Signed:   true,
+				Verified: true,
+			},
+			expected: "✅ Verified",
+		},
+		{
+			name: "signed but not verified",
+			sig: &api.SignatureStatus{
+				Signed:   true,
+				Verified: false,
+			},
+			expected: "❌ Invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatSignatureStatus(tt.sig)
+			if result != tt.expected {
+				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestSignatureIntegrationWorkflow(t *testing.T) {
+	// Integration test for the full signature workflow
+	t.Run("workflow validation", func(t *testing.T) {
+		// Generate test key pair
+		publicKey, privateKey, err := server.GenerateKeyPair()
+		if err != nil {
+			t.Fatalf("Failed to generate key pair: %v", err)
+		}
+
+		// Validate key pair format
+		if len(publicKey) == 0 || len(privateKey) == 0 {
+			t.Error("Generated keys should not be empty")
+		}
+
+		// Create test signature
+		modelDigest := "test-model-digest-integration"
+		signer := "integration-test@example.com"
+		oms, err := server.CreateTestSignature(privateKey, modelDigest, signer)
+		if err != nil {
+			t.Fatalf("Failed to create test signature: %v", err)
+		}
+
+		// Validate signature structure
+		if oms.Signer != signer {
+			t.Errorf("Expected signer '%s', got '%s'", signer, oms.Signer)
+		}
+		if oms.ModelDigest != modelDigest {
+			t.Errorf("Expected model digest '%s', got '%s'", modelDigest, oms.ModelDigest)
+		}
+		if oms.Algorithm != "ed25519" {
+			t.Errorf("Expected algorithm 'ed25519', got '%s'", oms.Algorithm)
+		}
+
+		// Test cryptographic verification
+		config := server.DefaultSignatureConfig()
+		verifier := server.NewCryptoSignatureVerifier(config)
+		
+		// Create temporary signature file
+		tmpDir, err := os.MkdirTemp("", "integration-test")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		sigFile := filepath.Join(tmpDir, "signature.json")
+		sigData, err := json.Marshal(oms)
+		if err != nil {
+			t.Fatalf("Failed to marshal signature: %v", err)
+		}
+		if err := os.WriteFile(sigFile, sigData, 0644); err != nil {
+			t.Fatalf("Failed to write signature file: %v", err)
+		}
+
+		// Verify signature
+		result, err := verifier.VerifySignatureFile(sigFile, &server.SignatureInfo{
+			Signer:   signer,
+			SignedAt: oms.Timestamp,
+			Format:   oms.Version,
+		}, modelDigest)
+
+		if err != nil {
+			t.Fatalf("Signature verification failed: %v", err)
+		}
+		if !result.Valid {
+			t.Errorf("Expected valid signature, got invalid: %s", result.ErrorMessage)
+		}
+		if result.Signer != signer {
+			t.Errorf("Expected result signer '%s', got '%s'", signer, result.Signer)
+		}
+
+		t.Logf("✅ Integration test passed - full cryptographic workflow working")
+	})
 }

@@ -8,6 +8,16 @@ import (
 	"os"
 )
 
+// Media type constants for different layer types
+const (
+	// MediaTypeModelSignature represents an OpenSSF Model Signing (OMS) signature file
+	MediaTypeModelSignature = "application/vnd.oms.signature.v1+json"
+	// MediaTypeModelConfig represents a model configuration file
+	MediaTypeModelConfig = "application/vnd.docker.container.image.v1+json"
+	// MediaTypeModelLayer represents a model layer (weights, etc.)
+	MediaTypeModelLayer = "application/vnd.ollama.image.model"
+)
+
 type Layer struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
@@ -127,4 +137,35 @@ func (l *Layer) Remove() error {
 	}
 
 	return os.Remove(blob)
+}
+
+// IsSignature returns true if this layer represents a model signature
+func (l *Layer) IsSignature() bool {
+	return l.MediaType == MediaTypeModelSignature
+}
+
+// IsConfig returns true if this layer represents a model configuration
+func (l *Layer) IsConfig() bool {
+	return l.MediaType == MediaTypeModelConfig
+}
+
+// IsModelLayer returns true if this layer represents model data (weights, etc.)
+func (l *Layer) IsModelLayer() bool {
+	return l.MediaType == MediaTypeModelLayer
+}
+
+// NewSignatureLayer creates a new Layer for a signature file
+func NewSignatureLayer(r io.Reader) (Layer, error) {
+	return NewLayer(r, MediaTypeModelSignature)
+}
+
+// NewSignatureLayerFromFile creates a signature layer from an existing signature file
+func NewSignatureLayerFromFile(sigFilePath string) (Layer, error) {
+	file, err := os.Open(sigFilePath)
+	if err != nil {
+		return Layer{}, fmt.Errorf("failed to open signature file: %w", err)
+	}
+	defer file.Close()
+	
+	return NewSignatureLayer(file)
 }

@@ -456,14 +456,24 @@ type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
 }
 
+// SignatureStatus contains information about a model's cryptographic signature
+type SignatureStatus struct {
+	Signed    bool      `json:"signed"`              // Whether the model has a signature
+	Verified  bool      `json:"verified"`            // Whether the signature has been verified
+	Signer    string    `json:"signer,omitempty"`    // Identity of the signer
+	SignedAt  time.Time `json:"signed_at,omitempty"` // When the model was signed
+	Format    string    `json:"format,omitempty"`    // Signature format (e.g., "oms-v1.0")
+}
+
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name       string       `json:"name"`
-	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
-	Size       int64        `json:"size"`
-	Digest     string       `json:"digest"`
-	Details    ModelDetails `json:"details,omitempty"`
+	Name       string            `json:"name"`
+	Model      string            `json:"model"`
+	ModifiedAt time.Time         `json:"modified_at"`
+	Size       int64             `json:"size"`
+	Digest     string            `json:"digest"`
+	Details    ModelDetails      `json:"details,omitempty"`
+	Signature  *SignatureStatus  `json:"signature,omitempty"` // Signature information
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].

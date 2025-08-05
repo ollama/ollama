@@ -50,6 +50,21 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
+// ConvertSignatureInfo converts internal SignatureInfo to API SignatureStatus
+func ConvertSignatureInfo(sigInfo *SignatureInfo) *api.SignatureStatus {
+	if sigInfo == nil {
+		return nil
+	}
+	
+	return &api.SignatureStatus{
+		Signed:   true,
+		Verified: sigInfo.Verified,
+		Signer:   sigInfo.Signer,
+		SignedAt: sigInfo.SignedAt,
+		Format:   sigInfo.Format,
+	}
+}
+
 var mode string = gin.DebugMode
 
 type Server struct {
@@ -946,6 +961,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 				ParameterSize:     cf.ModelType,
 				QuantizationLevel: cf.FileType,
 			},
+			Signature:  ConvertSignatureInfo(m.Signature),
 		})
 	}
 
