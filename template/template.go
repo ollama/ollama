@@ -127,6 +127,16 @@ var funcs = template.FuncMap{
 		// Default format is YYYY-MM-DD
 		return time.Now().Format("2006-01-02")
 	},
+	"toTypeScriptType": func(v any) string {
+		if param, ok := v.(api.ToolProperty); ok {
+			return param.ToTypeScriptType()
+		}
+		// Handle pointer case
+		if param, ok := v.(*api.ToolProperty); ok && param != nil {
+			return param.ToTypeScriptType()
+		}
+		return "any"
+	},
 }
 
 func Parse(s string) (*Template, error) {

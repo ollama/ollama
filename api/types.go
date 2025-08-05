@@ -225,20 +225,68 @@ func (pt PropertyType) String() string {
 	return fmt.Sprintf("%v", []string(pt))
 }
 
+type ToolProperty struct {
+	AnyOf       []ToolProperty `json:"anyOf,omitempty"`
+	Type        PropertyType   `json:"type"`
+	Items       any            `json:"items,omitempty"`
+	Description string         `json:"description"`
+	Enum        []any          `json:"enum,omitempty"`
+}
+
+// ToTypeScriptType converts a ToolProperty to a TypeScript type string
+func (tp ToolProperty) ToTypeScriptType() string {
+	if len(tp.AnyOf) > 0 {
+		var types []string
+		for _, anyOf := range tp.AnyOf {
+			types = append(types, anyOf.ToTypeScriptType())
+		}
+		return strings.Join(types, " | ")
+	}
+
+	if len(tp.Type) == 0 {
+		return "any"
+	}
+
+	if len(tp.Type) == 1 {
+		return mapToTypeScriptType(tp.Type[0])
+	}
+
+	var types []string
+	for _, t := range tp.Type {
+		types = append(types, mapToTypeScriptType(t))
+	}
+	return strings.Join(types, " | ")
+}
+
+// mapToTypeScriptType maps JSON Schema types to TypeScript types
+func mapToTypeScriptType(jsonType string) string {
+	switch jsonType {
+	case "string":
+		return "string"
+	case "number", "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "array":
+		return "any[]"
+	case "object":
+		return "Record<string, any>"
+	case "null":
+		return "null"
+	default:
+		return "any"
+	}
+}
+
 type ToolFunction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Parameters  struct {
-		Type       string   `json:"type"`
-		Defs       any      `json:"$defs,omitempty"`
-		Items      any      `json:"items,omitempty"`
-		Required   []string `json:"required"`
-		Properties map[string]struct {
-			Type        PropertyType `json:"type"`
-			Items       any          `json:"items,omitempty"`
-			Description string       `json:"description"`
-			Enum        []any        `json:"enum,omitempty"`
-		} `json:"properties"`
+		Type       string                  `json:"type"`
+		Defs       any                     `json:"$defs,omitempty"`
+		Items      any                     `json:"items,omitempty"`
+		Required   []string                `json:"required"`
+		Properties map[string]ToolProperty `json:"properties"`
 	} `json:"parameters"`
 }
 
