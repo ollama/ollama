@@ -14,3 +14,8 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
+/ollama-*
+*.gguf
+.cursor/
+.windsurf/
+Modelfile.*

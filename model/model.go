@@ -123,32 +123,42 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 }
 
 func NewTextProcessor(s string) (TextProcessor, error) {
+	slog.Info("NewTextProcessor called", "path", s)
 	r, err := os.Open(s)
 	if err != nil {
+		slog.Error("Failed to open model file", "error", err)
 		return nil, err
 	}
 	defer r.Close()
 	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
+		slog.Error("Failed to decode model metadata", "error", err)
 		return nil, err
 	}
-	return getTextProcessor(meta.KV())
+	processor, err := getTextProcessor(meta.KV())
+	slog.Info("getTextProcessor result", "processor_not_nil", processor != nil, "error", err)
+	return processor, err
 }
 
 func getTextProcessor(kv fsggml.KV) (TextProcessor, error) {
 	arch := kv.Architecture()
+	slog.Info("getTextProcessor called", "architecture", arch)
 	f, ok := models[arch]
 	if !ok {
+		slog.Error("unsupported model architecture", "arch", arch)
 		return nil, fmt.Errorf("unsupported model architecture %q", arch)
 	}
 	m, err := f(kv)
 	if err != nil {
+		slog.Error("failed to create model", "arch", arch, "error", err)
 		return nil, err
 	}
 	tp, ok := m.(TextProcessor)
 	if !ok {
+		slog.Error("model is not a TextProcessor", "arch", arch, "model_type", fmt.Sprintf("%T", m))
 		return nil, fmt.Errorf("%v is not a TextProcessor", m)
 	}
+	slog.Info("TextProcessor created successfully", "arch", arch)
 	return tp, nil
 }
 

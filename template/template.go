@@ -160,12 +160,64 @@ func (t *Template) Vars() []string {
 	return slices.Sorted(maps.Keys(set))
 }
 
+// AnalyzeCapabilities analyzes template variables to determine model capabilities
+func (t *Template) AnalyzeCapabilities() map[string]bool {
+	capabilities := map[string]bool{
+		"reranking":      false,
+		"embedding":      false,
+		"chat":          false,
+		"completion":    false,
+		"text_generation": false,
+	}
+	
+	// Check for reranking capability
+	if t.hasVariable("query") && t.hasVariable("document") {
+		capabilities["reranking"] = true
+	}
+	
+	// Check for embedding capability  
+	if t.hasVariable("prompt") || t.hasVariable("query") {
+		capabilities["embedding"] = true
+	}
+	
+	// Check for chat capability
+	if t.hasVariable("messages") {
+		capabilities["chat"] = true
+	}
+	
+	// Check for completion capability
+	if t.hasVariable("prompt") && !t.hasVariable("messages") {
+		capabilities["completion"] = true
+	}
+	
+	// Check for text generation (chat or completion with response variable)
+	if (capabilities["chat"] || capabilities["completion"]) && t.hasVariable("response") {
+		capabilities["text_generation"] = true
+	}
+	
+	return capabilities
+}
+
+// hasVariable checks if a template contains a specific variable
+func (t *Template) hasVariable(varName string) bool {
+	vars := t.Vars()
+	return slices.Contains(vars, strings.ToLower(varName))
+}
+
+// hasTextGeneration checks if template supports text generation
+func (t *Template) hasTextGeneration() bool {
+	return t.hasVariable("response") || t.hasVariable("messages")
+}
+
 type Values struct {
 	Messages []api.Message
 	api.Tools
-	Prompt string
-	Suffix string
-	Think  bool
+	Prompt      string
+	Suffix      string
+	Query       string
+	Document    string
+	Instruction string
+	Think       bool
 	// whether or not the user explicitly set the thinking flag (vs. it being
 	// implicitly false). Templates can't see whether `Think` is nil
 	IsThinkSet bool
@@ -230,14 +282,18 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Think":      v.Think,
 			"IsThinkSet": v.IsThinkSet,
 		})
-	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
+	} else if !v.forceLegacy && (slices.Contains(t.Vars(), "messages") ||
+		slices.Contains(t.Vars(), "document")) {
 		return t.Template.Execute(w, map[string]any{
-			"System":     system,
-			"Messages":   messages,
-			"Tools":      v.Tools,
-			"Response":   "",
-			"Think":      v.Think,
-			"IsThinkSet": v.IsThinkSet,
+			"System":      system,
+			"Messages":    messages,
+			"Tools":       v.Tools,
+			"Response":    "",
+			"Think":       v.Think,
+			"IsThinkSet":  v.IsThinkSet,
+			"Query":       v.Query,
+			"Document":    v.Document,
+			"Instruction": v.Instruction,
 		})
 	}
 

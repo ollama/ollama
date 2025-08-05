@@ -39,6 +39,7 @@ var (
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
+	errCapabilityReranking  = errors.New("reranking")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -80,8 +81,29 @@ func (m *Model) Capabilities() []model.Capability {
 		if f.KeyValue("pooling_type").Valid() {
 			capabilities = append(capabilities, model.CapabilityEmbedding)
 		} else {
-			// If no embedding is specified, we assume the model supports completion
-			capabilities = append(capabilities, model.CapabilityCompletion)
+			// Check for sequence classification models (like BGE rerankers)
+			// These models have specific architecture patterns that indicate they're classifiers
+			modelType := ""
+			architecture := ""
+			modelName := m.ShortName
+			
+			if typeKV := f.KeyValue("general.type"); typeKV.Valid() {
+				modelType = typeKV.String()
+			}
+			if archKV := f.KeyValue("general.architecture"); archKV.Valid() {
+				architecture = archKV.String()
+			}
+			
+			// Check for BGE rerankers using template patterns instead of model names
+			isBGEReranker := detectBGERerankingFromTemplate(m.Template)
+			
+			if isBGEReranker {
+				capabilities = append(capabilities, model.CapabilityReranking)
+				slog.Info("Detected BGE reranker model from template", "model", modelName, "type", modelType, "arch", architecture)
+			} else {
+				// If no embedding or sequence classification, assume completion model
+				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
 		}
 		if f.KeyValue("vision.block_count").Valid() {
 			capabilities = append(capabilities, model.CapabilityVision)
@@ -115,7 +137,65 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
+	// Check for reranking capability - enhanced detection
+	vars := m.Template.Vars()
+	hasRerankVars := slices.Contains(vars, "query") && slices.Contains(vars, "document")
+	
+	if hasRerankVars {
+		// Check template content for reranking patterns
+		templateStr := strings.ToLower(m.Template.String())
+		hasRerankPattern := strings.Contains(templateStr, "relevance") ||
+							 strings.Contains(templateStr, "rerank") ||
+							 strings.Contains(templateStr, "judge") ||
+							 strings.Contains(templateStr, "classify") ||
+							 strings.Contains(templateStr, "score") ||
+							 (strings.Contains(templateStr, "yes") && strings.Contains(templateStr, "no"))
+		
+		if hasRerankPattern {
+			capabilities = append(capabilities, model.CapabilityReranking)
+		}
+	}
+
 	return capabilities
+}
+
+// detectBGERerankingFromTemplate detects BGE rerankers based on template patterns
+func detectBGERerankingFromTemplate(tmpl *template.Template) bool {
+	if tmpl == nil {
+		return false
+	}
+	
+	vars := tmpl.Vars()
+	hasRerankVars := slices.Contains(vars, "query") && slices.Contains(vars, "document")
+	
+	if !hasRerankVars {
+		return false
+	}
+	
+	templateStr := strings.ToLower(tmpl.String())
+	
+	// Pattern 1: Simple BGE reranker template - just "{{ .Query }} {{ .Document }}"
+	// This is the most distinctive pattern for normal BGE rerankers
+	simpleBGEPattern := strings.TrimSpace(templateStr) == "{{ .query }} {{ .document }}"
+	
+	// Pattern 2: Query/Document/Relevance pattern (common BGE format)
+	// Example: "Query: {{ .Query }}\nDocument: {{ .Document }}\nRelevance:"
+	hasQueryDocRelevance := strings.Contains(templateStr, "query:") &&
+							 strings.Contains(templateStr, "document:") &&
+							 strings.Contains(templateStr, "relevance:")
+	
+	// Pattern 3: LLM-based BGE rerankers with passage/answer instructions
+	// These contain specific BGE instruction patterns
+	hasPassageAnswerPattern := strings.Contains(templateStr, "passage") && 
+							  strings.Contains(templateStr, "answer") &&
+							  strings.Contains(templateStr, "query")
+	
+	// Pattern 4: BGE-specific instruction patterns
+	hasBGEInstruction := strings.Contains(templateStr, "determine whether the passage contains an answer") ||
+						 strings.Contains(templateStr, "providing a prediction of either 'yes' or 'no'") ||
+						 (strings.Contains(templateStr, "passage") && strings.Contains(templateStr, "relevant"))
+	
+	return simpleBGEPattern || hasQueryDocRelevance || hasPassageAnswerPattern || hasBGEInstruction
 }
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
@@ -132,6 +212,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
+		model.CapabilityReranking:  errCapabilityReranking,
 	}
 
 	for _, cap := range want {

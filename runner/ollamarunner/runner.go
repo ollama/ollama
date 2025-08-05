@@ -11,6 +11,7 @@ import (
 	"image"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -102,6 +103,14 @@ type NewSequenceParams struct {
 	embedding  bool
 }
 
+// NewEmbeddingSequence creates a new sequence with embedding mode enabled
+func (s *Server) NewEmbeddingSequence(prompt string, images []llm.ImageData) (*Sequence, error) {
+	params := NewSequenceParams{
+		embedding: true,
+	}
+	return s.NewSequence(prompt, images, params)
+}
+
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
@@ -119,7 +128,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// Ensure that at least 1 input can be discarded during shift
-	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
+	params.numKeep = int32(min(int(params.numKeep), int(s.cache.numCtx-1)))
 
 	if int32(len(inputs)) > s.cache.numCtx {
 		discard := int32(len(inputs)) - s.cache.numCtx
@@ -508,16 +517,55 @@ func (s *Server) processBatch() error {
 			seq.startGenerationTime = time.Now()
 		}
 
+		// sample a token
+		vocabSize := len(logits) / len(batch.Outputs)
+
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			// TODO(jessegross): Embedding support
-			slog.Warn("generation of embedding outputs not yet supported")
+			vocabSize := len(logits) / len(batch.Outputs)
+			lastTokenLogits := logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize]
+			
+			// For reranking models, extract the relevance score from binary classification logits
+			// Qwen3-Reranker uses yes/no classification, so we need to extract those specific logits
+			textProcessor, ok := s.model.(model.TextProcessor)
+			if ok {
+				// Try to find yes/no tokens
+				yesToken, err := textProcessor.Encode("yes", false)
+				noToken, err2 := textProcessor.Encode("no", false)
+				if err == nil && err2 == nil && len(yesToken) > 0 && len(noToken) > 0 {
+					yesID := yesToken[0]
+					noID := noToken[0]
+					
+					// Extract logits for yes and no tokens
+					if int(yesID) < len(lastTokenLogits) && int(noID) < len(lastTokenLogits) {
+						yesLogit := lastTokenLogits[yesID]
+						noLogit := lastTokenLogits[noID]
+						
+						// Compute softmax probability for "yes" (relevance score)
+						maxLogit := float32(math.Max(float64(yesLogit), float64(noLogit)))
+						yesProb := float32(math.Exp(float64(yesLogit-maxLogit))) /
+							float32(math.Exp(float64(yesLogit-maxLogit))+math.Exp(float64(noLogit-maxLogit)))
+						
+						seq.embedding <- []float32{yesProb}
+						s.removeSequence(i, llm.DoneReasonStop)
+						continue
+					}
+				}
+			}
+			
+			// Fallback: if we can't find yes/no tokens, use the original approach
+			if len(logits) == len(batch.Outputs) {
+				// This is a reranking model - extract score directly
+				score := logits[seq.iBatch]
+				seq.embedding <- []float32{score}
+			} else {
+				// This is an embedding model - extract embedding from vocabulary logits
+				embedding := lastTokenLogits
+				seq.embedding <- embedding
+			}
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
-
-		// sample a token
-		vocabSize := len(logits) / len(batch.Outputs)
 
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
 		if err != nil {
@@ -716,6 +764,131 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		Status:   s.status,
 		Progress: s.progress,
 	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+type RerankRequest struct {
+	Model       string   `json:"model"`
+	Query       string   `json:"query,omitempty"`
+	Documents   []string `json:"documents,omitempty"`
+	Instruction string   `json:"instruction,omitempty"`
+	TopN        int      `json:"top_n,omitempty"`
+	Prompts     []string `json:"prompts,omitempty"` // For backward compatibility with server
+}
+
+type RerankResult struct {
+	Index          int     `json:"index"`
+	Document       string  `json:"document,omitempty"`
+	RelevanceScore float64 `json:"relevance_score"`
+}
+
+type RerankResponse struct {
+	Model   string         `json:"model"`
+	Results []RerankResult `json:"results"`
+}
+
+func (s *Server) extractRerankingScore(logits []float32, prompt string) float32 {
+	// For binary classification models, extract yes/no token probabilities
+	textProcessor, ok := s.model.(model.TextProcessor)
+	if ok {
+		// Try to find yes/no tokens for binary classification
+		yesToken, err := textProcessor.Encode("yes", false)
+		noToken, err2 := textProcessor.Encode("no", false)
+		if err == nil && err2 == nil && len(yesToken) > 0 && len(noToken) > 0 {
+			yesID := yesToken[0]
+			noID := noToken[0]
+			
+			// Extract logits for yes and no tokens if they're in range
+			if int(yesID) < len(logits) && int(noID) < len(logits) {
+				yesLogit := logits[yesID]
+				noLogit := logits[noID]
+				
+				// Compute softmax probability for "yes" (relevance score)
+				maxLogit := float32(math.Max(float64(yesLogit), float64(noLogit)))
+				yesProb := float32(math.Exp(float64(yesLogit-maxLogit))) /
+					float32(math.Exp(float64(yesLogit-maxLogit))+math.Exp(float64(noLogit-maxLogit)))
+				
+				return yesProb
+			}
+		}
+	}
+	
+	// Fallback: for other models, use the first logit as the score
+	// This works for models that output a single relevance score
+	if len(logits) > 0 {
+		return logits[0]
+	}
+	
+	return 0.0
+}
+
+func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
+	var req RerankRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	// Handle both new API format (direct) and old format (from server)
+	var query string
+	var documents []string
+	var instruction string
+
+	if len(req.Prompts) > 0 {
+		// Old format from server - prompts are already templated
+		slog.Info("Using templated prompts from server", "count", len(req.Prompts))
+		
+		// For now, we'll use a simple approach: treat each prompt as a document
+		// and extract query/instruction from the first prompt if possible
+		query = "" // Will be extracted from template if needed
+		documents = req.Prompts
+		instruction = ""
+	} else {
+		// New format - direct API call
+		if len(req.Documents) == 0 {
+			http.Error(w, "no documents provided for reranking", http.StatusBadRequest)
+			return
+		}
+		
+		query = req.Query
+		documents = req.Documents
+		instruction = req.Instruction
+		
+		slog.Info("Using direct API format", "query", query, "doc_count", len(documents), "instruction", instruction)
+	}
+
+	// Use default instruction if none provided
+	if instruction == "" {
+		instruction = "Given a web search query, retrieve relevant passages that answer the query"
+	}
+
+	// Create appropriate reranker based on model name and template
+	reranker, err := CreateReranker(s, req.Model, "")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create reranker: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Perform reranking using the appropriate implementation
+	results, err := reranker.Rerank(r.Context(), query, documents, instruction)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("reranking failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Apply TopN limit if specified
+	if req.TopN > 0 && len(results) > req.TopN {
+		results = results[:req.TopN]
+	}
+
+	// Build response
+	rsp := RerankResponse{
+		Model:   req.Model,
+		Results: results,
+	}
+	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
@@ -972,6 +1145,8 @@ func Execute(args []string) error {
 	mux.HandleFunc("POST /embedding", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 	})
+
+	mux.HandleFunc("POST /rerank", server.rerank) // Add rerank handler
 
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
