@@ -93,6 +93,15 @@ type safetensor struct {
 	*tensorBase
 }
 
+func (st safetensor) Kind() uint32 {
+	kind := st.tensorBase.Kind()
+	if st.dtype == "BF16" && kind != tensorKindFP32 {
+		kind = tensorKindBF16
+	}
+
+	return kind
+}
+
 func (st safetensor) Clone() Tensor {
 	return &safetensor{
 		fs:     st.fs,
@@ -150,6 +159,9 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 		}
 
 		f32s = bfloat16.DecodeFloat32(u8s)
+	case "U8":
+		// U8 tensors do not support repacking or type conversion.
+		return io.CopyN(w, f, st.size)
 	default:
 		return 0, fmt.Errorf("unknown data type: %s", st.dtype)
 	}
@@ -162,15 +174,18 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	switch st.Kind() {
-	case tensorKindF32:
+	case tensorKindFP32:
 		return 0, binary.Write(w, binary.LittleEndian, f32s)
-	case tensorKindF16:
+	case tensorKindFP16:
 		f16s := make([]uint16, len(f32s))
 		for i := range f32s {
 			f16s[i] = float16.Fromfloat32(f32s[i]).Bits()
 		}
 
 		return 0, binary.Write(w, binary.LittleEndian, f16s)
+	case tensorKindBF16:
+		u8s := bfloat16.EncodeFloat32(f32s)
+		return 0, binary.Write(w, binary.LittleEndian, u8s)
 	default:
 		return 0, fmt.Errorf("unknown storage type: %d", st.Kind())
 	}

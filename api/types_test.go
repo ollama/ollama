@@ -374,24 +374,21 @@ func TestPropertyType_MarshalJSON(t *testing.T) {
 }
 
 func TestThinking_UnmarshalJSON(t *testing.T) {
-	trueVal := true
-	falseVal := false
-
 	tests := []struct {
 		name             string
 		input            string
-		expectedThinking *bool
+		expectedThinking *ThinkValue
 		expectedError    bool
 	}{
 		{
 			name:             "true",
 			input:            `{ "think": true }`,
-			expectedThinking: &trueVal,
+			expectedThinking: &ThinkValue{Value: true},
 		},
 		{
 			name:             "false",
 			input:            `{ "think": false }`,
-			expectedThinking: &falseVal,
+			expectedThinking: &ThinkValue{Value: false},
 		},
 		{
 			name:             "unset",
@@ -399,8 +396,23 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			expectedThinking: nil,
 		},
 		{
-			name:             "invalid",
-			input:            `{ "think": "true" }`,
+			name:             "string_high",
+			input:            `{ "think": "high" }`,
+			expectedThinking: &ThinkValue{Value: "high"},
+		},
+		{
+			name:             "string_medium",
+			input:            `{ "think": "medium" }`,
+			expectedThinking: &ThinkValue{Value: "medium"},
+		},
+		{
+			name:             "string_low",
+			input:            `{ "think": "low" }`,
+			expectedThinking: &ThinkValue{Value: "low"},
+		},
+		{
+			name:             "invalid_string",
+			input:            `{ "think": "invalid" }`,
 			expectedThinking: nil,
 			expectedError:    true,
 		},
@@ -414,7 +426,12 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, test.expectedThinking, req.Think)
+				if test.expectedThinking == nil {
+					assert.Nil(t, req.Think)
+				} else {
+					require.NotNil(t, req.Think)
+					assert.Equal(t, test.expectedThinking.Value, req.Think.Value)
+				}
 			}
 		})
 	}

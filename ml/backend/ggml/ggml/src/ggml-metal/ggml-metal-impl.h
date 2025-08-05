@@ -65,6 +65,9 @@
 #define N_R0_IQ4_XS 2
 #define N_SG_IQ4_XS 2
 
+#define N_R0_MXFP4 4
+#define N_SG_MXFP4 2
+
 // kernel argument structs
 //
 // - element counters (e.g. ne00) typically use int32_t to reduce register usage
