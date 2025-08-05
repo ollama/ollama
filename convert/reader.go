@@ -54,7 +54,7 @@ func (t tensorBase) Kind() uint32 {
 	case 1:
 		return tensorKindFP32
 	default:
-		return tensorKindBF16
+		return tensorKindFP16
 	}
 }
 

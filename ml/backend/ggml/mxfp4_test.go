@@ -22,27 +22,25 @@ import (
 
 // MXFP4 reference: https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
 
-var (
-	// E2M1 values
-	mxfp4_vals = []float32{
-		0.0,  // 0 00 0 = 0x0
-		0.5,  // 0 00 1 = 0x1
-		1.0,  // 0 01 0 = 0x2
-		1.5,  // 0 01 1 = 0x3
-		2.0,  // 0 10 0 = 0x4
-		3.0,  // 0 10 1 = 0x5
-		4.0,  // 0 11 0 = 0x6
-		6.0,  // 0 11 1 = 0x7
-		0.0,  // 1 00 0 = 0x8
-		-0.5, // 1 00 1 = 0x9
-		-1.0, // 1 01 0 = 0xa
-		-1.5, // 1 01 1 = 0xb
-		-2.0, // 1 10 0 = 0xc
-		-3.0, // 1 10 1 = 0xd
-		-4.0, // 1 11 0 = 0xe
-		-6.0, // 1 11 1 = 0xf
-	}
-)
+// E2M1 values
+var mxfp4_vals = []float32{
+	0.0,  // 0 00 0 = 0x0
+	0.5,  // 0 00 1 = 0x1
+	1.0,  // 0 01 0 = 0x2
+	1.5,  // 0 01 1 = 0x3
+	2.0,  // 0 10 0 = 0x4
+	3.0,  // 0 10 1 = 0x5
+	4.0,  // 0 11 0 = 0x6
+	6.0,  // 0 11 1 = 0x7
+	0.0,  // 1 00 0 = 0x8
+	-0.5, // 1 00 1 = 0x9
+	-1.0, // 1 01 0 = 0xa
+	-1.5, // 1 01 1 = 0xb
+	-2.0, // 1 10 0 = 0xc
+	-3.0, // 1 10 1 = 0xd
+	-4.0, // 1 11 0 = 0xe
+	-6.0, // 1 11 1 = 0xf
+}
 
 func TestMXFP4Ops(t *testing.T) {
 	b := setup(t)
@@ -412,11 +410,9 @@ func TestMXFP4Ops(t *testing.T) {
 					}
 					// t.Logf("MulmatID results matched:\n%s", d4)
 				})
-
 			})
 
 			t.Run("mm", func(t *testing.T) {
-
 				t.Run("example", func(t *testing.T) {
 					r := rand.New(rand.NewSource(0))
 					ctx := initContextOrSkip(t, b, useGPU)
@@ -735,7 +731,6 @@ func TestMXFP4Simple(t *testing.T) {
 		}
 		t.Logf("result (mxfp4): \n%s", d3)
 	})
-
 }
 
 func TestMXFP4Conversion(t *testing.T) {
@@ -744,7 +739,7 @@ func TestMXFP4Conversion(t *testing.T) {
 
 		data := [32 * 4]float32{}
 		for i := range data {
-			data[i] = mxfp4_vals[r.Int()%len(mxfp4_vals)] * 0.1
+			data[i] = mxfp4_vals[r.Int()%len(mxfp4_vals)]
 		}
 		mxData := Quantize(fsggml.TensorTypeMXFP4, data[:], []uint64{uint64(len(data))})
 		newData := ConvertToF32(mxData, uint32(fsggml.TensorTypeMXFP4), uint64(len(data)))

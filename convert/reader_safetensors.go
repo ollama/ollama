@@ -93,6 +93,15 @@ type safetensor struct {
 	*tensorBase
 }
 
+func (st safetensor) Kind() uint32 {
+	kind := st.tensorBase.Kind()
+	if st.dtype == "BF16" && kind != tensorKindFP32 {
+		kind = tensorKindBF16
+	}
+
+	return kind
+}
+
 func (st safetensor) Clone() Tensor {
 	return &safetensor{
 		fs:     st.fs,
