@@ -761,6 +761,10 @@ func (f GGML) SupportsFlashAttention() bool {
 		return false
 	}
 
+	if f.KV().Architecture() == "gptoss" {
+		return false
+	}
+
 	// Check head counts match and are non-zero
 	headCountK := f.KV().EmbeddingHeadCountK()
 	headCountV := f.KV().EmbeddingHeadCountV()
