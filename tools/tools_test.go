@@ -41,25 +41,15 @@ func TestParser(t *testing.T) {
 				Name:        "get_temperature",
 				Description: "Retrieve the temperature for a given location",
 				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
+					Type       string                      `json:"type"`
+					Defs       any                         `json:"$defs,omitempty"`
+					Items      any                         `json:"items,omitempty"`
+					Required   []string                    `json:"required"`
+					Properties map[string]api.ToolProperty `json:"properties"`
 				}{
 					Type:     "object",
 					Required: []string{"city"},
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: map[string]api.ToolProperty{
 						"format": {
 							Type:        api.PropertyType{"string"},
 							Description: "The format to return the temperature in",
@@ -79,24 +69,14 @@ func TestParser(t *testing.T) {
 				Name:        "get_conditions",
 				Description: "Retrieve the current weather conditions for a given location",
 				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
+					Type       string                      `json:"type"`
+					Defs       any                         `json:"$defs,omitempty"`
+					Items      any                         `json:"items,omitempty"`
+					Required   []string                    `json:"required"`
+					Properties map[string]api.ToolProperty `json:"properties"`
 				}{
 					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the weather conditions for",
@@ -125,24 +105,14 @@ func TestParser(t *testing.T) {
 				Name:        "get_address",
 				Description: "Get the address of a given location",
 				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
+					Type       string                      `json:"type"`
+					Defs       any                         `json:"$defs,omitempty"`
+					Items      any                         `json:"items,omitempty"`
+					Required   []string                    `json:"required"`
+					Properties map[string]api.ToolProperty `json:"properties"`
 				}{
 					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the address for",
@@ -157,24 +127,14 @@ func TestParser(t *testing.T) {
 				Name:        "add",
 				Description: "Add two numbers",
 				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
+					Type       string                      `json:"type"`
+					Defs       any                         `json:"$defs,omitempty"`
+					Items      any                         `json:"items,omitempty"`
+					Required   []string                    `json:"required"`
+					Properties map[string]api.ToolProperty `json:"properties"`
 				}{
 					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: map[string]api.ToolProperty{
 						"a": {
 							Type:        api.PropertyType{"string"},
 							Description: "The first number to add",

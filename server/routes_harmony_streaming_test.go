@@ -27,25 +27,15 @@ func getTestTools() []api.Tool {
 				Name:        "get_weather",
 				Description: "Get the current weather in a given location",
 				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
+					Type       string                      `json:"type"`
+					Defs       any                         `json:"$defs,omitempty"`
+					Items      any                         `json:"items,omitempty"`
+					Required   []string                    `json:"required"`
+					Properties map[string]api.ToolProperty `json:"properties"`
 				}{
 					Type:     "object",
 					Required: []string{"location"},
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The city and state, e.g. San Francisco, CA",
@@ -60,25 +50,15 @@ func getTestTools() []api.Tool {
 				Name:        "calculate",
 				Description: "Calculate a mathematical expression",
 				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
+					Type       string                      `json:"type"`
+					Defs       any                         `json:"$defs,omitempty"`
+					Items      any                         `json:"items,omitempty"`
+					Required   []string                    `json:"required"`
+					Properties map[string]api.ToolProperty `json:"properties"`
 				}{
 					Type:     "object",
 					Required: []string{"expression"},
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: map[string]api.ToolProperty{
 						"expression": {
 							Type:        api.PropertyType{"string"},
 							Description: "The mathematical expression to calculate",
