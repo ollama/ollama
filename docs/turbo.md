@@ -79,3 +79,17 @@ for await (const part of response) {
     process.stdout.write(part.message.content)
 }
 ```
+
+### Community integrations
+
+Turbo mode is also compatible with several community integrations.
+
+#### Open WebUI
+
+- Go to **settings** → **Admin settings** → **Connections**
+- Under **Ollama API,** click **+**
+- For the **URL** put `https://ollama.com`
+- For the **API key,** create an API key on https://ollama.com/settings/keys and add it.
+- Click **Save**
+
+Now, if you navigate to the model selector, Turbo models should be available under **External**.
