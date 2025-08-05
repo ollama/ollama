@@ -1,0 +1,81 @@
+# Turbo
+
+> ⚠️ Turbo is preview
+
+Ollama’s [Turbo](https://ollama.com/turbo) is a new way to run open-source models with acceleration from datacenter-grade hardware.
+
+During the preview the following models are available:
+
+- `gpt-oss:20b`
+- `gpt-oss:120b`
+
+## Get started
+
+### Ollama for macOS & Windows
+
+Download Ollama
+
+- Select a model such as `gpt-oss:20b` or `gpt-oss:120b`
+- Click on **Turbo**. You’ll be prompted to create an account or sign in
+
+### Ollama’s CLI
+
+- [Sign up](https://ollama.com/signup) for an Ollama account
+- Add your Ollama key [to ollama.com](https://ollama.com/settings/keys)
+  ```shell
+  cat ~/.ollama/id_ed25519.pub
+  ```
+- Then run a model setting `OLLAMA_HOST` to `ollama.com`:
+  ```shell
+  OLLAMA_HOST=ollama.com ollama run gpt-oss:120b
+  ```
+
+### Ollama’s Python library
+
+- [Sign up](https://ollama.com/signup) for an Ollama account
+- Create an API key by visiting https://ollama.com/settings/keys
+
+```python
+from ollama import Client
+
+client = Client(
+    host="https://ollama.com",
+    headers={'Authorization': '<api key>'}
+)
+
+messages = [
+  {
+    'role': 'user',
+    'content': 'Why is the sky blue?',
+  },
+]
+
+for part in client.chat('gpt-oss:120b', messages=messages, stream=True):
+  print(part['message']['content'], end='', flush=True)
+```
+
+### Ollama’s JavaScript library
+
+- [Sign up](https://ollama.com/signup) for an Ollama account
+- Create an API key by visiting https://ollama.com/settings/keys
+
+```typescript
+import { Ollama } from 'ollama';
+
+const ollama = new Ollama({
+  host: 'https://ollama.com'
+  headers: {
+	  Authorization: "Bearer <api key>"
+  }
+});
+
+const response = await ollama.chat({
+  model: 'deepseek-r1:671b',
+  messages: [{ role: 'user', content: 'Explain quantum computing' }],
+  stream: true
+});
+
+for await (const part of response) {
+    process.stdout.write(part.message.content)
+}
+```
