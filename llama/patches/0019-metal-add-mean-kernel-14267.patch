@@ -16,10 +16,10 @@ ggml-ci
  2 files changed, 67 insertions(+), 14 deletions(-)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index ee4f2dcb..f20f5615 100644
+index a9eeebc6..110c9ece 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -489,6 +489,7 @@ enum ggml_metal_kernel_type {
+@@ -489,6 +489,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
      GGML_METAL_KERNEL_TYPE_COS,
      GGML_METAL_KERNEL_TYPE_NEG,
      GGML_METAL_KERNEL_TYPE_SUM_ROWS,
@@ -27,7 +27,7 @@ index ee4f2dcb..f20f5615 100644
      GGML_METAL_KERNEL_TYPE_POOL_2D_AVG_F32,
      GGML_METAL_KERNEL_TYPE_POOL_2D_MAX_F32,
      GGML_METAL_KERNEL_TYPE_ARGMAX,
-@@ -1436,6 +1437,7 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
+@@ -1436,6 +1437,7 @@ @implementation GGMLMetalClass
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_COS,                             cos,                             true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_NEG,                             neg,                             true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SUM_ROWS,                        sum_rows,                        true);

@@ -138,7 +138,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
-	requiredMemory.CPU.UUID = C.GoString(props.uuid)
+	requiredMemory.CPU.ID = C.GoString(props.id)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -155,7 +155,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
-		requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
+		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
@@ -356,23 +356,25 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	// Mimic llama runner logs summarizing layers and memory
-	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", max(0, params.NumGPULayers-1)))
 	gpuLayers := 0
-	switch C.ggml_backend_dev_type(output.d) {
-	case 0: // CPU
-		slog.Info("offloading output layer to CPU")
-	case 1: // GPU
-		slog.Info("offloading output layer to GPU")
-		gpuLayers++
-	case 2: // ACCEL
-		slog.Info("offloading output layer to ACCEL")
-	}
 	for _, layer := range layers {
-		if C.ggml_backend_dev_type(layer.d) == 1 {
+		if C.ggml_backend_dev_type(layer.d) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
 			gpuLayers++
 		}
 	}
+	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
+
+	switch C.ggml_backend_dev_type(output.d) {
+	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+		slog.Info("offloading output layer to CPU")
+	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+		slog.Info("offloading output layer to GPU")
+		gpuLayers++
+	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+		slog.Info("offloading output layer to ACCEL")
+	}
 	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(layers)+1))
+
 	for bs := range maps.Values(bbs) {
 		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
@@ -418,7 +420,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
+			C._Bool(false),
 			C._Bool(false),
 		),
 		schedBackends: schedBackends,

@@ -89,7 +89,11 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
         ctx->has_bfloat |= [ctx->mtl_device supportsFamily:MTLGPUFamilyApple6];
 
 #if defined(GGML_METAL_USE_BF16)
-        ctx->use_bfloat = ctx->has_bfloat;
+        if (@available(macOS 14.0, *)) {
+            ctx->use_bfloat = ctx->has_bfloat;
+        } else {
+            ctx->use_bfloat = false;
+        }
 #else
         ctx->use_bfloat = false;
 #endif
@@ -5726,7 +5730,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
 static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
     props->name        = ggml_backend_metal_device_get_name(dev);
     props->description = ggml_backend_metal_device_get_description(dev);
-    props->uuid        = "0";
+    props->id          = "0";
     props->type        = ggml_backend_metal_device_get_type(dev);
     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = (struct ggml_backend_dev_caps) {

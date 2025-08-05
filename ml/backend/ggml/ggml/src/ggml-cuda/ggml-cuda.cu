@@ -2474,6 +2474,9 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
     cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
 
+    const std::string gemma3n_per_layer_proj_src1_name   = " (reshaped)";
+    const std::string gemma3n_node_name                  = "node_";
+
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor * node = cgraph->nodes[i];
 
@@ -2495,12 +2498,17 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
 #endif
         }
 
-        if (node->op == GGML_OP_ADD && node->src[1] && node->src[1]->ne[1] > 1) {
-            // disable CUDA graphs for batch size > 1 for now.
-            // Changes in batch size or context size can cause changes to the grid size of some kernels.
+        // workarounds to exclude Gemma3n's `project_per_layer_input` operation from the batch-size heuristic, specific to ollama's implementation of gemma3n
+        // number of layers is different for per_layer_proj between gemma3n:2b and gemma3n:4b, which is why we don't check that value here
+        if (node->op == GGML_OP_ADD && node->src[1] && node->src[1]->ne[1] > 1 && !(node->ne[0] == 256
+                                                                                    && node->ne[2] == 1
+                                                                                    && node->ne[3] == 1
+                                                                                    && node->src[0] ? std::string(node->src[0]->name).find(gemma3n_node_name) != std::string::npos : false
+                                                                                    && node->src[1] ? node->src[1]->name == gemma3n_per_layer_proj_src1_name : false)) {
+            // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
             use_cuda_graph = false;
 #ifndef NDEBUG
-            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
+            GGML_LOG_INFO("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
 #endif
         }
 
@@ -2888,7 +2896,7 @@ struct ggml_backend_cuda_device_context {
     int device;
     std::string name;
     std::string description;
-    std::string uuid;
+    std::string id;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -2901,9 +2909,9 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t 
     return ctx->description.c_str();
 }
 
-static const char * ggml_backend_cuda_device_get_uuid(ggml_backend_dev_t dev) {
+static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
-    return ctx->uuid.c_str();
+    return ctx->id.c_str();
 }
 
 static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
@@ -2920,7 +2928,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name        = ggml_backend_cuda_device_get_name(dev);
     props->description = ggml_backend_cuda_device_get_description(dev);
-    props->uuid        = ggml_backend_cuda_device_get_uuid(dev);
+    props->id          = ggml_backend_cuda_device_get_id(dev);
     props->type        = ggml_backend_cuda_device_get_type(dev);
     ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
 
@@ -3471,8 +3479,8 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 dev_ctx->description = prop.name;
 
                 #if !defined(GGML_USE_HIP)
-                char uuid[64];
-                snprintf(uuid, sizeof(uuid),
+                char id[64];
+                snprintf(id, sizeof(id),
                     "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
                     (unsigned char)prop.uuid.bytes[0],
                     (unsigned char)prop.uuid.bytes[1],
@@ -3491,9 +3499,15 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                     (unsigned char)prop.uuid.bytes[14],
                     (unsigned char)prop.uuid.bytes[15]
                   );
-                dev_ctx->uuid = uuid;
+                dev_ctx->id = id;
                 #else
-                dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
+                #ifdef _WIN32
+                char id[16];
+                snprintf(id, sizeof(id), "%d", i);
+                dev_ctx->id = id;
+                #else
+                dev_ctx->id = "GPU-" + std::string(prop.uuid.bytes, 16);
+                #endif
                 #endif
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
