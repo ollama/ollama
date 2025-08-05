@@ -214,6 +214,7 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 			c.curLoc, err = c.findStartLoc()
 		}
 		if err != nil {
+			slog.Warn("unable to find a kv cache slot", "cache", c)
 			return err
 		}
 
