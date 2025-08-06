@@ -10,7 +10,7 @@ Subject: [PATCH] add argsort and cuda copy for i32
  3 files changed, 145 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 6581d27..9dedc11 100644
+index 6581d27a..9dedc113 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -7967,6 +7967,45 @@ static void ggml_compute_forward_argsort_f32(
@@ -71,7 +71,7 @@ index 6581d27..9dedc11 100644
              {
                  GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
-index 607ded8..53b0263 100644
+index 607ded85..53b02634 100644
 --- a/ggml/src/ggml-cuda/argsort.cu
 +++ b/ggml/src/ggml-cuda/argsort.cu
 @@ -85,13 +85,107 @@ static void argsort_f32_i32_cuda(const float * x, int * dst, const int ncols, co
@@ -195,7 +195,7 @@ index 607ded8..53b0263 100644
 +    }
  }
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index f9bb025..f99467e 100644
+index f9bb0256..f99467ed 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
 @@ -373,6 +373,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg

@@ -10,7 +10,7 @@ Signed-off-by: Gabe Goodhart <ghart@us.ibm.com>
  2 files changed, 13 insertions(+)
 
 diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
-index e3829738..57f6f0ab 100644
+index 45b2f1f2..a5a713b1 100644
 --- a/tools/mtmd/mtmd.cpp
 +++ b/tools/mtmd/mtmd.cpp
 @@ -79,6 +79,16 @@ enum mtmd_slice_tmpl {

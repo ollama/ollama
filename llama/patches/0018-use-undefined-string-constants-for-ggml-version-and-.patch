@@ -9,7 +9,7 @@ These are normally set via the CMake build system
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 5ae1c527..fd14cb80 100644
+index 124cf3e8..8c7886ee 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -474,11 +474,11 @@ bool ggml_guid_matches(ggml_guid_t guid_a, ggml_guid_t guid_b) {

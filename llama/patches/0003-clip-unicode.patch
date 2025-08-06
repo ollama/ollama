@@ -10,7 +10,7 @@ filesystems for paths that include wide characters
  1 file changed, 39 insertions(+)
 
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index a990520e..1229e6e8 100644
+index a4b62f9a..9fa6cd39 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
 @@ -28,6 +28,19 @@
@@ -33,7 +33,7 @@ index a990520e..1229e6e8 100644
  struct clip_logger_state g_logger_state = {GGML_LOG_LEVEL_CONT, clip_log_callback_default, NULL};
  
  enum ffn_op_type {
-@@ -2559,7 +2572,29 @@ struct clip_model_loader {
+@@ -2591,7 +2604,29 @@ struct clip_model_loader {
          {
              std::vector<uint8_t> read_buf;
  
@@ -63,7 +63,7 @@ index a990520e..1229e6e8 100644
              if (!fin) {
                  throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
              }
-@@ -2586,7 +2621,11 @@ struct clip_model_loader {
+@@ -2618,7 +2653,11 @@ struct clip_model_loader {
                      ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
                  }
              }
