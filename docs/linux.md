@@ -37,7 +37,7 @@ ollama -v
 If you have an AMD GPU, also download and extract the additional ROCm package:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-amd64-rocm.tgz -o ollama-linux-amd64-rocm.tgz
+curl -LO https://ollama.com/download/ollama-linux-amd64-rocm.tgz
 sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
 ```
 
@@ -46,7 +46,7 @@ sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
 Download and extract the ARM64-specific package:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-arm64.tgz -o ollama-linux-arm64.tgz
+curl -LO https://ollama.com/download/ollama-linux-arm64.tgz
 sudo tar -C /usr -xzf ollama-linux-arm64.tgz
 ```
 
@@ -141,7 +141,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 Or by re-downloading Ollama:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
+curl -LO https://ollama.com/download/ollama-linux-amd64.tgz
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 
