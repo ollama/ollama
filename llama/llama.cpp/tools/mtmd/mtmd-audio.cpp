@@ -1,6 +1,6 @@
+#define _USE_MATH_DEFINES // for M_PI
 #include "mtmd-audio.h"
 
-#define _USE_MATH_DEFINES // for M_PI
 #include <cmath>
 #include <cstdint>
 #include <cstring>
