@@ -36,6 +36,7 @@ type ErrorResponse struct {
 type Message struct {
 	Role      string     `json:"role"`
 	Content   any        `json:"content"`
+	Reasoning string     `json:"reasoning,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
@@ -81,6 +82,10 @@ type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
+type Reasoning struct {
+	Effort *string `json:"effort,omitempty"`
+}
+
 type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
@@ -95,6 +100,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 }
 
 type ChatCompletion struct {
@@ -253,7 +259,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		SystemFingerprint: "fp_ollama",
 		Choices: []Choice{{
 			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
 				if len(toolCalls) > 0 {
 					reason = "tool_calls"
@@ -278,10 +284,10 @@ func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
-					if toolCallSent {
+					if toolCallSent || len(toolCalls) > 0 {
 						return &finishReasonToolCalls
 					}
 					return &reason
@@ -397,7 +403,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -423,7 +429,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png"}
+					types := []string{"jpeg", "jpg", "png", "webp"}
 					valid := false
 					for _, t := range types {
 						prefix := "data:image/" + t + ";base64,"
@@ -508,6 +514,10 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = 1.0
 	}
 
+	if r.Reasoning != nil {
+		options["reasoning"] = *r.Reasoning.Effort
+	}
+
 	var format json.RawMessage
 	if r.ResponseFormat != nil {
 		switch strings.ToLower(strings.TrimSpace(r.ResponseFormat.Type)) {
@@ -521,6 +531,13 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	var think *api.ThinkValue
+	if r.Reasoning != nil {
+		think = &api.ThinkValue{
+			Value: *r.Reasoning.Effort,
+		}
+	}
+
 	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
@@ -528,6 +545,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Options:  options,
 		Stream:   &r.Stream,
 		Tools:    r.Tools,
+		Think:    think,
 	}, nil
 }
 

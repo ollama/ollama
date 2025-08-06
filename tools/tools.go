@@ -26,6 +26,10 @@ type Parser struct {
 	n      int
 }
 
+func (p *Parser) GetBuffer() []byte {
+	return p.buffer
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
@@ -115,32 +119,16 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var tool *api.Tool
-	var end int = len(p.buffer)
-	var i int
-
-	// find tool name
-	for _, t := range p.tools {
-		n := t.Function.Name
-		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
-			if i+len(n) < end {
-				tool = &t
-				end = i + len(n)
-			}
-		}
-	}
-
+	tool, end := findTool(p.tools, p.buffer)
 	if tool == nil {
 		return nil
 	}
 
-	// only look for arguments if the tool has parameters
-	args := map[string]any{}
-	if len(tool.Function.Parameters.Properties) > 0 {
-		if args, i = p.findArguments(*tool); args == nil {
-			return nil
-		}
-
+	var args map[string]any
+	if found, i := findArguments(p.buffer); found == nil {
+		return nil
+	} else {
+		args = found
 		if i > end {
 			end = i
 		}
@@ -159,90 +147,142 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	return tc
 }
 
-// findArguments returns the first object that appears to be
-// arguments for the provided tool, returning nil
-func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
-	if len(p.buffer) == 0 {
+// findTool finds the first tool name in the list that matches the
+// beginning of the buffer, returning nil if no tool is found
+// or if the buffer ends with a partial tool name since we need
+// to wait for more data to disambiguate.
+// The second return value is the end position of the tool name
+// if one is found, otherwise 0.
+func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
+	if len(buf) == 0 {
 		return nil, 0
 	}
 
-	// no arguments to parse
-	if len(tool.Function.Parameters.Properties) == 0 {
+	// check if buffer ends with a partial tool name
+	// this prevents matching "get" when seeing "get_weather"
+	var longest string
+	for _, t := range tools {
+		if len(t.Function.Name) > len(longest) {
+			longest = t.Function.Name
+		}
+	}
+
+	// Only check up to longest characters from the end
+	for i := 1; i <= min(len(buf), len(longest)); i++ {
+		tail := buf[len(buf)-i:]
+		for _, t := range tools {
+			name := []byte(t.Function.Name)
+			if len(tail) < len(name) && bytes.HasPrefix(name, tail) {
+				return nil, 0
+			}
+		}
+	}
+
+	// find first occurrence of the longest tool name
+	var found *api.Tool
+	start := -1
+	end := -1
+
+	for i := range tools {
+		name := []byte(tools[i].Function.Name)
+		pos := bytes.Index(buf, name)
+		if pos == -1 {
+			continue
+		}
+
+		// Skip if we have a better match already
+		if start != -1 {
+			if pos > start {
+				continue
+			}
+			if pos == start && len(name) <= len(found.Function.Name) {
+				continue
+			}
+		}
+
+		found = &tools[i]
+		start = pos
+		end = pos + len(name)
+	}
+
+	if found != nil {
+		return found, end
+	}
+
+	return nil, 0
+}
+
+// findArguments returns the first object that appears to be
+// arguments for the provided tool in the provided buffer,
+// returning nil if no arguments are found and the end position
+// TODO (jmorganca): this does not support parsing omitted arguments
+// objects for functions that have all-optional parameters
+// e.g. `{"name": "get_conditions", "arguments": {}}` will work but
+// `{"name": "get_conditions"}` will not currently work
+func findArguments(buffer []byte) (map[string]any, int) {
+	if len(buffer) == 0 {
 		return nil, 0
 	}
 
 	var braces int
 	var start int = -1
-	var end int
-	var object []byte
 
-	// find any outer json object
-	for i, c := range p.buffer {
+	for i, c := range buffer {
 		if c == '{' {
-			braces++
-			if start == -1 {
+			if braces == 0 {
 				start = i
 			}
-		}
+			braces++
+		} else if c == '}' && braces > 0 {
+			braces--
+			if braces == 0 && start != -1 {
+				object := buffer[start : i+1]
 
-		if c == '}' {
-			if start != -1 {
-				braces--
-				if braces == 0 {
-					end = i + 1
-					object = p.buffer[start:end]
-					break
+				var data map[string]any
+				if err := json.Unmarshal(object, &data); err != nil {
+					start = -1
+					continue
 				}
-			}
-		}
-	}
 
-	if braces > 0 {
-		return nil, 0
-	}
+				var findObject func(obj map[string]any) (map[string]any, bool)
+				findObject = func(obj map[string]any) (map[string]any, bool) {
+					if _, hasName := obj["name"]; hasName {
+						if args, ok := obj["arguments"].(map[string]any); ok {
+							return args, true
+						}
+						if args, ok := obj["parameters"].(map[string]any); ok {
+							return args, true
+						}
+						return nil, true
+					}
 
-	var data map[string]any
+					for _, v := range obj {
+						switch child := v.(type) {
+						case map[string]any:
+							if result, found := findObject(child); found {
+								return result, true
+							}
+						case []any:
+							for _, item := range child {
+								if childObj, ok := item.(map[string]any); ok {
+									if result, found := findObject(childObj); found {
+										return result, true
+									}
+								}
+							}
+						}
+					}
 
-	// not valid json
-	if err := json.Unmarshal(object, &data); err != nil {
-		return nil, 0
-	}
-
-	var find func(obj any) map[string]any
-	find = func(obj any) map[string]any {
-		switch obj := obj.(type) {
-		case map[string]any:
-			found := true
-			for key := range obj {
-				if _, exists := tool.Function.Parameters.Properties[key]; !exists {
-					found = false
-					break
+					return nil, false
 				}
-			}
 
-			if found {
-				return obj
-			}
+				if args, found := findObject(data); found {
+					return args, i
+				}
 
-			for _, value := range obj {
-				if result := find(value); result != nil {
-					return result
-				}
-			}
-		case []any:
-			for _, item := range obj {
-				if result := find(item); result != nil {
-					return result
-				}
+				return data, i
 			}
 		}
-
-		return nil
-	}
-
-	result := find(data)
-	if result != nil {
-		return result, end
 	}
 
 	return nil, 0

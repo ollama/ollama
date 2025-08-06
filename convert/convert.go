@@ -190,6 +190,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &gemma2Model{}
 	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
 		conv = &gemma3Model{Architecture: p.Architectures[0]}
+	case "Gemma3nForConditionalGeneration":
+		conv = &gemma3nModel{}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
@@ -200,6 +202,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &bertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
+	case "GptOssForCausalLM":
+		conv = &gptossModel{}
 	default:
 		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}

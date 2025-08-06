@@ -138,7 +138,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
-	requiredMemory.CPU.UUID = C.GoString(props.uuid)
+	requiredMemory.CPU.ID = C.GoString(props.id)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -155,7 +155,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
-		requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
+		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
@@ -239,10 +239,12 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	createTensor := func(t tensor, bts []*C.struct_ggml_backend_buffer_type, layer int) *C.struct_ggml_tensor {
 		for _, bt := range bts {
 			if _, ok := ctxs[bt]; !ok {
+				// slog.Info("XXX before ggml_init")
 				ctxs[bt] = C.ggml_init(C.struct_ggml_init_params{
 					mem_size: C.ggml_tensor_overhead() * C.size_t(maxTensors),
 					no_alloc: true,
 				})
+				// slog.Info("XXX after ggml_init")
 			}
 
 			targets[t.source.Name] = append(targets[t.source.Name], t.target)
@@ -297,7 +299,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
 				createTensor(tensor{source: t, target: "output.weight"}, output.bts, blocks)
 			}
-		case contains(t.Name, "cls", "output", "output_norm"):
+		case contains(t.Name, "cls", "output", "output_norm",
+			"altup_proj", "altup_unembd_proj",
+			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
 			createTensor(tensor{source: t}, output.bts, blocks)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
@@ -353,6 +357,26 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		bbs[c] = b
 	}
 
+	// Mimic llama runner logs summarizing layers and memory
+	gpuLayers := 0
+	for _, layer := range layers {
+		if C.ggml_backend_dev_type(layer.d) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
+			gpuLayers++
+		}
+	}
+	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
+
+	switch C.ggml_backend_dev_type(output.d) {
+	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+		slog.Info("offloading output layer to CPU")
+	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+		slog.Info("offloading output layer to GPU")
+		gpuLayers++
+	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+		slog.Info("offloading output layer to ACCEL")
+	}
+	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(layers)+1))
+
 	for bs := range maps.Values(bbs) {
 		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
@@ -398,7 +422,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
+			C._Bool(false),
 			C._Bool(false),
 		),
 		schedBackends: schedBackends,
@@ -519,6 +543,8 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 
 	var allocatedBuffers []*C.struct_ggml_backend_buffer
 
+	// slog.Info("XXX before ggml_init")
+	// defer slog.Info("XXX after ggml_init")
 	return &Context{
 		b:             b,
 		maxGraphNodes: n,
@@ -686,6 +712,8 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		cdtype = C.GGML_TYPE_Q4_0
 	case ml.DTypeI32:
 		cdtype = C.GGML_TYPE_I32
+	case ml.DTypeMXFP4:
+		cdtype = C.GGML_TYPE_MXFP4
 	default:
 		panic("unsupported dtype")
 	}
@@ -874,6 +902,8 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
+	case C.GGML_TYPE_MXFP4:
+		return ml.DTypeMXFP4
 	default:
 		return ml.DTypeOther
 	}
@@ -890,6 +920,13 @@ func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) Sub(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sub(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
 
@@ -929,10 +966,35 @@ func (t *Tensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Contiguous(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+func (t *Tensor) Contiguous(ctx ml.Context, shape ...int) ml.Tensor {
+	switch len(shape) {
+	case 0:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+		}
+	case 1:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0])),
+		}
+	case 2:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_2d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1])),
+		}
+	case 3:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_3d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2])),
+		}
+	case 4:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_4d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2]), C.int64_t(shape[3])),
+		}
+	default:
+		panic("unsupported number of dimensions")
 	}
 }
 
@@ -1147,11 +1209,18 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 
 func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase, ropeScale float32, options ...func(*rope.Options)) ml.Tensor {
 	// Default options
-	opts := &rope.Options{OriginalContextLength: 131072, Factors: &Tensor{}}
+	opts := rope.Options{
+		Factors:               &Tensor{},
+		OriginalContextLength: 131072,
+		ExtrapolationFactor:   0.,
+		AttentionFactor:       1.,
+		BetaFast:              32.,
+		BetaSlow:              1.,
+	}
 
 	// Apply any provided options
 	for _, option := range options {
-		option(opts)
+		option(&opts)
 	}
 
 	dequant := t.t
@@ -1171,10 +1240,10 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			C.int(opts.OriginalContextLength),
 			C.float(ropeBase),
 			C.float(ropeScale),
-			C.float(0.0),
-			C.float(1.0),
-			C.float(32.0),
-			C.float(1.0),
+			C.float(opts.ExtrapolationFactor),
+			C.float(opts.AttentionFactor),
+			C.float(opts.BetaFast),
+			C.float(opts.BetaSlow),
 		),
 	}
 }
@@ -1193,10 +1262,24 @@ func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) QuickGELU(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) SILU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_silu_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) RELU(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_relu_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
@@ -1273,5 +1356,106 @@ func (t *Tensor) Argsort(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_argsort(ctx.(*Context).ctx, t.t, C.GGML_SORT_ORDER_ASC),
+	}
+}
+
+func (t *Tensor) Mean(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_mean(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Variance(ctx ml.Context) ml.Tensor {
+	return t.Add(ctx, t.Mean(ctx).Scale(ctx, -1)).
+		Sqr(ctx).
+		SumRows(ctx).
+		Scale(ctx, 1/float64(t.Dim(0)))
+}
+
+func (t *Tensor) Stddev(ctx ml.Context) ml.Tensor {
+	return t.Variance(ctx).Sqrt(ctx)
+}
+
+func (t *Tensor) Sqr(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sqr(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sqrt(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
+	}
+}
+
+func (c Context) FromBytes(dtype ml.DType, s []uint8, shape ...int) ml.Tensor {
+	// Unchecked to handle quantized types
+	t := c.newTensor(dtype, shape)
+	if len(s) > 0 {
+		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	}
+
+	return t
+}
+
+// TODO - DRY this out with New if possible
+func newTestBackend(size int) *Backend {
+	var cpus []*C.struct_ggml_backend_device
+	for _, d := range devices() {
+		switch C.ggml_backend_dev_type(d) {
+		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+			if len(cpus) == 0 {
+				// only the first cpu device should be used
+				cpus = append(cpus, d)
+				break
+			}
+		}
+	}
+	var schedBackends []*C.struct_ggml_backend
+	var schedBufts []*C.struct_ggml_backend_buffer_type
+	b := C.ggml_backend_dev_init(cpus[0], nil)
+	bt := C.ggml_backend_get_default_buffer_type(b)
+	C.ggml_backend_cpu_set_n_threads(b, C.int(Threads(runtime.NumCPU())))
+	// C.ggml_backend_cpu_set_n_threads(b, 1) // DEBUGGING
+	schedBackends = append(schedBackends, b)
+	schedBufts = append(schedBufts, bt)
+	return &Backend{
+		meta: nil,
+		sched: C.ggml_backend_sched_new(
+			(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
+			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
+			C.int(len(schedBackends)),
+			C.size_t(max(8192, size)),
+			false,
+			false,
+		),
+		input:         bt,
+		maxGraphNodes: max(8192, size),
+		schedBackends: schedBackends,
+		schedBufts:    schedBufts,
+	}
+}
+
+func newTestContext(b *Backend, n int) *Context {
+	n = max(8192, n)
+	// slog.Info("XXX before ggml_init")
+	// defer slog.Info("XXX after ggml_init")
+	return &Context{
+		b:             b,
+		maxGraphNodes: n,
+		ctx: C.ggml_init(C.struct_ggml_init_params{
+			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
+			no_alloc: true,
+		}),
 	}
 }
