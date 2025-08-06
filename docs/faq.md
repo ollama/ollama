@@ -22,7 +22,7 @@ Please refer to the [GPU docs](./gpu.md).
 
 By default, Ollama uses a context window size of 4096 tokens. 
 
-This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use: 
+This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use:
 
 ```shell
 OLLAMA_CONTEXT_LENGTH=8192 ollama serve
@@ -84,20 +84,15 @@ If Ollama is run as a macOS application, environment variables should be set usi
 
 ### Setting environment variables on Linux
 
-If Ollama is run as a systemd service, environment variables should be set using `systemctl`:
+If Ollama is run as a systemd service, environment variables should be set via the file specified in the `EnvironmentFile` option of the systemd unit:
 
-1. Edit the systemd service by calling `systemctl edit ollama.service`. This will open an editor.
-
-2. For each environment variable, add a line `Environment` under section `[Service]`:
+1. Edit the file `/etc/ollama/serve.conf`:
 
     ```ini
-    [Service]
-    Environment="OLLAMA_HOST=0.0.0.0:11434"
+    OLLAMA_HOST=0.0.0.0
     ```
 
-3. Save and exit.
-
-4. Reload `systemd` and restart Ollama:
+2. Restart Ollama:
 
    ```shell
    systemctl daemon-reload

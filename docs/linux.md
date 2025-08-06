@@ -192,3 +192,8 @@ Remove installed libraries:
 ```shell
 sudo rm -rf /usr/local/lib/ollama
 ```
+
+Remove the config
+```bash
+sudo rm -rf /etc/ollama
+```
