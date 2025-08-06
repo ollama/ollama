@@ -403,7 +403,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning})
+			toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -454,7 +458,17 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, errors.New("invalid message format")
 				}
 			}
+			// since we might have added multiple messages above, if we have tools
+			// calls we'll add them to the last message
+			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
+				toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
+				if err != nil {
+					return nil, err
+				}
+				messages[len(messages)-1].ToolCalls = toolCalls
+			}
 		default:
+			// content is only optional if tool calls are present
 			if msg.ToolCalls == nil {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
@@ -547,6 +561,19 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Tools:    r.Tools,
 		Think:    think,
 	}, nil
+}
+
+func fromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
+	apiToolCalls := make([]api.ToolCall, len(toolCalls))
+	for i, tc := range toolCalls {
+		apiToolCalls[i].Function.Name = tc.Function.Name
+		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
+		if err != nil {
+			return nil, errors.New("invalid tool call arguments")
+		}
+	}
+
+	return apiToolCalls, nil
 }
 
 func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
