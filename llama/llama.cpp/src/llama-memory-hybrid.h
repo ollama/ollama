@@ -39,6 +39,7 @@ public:
                              /* common */
                  uint32_t    n_seq_max,
                      bool    offload,
+                     bool    unified,
                              /* layer filters */
           layer_filter_cb && filter_attn = nullptr,
           layer_filter_cb && filter_recr = nullptr);

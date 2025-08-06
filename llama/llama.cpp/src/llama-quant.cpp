@@ -211,7 +211,10 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, ggml_type new_t
             const int64_t nx = tensor->ne[0];
             const int64_t qk_k = ggml_blck_size(new_type);
 
-            if (arch == LLM_ARCH_FALCON || nx % qk_k != 0) {
+            if (ftype == LLAMA_FTYPE_MOSTLY_MXFP4_MOE) {
+                new_type = GGML_TYPE_Q8_0;
+            }
+            else if (arch == LLM_ARCH_FALCON || nx % qk_k != 0) {
                 new_type = GGML_TYPE_Q8_0;
             }
             else if (ftype == LLAMA_FTYPE_MOSTLY_IQ2_XXS || ftype == LLAMA_FTYPE_MOSTLY_IQ2_XS || ftype == LLAMA_FTYPE_MOSTLY_IQ3_XXS ||
@@ -222,6 +225,14 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, ggml_type new_t
             else if (new_type != GGML_TYPE_Q8_0) {
                 new_type = GGML_TYPE_Q6_K;
             }
+        }
+    } else if (ftype == LLAMA_FTYPE_MOSTLY_MXFP4_MOE) {
+        // MoE   tensors -> MXFP4
+        // other tensors -> Q8_0
+        if (tensor->ne[2] > 1) {
+            new_type = GGML_TYPE_MXFP4;
+        } else {
+            new_type = GGML_TYPE_Q8_0;
         }
     } else if (name == "token_embd.weight" || name == "per_layer_token_embd.weight") {
         if (qs.params->token_embedding_type < GGML_TYPE_COUNT) {
@@ -532,6 +543,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         case LLAMA_FTYPE_MOSTLY_F16:  default_type = GGML_TYPE_F16;  break;
         case LLAMA_FTYPE_MOSTLY_BF16: default_type = GGML_TYPE_BF16; break;
         case LLAMA_FTYPE_ALL_F32:     default_type = GGML_TYPE_F32;  break;
+
+        case LLAMA_FTYPE_MOSTLY_MXFP4_MOE: default_type = GGML_TYPE_MXFP4; break;
 
         // K-quants
         case LLAMA_FTYPE_MOSTLY_Q2_K_S:
@@ -875,9 +888,10 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
             // get more optimal quantization type based on the tensor shape, layer, etc.
             if (!params->pure && ggml_is_quantized(default_type)) {
+                int fallback = qs.n_fallback;
                 new_type = llama_tensor_get_type(qs, new_type, tensor, ftype);
-                // unless the user specifies a type
-                if (params->tensor_types) {
+                // unless the user specifies a type, and the tensor geometry will not require fallback quantisation
+                if (params->tensor_types && qs.n_fallback - fallback == 0) {
                     const std::vector<tensor_quantization> & tensor_types = *static_cast<const std::vector<tensor_quantization> *>(params->tensor_types);
                     const std::string tensor_name(tensor->name);
                     for (const auto & [tname, qtype] : tensor_types) {
@@ -890,7 +904,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     }
                 }
             }
-
             if (params->token_embedding_type < GGML_TYPE_COUNT && strcmp(tensor->name, "token_embd.weight") == 0) {
                 new_type = params->token_embedding_type;
             }
@@ -984,6 +997,29 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 const float * imatrix_03 = imatrix ? imatrix + i03 * n_per_row : nullptr;
 
                 new_size += llama_tensor_quantize_impl(new_type, f32_data_03, new_data_03, chunk_size, nrows, n_per_row, imatrix_03, workers, nthread_use);
+
+                // TODO: temporary sanity check that the F16 -> MXFP4 is lossless
+#if 0
+                if (new_type == GGML_TYPE_MXFP4) {
+                    auto * x = f32_data_03;
+
+                    //LLAMA_LOG_INFO("nrows = %d, n_per_row = %d\n", nrows, n_per_row);
+                    std::vector<float> deq(nrows*n_per_row);
+                    const ggml_type_traits * qtype = ggml_get_type_traits(new_type);
+                    qtype->to_float(new_data_03, deq.data(), deq.size());
+
+                    double err = 0.0f;
+                    for (int i = 0; i < (int) deq.size(); ++i) {
+                        err += fabsf(deq[i] - x[i]);
+                        //if (fabsf(deq[i] - x[i]) > 0.00001 && i < 256) {
+                        if (deq[i] != x[i]) {
+                            LLAMA_LOG_INFO("deq[%d] = %f, x[%d] = %f\n", i, deq[i], i, x[i]);
+                        }
+                    }
+                    //LLAMA_LOG_INFO("err = %f\n", err);
+                    GGML_ASSERT(err == 0.00000);
+                }
+#endif
             }
             LLAMA_LOG_INFO("size = %8.2f MiB -> %8.2f MiB\n", ggml_nbytes(tensor)/1024.0/1024.0, new_size/1024.0/1024.0);
         }

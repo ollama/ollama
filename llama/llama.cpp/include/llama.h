@@ -152,6 +152,7 @@ extern "C" {
         //LLAMA_FTYPE_MOSTLY_Q4_0_8_8      = 35, // removed from gguf files, use Q4_0 and runtime repack
         LLAMA_FTYPE_MOSTLY_TQ1_0         = 36, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_TQ2_0         = 37, // except 1d tensors
+        LLAMA_FTYPE_MOSTLY_MXFP4_MOE     = 38, // except 1d tensors
 
         LLAMA_FTYPE_GUESSED = 1024, // not specified in the model file
     };
@@ -284,10 +285,11 @@ extern "C" {
         const struct llama_model_kv_override * kv_overrides;
 
         // Keep the booleans together to avoid misalignment during copy-by-value.
-        bool vocab_only;    // only load the vocabulary, no weights
-        bool use_mmap;      // use mmap if possible
-        bool use_mlock;     // force system to keep model in RAM
-        bool check_tensors; // validate model tensor data
+        bool vocab_only;      // only load the vocabulary, no weights
+        bool use_mmap;        // use mmap if possible
+        bool use_mlock;       // force system to keep model in RAM
+        bool check_tensors;   // validate model tensor data
+        bool use_extra_bufts; // use extra buffer types (used for weight repacking)
     };
 
     // NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may cause crashes or incorrect results in certain configurations
@@ -536,6 +538,9 @@ extern "C" {
 
     // Returns true if the model is recurrent (like Mamba, RWKV, etc.)
     LLAMA_API bool llama_model_is_recurrent(const struct llama_model * model);
+
+    // Returns true if the model is diffusion-based (like LLaDA, Dream, etc.)
+    LLAMA_API bool llama_model_is_diffusion(const struct llama_model * model);
 
     // Returns 0 on success
     LLAMA_API uint32_t llama_model_quantize(

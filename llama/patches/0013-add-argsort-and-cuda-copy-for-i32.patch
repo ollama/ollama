@@ -10,10 +10,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  3 files changed, 145 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 6581d27a..9dedc113 100644
+index 854f1c2b..a2924757 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -7967,6 +7967,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -8146,6 +8146,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -59,7 +59,7 @@ index 6581d27a..9dedc113 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -7978,6 +8017,10 @@ void ggml_compute_forward_argsort(
+@@ -8157,6 +8196,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;

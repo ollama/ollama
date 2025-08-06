@@ -503,6 +503,9 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
 
     std::vector<fs::path> search_paths;
     if (user_search_path == nullptr) {
+#ifdef GGML_BACKEND_DIR
+        search_paths.push_back(fs::u8path(GGML_BACKEND_DIR));
+#endif
         // default search paths: executable directory, current directory
         search_paths.push_back(get_executable_path());
         search_paths.push_back(fs::current_path());

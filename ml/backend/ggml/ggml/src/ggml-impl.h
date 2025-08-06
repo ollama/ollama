@@ -410,6 +410,67 @@ static inline ggml_fp16_t ggml_compute_fp32_to_fp16(float f) {
 #define GGML_FP16_TO_FP32(x) GGML_COMPUTE_FP16_TO_FP32(x)
 #define GGML_FP32_TO_FP16(x) GGML_COMPUTE_FP32_TO_FP16(x)
 
+static inline float ggml_e8m0_to_fp32(uint8_t x) {
+    uint32_t bits;  // Stores the raw bit representation of the float
+
+    // Handle special case for minimum exponent (denormalized float)
+    if (x == 0) {
+        // Bit pattern for 2^(-127):
+        // - Sign bit: 0 (positive)
+        // - Exponent: 0 (denormalized number)
+        // - Mantissa: 0x400000 (0.5 in fractional form)
+        // Value = 0.5 * 2^(-126) = 2^(-127)
+        bits = 0x00400000;
+    }
+    // note: disabled as we don't need to handle NaNs
+    //// Handle special case for NaN (all bits set)
+    //else if (x == 0xFF) {
+    //    // Standard quiet NaN pattern:
+    //    // - Sign bit: 0
+    //    // - Exponent: all 1s (0xFF)
+    //    // - Mantissa: 0x400000 (quiet NaN flag)
+    //    bits = 0x7FC00000;
+    //}
+    // Normalized values (most common case)
+    else {
+        // Construct normalized float by shifting exponent into position:
+        // - Exponent field: 8 bits (positions 30-23)
+        // - Mantissa: 0 (implicit leading 1)
+        // Value = 2^(x - 127)
+        bits = (uint32_t) x << 23;
+    }
+
+    float result;  // Final float value
+                   // Safely reinterpret bit pattern as float without type-punning issues
+    memcpy(&result, &bits, sizeof(float));
+    return result;
+}
+
+// Equal to ggml_e8m0_to_fp32/2
+// Useful with MXFP4 quantization since the E0M2 values are doubled
+static inline float ggml_e8m0_to_fp32_half(uint8_t x) {
+    uint32_t bits;
+
+    // For x < 2: use precomputed denormal patterns
+    if (x < 2) {
+        // 0x00200000 = 2^(-128), 0x00400000 = 2^(-127)
+        bits = 0x00200000 << x;
+    }
+    // For x >= 2: normalized exponent adjustment
+    else {
+        // 0.5 * 2^(x-127) = 2^(x-128) = normalized with exponent (x-1)
+        bits = (uint32_t)(x - 1) << 23;
+    }
+    // Note: NaNs are not handled here
+
+    float result;
+    memcpy(&result, &bits, sizeof(float));
+    return result;
+}
+
+#define GGML_E8M0_TO_FP32(x) ggml_e8m0_to_fp32(x)
+#define GGML_E8M0_TO_FP32_HALF(x) ggml_e8m0_to_fp32_half(x)
+
 /**
  * Converts brain16 to float32.
  *

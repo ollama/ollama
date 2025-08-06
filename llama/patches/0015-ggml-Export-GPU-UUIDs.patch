@@ -24,10 +24,10 @@ index 8a91b381..9424394e 100644
          size_t memory_total;
          enum ggml_backend_dev_type type;
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index adeac245..ff520ca6 100644
+index 8f3825b0..13e439cc 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -3110,6 +3110,7 @@ struct ggml_backend_cuda_device_context {
+@@ -3135,6 +3135,7 @@ struct ggml_backend_cuda_device_context {
      int device;
      std::string name;
      std::string description;
@@ -35,7 +35,7 @@ index adeac245..ff520ca6 100644
  };
  
  static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
-@@ -3122,6 +3123,11 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t
+@@ -3147,6 +3148,11 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t
      return ctx->description.c_str();
  }
  
@@ -47,7 +47,7 @@ index adeac245..ff520ca6 100644
  static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
      ggml_cuda_set_device(ctx->device);
-@@ -3136,6 +3142,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+@@ -3161,6 +3167,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
  static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      props->name        = ggml_backend_cuda_device_get_name(dev);
      props->description = ggml_backend_cuda_device_get_description(dev);
@@ -55,7 +55,7 @@ index adeac245..ff520ca6 100644
      props->type        = ggml_backend_cuda_device_get_type(dev);
      ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
  
-@@ -3726,6 +3733,38 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -3758,6 +3765,38 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
                  dev_ctx->description = prop.name;
  
@@ -95,10 +95,10 @@ index adeac245..ff520ca6 100644
                      /* .iface   = */ ggml_backend_cuda_device_interface,
                      /* .reg     = */ &reg,
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index d7401914..c17eff4e 100644
+index 7bccc7bf..fe7b2f0a 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -6422,6 +6422,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+@@ -6522,6 +6522,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
  static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
      props->name        = ggml_backend_metal_device_get_name(dev);
      props->description = ggml_backend_metal_device_get_description(dev);

@@ -881,10 +881,16 @@ struct clip_graph {
             int n_head = n_embd/d_head;
             int num_query = 96;
             if (ctx->model.hparams.minicpmv_version == 2) {
+                // MiniCPM-V 2.5
                 num_query = 96;
             } else if (ctx->model.hparams.minicpmv_version == 3) {
+                // MiniCPM-V 2.6
                 num_query = 64;
             } else if (ctx->model.hparams.minicpmv_version == 4) {
+                // MiniCPM-o 2.6
+                num_query = 64;
+            } else if (ctx->model.hparams.minicpmv_version == 5) {
+                // MiniCPM-V 4.0
                 num_query = 64;
             }
 
@@ -3590,10 +3596,16 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
         case PROJECTOR_TYPE_MINICPMV:
             {
                 if (params.minicpmv_version == 2) {
+                    // MiniCPM-V 2.5
                     n_patches_sq = 96;
                 } else if (params.minicpmv_version == 3) {
+                    // MiniCPM-V 2.6
                     n_patches_sq = 64;
                 } else if (params.minicpmv_version == 4) {
+                    // MiniCPM-o 2.6
+                    n_patches_sq = 64;
+                } else if (params.minicpmv_version == 5) {
+                    // MiniCPM-V 4.0
                     n_patches_sq = 64;
                 } else {
                     GGML_ABORT("Unknown minicpmv version");
@@ -4142,11 +4154,17 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
             return ctx->model.mm_3_b->ne[0];
         case PROJECTOR_TYPE_MINICPMV:
             if (hparams.minicpmv_version == 2) {
+                // MiniCPM-V 2.5
                 return 4096;
             } else if (hparams.minicpmv_version == 3) {
+                // MiniCPM-V 2.6
                 return 3584;
             } else if (hparams.minicpmv_version == 4) {
+                // MiniCPM-o 2.6
                 return 3584;
+            } else if (hparams.minicpmv_version == 5) {
+                // MiniCPM-V 4.0
+                return 2560;
             }
             GGML_ABORT("Unknown minicpmv version");
         case PROJECTOR_TYPE_GLM_EDGE:

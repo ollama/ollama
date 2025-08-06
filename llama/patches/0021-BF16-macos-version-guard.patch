@@ -9,7 +9,7 @@ Only enable BF16 on supported MacOS versions (v14+)
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index c17eff4e..4095c861 100644
+index fe7b2f0a..e4c31268 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
 @@ -106,7 +106,11 @@

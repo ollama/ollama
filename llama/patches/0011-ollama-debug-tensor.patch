@@ -8,7 +8,7 @@ Subject: [PATCH] ollama debug tensor
  1 file changed, 6 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index c5271b77..b2ea2bae 100644
+index d89cd8f4..a5689c18 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -15,6 +15,8 @@
@@ -20,7 +20,7 @@ index c5271b77..b2ea2bae 100644
  #if defined(_MSC_VER) || defined(__MINGW32__)
  #include <malloc.h> // using malloc.h with MSC/MINGW
  #elif !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
-@@ -2845,6 +2847,10 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+@@ -2858,6 +2860,10 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
  
          ggml_compute_forward(&params, node);
  

@@ -217,7 +217,7 @@ struct mtmd_context {
             tok_row_end_trail = false; // no trailing end-of-row token
             ov_img_first      = true;
 
-        } else if (minicpmv_version == 3 || minicpmv_version == 4) {
+        } else if (minicpmv_version == 3 || minicpmv_version == 4 || minicpmv_version == 5) {
             // minicpmv 2.6 format:
             // <image> (overview) </image><slice> (slice) </slice><slice> (slice) </slice>\n ...
             slice_tmpl        = MTMD_SLICE_TMPL_MINICPMV_2_6;
