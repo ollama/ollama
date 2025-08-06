@@ -82,7 +82,7 @@ const ollama = new Ollama({
 });
 
 const response = await ollama.chat({
-  model: 'deepseek-r1:671b',
+  model: 'gpt-oss:120b',
   messages: [{ role: 'user', content: 'Explain quantum computing' }],
   stream: true
 });
