@@ -25,7 +25,7 @@ cleanup () {
     rmdir --ignore-fail-on-non-empty $TEMP_ROOT_DIR || true
   fi
 }
-trap 'status=$?; cleanup; exit $status' EXIT
+trap 'status=$?; cleanup ""; exit $status' EXIT
 trap 'trap - HUP; cleanup SIGHUP; kill -HUP $$' HUP
 trap 'trap - INT; cleanup SIGINT; kill -INT $$' INT
 trap 'trap - TERM; cleanup SIGTERM; kill -TERM $$' TERM
