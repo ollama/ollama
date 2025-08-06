@@ -33,9 +33,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func devices() []*C.struct_ggml_backend_device {
+func devices() []C.ggml_backend_dev_t {
 	ggml.OnceLoad()
-	ds := make([]*C.struct_ggml_backend_device, C.ggml_backend_dev_count())
+	ds := make([]C.ggml_backend_dev_t, C.ggml_backend_dev_count())
 	for i := range ds {
 		ds[i] = C.ggml_backend_dev_get(C.size_t(i))
 	}
@@ -53,23 +53,23 @@ type Backend struct {
 	// to the name that is used by the model definition
 	tensorLoadTargets map[string][]string
 
-	sched         *C.struct_ggml_backend_sched
-	schedBackends []*C.struct_ggml_backend
-	schedBufts    []*C.struct_ggml_backend_buffer_type
+	sched         C.ggml_backend_sched_t
+	schedBackends []C.ggml_backend_t
+	schedBufts    []C.ggml_backend_buffer_type_t
 
 	tensors map[string]*C.struct_ggml_tensor
 
 	// input is the backend used for inputs
-	input *C.struct_ggml_backend_buffer_type
+	input C.ggml_backend_buffer_type_t
 
 	// layers is the backend used for repeating layers
-	layers map[int]*C.struct_ggml_backend_buffer_type
+	layers map[int]C.ggml_backend_buffer_type_t
 
 	// requiredMemory is the cumulative memory allocations needed by the backend
 	requiredMemory *ml.BackendMemory
 
 	// btDeviceMemory maps from a buffer type to the memory allocations associated with that device
-	btDeviceMemory map[*C.struct_ggml_backend_buffer_type]*ml.DeviceMemory
+	btDeviceMemory map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory
 
 	flashAttention bool
 
@@ -100,14 +100,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	)
 
 	var requiredMemory ml.BackendMemory
-	btDeviceMemory := make(map[*C.struct_ggml_backend_buffer_type]*ml.DeviceMemory)
+	btDeviceMemory := make(map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory)
 
 	type deviceBufferType struct {
-		d   *C.struct_ggml_backend_device
-		bts []*C.struct_ggml_backend_buffer_type
+		d   C.ggml_backend_dev_t
+		bts []C.ggml_backend_buffer_type_t
 	}
 
-	var cpus, accels, gpus []*C.struct_ggml_backend_device
+	var cpus, accels, gpus []C.ggml_backend_dev_t
 	for _, d := range devices() {
 		switch C.ggml_backend_dev_type(d) {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
@@ -149,7 +149,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		bt := C.ggml_backend_dev_buffer_type(d)
 		gpuDeviceBufferTypes = append(gpuDeviceBufferTypes, deviceBufferType{
 			d:   d,
-			bts: append([]*C.struct_ggml_backend_buffer_type{bt}, cpuDeviceBufferType.bts...),
+			bts: append([]C.ggml_backend_buffer_type_t{bt}, cpuDeviceBufferType.bts...),
 		})
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
@@ -235,8 +235,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	targets := make(map[string][]string)
 
 	// contexts are shared by tensors of the same buffer type
-	ctxs := make(map[*C.struct_ggml_backend_buffer_type]*C.struct_ggml_context)
-	createTensor := func(t tensor, bts []*C.struct_ggml_backend_buffer_type, layer int) *C.struct_ggml_tensor {
+	ctxs := make(map[C.ggml_backend_buffer_type_t]*C.struct_ggml_context)
+	createTensor := func(t tensor, bts []C.ggml_backend_buffer_type_t, layer int) *C.struct_ggml_tensor {
 		for _, bt := range bts {
 			if _, ok := ctxs[bt]; !ok {
 				ctxs[bt] = C.ggml_init(C.struct_ggml_init_params{
@@ -330,7 +330,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	// allocate buffers for each context
-	bbs := make(map[*C.struct_ggml_context]*C.struct_ggml_backend_buffer, len(ctxs))
+	bbs := make(map[*C.struct_ggml_context]C.ggml_backend_buffer_t, len(ctxs))
 	for bt, c := range ctxs {
 		if C.ggml_get_first_tensor(c) == nil {
 			continue
@@ -388,11 +388,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
-	deviceBufferTypes := make(map[*C.struct_ggml_backend_device]*C.struct_ggml_backend_buffer_type)
+	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
 
 	// create backends and buffer types used for the compute graph scheduler
-	var schedBackends []*C.struct_ggml_backend
-	var schedBufts []*C.struct_ggml_backend_buffer_type
+	var schedBackends []C.ggml_backend_t
+	var schedBufts []C.ggml_backend_buffer_type_t
 	for _, d := range append(gpus, append(accels, cpus...)...) {
 		b := C.ggml_backend_dev_init(d, nil)
 		bt := C.ggml_backend_get_default_buffer_type(b)
@@ -426,8 +426,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		schedBackends: schedBackends,
 		schedBufts:    schedBufts,
 		input:         deviceBufferTypes[input.d],
-		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
-			m := make(map[int]*C.struct_ggml_backend_buffer_type)
+		layers: func() map[int]C.ggml_backend_buffer_type_t {
+			m := make(map[int]C.ggml_backend_buffer_type_t)
 			for i, layer := range layers {
 				m[i] = deviceBufferTypes[layer.d]
 			}
@@ -539,7 +539,7 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 		panic(fmt.Errorf("requested number of graph nodes (%v) for new context exceeds maximum (%v)", n, b.maxGraphNodes))
 	}
 
-	var allocatedBuffers []*C.struct_ggml_backend_buffer
+	var allocatedBuffers []C.ggml_backend_buffer_t
 
 	return &Context{
 		b:             b,
@@ -568,11 +568,11 @@ type Context struct {
 	graph *C.struct_ggml_cgraph
 
 	// buft is the buffer type used for new tensors
-	buft *C.struct_ggml_backend_buffer_type
+	buft C.ggml_backend_buffer_type_t
 
 	// allocatedBuffers are buffers for tensors that we have allocated in this context
 	// so that we can free them when we close the context
-	allocatedBuffers *[]*C.struct_ggml_backend_buffer
+	allocatedBuffers *[]C.ggml_backend_buffer_t
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this context
 	maxGraphNodes int
