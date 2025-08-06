@@ -239,12 +239,10 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	createTensor := func(t tensor, bts []*C.struct_ggml_backend_buffer_type, layer int) *C.struct_ggml_tensor {
 		for _, bt := range bts {
 			if _, ok := ctxs[bt]; !ok {
-				// slog.Info("XXX before ggml_init")
 				ctxs[bt] = C.ggml_init(C.struct_ggml_init_params{
 					mem_size: C.ggml_tensor_overhead() * C.size_t(maxTensors),
 					no_alloc: true,
 				})
-				// slog.Info("XXX after ggml_init")
 			}
 
 			targets[t.source.Name] = append(targets[t.source.Name], t.target)
@@ -543,8 +541,6 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 
 	var allocatedBuffers []*C.struct_ggml_backend_buffer
 
-	// slog.Info("XXX before ggml_init")
-	// defer slog.Info("XXX after ggml_init")
 	return &Context{
 		b:             b,
 		maxGraphNodes: n,
@@ -1406,56 +1402,4 @@ func (c Context) FromBytes(dtype ml.DType, s []uint8, shape ...int) ml.Tensor {
 	}
 
 	return t
-}
-
-// TODO - DRY this out with New if possible
-func newTestBackend(size int) *Backend {
-	var cpus []*C.struct_ggml_backend_device
-	for _, d := range devices() {
-		switch C.ggml_backend_dev_type(d) {
-		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
-			if len(cpus) == 0 {
-				// only the first cpu device should be used
-				cpus = append(cpus, d)
-				break
-			}
-		}
-	}
-	var schedBackends []*C.struct_ggml_backend
-	var schedBufts []*C.struct_ggml_backend_buffer_type
-	b := C.ggml_backend_dev_init(cpus[0], nil)
-	bt := C.ggml_backend_get_default_buffer_type(b)
-	C.ggml_backend_cpu_set_n_threads(b, C.int(Threads(runtime.NumCPU())))
-	// C.ggml_backend_cpu_set_n_threads(b, 1) // DEBUGGING
-	schedBackends = append(schedBackends, b)
-	schedBufts = append(schedBufts, bt)
-	return &Backend{
-		meta: nil,
-		sched: C.ggml_backend_sched_new(
-			(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
-			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
-			C.int(len(schedBackends)),
-			C.size_t(max(8192, size)),
-			false,
-			false,
-		),
-		input:         bt,
-		maxGraphNodes: max(8192, size),
-		schedBackends: schedBackends,
-		schedBufts:    schedBufts,
-	}
-}
-
-func newTestContext(b *Backend, n int) *Context {
-	n = max(8192, n)
-	// slog.Info("XXX before ggml_init")
-	// defer slog.Info("XXX after ggml_init")
-	return &Context{
-		b:             b,
-		maxGraphNodes: n,
-		ctx: C.ggml_init(C.struct_ggml_init_params{
-			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
-			no_alloc: true,
-		}),
-	}
 }
