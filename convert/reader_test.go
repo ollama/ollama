@@ -3,11 +3,11 @@ package convert
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/d4l3k/go-bfloat16"
 	"github.com/google/go-cmp/cmp"
 	"github.com/x448/float16"
 )
@@ -132,12 +132,13 @@ func TestSafetensors(t *testing.T) {
 			size:  32 * 2, // 32 brain floats, each 2 bytes
 			shape: []uint64{16, 2},
 			setup: func(t *testing.T, f *os.File) {
-				f32s := make([]float32, 32)
-				for i := range f32s {
-					f32s[i] = float32(i)
+				u16s := make([]uint16, 32)
+				for i := range u16s {
+					bits := math.Float32bits(float32(i))
+					u16s[i] = uint16(bits >> 16)
 				}
 
-				if err := binary.Write(f, binary.LittleEndian, bfloat16.EncodeFloat32(f32s)); err != nil {
+				if err := binary.Write(f, binary.LittleEndian, u16s); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -154,12 +155,13 @@ func TestSafetensors(t *testing.T) {
 			size:  32 * 2, // 32 brain floats, each 2 bytes
 			shape: []uint64{32},
 			setup: func(t *testing.T, f *os.File) {
-				f32s := make([]float32, 32)
-				for i := range f32s {
-					f32s[i] = float32(i)
+				u16s := make([]uint16, 32)
+				for i := range u16s {
+					bits := math.Float32bits(float32(i))
+					u16s[i] = uint16(bits >> 16)
 				}
 
-				if err := binary.Write(f, binary.LittleEndian, bfloat16.EncodeFloat32(f32s)); err != nil {
+				if err := binary.Write(f, binary.LittleEndian, u16s); err != nil {
 					t.Fatal(err)
 				}
 			},
