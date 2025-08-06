@@ -26,6 +26,9 @@ cleanup () {
   fi
 }
 trap 'status=$?; cleanup; exit $status' EXIT
+trap 'trap - HUP; cleanup SIGHUP; kill -HUP $$' HUP
+trap 'trap - INT; cleanup SIGINT; kill -INT $$' INT
+trap 'trap - TERM; cleanup SIGTERM; kill -TERM $$' TERM
 
 available() { command -v $1 >/dev/null; }
 require() {
