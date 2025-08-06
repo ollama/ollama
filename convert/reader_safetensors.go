@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/convert/bfloat16"
-	"github.com/x448/float16"
+	"github.com/ollama/ollama/convert/float16"
 )
 
 type safetensorMetadata struct {
@@ -163,10 +163,7 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 			return 0, err
 		}
 
-		f32s = make([]float32, len(u16s))
-		for i := range u16s {
-			f32s[i] = float16.Frombits(u16s[i]).Float32()
-		}
+		f32s = float16.Float32s(u16s)
 
 	case "BF16":
 		u16s := make([]uint16, st.size/2)
@@ -191,12 +188,7 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	case tensorKindFP32:
 		return 0, binary.Write(w, binary.LittleEndian, f32s)
 	case tensorKindFP16:
-		u16s := make([]uint16, len(f32s))
-		for i := range f32s {
-			u16s[i] = float16.Fromfloat32(f32s[i]).Bits()
-		}
-
-		return 0, binary.Write(w, binary.LittleEndian, u16s)
+		return 0, binary.Write(w, binary.LittleEndian, float16.FromFloat32s(f32s))
 	case tensorKindBF16:
 		return 0, binary.Write(w, binary.LittleEndian, bfloat16.FromFloat32s(f32s))
 	default:
