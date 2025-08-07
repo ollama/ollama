@@ -275,6 +275,83 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "chat handler with tools and empty content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "content": "", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools and thinking content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "reasoning": "Let's see what the weather is like in Paris", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role:     "assistant",
+						Thinking: "Let's see what the weather is like in Paris",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
 			name: "tool response with call ID",
 			body: `{
 				"model": "test-model",
