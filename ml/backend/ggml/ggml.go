@@ -270,6 +270,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				slog.Info("XXX mapping MXFP4 type", "name", name)
 				t.source.Kind = 39
 			}
+			// SUPER HACKY!  bf16->fp32
+			if strings.HasSuffix(t.source.Name, "_exps.bias") && t.source.Kind == uint32(fsggml.TensorTypeBF16) {
+				slog.Info("XXX mapping bf16 to fp32", "name", name, "offset", t.source.Offset, "elements", t.source.Elements())
+				t.source.Kind = uint32(fsggml.TensorTypeF32)
+			}
 
 			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
 			C.ggml_set_name(tt, cname)
@@ -565,7 +570,22 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 					progress(float32(done) / float32(totalBytes))
 				}
 				return nil
+			} else if strings.HasSuffix(t.Name, "_exps.bias") && t.Kind == 0 {
+				// data is bf16 but we need to convert to fp32
+				// TODO do this in blocks to put less memory pressure on the system
+				buf := make([]byte, t.Elements()*2)
+				_, err := io.ReadFull(sr, buf)
+				if err != nil {
+					slog.Info("XXX error", "name", t.Name, "error", err)
+					return err
+				}
+				fp32 := ConvertToF32(buf, uint32(fsggml.TensorTypeBF16), t.Elements())
+				for _, tt := range tts {
+					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&fp32[0]), C.size_t(0), C.size_t(t.Elements()*4))
+				}
+				return nil
 			}
+
 			bts := make([]byte, 128*format.KibiByte)
 
 			var s uint64
