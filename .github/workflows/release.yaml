@@ -23,7 +23,7 @@ jobs:
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
 
   darwin-build:
-    runs-on: macos-13
+    runs-on: macos-13-xlarge
     environment: release
     needs: setup-environment
     strategy:
@@ -225,7 +225,7 @@ jobs:
             CGO_CFLAGS=${{ env.CGO_CFLAGS }}
             CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
           outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
-          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           cache-to: type=inline
       - run: |
           for COMPONENT in bin/* lib/ollama/*; do
@@ -298,8 +298,8 @@ jobs:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
           build-args: ${{ matrix.build-args }}
-          outputs: type=image,name=ollama/ollama,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=ollama/ollama:latest
+          outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           cache-to: type=inline
       - run: |
           mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
@@ -331,7 +331,7 @@ jobs:
             latest=false
             suffix=${{ matrix.suffix }}
           images: |
-            ollama/ollama
+            ${{ vars.DOCKER_REPO }}
           tags: |
             type=ref,enable=true,priority=600,prefix=pr-,event=pr
             type=semver,pattern={{version}}
@@ -341,8 +341,8 @@ jobs:
           path: ${{ runner.temp }}
           merge-multiple: true
       - run: |
-          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf 'ollama/ollama@%s ')
-          docker buildx imagetools inspect ollama/ollama:${{ steps.metadata.outputs.version }}
+          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf '${{ vars.DOCKER_REPO }}@%s ')
+          docker buildx imagetools inspect ${{ vars.DOCKER_REPO }}:${{ steps.metadata.outputs.version }}
         working-directory: ${{ runner.temp }}
 
   # Trigger downstream release process
@@ -380,4 +380,4 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.RELEASE_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/ollama/${{ vars.RELEASE_REPO }}/dispatches \
-            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\", \"publish\": \"1\"}}"
+            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\", \"origin\": \"${GITHUB_REPOSITORY}\", \"publish\": \"1\"}}"

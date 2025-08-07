@@ -138,10 +138,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
-
-	// Bug #11211: Reporting of UUIDs is temporarily disabled due to causing segfaults
-	// This only affects debug information until the new memory management code is in place
-	// requiredMemory.CPU.UUID = C.GoString(props.uuid)
+	requiredMemory.CPU.ID = C.GoString(props.id)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -158,7 +155,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
-		// requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
+		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
@@ -359,23 +356,25 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	// Mimic llama runner logs summarizing layers and memory
-	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", max(0, params.NumGPULayers-1)))
 	gpuLayers := 0
-	switch C.ggml_backend_dev_type(output.d) {
-	case 0: // CPU
-		slog.Info("offloading output layer to CPU")
-	case 1: // GPU
-		slog.Info("offloading output layer to GPU")
-		gpuLayers++
-	case 2: // ACCEL
-		slog.Info("offloading output layer to ACCEL")
-	}
 	for _, layer := range layers {
-		if C.ggml_backend_dev_type(layer.d) == 1 {
+		if C.ggml_backend_dev_type(layer.d) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
 			gpuLayers++
 		}
 	}
+	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
+
+	switch C.ggml_backend_dev_type(output.d) {
+	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+		slog.Info("offloading output layer to CPU")
+	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+		slog.Info("offloading output layer to GPU")
+		gpuLayers++
+	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+		slog.Info("offloading output layer to ACCEL")
+	}
 	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(layers)+1))
+
 	for bs := range maps.Values(bbs) {
 		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
@@ -421,7 +420,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
+			C._Bool(false),
 			C._Bool(false),
 		),
 		schedBackends: schedBackends,
@@ -709,6 +708,8 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		cdtype = C.GGML_TYPE_Q4_0
 	case ml.DTypeI32:
 		cdtype = C.GGML_TYPE_I32
+	case ml.DTypeMXFP4:
+		cdtype = C.GGML_TYPE_MXFP4
 	default:
 		panic("unsupported dtype")
 	}
@@ -897,6 +898,8 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
+	case C.GGML_TYPE_MXFP4:
+		return ml.DTypeMXFP4
 	default:
 		return ml.DTypeOther
 	}
@@ -959,10 +962,35 @@ func (t *Tensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Contiguous(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+func (t *Tensor) Contiguous(ctx ml.Context, shape ...int) ml.Tensor {
+	switch len(shape) {
+	case 0:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+		}
+	case 1:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0])),
+		}
+	case 2:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_2d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1])),
+		}
+	case 3:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_3d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2])),
+		}
+	case 4:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_4d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2]), C.int64_t(shape[3])),
+		}
+	default:
+		panic("unsupported number of dimensions")
 	}
 }
 
@@ -1177,11 +1205,18 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 
 func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase, ropeScale float32, options ...func(*rope.Options)) ml.Tensor {
 	// Default options
-	opts := &rope.Options{OriginalContextLength: 131072, Factors: &Tensor{}}
+	opts := rope.Options{
+		Factors:               &Tensor{},
+		OriginalContextLength: 131072,
+		ExtrapolationFactor:   0.,
+		AttentionFactor:       1.,
+		BetaFast:              32.,
+		BetaSlow:              1.,
+	}
 
 	// Apply any provided options
 	for _, option := range options {
-		option(opts)
+		option(&opts)
 	}
 
 	dequant := t.t
@@ -1201,10 +1236,10 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			C.int(opts.OriginalContextLength),
 			C.float(ropeBase),
 			C.float(ropeScale),
-			C.float(0.0),
-			C.float(1.0),
-			C.float(32.0),
-			C.float(1.0),
+			C.float(opts.ExtrapolationFactor),
+			C.float(opts.AttentionFactor),
+			C.float(opts.BetaFast),
+			C.float(opts.BetaSlow),
 		),
 	}
 }
@@ -1220,6 +1255,13 @@ func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) QuickGELU(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
@@ -1350,4 +1392,14 @@ func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 		b: t.b,
 		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
+}
+
+func (c Context) FromBytes(dtype ml.DType, s []uint8, shape ...int) ml.Tensor {
+	// Unchecked to handle quantized types
+	t := c.newTensor(dtype, shape)
+	if len(s) > 0 {
+		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	}
+
+	return t
 }

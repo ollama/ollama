@@ -1,6 +1,7 @@
 package ggml
 
 import (
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -179,6 +180,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"llama4",
 		"mllama",
 		"qwen25vl",
+		"gptoss",
 	}, kv.Architecture())
 }
 
@@ -280,7 +282,7 @@ func (t Tensor) block() (n int) {
 }
 
 func (t Tensor) blockSize() uint64 {
-	return (TensorType)(t.Kind).BlockSize()
+	return TensorType(t.Kind).BlockSize()
 }
 
 func (t TensorType) BlockSize() uint64 {
@@ -298,6 +300,7 @@ func (t TensorType) BlockSize() uint64 {
 	case
 		2,  // Q4_0
 		3,  // Q4_1
+		4,  // MXFP4
 		6,  // Q5_0
 		7,  // Q5_1
 		8,  // Q8_0
@@ -325,6 +328,8 @@ func (t TensorType) TypeSize() uint64 {
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
+	case TensorTypeMXFP4:
+		return 1 + blockSize/2
 	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
 	case TensorTypeQ5_1:
@@ -487,9 +492,11 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
+	var kvTotal uint64
 	kv = make([]uint64, f.KV().BlockCount())
 	for i := range kv {
 		kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+		kvTotal += kv[i]
 	}
 
 	switch f.KV().Architecture() {
@@ -658,6 +665,18 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 					4*qkvBias.Shape[0],
 			)
 		}
+	case "gptoss":
+		kv = make([]uint64, f.KV().BlockCount())
+		for i := range kv {
+			kv[i] = uint64(float64((embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+			if i%2 == 0 {
+				kv[i] *= (uint64(numParallel)*4096 + batch)
+			} else {
+				kv[i] *= context
+			}
+		}
+		fullOffload = 4 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
+		partialOffload = fullOffload
 	}
 
 	return
@@ -739,6 +758,10 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
+		return false
+	}
+
+	if f.KV().Architecture() == "gptoss" {
 		return false
 	}
 

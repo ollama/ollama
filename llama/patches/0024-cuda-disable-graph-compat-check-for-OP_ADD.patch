@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <git@mxy.ng>
+Date: Thu, 31 Jul 2025 12:31:58 -0700
+Subject: [PATCH] cuda: disable graph compat check for OP_ADD
+
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 14 --------------
+ 1 file changed, 14 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index bb19b06e..080e7467 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -2509,20 +2509,6 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+ #endif
+         }
+ 
+-        // workarounds to exclude Gemma3n's `project_per_layer_input` operation from the batch-size heuristic, specific to ollama's implementation of gemma3n
+-        // number of layers is different for per_layer_proj between gemma3n:2b and gemma3n:4b, which is why we don't check that value here
+-        if (node->op == GGML_OP_ADD && node->src[1] && node->src[1]->ne[1] > 1 && !(node->ne[0] == 256
+-                                                                                    && node->ne[2] == 1
+-                                                                                    && node->ne[3] == 1
+-                                                                                    && node->src[0] ? std::string(node->src[0]->name).find(gemma3n_node_name) != std::string::npos : false
+-                                                                                    && node->src[1] ? node->src[1]->name == gemma3n_per_layer_proj_src1_name : false)) {
+-            // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
+-            use_cuda_graph = false;
+-#ifndef NDEBUG
+-            GGML_LOG_INFO("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
+-#endif
+-        }
+-
+         if (node->op == GGML_OP_CPY) {
+ 
+             // Store the pointers which are updated for each token, such that these can be sent

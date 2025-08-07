@@ -53,6 +53,8 @@ FROM /path/to/safetensors/directory
 
 If you create the Modelfile in the same directory as the weights, you can use the command `FROM .`.
 
+If you do not create the Modelfile, ollama will act as if there was a Modelfile with the command `FROM .`.
+
 Now run the `ollama create` command from the directory where you created the `Modelfile`:
 
 ```shell
