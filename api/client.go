@@ -428,3 +428,41 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 	return version.Version, nil
 }
+
+// ExportProgressFunc is a function that [Client.Export] invokes when the
+// service sends progress updates during the export process.
+type ExportProgressFunc func(ProgressResponse)
+
+// Export exports a model to the specified path. The request includes
+// the model name and destination path. Progress updates are sent to the
+// provided function.
+func (c *Client) Export(ctx context.Context, req *ExportRequest, fn ExportProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/export", req, func(bts []byte) error {
+		var resp ProgressResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		fn(resp)
+		return nil
+	})
+}
+
+// ImportProgressFunc is a function that [Client.Import] invokes when the
+// service sends progress updates during the import process.
+type ImportProgressFunc func(ProgressResponse)
+
+// Import imports a model from the specified path. The request includes
+// the source path and optional model name. Progress updates are sent to the
+// provided function.
+func (c *Client) Import(ctx context.Context, req *ImportRequest, fn ImportProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/import", req, func(bts []byte) error {
+		var resp ProgressResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		fn(resp)
+		return nil
+	})
+}
