@@ -42,6 +42,23 @@ type Client struct {
 
 func checkError(resp *http.Response, body []byte) error {
 	if resp.StatusCode < http.StatusBadRequest {
+		if len(body) == 0 {
+			return nil
+		}
+
+		// streams can contain error message even with StatusOK
+		var errorResponse struct {
+			Error string `json:"error,omitempty"`
+		}
+
+		if err := json.Unmarshal(body, &errorResponse); err != nil {
+			return fmt.Errorf("unmarshal: %w", err)
+		}
+
+		if errorResponse.Error != "" {
+			return errors.New(errorResponse.Error)
+		}
+
 		return nil
 	}
 
@@ -213,25 +230,9 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanBuf := make([]byte, 0, maxBufferSize)
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
-		var errorResponse struct {
-			Error string `json:"error,omitempty"`
-		}
-
 		bts := scanner.Bytes()
-		if err := json.Unmarshal(bts, &errorResponse); err != nil {
-			return fmt.Errorf("unmarshal: %w", err)
-		}
-
-		if response.StatusCode >= http.StatusBadRequest {
-			return StatusError{
-				StatusCode:   response.StatusCode,
-				Status:       response.Status,
-				ErrorMessage: errorResponse.Error,
-			}
-		}
-
-		if errorResponse.Error != "" {
-			return errors.New(errorResponse.Error)
+		if err := checkError(response, bts); err != nil {
+			return err
 		}
 
 		if err := fn(bts); err != nil {
