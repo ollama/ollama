@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
+var (
 	smol = "llama3.2:1b"
 )
 
@@ -37,6 +37,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"gpt-oss:20b",
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
 		"deepseek-r1:1.5b",
@@ -126,6 +127,7 @@ var (
 		"gemma3n",
 		"glm4",
 		"goliath",
+		"gpt-oss:20b",
 		"granite-code",
 		"granite3-dense",
 		"granite3-guardian",
@@ -255,8 +257,13 @@ var (
 	}
 )
 
-func Init() {
+func init() {
 	lifecycle.InitLogging()
+	custom := os.Getenv("OLLAMA_TEST_SMOL_MODEL")
+	if custom != "" {
+		slog.Info("setting smol test model to " + custom)
+		smol = custom
+	}
 }
 
 func FindPort() string {
