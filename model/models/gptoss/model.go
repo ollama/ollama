@@ -101,10 +101,16 @@ func (d *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outp
 }
 
 type AttentionBlock struct {
-	Norm   *nn.RMSNorm `gguf:"attn_norm"`
-	QKV    *nn.Linear  `gguf:"attn_qkv"`
-	Output *nn.Linear  `gguf:"attn_out"`
-	Sinks  ml.Tensor   `gguf:"attn_sinks"`
+	Norm *nn.RMSNorm `gguf:"attn_norm"`
+
+	QKV *nn.Linear `gguf:"attn_qkv"`
+
+	Query *nn.Linear `gguf:"attn_q"`
+	Key   *nn.Linear `gguf:"attn_k"`
+	Value *nn.Linear `gguf:"attn_v"`
+
+	Output *nn.Linear `gguf:"attn_out"`
+	Sinks  ml.Tensor  `gguf:"attn_sinks"`
 }
 
 func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -113,33 +119,46 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	residual := hiddenStates
 	hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
 
-	qkv := attn.QKV.Forward(ctx, hiddenStates)
+	var query, key, value ml.Tensor
+	if attn.QKV != nil {
+		qkv := attn.QKV.Forward(ctx, hiddenStates)
 
-	// query = qkv[..., : num_attention_heads * head_dim].reshape(batch_size, num_attention_heads, head_dim)
-	query := qkv.View(ctx,
-		0,
-		opts.headDim(), qkv.Stride(0)*opts.headDim(),
-		opts.numHeads, qkv.Stride(1),
-		batchSize,
-	)
+		// query = qkv[..., : num_attention_heads * head_dim].reshape(batch_size, num_attention_heads, head_dim)
+		query = qkv.View(ctx,
+			0,
+			opts.headDim(), qkv.Stride(0)*opts.headDim(),
+			opts.numHeads, qkv.Stride(1),
+			batchSize,
+		)
+
+		// key = qkv[..., num_attention_heads * head_dim:(num_attention_heads + num_key_value_heads) * head_dim].reshape(batch_size, num_key_value_heads, head_dim)
+		key = qkv.View(ctx,
+			qkv.Stride(0)*opts.headDim()*opts.numHeads,
+			opts.headDim(), qkv.Stride(0)*opts.headDim(),
+			opts.numKVHeads, qkv.Stride(1),
+			batchSize,
+		)
+
+		// value = qkv[..., (num_attention_heads  + num_key_value_heads) * head_dim:].reshape(batch_size, num_key_value_heads, head_dim)
+		value = qkv.View(ctx,
+			qkv.Stride(0)*opts.headDim()*(opts.numHeads+opts.numKVHeads),
+			opts.headDim(), qkv.Stride(0)*opts.headDim(),
+			opts.numKVHeads, qkv.Stride(1),
+			batchSize,
+		)
+	} else {
+		query = attn.Query.Forward(ctx, hiddenStates)
+		query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
+
+		key = attn.Key.Forward(ctx, hiddenStates)
+		key = key.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
+
+		value = attn.Value.Forward(ctx, hiddenStates)
+		value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
+	}
+
 	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-
-	// key = qkv[..., num_attention_heads * head_dim:(num_attention_heads + num_key_value_heads) * head_dim].reshape(batch_size, num_key_value_heads, head_dim)
-	key := qkv.View(ctx,
-		qkv.Stride(0)*opts.headDim()*opts.numHeads,
-		opts.headDim(), qkv.Stride(0)*opts.headDim(),
-		opts.numKVHeads, qkv.Stride(1),
-		batchSize,
-	)
 	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-
-	// value = qkv[..., (num_attention_heads  + num_key_value_heads) * head_dim:].reshape(batch_size, num_key_value_heads, head_dim)
-	value := qkv.View(ctx,
-		qkv.Stride(0)*opts.headDim()*(opts.numHeads+opts.numKVHeads),
-		opts.headDim(), qkv.Stride(0)*opts.headDim(),
-		opts.numKVHeads, qkv.Stride(1),
-		batchSize,
-	)
 
 	cache.Put(ctx, key, value)
 	key, value, mask := cache.Get(ctx)
@@ -163,10 +182,15 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 }
 
 type MLPBlock struct {
-	Norm   *nn.RMSNorm     `gguf:"ffn_norm"`
-	Router *nn.Linear      `gguf:"ffn_gate_inp"`
+	Norm   *nn.RMSNorm `gguf:"ffn_norm"`
+	Router *nn.Linear  `gguf:"ffn_gate_inp"`
+
 	GateUp *nn.LinearBatch `gguf:"ffn_gate_up_exps"`
-	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
+
+	Gate *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up   *nn.LinearBatch `gguf:"ffn_up_exps"`
+
+	Down *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
 func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *Options) ml.Tensor {
@@ -185,18 +209,22 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *
 
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
-	hiddenStates = mlp.GateUp.Forward(ctx, hiddenStates, selectedExperts)
-	hiddenStates = hiddenStates.Reshape(ctx, 2, hiddenStates.Dim(0)/2, hiddenStates.Dim(1), hiddenStates.Dim(2))
+	var gate, up ml.Tensor
+	if mlp.GateUp != nil {
+		hiddenStates = mlp.GateUp.Forward(ctx, hiddenStates, selectedExperts)
+		hiddenStates = hiddenStates.Reshape(ctx, 2, hiddenStates.Dim(0)/2, hiddenStates.Dim(1), hiddenStates.Dim(2))
 
-	dimStride := []int{hiddenStates.Dim(0) / 2, hiddenStates.Stride(1), hiddenStates.Dim(1), hiddenStates.Stride(2), hiddenStates.Dim(2), hiddenStates.Stride(3), hiddenStates.Dim(3)}
+		dimStride := []int{hiddenStates.Dim(0) / 2, hiddenStates.Stride(1), hiddenStates.Dim(1), hiddenStates.Stride(2), hiddenStates.Dim(2), hiddenStates.Stride(3), hiddenStates.Dim(3)}
 
-	gate := hiddenStates.View(ctx, 0, dimStride...)
-	gate = gate.Contiguous(ctx)
-	gate = gate.Reshape(ctx, gate.Dim(0)*gate.Dim(1), gate.Dim(2), gate.Dim(3))
+		gate = hiddenStates.View(ctx, 0, dimStride...)
+		gate = gate.Contiguous(ctx, gate.Dim(0)*gate.Dim(1), gate.Dim(2), gate.Dim(3))
 
-	up := hiddenStates.View(ctx, hiddenStates.Stride(0), dimStride...)
-	up = up.Contiguous(ctx)
-	up = up.Reshape(ctx, up.Dim(0)*up.Dim(1), up.Dim(2), up.Dim(3))
+		up = hiddenStates.View(ctx, hiddenStates.Stride(0), dimStride...)
+		up = up.Contiguous(ctx, up.Dim(0)*up.Dim(1), up.Dim(2), up.Dim(3))
+	} else {
+		gate = mlp.Gate.Forward(ctx, hiddenStates, selectedExperts)
+		up = mlp.Up.Forward(ctx, hiddenStates, selectedExperts)
+	}
 
 	hiddenStates = gate.SwiGLU(ctx, up, 1.702, 7)
 
