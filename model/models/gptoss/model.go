@@ -190,19 +190,15 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *
 
 	dimStride := []int{hiddenStates.Dim(0) / 2, hiddenStates.Stride(1), hiddenStates.Dim(1), hiddenStates.Stride(2), hiddenStates.Dim(2), hiddenStates.Stride(3), hiddenStates.Dim(3)}
 
-	glu := hiddenStates.View(ctx, 0, dimStride...)
-	glu = glu.Contiguous(ctx)
-	glu = glu.Reshape(ctx, glu.Dim(0)*glu.Dim(1), glu.Dim(2), glu.Dim(3))
+	gate := hiddenStates.View(ctx, 0, dimStride...)
+	gate = gate.Contiguous(ctx)
+	gate = gate.Reshape(ctx, gate.Dim(0)*gate.Dim(1), gate.Dim(2), gate.Dim(3))
 
-	glu = glu.Clamp(ctx, float32(math.Inf(-1)), 7.0)
-	glu = glu.QuickGELU(ctx)
+	up := hiddenStates.View(ctx, hiddenStates.Stride(0), dimStride...)
+	up = up.Contiguous(ctx)
+	up = up.Reshape(ctx, up.Dim(0)*up.Dim(1), up.Dim(2), up.Dim(3))
 
-	linear := hiddenStates.View(ctx, hiddenStates.Stride(0), dimStride...)
-	linear = linear.Contiguous(ctx)
-	linear = linear.Reshape(ctx, linear.Dim(0)*linear.Dim(1), linear.Dim(2), linear.Dim(3))
-	linear = linear.Clamp(ctx, -7.0, 7.0)
-
-	hiddenStates = glu.Mul(ctx, linear.Add(ctx, one))
+	hiddenStates = gate.SwiGLU(ctx, up, 1.702, 7)
 
 	experts := mlp.Down.Forward(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)
