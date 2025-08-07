@@ -519,69 +519,89 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 
 			// TODO this should use some other marker to toggle behavior so we can support loading type=4 and type=39
 			if t.Kind == 39 {
+				const BS = 17                             // MXFP4 block size
+				bts := make([]byte, 8*BS*format.KibiByte) // ~128k block aligned
 				var s uint64
-				buf := make([]byte, t.Size())
-				_, err := io.ReadFull(sr, buf)
-				if err != nil {
-					slog.Info("XXX error", "name", t.Name, "error", err)
-					return err
-				}
-				for j := 0; j < len(buf)/17; j++ {
-
-					for i := 0; i < 16; i++ {
-						// swap nibbles
-						t_lo := buf[j*17+i+1] & 0x0F
-						t_hi := buf[j*17+i+1] & 0xF0
-						buf[j*17+i+1] = (t_lo << 4) | (t_hi >> 4)
+				for s < t.Size() {
+					// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
+					if err != nil {
+						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						return err
+					}
+					for j := 0; j < n/BS; j++ {
+						for i := 1; i < BS; i++ {
+							// swap nibbles
+							t_lo := bts[j*BS+i] & 0x0F
+							t_hi := bts[j*BS+i] & 0xF0
+							bts[j*BS+i] = (t_lo << 4) | (t_hi >> 4)
+						}
+						// transform aaaa...bbbb... to abababab...
+						oi := 0
+						tmp := [16]byte{}
+						for i := 1; i < 9; i++ {
+							blk_a0 := bts[j*BS+i] & 0xF0
+							blk_a1 := bts[j*BS+i] << 4
+							blk_b0 := bts[j*BS+i+8] >> 4
+							blk_b1 := bts[j*BS+i+8] & 0x0F
+							// swap once more
+							out0 := blk_a0 | blk_b0
+							out1 := blk_a1 | blk_b1
+							out_h0 := out0 & 0xF0
+							out_l0 := out0 & 0x0F
+							out_h1 := out1 & 0xF0
+							out_l1 := out1 & 0x0F
+							out0 = (out_h0 >> 4) | (out_l0 << 4)
+							out1 = (out_h1 >> 4) | (out_l1 << 4)
+							tmp[oi] = out0
+							oi++
+							tmp[oi] = out1
+							oi++
+						}
+						for i := range len(tmp) {
+							bts[j*BS+i+1] = tmp[i]
+						}
 					}
 
-					// transform aaaa...bbbb... to abababab...
-					oi := 0
-					tmp := [16]byte{}
-					for i := 1; i < 9; i++ {
-						blk_a0 := buf[j*17+i] & 0xF0
-						blk_a1 := buf[j*17+i] << 4
-						blk_b0 := buf[j*17+i+8] >> 4
-						blk_b1 := buf[j*17+i+8] & 0x0F
-						// swap once more
-						out0 := blk_a0 | blk_b0
-						out1 := blk_a1 | blk_b1
-						out_h0 := out0 & 0xF0
-						out_l0 := out0 & 0x0F
-						out_h1 := out1 & 0xF0
-						out_l1 := out1 & 0x0F
-						out0 = (out_h0 >> 4) | (out_l0 << 4)
-						out1 = (out_h1 >> 4) | (out_l1 << 4)
-						tmp[oi] = out0
-						oi++
-						tmp[oi] = out1
-						oi++
+					for _, tt := range tts {
+						C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
 					}
-					for i := range len(tmp) {
-						buf[j*17+i+1] = tmp[i]
+
+					s += uint64(n)
+
+					if progress != nil {
+						done := doneBytes.Add(uint64(n))
+						progress(float32(done) / float32(totalBytes))
 					}
-				}
-				for _, tt := range tts {
-					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&buf[0]), C.size_t(s), C.size_t(len(buf)))
-				}
-				s += uint64(17)
-				if progress != nil {
-					done := doneBytes.Add(uint64(len(buf)))
-					progress(float32(done) / float32(totalBytes))
 				}
 				return nil
 			} else if strings.HasSuffix(t.Name, "_exps.bias") && t.Kind == 0 {
 				// data is bf16 but we need to convert to fp32
-				// TODO do this in blocks to put less memory pressure on the system
-				buf := make([]byte, t.Elements()*2)
-				_, err := io.ReadFull(sr, buf)
-				if err != nil {
-					slog.Info("XXX error", "name", t.Name, "error", err)
-					return err
-				}
-				fp32 := ConvertToF32(buf, uint32(fsggml.TensorTypeBF16), t.Elements())
-				for _, tt := range tts {
-					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&fp32[0]), C.size_t(0), C.size_t(t.Elements()*4))
+				bts := make([]byte, 128*format.KibiByte)
+				var e uint64
+				for e < t.Elements() {
+					// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Elements()-e)*2)])
+					if err != nil {
+						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						return err
+					}
+					fp32 := ConvertToF32(bts, uint32(fsggml.TensorTypeBF16), uint64(n/2))
+
+					for _, tt := range tts {
+						C.ggml_backend_tensor_set(tt, unsafe.Pointer(&fp32[0]), C.size_t(e*4), C.size_t(n*2))
+					}
+					e += uint64(n / 2)
+					if progress != nil {
+						done := doneBytes.Add(uint64(n))
+						progress(float32(done) / float32(totalBytes))
+					}
 				}
 				return nil
 			}
