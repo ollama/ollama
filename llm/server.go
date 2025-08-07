@@ -239,13 +239,15 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 	}
 
-	// Windows CUDA should not use mmap for best performance
-	// Linux  with a model larger than free space, mmap leads to thrashing
-	// For CPU loads we want the memory to be allocated, not FS cache
-	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
-		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == nil) ||
-		(gpus[0].Library == "cpu" && opts.UseMMap == nil) ||
-		(opts.UseMMap != nil && !*opts.UseMMap) {
+    // Windows CUDA should not use mmap for best performance
+    // Vulkan should not use mmap because of double allocation (VRAM + RAM)
+    // Linux  with a model larger than free space, mmap leads to thrashing
+    // For CPU loads we want the memory to be allocated, not FS cache
+    if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
+        (runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == nil) ||
+        (gpus[0].Library == "vulkan" && opts.UseMMap == nil) ||
+        (gpus[0].Library == "cpu" && opts.UseMMap == nil) ||
+        (opts.UseMMap != nil && !*opts.UseMMap) {
 		params = append(params, "--no-mmap")
 	}
 
@@ -353,14 +355,14 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			pathEnv = "LD_LIBRARY_PATH"
 		}
 
-		// Note: we always put our dependency paths first
-		// since these are the exact version we compiled/linked against
-		libraryPaths := []string{discover.LibOllamaPath}
+        // Note: we always put our dependency paths first
+        // since these are the exact version we compiled/linked against
+        libraryPaths := []string{discover.LibOllamaPath}
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
-		ggmlPaths := []string{discover.LibOllamaPath}
+        ggmlPaths := []string{discover.LibOllamaPath}
 		if len(compatible) > 0 {
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
@@ -406,7 +408,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		for _, gpu := range gpus {
 			envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
 		}
-		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
+        visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path and visible devices variable with our adjusted version

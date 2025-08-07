@@ -1,0 +1,72 @@
+From 82840199acfaa866f2cedf52687ecf9582debe44 Mon Sep 17 00:00:00 2001
+From: Agustin Alexander <agustin.alexander@dominodatalab.com>
+Date: Thu, 7 Aug 2025 19:57:50 -0300
+Subject: [PATCH 2/3] feat(vulkan): linux/windows globs and helpers for
+ libvulkan/libcap discovery
+
+---
+ discover/gpu_linux.go   | 18 ++++++++++++++++++
+ discover/gpu_windows.go |  9 +++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/discover/gpu_linux.go b/discover/gpu_linux.go
+index 44c53b44..e010e833 100644
+--- a/discover/gpu_linux.go
++++ b/discover/gpu_linux.go
+@@ -52,8 +52,26 @@ var (
+ 	NvcudaMgmtName = "libcuda.so*"
+ 	NvmlMgmtName   = "" // not currently wired on linux
+ 	OneapiMgmtName = "libze_intel_gpu.so*"
++    VulkanMgmtName = "libvulkan.so*"
++    libcapMgmtName = "libcap.so*"
+ )
+ 
++var VulkanGlobs = []string{
++    "/usr/lib/x86_64-linux-gnu/libvulkan.so*",
++    "/usr/lib/aarch64-linux-gnu/libvulkan.so*",
++    "/usr/lib*/libvulkan.so*",
++}
++
++var capLinuxGlobs = []string{
++    "/usr/lib/x86_64-linux-gnu/libcap.so*",
++    "/usr/lib/aarch64-linux-gnu/libcap.so*",
++    "/usr/lib*/libcap.so*",
++}
++
++func FindLibCapLibs() []string {
++    return FindGPULibs(libcapMgmtName, capLinuxGlobs)
++}
++
+ func GetCPUMem() (memInfo, error) {
+ 	var mem memInfo
+ 	var total, available, free, buffers, cached, freeSwap uint64
+diff --git a/discover/gpu_windows.go b/discover/gpu_windows.go
+index 2dc2f074..26a09576 100644
+--- a/discover/gpu_windows.go
++++ b/discover/gpu_windows.go
+@@ -42,13 +42,22 @@ var OneapiGlobs = []string{
+ 	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
+ }
+ 
++var VulkanGlobs = []string{
++    "c:\\Windows\\System32\\vulkan-1.dll",
++}
++
+ var (
+ 	CudartMgmtName = "cudart64_*.dll"
+ 	NvcudaMgmtName = "nvcuda.dll"
+ 	NvmlMgmtName   = "nvml.dll"
+ 	OneapiMgmtName = "ze_intel_gpu64.dll"
++    VulkanMgmtName = "vulkan-1.dll"
+ )
+ 
++func FindLibCapLibs() []string {
++    return []string{"<unused>"}
++}
++
+ func GetCPUMem() (memInfo, error) {
+ 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}
+ 	r1, _, err := globalMemoryStatusExProc.Call(uintptr(unsafe.Pointer(&memStatus)))
+-- 
+2.50.0
+

@@ -92,6 +92,11 @@ type OneapiGPUInfo struct {
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
+type VulkanGPUInfo struct {
+    GpuInfo
+    index int //nolint:unused,nolintlint
+}
+
 type GpuInfoList []GpuInfo
 
 type UnsupportedGPUInfo struct {
@@ -173,7 +178,8 @@ func (l GpuInfoList) FlashAttentionSupported() bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "metal" ||
 			(gpu.Library == "cuda" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "rocm"
+            gpu.Library == "rocm" ||
+            gpu.Library == "vulkan"
 
 		if !supportsFA {
 			return false

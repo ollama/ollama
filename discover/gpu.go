@@ -37,6 +37,11 @@ type oneapiHandles struct {
 	deviceCount int
 }
 
+type vulkanHandles struct {
+    vulkan      *C.vk_handle_t
+    deviceCount int
+}
+
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
@@ -48,9 +53,17 @@ var (
 	bootstrapped  bool
 	cpus          []CPUInfo
 	cudaGPUs      []CudaGPUInfo
+    vulkanGPUs    []VulkanGPUInfo
 	nvcudaLibPath string
 	cudartLibPath string
-	oneapiLibPath string
+    oneapiLibPath string
+    // vulkan paths for runtime and libcap
+    // filled by LoadVulkanMgmt on first success
+    // used to short-circuit subsequent refreshes
+    libcapLibPath string
+    vulkanLibPath string
+    vulkanLibPath string
+    libcapLibPath string
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
@@ -247,8 +260,9 @@ func GetGPUInfo() GpuInfoList {
 			},
 		}
 
-		// Load ALL libraries
+        // Load ALL libraries
 		cHandles = initCudaHandles()
+        vHandles := initVulkanHandles()
 
 		// NVIDIA
 		for i := range cHandles.deviceCount {
@@ -368,12 +382,42 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 
-		rocmGPUs, err = AMDGetGPUInfo()
+        // Vulkan
+        for i := range vHandles.deviceCount {
+            if vHandles.vulkan != nil {
+                gpuInfo := VulkanGPUInfo{
+                    GpuInfo: GpuInfo{
+                        Library: "vulkan",
+                    },
+                    index: i,
+                }
+
+                C.vk_check_vram(*vHandles.vulkan, C.int(i), &memInfo)
+                if memInfo.err != nil {
+                    slog.Info("error looking up vulkan GPU memory", "error", C.GoString(memInfo.err))
+                    C.free(unsafe.Pointer(memInfo.err))
+                    continue
+                }
+
+                gpuInfo.TotalMemory = uint64(memInfo.total)
+                gpuInfo.FreeMemory = uint64(memInfo.free)
+                gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+                gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
+                gpuInfo.MinimumMemory = 0
+                gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+                gpuInfo.DriverMajor = int(memInfo.major)
+                gpuInfo.DriverMinor = int(memInfo.minor)
+
+                vulkanGPUs = append(vulkanGPUs, gpuInfo)
+            }
+        }
+
+        rocmGPUs, err = AMDGetGPUInfo()
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
 		bootstrapped = true
-		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
+        if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(vulkanGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
 		}
 
@@ -457,7 +501,7 @@ func GetGPUInfo() GpuInfoList {
 			cudaGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
-		if oHandles == nil && len(oneapiGPUs) > 0 {
+        if oHandles == nil && len(oneapiGPUs) > 0 {
 			oHandles = initOneAPIHandles()
 		}
 		for i, gpu := range oneapiGPUs {
@@ -473,7 +517,23 @@ func GetGPUInfo() GpuInfoList {
 			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
-		err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
+        // Vulkan refresh
+        if len(vulkanGPUs) > 0 {
+            vHandles = initVulkanHandles()
+            for i := range vulkanGPUs {
+                if vHandles.vulkan == nil {
+                    slog.Warn("nil vulkan handle with device count", "count", vHandles.deviceCount)
+                    break
+                }
+                C.vk_check_vram(*vHandles.vulkan, C.int(vulkanGPUs[i].index), &memInfo)
+                // leave 5% headroom like oneAPI workaround
+                var totalFreeMem float64 = float64(memInfo.free) * 0.95
+                memInfo.free = C.uint64_t(totalFreeMem)
+                vulkanGPUs[i].FreeMemory = uint64(memInfo.free)
+            }
+        }
+
+        err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
 		if err != nil {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
 		}
@@ -489,6 +549,9 @@ func GetGPUInfo() GpuInfoList {
 	for _, gpu := range oneapiGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
+    for _, gpu := range vulkanGPUs {
+        resp = append(resp, gpu.GpuInfo)
+    }
 	if len(resp) == 0 {
 		resp = append(resp, cpus[0].GpuInfo)
 	}
@@ -669,8 +732,48 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 	return 0, nil, "", err
 }
 
+func LoadVulkanMgmt(vulkanLibPaths []string, capLibPaths []string) (int, *C.vk_handle_t, string, string) {
+    var resp C.vk_init_resp_t
+    resp.ch.verbose = getVerboseState()
+    for _, vkLibPath := range vulkanLibPaths {
+        for _, capLibPath := range capLibPaths {
+            vkLib := C.CString(vkLibPath)
+            capLib := C.CString(capLibPath)
+            defer C.free(unsafe.Pointer(vkLib))
+            defer C.free(unsafe.Pointer(capLib))
+
+            C.vk_init(vkLib, capLib, &resp)
+            if resp.err != nil {
+                slog.Debug("Unable to load vulkan", "library", vkLibPath, capLibPath, "error", C.GoString(resp.err))
+                C.free(unsafe.Pointer(resp.err))
+            } else {
+                return int(resp.num_devices), &resp.ch, vkLibPath, capLibPath
+            }
+        }
+    }
+    return 0, nil, "", ""
+}
+
+func initVulkanHandles() *vulkanHandles {
+    vHandles := &vulkanHandles{}
+
+    if vulkanLibPath != "" && libcapLibPath != "" {
+        vHandles.deviceCount, vHandles.vulkan, _, _ = LoadVulkanMgmt([]string{vulkanLibPath}, []string{libcapLibPath})
+        return vHandles
+    }
+
+    vulkanPaths := FindGPULibs(VulkanMgmtName, VulkanGlobs)
+    libcapPaths := FindLibCapLibs()
+
+    if len(vulkanPaths) > 0 && len(libcapPaths) > 0 {
+        vHandles.deviceCount, vHandles.vulkan, vulkanLibPath, libcapLibPath = LoadVulkanMgmt(vulkanPaths, libcapPaths)
+    }
+
+    return vHandles
+}
+
 func getVerboseState() C.uint16_t {
-	if envconfig.LogLevel() < slog.LevelInfo {
+    if envconfig.LogLevel() < slog.LevelInfo {
 		return C.uint16_t(1)
 	}
 	return C.uint16_t(0)
@@ -691,6 +794,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		return rocmGetVisibleDevicesEnv(l)
 	case "oneapi":
 		return oneapiGetVisibleDevicesEnv(l)
+    case "vulkan":
+        return vkGetVisibleDevicesEnv(l)
 	default:
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""

@@ -62,6 +62,18 @@ if(NOT CPU_VARIANTS)
     set(CPU_VARIANTS "ggml-cpu")
 endif()
 
+find_package(Vulkan)
+if(Vulkan_FOUND)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
+    set(OLLAMA_VULKAN_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/vulkan)
+    install(TARGETS ggml-vulkan
+        RUNTIME_DEPENDENCIES
+            PRE_INCLUDE_REGEXES vulkan
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_VULKAN_INSTALL_DIR} COMPONENT Vulkan
+        LIBRARY DESTINATION ${OLLAMA_VULKAN_INSTALL_DIR} COMPONENT Vulkan
+    )
+endif()
 install(TARGETS ggml-base ${CPU_VARIANTS}
     RUNTIME_DEPENDENCIES
         PRE_EXCLUDE_REGEXES ".*"

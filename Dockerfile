@@ -6,6 +6,7 @@ ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
+ARG VULKANVERSION=1.4.304.1
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -30,6 +31,12 @@ RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSIO
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
+FROM base AS vulkan
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'Vulkan' \
+        && cmake --build --parallel --preset 'Vulkan' \
+        && cmake --install build --component Vulkan --strip --parallel 8
+
 
 FROM base AS cpu
 RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
@@ -91,6 +98,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama
+COPY --from=vulkan  dist/lib/ollama/vulkan  /lib/ollama/vulkan
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/cuda_sbsa
@@ -106,7 +114,7 @@ COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates \
+    && apt-get install -y ca-certificates libcap2 libvulkan1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin
