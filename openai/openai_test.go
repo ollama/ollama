@@ -236,6 +236,210 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "chat handler with tools and content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "content": "Let's see what the weather is like in Paris", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role:    "assistant",
+						Content: "Let's see what the weather is like in Paris",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools and empty content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "content": "", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools and thinking content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "reasoning": "Let's see what the weather is like in Paris", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role:     "assistant",
+						Thinking: "Let's see what the weather is like in Paris",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "tool response with call ID",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "tool_calls": [{"id": "id_abc", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]},
+					{"role": "tool", "tool_call_id": "id_abc", "content": "The weather in Paris is 20 degrees Celsius"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+					{
+						Role:     "tool",
+						Content:  "The weather in Paris is 20 degrees Celsius",
+						ToolName: "get_current_weather",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "tool response with name",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]},
+					{"role": "tool", "name": "get_current_weather", "content": "The weather in Paris is 20 degrees Celsius"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+					{
+						Role:     "tool",
+						Content:  "The weather in Paris is 20 degrees Celsius",
+						ToolName: "get_current_weather",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
 			name: "chat handler with streaming tools",
 			body: `{
 				"model": "test-model",
