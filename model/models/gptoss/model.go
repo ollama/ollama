@@ -109,8 +109,8 @@ type AttentionBlock struct {
 	Key   *nn.Linear `gguf:"attn_k"`
 	Value *nn.Linear `gguf:"attn_v"`
 
-	Output *nn.Linear `gguf:"attn_out"`
-	Sinks  ml.Tensor  `gguf:"attn_sinks"`
+	Output *nn.Linear `gguf:"attn_out,alt:attn_output"`
+	Sinks  ml.Tensor  `gguf:"attn_sinks,alt:attn_sinks.weight"`
 }
 
 func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -182,7 +182,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 }
 
 type MLPBlock struct {
-	Norm   *nn.RMSNorm `gguf:"ffn_norm"`
+	Norm   *nn.RMSNorm `gguf:"ffn_norm,alt:post_attention_norm"`
 	Router *nn.Linear  `gguf:"ffn_gate_inp"`
 
 	GateUp *nn.LinearBatch `gguf:"ffn_gate_up_exps"`
@@ -292,4 +292,5 @@ func New(c fs.Config) (model.Model, error) {
 
 func init() {
 	model.Register("gptoss", New)
+	model.Register("gpt-oss", New)
 }

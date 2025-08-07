@@ -174,25 +174,27 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				vv.Set(reflect.ValueOf(base))
 			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
 				var fn func([]Tag) [][]string
-				fn = func(tags []Tag) (values [][]string) {
-					if len(tags) < 1 {
-						return nil
-					}
-
-					values = [][]string{{tags[0].Name}}
-					for _, alt := range tags[0].Alternate {
-						values = append(values, []string{alt})
-					}
-
-					for i, value := range values {
-						for _, rest := range fn(tags[1:]) {
-							value = append(value, rest...)
+				fn = func(tags []Tag) (names [][]string) {
+					if len(tags) > 0 {
+						localNames := []string{tags[0].Name}
+						for _, alt := range tags[0].Alternate {
+							localNames = append(localNames, alt)
 						}
 
-						values[i] = value
+						for _, localName := range localNames {
+							fullName := []string{localName}
+							nested := fn(tags[1:])
+							if len(nested) > 0 {
+								for _, rest := range nested {
+									names = append(names, append(fullName, rest...))
+								}
+							} else {
+								names = append(names, fullName)
+							}
+						}
 					}
 
-					return values
+					return names
 				}
 
 				names := fn(tagsCopy)
