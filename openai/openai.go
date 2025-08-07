@@ -478,6 +478,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				if toolName != "" {
 					messages[len(messages)-1].ToolName = toolName
 				}
+				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
 			// content is only optional if tool calls are present
@@ -493,7 +494,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, errors.New("invalid tool call arguments")
 				}
 			}
-			messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls})
 		}
 	}
 
