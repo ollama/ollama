@@ -34,10 +34,12 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role      string     `json:"role"`
-	Content   any        `json:"content"`
-	Reasoning string     `json:"reasoning,omitempty"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Role       string     `json:"role"`
+	Content    any        `json:"content"`
+	Reasoning  string     `json:"reasoning,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 type Choice struct {
@@ -401,13 +403,20 @@ func toModel(r api.ShowResponse, m string) Model {
 func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
+		toolName := ""
+		if strings.ToLower(msg.Role) == "tool" {
+			toolName = msg.Name
+			if toolName == "" && msg.ToolCallID != "" {
+				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
+			}
+		}
 		switch content := msg.Content.(type) {
 		case string:
 			toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -466,6 +475,9 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, err
 				}
 				messages[len(messages)-1].ToolCalls = toolCalls
+				if toolName != "" {
+					messages[len(messages)-1].ToolName = toolName
+				}
 			}
 		default:
 			// content is only optional if tool calls are present
@@ -561,6 +573,20 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Tools:    r.Tools,
 		Think:    think,
 	}, nil
+}
+
+func nameFromToolCallID(messages []Message, toolCallID string) string {
+	// iterate backwards to be more resilient to duplicate tool call IDs (this
+	// follows "last one wins")
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == toolCallID {
+				return tc.Function.Name
+			}
+		}
+	}
+	return ""
 }
 
 func fromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
