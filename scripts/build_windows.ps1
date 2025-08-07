@@ -78,7 +78,7 @@ function checkEnv() {
 }
 
 
-function buildOllama() {
+function buildCPU() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
@@ -90,7 +90,12 @@ function buildOllama() {
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --install build --component CPU --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
+}
 
+function buildCUDA() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
         if ("$script:CUDA_DIRS".Contains("v12")) {
@@ -104,6 +109,12 @@ function buildOllama() {
             & cmake --install build --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
+    }
+}
+
+function buildROCm() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
         if ($env:HIP_PATH) {
             write-host "Building ROCm backend libraries"
             if (-Not (get-command -ErrorAction silent ninja)) {
@@ -129,6 +140,10 @@ function buildOllama() {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
+}
+
+function buildOllama() {
+    mkdir -Force -path "${script:DIST_DIR}\"
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -236,6 +251,9 @@ function distZip() {
 checkEnv
 try {
     if ($($args.count) -eq 0) {
+        buildCPU
+        buildCUDA
+        buildROCm
         buildOllama
         buildApp
         gatherDependencies
