@@ -266,6 +266,10 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if tt := C.ggml_get_tensor(ctxs[bt], cname); tt != nil {
 				return tt
 			}
+			if t.source.Kind == 4 {
+				slog.Info("XXX mapping MXFP4 type", "name", name)
+				t.source.Kind = 39
+			}
 
 			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
 			C.ggml_set_name(tt, cname)
@@ -507,6 +511,61 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 			}
 			defer file.Close()
 			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
+
+			// TODO this should use some other marker to toggle behavior so we can support loading type=4 and type=39
+			if t.Kind == 39 {
+				var s uint64
+				buf := make([]byte, t.Size())
+				_, err := io.ReadFull(sr, buf)
+				if err != nil {
+					slog.Info("XXX error", "name", t.Name, "error", err)
+					return err
+				}
+				for j := 0; j < len(buf)/17; j++ {
+
+					for i := 0; i < 16; i++ {
+						// swap nibbles
+						t_lo := buf[j*17+i+1] & 0x0F
+						t_hi := buf[j*17+i+1] & 0xF0
+						buf[j*17+i+1] = (t_lo << 4) | (t_hi >> 4)
+					}
+
+					// transform aaaa...bbbb... to abababab...
+					oi := 0
+					tmp := [16]byte{}
+					for i := 1; i < 9; i++ {
+						blk_a0 := buf[j*17+i] & 0xF0
+						blk_a1 := buf[j*17+i] << 4
+						blk_b0 := buf[j*17+i+8] >> 4
+						blk_b1 := buf[j*17+i+8] & 0x0F
+						// swap once more
+						out0 := blk_a0 | blk_b0
+						out1 := blk_a1 | blk_b1
+						out_h0 := out0 & 0xF0
+						out_l0 := out0 & 0x0F
+						out_h1 := out1 & 0xF0
+						out_l1 := out1 & 0x0F
+						out0 = (out_h0 >> 4) | (out_l0 << 4)
+						out1 = (out_h1 >> 4) | (out_l1 << 4)
+						tmp[oi] = out0
+						oi++
+						tmp[oi] = out1
+						oi++
+					}
+					for i := range len(tmp) {
+						buf[j*17+i+1] = tmp[i]
+					}
+				}
+				for _, tt := range tts {
+					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&buf[0]), C.size_t(s), C.size_t(len(buf)))
+				}
+				s += uint64(17)
+				if progress != nil {
+					done := doneBytes.Add(uint64(len(buf)))
+					progress(float32(done) / float32(totalBytes))
+				}
+				return nil
+			}
 			bts := make([]byte, 128*format.KibiByte)
 
 			var s uint64
