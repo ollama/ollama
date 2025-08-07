@@ -283,6 +283,7 @@ type Tensor interface {
 	SILU(ctx Context) Tensor
 	RELU(ctx Context) Tensor
 	Sigmoid(ctx Context) Tensor
+	SwiGLU(ctx Context, up Tensor, alpha, limit float32) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor

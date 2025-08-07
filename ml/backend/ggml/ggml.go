@@ -1409,6 +1409,13 @@ func (t *Tensor) RELU(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SwiGLU(ctx ml.Context, up ml.Tensor, alpha, limit float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_swiglu_oai(ctx.(*Context).ctx, t.t, up.(*Tensor).t, C.float(alpha), C.float(limit)),
+	}
+}
+
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
