@@ -111,6 +111,28 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
+		if params.embedding && len(images) > 0 {
+			multimodalProcessor, visionModel := s.model.(model.MultimodalProcessor)
+			if !visionModel {
+				return nil, errors.New("embedding only supported for multimodal models")
+			}
+			if len(images) > 1 {
+				return nil, errors.New("embedding only supported for single image")
+			}
+			ctx := s.model.Backend().NewContext()
+			runtime.SetFinalizer(ctx, func(c ml.Context) { c.Close() })
+			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[0].Data)
+			if err != nil {
+				return nil, err
+			}
+
+			s.multimodalHash.Reset()
+			_, _ = s.multimodalHash.Write(images[0].Data)
+			imageHash := s.multimodalHash.Sum64()
+
+			mmStore.addMultimodal(imageEmbeddings)
+			inputs = []input.Input{{Multimodal: imageEmbeddings, MultimodalHash: imageHash}}
+		}
 		return nil, errors.New("no input provided")
 	}
 
@@ -510,8 +532,7 @@ func (s *Server) processBatch() error {
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			// TODO(jessegross): Embedding support
-			slog.Warn("generation of embedding outputs not yet supported")
+			seq.embedding <- logits
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
@@ -707,6 +728,69 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
+	var req llm.EmbeddingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad request: %s", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	slog.Debug("embedding request", "content", req.Content)
+
+	var images []llm.ImageData
+	if req.Image != nil {
+		images = []llm.ImageData{*req.Image}
+	}
+	seq, err := s.NewSequence(req.Content, images, NewSequenceParams{embedding: true})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure there is a place to put the sequence, released when removed from s.seqs
+	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embeddings request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
+		return
+	}
+
+	s.mu.Lock()
+	found := false
+	for i, sq := range s.seqs {
+		if sq == nil {
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
+			if err != nil {
+				s.mu.Unlock()
+				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+				return
+			}
+			s.seqs[i] = seq
+			s.cond.Signal()
+			found = true
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if !found {
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
+
+	embedding := <-seq.embedding
+
+	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
+		Embedding: embedding,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
 
@@ -977,11 +1061,7 @@ func Execute(args []string) error {
 	defer listener.Close()
 
 	mux := http.NewServeMux()
-	// TODO: support embeddings
-	mux.HandleFunc("POST /embedding", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
-	})
-
+	mux.HandleFunc("POST /embedding", server.embeddings)
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
 
