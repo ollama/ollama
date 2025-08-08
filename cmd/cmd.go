@@ -1396,7 +1396,7 @@ func getAvailableModels() []string {
 		return nil
 	}
 
-	var names []string
+	names := make([]string, 0, len(models.Models))
 	for _, model := range models.Models {
 		names = append(names, model.Name)
 	}
@@ -1418,7 +1418,7 @@ func getRunningModels() []string {
 		return nil
 	}
 
-	var names []string
+	names := make([]string, 0, len(models.Models))
 	for _, model := range models.Models {
 		names = append(names, model.Name)
 	}
