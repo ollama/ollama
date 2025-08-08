@@ -92,6 +92,12 @@ type OneapiGPUInfo struct {
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
+type SyclGPUInfo struct {
+	GpuInfo
+	index int //nolint:unused,nolintlint
+}
+type SyclGPUInfoList []SyclGPUInfo
+
 type GpuInfoList []GpuInfo
 
 type UnsupportedGPUInfo struct {

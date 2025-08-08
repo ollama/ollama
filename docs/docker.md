@@ -65,6 +65,14 @@ To run Ollama using Docker with AMD GPUs, use the `rocm` tag and the following c
 docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama:rocm
 ```
 
+### Intel GPU
+
+To run Ollama using Docker with Intel GPUs, use the `sycl` tag and the following command:
+
+```shell
+docker run -d --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama:sycl
+```
+
 ### Run model locally
 
 Now you can run a model:

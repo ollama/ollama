@@ -71,8 +71,13 @@ jobs:
             arch: amd64
             preset: 'ROCm 6'
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            rocm-version: '6.2'
+            rocm-version: '6.2'            
             flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+          - os: windows
+            arch: amd64
+            preset: 'SYCL'
+            install: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e5785fb3-b5a7-4b97-89bc-918adab1f77d/intel-oneapi-base-toolkit-2025.1.3.8_offline.exe
+            oneapi-version: '2025.1'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -82,13 +87,14 @@ jobs:
         run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ')
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || matrix.preset == 'SYCL'
         id: cache-install
         uses: actions/cache/restore@v4
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\Program Files (x86)\Intel\oneAPI
           key: ${{ matrix.install }}
       - if: startsWith(matrix.preset, 'CUDA ')
         name: Install CUDA ${{ matrix.cuda-version }}
@@ -118,6 +124,33 @@ jobs:
           echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: startsWith(matrix.preset, 'SYCL')
+        name: Install Intel OneAPI ${{ matrix.oneapi-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList "-a --silent --eula accept" -NoNewWindow -Wait
+          }
+
+          Write-Host "Running setvars.bat and capturing environment variables..."
+          $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
+          $setvarsOutput | ForEach-Object {
+            if ($_ -match '(.+?)=(.*)') {
+              $name = $matches[1]
+              $value = $matches[2]
+              
+              if ($name -eq "Path") {              
+                # Write the entire PATH value to GITHUB_PATH
+                echo $value | Out-File -FilePath $env:GITHUB_PATH
+              }
+              
+              # Add all variables (except PATH) to GITHUB_ENV
+              if ($name -ne "Path") {
+                echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
+              }
+            }
+          }
       - if: matrix.preset == 'CPU'
         run: |
           echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -128,6 +161,7 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\Program Files (x86)\Intel\oneAPI
           key: ${{ matrix.install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -140,7 +174,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
+          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || matrix.preset == 'SYCL' && 'SYCL' || 'CPU' }}" --strip --parallel 8
         env:
           CMAKE_GENERATOR: Ninja
       - uses: actions/upload-artifact@v4
@@ -207,6 +241,9 @@ jobs:
           - os: linux
             arch: arm64
             target: archive
+          - os: linux
+            arch: amd64
+            target: sycl
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -236,6 +273,7 @@ jobs:
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+              lib/ollama/sycl)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-sycl.tar.in ;;
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
@@ -280,6 +318,14 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
+          - os: linux
+            arch: amd64
+            suffix: '-sycl'
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+              FLAVOR=sycl
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -315,7 +361,7 @@ jobs:
   docker-merge-push:
     strategy:
       matrix:
-        suffix: ['', '-rocm']
+        suffix: ['', '-rocm', '-sycl']
     runs-on: linux
     environment: release
     needs: [docker-build-push]

@@ -111,7 +111,7 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFile
 #if DirExists("..\dist\windows-arm64")
 Filename: "{tmp}\vc_redist.arm64.exe"; Parameters: "/install /passive /norestart"; Check: IsArm64() and vc_redist_needed(); StatusMsg: "Installing VC++ Redistributables..."; Flags: waituntilterminated
 #endif
-Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
+Filename: "{cmd}"; Parameters: "/C set PATH={app};{app}\lib\ollama;{app}\lib\ollama\sycl;%PATH% & set ZES_ENABLE_SYSMAN=1 & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
 
 [UninstallRun]
 ; Filename: "{cmd}"; Parameters: "/C ""taskkill /im ''{#MyAppExeName}'' /f /t"; Flags: runhidden
@@ -148,6 +148,17 @@ SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or fi
 Root: HKCU; Subkey: "Environment"; \
     ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; \
     Check: NeedsAddPath('{app}')
+
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\lib\ollama"; \
+    Check: NeedsAddPath('{app}\lib\ollama')
+
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\lib\ollama\sycl"; \
+    Check: NeedsAddPath('{app}\lib\ollama\sycl')
+
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: string; ValueName: "ZES_ENABLE_SYSMAN"; ValueData: "1"
 
 [Code]
 

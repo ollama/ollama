@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Desmond Sow <7720601+desmondsow@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 11:13:41 +0800
+Subject: [PATCH] catch ggml-sycl init exception to prevent crashing when no
+ requested device is found
+
+---
+ ggml/src/ggml-sycl/ggml-sycl.cpp | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
+index ae3a3c33..4ac3e7a1 100644
+--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
+@@ -54,9 +54,23 @@ int g_ggml_sycl_prioritize_dmmv = 0;
+ static ggml_sycl_device_info ggml_sycl_init() {
+     ggml_sycl_device_info info = {};
+ 
+-    info.device_count = dpct::dev_mgr::instance().device_count();
+-    if (info.device_count == 0) {
+-        GGML_LOG_ERROR("%s: failed to initialize: %s\n", GGML_SYCL_NAME, __func__);
++    try {
++        info.device_count = dpct::dev_mgr::instance().device_count();
++        if (info.device_count == 0) {
++            GGML_LOG_ERROR("%s: failed to initialize: %s (%s:%d)\n", GGML_SYCL_NAME, __func__, __FILE__, __LINE__);
++            return info;
++        }
++    } catch (const sycl::exception &e) {
++        GGML_LOG_ERROR("%s: SYCL exception caught during initialization: %s (%s:%d)\n", GGML_SYCL_NAME, e.what(), __FILE__, __LINE__);
++        info.device_count = 0;
++        return info;
++    } catch (const std::exception &e) {
++        GGML_LOG_ERROR("%s: exception caught during initialization: %s (%s:%d)\n", GGML_SYCL_NAME, e.what(), __FILE__, __LINE__);
++        info.device_count = 0;
++        return info;
++    } catch (...) {
++        GGML_LOG_ERROR("%s: unknown exception caught during initialization (%s:%d)\n", GGML_SYCL_NAME, __FILE__, __LINE__);
++        info.device_count = 0;
+         return info;
+     }
+ 
