@@ -1430,11 +1430,6 @@ func modelCompletionFunc(cmd *cobra.Command, args []string, toComplete string) (
 	return getAvailableModels(), cobra.ShellCompDirectiveNoFileComp
 }
 
-// runningModelCompletionFunc provides completion for commands that take running model names
-func runningModelCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return getRunningModels(), cobra.ShellCompDirectiveNoFileComp
-}
-
 // stopCompletionFunc provides completion for the stop command
 func stopCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) == 0 {
