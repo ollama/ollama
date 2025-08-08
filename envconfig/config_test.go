@@ -1,11 +1,14 @@
 package envconfig
 
 import (
+	"os"
+	"path/filepath"
+	"fmt"
+	"sync"
 	"log/slog"
 	"math"
 	"testing"
 	"time"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/logutil"
 )
@@ -321,6 +324,93 @@ func TestLogLevel(t *testing.T) {
 			t.Setenv("OLLAMA_DEBUG", k)
 			if i := LogLevel(); i != v {
 				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestParseEnvLine(t *testing.T) {
+	cases := []struct {
+		raw      string
+		wantKey  string
+		wantVal  string
+		wantOK   bool
+	}{
+		// empty line
+		{raw: "", wantOK: false},
+		{raw: "   ", wantOK: false},
+		{raw: "# just a comment", wantOK: false},
+		// no “=” or missing parts
+		{raw: "INVALID", wantOK: false},
+		{raw: "=valueOnly", wantOK: false},
+		// Quotes and Wuitespace
+		{raw: "  FOO =   bar   ", wantKey: "FOO", wantVal: "bar", wantOK: true},
+		{raw: `  FOO =   "bar"   `, wantKey: "FOO", wantVal: "bar", wantOK: true},
+		{raw: `FOO="bar"`, wantKey: "FOO", wantVal: "bar", wantOK: true},
+		{raw: "FOO='bar'", wantKey: "FOO", wantVal: "bar", wantOK: true},
+		// inline comment
+		{raw: `FOO=bar # comment`, wantKey: "FOO", wantVal: "bar", wantOK: true},
+		{raw: "FOO=bar#ignore", wantKey: "FOO", wantVal: "bar", wantOK: true},
+		// happy path
+		{raw: "FOO=bar", wantKey: "FOO", wantVal: "bar", wantOK: true},
+		{raw: "KEY=", wantKey: "KEY", wantVal: "", wantOK: true},
+	}
+
+	for _, testcase := range cases {
+		t.Run(testcase.raw, func(t *testing.T) {
+			key, val, ok := parseEnvLine(testcase.raw)
+
+			if ok != testcase.wantOK {
+				t.Fatalf("parseEnvLine(%q) ok = %v; want %v", testcase.raw, ok, testcase.wantOK)
+			}
+			if ok && key != testcase.wantKey {
+				t.Errorf("parseEnvLine(%q) key = %q; want %q", testcase.raw, key, testcase.wantKey)
+			}
+			if ok && val != testcase.wantVal {
+				t.Errorf("parseEnvLine(%q) val = %q; want %q", testcase.raw, val, testcase.wantVal)
+			}
+		})
+	}
+}
+
+func TestConfigFile(t *testing.T) {
+	varSetInFileOnly := "VAR_SET_IN_FILE_ONLY"
+	varSetInBoth := "VAR_SET_IN_BOTH"
+	varSetAsCommentInFile := "VAR_SET_AS_COMMENT"
+	valueFromFile := "value_from_file"
+	valueFromEnv := "value_from_env"
+
+	tmpHome := t.TempDir()
+	configDir := filepath.Join(tmpHome, ".ollama")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.env")
+	content := fmt.Sprintf(`%s=  "%s" # varSetInFileOnly,valueFromFile
+%s=nope # varSetInBoth
+#%s=nope # varSetAsCommentInFile
+`, varSetInFileOnly, valueFromFile, varSetInBoth, varSetAsCommentInFile)
+
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	t.Setenv("HOME", tmpHome)
+	fileOnce = sync.Once{}
+	fileVars = nil
+	fileErr = nil
+
+	cases := map[string]string{
+		varSetInFileOnly: valueFromFile,
+		varSetInBoth: valueFromEnv,
+		varSetAsCommentInFile: "",
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv(varSetInBoth, valueFromEnv)
+			if i := Var(k); i != v {
+				t.Errorf("%s: expected %s, got %s", k, v, i)
 			}
 		})
 	}
