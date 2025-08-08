@@ -160,24 +160,8 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 
-	cache.Put(ctx, key, value)
-	key, value, mask := cache.Get(ctx)
-
-	query = query.Permute(ctx, 0, 2, 1, 3)
-	key = key.Permute(ctx, 0, 2, 1, 3)
-
-	scores := key.MulmatFullPrec(ctx, query)
-	scores = scores.Scale(ctx, 1./math.Sqrt(float64(opts.headDim())))
-	scores = scores.Add(ctx, mask)
-
-	scores = scores.Concat(ctx, attn.Sinks.Reshape(ctx, 1, 1, opts.numHeads, 1).Repeat(ctx, 1, batchSize), 0)
-	scores = scores.Softmax(ctx)
-	scores = scores.Pad(ctx, -1, 0, 0, 0)
-
-	attention := value.Mulmat(ctx, scores)
-	attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	attention := nn.AttentionWithSinks(ctx, query, key, value, attn.Sinks, 1/math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
-
 	return attn.Output.Forward(ctx, attention).Add(ctx, residual)
 }
 
@@ -286,7 +270,6 @@ func New(c fs.Config) (model.Model, error) {
 		kvcache.NewSWAMemCache(int32(c.Uint("attention.sliding_window")), 4096, m.Shift),
 		kvcache.NewCausalCache(m.Shift),
 	)
-	m.Cache.SetConfig(ml.CacheConfig{CachePadding: 32, PermutedV: true})
 	return &m, nil
 }
 

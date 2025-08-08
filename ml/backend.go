@@ -334,7 +334,7 @@ type Tensor interface {
 // kqv := value.Mulmat(ctx, kq)
 // return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 type ScaledDotProductAttention interface {
-	ScaledDotProductAttention(ctx Context, key, value, mask Tensor, scale float64) Tensor
+	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, scale float64) Tensor
 }
 
 type number interface {
