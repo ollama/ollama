@@ -282,8 +282,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				ID:             ID,
 				Name:           name,
 				Compute:        fmt.Sprintf("gfx%d%x%x", major, minor, patch),
-				MinimumMemory:  rocmMinimumMemory,
-				FlashAttention: true, // Supposedly ROCm supports it everywhere
+				MinimumMemory:  rocmMinimumMemory,				
 				DriverMajor:    driverMajor,
 				DriverMinor:    driverMinor,
 			},
