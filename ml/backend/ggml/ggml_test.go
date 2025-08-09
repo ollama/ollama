@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/logutil"
@@ -36,7 +37,13 @@ func setup(tb testing.TB) ml.Backend {
 		tb.Fatal(err)
 	}
 
-	b, err := New(f.Name(), ml.BackendParams{NumGPULayers: 1})
+	var gpuList ml.GPULayersList
+	gpus := discover.GetGPUInfo()
+	if len(gpus) > 0 {
+		gpuList = ml.GPULayersList{{ID: gpus[0].ID, Layers: []int{0}}}
+	}
+
+	b, err := New(f.Name(), ml.BackendParams{AllocMemory: true, GPULayers: gpuList})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -48,7 +55,7 @@ func setup(tb testing.TB) ml.Backend {
 // If GPUs are not available, the current test is skipped
 // gpu=false will always succed
 func initContextOrSkip(t *testing.T, b ml.Backend, gpu bool) ml.Context {
-	if gpu && len(b.(*Backend).schedBackends) == 1 {
+	if gpu && len(b.(*Backend).requiredMemory.GPUs) == 1 {
 		t.Skip("No GPU detected, skipping GPU test case")
 	}
 	ctx := b.NewContext()
