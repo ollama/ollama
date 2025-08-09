@@ -115,6 +115,70 @@ sudo systemctl status ollama
 > [AMD](https://www.amd.com/en/support/download/linux-drivers.html) for best support
 > of your Radeon GPU.
 
+## Generating auto-completions
+
+Ollama can generate shell completion scripts for Bash, Zsh, Fish, and PowerShell (pwsh).
+
+You can load completions for the current session, or install them so they load automatically in new sessions. After 
+installing persistent completions, start a new shell for the changes to take effect.
+
+> Tip: You can disable inline completion descriptions by adding the flag `--no-descriptions` to any of the commands below.
+
+### Bash
+
+Load for the current session:
+```shell
+source <(ollama completion bash)
+```
+
+Install for all future sessions (Linux):
+```shell
+ollama completion bash > /etc/bash_completion.d/ollama
+```
+
+If you need elevated permissions, you can instead run:
+```shell
+ollama completion bash | sudo tee /etc/bash_completion.d/ollama > /dev/null
+```
+
+### Zsh
+
+Load for the current session:
+```shell
+source <(ollama completion zsh)
+```
+
+Install for all future sessions:
+```shell
+ollama completion zsh > "${fpath[1]}/_ollama"
+```
+
+Ensure the target directory in `fpath` exists and is writable.
+
+### Fish
+
+Load for the current session:
+```shell
+ollama completion fish | source
+```
+
+Install for all future sessions:
+```shell
+ollama completion fish > ~/.config/fish/completions/ollama.fish
+```
+
+### PowerShell (pwsh)
+
+Load for the current session:
+```shell
+ollama completion powershell | Out-String | Invoke-Expression
+```
+
+Install for all future sessions by adding the above command to your PowerShell profile. For example:
+```shell
+Add-Content -Path $PROFILE -Value "`r`n", '(&  ollama completion powershell) | Out-String | Invoke-Expression'
+```
+
 ## Customizing
 
 To customize the installation of Ollama, you can edit the systemd service file or the environment variables by running:
