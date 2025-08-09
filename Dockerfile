@@ -108,7 +108,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama
 COPY --from=vulkan  dist/lib/ollama/vulkan  /lib/ollama/vulkan
 
 FROM --platform=linux/arm64 scratch AS arm64
