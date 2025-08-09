@@ -411,6 +411,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ollama launcher](https://github.com/NGC13009/ollama-launcher) (A launcher for Ollama, aiming to provide users with convenient functions such as ollama server launching, management, or configuration.)
 - [ai-hub](https://github.com/Aj-Seven/ai-hub) (AI Hub supports multiple models via API keys and Chat support via Ollama API.)
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) (Open source document management system to organize, tag, search, and automate your files with powerful Ollama driven workflows.)
+- [OllamaChat](https://github.com/vaccarov/OllamaChat) A modern, multi-languages dashboard with import/export, voice transcription, image analysis and remote use capabilities
 
 ### Cloud
 
