@@ -15,7 +15,7 @@ RUN yum install -y yum-utils \
     && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
     && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
     && dnf install -y ccache \
-    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo 
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 ARG VULKANVERSION
 RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
@@ -108,7 +108,6 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
 COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
 COPY --from=vulkan  dist/lib/ollama/vulkan  /lib/ollama/vulkan
 
@@ -131,8 +130,8 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin
-COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
