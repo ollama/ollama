@@ -529,7 +529,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 						slog.Warn("file read error", "file", b.modelPath, "error", err)
 						return err
 					}
-					for j := 0; j < n/BS; j++ {
+					for j := range n / BS {
 						for i := 1; i < BS; i++ {
 							// swap nibbles
 							t_lo := bts[j*BS+i] & 0x0F
@@ -558,7 +558,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 							tmp[oi] = out1
 							oi++
 						}
-						for i := range len(tmp) {
+						for i := range tmp {
 							bts[j*BS+i+1] = tmp[i]
 						}
 					}

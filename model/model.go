@@ -177,9 +177,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				fn = func(tags []Tag) (names [][]string) {
 					if len(tags) > 0 {
 						localNames := []string{tags[0].Name}
-						for _, alt := range tags[0].Alternate {
-							localNames = append(localNames, alt)
-						}
+						localNames = append(localNames, tags[0].Alternate...)
 
 						for _, localName := range localNames {
 							fullName := []string{localName}
