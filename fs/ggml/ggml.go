@@ -328,7 +328,7 @@ func (t TensorType) TypeSize() uint64 {
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
-	case TensorTypeMXFP4:
+	case TensorTypeMXFP4, 39:
 		return 1 + blockSize/2
 	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
@@ -758,10 +758,6 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
-		return false
-	}
-
-	if f.KV().Architecture() == "gptoss" {
 		return false
 	}
 

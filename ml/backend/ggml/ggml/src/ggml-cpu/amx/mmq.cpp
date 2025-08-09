@@ -8,7 +8,8 @@
 #include "mmq.h"
 #include "ggml-impl.h"
 #include "ggml-cpu-impl.h"
-#include "ggml-cpu-quants.h"
+#include "simd-mappings.h"
+#include "quants.h"
 #include "ggml-quants.h"
 #include <algorithm>
 #include <type_traits>
@@ -453,7 +454,7 @@ void quantize_row_q8_K_vnni(const float * RESTRICT x, void * RESTRICT vy, int64_
 
         // Quantize these floats
         const float iscale = 127.f / amax;
-        y[i].d = GGML_FP32_TO_FP16(1 / iscale);
+        y[i].d = GGML_CPU_FP32_TO_FP16(1 / iscale);
         const float id = ( amax != 0.0f ) ? iscale : 0.f;
         const __m512 vscale = _mm512_set1_ps(id);
 
@@ -1090,7 +1091,7 @@ struct acc_C<block_q8_0, block_q4_0, is_acc> {
         const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)((const char *)packed_B + offset)));
 
         for (int m = 0; m < nr; ++m) {
-            const __m512 vd1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[m * lda].d));
+            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].d));
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
             __m512 vsum;
@@ -1113,8 +1114,8 @@ struct acc_C<block_q8_1, block_q4_1, is_acc> {
         const __m512 vm0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)((const char *)packed_B + offset + TILE_N * sizeof(ggml_half))));
 
         for (int m = 0; m < nr; ++m) {
-            const __m512 vd1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[m * lda].d));
-            const __m512 vs1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[m * lda].s));
+            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].d));
+            const __m512 vs1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].s));
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
             __m512 vsum;
@@ -1137,7 +1138,7 @@ struct acc_C<block_q8_0, block_q8_0, is_acc> {
         const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)((const char *)packed_B + offset)));
 
         for (int m = 0; m < nr; ++m) {
-            const __m512 vd1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[m * lda].d));
+            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].d));
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
             __m512 vsum;
@@ -1437,7 +1438,7 @@ struct tinygemm_kernel_vnni<block_q8_0, block_q4_0, float, BLOCK_M, BLOCK_N, BLO
                     va[k] = _mm512_set1_epi32(a_ptr[k]);
                     vcomp = _mm512_dpbusd_epi32(vcomp, off, va[k]);
                 }
-                vd1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[0 * KB + i].d));
+                vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[0 * KB + i].d));
             }
 
             // load b
@@ -1498,8 +1499,8 @@ struct tinygemm_kernel_vnni<block_q8_1, block_q4_1, float, 1, BLOCK_N, BLOCK_K> 
                 for (int k = 0; k < 8; ++k) {
                     va[k] = _mm512_set1_epi32(a_ptr[k]);
                 }
-                vd1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[0 * KB + i].d));
-                vs1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[0 * KB + i].s));
+                vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[0 * KB + i].d));
+                vs1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[0 * KB + i].s));
             }
 
             // load b
@@ -1571,7 +1572,7 @@ struct tinygemm_kernel_vnni<block_q8_0, block_q8_0, float, BLOCK_M, BLOCK_N, BLO
                     va[k] = _mm512_set1_epi32(a_ptr[k]);
                     va[k] = _mm512_add_epi8(va[k], off);
                 }
-                vd1 = _mm512_set1_ps(GGML_FP16_TO_FP32(A[0 * KB + i].d));
+                vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[0 * KB + i].d));
             }
 
             // load b

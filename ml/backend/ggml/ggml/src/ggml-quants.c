@@ -21,6 +21,17 @@
 
 #define UNUSED GGML_UNUSED
 
+static inline int best_index_int8(int n, const int8_t * val, float x) {
+    if (x <= val[0]) return 0;
+    if (x >= val[n-1]) return n-1;
+    int ml = 0, mu = n-1;
+    while (mu-ml > 1) {
+        int mav = (ml+mu)/2;
+        if (x < val[mav]) mu = mav; else ml = mav;
+    }
+    return x - val[mu-1] < val[mu] - x ? mu-1 : mu;
+}
+
 // reference implementation for deterministic creation of model files
 void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_RESTRICT y, int64_t k) {
     static const int qk = QK4_0;
@@ -246,6 +257,53 @@ void quantize_row_q8_1_ref(const float * GGML_RESTRICT x, block_q8_1 * GGML_REST
     }
 }
 
+static inline int best_index_mxfp4(float x, float e) {
+    int best_index = 0;
+    float best_err = fabsf(kvalues_mxfp4[0]*e - x);
+    for (int i = 1; i < 16; i++) {
+        float err = fabsf(kvalues_mxfp4[i]*e - x);
+        if (err < best_err) {
+            best_index = i;
+            best_err = err;
+        }
+    }
+    return best_index;
+}
+
+void quantize_row_mxfp4_ref(const float * GGML_RESTRICT x, block_mxfp4 * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK_MXFP4;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        float amax = 0.0f; // absolute max
+
+        for (int j = 0; j < qk; j++) {
+            const float v = x[i*qk + j];
+
+            if (amax < fabsf(v)) {
+                amax = fabsf(v);
+            }
+        }
+
+        const uint8_t e = amax > 0.0f ? (uint8_t) (floorf(log2f(amax)) - 2 + 127) : 0;
+
+        const float d = GGML_E8M0_TO_FP32_HALF(e);
+
+        y[i].e = e;
+
+        for (int j = 0; j < qk/2; ++j) {
+            const uint8_t x0 = best_index_mxfp4(x[i*qk + 0    + j], d);
+            const uint8_t x1 = best_index_mxfp4(x[i*qk + qk/2 + j], d);
+
+            y[i].qs[j]  = x0;
+            y[i].qs[j] |= x1 << 4;
+        }
+    }
+}
+
 void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
     static const int qk = QK4_0;
 
@@ -352,6 +410,26 @@ void dequantize_row_q8_0(const block_q8_0 * GGML_RESTRICT x, float * GGML_RESTRI
 
         for (int j = 0; j < qk; ++j) {
             y[i*qk + j] = x[i].qs[j]*d;
+        }
+    }
+}
+
+void dequantize_row_mxfp4(const block_mxfp4 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK_MXFP4;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        const float d = GGML_E8M0_TO_FP32_HALF(x[i].e);
+
+        for (int j = 0; j < qk/2; ++j) {
+            const int8_t x0 = kvalues_mxfp4[x[i].qs[j] & 0x0F];
+            const int8_t x1 = kvalues_mxfp4[x[i].qs[j] >>   4];
+
+            y[i*qk + j + 0   ] = x0*d;
+            y[i*qk + j + qk/2] = x1*d;
         }
     }
 }
@@ -568,14 +646,14 @@ static float make_qkx2_quants(int n, int nmax, const float * GGML_RESTRICT x, co
     }
     float iscale = nmax/(max - min);
     float scale = 1/iscale;
-    float best_mad = 0;
+    float best_error = 0;
     for (int i = 0; i < n; ++i) {
         int l = nearest_int(iscale*(x[i] - min));
         L[i] = MAX(0, MIN(nmax, l));
         float diff = scale * L[i] + min - x[i];
         diff = use_mad ? fabsf(diff) : diff * diff;
         float w = weights[i];
-        best_mad += w * diff;
+        best_error += w * diff;
     }
     if (nstep < 1) {
         *the_min = -min;
@@ -601,18 +679,18 @@ static float make_qkx2_quants(int n, int nmax, const float * GGML_RESTRICT x, co
                 this_min = 0;
                 this_scale = sum_xl / sum_l2;
             }
-            float mad = 0;
+            float cur_error = 0;
             for (int i = 0; i < n; ++i) {
                 float diff = this_scale * Laux[i] + this_min - x[i];
                 diff = use_mad ? fabsf(diff) : diff * diff;
                 float w = weights[i];
-                mad += w * diff;
+                cur_error += w * diff;
             }
-            if (mad < best_mad) {
+            if (cur_error < best_error) {
                 for (int i = 0; i < n; ++i) {
                     L[i] = Laux[i];
                 }
-                best_mad = mad;
+                best_error = cur_error;
                 scale = this_scale;
                 min = this_min;
             }
@@ -2014,6 +2092,12 @@ size_t quantize_q8_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, 
     return nrow * row_size;
 }
 
+size_t quantize_mxfp4(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * quant_weights) {
+    GGML_UNUSED(quant_weights);
+    quantize_row_mxfp4_ref(src, dst, (int64_t)nrow*n_per_row);
+    return nrow * ggml_row_size(GGML_TYPE_MXFP4, n_per_row);
+}
+
 // ====================== Ternary (de)-quantization (BitNet b1.58 and TriLMs)
 
 void quantize_row_tq1_0_ref(const float * GGML_RESTRICT x, block_tq1_0 * GGML_RESTRICT y, int64_t k) {
@@ -2424,8 +2508,6 @@ void dequantize_row_iq1_m(const block_iq1_m * GGML_RESTRICT x, float * GGML_REST
         }
     }
 }
-
-static const int8_t kvalues_iq4nl[16] = {-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113};
 
 void dequantize_row_iq4_nl(const block_iq4_nl * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
     assert(k % QK4_NL == 0);
@@ -4553,17 +4635,6 @@ size_t quantize_iq1_m(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
 
 // ============================ 4-bit non-linear quants
 
-static inline int best_index_int8(int n, const int8_t * val, float x) {
-    if (x <= val[0]) return 0;
-    if (x >= val[n-1]) return n-1;
-    int ml = 0, mu = n-1;
-    while (mu-ml > 1) {
-        int mav = (ml+mu)/2;
-        if (x < val[mav]) mu = mav; else ml = mav;
-    }
-    return x - val[mu-1] < val[mu] - x ? mu-1 : mu;
-}
-
 static void quantize_row_iq4_nl_impl(const int super_block_size, const int block_size, const float * GGML_RESTRICT x,
         ggml_fp16_t * dh, uint8_t * q4, uint16_t * scales_h, uint8_t * scales_l,
         float * scales, float * weight, uint8_t * L,
@@ -4925,144 +4996,6 @@ void quantize_row_iq2_s_ref(const float * GGML_RESTRICT x, block_iq2_s * GGML_RE
     quantize_iq2_s(x, y, 1, k, NULL);
 }
 
-// =============================== mxfp4 (de)-quantization
-
-void quantize_row_mxfp4_ref(const float * GGML_RESTRICT x, block_mxfp4 * GGML_RESTRICT y, int64_t k) {
-    static const int qk = MXFP4;
-    static const uint32_t E8_BIAS = 127;
-    static const uint32_t E2_BIAS = 1;
-
-    assert(k % qk == 0);
-
-    const int nb = k / qk;
-
-    for (int i = 0; i < nb; i++) {
-        float amax = 0.0f; // absolute max
-
-        for (int j = 0; j < qk; j++) {
-            const float v = x[i*qk + j];
-            if (amax < fabsf(v)) {
-                amax = fabsf(v);
-            }
-        }
-
-        const float dequant_scale  = amax / 6.0f;
-        uint32_t dequant_scale_exponent = 0;
-        memcpy(&dequant_scale_exponent, &dequant_scale, sizeof(dequant_scale_exponent));
-
-        // Rounding up
-        dequant_scale_exponent = (dequant_scale_exponent + 0x007FFFFF) & 0x7F800000;
-        // Rounding down
-        // dequant_scale_exponent = dequant_scale_exponent & 0x7F800000;
-
-        float dequant_scale_rounded = 0.0f;
-        memcpy(&dequant_scale_rounded, &dequant_scale_exponent, sizeof(dequant_scale_rounded));
-        float quant_scale = 0.0f;
-        if (dequant_scale_rounded != 0.0f) {
-            quant_scale = 1.0f / dequant_scale_rounded;
-        }
-
-        y[i].d = (uint8_t)(dequant_scale_exponent >> 23);
-
-        for (int j = 0; j < qk/2; ++j) {
-            const float x0 = x[i*qk + j*2]*quant_scale;
-            const float x1 = x[i*qk + j*2+1]*quant_scale;
-
-            uint32_t xi0 = 0;
-            uint32_t xi1 = 0;
-            memcpy(&xi0, &x0, sizeof(xi0));
-            memcpy(&xi1, &x1, sizeof(xi1));
-
-            uint32_t s0 = xi0 & 0x80000000;
-            uint32_t s1 = xi1 & 0x80000000;
-            uint32_t e0 = (xi0 >> 23) & 0xFF;
-            uint32_t e1 = (xi1 >> 23) & 0xFF;
-            uint32_t m0 = (xi0 & 0x7FFFFF);
-            uint32_t m1 = (xi1 & 0x7FFFFF);
-
-            // 0.25 <= x < 0.75 maps to 0.5, a denormal number
-            // Move implicit bit 1 at the beginning to mantissa for denormals
-            // adjusted_exponents
-            uint32_t ae0 = E8_BIAS - (e0 + 1);
-            uint32_t ae1 = E8_BIAS - (e1 + 1);
-            if (e0 < E8_BIAS) {
-                m0 = (0x400000 | (m0 >> 1)) >> ae0;
-            }
-            if (e1 < E8_BIAS) {
-                m1 = (0x400000 | (m1 >> 1)) >> ae1;
-            }
-
-            // For normal numbers, we change the bias from 127 to 1, and for subnormals, we keep exponent as 0.
-            e0 = MAX(e0, E8_BIAS - E2_BIAS) - (E8_BIAS - E2_BIAS);
-            e1 = MAX(e1, E8_BIAS - E2_BIAS) - (E8_BIAS - E2_BIAS);
-
-            // Combine sign, exponent, and mantissa, while saturating
-            // rounding nearest with tie breaking up by adding +1 to one bit right of the LSB, then shift right
-            uint32_t tmp0 = MIN((((e0 << 2) | (m0 >> 21)) + 1) >> 1, 0x7);
-            uint32_t tmp1 = MIN((((e1 << 2) | (m1 >> 21)) + 1) >> 1, 0x7);
-            uint8_t v0 = (uint8_t)((s0 >> 28) | tmp0);
-            uint8_t v1 = (uint8_t)((s1 >> 28) | tmp1);           
-            y[i].qs[j]  = v0;
-            y[i].qs[j] |= v1 << 4;
-        }
-    }
-}
-
-void dequantize_row_mxfp4(const block_mxfp4 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
-    assert(k % MXFP4 == 0);
-
-    const int nb = k / MXFP4;
-    const uint16_t dst_bias = 15;
-    const uint16_t dst_0p5 = 0x3800;
-    const uint16_t dst_m_bits = 10;
-
-    for (int i = 0; i < nb; i++) {
-        union {
-            uint32_t as_bits;
-            float as_value;
-        } scale;
-        scale.as_bits = (((uint32_t)x[i].d) << 23);
-        for (int j = 0; j < MXFP4/2; ++j) {
-            uint16_t em0 = x[i].qs[j] & 0x07;
-            uint16_t em1 = x[i].qs[j] & 0x70;
-            // float16 values
-            uint16_t x0 = (em0 << (dst_m_bits - 1)) | ((x[i].qs[j] & 0x08) << 12);
-            uint16_t x1 = (em1 << (dst_m_bits - 5)) | ((x[i].qs[j] & 0x80) << 8);
-
-            // Three cases:
-            // x is normal and non-zero: Correct bias
-            if ((em0 & 0x06) != 0) {
-                x0 = x0 + ((dst_bias - 1) << dst_m_bits);
-            }
-            if ((em1 & 0x60) != 0) {
-                x1 = x1 + ((dst_bias - 1) << dst_m_bits);
-            }
-            // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
-            if (em0 == 0x01) {
-                x0 = dst_0p5 | (x0 & 0x8000);
-            }
-            if (em1 == 0x10) {
-                x1 = dst_0p5 | (x1 & 0x8000);
-            }
-            // x is zero, do nothing
-
-            if (isnan(scale.as_value)) {
-                y[i*MXFP4 + j*2] = scale.as_value;
-                y[i*MXFP4 + j*2+1] = scale.as_value;
-            } else {
-                y[i*MXFP4 + j*2] = GGML_FP16_TO_FP32(x0)*scale.as_value;
-                y[i*MXFP4 + j*2+1] = GGML_FP16_TO_FP32(x1)*scale.as_value;
-            }
-        }
-    }
-}
-
-
-size_t quantize_mxfp4(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * quant_weights) {
-    quantize_row_mxfp4_ref(src, dst, (int64_t)nrow*n_per_row);
-    return nrow * ggml_row_size(GGML_TYPE_MXFP4, n_per_row);
-}
-
 // =============================== data validation
 
 static bool validate_float(float f, size_t i) {
@@ -5101,6 +5034,15 @@ static bool validate_fp16(ggml_fp16_t f, size_t i) {
     return true;
 }
 
+static bool validate_e_e8m0(uint8_t e, size_t i) {
+    if (e == 0xff) {
+        fprintf(stderr, "ggml_validate_row_data: found invalid e value %d at block %zu\n", e, i);
+        return false;
+    }
+
+    return true;
+}
+
 #define VALIDATE_ROW_DATA_D_F16_IMPL(type, data, nb) \
     const type * q = (const type *) (data); \
     for (size_t i = 0; i < (nb); ++i) { \
@@ -5113,6 +5055,14 @@ static bool validate_fp16(ggml_fp16_t f, size_t i) {
     const type * q = (const type *) (data); \
     for (size_t i = 0; i < (nb); ++i) { \
         if (!validate_fp16(q[i].d, i) || !validate_fp16(q[i].m, i)) { \
+            return false; \
+        } \
+    }
+
+#define VALIDATE_ROW_DATA_E_E8M0_IMPL(type, data, nb) \
+    const type * q = (const type *) (data); \
+    for (size_t i = 0; i < (nb); ++i) { \
+        if (!validate_e_e8m0(q[i].e, i)) { \
             return false; \
         } \
     }
@@ -5270,6 +5220,10 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q8_0, data, nb);
             } break;
+        case GGML_TYPE_MXFP4:
+            {
+                VALIDATE_ROW_DATA_E_E8M0_IMPL(block_mxfp4, data, nb);
+            } break;
         case GGML_TYPE_Q2_K:
             {
                 VALIDATE_ROW_DATA_DM_F16_IMPL(block_q2_K, data, nb, d, dmin);
@@ -5352,9 +5306,7 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_iq4_nl, data, nb);
             } break;
-        case GGML_TYPE_MXFP4:
-            // TODO - anything to validate?
-            break;
+
         case GGML_TYPE_I8:
         case GGML_TYPE_I16:
         case GGML_TYPE_I32:

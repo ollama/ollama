@@ -266,6 +266,12 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if tt := C.ggml_get_tensor(ctxs[bt], cname); tt != nil {
 				return tt
 			}
+			if t.source.Kind == 4 {
+				// HACK: transition from original mxfp4 implementation to ggml implementation
+				t.source.Kind = 39
+			} else if t.source.Kind == uint32(fsggml.TensorTypeBF16) && strings.HasSuffix(t.source.Name, "_exps.bias") {
+				t.source.Kind = uint32(fsggml.TensorTypeF32)
+			}
 
 			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
 			C.ggml_set_name(tt, cname)
@@ -507,6 +513,96 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 			}
 			defer file.Close()
 			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
+
+			// TODO this should use some other marker to toggle behavior so we can support loading type=4 and type=39
+			if t.Kind == 39 {
+				const BS = 17                             // MXFP4 block size
+				bts := make([]byte, 8*BS*format.KibiByte) // ~128k block aligned
+				var s uint64
+				for s < t.Size() {
+					// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
+					if err != nil {
+						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						return err
+					}
+					for j := range n / BS {
+						for i := 1; i < BS; i++ {
+							// swap nibbles
+							t_lo := bts[j*BS+i] & 0x0F
+							t_hi := bts[j*BS+i] & 0xF0
+							bts[j*BS+i] = (t_lo << 4) | (t_hi >> 4)
+						}
+						// transform aaaa...bbbb... to abababab...
+						oi := 0
+						tmp := [16]byte{}
+						for i := 1; i < 9; i++ {
+							blk_a0 := bts[j*BS+i] & 0xF0
+							blk_a1 := bts[j*BS+i] << 4
+							blk_b0 := bts[j*BS+i+8] >> 4
+							blk_b1 := bts[j*BS+i+8] & 0x0F
+							// swap once more
+							out0 := blk_a0 | blk_b0
+							out1 := blk_a1 | blk_b1
+							out_h0 := out0 & 0xF0
+							out_l0 := out0 & 0x0F
+							out_h1 := out1 & 0xF0
+							out_l1 := out1 & 0x0F
+							out0 = (out_h0 >> 4) | (out_l0 << 4)
+							out1 = (out_h1 >> 4) | (out_l1 << 4)
+							tmp[oi] = out0
+							oi++
+							tmp[oi] = out1
+							oi++
+						}
+						for i := range tmp {
+							bts[j*BS+i+1] = tmp[i]
+						}
+					}
+
+					for _, tt := range tts {
+						C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
+					}
+
+					s += uint64(n)
+
+					if progress != nil {
+						done := doneBytes.Add(uint64(n))
+						progress(float32(done) / float32(totalBytes))
+					}
+				}
+				return nil
+			} else if strings.HasSuffix(t.Name, "_exps.bias") && t.Kind == 0 {
+				// data is bf16 but we need to convert to fp32
+				bts := make([]byte, 128*format.KibiByte)
+				var e uint64
+				for e < t.Elements() {
+					// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Elements()-e)*2)])
+					if err != nil {
+						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						return err
+					}
+					fp32 := ConvertToF32(bts, uint32(fsggml.TensorTypeBF16), uint64(n/2))
+
+					for _, tt := range tts {
+						C.ggml_backend_tensor_set(tt, unsafe.Pointer(&fp32[0]), C.size_t(e*4), C.size_t(n*2))
+					}
+					e += uint64(n / 2)
+					if progress != nil {
+						done := doneBytes.Add(uint64(n))
+						progress(float32(done) / float32(totalBytes))
+					}
+				}
+				return nil
+			}
+
 			bts := make([]byte, 128*format.KibiByte)
 
 			var s uint64
@@ -1063,6 +1159,13 @@ func (t *Tensor) MulmatID(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) AddID(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_add_id(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, ids.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	tt := C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))
 	if w != nil {
@@ -1310,6 +1413,13 @@ func (t *Tensor) RELU(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SwiGLU(ctx ml.Context, up ml.Tensor, alpha, limit float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_swiglu_oai(ctx.(*Context).ctx, t.t, up.(*Tensor).t, C.float(alpha), C.float(limit)),
+	}
+}
+
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1338,7 +1448,7 @@ func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) m
 	return &Tensor{b: t.b, t: tt}
 }
 
-func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.Tensor, scale float64) ml.Tensor {
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, scale float64) ml.Tensor {
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
 		kqMask = mask.(*Tensor).t
@@ -1351,6 +1461,9 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.T
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
 		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
+		if sinks != nil {
+			C.ggml_flash_attn_ext_add_sinks(kqv, sinks.(*Tensor).t)
+		}
 		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32)
 		return &Tensor{b: t.b, t: kqv}
 	} else {
@@ -1358,6 +1471,9 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.T
 		kq = &Tensor{
 			b: t.b,
 			t: C.ggml_soft_max_ext(ctx.(*Context).ctx, kq.(*Tensor).t, kqMask, C.float(scale), 0),
+		}
+		if sinks != nil {
+			C.ggml_soft_max_add_sinks(kq.(*Tensor).t, sinks.(*Tensor).t)
 		}
 
 		kqv := value.Mulmat(ctx, kq)

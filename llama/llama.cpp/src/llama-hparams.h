@@ -6,12 +6,19 @@
 
 // bump if necessary
 #define LLAMA_MAX_LAYERS  512
-#define LLAMA_MAX_EXPERTS 256  // DeepSeekV3
+#define LLAMA_MAX_EXPERTS 384  // Kimi-K2
 
 enum llama_expert_gating_func_type {
-    LLAMA_EXPERT_GATING_FUNC_TYPE_NONE    = 0,
-    LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX = 1,
-    LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID = 2,
+    LLAMA_EXPERT_GATING_FUNC_TYPE_NONE           = 0,
+    LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX        = 1,
+    LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID        = 2,
+    LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX_WEIGHT = 3, // applied to the router weights instead of the logits
+};
+
+enum llama_swa_type {
+    LLAMA_SWA_TYPE_NONE     = 0,
+    LLAMA_SWA_TYPE_STANDARD = 1,
+    LLAMA_SWA_TYPE_CHUNKED  = 2,
 };
 
 struct llama_hparams_posnet {
@@ -35,8 +42,6 @@ struct llama_hparams {
     uint32_t n_embd_features = 0;
     uint32_t n_layer;
     uint32_t n_rot;
-    uint32_t n_swa = 0; // sliding window attention (SWA)
-    uint32_t n_swa_pattern = 1; // by default, all layers use non-sliding-window attention
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
     uint32_t n_expert = 0;
@@ -50,6 +55,8 @@ struct llama_hparams {
     // for WavTokenizer
     struct llama_hparams_posnet   posnet;
     struct llama_hparams_convnext convnext;
+
+    uint32_t n_shortconv_l_cache  = 0;
 
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_arr;
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
@@ -69,6 +76,7 @@ struct llama_hparams {
     bool     expert_weights_norm  = false;
     uint32_t expert_gating_func   = LLAMA_EXPERT_GATING_FUNC_TYPE_NONE;
     uint32_t moe_every_n_layers   = 0;
+    uint32_t nextn_predict_layers = 0;
 
     float f_norm_eps;
     float f_norm_rms_eps;
@@ -94,15 +102,28 @@ struct llama_hparams {
     float    rope_freq_scale_train;
     float    rope_freq_scale_train_swa;
     uint32_t n_ctx_orig_yarn;
-    float    rope_yarn_log_mul;
+    float    rope_yarn_log_mul = 0.0f;
 
     std::array<int, 4> rope_sections;
+
+    // Sliding Window Attention (SWA)
+    llama_swa_type swa_type = LLAMA_SWA_TYPE_NONE;
+    // the size of the sliding window (0 - no SWA)
+    uint32_t n_swa = 0;
+    // if swa_layers[il] == true, then layer il is SWA
+    // if swa_layers[il] == false, then layer il is dense (i.e. non-SWA)
+    // by default, all layers are dense
+    std::array<bool, LLAMA_MAX_LAYERS> swa_layers;
 
     // for State Space Models
     uint32_t ssm_d_conv  = 0;
     uint32_t ssm_d_inner = 0;
     uint32_t ssm_d_state = 0;
     uint32_t ssm_dt_rank = 0;
+    uint32_t ssm_n_group = 0;
+
+    // for hybrid state space models
+    std::array<bool, LLAMA_MAX_LAYERS> recurrent_layer_arr;
 
     bool ssm_dt_b_c_rms = false;
 
@@ -118,14 +139,22 @@ struct llama_hparams {
     bool causal_attn   = true;
     bool use_alibi     = false;
     bool attn_soft_cap = false;
+    bool use_kq_norm   = true;
 
+    // for Classifiers
+    uint32_t n_cls_out = 1;
+
+    // llama4 smallthinker
     uint32_t n_moe_layer_step        = 0;
-    bool     use_kq_norm             = true;
-    uint32_t n_attn_chunk            = 0;
-    // values below seems to be fixed on llama4
     uint32_t n_no_rope_layer_step    = 4;
     uint32_t n_attn_temp_floor_scale = 8192;
     float    f_attn_temp_scale       = 0.1;
+
+    // gemma3n altup
+    uint32_t n_altup      = 4; // altup_num_inputs
+    uint32_t i_altup_act  = 0; // altup_active_idx
+    uint32_t laurel_rank  = 64;
+    uint32_t n_embd_altup = 256;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141
@@ -134,6 +163,30 @@ struct llama_hparams {
     enum llama_pooling_type      pooling_type            = LLAMA_POOLING_TYPE_NONE;
     enum llama_rope_type         rope_type               = LLAMA_ROPE_TYPE_NONE;
     enum llama_rope_scaling_type rope_scaling_type_train = LLAMA_ROPE_SCALING_TYPE_NONE;
+
+    // this value n_pattern means that every nth layer is dense (i.e. non-SWA)
+    // dense_first means whether the pattern is start with a dense layer
+    // note that if n_pattern == 0, all layers are SWA
+    //           if n_pattern == 1, all layers are dense
+    // example 1: n_pattern = 3, dense_first = false
+    //   il == 0: swa
+    //   il == 1: swa
+    //   il == 2: dense
+    //   il == 3: swa
+    //   il == 4: swa
+    //   il == 5: dense
+    //   il == 6: swa
+    //   etc ...
+    // example 2: n_pattern = 2, dense_first = true
+    //   il == 0: dense
+    //   il == 1: swa
+    //   il == 2: dense
+    //   il == 3: swa
+    //   etc ...
+    void set_swa_pattern(uint32_t n_pattern, bool dense_first = false);
+
+    // return true if one of the layers is SWA
+    bool is_swa_any() const;
 
     uint32_t n_head(uint32_t il = 0) const;
 
@@ -149,12 +202,25 @@ struct llama_hparams {
     // dimension of value embeddings across all k-v heads
     uint32_t n_embd_v_gqa(uint32_t il = 0) const;
 
+    // true if any layer has a different n_embd_k_gqa/n_embd_v_gqa
+    bool is_n_embd_k_gqa_variable() const;
+    bool is_n_embd_v_gqa_variable() const;
+
+    // return the maximum n_embd_k_gqa/n_embd_v_gqa across all layers
+    uint32_t n_embd_k_gqa_max() const;
+    uint32_t n_embd_v_gqa_max() const;
+
     // dimension of the rolling state embeddings
     // corresponds to Mamba's conv_states size or RWKV's token_shift states size
-    uint32_t n_embd_k_s() const;
+    uint32_t n_embd_r() const;
 
     // dimension of the recurrent state embeddings
-    uint32_t n_embd_v_s() const;
+    uint32_t n_embd_s() const;
+
+    // whether or not the given layer is recurrent (for hybrid models)
+    bool is_recurrent(uint32_t il) const;
+
+    uint32_t n_pos_per_embd() const;
 
     // Block skip connection
     bool n_bskcn(uint32_t n, uint32_t il) const;
