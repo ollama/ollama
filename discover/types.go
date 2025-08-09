@@ -36,9 +36,10 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	UnreliableFreeMemory bool
 
 	// GPU information
-	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
-	Name    string `json:"name"`    // user friendly name if available
-	Compute string `json:"compute"` // Compute Capability or gfx
+	ID             string `json:"gpu_id"`          // string to use for selection of this specific GPU
+	Name           string `json:"name"`            // user friendly name if available
+	Compute        string `json:"compute"`         // Compute Capability or gfx
+	FlashAttention bool   `json:"flash_attention"` // is flash attention supported
 
 	// Driver Information - TODO no need to put this on each GPU
 	DriverMajor int `json:"driver_major,omitempty"`
@@ -91,6 +92,13 @@ type OneapiGPUInfo struct {
 	gpuIndex    int //nolint:unused,nolintlint
 }
 type OneapiGPUInfoList []OneapiGPUInfo
+
+type VulkanGPUInfo struct {
+	GpuInfo
+	index int
+}
+
+type VulkanGPUInfoList []VulkanGPUInfo
 
 type GpuInfoList []GpuInfo
 
@@ -171,11 +179,7 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 // For each GPU, check if it does NOT support flash attention
 func (l GpuInfoList) FlashAttentionSupported() bool {
 	for _, gpu := range l {
-		supportsFA := gpu.Library == "metal" ||
-			(gpu.Library == "cuda" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "rocm"
-
-		if !supportsFA {
+		if !gpu.FlashAttention {
 			return false
 		}
 	}
