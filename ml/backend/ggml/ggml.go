@@ -267,12 +267,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				return tt
 			}
 			if t.source.Kind == 4 {
-				slog.Info("XXX mapping MXFP4 type", "name", name)
+				// HACK: transition from original mxfp4 implementation to ggml implementation
 				t.source.Kind = 39
-			}
-			// SUPER HACKY!  bf16->fp32
-			if strings.HasSuffix(t.source.Name, "_exps.bias") && t.source.Kind == uint32(fsggml.TensorTypeBF16) {
-				slog.Info("XXX mapping bf16 to fp32", "name", name, "offset", t.source.Offset, "elements", t.source.Elements())
+			} else if t.source.Kind == uint32(fsggml.TensorTypeBF16) && strings.HasSuffix(t.source.Name, "_exps.bias") {
 				t.source.Kind = uint32(fsggml.TensorTypeF32)
 			}
 
