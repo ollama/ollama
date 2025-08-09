@@ -750,7 +750,11 @@ func (s *Server) loadModel(
 	if err != nil {
 		panic(err)
 	}
-
+	if envThreads := os.Getenv("OLLAMA_NUM_THREADS"); envThreads != "" {
+              if n, err := strconv.Atoi(envThreads); err == nil && n > 0 {
+                      threads = n
+              }
+        }
 	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
