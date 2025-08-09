@@ -32,6 +32,7 @@ extern "C" {
         struct ggml_backend_buffer_type_i  iface;
         ggml_backend_dev_t device;
         void * context;
+        bool no_alloc;
     };
 
     //
@@ -44,7 +45,7 @@ extern "C" {
         // base address of the buffer
         void *       (*get_base)     (ggml_backend_buffer_t buffer);
         // (optional) initialize a tensor in the buffer (eg. add tensor extras)
-        void         (*init_tensor)  (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor);
+        enum ggml_status (*init_tensor)(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor);
         // tensor data access
         void         (*memset_tensor)(ggml_backend_buffer_t buffer,       struct ggml_tensor * tensor,     uint8_t value, size_t offset, size_t size);
         void         (*set_tensor)   (ggml_backend_buffer_t buffer,       struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
@@ -63,6 +64,7 @@ extern "C" {
         void * context;
         size_t size;
         enum ggml_backend_buffer_usage usage;
+        bool no_alloc;
     };
 
     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(

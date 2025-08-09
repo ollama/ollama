@@ -23,9 +23,10 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -35,14 +36,10 @@ var (
 	errCapabilityCompletion = errors.New("completion")
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
-)
-
-type Capability string
-
-const (
-	CapabilityCompletion = Capability("completion")
-	CapabilityTools      = Capability("tools")
-	CapabilityInsert     = Capability("insert")
+	errCapabilityVision     = errors.New("vision")
+	errCapabilityEmbedding  = errors.New("embedding")
+	errCapabilityThinking   = errors.New("thinking")
+	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
 type registryOptions struct {
@@ -65,56 +62,104 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
-	Options        map[string]interface{}
+	Options        map[string]any
 	Messages       []api.Message
 
 	Template *template.Template
 }
 
+// Capabilities returns the capabilities that the model supports
+func (m *Model) Capabilities() []model.Capability {
+	capabilities := []model.Capability{}
+
+	// Check for completion capability
+	f, err := gguf.Open(m.ModelPath)
+	if err == nil {
+		defer f.Close()
+
+		if f.KeyValue("pooling_type").Valid() {
+			capabilities = append(capabilities, model.CapabilityEmbedding)
+		} else {
+			// If no embedding is specified, we assume the model supports completion
+			capabilities = append(capabilities, model.CapabilityCompletion)
+		}
+		if f.KeyValue("vision.block_count").Valid() {
+			capabilities = append(capabilities, model.CapabilityVision)
+		}
+	} else {
+		slog.Error("couldn't open model file", "error", err)
+	}
+
+	if m.Template == nil {
+		return capabilities
+	}
+
+	// Check for tools capability
+	if slices.Contains(m.Template.Vars(), "tools") {
+		capabilities = append(capabilities, model.CapabilityTools)
+	}
+
+	// Check for insert capability
+	if slices.Contains(m.Template.Vars(), "suffix") {
+		capabilities = append(capabilities, model.CapabilityInsert)
+	}
+
+	// Check for vision capability in projector-based models
+	if len(m.ProjectorPaths) > 0 {
+		capabilities = append(capabilities, model.CapabilityVision)
+	}
+
+	// Check for thinking capability
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
+	hasTags := openingTag != "" && closingTag != ""
+	if hasTags || m.Config.ModelFamily == "gptoss" {
+		capabilities = append(capabilities, model.CapabilityThinking)
+	}
+
+	return capabilities
+}
+
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
 // any missing or unknown capabilities
-func (m *Model) CheckCapabilities(caps ...Capability) error {
+func (m *Model) CheckCapabilities(want ...model.Capability) error {
+	available := m.Capabilities()
 	var errs []error
-	for _, cap := range caps {
-		switch cap {
-		case CapabilityCompletion:
-			r, err := os.Open(m.ModelPath)
-			if err != nil {
-				slog.Error("couldn't open model file", "error", err)
-				continue
-			}
-			defer r.Close()
 
-			// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
-			f, _, err := ggml.Decode(r, 0)
-			if err != nil {
-				slog.Error("couldn't decode ggml", "error", err)
-				continue
-			}
+	// Map capabilities to their corresponding error
+	capToErr := map[model.Capability]error{
+		model.CapabilityCompletion: errCapabilityCompletion,
+		model.CapabilityTools:      errCapabilityTools,
+		model.CapabilityInsert:     errCapabilityInsert,
+		model.CapabilityVision:     errCapabilityVision,
+		model.CapabilityEmbedding:  errCapabilityEmbedding,
+		model.CapabilityThinking:   errCapabilityThinking,
+	}
 
-			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
-				errs = append(errs, errCapabilityCompletion)
-			}
-		case CapabilityTools:
-			if !slices.Contains(m.Template.Vars(), "tools") {
-				errs = append(errs, errCapabilityTools)
-			}
-		case CapabilityInsert:
-			vars := m.Template.Vars()
-			if !slices.Contains(vars, "suffix") {
-				errs = append(errs, errCapabilityInsert)
-			}
-		default:
+	for _, cap := range want {
+		err, ok := capToErr[cap]
+		if !ok {
 			slog.Error("unknown capability", "capability", cap)
 			return fmt.Errorf("unknown capability: %s", cap)
 		}
+
+		if !slices.Contains(available, cap) {
+			errs = append(errs, err)
+		}
 	}
 
-	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
+	var err error
+	if len(errs) > 0 {
+		err = fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
-	return nil
+	if slices.Contains(errs, errCapabilityThinking) {
+		if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+			// append a message to the existing error
+			return fmt.Errorf("%w. Pull the model again to get the latest version with full thinking support", err)
+		}
+	}
+
+	return err
 }
 
 func (m *Model) String() string {
@@ -479,7 +524,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errors.New("insecure protocol http")
+		return errInsecureProtocol
 	}
 
 	manifest, _, err := GetManifest(mp)
@@ -543,7 +588,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errors.New("insecure protocol http")
+		return errInsecureProtocol
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})

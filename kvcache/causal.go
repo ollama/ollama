@@ -19,16 +19,31 @@ type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, e
 // The tensors are of shape embed dim, kv heads, batch size
 // The mask is of shape history size, batch size
 type Causal struct {
-	DType      ml.DType
-	Capacity   int32
-	windowSize int32
+	DType ml.DType
+
+	// swaWindowSize is the number of tokens that will be included in the mask
+	// during attention operations. swaMemorySize is the number of tokens that
+	// will be retained in memory for partial prefix caching. Set to math.MaxInt32
+	// for unlimited or if sliding window attention is not being used.
+	swaWindowSize int32
+	swaMemorySize int32
+
+	chunkSize int32
 
 	opts CausalOptions
+
+	// maxBatch is the largest batch that we might receive
+	maxBatch int
 
 	// config controls mostly backend-specific optimizations
 	config *ml.CacheConfig
 
 	// ** current forward pass **
+
+	// curReserve indicates that this forward pass is only for
+	// memory reservation and we should not update our metadata
+	// based on it.
+	curReserve bool
 
 	// the active layer for Get and Put
 	curLayer int
@@ -80,25 +95,45 @@ type cellRange struct {
 
 func NewCausalCache(shift shiftFn) *Causal {
 	return &Causal{
-		windowSize: math.MaxInt32,
-		shiftFn:    shift,
-		ctxs:       make(map[int]ml.Context),
-		keys:       make(map[int]ml.Tensor),
-		values:     make(map[int]ml.Tensor),
+		shiftFn: shift,
+		ctxs:    make(map[int]ml.Context),
+		keys:    make(map[int]ml.Tensor),
+		values:  make(map[int]ml.Tensor),
 	}
 }
 
 func NewSWACache(windowSize int32, shift shiftFn) *Causal {
 	return &Causal{
-		windowSize: windowSize,
-		shiftFn:    shift,
-		ctxs:       make(map[int]ml.Context),
-		keys:       make(map[int]ml.Tensor),
-		values:     make(map[int]ml.Tensor),
+		swaWindowSize: windowSize,
+		shiftFn:       shift,
+		ctxs:          make(map[int]ml.Context),
+		keys:          make(map[int]ml.Tensor),
+		values:        make(map[int]ml.Tensor),
 	}
 }
 
-func (c *Causal) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
+func NewSWAMemCache(windowSize int32, memorySize int32, shift shiftFn) *Causal {
+	return &Causal{
+		swaWindowSize: windowSize,
+		swaMemorySize: memorySize,
+		shiftFn:       shift,
+		ctxs:          make(map[int]ml.Context),
+		keys:          make(map[int]ml.Tensor),
+		values:        make(map[int]ml.Tensor),
+	}
+}
+
+func NewChunkedAttentionCache(chunkSize int32, shift shiftFn) *Causal {
+	return &Causal{
+		chunkSize: chunkSize,
+		shiftFn:   shift,
+		ctxs:      make(map[int]ml.Context),
+		keys:      make(map[int]ml.Tensor),
+		values:    make(map[int]ml.Tensor),
+	}
+}
+
+func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	if c.config == nil {
 		var config ml.CacheConfig
 		if cc, ok := backend.(ml.BackendCacheConfig); ok {
@@ -119,11 +154,33 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
 		c.config.MaskDType = ml.DTypeF32
 	}
 
+	if c.swaWindowSize == 0 {
+		c.swaWindowSize = math.MaxInt32
+	}
+	if c.swaMemorySize == 0 {
+		c.swaMemorySize = c.swaWindowSize
+	}
+	if int(c.swaMemorySize) > capacity {
+		c.swaMemorySize = math.MaxInt32
+	}
+
+	if c.swaMemorySize < c.swaWindowSize {
+		panic(fmt.Errorf("sliding window memory (%v) must be at least as large as the window (%v)", c.swaMemorySize, c.swaWindowSize))
+	}
+
+	var cacheSize int
+	if c.swaMemorySize == math.MaxInt32 {
+		cacheSize = maxSequences * capacity
+	} else {
+		cacheSize = (maxSequences * int(c.swaMemorySize)) + maxBatch
+	}
+	cacheSize = roundUp(cacheSize, c.config.CachePadding)
+	c.cells = make([]cacheCell, cacheSize)
+
 	c.DType = dtype
-	c.Capacity = int32(roundUp(int(capacity), c.config.CachePadding))
-	c.cells = make([]cacheCell, c.Capacity)
 	c.cellRanges = make(map[int]cellRange)
 	c.backend = backend
+	c.maxBatch = maxBatch
 }
 
 func (c *Causal) SetConfig(config ml.CacheConfig) {
@@ -140,52 +197,56 @@ func (c *Causal) Close() {
 	}
 }
 
-func (c *Causal) StartForward(ctx ml.Context, opts input.Options) error {
-	c.curBatchSize = len(opts.Positions)
-	c.curSequences = opts.Sequences
-	c.curPositions = opts.Positions
+func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
+	c.curReserve = reserve
+	c.curBatchSize = len(batch.Positions)
+	c.curSequences = batch.Sequences
+	c.curPositions = batch.Positions
 	c.opts.Except = nil
 
-	var err error
-	c.curLoc, err = c.findStartLoc()
-	if errors.Is(err, ErrKvCacheFull) {
-		c.defrag()
+	if !c.curReserve {
+		c.updateSlidingWindow()
+
+		var err error
 		c.curLoc, err = c.findStartLoc()
+		if errors.Is(err, ErrKvCacheFull) {
+			c.defrag()
+			c.curLoc, err = c.findStartLoc()
+		}
+		if err != nil {
+			slog.Warn("unable to find a kv cache slot", "cache", c)
+			return err
+		}
+
+		for i, pos := range batch.Positions {
+			seq := batch.Sequences[i]
+
+			c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
+
+			seqRange, ok := c.cellRanges[seq]
+			if !ok {
+				seqRange = newRange()
+			}
+
+			seqRange.min = min(seqRange.min, c.curLoc+i)
+			c.curCellRange.min = min(c.curCellRange.min, c.curLoc+i)
+
+			seqRange.max = max(seqRange.max, c.curLoc+i)
+			c.curCellRange.max = max(c.curCellRange.max, c.curLoc+i)
+
+			c.cellRanges[seq] = seqRange
+		}
+	} else {
+		// If we are reserving memory, don't update any of the cache metadata but set the size
+		// to the worst case.
+		c.curLoc = 0
+		c.curCellRange.min = 0
+		c.curCellRange.max = len(c.cells) - 1
 	}
-	if err != nil {
-		return err
-	}
 
-	c.curCellRange = newRange()
-	for i, pos := range opts.Positions {
-		seq := opts.Sequences[i]
+	c.curMask = c.buildMask(ctx)
 
-		c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
-
-		seqRange, ok := c.cellRanges[seq]
-		if !ok {
-			seqRange = newRange()
-		}
-
-		if c.curLoc+i > seqRange.max {
-			seqRange.max = c.curLoc + i
-		}
-		if seqRange.max > c.curCellRange.max {
-			c.curCellRange.max = seqRange.max
-		}
-
-		if c.curLoc+i < seqRange.min {
-			seqRange.min = c.curLoc + i
-		}
-		if seqRange.min < c.curCellRange.min {
-			c.curCellRange.min = seqRange.min
-		}
-		c.cellRanges[seq] = seqRange
-	}
-
-	c.curMask, err = c.buildMask(ctx)
-
-	return err
+	return nil
 }
 
 func newRange() cellRange {
@@ -210,7 +271,64 @@ func (c *Causal) findStartLoc() (int, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("%w (length: %v)", ErrKvCacheFull, c.Capacity)
+	return 0, fmt.Errorf("%w (cache: %v batch: %v)", ErrKvCacheFull, len(c.cells), c.curBatchSize)
+}
+
+func (c *Causal) updateSlidingWindow() {
+	c.curCellRange = newRange()
+
+	if c.swaMemorySize == math.MaxInt32 {
+		for _, seq := range c.curSequences {
+			if seqRange, ok := c.cellRanges[seq]; ok {
+				c.curCellRange.min = min(c.curCellRange.min, seqRange.min)
+				c.curCellRange.max = max(c.curCellRange.max, seqRange.max)
+			}
+		}
+
+		return
+	}
+
+	// create a map of unique sequences to the lowest position in that sequence
+	lowestPos := make(map[int]int32)
+	for i := range c.curPositions {
+		seq := c.curSequences[i]
+
+		pos, ok := lowestPos[seq]
+		if !ok {
+			pos = c.curPositions[i]
+		} else if c.curPositions[i] < pos {
+			pos = c.curPositions[i]
+		}
+
+		lowestPos[seq] = pos
+	}
+
+	// delete any entries that are beyond the window of the oldest position in the sequence
+	for seq, pos := range lowestPos {
+		oldRange, ok := c.cellRanges[seq]
+		if !ok {
+			continue
+		}
+
+		newRange := newRange()
+
+		for i := oldRange.min; i <= oldRange.max; i++ {
+			if slices.Contains(c.cells[i].sequences, seq) {
+				if c.cells[i].pos < pos-c.swaMemorySize {
+					c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int) bool { return s == seq })
+				} else {
+					newRange.min = min(newRange.min, i)
+					newRange.max = max(newRange.max, i)
+				}
+				if c.cells[i].pos >= pos-c.swaWindowSize {
+					c.curCellRange.min = min(c.curCellRange.min, i)
+					c.curCellRange.max = max(c.curCellRange.max, i)
+				}
+			}
+		}
+
+		c.cellRanges[seq] = newRange
+	}
 }
 
 func roundDown(length, pad int) int {
@@ -224,7 +342,7 @@ func roundUp(length, pad int) int {
 // Builds a mask of history x batch indicating whether for each token in the batch the
 // token in the history should apply. This is based on both the sequence and causality (the
 // position of the history is not ahead of the token in the batch).
-func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
+func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 	// Align and pad the two dimensions as required by the backend
 	batchSize := roundUp(c.curBatchSize, c.config.MaskBatchPadding)
 
@@ -232,6 +350,11 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 	c.curCellRange.max = roundUp(c.curCellRange.max+1, c.config.CachePadding) - 1
 
 	length := c.curCellRange.max - c.curCellRange.min + 1
+
+	if c.curReserve {
+		return ctx.Input().Empty(c.config.MaskDType, length, batchSize)
+	}
+
 	mask := make([]float32, batchSize*length)
 
 	for i := range c.curBatchSize {
@@ -239,7 +362,8 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 		for j := c.curCellRange.min; j <= c.curCellRange.max; j++ {
 			if !slices.Contains(c.cells[j].sequences, c.curSequences[i]) ||
 				(enabled && c.cells[j].pos > c.curPositions[i]) ||
-				c.cells[j].pos < c.curPositions[i]-c.windowSize {
+				c.chunkSize > 0 && c.cells[j].pos < c.curPositions[i]-c.curPositions[i]%c.chunkSize ||
+				c.cells[j].pos < c.curPositions[i]-c.swaWindowSize {
 				mask[i*length+(j-c.curCellRange.min)] = float32(math.Inf(-1))
 			}
 		}
@@ -251,10 +375,7 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 		mask[i] = float32(math.Inf(-1))
 	}
 
-	maskTensor, err := ctx.Input().FromFloatSlice(mask, length, batchSize)
-	if err != nil {
-		return nil, err
-	}
+	maskTensor := ctx.Input().FromFloatSlice(mask, length, batchSize)
 
 	if c.config.MaskDType != ml.DTypeF32 {
 		out := ctx.Input().Empty(c.config.MaskDType, maskTensor.Shape()...)
@@ -262,10 +383,10 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 		maskTensor = out
 	}
 
-	return maskTensor, nil
+	return maskTensor
 }
 
-func (c *Causal) moveCells(ctx ml.Context, src, dst, len int) {
+func (c *Causal) moveCells(ctx ml.Context, src, dst, length int) {
 	for i, key := range c.keys {
 		if key == nil {
 			continue
@@ -275,8 +396,8 @@ func (c *Causal) moveCells(ctx ml.Context, src, dst, len int) {
 		numKVHeads := key.Dim(1)
 		rowSize := key.Stride(2)
 
-		kSrcView := key.View(ctx, rowSize*src, kHeadDim*numKVHeads*len)
-		kDstView := key.View(ctx, rowSize*dst, kHeadDim*numKVHeads*len)
+		kSrcView := key.View(ctx, rowSize*src, kHeadDim*numKVHeads*length)
+		kDstView := key.View(ctx, rowSize*dst, kHeadDim*numKVHeads*length)
 
 		value := c.values[i]
 		var vSrcView, vDstView ml.Tensor
@@ -284,14 +405,14 @@ func (c *Causal) moveCells(ctx ml.Context, src, dst, len int) {
 			vHeadDim := value.Dim(1)
 			elemSize := value.Stride(0)
 
-			vSrcView = value.View(ctx, elemSize*src, len, int(c.Capacity)*elemSize, vHeadDim*numKVHeads)
-			vDstView = value.View(ctx, elemSize*dst, len, int(c.Capacity)*elemSize, vHeadDim*numKVHeads)
+			vSrcView = value.View(ctx, elemSize*src, length, len(c.cells)*elemSize, vHeadDim*numKVHeads)
+			vDstView = value.View(ctx, elemSize*dst, length, len(c.cells)*elemSize, vHeadDim*numKVHeads)
 		} else {
 			vHeadDim := value.Dim(0)
 			rowSize := value.Stride(2)
 
-			vSrcView = value.View(ctx, rowSize*src, vHeadDim*numKVHeads*len)
-			vDstView = value.View(ctx, rowSize*dst, vHeadDim*numKVHeads*len)
+			vSrcView = value.View(ctx, rowSize*src, vHeadDim*numKVHeads*length)
+			vDstView = value.View(ctx, rowSize*dst, vHeadDim*numKVHeads*length)
 		}
 
 		ctx.Forward(
@@ -321,7 +442,8 @@ func (c *Causal) defrag() {
 	ctx := c.backend.NewContext()
 
 	// For every move, 6 tensors are required per layer (2 views and a
-	// copy for each of k and v).
+	// copy for each of k and v). We also need to refer to the original
+	// k and v cache tensors - once per layer, not per move.
 	layers := 0
 	for _, key := range c.keys {
 		if key == nil {
@@ -330,7 +452,7 @@ func (c *Causal) defrag() {
 		layers++
 	}
 
-	maxMoves := ctx.MaxGraphNodes() / (6 * layers)
+	maxMoves := (ctx.MaxGraphNodes() - 2*layers) / (6 * layers)
 	moves := 0
 
 	var pendingSrc, pendingDst, pendingLen int
@@ -399,6 +521,8 @@ func (c *Causal) defrag() {
 
 		c.cellRanges[seq] = seqRange
 	}
+
+	c.updateSlidingWindow()
 }
 
 func (c *Causal) SetLayer(layer int) {
@@ -416,12 +540,7 @@ func (c *Causal) SetCausal(ctx ml.Context, opts CausalOptions) {
 	if !slices.Equal(c.opts.Except, opts.Except) {
 		c.opts = opts
 		if ctx != nil {
-			var err error
-			c.curMask, err = c.buildMask(ctx)
-			if err != nil {
-				// This error should never occur because we have previously built a mask with the same shape
-				panic(fmt.Errorf("SetCausal: %w", err))
-			}
+			c.curMask = c.buildMask(ctx)
 		}
 	}
 }
@@ -479,14 +598,14 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 
 	if _, ok := c.keys[c.curLayer]; !ok {
-		c.keys[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, kHeadDim, numKVHeads, int(c.Capacity))
+		c.keys[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, kHeadDim, numKVHeads, len(c.cells))
 	}
 
 	if _, ok := c.values[c.curLayer]; !ok {
 		if c.config.PermutedV {
-			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, int(c.Capacity), vHeadDim, numKVHeads)
+			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, len(c.cells), vHeadDim, numKVHeads)
 		} else {
-			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, vHeadDim, numKVHeads, int(c.Capacity))
+			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, vHeadDim, numKVHeads, len(c.cells))
 		}
 	}
 
@@ -497,7 +616,7 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 		elemSize := c.values[c.curLayer].Stride(0)
 
 		value = value.Permute(ctx, 1, 2, 0, 3)
-		ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, elemSize*c.curLoc, batchSize, int(c.Capacity)*elemSize, vHeadDim*numKVHeads)))
+		ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, elemSize*c.curLoc, batchSize, len(c.cells)*elemSize, vHeadDim*numKVHeads)))
 	} else {
 		rowSize := c.values[c.curLayer].Stride(2)
 
@@ -528,60 +647,108 @@ func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	c.cellRanges[dstSeq] = seqRange
 }
 
+func (c *Causal) CanResume(seq int, pos int32) bool {
+	if c.swaMemorySize == math.MaxInt32 {
+		return true
+	}
+
+	seqRange, ok := c.cellRanges[seq]
+	if !ok {
+		return false
+	}
+
+	// for sliding window, check that the window of the new sequence is contained in
+	// the window of what we are storing
+	var last int32 = -1
+	for i := seqRange.min; i <= seqRange.max; i++ {
+		if slices.Contains(c.cells[i].sequences, seq) {
+			last = max(last, c.cells[i].pos)
+		}
+	}
+
+	if last == -1 {
+		return false
+	}
+
+	lastWindowStart := max(0, last-c.swaMemorySize)
+	posWindowStart := max(0, pos-c.swaWindowSize)
+
+	return posWindowStart >= lastWindowStart
+}
+
 func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 	if c.shiftFn == nil {
 		return ErrNotSupported
 	}
 
-	ctx := c.backend.NewContext()
-	defer ctx.Close()
-
 	seqRange := c.cellRanges[seq]
-	size := seqRange.max - seqRange.min + 1
 
-	offsets := make([]int32, size)
-	for i := range offsets {
-		cell := c.cells[seqRange.min+i]
+	for start := seqRange.min; start <= seqRange.max; start += c.maxBatch {
+		size := min(seqRange.max-start+1, c.maxBatch)
+		offsets := make([]int32, size)
 
-		if slices.Contains(cell.sequences, seq) && cell.pos >= beginIndex {
-			offsets[i] = offset
+		var batchFirst, batchLast int
+
+		batchFirst = -1
+		for i := range offsets {
+			cell := c.cells[start+i]
+
+			if slices.Contains(cell.sequences, seq) && cell.pos >= beginIndex {
+				offsets[i] = offset
+				if batchFirst < 0 {
+					batchFirst = i
+				}
+				batchLast = i
+			}
 		}
-	}
 
-	kShift, err := ctx.Input().FromIntSlice(offsets, len(offsets))
-	if err != nil {
-		return err
-	}
-
-	for i, key := range c.keys {
-		if key == nil {
+		if batchFirst < 0 {
 			continue
 		}
 
-		kHeadDim := key.Dim(0)
-		numKVHeads := key.Dim(1)
-		rowSize := key.Stride(2)
+		offsets = offsets[batchFirst : batchLast+1]
 
-		key = key.View(ctx, rowSize*seqRange.min,
-			kHeadDim, key.Stride(1),
-			numKVHeads, key.Stride(2),
-			size,
-		)
+		ctx := c.backend.NewContext()
+		kShift := ctx.Input().FromIntSlice(offsets, len(offsets))
 
-		roped, err := c.shiftFn(ctx, i, key, kShift)
-		if err != nil {
-			return err
+		for i, key := range c.keys {
+			if key == nil {
+				continue
+			}
+
+			kHeadDim := key.Dim(0)
+			numKVHeads := key.Dim(1)
+			rowSize := key.Stride(2)
+
+			key = key.View(ctx, rowSize*(start+batchFirst),
+				kHeadDim, key.Stride(1),
+				numKVHeads, key.Stride(2),
+				len(offsets),
+			)
+
+			roped, err := c.shiftFn(ctx, i, key, kShift)
+			if err != nil {
+				ctx.Close()
+				return err
+			}
+
+			ctx.Forward(roped.Copy(ctx, key))
 		}
 
-		ctx.Forward(roped.Copy(ctx, key))
+		ctx.Compute()
+		ctx.Close()
 	}
-
-	ctx.Compute()
 
 	return nil
 }
 
 func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
+	// TODO(jessegross): We should check to see if removing the middle of the sequence will
+	// cause the sliding window to encompass tokens that we no longer have. If so, then we
+	// should return an error, which will trigger the runner to evaluate the full history and
+	// rebuild the window. However, if we have multimodal inputs in our history, this reuse
+	// results in use after free, so we don't do it for now.
+
 	var offset int32
 	if endIndex != math.MaxInt32 {
 		offset = beginIndex - endIndex
@@ -596,8 +763,7 @@ func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
 			} else {
 				if c.cells[i].pos >= endIndex {
 					if slices.ContainsFunc(c.cells[i].sequences, func(s int) bool { return s != seq }) {
-						// TODO(jessegross): Need to be careful about data shared between sequences
-						return errors.New("shifting on cells shared by multiple sequences not yet implemented")
+						return errors.New("shifting cells shared by multiple sequences not supported")
 					}
 
 					c.cells[i].pos += offset

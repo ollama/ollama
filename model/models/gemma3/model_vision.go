@@ -3,6 +3,7 @@ package gemma3
 import (
 	"math"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
@@ -91,16 +92,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	positions := make([]int32, numPatches)
-	for i := range positions {
-		positions[i] = int32(i)
-	}
-
-	positionIDs, err := ctx.Input().FromIntSlice(positions, len(positions))
-	if err != nil {
-		panic(err)
-	}
-
+	positionIDs := ctx.Arange(0, float32(numPatches), 1, ml.DTypeI32)
 	hiddenState = hiddenState.Add(ctx, m.PositionEmbedding.Forward(ctx, positionIDs))
 
 	for _, layer := range m.Layers {
@@ -111,7 +103,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	return hiddenState
 }
 
-func newVisionModel(c ml.Config) *VisionModel {
+func newVisionModel(c fs.Config) *VisionModel {
 	return &VisionModel{
 		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count")),
 		VisionModelOptions: &VisionModelOptions{

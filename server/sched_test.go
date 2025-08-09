@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestInitScheduler(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
+	ctx, done := context.WithCancel(t.Context())
 	defer done()
 	s := InitScheduler(ctx)
 	s.loadedMu.Lock()
@@ -35,7 +35,7 @@ func TestInitScheduler(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	var f *ggml.GGML // value not used in tests
@@ -112,11 +112,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	b.ctx, b.ctxDone = context.WithCancel(ctx)
 	t.Helper()
 
-	f, err := os.CreateTemp(t.TempDir(), modelName)
-	require.NoError(t, err)
-	defer f.Close()
-
-	require.NoError(t, ggml.WriteGGUF(f, ggml.KV{
+	p, _ := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
@@ -126,17 +122,17 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 		"tokenizer.ggml.tokens":         []string{" "},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-	}))
-	require.NoError(t, err)
+	})
 
-	fname := f.Name()
-	model := &Model{Name: modelName, ModelPath: fname}
-	b.f, err = llm.LoadModel(model.ModelPath, 0)
-	require.NoError(t, err)
-
+	model := &Model{Name: modelName, ModelPath: p}
+	f, err := llm.LoadModel(model.ModelPath, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.f = f
 	if duration == nil {
 		duration = &api.Duration{Duration: 5 * time.Millisecond}
 	}
@@ -167,7 +163,7 @@ func getCpuFn() discover.GpuInfoList {
 }
 
 func TestRequestsSameModelSameRequest(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
@@ -210,7 +206,7 @@ func TestRequestsSameModelSameRequest(t *testing.T) {
 }
 
 func TestRequestsSimpleReloadSameModel(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
@@ -258,7 +254,7 @@ func TestRequestsSimpleReloadSameModel(t *testing.T) {
 }
 
 func TestRequestsMultipleLoadedModels(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
@@ -355,7 +351,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 3*time.Second)
 	defer done()
 
 	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})
@@ -408,7 +404,7 @@ func TestGetRunner(t *testing.T) {
 }
 
 func TestExpireRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	req := &LlmRequest{
@@ -455,7 +451,7 @@ func TestExpireRunner(t *testing.T) {
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
 func TestPrematureExpired(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -502,7 +498,7 @@ func TestPrematureExpired(t *testing.T) {
 }
 
 func TestUseLoadedRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	req := &LlmRequest{
 		ctx:             ctx,
 		opts:            api.DefaultOptions(),
@@ -529,7 +525,7 @@ func TestUseLoadedRunner(t *testing.T) {
 }
 
 func TestUpdateFreeSpace(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 	gpus := discover.GpuInfoList{
 		{
@@ -562,7 +558,7 @@ func TestUpdateFreeSpace(t *testing.T) {
 }
 
 func TestFilterGPUsWithoutLoadingModels(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 	gpus := discover.GpuInfoList{
 		{
@@ -596,7 +592,7 @@ func TestFilterGPUsWithoutLoadingModels(t *testing.T) {
 }
 
 func TestFindRunnerToUnload(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 
 	r1 := &runnerRef{refCount: 1, sessionDuration: 1, numParallel: 1}
@@ -616,7 +612,7 @@ func TestFindRunnerToUnload(t *testing.T) {
 }
 
 func TestNeedsReload(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 
 	llm := &mockLlm{estimatedVRAMByGPU: map[string]uint64{}}
@@ -663,7 +659,7 @@ func TestNeedsReload(t *testing.T) {
 }
 
 func TestUnloadAllRunners(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 
 	llm1 := &mockLlm{estimatedVRAMByGPU: map[string]uint64{}}
@@ -695,7 +691,7 @@ func TestUnload(t *testing.T) {
 }
 
 func TestAlreadyCanceled(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	dctx, done2 := context.WithCancel(ctx)
 	done2()
@@ -712,7 +708,7 @@ func TestAlreadyCanceled(t *testing.T) {
 }
 
 func TestHomogeneousGPUs(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 
@@ -792,3 +788,4 @@ func (s *mockLlm) Close() error {
 func (s *mockLlm) EstimatedVRAM() uint64                  { return s.estimatedVRAM }
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
 func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }
+func (s *mockLlm) Pid() int                               { return -1 }

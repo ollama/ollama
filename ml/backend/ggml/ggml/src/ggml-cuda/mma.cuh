@@ -26,6 +26,7 @@ static __device__ __forceinline__ int ggml_cuda_movmatrix(const int x) {
     asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
         : "=r"(ret) : "r"(x));
 #else
+    GGML_UNUSED(x);
     NO_DEVICE_CODE;
 #endif // defined(NEW_MMA_AVAILABLE)
     return ret;
@@ -178,6 +179,7 @@ namespace ggml_cuda_mma {
             : "l"(xs));
 #else
         load_generic(xs0, stride);
+        GGML_UNUSED(t);
 #endif // NEW_MMA_AVAILABLE
     }
 

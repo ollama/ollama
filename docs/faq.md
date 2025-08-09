@@ -20,7 +20,13 @@ Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 2048 tokens. This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context length to 8K, use: `OLLAMA_CONTEXT_LENGTH=8192 ollama serve`.
+By default, Ollama uses a context window size of 4096 tokens for most models. The `gpt-oss` model has a default context window size of 8192 tokens.
+
+This can be overridden in Settings in the Windows and macOS App, or with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use:
+
+```shell
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
 
 To change this when using `ollama run`, use `/set parameter`:
 
@@ -40,6 +46,8 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+Setting the context length higher may cause the model to not be able to fit onto the GPU which make the model run more slowly.
+
 ## How can I tell if my model was loaded onto the GPU?
 
 Use the `ollama ps` command to see what models are currently loaded into memory.
@@ -51,8 +59,8 @@ ollama ps
 > **Output**:
 >
 > ```
-> NAME      	ID          	SIZE 	PROCESSOR	UNTIL
-> llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
+> NAME           ID              SIZE     PROCESSOR    CONTEXT    UNTIL
+> gpt-oss:20b    05afbac4bad6    16 GB    100% GPU     8192       4 minutes from now
 > ```
 
 The `Processor` column will show which memory the model was loaded in to:
@@ -142,9 +150,11 @@ docker build -t ollama-with-ca .
 docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-with-ca
 ```
 
-## Does Ollama send my prompts and answers back to ollama.com?
+## Does Ollama send my prompts and responses back to ollama.com?
 
-No. Ollama runs locally, and conversation data does not leave your machine.
+If you're running a model locally, your prompts and responses will always stay on your machine. Ollama Turbo in the App allows you to run your queries on Ollama's servers if you don't have a powerful enough GPU. Web search lets a model query the web, giving you more accurate and up-to-date information. Both Turbo and web search require sending your prompts and responses to Ollama.com. This data is neither logged nor stored.
+
+If you don't want to see the Turbo and web search options in the app, you can disable them in Settings by turning on Airplane mode. In Airplane mode, all models will run locally, and your prompts and responses will stay on your machine.
 
 ## How can I expose Ollama on my network?
 
@@ -286,7 +296,7 @@ If too many requests are sent to the server, it will respond with a 503 error in
 
 ## How does Ollama handle concurrent requests?
 
-Ollama supports two levels of concurrent processing.  If your system has sufficient available memory (system memory when using CPU inference, or VRAM for GPU inference) then multiple models can be loaded at the same time.  For a given model, if there is sufficient available memory when the model is loaded, it is configured to allow parallel request processing.
+Ollama supports two levels of concurrent processing.  If your system has sufficient available memory (system memory when using CPU inference, or VRAM for GPU inference) then multiple models can be loaded at the same time.  For a given model, if there is sufficient available memory when the model is loaded, it can be configured to allow parallel request processing.
 
 If there is insufficient available memory to load a new model request while one or more models are already loaded, all new requests will be queued until the new model can be loaded.  As prior models become idle, one or more will be unloaded to make room for the new model.  Queued requests will be processed in order.  When using GPU inference new models must be able to completely fit in VRAM to allow concurrent model loads.
 
@@ -295,7 +305,7 @@ Parallel request processing for a given model results in increasing the context 
 The following server settings may be used to adjust how Ollama handles concurrent requests on most platforms:
 
 - `OLLAMA_MAX_LOADED_MODELS` - The maximum number of models that can be loaded concurrently provided they fit in available memory.  The default is 3 * the number of GPUs or 3 for CPU inference.
-- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time.  The default will auto-select either 4 or 1 based on available memory.
+- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time.  The default is 1, and will handle 1 request per model at a time.
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
 
 Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting.  Once ROCm v6.2 is available, Windows Radeon will follow the defaults above.  You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPUs VRAM.
@@ -327,3 +337,16 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## How can I stop Ollama from starting when I login to my computer
+
+Ollama for Windows and macOS register as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
+
+**Windows**
+- Remove `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Ollama.lnk`
+
+**MacOS Monterey (v12)**
+- Open `Settings` -> `Users & Groups` -> `Login Items` and find the `Ollama` entry, then click the `-` (minus) to remove
+
+**MacOS Ventura (v13) and later**
+- Open `Settings` and search for "Login Items", find the `Ollama` entry under "Allow in the Background`, then click the slider to disable.

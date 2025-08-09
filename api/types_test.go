@@ -134,7 +134,7 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var oMap map[string]interface{}
+			var oMap map[string]any
 			err := json.Unmarshal([]byte(test.req), &oMap)
 			require.NoError(t, err)
 			opts := DefaultOptions()
@@ -229,5 +229,210 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		if msg.Role != test.expected {
 			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
 		}
+	}
+}
+
+func TestToolFunction_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name: "valid enum with same types",
+			input: `{
+				"name": "test",
+				"description": "test function",
+				"parameters": {
+					"type": "object",
+					"required": ["test"],
+					"properties": {
+						"test": {
+							"type": "string",
+							"description": "test prop",
+							"enum": ["a", "b", "c"]
+						}
+					}
+				}
+			}`,
+			wantErr: "",
+		},
+		{
+			name: "empty enum array",
+			input: `{
+				"name": "test",
+				"description": "test function",
+				"parameters": {
+					"type": "object",
+					"required": ["test"],
+					"properties": {
+						"test": {
+							"type": "string",
+							"description": "test prop",
+							"enum": []
+						}
+					}
+				}
+			}`,
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tf ToolFunction
+			err := json.Unmarshal([]byte(tt.input), &tf)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestPropertyType_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected PropertyType
+	}{
+		{
+			name:     "string type",
+			input:    `"string"`,
+			expected: PropertyType{"string"},
+		},
+		{
+			name:     "array of types",
+			input:    `["string", "number"]`,
+			expected: PropertyType{"string", "number"},
+		},
+		{
+			name:     "array with single type",
+			input:    `["string"]`,
+			expected: PropertyType{"string"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var pt PropertyType
+			if err := json.Unmarshal([]byte(test.input), &pt); err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			if len(pt) != len(test.expected) {
+				t.Errorf("Length mismatch: got %v, expected %v", len(pt), len(test.expected))
+			}
+
+			for i, v := range pt {
+				if v != test.expected[i] {
+					t.Errorf("Value mismatch at index %d: got %v, expected %v", i, v, test.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestPropertyType_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    PropertyType
+		expected string
+	}{
+		{
+			name:     "single type",
+			input:    PropertyType{"string"},
+			expected: `"string"`,
+		},
+		{
+			name:     "multiple types",
+			input:    PropertyType{"string", "number"},
+			expected: `["string","number"]`,
+		},
+		{
+			name:     "empty type",
+			input:    PropertyType{},
+			expected: `[]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.input)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			if string(data) != test.expected {
+				t.Errorf("Marshaled data mismatch: got %v, expected %v", string(data), test.expected)
+			}
+		})
+	}
+}
+
+func TestThinking_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name             string
+		input            string
+		expectedThinking *ThinkValue
+		expectedError    bool
+	}{
+		{
+			name:             "true",
+			input:            `{ "think": true }`,
+			expectedThinking: &ThinkValue{Value: true},
+		},
+		{
+			name:             "false",
+			input:            `{ "think": false }`,
+			expectedThinking: &ThinkValue{Value: false},
+		},
+		{
+			name:             "unset",
+			input:            `{ }`,
+			expectedThinking: nil,
+		},
+		{
+			name:             "string_high",
+			input:            `{ "think": "high" }`,
+			expectedThinking: &ThinkValue{Value: "high"},
+		},
+		{
+			name:             "string_medium",
+			input:            `{ "think": "medium" }`,
+			expectedThinking: &ThinkValue{Value: "medium"},
+		},
+		{
+			name:             "string_low",
+			input:            `{ "think": "low" }`,
+			expectedThinking: &ThinkValue{Value: "low"},
+		},
+		{
+			name:             "invalid_string",
+			input:            `{ "think": "invalid" }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var req GenerateRequest
+			err := json.Unmarshal([]byte(test.input), &req)
+			if test.expectedError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				if test.expectedThinking == nil {
+					assert.Nil(t, req.Think)
+				} else {
+					require.NotNil(t, req.Think)
+					assert.Equal(t, test.expectedThinking.Value, req.Think.Value)
+				}
+			}
+		})
 	}
 }
