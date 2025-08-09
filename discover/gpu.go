@@ -309,7 +309,7 @@ func GetGPUInfo() GpuInfoList {
 					slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
 					C.free(unsafe.Pointer(memInfo.err))
 					continue
-				}				
+				}
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
@@ -393,7 +393,7 @@ func GetGPUInfo() GpuInfoList {
 						C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
 						// TODO - convert this to MinimumMemory based on testing...
 						var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-						memInfo.free = C.uint64_t(totalFreeMem)						
+						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
 						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
