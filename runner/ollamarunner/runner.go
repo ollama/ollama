@@ -118,9 +118,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		params.numKeep = int32(len(inputs))
 	}
 
-	// TODO(jessegross): We should ensure that we always leave minBatch of context space to shift,
-	// otherwise we might truncate or split the batch against the model's wishes
-
 	// Ensure that at least 1 input can be discarded during shift
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
@@ -434,14 +431,6 @@ func (s *Server) processBatch() error {
 					break
 				}
 
-			// If the sum of our working set (already processed tokens, tokens we added to this
-			// batch, required following tokens) exceeds the context size, then trigger a shift
-			// now so we don't have to do one later when we can't break the batch.
-			if int32(len(seq.cache.Inputs)+len(seq.pendingInputs)+minBatch) > s.cache.numCtx {
-				if len(seq.pendingInputs) != 0 {
-					break
-				}
-
 				err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 				if err != nil {
 					var reprocess *ErrReprocessInputs
@@ -456,7 +445,7 @@ func (s *Server) processBatch() error {
 				}
 			}
 
-			options.Inputs = append(options.Inputs, inp.Token)
+			batchInputs = append(batchInputs, inp.Token)
 			if inp.Multimodal != nil {
 				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, false)
 				if err != nil {
