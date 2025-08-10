@@ -404,9 +404,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	if g.Wait() != nil {
-		return nil, err
-	}
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
 	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
 
