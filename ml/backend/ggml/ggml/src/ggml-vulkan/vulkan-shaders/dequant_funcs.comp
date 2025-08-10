@@ -23,6 +23,12 @@ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
 }
 #endif
 
+#if defined(DATA_A_BF16)
+vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+    return vec2(bf16_to_fp32(data_a[a_offset + ib]), bf16_to_fp32(data_a[a_offset + ib + 1]));
+}
+#endif
+
 #if defined(DATA_A_Q4_0)
 vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     const uint vui = uint(data_a[a_offset + ib].qs[iqs]);
@@ -82,9 +88,9 @@ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     return vec2(int(data_a[a_offset + ib].qs[iqs]), int(data_a[a_offset + ib].qs[iqs + 1]));
 }
 vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
-    uint32_t v0 = data_a_packed16[a_offset + ib].qs[iqs/2];
-    uint32_t v1 = data_a_packed16[a_offset + ib].qs[iqs/2 + 1];
-    return vec4(int8_t(v0 & 0xFF), int8_t(v0 >> 8), int8_t(v1 & 0xFF), int8_t(v1 >> 8));
+    const i8vec2 v0 = unpack8(int32_t(data_a_packed16[a_offset + ib].qs[iqs/2])).xy; // vec4 used due to #12147
+    const i8vec2 v1 = unpack8(int32_t(data_a_packed16[a_offset + ib].qs[iqs/2 + 1])).xy;
+    return vec4(v0.x, v0.y, v1.x, v1.y);
 }
 #endif
 
@@ -428,7 +434,7 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
 }
 #endif
 
-#if defined(DATA_A_F32) || defined(DATA_A_F16)
+#if defined(DATA_A_F32) || defined(DATA_A_F16) || defined(DATA_A_BF16)
 vec2 get_dm(uint ib, uint a_offset) {
     return vec2(0, 0);
 }

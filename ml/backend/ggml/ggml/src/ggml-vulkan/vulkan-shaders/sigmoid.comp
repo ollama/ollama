@@ -16,5 +16,5 @@ void main() {
     if (i >= p.KX) {
         return;
     }
-    data_d[i] = D_TYPE(1. / (1 + exp(-1. *data_a[i])));
+    data_d[i] = D_TYPE(1. / (1 + exp(-1. * float(data_a[i]))));
 }

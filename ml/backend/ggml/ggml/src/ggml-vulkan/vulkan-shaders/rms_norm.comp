@@ -1,6 +1,6 @@
 #version 450
 
-#include "generic_head.comp"
+#include "generic_unary_head.comp"
 #include "types.comp"
 
 #extension GL_EXT_control_flow_attributes : enable
@@ -8,19 +8,29 @@
 
 layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
 
-layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
-layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
-
 shared FLOAT_TYPE sum[BLOCK_SIZE];
 
 void main() {
-    const uint row = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
-    const uint tid = gl_LocalInvocationID.x;
+    const uint ncols     = p.ne00;
+    const uint nrows     = gl_NumWorkGroups.x;
+    const uint nchannels = gl_NumWorkGroups.y;
+
+    const uint row       = gl_WorkGroupID.x;
+    const uint channel   = gl_WorkGroupID.y;
+    const uint samp      = gl_WorkGroupID.z;
+    const uint tid       = gl_LocalInvocationID.x;
+
+    const uint stride_row       = p.nb01;
+    const uint stride_channel   = p.nb02;
+    const uint stride_sample    = p.nb03;
+
+    uint32_t a_offset = samp*stride_sample + channel*stride_channel + row*stride_row + get_aoffset();
+    uint32_t d_offset = ((samp*nchannels + channel)*nrows + row)*ncols + get_doffset();
 
     sum[tid] = FLOAT_TYPE(0.0f); // partial sum for thread in warp
 
-    [[unroll]] for (uint col = tid; col < p.KX; col += BLOCK_SIZE) {
-        const FLOAT_TYPE xi = FLOAT_TYPE(data_a[row*p.KX + col]);
+    [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+        const FLOAT_TYPE xi = FLOAT_TYPE(data_a[a_offset + col]);
         sum[tid] += xi * xi;
     }
 
@@ -33,10 +43,10 @@ void main() {
         barrier();
     }
 
-    const FLOAT_TYPE mean = sum[0] / FLOAT_TYPE(p.KX);
+    const FLOAT_TYPE mean = sum[0] / FLOAT_TYPE(ncols);
     const FLOAT_TYPE scale = inversesqrt(mean + FLOAT_TYPE(p.param1));
 
-    [[unroll]] for (uint col = tid; col < p.KX; col += BLOCK_SIZE) {
-        data_d[row*p.KX + col] = D_TYPE(scale * FLOAT_TYPE(data_a[row*p.KX + col]));
+    [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+        data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
     }
 }

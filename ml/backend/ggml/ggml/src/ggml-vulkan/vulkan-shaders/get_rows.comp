@@ -20,9 +20,14 @@ void main() {
     const uint a_offset = get_aoffset() + i01*p.nb01 + i11*p.nb02 + i12*p.nb03;
     const uint d_offset = get_doffset() + i10*p.nb21 + i11*p.nb22 + i12*p.nb23;
 
-#ifndef OPTIMIZATION_ERROR_WORKAROUND
-    data_d[d_offset + i00] = D_TYPE(data_a[a_offset + i00]);
+#if defined(DATA_A_BF16)
+    FLOAT_TYPE v = FLOAT_TYPE(bf16_to_fp32(data_a[a_offset + i00]));
 #else
-    data_d[d_offset + i00] = data_a[a_offset + i00];
+    FLOAT_TYPE v = FLOAT_TYPE(data_a[a_offset + i00]);
+#endif
+#ifndef OPTIMIZATION_ERROR_WORKAROUND
+    data_d[d_offset + i00] = D_TYPE(v);
+#else
+    data_d[d_offset + i00] = D_TYPE(v);
 #endif
 }

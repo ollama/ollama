@@ -1,5 +1,7 @@
 #version 450
 
+#extension GL_EXT_control_flow_attributes : enable
+
 #include "types.comp"
 #include "generic_binary_head.comp"
 #include "dequant_funcs.comp"

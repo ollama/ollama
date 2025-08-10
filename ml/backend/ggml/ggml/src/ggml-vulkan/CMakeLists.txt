@@ -32,8 +32,10 @@ if (Vulkan_FOUND)
 
     if (${glslc_error} MATCHES ".*extension not supported: GL_KHR_cooperative_matrix.*")
         message(STATUS "GL_KHR_cooperative_matrix not supported by glslc")
+        set(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT OFF)
     else()
         message(STATUS "GL_KHR_cooperative_matrix supported by glslc")
+        set(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT ON)
         add_compile_definitions(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     endif()
 
@@ -46,9 +48,43 @@ if (Vulkan_FOUND)
 
     if (${glslc_error} MATCHES ".*extension not supported: GL_NV_cooperative_matrix2.*")
         message(STATUS "GL_NV_cooperative_matrix2 not supported by glslc")
+        set(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT OFF)
     else()
         message(STATUS "GL_NV_cooperative_matrix2 supported by glslc")
+        set(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT ON)
         add_compile_definitions(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
+    endif()
+
+    # Compile a test shader to determine whether GL_EXT_integer_dot_product is supported.
+    # If it's not, there will be an error to stderr.
+    # If it's supported, set a define to indicate that we should compile those shaders
+    execute_process(COMMAND ${Vulkan_GLSLC_EXECUTABLE} -o - -fshader-stage=compute --target-env=vulkan1.3 "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/test_integer_dot_support.comp"
+                    OUTPUT_VARIABLE glslc_output
+                    ERROR_VARIABLE glslc_error)
+
+    if (${glslc_error} MATCHES ".*extension not supported: GL_EXT_integer_dot_product.*")
+        message(STATUS "GL_EXT_integer_dot_product not supported by glslc")
+        set(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT OFF)
+    else()
+        message(STATUS "GL_EXT_integer_dot_product supported by glslc")
+        set(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT ON)
+        add_compile_definitions(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    endif()
+
+    # Compile a test shader to determine whether GL_EXT_bfloat16 is supported.
+    # If it's not, there will be an error to stderr.
+    # If it's supported, set a define to indicate that we should compile those shaders
+    execute_process(COMMAND ${Vulkan_GLSLC_EXECUTABLE} -o - -fshader-stage=compute --target-env=vulkan1.3 "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/test_bfloat16_support.comp"
+                    OUTPUT_VARIABLE glslc_output
+                    ERROR_VARIABLE glslc_error)
+
+    if (${glslc_error} MATCHES ".*extension not supported: GL_EXT_bfloat16.*")
+        message(STATUS "GL_EXT_bfloat16 not supported by glslc")
+        set(GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT OFF)
+    else()
+        message(STATUS "GL_EXT_bfloat16 supported by glslc")
+        set(GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT ON)
+        add_compile_definitions(GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT)
     endif()
 
     target_link_libraries(ggml-vulkan PRIVATE Vulkan::Vulkan)
@@ -119,6 +155,10 @@ if (Vulkan_FOUND)
             SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders
             CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${HOST_CMAKE_TOOLCHAIN_FILE}
                     -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}
+                    -DGGML_VULKAN_COOPMAT_GLSLC_SUPPORT=${GGML_VULKAN_COOPMAT_GLSLC_SUPPORT}
+                    -DGGML_VULKAN_COOPMAT2_GLSLC_SUPPORT=${GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT}
+                    -DGGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT=${GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT}
+                    -DGGML_VULKAN_BFLOAT16_GLSLC_SUPPORT=${GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT}
             BUILD_COMMAND ${CMAKE_COMMAND} --build .
             INSTALL_COMMAND ${CMAKE_COMMAND} --install .
             INSTALL_DIR ${CMAKE_BINARY_DIR}

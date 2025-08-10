@@ -17,5 +17,5 @@ void main() {
         return;
     }
 
-    data_d[i] = max(float(data_a[i]), 0);
+    data_d[i] = D_TYPE(max(float(data_a[i]), 0));
 }

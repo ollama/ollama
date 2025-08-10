@@ -1,0 +1,7 @@
+#version 460
+
+#extension GL_EXT_integer_dot_product : require
+
+void main()
+{
+}

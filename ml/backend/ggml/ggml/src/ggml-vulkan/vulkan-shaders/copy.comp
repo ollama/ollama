@@ -12,7 +12,10 @@ void main() {
         return;
     }
 
-#ifndef OPTIMIZATION_ERROR_WORKAROUND
+#if defined(DATA_D_BF16)
+    float f = float(data_a[get_aoffset() + src0_idx(idx)]);
+    data_d[get_doffset() + dst_idx(idx)] = D_TYPE(fp32_to_bf16(f));
+#elif !defined(OPTIMIZATION_ERROR_WORKAROUND)
     data_d[get_doffset() + dst_idx(idx)] = D_TYPE(data_a[get_aoffset() + src0_idx(idx)]);
 #else
     data_d[get_doffset() + dst_idx(idx)] = data_a[get_aoffset() + src0_idx(idx)];
