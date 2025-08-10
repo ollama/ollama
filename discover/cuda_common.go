@@ -64,6 +64,10 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		// The detected driver is older than Feb 2023
 		slog.Warn("old CUDA driver detected - please upgrade to a newer driver", "version", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
 		return "v11"
+	} else if gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor > 1 {
+		return "v12"
+	} else if gpuInfo.DriverMajor == 13 && gpuInfo.DriverMinor >= 0 {
+		return "v13"
 	}
 	return "v12"
 }
