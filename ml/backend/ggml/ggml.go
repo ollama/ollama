@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"unicode"
 	"unsafe"
-	"sync"
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
