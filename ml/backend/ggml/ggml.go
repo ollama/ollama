@@ -404,42 +404,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	// concurrently read in tensor data. uses a section reader which is safe for concurrent reads
-	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
-	var tensorSetMutex sync.Mutex
-	var g errgroup.Group
-	for _, t := range meta.Tensors().Items() {
-		for _, target := range targets[t.Name] {
-			g.Go(func() error {
-				if target == "" {
-					target = t.Name
-				}
-
-				tt, ok := tensors[target]
-				if !ok {
-					return fmt.Errorf("unassigned tensor: %s", t.Name)
-				}
-
-				bts := C.malloc(C.size_t(t.Size()))
-				if bts == nil {
-					return errors.New("failed to allocate tensor buffer")
-				}
-				defer C.free(bts)
-
-				buf := unsafe.Slice((*byte)(bts), t.Size())
-				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), buf)
-				if err != nil || n != len(buf) {
-					return errors.New("read failed")
-				}
-
-				tensorSetMutex.Lock()
-				C.ggml_backend_tensor_set(tt, bts, 0, C.size_t(t.Size()))
-				tensorSetMutex.Unlock()
-				return nil
-			})
-		}
-	}
-
 	if g.Wait() != nil {
 		return nil, err
 	}
