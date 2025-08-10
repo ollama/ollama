@@ -423,7 +423,7 @@ func GetGPUInfo() GpuInfoList {
 					continue
 				}
 
-				gpuInfo.FlashAttention = (C.vk_check_flash_attention(*vHandles.vulkan, C.int(i)) == 0) // 0 means supported
+				gpuInfo.FlashAttention = (C.vk_check_flash_attention(*vHandles.vulkan, C.int(i)) == 1) // 1 means supported
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
