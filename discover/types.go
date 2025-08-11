@@ -171,7 +171,8 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 // For each GPU, check if it does NOT support flash attention
 func (l GpuInfoList) FlashAttentionSupported() bool {
 	for _, gpu := range l {
-		supportsFA := gpu.Library == "metal" ||
+		supportsFA := gpu.Library == "cpu" ||
+			gpu.Library == "metal" ||
 			(gpu.Library == "cuda" && gpu.DriverMajor >= 7) ||
 			gpu.Library == "rocm"
 
