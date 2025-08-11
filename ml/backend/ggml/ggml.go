@@ -266,14 +266,17 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if tt := C.ggml_get_tensor(ctxs[bt], cname); tt != nil {
 				return tt
 			}
+
+			kind := t.source.Kind
 			if t.source.Kind == 4 {
-				// HACK: transition from original mxfp4 implementation to ggml implementation
-				t.source.Kind = 39
+				// transform raw mxfp4 stream to ggml mxfp4 format
+				kind = 39
 			} else if t.source.Kind == uint32(fsggml.TensorTypeBF16) && strings.HasSuffix(t.source.Name, "_exps.bias") {
-				t.source.Kind = uint32(fsggml.TensorTypeF32)
+				// transform "_exps.bias" from bf16 to fp32; add_ids only supports fp32 tensors
+				kind = uint32(fsggml.TensorTypeF32)
 			}
 
-			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
+			tt := C.ggml_new_tensor(ctxs[bt], kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
 			C.ggml_set_name(tt, cname)
 
 			slog.Log(context.TODO(), logutil.LevelTrace, "created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
@@ -514,8 +517,9 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 			defer file.Close()
 			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
 
-			// TODO this should use some other marker to toggle behavior so we can support loading type=4 and type=39
-			if t.Kind == 39 {
+			if t.Kind == 4 && tts[0]._type == 39 {
+				// source is mxfp4, target is ggml mxfp4
+
 				const BS = 17                             // MXFP4 block size
 				bts := make([]byte, 8*BS*format.KibiByte) // ~128k block aligned
 				var s uint64
@@ -575,7 +579,9 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 					}
 				}
 				return nil
-			} else if strings.HasSuffix(t.Name, "_exps.bias") && t.Kind == 0 {
+			} else if strings.HasSuffix(t.Name, "_exps.bias") && t.Kind == 30 && tts[0]._type == 0 {
+				// source is bf16, target is ggml fp32
+
 				// data is bf16 but we need to convert to fp32
 				bts := make([]byte, 128*format.KibiByte)
 				var e uint64
