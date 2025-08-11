@@ -783,10 +783,6 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 					ok, estimatedVRAM := llm.PredictServerFit(gpuSubset, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p)
 
 					if ok {
-						var totalFreeMemory uint64
-						for _, g := range gpuSubset {
-							totalFreeMemory += g.FreeMemory
-						}
 						slog.Info("new model will fit in available VRAM across minimum required GPUs, loading",
 							"model", req.model.ModelPath,
 							"library", sgl[0].Library,
