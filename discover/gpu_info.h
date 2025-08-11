@@ -70,6 +70,7 @@ void cpu_check_ram(mem_info_t *resp);
 #include "gpu_info_musart.h"
 #include "gpu_info_mtmusa.h"
 #include "gpu_info_mtml.h"
+#include "gpu_info_vulkan.h"
 
 #endif  // __GPU_INFO_H__
 #endif  // __APPLE__

@@ -116,6 +116,11 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 
+	// XXX: On arm64, set n_ubatch to 1 for Vulkan backend
+	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
+		params.n_ubatch = C.uint(1)
+	}
+
 	return ContextParams{c: params}
 }
 

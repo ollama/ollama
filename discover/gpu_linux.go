@@ -67,6 +67,12 @@ var MtmusaGlobs = []string{
 	"/usr/local/lib*/libmusa.so*",
 }
 
+var VulkanGlobs = []string{
+	"/usr/lib/x86_64-linux-gnu/libvulkan.so*",
+	"/usr/lib/aarch64-linux-gnu/libvulkan.so*",
+	"/usr/lib*/libvulkan.so*",
+}
+
 var (
 	CudartMgmtName = "libcudart.so*"
 	NvcudaMgmtName = "libcuda.so*"
@@ -75,6 +81,7 @@ var (
 	MusartMgmtName = "libmusart.so*"
 	MtmusaMgmtName = "libmusa.so*"
 	MtmlMgmtName   = "libmtml.so*"
+	VulkanMgmtName = "libvulkan.so*"
 )
 
 func GetCPUMem() (memInfo, error) {

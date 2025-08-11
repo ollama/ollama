@@ -8,6 +8,7 @@ ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 ARG MUSAVERSION=rc4.2.0
 ARG UBUNTUVERSION=22.04
+ARG VULKANVERSION=1.4.321.1
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -15,20 +16,20 @@ RUN yum install -y yum-utils \
     && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
     && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
     && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
-    && dnf install -y ccache \
+    && dnf install -y ccache vulkan-headers \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
 RUN yum install -y yum-utils epel-release \
-    && dnf install -y clang ccache \
+    && dnf install -y clang ccache vulkan-headers \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
 ENV CC=clang CXX=clang++
 
 FROM base-${TARGETARCH} AS base
 ARG CMAKEVERSION
-RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl -fsSL https://cmake.org/files/v${CMAKEVERSION%.*}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
@@ -105,6 +106,17 @@ COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
+FROM mthreads/vulkan-sdk:${VULKANVERSION}-arm64 AS vulkan-1
+ARG CMAKEVERSION
+RUN curl -fsSL https://cmake.org/files/v${CMAKEVERSION%.*}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+ENV LDFLAGS=-s
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'VULKAN 1' \
+        && cmake --build --parallel --preset 'VULKAN 1' \
+        && cmake --install build --component VULKAN --strip --parallel 8
+
 # Moore Threads (MUSA) build stages
 FROM mthreads/musa:${MUSAVERSION}-devel-ubuntu${UBUNTUVERSION}-amd64 AS musa-4
 RUN apt-get update \
@@ -112,7 +124,7 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 ARG CMAKEVERSION
-RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl -fsSL https://cmake.org/files/v${CMAKEVERSION%.*}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
@@ -131,6 +143,9 @@ RUN cd dist/lib/ollama/musa_v4 && \
 
 FROM scratch AS musa
 COPY --from=musa-4 dist/lib/ollama/musa_v4 /lib/ollama/musa_v4
+
+FROM scratch AS vulkan
+COPY --from=vulkan-1 dist/lib/ollama/vulkan_v1 /lib/ollama/vulkan_v1
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama

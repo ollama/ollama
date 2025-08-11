@@ -1,0 +1,41 @@
+# Compiler and flags
+CC ?= gcc
+CFLAGS = -Wall -Wextra -std=c99 -g -O2 -D_GNU_SOURCE
+INCLUDES = -I.
+
+# Platform detection
+UNAME_S := $(shell uname -s)
+
+# Default settings
+LIBS = -ldl
+DEFINES =
+
+# Source files
+SOURCES = gpu_info_vulkan.c test_vulkan.c
+TARGET = test_vulkan
+
+# Build rules
+.PHONY: build clean test
+.DEFAULT_GOAL := test
+
+build: $(TARGET)
+
+$(TARGET): $(SOURCES)
+	@echo "Building $(TARGET)..."
+	@echo "Platform: $(UNAME_S)"
+	@echo "Compiler: $(CC)"
+	@echo "Flags: $(CFLAGS) $(DEFINES) $(INCLUDES)"
+	@echo "Libraries: $(LIBS)"
+	@echo
+	$(CC) $(CFLAGS) $(DEFINES) $(INCLUDES) $(SOURCES) -o $(TARGET) $(LIBS)
+	@echo
+	@echo "Build successful! Executable: $(TARGET)"
+	@echo "Usage: ./$(TARGET) [vulkan_lib_path] [libcap_lib_path]"
+
+clean:
+	rm -f $(TARGET)
+	@echo "Cleaned build artifacts"
+
+test: clean $(TARGET)
+	@echo "Running Vulkan GPU info test..."
+	./$(TARGET)

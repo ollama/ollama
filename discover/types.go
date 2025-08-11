@@ -101,6 +101,13 @@ type MusaGPUInfo struct {
 }
 type MusaGPUInfoList []MusaGPUInfo
 
+type VulkanGPUInfo struct {
+	GpuInfo
+	index int
+}
+
+type VulkanGPUInfoList []VulkanGPUInfo
+
 type GpuInfoList []GpuInfo
 
 type UnsupportedGPUInfo struct {

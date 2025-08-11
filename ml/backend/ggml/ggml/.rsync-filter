@@ -21,10 +21,13 @@ include /src/ggml-cuda/template-instances/
 include /src/ggml-hip/
 include /src/ggml-metal/
 include src/ggml-musa/
+include src/ggml-vulkan/
+include src/ggml-vulkan/vulkan-shaders
 include CMakeLists.txt
 include *.[chm]
 include *.cpp
 include *.cu
 include *.cuh
 include *.metal
+include *.comp
 hide *

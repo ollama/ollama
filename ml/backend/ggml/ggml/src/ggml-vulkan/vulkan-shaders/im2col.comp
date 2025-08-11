@@ -1,0 +1,100 @@
+#version 450
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics: enable
+#extension GL_EXT_control_flow_attributes : require
+
+#if RTE16
+spirv_execution_mode(capabilities = [4467], 4462, 16); // RoundingModeRTE, 16 bits
+#endif
+
+layout (push_constant) uniform parameter
+{
+    uint batch_offset; uint offset_delta;
+    uint IC;
+    uint IW; uint IH;
+    uint OW; uint OH;
+    uint KW; uint KH;
+    uint pelements;
+    uint CHW;
+    int s0; int s1;
+    int p0; int p1;
+    int d0; int d1;
+} p;
+
+#include "types.comp"
+
+layout(constant_id = 0) const uint BLOCK_SIZE = 32;
+
+const uint NUM_ITER = 512 / BLOCK_SIZE;
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint gidx = gl_GlobalInvocationID.x;
+
+    const uint oh = gl_GlobalInvocationID.y;
+    const uint batch = gl_GlobalInvocationID.z / p.IC;
+    const uint ic = gl_GlobalInvocationID.z % p.IC;
+
+    const uint src_base = ic * p.offset_delta + batch * p.batch_offset;
+    const uint dst_base = ((batch * p.OH + oh) * p.OW) * p.CHW + ic * (p.KW * p.KH);
+    const int oh_s1 = int(oh) * p.s1;
+    const uint ksize = p.OW * (p.KH > 1 ? p.KW : 1);
+
+    const uint base_linear_idx = gidx * NUM_ITER;
+
+    const uint max_ky = ksize / p.OW;
+
+    uint current_kx = base_linear_idx / ksize;
+    const uint rem = base_linear_idx - (current_kx * ksize);
+    uint current_ky = rem / p.OW;
+    uint current_ix = rem % p.OW;
+
+    A_TYPE values[NUM_ITER];
+    uint offset_dst[NUM_ITER];
+    [[unroll]] for (uint idx = 0; idx < NUM_ITER; ++idx) {
+        values[idx] = A_TYPE(0);
+    }
+
+    [[unroll]] for (uint idx = 0; idx < NUM_ITER; ++idx) {
+
+        const uint linear_idx = base_linear_idx + idx;
+
+        if (linear_idx >= p.pelements) {
+            continue;
+        }
+
+        const uint iiw = current_ix * p.s0 + current_kx * p.d0 - p.p0;
+        const uint iih = oh_s1 + current_ky * p.d1 - p.p1;
+
+        offset_dst[idx] = dst_base + current_ix * p.CHW + current_ky * p.KW + current_kx;
+
+        if ((iih < p.IH) && (iiw < p.IW)) {
+            values[idx] = data_a[src_base + iih * p.IW + iiw];
+        }
+
+        if (++current_ix == p.OW) {
+            current_ix = 0;
+            if (++current_ky == max_ky) {
+                current_ky = 0;
+                current_kx++;
+            }
+        }
+    }
+
+    [[unroll]] for (uint idx = 0; idx < NUM_ITER; ++idx) {
+
+        const uint linear_idx = base_linear_idx + idx;
+
+        if (linear_idx >= p.pelements) {
+            continue;
+        }
+
+        data_d[offset_dst[idx]] = D_TYPE(values[idx]);
+    }
+
+}
