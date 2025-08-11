@@ -371,7 +371,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						*toolName = strings.TrimPrefix(*toolName, "functions.")
 						var args api.ToolCallFunctionArguments
 						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							ch <- gin.H{"error parsing tool call": err.Error()}
+							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
+							ch <- gin.H{"error": errStr}
 							return
 						}
 
@@ -1671,7 +1672,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						*toolName = strings.TrimPrefix(*toolName, "functions.")
 						var args api.ToolCallFunctionArguments
 						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							ch <- gin.H{"error parsing tool call": err.Error()}
+							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
+							ch <- gin.H{"error": errStr}
 							return
 						}
 						res.Message.ToolCalls = []api.ToolCall{{Function: api.ToolCallFunction{Name: *toolName, Arguments: args}}}
