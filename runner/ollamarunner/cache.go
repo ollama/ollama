@@ -70,6 +70,10 @@ func kvCacheTypeFromStr(s string) ml.DType {
 }
 
 func (c *InputCache) Close() {
+	if c == nil {
+		return
+	}
+
 	c.cache.Close()
 }
 
@@ -136,8 +140,8 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 	slog.Debug("loading cache slot", "id", slot.Id, "cache", len(slot.Inputs), "prompt", len(prompt),
 		"used", numPast, "remaining", int32(len(prompt))-numPast)
 
+	slot.Inputs = prompt[:numPast]
 	prompt = prompt[numPast:]
-	slot.Inputs = slot.Inputs[:numPast]
 
 	return slot, prompt, nil
 }
@@ -284,7 +288,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
 
 			// Reset the cache
-			_ = c.cache.Remove(slot.Id, 0, -1)
+			_ = c.cache.Remove(slot.Id, 0, math.MaxInt32)
 			slot.Inputs = []input.Input{}
 
 			// Return error with inputs that need to be reprocessed

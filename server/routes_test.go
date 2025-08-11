@@ -15,11 +15,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 	"unicode"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
@@ -77,19 +81,6 @@ func createTestFile(t *testing.T, name string) (string, string) {
 	}
 
 	return f.Name(), digest
-}
-
-// equalStringSlices checks if two slices of strings are equal.
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 type panicTransport struct{}
@@ -444,7 +435,7 @@ func TestRoutes(t *testing.T) {
 					"stop \"foo\"",
 					"top_p 0.9",
 				}
-				if !equalStringSlices(params, expectedParams) {
+				if !slices.Equal(params, expectedParams) {
 					t.Errorf("expected parameters %v, got %v", expectedParams, params)
 				}
 				paramCount, ok := showResp.ModelInfo["general.parameter_count"].(float64)
@@ -473,14 +464,24 @@ func TestRoutes(t *testing.T) {
 					t.Fatalf("failed to read response body: %v", err)
 				}
 
-				var retrieveResp api.RetrieveModelResponse
-				err = json.Unmarshal(body, &retrieveResp)
+				var m openai.Model
+				err = json.Unmarshal(body, &m)
 				if err != nil {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if retrieveResp.Id != "show-model" || retrieveResp.OwnedBy != "library" {
-					t.Errorf("expected model 'show-model' owned by 'library', got %v", retrieveResp)
+				if m.Id != "show-model" || m.OwnedBy != "library" {
+					t.Errorf("expected model 'show-model' owned by 'library', got %v", m)
+				}
+			},
+		},
+		{
+			Name:   "Method Not Allowed",
+			Method: http.MethodGet,
+			Path:   "/api/show",
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != 405 {
+					t.Errorf("expected status code 405, got %d", resp.StatusCode)
 				}
 			},
 		},
@@ -516,7 +517,7 @@ func TestRoutes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			u := httpSrv.URL + tc.Path
-			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			req, err := http.NewRequestWithContext(t.Context(), tc.Method, u, nil)
 			if err != nil {
 				t.Fatalf("failed to create request: %v", err)
 			}
@@ -742,6 +743,215 @@ func TestNormalize(t *testing.T) {
 			normalized := normalize(tc.input)
 			if !isNormalized(normalized) {
 				t.Errorf("Vector %v is not normalized", tc.input)
+			}
+		})
+	}
+}
+
+func TestFilterThinkTags(t *testing.T) {
+	type testCase struct {
+		msgs  []api.Message
+		want  []api.Message
+		model *Model
+	}
+	testCases := []testCase{
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		// with newlines inside the think tag aned newlines after
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... \n\nabout \nthe answer</think>\n\nabc\ndef"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc\ndef"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		// should leave thinking tags if it's after the last user message
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking...</think>after"},
+				{Role: "user", Content: "What is the answer?"},
+				{Role: "assistant", Content: "<think>thinking again</think>hjk"},
+				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "after"},
+				{Role: "user", Content: "What is the answer?"},
+				{Role: "assistant", Content: "<think>thinking again</think>hjk"},
+				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		{
+			// shouldn't strip anything because the model family isn't one of the hardcoded ones
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "llama3",
+				},
+			},
+		},
+		{
+			// deepseek-r1:-prefixed model
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
+				ShortName: "deepseek-r1:7b",
+				Config:    ConfigV2{},
+			},
+		},
+	}
+
+	for i, tc := range testCases {
+		filtered := filterThinkTags(tc.msgs, tc.model)
+
+		if !reflect.DeepEqual(filtered, tc.want) {
+			t.Errorf("messages differ for case %d:", i)
+			for i := range tc.want {
+				if i >= len(filtered) {
+					t.Errorf("  missing message %d: %+v", i, tc.want[i])
+					continue
+				}
+				if !reflect.DeepEqual(filtered[i], tc.want[i]) {
+					t.Errorf("  message %d:\n    want: %+v\n    got:  %+v", i, tc.want[i], filtered[i])
+				}
+			}
+			if len(filtered) > len(tc.want) {
+				for i := len(tc.want); i < len(filtered); i++ {
+					t.Errorf("  extra message %d: %+v", i, filtered[i])
+				}
+			}
+		}
+	}
+}
+
+func TestWaitForStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name       string
+		messages   []any
+		expectCode int
+		expectBody string
+	}{
+		{
+			name: "error",
+			messages: []any{
+				gin.H{"error": "internal server error"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"internal server error"}`,
+		},
+		{
+			name: "error status",
+			messages: []any{
+				gin.H{"status": http.StatusNotFound, "error": "not found"},
+			},
+			expectCode: http.StatusNotFound,
+			expectBody: `{"error":"not found"}`,
+		},
+		{
+			name: "unknown error",
+			messages: []any{
+				gin.H{"msg": "something else"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown error"}`,
+		},
+		{
+			name: "unknown type",
+			messages: []any{
+				struct{}{},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown message type"}`,
+		},
+		{
+			name: "progress success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"success"}`,
+		},
+		{
+			name: "progress more than success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+				api.ProgressResponse{Status: "one more thing"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"one more thing"}`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			ch := make(chan any, len(tt.messages))
+			for _, msg := range tt.messages {
+				ch <- msg
+			}
+			close(ch)
+
+			waitForStream(c, ch)
+
+			if w.Code != tt.expectCode {
+				t.Errorf("expected status %d, got %d", tt.expectCode, w.Code)
+			}
+
+			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
+				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

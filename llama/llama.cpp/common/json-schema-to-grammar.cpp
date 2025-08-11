@@ -16,6 +16,9 @@ using json = nlohmann::ordered_json;
 static std::string build_repetition(const std::string & item_rule, int min_items, int max_items, const std::string & separator_rule = "") {
     auto has_max = max_items != std::numeric_limits<int>::max();
 
+    if (max_items == 0) {
+        return "";
+    }
     if (min_items == 0 && max_items == 1) {
         return item_rule + "?";
     }
@@ -264,7 +267,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
     throw std::runtime_error("At least one of min_value or max_value must be set");
 }
 
-const std::string SPACE_RULE = "| \" \" | \"\\n\" [ \\t]{0,20}";
+const std::string SPACE_RULE = "| \" \" | \"\\n\"{1,2} [ \\t]{0,20}";
 
 struct BuiltinRule {
     std::string content;
@@ -764,11 +767,10 @@ private:
 public:
     SchemaConverter(
         const std::function<json(const std::string &)> & fetch_json,
-        bool dotall,
-        bool compact_spaces)
+        bool dotall)
           : _fetch_json(fetch_json), _dotall(dotall)
     {
-        _rules["space"] = compact_spaces ? "\" \"?" : SPACE_RULE;
+        _rules["space"] = SPACE_RULE;
     }
 
     void resolve_refs(json & schema, const std::string & url) {
@@ -1007,7 +1009,7 @@ std::string json_schema_to_grammar(const json & schema, bool force_gbnf) {
 }
 
 std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options) {
-    SchemaConverter converter([&](const std::string &) { return json(); }, options.dotall, options.compact_spaces);
+    SchemaConverter converter([&](const std::string &) { return json(); }, options.dotall);
     common_grammar_builder builder {
         /* .add_rule = */ [&](const std::string & name, const std::string & rule) {
             return converter._add_rule(name, rule);
