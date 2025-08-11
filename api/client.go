@@ -159,7 +159,10 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
-const maxBufferSize = 512 * format.KiloByte
+const (
+	maxBufferSize     = 5 * format.MegaByte
+	defaultBufferSize = 512 * format.KiloByte
+)
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf io.Reader
@@ -210,7 +213,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 
 	scanner := bufio.NewScanner(response.Body)
 	// increase the buffer size to avoid running out of space
-	scanBuf := make([]byte, 0, maxBufferSize)
+	scanBuf := make([]byte, 0, defaultBufferSize)
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
