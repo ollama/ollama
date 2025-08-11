@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/MooreThreads/ollama-musa/refs/heads
 Install the [MT Container Toolkit](https://developer.mthreads.com/sdk/download/CloudNative?equipment=&os=&driverVersion=&version=) (v2.0.0), and set the default runtime to `mthreads`.
 
 ```bash
-docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama mthreads/ollama:0.11.3-musa-rc4.2.0
+docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama mthreads/ollama:0.11.4-musa-rc4.2.0
 ```
 
 # Ollama
