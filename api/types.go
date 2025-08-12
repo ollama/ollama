@@ -769,8 +769,8 @@ func (t *ThinkValue) IsString() bool {
 	return ok
 }
 
-// AsBool returns the value as a bool (true if enabled in any way)
-func (t *ThinkValue) AsBool() bool {
+// Bool returns the value as a bool (true if enabled in any way)
+func (t *ThinkValue) Bool() bool {
 	if t == nil || t.Value == nil {
 		return false
 	}
@@ -786,8 +786,8 @@ func (t *ThinkValue) AsBool() bool {
 	}
 }
 
-// AsString returns the value as a string
-func (t *ThinkValue) AsString() string {
+// String returns the value as a string
+func (t *ThinkValue) String() string {
 	if t == nil || t.Value == nil {
 		return ""
 	}

@@ -205,7 +205,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// Validate Think value: string values currently only allowed for gptoss models
 	if req.Think != nil && req.Think.IsString() && !useHarmony {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.AsString())})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
 
@@ -213,7 +213,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
-	if req.Think != nil && req.Think.AsBool() {
+	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
 		// TODO(drifkin): consider adding a warning if it's false and the model
 		// doesn't support thinking. It's not strictly required, but it can be a
@@ -288,10 +288,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
 		}
 
-		values.Think = req.Think != nil && req.Think.AsBool()
+		values.Think = req.Think != nil && req.Think.Bool()
 		values.ThinkLevel = ""
 		if req.Think != nil {
-			values.ThinkLevel = req.Think.AsString()
+			values.ThinkLevel = req.Think.String()
 		}
 		values.IsThinkSet = req.Think != nil
 
@@ -317,7 +317,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	var thinkingState *thinking.Parser
 	if !useHarmony {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
-		if req.Think != nil && req.Think.AsBool() && openingTag != "" && closingTag != "" {
+		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
@@ -1547,7 +1547,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
-	if req.Think != nil && req.Think.AsBool() {
+	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
 	}
 
@@ -1601,7 +1601,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	// Validate Think value: string values currently only allowed for gptoss models
 	if req.Think != nil && req.Think.IsString() && !useHarmony {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.AsString())})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
 
@@ -1620,7 +1620,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	var thinkingState *thinking.Parser
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if req.Think != nil && req.Think.AsBool() && openingTag != "" && closingTag != "" {
+	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 		thinkingState = &thinking.Parser{
 			OpeningTag: openingTag,
 			ClosingTag: closingTag,
