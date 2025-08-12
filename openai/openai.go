@@ -103,6 +103,7 @@ type ChatCompletionRequest struct {
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
+	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
 }
 
 type ChatCompletion struct {
@@ -541,10 +542,6 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	if r.Reasoning != nil {
-		options["reasoning"] = *r.Reasoning.Effort
-	}
-
 	var format json.RawMessage
 	if r.ResponseFormat != nil {
 		switch strings.ToLower(strings.TrimSpace(r.ResponseFormat.Type)) {
@@ -560,8 +557,14 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	var think *api.ThinkValue
 	if r.Reasoning != nil {
+		options["reasoning"] = *r.Reasoning.Effort
 		think = &api.ThinkValue{
 			Value: *r.Reasoning.Effort,
+		}
+	} else if r.ReasoningEffort != nil {
+		options["reasoning"] = *r.ReasoningEffort
+		think = &api.ThinkValue{
+			Value: *r.ReasoningEffort,
 		}
 	}
 
