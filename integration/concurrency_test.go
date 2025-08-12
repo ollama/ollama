@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"sync"
@@ -21,7 +23,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 	var (
 		req = [2]api.GenerateRequest{
 			{
-				Model:     "llama3.2:1b",
+				Model:     smol,
 				Prompt:    "why is the ocean blue?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
@@ -30,7 +32,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 					"temperature": 0.0,
 				},
 			}, {
-				Model:     "tinydolphin",
+				Model:     "qwen3:0.6b",
 				Prompt:    "what is the origin of the us thanksgiving holiday?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
@@ -132,16 +134,16 @@ func TestMultiModelStress(t *testing.T) {
 			size: 2876 * format.MebiByte,
 		},
 		{
-			name: "phi",
-			size: 2616 * format.MebiByte,
+			name: "qwen3:0.6b",
+			size: 1600 * format.MebiByte,
 		},
 		{
 			name: "gemma:2b",
 			size: 2364 * format.MebiByte,
 		},
 		{
-			name: "stable-code:3b",
-			size: 2608 * format.MebiByte,
+			name: "deepseek-r1:1.5b",
+			size: 2048 * format.MebiByte,
 		},
 		{
 			name: "starcoder2:3b",
@@ -150,16 +152,20 @@ func TestMultiModelStress(t *testing.T) {
 	}
 	mediumModels := []model{
 		{
+			name: "qwen3:8b",
+			size: 6600 * format.MebiByte,
+		},
+		{
 			name: "llama2",
 			size: 5118 * format.MebiByte,
 		},
 		{
-			name: "mistral",
-			size: 4620 * format.MebiByte,
+			name: "deepseek-r1:7b",
+			size: 5600 * format.MebiByte,
 		},
 		{
-			name: "orca-mini:7b",
-			size: 5118 * format.MebiByte,
+			name: "mistral",
+			size: 4620 * format.MebiByte,
 		},
 		{
 			name: "dolphin-mistral",
@@ -254,7 +260,7 @@ func TestMultiModelStress(t *testing.T) {
 	}
 	go func() {
 		for {
-			time.Sleep(2 * time.Second)
+			time.Sleep(10 * time.Second)
 			select {
 			case <-ctx.Done():
 				return
@@ -265,7 +271,21 @@ func TestMultiModelStress(t *testing.T) {
 					continue
 				}
 				for _, m := range models.Models {
-					slog.Info("loaded model snapshot", "model", m)
+					var procStr string
+					switch {
+					case m.SizeVRAM == 0:
+						procStr = "100% CPU"
+					case m.SizeVRAM == m.Size:
+						procStr = "100% GPU"
+					case m.SizeVRAM > m.Size || m.Size == 0:
+						procStr = "Unknown"
+					default:
+						sizeCPU := m.Size - m.SizeVRAM
+						cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
+						procStr = fmt.Sprintf("%d%%/%d%%", int(cpuPercent), int(100-cpuPercent))
+					}
+
+					slog.Info("loaded model snapshot", "model", m.Name, "CPU/GPU", procStr, "expires", format.HumanTime(m.ExpiresAt, "Never"))
 				}
 			}
 		}
