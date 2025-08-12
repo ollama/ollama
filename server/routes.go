@@ -514,6 +514,23 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	images := make([]llm.ImageData, 0, len(req.Images))
+
+	for i, imgData := range req.Images {
+		data := llm.ImageData{
+			ID:   i,
+			Data: imgData,
+		}
+		// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
+		// Clip images are represented as 768 tokens, each an embedding
+		if 768*len(imgData) > opts.NumCtx {
+			slog.Debug("truncating images messages which exceed context length", "truncated", i)
+			continue
+		}
+		images = append(images, data)
+
+	}
+
 	var count int
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
@@ -546,7 +563,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	embeddings := make([][]float32, len(input))
 	for i, text := range input {
 		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
+			embedding, err := r.Embedding(c.Request.Context(), text, nil)
 			if err != nil {
 				return err
 			}
@@ -610,12 +627,20 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	}
 
 	// an empty request loads the model
-	if req.Prompt == "" {
+	if req.Prompt == "" && req.Image == nil {
 		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
+	var image *llm.ImageData
+	if len(req.Image) != 0 {
+		image = &llm.ImageData{
+			ID:   0,
+			Data: req.Image,
+		}
+	}
+
+	embedding, err := r.Embedding(c.Request.Context(), req.Prompt, image)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
