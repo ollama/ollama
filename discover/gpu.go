@@ -422,8 +422,7 @@ func GetGPUInfo() GpuInfoList {
 					C.free(unsafe.Pointer(memInfo.err))
 					continue
 				}
-				
-				gpuInfo.FlashAttention = true
+
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
