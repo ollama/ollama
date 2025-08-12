@@ -169,7 +169,7 @@ COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
-ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility
+ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility,graphics
 ENV MTHREADS_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434

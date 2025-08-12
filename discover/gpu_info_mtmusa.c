@@ -18,7 +18,6 @@ void mtmusa_init(char *mtmusa_lib_path, mtmusa_init_resp_t *resp) {
     char *s;
     void **p;
   } l[] = {
-
       {"muInit", (void *)&resp->ch.muInit},
       {"muDriverGetVersion", (void *)&resp->ch.muDriverGetVersion},
       {"muDeviceGetCount", (void *)&resp->ch.muDeviceGetCount},
