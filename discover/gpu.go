@@ -189,7 +189,11 @@ func initVulkanHandles() *vulkanHandles {
 		return vHandles
 	}
 
-	vulkanLibPaths := FindGPULibs(VulkanMgmtName, VulkanGlobs)
+	var vulkanMgmtPatterns []string
+	vulkanMgmtPatterns = append(vulkanMgmtPatterns, filepath.Join(LibOllamaPath, "vulkan_v*", VulkanMgmtName))
+	vulkanMgmtPatterns = append(vulkanMgmtPatterns, VulkanGlobs...)
+
+	vulkanLibPaths := FindGPULibs(VulkanMgmtName, vulkanMgmtPatterns)
 	if len(vulkanLibPaths) > 0 {
 		deviceCount, vulkan, libPath, err := loadVulkanMgmt(vulkanLibPaths)
 		if vulkan != nil {
@@ -841,16 +845,18 @@ func GetGPUInfo() GpuInfoList {
 	for _, gpu := range oneapiGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
-	// XXX: On arm64, append vulkan GPUs before musa GPUs
-	if runtime.GOARCH == "arm64" {
+	flavor := os.Getenv("OLLAMA_FLAVOR")
+	if flavor == "vulkan" {
 		for _, gpu := range vulkanGPUs {
 			resp = append(resp, gpu.GpuInfo)
 		}
-	}
-	for _, gpu := range musaGPUs {
-		resp = append(resp, gpu.GpuInfo)
-	}
-	if runtime.GOARCH != "arm64" {
+		for _, gpu := range musaGPUs {
+			resp = append(resp, gpu.GpuInfo)
+		}
+	} else {
+		for _, gpu := range musaGPUs {
+			resp = append(resp, gpu.GpuInfo)
+		}
 		for _, gpu := range vulkanGPUs {
 			resp = append(resp, gpu.GpuInfo)
 		}

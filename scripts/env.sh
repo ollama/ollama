@@ -4,6 +4,7 @@ export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --alwa
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 # TODO - consider `docker buildx ls --format=json` to autodiscover platform capability
 PLATFORM=${PLATFORM:-"linux/arm64,linux/amd64"}
+FLAVORS=${FLAVORS:-"musa"}
 DOCKER_ORG=${DOCKER_ORG:-"ollama"}
 FINAL_IMAGE_REPO=${FINAL_IMAGE_REPO:-"${DOCKER_ORG}/ollama"}
 OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
@@ -21,3 +22,4 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
 echo "Building Ollama"
 echo "VERSION=$VERSION"
 echo "PLATFORM=$PLATFORM"
+echo "FLAVORS=$FLAVORS"

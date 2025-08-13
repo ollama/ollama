@@ -106,7 +106,7 @@ COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
-FROM mthreads/vulkan-sdk:${VULKANVERSION}-arm64 AS vulkan-1
+FROM mthreads/vulkan-sdk:${VULKANVERSION} AS vulkan-1
 ARG CMAKEVERSION
 RUN curl -fsSL https://cmake.org/files/v${CMAKEVERSION%.*}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
@@ -157,9 +157,15 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 ARG FLAVOR
+ENV OLLAMA_FLAVOR=$FLAVOR
 RUN if [ "$FLAVOR" = "musa" ]; then \
     apt-get update \
     && apt-get install -y libelf1 libnuma1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*; \
+elif [ "$FLAVOR" = "vulkan" ]; then \
+    apt-get update \
+    && apt-get install -y libvulkan1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*; \
 fi

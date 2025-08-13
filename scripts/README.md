@@ -3,8 +3,12 @@
 ## Build Docker Images
 
 ```bash
+# By default using FLAVORS=musa
 PLATFORM=linux/amd64 DOCKER_ORG=mthreads ./scripts/build_docker.sh
 PLATFORM=linux/arm64 DOCKER_ORG=mthreads ./scripts/build_docker.sh
+# Using FLAVORS=vulkan
+PLATFORM=linux/amd64 DOCKER_ORG=mthreads FLAVORS=vulkan ./scripts/build_docker.sh
+PLATFORM=linux/arm64 DOCKER_ORG=mthreads FLAVORS=vulkan ./scripts/build_docker.sh
 ```
 
 ## Push Docker Images

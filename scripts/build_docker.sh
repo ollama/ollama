@@ -15,15 +15,6 @@ else
     LOAD_OR_PUSH="--push"
 fi
 
-if echo "$PLATFORM" | grep "amd64" > /dev/null; then
-    FLAVORS="musa"
-elif echo "$PLATFORM" | grep "arm64" > /dev/null; then
-    FLAVORS="vulkan"
-else
-    echo "Error: Unsupported platform '$PLATFORM'. FLAVORS cannot be set."
-    exit 1
-fi
-
 if [ "${DOCKER_ORG}" != "mthreads" ]; then
     docker buildx build \
         ${LOAD_OR_PUSH} \
@@ -42,6 +33,6 @@ for FLAVOR in $FLAVORS; do
         ${OLLAMA_COMMON_BUILD_ARGS} \
         --build-arg FLAVOR=${FLAVOR} \
         -f Dockerfile \
-        -t ${FINAL_IMAGE_REPO}:$VERSION-${FLAVOR} \
+        -t ${FINAL_IMAGE_REPO}:$VERSION-${FLAVOR}-$(basename ${PLATFORM}) \
         .
 done
