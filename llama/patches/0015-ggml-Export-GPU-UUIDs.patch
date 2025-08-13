@@ -24,7 +24,7 @@ index 8a91b381..9424394e 100644
          size_t memory_total;
          enum ggml_backend_dev_type type;
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 37ee2a6d..7264500b 100644
+index 37ee2a6d..57eae461 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -179,6 +179,51 @@ static int ggml_cuda_parse_id(char devName[]) {

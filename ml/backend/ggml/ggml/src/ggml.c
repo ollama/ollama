@@ -474,11 +474,11 @@ bool ggml_guid_matches(ggml_guid_t guid_a, ggml_guid_t guid_b) {
 }
 
 const char * ggml_version(void) {
-    return "undefined";
+    return GGML_VERSION;
 }
 
 const char * ggml_commit(void) {
-    return "undefined";
+    return GGML_COMMIT;
 }
 
 //
