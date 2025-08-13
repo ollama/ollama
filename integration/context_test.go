@@ -66,7 +66,7 @@ func TestContextExhaustion(t *testing.T) {
 	DoGenerate(ctx, t, client, req, []string{"once", "upon", "lived"}, 120*time.Second, 10*time.Second)
 }
 
-// Send multiple requests with prior context and ensure the response is coherant and expected
+// Send multiple generate requests with prior context and ensure the response is coherant and expected
 func TestGenerateWithHistory(t *testing.T) {
 	modelOverride := ollamaEngineChatModels[0] // Most recent ollama engine model
 	req, resp := GenerateRequests()
@@ -111,5 +111,56 @@ func TestGenerateWithHistory(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
 
+// Send multiple chat requests with prior context and ensure the response is coherant and expected
+func TestChatWithHistory(t *testing.T) {
+	modelOverride := ollamaEngineChatModels[0] // Most recent ollama engine model
+	req, resp := ChatRequests()
+	numParallel := 2
+	iterLimit := 2
+
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	// Get the server running (if applicable) warm the model up with a single initial empty request
+	slog.Info("loading", "model", modelOverride)
+	err := client.Generate(ctx,
+		&api.GenerateRequest{Model: modelOverride, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
+		func(response api.GenerateResponse) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("failed to load model %s: %s", modelOverride, err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(numParallel)
+	for i := range numParallel {
+		go func(i int) {
+			defer wg.Done()
+			k := i % len(req)
+			req[k].Model = modelOverride
+			for j := 0; j < iterLimit; j++ {
+				if time.Now().Sub(started) > softTimeout {
+					slog.Info("exceeded soft timeout, winding down test")
+					return
+				}
+				slog.Info("Starting", "thread", i, "iter", j)
+				// On slower GPUs it can take a while to process the concurrent requests
+				// so we allow a much longer initial timeout
+				assistant := DoChat(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
+				if assistant == nil {
+					t.Fatalf("didn't get an assistant response for context")
+				}
+				req[k].Messages = append(req[k].Messages,
+					*assistant,
+					api.Message{Role: "user", Content: "tell me more!"},
+				)
+			}
+		}(i)
+	}
+	wg.Wait()
 }

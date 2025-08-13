@@ -19,6 +19,8 @@ import (
 )
 
 func TestMaxQueue(t *testing.T) {
+	t.Skip("this test needs to be re-evaluated to use a proper embedding model")
+
 	if os.Getenv("OLLAMA_TEST_EXISTING") != "" {
 		t.Skip("Max Queue test requires spawning a local server so we can adjust the queue size")
 		return

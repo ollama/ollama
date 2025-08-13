@@ -567,6 +567,76 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		}
 }
 
+func ChatRequests() ([]api.ChatRequest, [][]string) {
+	genReqs, results := GenerateRequests()
+	reqs := make([]api.ChatRequest, len(genReqs))
+	for i := range reqs {
+		reqs[i].Model = genReqs[i].Model
+		reqs[i].Stream = genReqs[i].Stream
+		reqs[i].KeepAlive = genReqs[i].KeepAlive
+		reqs[i].Messages = []api.Message{
+			{
+				Role:    "user",
+				Content: genReqs[i].Prompt,
+			},
+		}
+	}
+	return reqs, results
+}
+
+func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
+	stallTimer := time.NewTimer(initialTimeout)
+	var buf bytes.Buffer
+	role := "assistant"
+	fn := func(response api.ChatResponse) error {
+		// fmt.Print(".")
+		role = response.Message.Role
+		buf.Write([]byte(response.Message.Content))
+		if !stallTimer.Reset(streamTimeout) {
+			return errors.New("stall was detected while streaming response, aborting")
+		}
+		return nil
+	}
+
+	stream := true
+	req.Stream = &stream
+	done := make(chan int)
+	var genErr error
+	go func() {
+		genErr = client.Chat(ctx, &req, fn)
+		done <- 0
+	}()
+
+	select {
+	case <-stallTimer.C:
+		if buf.Len() == 0 {
+			t.Errorf("generate never started.  Timed out after :%s", initialTimeout.String())
+		} else {
+			t.Errorf("generate stalled.  Response so far:%s", buf.String())
+		}
+	case <-done:
+		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
+			slog.Warn("model is too large for the target test system", "model", req.Model, "error", genErr)
+			return nil
+		}
+		require.NoError(t, genErr, "failed with %s request Messages %s ", req.Model, req.Messages)
+		// Verify the response contains the expected data
+		response := buf.String()
+		atLeastOne := false
+		for _, resp := range anyResp {
+			if strings.Contains(strings.ToLower(response), resp) {
+				atLeastOne = true
+				break
+			}
+		}
+		require.True(t, atLeastOne, "%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
+		slog.Info("test pass", "model", req.Model, "messages", req.Messages, "contains", anyResp, "response", response)
+	case <-ctx.Done():
+		t.Error("outer test context done while waiting for generate")
+	}
+	return &api.Message{Role: role, Content: buf.String()}
+}
+
 func skipUnderMinVRAM(t *testing.T, gb uint64) {
 	// TODO use info API in the future
 	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {

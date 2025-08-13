@@ -64,7 +64,7 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize([]input.Input) ([]input.Input, error)
+	PostTokenize([]*input.Input) ([]*input.Input, error)
 }
 
 // Base implements the common fields and methods for all models
@@ -278,13 +278,13 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Tensor, error) {
+func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Tensor, ml.Tensor, error) {
 	if len(batch.Positions) != len(batch.Sequences) {
-		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
+		return nil, nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
 	}
 
 	if len(batch.Positions) < 1 {
-		return nil, errors.New("batch size cannot be less than 1")
+		return nil, nil, errors.New("batch size cannot be less than 1")
 	}
 
 	batch.Inputs = ctx.Input().FromIntSlice(inputs, len(inputs))
@@ -293,16 +293,16 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 	if cache != nil {
 		err := cache.StartForward(ctx, batch, false)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	t, err := m.Forward(ctx, batch)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	ctx.Forward(t).Compute(t)
+	ctx.Forward(t)
 
-	return t, nil
+	return batch.Inputs, t, nil
 }

@@ -400,6 +400,8 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
+	BackendSetFromIntSlice(s []int32)
+
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Sub(ctx Context, t2 Tensor) Tensor
