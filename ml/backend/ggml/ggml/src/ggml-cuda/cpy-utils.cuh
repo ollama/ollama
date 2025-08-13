@@ -223,3 +223,9 @@ template<typename src_t, typename dst_t>
 static __device__ void cpy_1_flt(const char * cxi, char * cdsti) {
     convert_flt((const src_t *)cxi, (dst_t *)cdsti);
 }
+
+static __device__ void cpy_1_i32_i32(const char * cxi, char * cdsti) {
+    const int32_t * src = (const int32_t *)cxi;
+    int32_t * dst = (int32_t *)cdsti;
+    *dst = *src;
+}

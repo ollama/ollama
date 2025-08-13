@@ -134,10 +134,10 @@ index 8b6e6028..41c8c4a2 100644
  
  static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buffers) {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 78b57ab5..9a49bf1f 100644
+index 97f47abd..eded0291 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -1626,6 +1626,16 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
+@@ -1631,6 +1631,16 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
      return ggml_gallocr_get_buffer_size(sched->galloc, backend_index);
  }
  
