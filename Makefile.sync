@@ -12,7 +12,7 @@ help:
 	@echo "    clean                Clean local repository"
 	@echo
 	@echo "Example:"
-	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean sync"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean apply-patches sync"
 
 .PHONY: sync
 sync: llama/build-info.cpp ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal
@@ -39,7 +39,15 @@ PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATC
 apply-patches: $(PATCHED)
 
 llama/patches/.%.patched: llama/patches/%.patch
-	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
+	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then \
+		touch $@;                                                                           \
+	else                                                                                    \
+		echo "Patch failed. Resolve any conflicts then continue.";                          \
+		echo "1. Run 'git -C $(WORKDIR) am --continue'";                                    \
+		echo "2. Run 'make -f $(lastword $(MAKEFILE_LIST)) format-patches'";                \
+		echo "3. Run 'make -f $(lastword $(MAKEFILE_LIST)) clean apply-patches'";           \
+		exit 1;                                                                             \
+	fi
 
 .PHONY: checkout
 checkout: $(WORKDIR)
@@ -60,4 +68,5 @@ format-patches: llama/patches
 
 .PHONE: clean
 clean: checkout
+	@git -C $(WORKDIR) am --abort || true
 	$(RM) llama/patches/.*.patched
