@@ -25,11 +25,11 @@ ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal: ml/backend/ggml/ggml
 
 .PHONY: llama/llama.cpp
 llama/llama.cpp: llama/vendor/
-	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+	rsync -arvzc --delete -f "merge $@/.rsync-filter" $< $@
 
 .PHONY: ml/backend/ggml/ggml
 ml/backend/ggml/ggml: llama/vendor/ggml/
-	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+	rsync -arvzc --delete -f "merge $@/.rsync-filter" $< $@
 
 PATCHES=$(wildcard llama/patches/*.patch)
 PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATCHES)))))

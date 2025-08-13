@@ -1,5 +1,6 @@
 protect *.go
 protect *-embed.*
+protect ollama-*
 include include/
 include cmake/
 include cmake/common.cmake
