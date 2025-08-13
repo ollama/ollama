@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -279,6 +280,13 @@ type Server struct {
 	// TODO (jmorganca): make this n_batch
 	batchSize int
 
+	// Synchronize between computeBatch and predictForwardBatch
+	// true signals to keep predicted graph, false signals to discard predicted graph
+	computeDoneCh chan bool
+
+	// Used to signal a hard failure during async processing which will panic the runner
+	hardErrCh chan error
+
 	// protects access to everything below this line
 	// this is context state needed for decoding
 	mu sync.Mutex
@@ -351,15 +359,33 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	s.seqsSem.Release(1)
 }
 
+// track batch state between forwardBatch, computeBatch and predictForwardBatch
+type batchState struct {
+	ctx         ml.Context
+	modelInput  ml.Tensor
+	modelOutput ml.Tensor
+	batchInputs []int32
+	batch       input.Batch
+}
+
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
+	var bs batchState
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case err := <-s.hardErrCh:
+			panic(err)
 		default:
-			err := s.processBatch()
+			var err error
+			bs, err = s.forwardBatch(bs)
+			if err != nil {
+				panic(err)
+			}
+			go s.computeBatch(bs)
+			bs, err = s.predictForwardBatch(bs)
 			if err != nil {
 				panic(err)
 			}
@@ -367,15 +393,22 @@ func (s *Server) run(ctx context.Context) {
 	}
 }
 
-func (s *Server) processBatch() error {
+// forwardBatch will calculate a batch.  If the predicted batchState
+// matches the batch, the predicted graph is ready for computeBatch.
+// If the batch does not match, the predicted graph and context will be
+// discarded and a new context and graph will be created via model.Forward
+//
+// Note: forwardBatch takes s.mu lock but does not release
+func (s *Server) forwardBatch(bs batchState) (batchState, error) {
 	s.mu.Lock()
 	for s.allNil() {
 		s.cond.Wait() // Wait until an item is added
 	}
-	defer s.mu.Unlock()
 
-	ctx := s.model.Backend().NewContext()
-	defer ctx.Close()
+	ctx := bs.ctx
+	if ctx == nil {
+		ctx = s.model.Backend().NewContext()
+	}
 
 	var batchInputs []int32
 	var batch input.Batch
@@ -440,16 +473,19 @@ func (s *Server) processBatch() error {
 						// Skip this sequence but continue processing the rest
 						continue
 					} else {
-						return err
+						ctx.Close()
+						return batchState{}, err
 					}
 				}
 			}
 
 			batchInputs = append(batchInputs, inp.Token)
 			if inp.Multimodal != nil {
+				// Note: the mm tensors must be recreated if we have to rotate the ctx
 				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, false)
 				if err != nil {
-					return err
+					ctx.Close()
+					return batchState{}, err
 				}
 				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})
 			}
@@ -474,15 +510,77 @@ func (s *Server) processBatch() error {
 	}
 
 	if len(batchInputs) == 0 {
-		return nil
+		ctx.Close()
+		return batchState{}, nil
 	}
 
-	modelOutput, err := model.Forward(ctx, s.model, batchInputs, batch)
-	if err != nil {
-		return fmt.Errorf("failed to decode batch: %w", err)
+	// Now that we have created the batch, we can compare with the predicted batch
+	// to see if we're prepared, or need to recompute the graph
+	// This will typically be the result of a new sequence coming in
+	if bs.ctx != nil {
+		if !reflect.DeepEqual(bs.batch.Multimodal, batch.Multimodal) ||
+			!reflect.DeepEqual(bs.batch.Positions, batch.Positions) ||
+			!reflect.DeepEqual(bs.batch.Sequences, batch.Sequences) ||
+			!reflect.DeepEqual(bs.batch.Outputs, batch.Outputs) {
+			slog.Debug("predicted next batch does not match actual batch, recomputing")
+			ctx = s.model.Backend().NewContext()
+
+			// Embedded multimodal tensors need to be recreated in the new context before closing the old one
+			if len(batch.Multimodal) > 0 {
+				var tensors []ml.Tensor
+				for _, mm := range batch.Multimodal {
+					for _, mmt := range mm.Multimodal {
+						tensors = append(tensors, mmt.Tensor)
+					}
+				}
+				bs.ctx.Forward(tensors...)
+				bs.ctx.Compute(tensors...)
+				for i := range batch.Multimodal {
+					for j := range batch.Multimodal[i].Multimodal {
+						tmp := batch.Multimodal[i].Multimodal[j].Tensor
+						batch.Multimodal[i].Multimodal[j].Tensor = ctx.Input().FromFloatSlice(tmp.Floats(), tmp.Shape()...)
+					}
+				}
+			}
+			bs.ctx.Close()
+			bs.ctx = nil
+		}
 	}
 
-	logits := modelOutput.Floats()
+	// Replace predicted dummy input tokens with actual input tokens
+	bs.batchInputs = batchInputs
+
+	if bs.ctx == nil {
+		bs.ctx = ctx
+		bs.batch = batch
+		var err error
+		bs.modelInput, bs.modelOutput, err = model.Forward(ctx, s.model, batchInputs, batch)
+		if err != nil {
+			return batchState{}, fmt.Errorf("failed to build graph: %w", err)
+		}
+	} // else the predicted graph was correct, no need to run model.Forward again
+	return bs, nil
+}
+
+// Note: s.mu must already be locked, and must remain locked until after s.computeDoneCh is signaled
+func (s *Server) computeBatch(bs batchState) {
+	if bs.ctx == nil {
+		// nothing to compute
+		s.computeDoneCh <- false
+		return
+	}
+	defer bs.ctx.Close()
+
+	// If any sequences terminate, discard the predicted next graph
+	keepPrediction := true
+	defer func() {
+		s.computeDoneCh <- keepPrediction
+	}()
+
+	bs.modelInput.BackendSetFromIntSlice(bs.batchInputs)
+	bs.ctx.Compute(bs.modelOutput)
+
+	logits := bs.modelOutput.Floats()
 
 	for i, seq := range s.seqs {
 		if seq == nil {
@@ -498,7 +596,9 @@ func (s *Server) processBatch() error {
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			if !s.cache.enabled {
-				return errors.New("caching disabled but unable to fit entire input in a batch")
+				s.hardErrCh <- fmt.Errorf("caching disabled but unable to fit entire input in a batch")
+				keepPrediction = false
+				return
 			}
 			continue
 		}
@@ -517,11 +617,13 @@ func (s *Server) processBatch() error {
 		}
 
 		// sample a token
-		vocabSize := len(logits) / len(batch.Outputs)
+		vocabSize := len(logits) / len(bs.batch.Outputs)
 
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
 		if err != nil {
-			return fmt.Errorf("failed to sample token: %w", err)
+			s.hardErrCh <- fmt.Errorf("failed to sample token: %w", err)
+			keepPrediction = false
+			return
 		}
 
 		// if it's an end of sequence token, break
@@ -531,12 +633,15 @@ func (s *Server) processBatch() error {
 			// seq.responses <- piece
 
 			s.removeSequence(i, llm.DoneReasonStop)
+			keepPrediction = false
 			continue
 		}
 
 		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
 		if err != nil {
-			return err
+			s.hardErrCh <- fmt.Errorf("failed to decode token: %w", err)
+			keepPrediction = false
+			return
 		}
 
 		seq.inputs = []input.Input{{Token: token}}
@@ -546,6 +651,7 @@ func (s *Server) processBatch() error {
 
 		if ok, stop := common.FindStop(sequence, seq.stop); ok {
 			slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
+			keepPrediction = false
 
 			var tokenTruncated bool
 			origLen := len(seq.pendingResponses)
@@ -579,11 +685,135 @@ func (s *Server) processBatch() error {
 		}
 
 		if !flushPending(seq) {
+			keepPrediction = false
 			s.removeSequence(i, llm.DoneReasonConnectionClosed)
 		}
 	}
+}
 
-	return nil
+// predictForwardBatch runs a forward pass based on the predicted next batch.
+// This blocks until computeBatch completes to determine if any sequences are done
+// and if so, discard the predicted batch as it is no longer valid.
+//
+// Note: s.mu lock will be released upon completion
+func (s *Server) predictForwardBatch(bs batchState) (batchState, error) {
+	defer s.mu.Unlock()
+
+	ctx := s.model.Backend().NewContext()
+
+	var batchInputs []int32
+	var batch input.Batch
+
+	resumeSeq := -1
+	seqIdx := s.nextSeq - 1
+	for range s.seqs {
+		seqIdx = (seqIdx + 1) % len(s.seqs)
+		if s.seqs[seqIdx] == nil {
+			continue
+		}
+
+		// we're just predicting the next batch so do not mutate the actual sequence state
+		seq := *s.seqs[seqIdx]
+		seq_inputs := []input.Input{{Token: 0}} // Single dummy token for next batch
+		seq_pendingInputs := append([]input.Input{}, seq.pendingInputs...)
+		seq_numPredicted := seq.numPredicted + 1
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq_numPredicted >= seq.numPredict {
+			slog.Debug("canceling predicted forward batch exceeded num predict limit")
+			ctx.Close()
+			<-s.computeDoneCh
+			return batchState{}, nil
+		}
+
+		if !s.cache.enabled {
+			seq_inputs = append(seq.cache.Inputs, seq_inputs...)
+		}
+
+		batchSize := s.batchSize
+
+		for i, inp := range seq_inputs {
+			// If we are required to put following inputs into a single batch then extend the
+			// batch size. Since we are only extending the size the minimum amount possible, this
+			// will cause a break if we have existing inputs.
+			minBatch := 1 + inp.SameBatch
+			if minBatch > batchSize {
+				batchSize = minBatch
+			}
+
+			// Stop if the required batch would put us over the total batch size (including tokens
+			// added by other sequences). If we haven't been able to add anything yet then pick up
+			// here again for the next batch to avoid starvation, though we can opportunistically
+			// check if other sequences can still squeeze something in.
+			if len(batchInputs)+minBatch > batchSize {
+				if len(seq_pendingInputs) == 0 && resumeSeq == -1 {
+					resumeSeq = seqIdx
+				}
+				break
+			}
+
+			// If the sum of our working set (already processed tokens, tokens we added to this
+			// batch, required following tokens) exceeds the context size, then abort predictive batch
+			if int32(len(seq.cache.Inputs)+len(seq_pendingInputs)+minBatch) > s.cache.numCtx {
+				slog.Debug("canceling predicted forward batch with working set past num ctx")
+				ctx.Close()
+				<-s.computeDoneCh
+				return batchState{}, nil
+			}
+
+			batchInputs = append(batchInputs, inp.Token)
+			if inp.Multimodal != nil {
+				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, false)
+				if err != nil {
+					slog.Debug("canceling predicted forward batch with multmodal error", "error", err)
+					ctx.Close()
+					<-s.computeDoneCh
+					return batchState{}, nil
+				}
+				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})
+			}
+
+			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq_pendingInputs)))
+			batch.Sequences = append(batch.Sequences, seq.cache.Id)
+
+			if i+1 == len(seq_inputs) {
+				batch.Outputs = append(batch.Outputs, int32(len(batchInputs)-1))
+			}
+			seq_pendingInputs = append(seq_pendingInputs, inp)
+		}
+	}
+
+	if len(batchInputs) == 0 {
+		slog.Debug("canceling predicted forward batch with empty batch inputs")
+		ctx.Close()
+		<-s.computeDoneCh
+		return batchState{}, nil
+	}
+
+	modelInput, modelOutput, err := model.Forward(ctx, s.model, batchInputs, batch)
+	if err != nil {
+		ctx.Close()
+		<-s.computeDoneCh
+		return batchState{}, fmt.Errorf("failed to build graph: %w", err)
+	}
+
+	// Wait for the compute to finish so we can cancel the prediction if any sequences were terminated
+	keepPrediction := <-s.computeDoneCh
+
+	if !keepPrediction {
+		slog.Debug("canceling predicted forward batch from terminated sequence")
+		ctx.Close()
+		return batchState{}, nil
+	}
+
+	// Prediction is (most likely) good, proceed
+	return batchState{
+		ctx:         ctx,
+		modelInput:  modelInput,
+		modelOutput: modelOutput,
+		batchInputs: batchInputs,
+		batch:       batch,
+	}, nil
 }
 
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
@@ -934,8 +1164,10 @@ func Execute(args []string) error {
 	slog.Info("starting ollama engine")
 
 	server := &Server{
-		batchSize: *batchSize,
-		status:    llm.ServerStatusLoadingModel,
+		batchSize:     *batchSize,
+		status:        llm.ServerStatusLoadingModel,
+		computeDoneCh: make(chan bool),
+		hardErrCh:     make(chan error),
 	}
 
 	server.cond = sync.NewCond(&server.mu)
