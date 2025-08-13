@@ -4,6 +4,7 @@ import (
 	_ "github.com/ollama/ollama/model/models/gemma2"
 	_ "github.com/ollama/ollama/model/models/gemma3"
 	_ "github.com/ollama/ollama/model/models/gemma3n"
+	_ "github.com/ollama/ollama/model/models/gptoss"
 	_ "github.com/ollama/ollama/model/models/llama"
 	_ "github.com/ollama/ollama/model/models/llama4"
 	_ "github.com/ollama/ollama/model/models/mistral3"

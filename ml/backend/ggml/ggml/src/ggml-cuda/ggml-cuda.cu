@@ -21,6 +21,7 @@
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmv.cuh"
+#include "ggml-cuda/mmvmxfp4.cuh"
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
@@ -174,6 +175,51 @@ static int ggml_cuda_parse_id(char devName[]) {
 }
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
 
+static std::string ggml_cuda_parse_uuid(cudaDeviceProp prop, int device_num) {
+    char id[64];
+
+    #if !defined(GGML_USE_HIP)
+    snprintf(id, sizeof(id),
+        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        (unsigned char)prop.uuid.bytes[0],
+        (unsigned char)prop.uuid.bytes[1],
+        (unsigned char)prop.uuid.bytes[2],
+        (unsigned char)prop.uuid.bytes[3],
+        (unsigned char)prop.uuid.bytes[4],
+        (unsigned char)prop.uuid.bytes[5],
+        (unsigned char)prop.uuid.bytes[6],
+        (unsigned char)prop.uuid.bytes[7],
+        (unsigned char)prop.uuid.bytes[8],
+        (unsigned char)prop.uuid.bytes[9],
+        (unsigned char)prop.uuid.bytes[10],
+        (unsigned char)prop.uuid.bytes[11],
+        (unsigned char)prop.uuid.bytes[12],
+        (unsigned char)prop.uuid.bytes[13],
+        (unsigned char)prop.uuid.bytes[14],
+        (unsigned char)prop.uuid.bytes[15]
+        );
+    #else
+    #ifdef _WIN32
+        snprintf(id, sizeof(id), "%d", device_num);
+    #else
+    try {
+        std::string uuid = std::string(prop.uuid.bytes, 16);
+
+        size_t pos = 0;
+        unsigned long long v = stoull(uuid, &pos, 16);
+        if (v == 0 || pos != uuid.size() || (!uuid.empty() && uuid[0] == '-'))
+            throw std::invalid_argument("invalid uuid");
+
+        snprintf(id, sizeof(id), "GPU-%016llx", v);
+    } catch (const std::exception &e) {
+        snprintf(id, sizeof(id), "%d", device_num);
+    }
+    #endif
+    #endif
+
+    return id;
+}
+
 static ggml_cuda_device_info ggml_cuda_init() {
 #ifdef __HIP_PLATFORM_AMD__
     // Workaround for a rocBLAS bug when using multiple graphics cards:
@@ -262,22 +308,24 @@ static ggml_cuda_device_info ggml_cuda_init() {
                 info.devices[id].cc += prop.minor * 0x10;
             }
         }
-        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d\n",
+        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d, ID: %s\n",
                       id, prop.name, prop.gcnArchName, info.devices[id].cc & 0xffff,
-                      device_vmm ? "yes" : "no", prop.warpSize);
+                      device_vmm ? "yes" : "no", prop.warpSize, ggml_cuda_parse_uuid(prop, id).c_str());
 #elif defined(GGML_USE_MUSA)
         // FIXME: Ensure compatibility with varying warp sizes across different MUSA archs.
         info.devices[id].warp_size = 32;
         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
         info.devices[id].cc = GGML_CUDA_CC_OFFSET_MTHREADS + prop.major * 0x100;
         info.devices[id].cc += prop.minor * 0x10;
-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
+        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
+                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
+                        ggml_cuda_parse_uuid(prop, id).c_str());
 #else
         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
         info.devices[id].cc = 100*prop.major + 10*prop.minor;
-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
+        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
+                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
+                        ggml_cuda_parse_uuid(prop, id).c_str());
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
     }
 
@@ -1202,7 +1250,7 @@ static void ggml_cuda_op_mul_mat_cublas(
 
     const int cc = ggml_cuda_info().devices[id].cc;
 
-    const bool use_fp16 = (src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) && ggml_is_contiguous(src0) && row_diff == src0->ne[1] && dst->op_params[0] == GGML_PREC_DEFAULT;
+    const bool use_fp16 = (src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) && ggml_is_contiguous(src0) && row_diff == src0->ne[1] && dst->op_params[0] == GGML_PREC_DEFAULT && src0->type != GGML_TYPE_MXFP4;
 
     if (src0->type == GGML_TYPE_BF16 && ggml_is_contiguous(src0) && row_diff == src0->ne[1]) {
         ggml_cuda_pool_alloc<nv_bfloat16> src1_as_bf16(ctx.pool(id));
@@ -1924,7 +1972,11 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         && src0->ne[0] % 2 == 0 && src1->ne[1] == 1;
     bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
-        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
+        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE
+        && src0->type != GGML_TYPE_MXFP4;
+    bool use_mul_mat_vec_mxfp4 = src0->type == GGML_TYPE_MXFP4
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
+        && src0->ne[0] % 2 == 0 && src1->ne[1] == 1;
     bool use_mul_mat_q     = ggml_is_quantized(src0->type) && !bad_padding_clear
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
 
@@ -1978,6 +2030,8 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, quantize_row_q8_1_cuda);
     } else if (use_mul_mat_q) {
         ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_q, quantize_mmq_q8_1_cuda);
+    } else if (use_mul_mat_vec_mxfp4) {
+        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_mxfp4, nullptr);
     } else {
         ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, nullptr);
     }
@@ -1997,6 +2051,10 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
 
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
+        if (ne2 == 1 && src0->type == GGML_TYPE_MXFP4) {
+            ggml_cuda_mul_mat_vec_mxfp4(ctx, src0, src1, ids, dst);
+            return;
+        }
         if (ne2 == 1) {
             if (ggml_is_quantized(src0->type)) {
                 ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
@@ -2474,6 +2532,9 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
     cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
 
+    const std::string gemma3n_per_layer_proj_src1_name   = " (reshaped)";
+    const std::string gemma3n_node_name                  = "node_";
+
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor * node = cgraph->nodes[i];
 
@@ -2492,15 +2553,6 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
             use_cuda_graph = false; // This node type is not supported by CUDA graph capture
 #ifndef NDEBUG
             GGML_LOG_DEBUG("%s: disabling CUDA graphs due to unsupported node type\n", __func__);
-#endif
-        }
-
-        if (node->op == GGML_OP_ADD && node->src[1] && node->src[1]->ne[1] > 1) {
-            // disable CUDA graphs for batch size > 1 for now.
-            // Changes in batch size or context size can cause changes to the grid size of some kernels.
-            use_cuda_graph = false;
-#ifndef NDEBUG
-            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
 #endif
         }
 
@@ -2888,7 +2940,7 @@ struct ggml_backend_cuda_device_context {
     int device;
     std::string name;
     std::string description;
-    std::string uuid;
+    std::string id;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -2901,9 +2953,9 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t 
     return ctx->description.c_str();
 }
 
-static const char * ggml_backend_cuda_device_get_uuid(ggml_backend_dev_t dev) {
+static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
-    return ctx->uuid.c_str();
+    return ctx->id.c_str();
 }
 
 static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
@@ -2920,7 +2972,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name        = ggml_backend_cuda_device_get_name(dev);
     props->description = ggml_backend_cuda_device_get_description(dev);
-    props->uuid        = ggml_backend_cuda_device_get_uuid(dev);
+    props->id          = ggml_backend_cuda_device_get_id(dev);
     props->type        = ggml_backend_cuda_device_get_type(dev);
     ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
 
@@ -3048,6 +3100,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     case GGML_TYPE_IQ4_NL:
                     case GGML_TYPE_IQ4_XS:
                     case GGML_TYPE_BF16:
+                    case GGML_TYPE_MXFP4:
 #ifdef GGML_USE_MUSA
                         if (a->type == GGML_TYPE_Q3_K) {
                             return false;
@@ -3469,32 +3522,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 cudaDeviceProp prop;
                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
                 dev_ctx->description = prop.name;
-
-                #if !defined(GGML_USE_HIP)
-                char uuid[64];
-                snprintf(uuid, sizeof(uuid),
-                    "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                    (unsigned char)prop.uuid.bytes[0],
-                    (unsigned char)prop.uuid.bytes[1],
-                    (unsigned char)prop.uuid.bytes[2],
-                    (unsigned char)prop.uuid.bytes[3],
-                    (unsigned char)prop.uuid.bytes[4],
-                    (unsigned char)prop.uuid.bytes[5],
-                    (unsigned char)prop.uuid.bytes[6],
-                    (unsigned char)prop.uuid.bytes[7],
-                    (unsigned char)prop.uuid.bytes[8],
-                    (unsigned char)prop.uuid.bytes[9],
-                    (unsigned char)prop.uuid.bytes[10],
-                    (unsigned char)prop.uuid.bytes[11],
-                    (unsigned char)prop.uuid.bytes[12],
-                    (unsigned char)prop.uuid.bytes[13],
-                    (unsigned char)prop.uuid.bytes[14],
-                    (unsigned char)prop.uuid.bytes[15]
-                  );
-                dev_ctx->uuid = uuid;
-                #else
-                dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
-                #endif
+                dev_ctx->id = ggml_cuda_parse_uuid(prop, i);
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,

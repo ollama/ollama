@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
@@ -50,11 +51,16 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
+// Low VRAM mode is based on the sum of total VRAM (not free) and triggers
+// reduced context length on some models
+var lowVRAMThreshold uint64 = 20 * format.GibiByte
+
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr  net.Addr
-	sched *Scheduler
+	addr    net.Addr
+	sched   *Scheduler
+	lowVRAM bool
 }
 
 func init() {
@@ -110,6 +116,12 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	opts, err := modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	// This model is much more capable with a larger context, so set that
+	// unless it would penalize performance too much
+	if !s.lowVRAM && slices.Contains(model.Config.ModelFamilies, "gptoss") {
+		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
@@ -182,11 +194,26 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	useHarmony := shouldUseHarmony(*m) && !req.Raw
+	var harmonyMessageHandler *HarmonyMessageHandler
+	var harmonyToolParser *HarmonyToolCallAccumulator
+	if useHarmony {
+		harmonyMessageHandler = NewHarmonyMessageHandler()
+		harmonyMessageHandler.harmonyParser.AddImplicitStart()
+		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+	}
+
+	// Validate Think value: string values currently only allowed for gptoss models
+	if req.Think != nil && req.Think.IsString() && !useHarmony {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
+		return
+	}
+
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
-	if req.Think != nil && *req.Think {
+	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
 		// TODO(drifkin): consider adding a warning if it's false and the model
 		// doesn't support thinking. It's not strictly required, but it can be a
@@ -261,7 +288,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
 		}
 
-		values.Think = req.Think != nil && *req.Think
+		values.Think = req.Think != nil && req.Think.Bool()
+		values.ThinkLevel = ""
+		if req.Think != nil {
+			values.ThinkLevel = req.Think.String()
+		}
 		values.IsThinkSet = req.Think != nil
 
 		var b bytes.Buffer
@@ -284,11 +315,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var thinkingState *thinking.Parser
-	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
-		thinkingState = &thinking.Parser{
-			OpeningTag: openingTag,
-			ClosingTag: closingTag,
+	if !useHarmony {
+		openingTag, closingTag := thinking.InferTags(m.Template.Template)
+		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
+			thinkingState = &thinking.Parser{
+				OpeningTag: openingTag,
+				ClosingTag: closingTag,
+			}
 		}
 	}
 
@@ -316,7 +349,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				},
 			}
 
-			if thinkingState != nil {
+			if useHarmony {
+				content, thinking, toolContent := harmonyMessageHandler.AddContent(cr.Content, harmonyToolParser)
+				res.Response = content
+				res.Thinking = thinking
+				harmonyToolParser.Add(toolContent)
+			} else if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
 				res.Response = content
@@ -327,6 +365,26 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
+				if useHarmony {
+					toolName, toolContent := harmonyToolParser.Drain()
+					if toolName != nil {
+						*toolName = strings.TrimPrefix(*toolName, "functions.")
+						var args api.ToolCallFunctionArguments
+						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
+							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
+							ch <- gin.H{"error": errStr}
+							return
+						}
+
+						res.ToolCalls = append(res.ToolCalls, api.ToolCall{
+							Function: api.ToolCallFunction{
+								Name:      *toolName,
+								Arguments: args,
+							},
+						})
+					}
+				}
+
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -339,6 +397,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					res.Context = tokens
 				}
+			}
+
+			if useHarmony {
+				// only send messages with meaningful content (empty messages confuse clients)
+				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 {
+					ch <- res
+				}
+
+				return
 			}
 
 			ch <- res
@@ -842,8 +909,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 	resp.Parameters = strings.Join(params, "\n")
 
-	for k, v := range req.Options {
-		if _, ok := req.Options[k]; ok {
+	if len(req.Options) > 0 {
+		if m.Options == nil {
+			m.Options = make(map[string]any)
+		}
+		for k, v := range req.Options {
 			m.Options[k] = v
 		}
 	}
@@ -1320,6 +1390,15 @@ func Serve(ln net.Listener) error {
 	gpus := discover.GetGPUInfo()
 	gpus.LogDetails()
 
+	var totalVRAM uint64
+	for _, gpu := range gpus {
+		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
+	}
+	if totalVRAM < lowVRAMThreshold {
+		s.lowVRAM = true
+		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
+	}
+
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
 	// otherwise error out quickly
@@ -1468,7 +1547,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
-	if req.Think != nil && *req.Think {
+	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
 	}
 
@@ -1518,9 +1597,30 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	useHarmony := shouldUseHarmony(*m)
+
+	// Validate Think value: string values currently only allowed for gptoss models
+	if req.Think != nil && req.Think.IsString() && !useHarmony {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
+		return
+	}
+
+	var harmonyMessageHandler *HarmonyMessageHandler
+	var harmonyToolParser *HarmonyToolCallAccumulator
+
+	if useHarmony {
+		harmonyMessageHandler = NewHarmonyMessageHandler()
+		var lastMessage *api.Message
+		if len(msgs) > 0 {
+			lastMessage = &msgs[len(msgs)-1]
+		}
+		harmonyMessageHandler.harmonyParser.AddImplicitStartOrPrefill(lastMessage)
+		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+	}
+
 	var thinkingState *thinking.Parser
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
+	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 		thinkingState = &thinking.Parser{
 			OpeningTag: openingTag,
 			ClosingTag: closingTag,
@@ -1528,7 +1628,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	var toolParser *tools.Parser
-	if len(req.Tools) > 0 {
+	if len(req.Tools) > 0 && !useHarmony {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
@@ -1554,6 +1654,39 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					EvalDuration:       r.EvalDuration,
 				},
 			}
+			if r.Done {
+				res.DoneReason = r.DoneReason.String()
+				res.TotalDuration = time.Since(checkpointStart)
+				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
+			if useHarmony {
+				content, thinking, toolContent := harmonyMessageHandler.AddContent(r.Content, harmonyToolParser)
+				res.Message.Content = content
+				res.Message.Thinking = thinking
+				harmonyToolParser.Add(toolContent)
+
+				if r.Done {
+					toolName, toolContent := harmonyToolParser.Drain()
+					if toolName != nil {
+						*toolName = strings.TrimPrefix(*toolName, "functions.")
+						var args api.ToolCallFunctionArguments
+						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
+							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
+							ch <- gin.H{"error": errStr}
+							return
+						}
+						res.Message.ToolCalls = []api.ToolCall{{Function: api.ToolCallFunction{Name: *toolName, Arguments: args}}}
+					}
+				}
+
+				// only send messages with meaningful content (empty messages confuse clients)
+				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
+					ch <- res
+				}
+
+				return
+			}
 
 			if thinkingState != nil {
 				thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
@@ -1563,12 +1696,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 				res.Message.Content = remainingContent
 				res.Message.Thinking = thinkingContent
-			}
-
-			if r.Done {
-				res.DoneReason = r.DoneReason.String()
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
 			if len(req.Tools) > 0 {

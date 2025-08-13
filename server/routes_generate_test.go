@@ -150,7 +150,7 @@ func TestGenerateChat(t *testing.T) {
 			Messages: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
-			Think: &think,
+			Think: &api.ThinkValue{Value: think},
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -388,25 +388,15 @@ func TestGenerateChat(t *testing.T) {
 					Name:        "get_weather",
 					Description: "Get the current weather",
 					Parameters: struct {
-						Type       string   `json:"type"`
-						Defs       any      `json:"$defs,omitempty"`
-						Items      any      `json:"items,omitempty"`
-						Required   []string `json:"required"`
-						Properties map[string]struct {
-							Type        api.PropertyType `json:"type"`
-							Items       any              `json:"items,omitempty"`
-							Description string           `json:"description"`
-							Enum        []any            `json:"enum,omitempty"`
-						} `json:"properties"`
+						Type       string                      `json:"type"`
+						Defs       any                         `json:"$defs,omitempty"`
+						Items      any                         `json:"items,omitempty"`
+						Required   []string                    `json:"required"`
+						Properties map[string]api.ToolProperty `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]struct {
-							Type        api.PropertyType `json:"type"`
-							Items       any              `json:"items,omitempty"`
-							Description string           `json:"description"`
-							Enum        []any            `json:"enum,omitempty"`
-						}{
+						Properties: map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -489,25 +479,15 @@ func TestGenerateChat(t *testing.T) {
 					Name:        "get_weather",
 					Description: "Get the current weather",
 					Parameters: struct {
-						Type       string   `json:"type"`
-						Defs       any      `json:"$defs,omitempty"`
-						Items      any      `json:"items,omitempty"`
-						Required   []string `json:"required"`
-						Properties map[string]struct {
-							Type        api.PropertyType `json:"type"`
-							Items       any              `json:"items,omitempty"`
-							Description string           `json:"description"`
-							Enum        []any            `json:"enum,omitempty"`
-						} `json:"properties"`
+						Type       string                      `json:"type"`
+						Defs       any                         `json:"$defs,omitempty"`
+						Items      any                         `json:"items,omitempty"`
+						Required   []string                    `json:"required"`
+						Properties map[string]api.ToolProperty `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]struct {
-							Type        api.PropertyType `json:"type"`
-							Items       any              `json:"items,omitempty"`
-							Description string           `json:"description"`
-							Enum        []any            `json:"enum,omitempty"`
-						}{
+						Properties: map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
