@@ -8,10 +8,10 @@ Subject: [PATCH] cuda: disable graph compat check for OP_ADD
  1 file changed, 40 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index fd19d48a..b9124206 100644
+index dcf76828..96b1ab5e 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2660,46 +2660,6 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2707,46 +2707,6 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
  #endif
          }
  

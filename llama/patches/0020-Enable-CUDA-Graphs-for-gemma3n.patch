@@ -13,10 +13,10 @@ checks.
  1 file changed, 31 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 113d7d9e..fd19d48a 100644
+index 7264500b..dcf76828 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2624,12 +2624,21 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2671,12 +2671,21 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
      cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
  
@@ -38,7 +38,7 @@ index 113d7d9e..fd19d48a 100644
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
  
-@@ -2658,6 +2667,28 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2705,6 +2714,28 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
              strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
              strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
              strncmp(node->name, ffn_moe_down_bias_prefix.c_str(), ffn_moe_down_bias_prefix.size()) != 0) {

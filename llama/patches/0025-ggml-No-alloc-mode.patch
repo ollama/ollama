@@ -16,7 +16,7 @@ Defaults to false for newly created backend buffer types.
  3 files changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 48839339..3903c3cb 100644
+index 9424394e..b602a7c7 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -35,6 +35,7 @@ extern "C" {
@@ -48,7 +48,7 @@ index c36c12d6..81749a5a 100644
  
      GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index be335e8c..84928bc3 100644
+index eded0291..05a842ed 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -35,12 +35,22 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
