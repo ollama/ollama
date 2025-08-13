@@ -36,6 +36,15 @@ $env:OLLAMA_DEBUG="1"
 
 Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
+## Logging Levels
+
+Set which logging level to use with the `OLLAMA_DEBUG` environment variable.
+```
+OLLAMA_DEBUG= or OLLAMA_DEBUG=0 or OLLAMA_DEBUG=false: unset or empty or falsy values sets default INFO level
+OLLAMA_DEBUG=1 or OLLAMA_DEBUG=true: set DEBUG level
+OLLAMA_DEBUG=2: set TRACE level. Includes chat completetion requests
+```
+
 ## LLM libraries
 
 Ollama includes multiple LLM libraries compiled for different GPUs and CPU vector features. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library. `cpu_avx2` will perform the best, followed by `cpu_avx` and the slowest but most compatible is `cpu`. Rosetta emulation under MacOS will work with the `cpu` library.
