@@ -242,7 +242,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	// Windows CUDA should not use mmap for best performance
 	// Linux  with a model larger than free space, mmap leads to thrashing
 	// For CPU loads we want the memory to be allocated, not FS cache
-	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
+	if envconfig.NoMMap() ||
+		(runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
 		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == nil) ||
 		(gpus[0].Library == "cpu" && opts.UseMMap == nil) ||
 		(opts.UseMMap != nil && !*opts.UseMMap) {
