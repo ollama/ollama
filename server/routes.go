@@ -663,7 +663,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &registryOptions{
+		regOpts := &RegistryOptions{
 			Insecure: req.Insecure,
 		}
 
@@ -712,7 +712,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &registryOptions{
+		regOpts := &RegistryOptions{
 			Insecure: req.Insecure,
 		}
 
