@@ -263,6 +263,8 @@ func GetGPUInfo() GpuInfoList {
 				var driverMinor int
 				if cHandles.cudart != nil {
 					C.cudart_bootstrap(*cHandles.cudart, C.int(i), &memInfo)
+					driverMajor = int(cHandles.cudart.driver_major)
+					driverMinor = int(cHandles.cudart.driver_minor)
 				} else {
 					C.nvcuda_bootstrap(*cHandles.nvcuda, C.int(i), &memInfo)
 					driverMajor = int(cHandles.nvcuda.driver_major)
