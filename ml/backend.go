@@ -263,6 +263,7 @@ type Tensor interface {
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
 	MulmatID(ctx Context, t2, ids Tensor) Tensor
+	AddID(ctx Context, t2, ids Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
@@ -283,6 +284,7 @@ type Tensor interface {
 	SILU(ctx Context) Tensor
 	RELU(ctx Context) Tensor
 	Sigmoid(ctx Context) Tensor
+	SwiGLU(ctx Context, up Tensor, alpha, limit float32) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
@@ -332,7 +334,7 @@ type Tensor interface {
 // kqv := value.Mulmat(ctx, kq)
 // return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 type ScaledDotProductAttention interface {
-	ScaledDotProductAttention(ctx Context, key, value, mask Tensor, scale float64) Tensor
+	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, scale float64) Tensor
 }
 
 type number interface {

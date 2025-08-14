@@ -281,10 +281,10 @@ ggml_backend_t ggml_backend_blas_init(void) {
     ggml_backend_blas_context * ctx = new ggml_backend_blas_context;
 
     ggml_backend_t backend = new ggml_backend {
-        /* .guid      = */ ggml_backend_blas_guid(),
-        /* .interface = */ blas_backend_i,
-        /* .device    = */ ggml_backend_reg_dev_get(ggml_backend_blas_reg(), 0),
-        /* .context   = */ ctx,
+        /* .guid    = */ ggml_backend_blas_guid(),
+        /* .iface   = */ blas_backend_i,
+        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_blas_reg(), 0),
+        /* .context = */ ctx,
     };
 
 #if defined(OPENBLAS_VERSION) && defined(GGML_USE_OPENMP)
