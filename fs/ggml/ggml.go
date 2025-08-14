@@ -180,7 +180,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"llama4",
 		"mllama",
 		"qwen25vl",
-		"gptoss",
+		"gptoss", "gpt-oss",
 	}, kv.Architecture())
 }
 
@@ -328,7 +328,7 @@ func (t TensorType) TypeSize() uint64 {
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
-	case TensorTypeMXFP4:
+	case TensorTypeMXFP4, 39:
 		return 1 + blockSize/2
 	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
@@ -665,7 +665,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 					4*qkvBias.Shape[0],
 			)
 		}
-	case "gptoss":
+	case "gptoss", "gpt-oss":
 		kv = make([]uint64, f.KV().BlockCount())
 		for i := range kv {
 			kv[i] = uint64(float64((embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
@@ -675,8 +675,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				kv[i] *= context
 			}
 		}
-		fullOffload = 4 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
-		partialOffload = fullOffload
+		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
 	}
 
 	return
@@ -758,10 +757,6 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
-		return false
-	}
-
-	if f.KV().Architecture() == "gptoss" {
 		return false
 	}
 

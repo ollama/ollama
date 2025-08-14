@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -19,7 +20,7 @@ const (
 )
 
 func shouldUseHarmony(model Model) bool {
-	if model.Config.ModelFamily == "gptoss" {
+	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		// heuristic to check whether the template expects to be parsed via harmony:
 		// search for harmony tags that are nearly always used
 		if model.Template.Contains("<|start|>") && model.Template.Contains("<|end|>") {
