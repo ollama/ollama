@@ -228,6 +228,7 @@ void llama_model_saver::add_kv_from_model() {
     // add_kv(LLM_KV_TOKENIZER_MASK_ID,                 ???);
     add_kv(LLM_KV_TOKENIZER_ADD_BOS,                 vocab.get_add_bos());
     add_kv(LLM_KV_TOKENIZER_ADD_EOS,                 vocab.get_add_eos());
+    add_kv(LLM_KV_TOKENIZER_ADD_SEP,                 vocab.get_add_sep());
     add_kv(LLM_KV_TOKENIZER_ADD_PREFIX,              vocab.get_add_space_prefix());
     add_kv(LLM_KV_TOKENIZER_REMOVE_EXTRA_WS,         vocab.get_remove_extra_whitespaces());
     add_kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP,    vocab.get_precompiled_charsmap());

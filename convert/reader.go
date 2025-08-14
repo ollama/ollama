@@ -39,6 +39,7 @@ const (
 
 func (t tensorBase) Kind() uint32 {
 	if strings.HasSuffix(t.name, ".ffn_gate_inp.weight") ||
+		strings.HasSuffix(t.name, ".bias") ||
 		t.name == "token_types.weight" ||
 		t.name == "v.positional_embedding_vlm" ||
 		t.name == "v.tile_position_embd.weight" ||

@@ -17,7 +17,7 @@ type ImageContext struct {
 	// mu is required to be held when generating embeddings or accessing the cache
 	mu sync.Mutex
 
-	clip *llama.ClipContext
+	mtmd *llama.MtmdContext
 
 	// cache of images to embeddings
 	images    []imageCache
@@ -32,7 +32,7 @@ func NewImageContext(llamaContext *llama.Context, modelPath string) (*ImageConte
 
 	var c ImageContext
 	if arch == "clip" {
-		c.clip, err = llama.NewClipContext(llamaContext, modelPath)
+		c.mtmd, err = llama.NewMtmdContext(llamaContext, modelPath)
 	} else {
 		return nil, fmt.Errorf("unknown vision model architecture: %s", arch)
 	}
@@ -51,8 +51,8 @@ func (c *ImageContext) Free(modelPath string) {
 		return
 	}
 
-	if c.clip != nil {
-		c.clip.Free()
+	if c.mtmd != nil {
+		c.mtmd.Free()
 	}
 }
 
@@ -72,8 +72,8 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte) ([][]f
 
 	embed, err := c.findImage(hash)
 	if err != nil {
-		if c.clip != nil {
-			embed, err = c.clip.NewEmbed(llamaContext, data)
+		if c.mtmd != nil {
+			embed, err = c.mtmd.NewEmbed(llamaContext, data)
 			if err != nil {
 				return nil, err
 			}

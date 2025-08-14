@@ -118,22 +118,31 @@ func TestPopulateFields(t *testing.T) {
 }
 
 func TestPopulateFieldsAlternateName(t *testing.T) {
+	type nested struct {
+		Weight *nn.Linear `gguf:"a,alt:b"`
+	}
+
 	type fakeModel struct {
 		Input  *nn.Embedding `gguf:"input"`
 		Output *nn.Linear    `gguf:"output,alt:input"`
+		Nested *nested       `gguf:"nested"`
 	}
 
-	m := fakeModel{}
+	var m fakeModel
 	v := reflect.ValueOf(&m)
 	v.Elem().Set(populateFields(Base{b: &fakeBackend{
 		names: []string{
 			"input.weight",
+			"nested.b.weight",
 		},
 	}}, v.Elem()))
 
 	if diff := cmp.Diff(fakeModel{
 		Input:  &nn.Embedding{Weight: &fakeTensor{Name: "input.weight"}},
 		Output: &nn.Linear{Weight: &fakeTensor{Name: "input.weight"}},
+		Nested: &nested{
+			Weight: &nn.Linear{Weight: &fakeTensor{Name: "nested.b.weight"}},
+		},
 	}, m); diff != "" {
 		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
 	}

@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Wed, 30 Jul 2025 08:43:46 -0700
+Subject: [PATCH] BF16 macos version guard
+
+Only enable BF16 on supported MacOS versions (v14+)
+---
+ ggml/src/ggml-metal/ggml-metal.m | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
+index fe7b2f0a..e4c31268 100644
+--- a/ggml/src/ggml-metal/ggml-metal.m
++++ b/ggml/src/ggml-metal/ggml-metal.m
+@@ -106,7 +106,11 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
+         ctx->has_bfloat |= [ctx->mtl_device supportsFamily:MTLGPUFamilyApple6];
+ 
+ #if defined(GGML_METAL_USE_BF16)
+-        ctx->use_bfloat = ctx->has_bfloat;
++        if (@available(macOS 14.0, *)) {
++            ctx->use_bfloat = ctx->has_bfloat;
++        } else {
++            ctx->use_bfloat = false;
++        }
+ #else
+         ctx->use_bfloat = false;
+ #endif
