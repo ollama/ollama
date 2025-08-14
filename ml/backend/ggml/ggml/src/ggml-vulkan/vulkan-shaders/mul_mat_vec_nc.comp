@@ -26,6 +26,9 @@ layout (push_constant) uniform parameter
     uint ne12;
     uint b_offset;
     uint d_offset;
+    uint nb03;
+    uint nb13;
+    uint nb23;
 } p;
 
 shared FLOAT_TYPE tmp[BLOCK_SIZE];
@@ -34,6 +37,7 @@ void main() {
     const uint tid       = gl_LocalInvocationID.x;
     const uint row_x     = gl_GlobalInvocationID.y;
     const uint channel   = gl_GlobalInvocationID.z;
+    const uint i3        = gl_WorkGroupID.x;
     const uint channel_x = channel / p.channel_x_divisor;
     const uint channel_y = channel % p.ne12;
 
@@ -41,7 +45,7 @@ void main() {
     const uint nrows_dst = p.nrows_x;
     const uint row_dst   = row_x;
 
-    const uint idst = channel*nrows_dst + row_dst;
+    const uint idst = i3*p.nb23 + channel*nrows_dst + row_dst;
 
     FLOAT_TYPE temp = 0.0f;
 
@@ -58,8 +62,8 @@ void main() {
 
                 const uint row_y = col_x;
 
-                const uint ix = channel_x*p.channel_stride_x + row_x*p.row_stride_x + col_x;
-                const uint iy = channel_y*p.channel_stride_y + row_y;
+                const uint ix = i3*p.nb03 + channel_x*p.channel_stride_x + row_x*p.row_stride_x + col_x;
+                const uint iy = i3*p.nb13 + channel_y*p.channel_stride_y + row_y;
 
                 const vec4 av4 = vec4(data_a_v4[ix / 4]);
                 const vec4 bv4 = vec4(data_b_v4[iy / 4]);
@@ -74,8 +78,8 @@ void main() {
 
             const uint row_y = col_x;
 
-            const uint ix = channel_x*p.channel_stride_x + row_x*p.row_stride_x + col_x;
-            const uint iy = channel_y*p.channel_stride_y + row_y;
+            const uint ix = i3*p.nb03 + channel_x*p.channel_stride_x + row_x*p.row_stride_x + col_x;
+            const uint iy = i3*p.nb13 + channel_y*p.channel_stride_y + row_y;
 
             const vec4 av4 = vec4(data_a_v4[ix / 4]);
             const vec4 bv4 = vec4(data_b_v4[iy / 4]);
@@ -91,8 +95,8 @@ void main() {
 
             const uint row_y = col_x;
 
-            const uint ix = channel_x*p.channel_stride_x + row_x*p.row_stride_x + col_x;
-            const uint iy = channel_y*p.channel_stride_y + row_y;
+            const uint ix = i3*p.nb03 + channel_x*p.channel_stride_x + row_x*p.row_stride_x + col_x;
+            const uint iy = i3*p.nb13 + channel_y*p.channel_stride_y + row_y;
 
             const FLOAT_TYPE xi = FLOAT_TYPE(data_a[ix]);
 

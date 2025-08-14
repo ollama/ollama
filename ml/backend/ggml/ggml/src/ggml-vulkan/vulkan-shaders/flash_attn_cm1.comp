@@ -1,0 +1,387 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_EXT_shader_16bit_storage : require
+
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_KHR_cooperative_matrix : enable
+
+#include "types.comp"
+#include "flash_attn_base.comp"
+
+const uint32_t HSK_per_thread = HSK / D_split;
+const uint32_t HSV_per_thread = HSV / D_split;
+
+const uint32_t row_split = 4;
+const uint32_t rows_per_thread = Br / row_split;
+const uint32_t cols_per_iter = gl_WorkGroupSize.x / D_split / row_split;
+const uint32_t cols_per_thread = Bc / cols_per_iter;
+
+
+layout (binding = 0) readonly buffer Q {float data_q[];};
+layout (binding = 0) readonly buffer QV4 {vec4 data_qv4[];};
+layout (binding = 1) readonly buffer K {float16_t data_k[];};
+layout (binding = 1) readonly buffer KV4 {f16vec4 data_kv4[];};
+layout (binding = 2) readonly buffer V {float16_t data_v[];};
+layout (binding = 2) readonly buffer VV4 {f16vec4 data_vv4[];};
+layout (binding = 3) readonly buffer M {float16_t data_m[];};
+
+// Store the output when doing grouped query attention.
+// Rows index by Q's dimension 2, and the first N rows are valid.
+D_TYPE perElemOpGqaStore(const in uint32_t r, const in uint32_t c, const in D_TYPE elem, const in uint32_t o_offset, const in uint32_t iq2, const in uint32_t N)
+{
+    uint32_t offset = (iq2 + r) * HSV + c;
+    data_o[o_offset + offset] = D_TYPE(elem);
+    return elem;
+}
+
+// These need to be supported N,M values for a MatBc x MatBr x 16 coopmatmuladd
+const uint32_t MatBr = 16;
+const uint32_t MatBc = 16;
+
+shared FLOAT_TYPE tmpsh[gl_WorkGroupSize.x];
+shared ACC_TYPEV4 tmpshv4[gl_WorkGroupSize.x];
+
+const uint32_t qstride = HSK / 4 + 2; // in units of f16vec4
+shared f16vec4 Qf[Br * qstride];
+
+// Avoid padding for hsk==256 to make it fit in 48KB shmem.
+const uint32_t sfshstride = (HSK <= 128) ? (Br + 8) : Br;
+shared ACC_TYPE sfsh[Bc * sfshstride];
+
+const uint32_t kshstride = HSK / 4 + 2; // in units of f16vec4
+shared f16vec4 ksh[Bc * kshstride];
+
+shared float slope[Br];
+
+void main() {
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
+#endif
+
+    init_indices();
+
+    const uint32_t tid = gl_LocalInvocationIndex;
+
+    const uint32_t threads_per_rowgroup = gl_WorkGroupSize.x / row_split;
+    const uint32_t row_tid = gl_LocalInvocationIndex / threads_per_rowgroup;
+    const uint32_t d_tid = gl_LocalInvocationIndex % D_split;
+    const uint32_t col_tid = (gl_LocalInvocationIndex % threads_per_rowgroup) / D_split;
+
+#define tile_row(r) (row_tid * rows_per_thread + (r))
+
+    uint32_t q_offset = (iq2*p.nb02+iq3*p.nb03) / 4;
+
+    [[unroll]] for (uint32_t idx = 0; idx < Br * HSK / 4; idx += gl_WorkGroupSize.x) {
+        uint32_t d = (idx + tid) % (HSK / 4);
+        uint32_t r = (idx + tid) / (HSK / 4);
+        if (r < Br && d < HSK / 4 &&
+            i * Br + r < N) {
+            Qf[r * qstride + d] = f16vec4(data_qv4[q_offset / 4 + (i * Br + r) * q_stride / 4 + d] * p.scale);
+        }
+    }
+    barrier();
+
+    ACC_TYPEV4 Of[rows_per_thread][HSV_per_thread / 4];
+    [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            Of[r][d] = ACC_TYPEV4(0.0);
+        }
+    }
+
+    float Lf[rows_per_thread], Mf[rows_per_thread];
+
+    // Use -FLT_MAX/2 rather than -inf to reduce the possibility of NaNs, e.g. when computing Mold-M.
+    const float NEG_FLT_MAX_OVER_2 = uintBitsToFloat(0xFEFFFFFF);
+
+    [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+        Lf[r] = 0;
+        Mf[r] = NEG_FLT_MAX_OVER_2;
+    }
+
+    // ALiBi
+    if (p.max_bias > 0.0f) {
+        if (tid < Br) {
+            uint r = tid;
+            slope[r] = perElemOpComputeSlope(r, col_tid, ACC_TYPE(0), iq2);
+        }
+        barrier();
+    } else {
+        if (tid < Br) {
+            uint r = tid;
+            slope[r] = 1.0;
+        }
+        barrier();
+    }
+
+#if BLOCK_SIZE > 1
+    uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / BLOCK_BYTE_SIZE;
+    uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / BLOCK_BYTE_SIZE;
+#else
+    uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / 2;
+    uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / 2;
+#endif
+    uint32_t m_offset = 0;
+    if (p.nem2 != 1 || p.nem3 != 1) {
+        m_offset = ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * KV;
+    }
+
+    [[dont_unroll]]
+    for (uint32_t j = start_j; j < end_j; ++j) {
+
+        [[unroll]] for (uint32_t idx = 0; idx < Bc * HSK / 4; idx += gl_WorkGroupSize.x) {
+            uint32_t d = (idx + tid) % (HSK / 4);
+            uint32_t c = (idx + tid) / (HSK / 4);
+            if (c < Bc && d < HSK / 4) {
+#if BLOCK_SIZE > 1
+                uint coord = (j * Bc + c) * k_stride * BLOCK_SIZE + 4 * d;
+                uint ib = coord / BLOCK_SIZE;
+                uint iqs = (coord % BLOCK_SIZE);
+                f16vec4 K_Tf = f16vec4(dequantize4(ib, iqs, k_offset, BINDING_IDX_K));
+#else
+                f16vec4 K_Tf = f16vec4(data_kv4[k_offset / 4 + (j * Bc + c) * k_stride / 4 + d]);
+#endif
+
+                ksh[c * kshstride + d] = K_Tf;
+            }
+        }
+        barrier();
+
+        // K * Q^T -> S^T: Bc x HSK * HSK x Br -> Bc x Br
+        // Bc split across workgroup (four subgroups), loop over HSK in chunks of 16: 16 x 16 * 16 x 16 -> 16 x 16
+        // This is written transposed in order to allow for N being 8 if implementations need it
+        coopmat<ACC_TYPE, gl_ScopeSubgroup, MatBc, MatBr, gl_MatrixUseAccumulator> SfMat = coopmat<ACC_TYPE, gl_ScopeSubgroup, MatBc, MatBr, gl_MatrixUseAccumulator>(0);
+        coopmat<float16_t, gl_ScopeSubgroup, MatBc, 16, gl_MatrixUseA> KMat;
+        coopmat<float16_t, gl_ScopeSubgroup, 16, MatBr, gl_MatrixUseB> QMat;
+
+        for (uint32_t d = 0; d < HSK / 16; ++d) {
+            coopMatLoad(QMat, Qf, d * 16 / 4, qstride, gl_CooperativeMatrixLayoutColumnMajor);
+
+            uint coord = (gl_SubgroupID * MatBc) * kshstride + d * 16 / 4;
+            coopMatLoad(KMat, ksh, coord, kshstride, gl_CooperativeMatrixLayoutRowMajor);
+
+            SfMat = coopMatMulAdd(KMat, QMat, SfMat);
+        }
+
+        uint coord = gl_SubgroupID * MatBc * sfshstride;
+        coopMatStore(SfMat, sfsh, coord, sfshstride, gl_CooperativeMatrixLayoutRowMajor);
+        barrier();
+
+        if (p.logit_softcap != 0.0f) {
+            [[unroll]] for (uint32_t idx = 0; idx < Bc * Br; idx += gl_WorkGroupSize.x) {
+                uint32_t c = (idx + tid) / Br;
+                uint32_t r = (idx + tid) % Br;
+                if (idx + tid < Bc * Br || idx + gl_WorkGroupSize.x <= Bc * Br) {
+                    sfsh[c * sfshstride + r] = ACC_TYPE(p.logit_softcap * tanh(sfsh[c * sfshstride + r]));
+                }
+            }
+            barrier();
+        }
+
+        if ((p.mask_n_head_log2 & MASK_ENABLE_BIT) != 0) {
+            [[unroll]] for (uint32_t idx = 0; idx < Bc * Br; idx += gl_WorkGroupSize.x) {
+                uint32_t c = (idx + tid) % Bc;
+                uint32_t r = (idx + tid) / Bc;
+                if (idx + tid < Bc * Br || idx + gl_WorkGroupSize.x <= Bc * Br) {
+                    sfsh[c * sfshstride + r] += ACC_TYPE(slope[r] * float(data_m[m_offset + (i * Br + r) * m_stride + (j * Bc + c)]));
+                }
+            }
+            barrier();
+        }
+
+        float eMf[rows_per_thread];
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            float rowmaxf = sfsh[tile_row(r) + (0 * cols_per_iter + col_tid) * sfshstride];
+            [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
+                rowmaxf = max(rowmaxf, float(sfsh[tile_row(r) + (c * cols_per_iter + col_tid) * sfshstride]));
+            }
+            float Moldf = Mf[r];
+
+            // M = max(rowmax, Mold)
+            // P = e^(S - M)
+            // eM = e^(Mold - M)
+            Mf[r] = max(rowmaxf, Moldf);
+            eMf[r] = exp(Moldf - Mf[r]);
+        }
+
+        [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+            [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                Of[r][d] = float16_t(eMf[r]) * Of[r][d];
+            }
+        }
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            Lf[r] = eMf[r]*Lf[r];
+        }
+
+        [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
+            float Pf[rows_per_thread];
+            [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                Pf[r] = exp(sfsh[tile_row(r) + (c * cols_per_iter + col_tid) * sfshstride] - Mf[r]);
+                Lf[r] += Pf[r];
+            }
+            [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+#if BLOCK_SIZE > 1
+                uint coord = (j * Bc + c * cols_per_iter + col_tid) * v_stride * BLOCK_SIZE + 4 * (d * D_split + d_tid);
+                uint ib = coord / BLOCK_SIZE;
+                uint iqs = (coord % BLOCK_SIZE);
+                vec4 Vf = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
+#else
+                vec4 Vf = vec4(data_vv4[v_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * v_stride / 4 + d * D_split + d_tid]);
+#endif
+                [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                    Of[r][d] += float16_t(Pf[r]) * ACC_TYPEV4(Vf);
+                }
+            }
+        }
+
+        barrier();
+    }
+
+    // reduce across threads
+
+    float rowmaxf[rows_per_thread], eMf[rows_per_thread], Moldf[rows_per_thread];
+    [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+        FLOAT_TYPE M = Mf[r];
+        tmpsh[tid] = M;
+        // Compute max across the row
+        barrier();
+        [[unroll]] for (int s = int(gl_WorkGroupSize.x / row_split) / 2; s >= D_split; s >>= 1) {
+            M = max(M, tmpsh[tid ^ s]);
+            barrier();
+            tmpsh[tid] = M;
+            barrier();
+        }
+        rowmaxf[r] = tmpsh[d_tid + row_tid * threads_per_rowgroup];
+        barrier();
+    }
+
+    [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+        Moldf[r] = Mf[r];
+
+        // M = max(rowmax, Mold)
+        // eM = e^(Mold - M)
+        Mf[r] = max(rowmaxf[r], Moldf[r]);
+        eMf[r] = exp(Moldf[r] - Mf[r]);
+
+        Lf[r] = eMf[r]*Lf[r];
+    }
+
+    [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+        FLOAT_TYPE L = Lf[r];
+        tmpsh[tid] = L;
+        // Compute sum across the row
+        barrier();
+        [[unroll]] for (int s = int(gl_WorkGroupSize.x / row_split) / 2; s >= D_split; s >>= 1) {
+            L += tmpsh[tid ^ s];
+            barrier();
+            tmpsh[tid] = L;
+            barrier();
+        }
+        Lf[r] = tmpsh[d_tid + row_tid * threads_per_rowgroup];
+        barrier();
+    }
+
+    [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+        [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+
+            Of[r][d] = float16_t(eMf[r]) * Of[r][d];
+            tmpshv4[tid] = Of[r][d];
+
+            barrier();
+            [[unroll]] for (int s = int(gl_WorkGroupSize.x / row_split) / 2; s >= D_split; s >>= 1) {
+                Of[r][d] += tmpshv4[tid ^ s];
+                barrier();
+                tmpshv4[tid] = Of[r][d];
+                barrier();
+            }
+            Of[r][d] = tmpshv4[d_tid + row_tid * threads_per_rowgroup];
+            barrier();
+        }
+    }
+
+    // If there is split_k, then the split_k resolve shader does the final
+    // division by L. Store the intermediate O value and per-row m and L values.
+    if (p.k_num > 1) {
+        uint32_t o_offset = HSV * p.ne1 * (split_k_index + iq3 * p.k_num);
+
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            if (tile_row(r) < N) {
+                [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+                    [[unroll]] for (uint32_t comp = 0; comp < 4; ++comp) {
+                        perElemOpGqaStore(tile_row(r), 4*(d * D_split + d_tid) + comp, float(Of[r][d][comp]), o_offset, iq2, N);
+                    }
+                }
+            }
+        }
+
+        o_offset = HSV * p.ne1 * p.ne3 * p.k_num + p.ne1 * (split_k_index + iq3 * p.k_num) * 2;
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            if (tile_row(r) < N) {
+                perElemOpStoreCol0(tile_row(r), 0u, ACC_TYPE(Lf[r]), o_offset, iq2, N);
+                perElemOpStoreCol0(tile_row(r), 0u, ACC_TYPE(Mf[r]), o_offset + p.ne1, iq2, N);
+            }
+        }
+
+        return;
+    }
+
+    if ((p.mask_n_head_log2 & SINK_ENABLE_BIT) != 0) {
+        [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
+            float sink = perElemOpGetSink(r, 0u, ACC_TYPE(0), iq2);
+
+            float ms = 1.0f;
+            float vs = 1.0f;
+
+            if (sink > Mf[r]) {
+                ms = exp(Mf[r] - sink);
+
+                [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+                    Of[r][d] *= ACC_TYPE(ms);
+                }
+            } else {
+                vs = exp(sink - Mf[r]);
+            }
+
+            Lf[r] = Lf[r]*ms + vs;
+        }
+    }
+
+    float Lfrcp[rows_per_thread];
+    [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+        Lfrcp[r] = 1.0 / Lf[r];
+    }
+
+    [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            Of[r][d] *= float16_t(Lfrcp[r]);
+        }
+    }
+
+    uint32_t o_offset = iq3*p.ne2*p.ne1*HSV;
+
+    if (p.gqa_ratio > 1) {
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            if (tile_row(r) < N) {
+                [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+                    [[unroll]] for (uint32_t comp = 0; comp < 4; ++comp) {
+                        perElemOpGqaStore(tile_row(r), 4*(d * D_split + d_tid) + comp, float(Of[r][d][comp]), o_offset, iq2, N);
+                    }
+                }
+            }
+        }
+    } else {
+        [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+            if (i * Br + tile_row(r) < N) {
+                [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+                    [[unroll]] for (uint32_t comp = 0; comp < 4; ++comp) {
+                        data_o[o_offset + iq2 * HSV + (i * Br + tile_row(r)) * p.ne1 * HSV + 4*(d * D_split + d_tid) + comp] = D_TYPE(Of[r][d][comp]);
+                    }
+                }
+            }
+        }
+    }
+}

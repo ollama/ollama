@@ -4,8 +4,8 @@
 #include "generic_unary_head.comp"
 #include "dequant_funcs.comp"
 
-#if defined(DATA_A_IQ4_NL)
-// 16 invocations needed for init_iq4nl_shmem
+#if defined(DATA_A_IQ4_NL) || defined(DATA_A_MXFP4)
+// 16 invocations needed for init_iq_shmem
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
 #else
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;

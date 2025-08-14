@@ -10,7 +10,7 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
 void main() {
     [[unroll]] for (uint wgy = 0; wgy < 256; wgy++) {
         const uint i = gl_WorkGroupID.x * 256 + wgy;
-        if (i >= p.M * p.K / QUANT_K) {
+        if (i >= p.nel / QUANT_K) {
             return;
         }
         const uint tid = gl_LocalInvocationID.x;

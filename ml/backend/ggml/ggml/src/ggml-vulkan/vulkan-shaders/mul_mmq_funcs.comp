@@ -92,6 +92,12 @@ FLOAT_TYPE get_d(uint ib) {
 }
 #endif
 
+#if defined(DATA_A_MXFP4)
+FLOAT_TYPE get_d(uint ib) {
+    return FLOAT_TYPE(e8m0_to_fp32(data_a[ib].e));
+}
+#endif
+
 #if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1)
 FLOAT_TYPE_VEC2 get_dm(uint ib) {
     return FLOAT_TYPE_VEC2(data_a_packed32[ib].dm);

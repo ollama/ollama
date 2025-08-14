@@ -1337,6 +1337,29 @@ struct block_iq4_nl_packed16
 #define A_TYPE_PACKED16 block_iq4_nl_packed16
 #endif
 
+#define QUANT_K_MXFP4 32
+#define QUANT_R_MXFP4 2
+
+struct block_mxfp4
+{
+    uint8_t e;
+    uint8_t qs[QUANT_K_MXFP4/2];
+};
+
+//struct block_mxfp4_packed16
+//{
+//    uint8_t e;
+//    uint16_t qs[QUANT_K_MXFP4/2/2];
+//};
+
+#if defined(DATA_A_MXFP4)
+#define QUANT_K QUANT_K_MXFP4
+#define QUANT_R QUANT_R_MXFP4
+#define QUANT_AUXF 1
+#define A_TYPE block_mxfp4
+//#define A_TYPE_PACKED16 block_mxfp4_packed16
+#endif
+
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
 const int8_t kvalues_iq4nl_const[16] = {
     int8_t(-127), int8_t(-104), int8_t(-83), int8_t(-65), int8_t(-49), int8_t(-35), int8_t(-22), int8_t(-10),
@@ -1356,6 +1379,25 @@ void init_iq_shmem(uvec3 wgsize)
 }
 #endif
 
+#if defined(DATA_A_MXFP4)
+const FLOAT_TYPE kvalues_mxfp4_const[16] = {
+    FLOAT_TYPE(0.0f), FLOAT_TYPE(0.5f), FLOAT_TYPE(1.0f), FLOAT_TYPE(1.5f), FLOAT_TYPE(2.0f), FLOAT_TYPE(3.0f), FLOAT_TYPE(4.0f), FLOAT_TYPE(6.0f),
+    FLOAT_TYPE(-0.0f), FLOAT_TYPE(-0.5f), FLOAT_TYPE(-1.0f), FLOAT_TYPE(-1.5f), FLOAT_TYPE(-2.0f), FLOAT_TYPE(-3.0f), FLOAT_TYPE(-4.0f), FLOAT_TYPE(-6.0f)
+};
+
+shared FLOAT_TYPE kvalues_mxfp4[16];
+
+#define NEEDS_INIT_IQ_SHMEM
+void init_iq_shmem(uvec3 wgsize)
+{
+    // copy the table into shared memory and sync
+    for (uint i = gl_LocalInvocationIndex.x; i < kvalues_mxfp4.length(); i += wgsize.x) {
+        kvalues_mxfp4[i] = kvalues_mxfp4_const[i];
+    }
+    barrier();
+}
+#endif
+
 // returns the bfloat value in the low 16b.
 // See ggml_compute_fp32_to_bf16
 uint32_t fp32_to_bf16(float f)
@@ -1368,6 +1410,19 @@ uint32_t fp32_to_bf16(float f)
 float bf16_to_fp32(uint32_t u)
 {
     return uintBitsToFloat(u << 16);
+}
+
+float e8m0_to_fp32(uint8_t x) {
+    uint32_t bits;
+
+    if (x == 0) {
+        bits = 0x00400000;
+    } else {
+        bits = x;
+        bits = bits << 23;
+    }
+
+    return uintBitsToFloat(bits);
 }
 
 #endif // !defined(GGML_TYPES_COMP)
