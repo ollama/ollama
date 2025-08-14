@@ -165,6 +165,8 @@ func LogLevel() slog.Level {
 }
 
 var (
+	// GinLogRequest disable GIN logging middleware that logs every request
+	GinDisableLogRequest = Bool("GIN_DISABLE_LOG_REQUEST")
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
 	// KvCacheType is the quantization type for the K/V cache.
@@ -275,6 +277,9 @@ func AsMap() map[string]EnvVar {
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
 		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
 		"NO_PROXY":    {"NO_PROXY", String("NO_PROXY")(), "No proxy"},
+
+		// GIN
+		"GIN_DISABLE_LOG_REQUEST": {"GIN_DISABLE_LOG_REQUEST", GinDisableLogRequest(), "Disable Gin logging middleware that logs every request"},
 	}
 
 	if runtime.GOOS != "windows" {
