@@ -528,55 +528,35 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
 				Model:     smol,
-				Prompt:    "why is the ocean blue?",
+				Prompt:    "why is the ocean blue? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "why is the color of dirt brown?",
+				Prompt:    "why is the color of dirt brown? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Prompt:    "what is the origin of the US thanksgiving holiday? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of independence day?",
+				Prompt:    "what is the origin of independence day? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the composition of air?",
+				Prompt:    "what is the composition of air? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			},
 		},
 		[][]string{
-			{"sunlight", "scattering", "interact"},
-			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles"},
-			{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"sunlight", "scattering", "interact", "color", "surface", "depth"},
+			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
+			{"england", "english", "massachusetts", "pilgrims", "colonists", "independence", "british", "feast", "family", "gatherings", "traditions", "turkey", "colonial", "period", "harvest", "agricultural", "european settlers", "american revolution", "civil war", "16th century", "17th century", "native american", "united states"},
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
