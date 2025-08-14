@@ -112,7 +112,7 @@ func (m *Model) Capabilities() []model.Capability {
 	// Check for thinking capability
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	hasTags := openingTag != "" && closingTag != ""
-	if hasTags || m.Config.ModelFamily == "gptoss" {
+	if hasTags || slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily) {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
