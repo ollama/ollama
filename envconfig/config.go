@@ -224,6 +224,8 @@ var (
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
+	// RunnerThreads sets the number of threads to use during generation. RunnerThreads can be configured via the OLLAMA_RUNNER_THREADS environment variable.
+	RunnerThreads = Uint("OLLAMA_RUNNER_THREADS", 0)
 )
 
 func Uint64(key string, defaultValue uint64) func() uint64 {
@@ -269,6 +271,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
+		"OLLAMA_RUNNER_THREADS":    {"OLLAMA_RUNNER_THREADS", RunnerThreads(), "Number of threads to use during generation (default: runtime.NumCPU())"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 
 		// Informational
