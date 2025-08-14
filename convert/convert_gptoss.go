@@ -67,15 +67,7 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 	mxfp4s := make(map[string]*mxfp4)
 	for _, t := range ts {
-		if strings.Contains(t.Name(), "attn_qkv") {
-			out = append(out, slices.Collect(splitDim(t, 0, split{
-				Replacer: strings.NewReplacer("attn_qkv", "attn_q"), dim: int(m.AttentionHeads * m.HeadDim),
-			}, split{
-				Replacer: strings.NewReplacer("attn_qkv", "attn_k"), dim: int(m.KeyValueHeads * m.HeadDim),
-			}, split{
-				Replacer: strings.NewReplacer("attn_qkv", "attn_v"), dim: int(m.KeyValueHeads * m.HeadDim),
-			}))...)
-		} else if strings.HasSuffix(t.Name(), ".blocks") || strings.HasSuffix(t.Name(), ".scales") {
+		if strings.HasSuffix(t.Name(), ".blocks") || strings.HasSuffix(t.Name(), ".scales") {
 			dot := strings.LastIndex(t.Name(), ".")
 			name, suffix := t.Name()[:dot], t.Name()[dot+1:]
 			if _, ok := mxfp4s[name]; !ok {
