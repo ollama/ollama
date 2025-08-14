@@ -5,6 +5,7 @@ ARG FLAVOR=${TARGETARCH}
 ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
+ARG SYCLVERSION=2025.1.3-0
 ARG CMAKEVERSION=3.31.2
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
@@ -55,6 +56,17 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel 8
 
+FROM --platform=linux/amd64 intel/oneapi-basekit:${SYCLVERSION}-devel-ubuntu22.04 AS oneapi-basekit-2025.1
+ARG CMAKEVERSION
+RUN apt-get update && apt-get install -y curl ccache patchelf \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'SYCL' \
+        && cmake --build --parallel --preset 'SYCL' \
+        && cmake --install build --component SYCL --strip --parallel 8
+
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
 RUN apt-get update && apt-get install -y curl ccache \
@@ -100,21 +112,41 @@ COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
+FROM scratch AS sycl
+COPY --from=oneapi-basekit-2025.1 dist/lib/ollama /lib/ollama
+
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ca-certificates wget ocl-icd-libopencl1 \
+    && mkdir -p /tmp/neo \
+    && cd /tmp/neo \
+    && wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.12.5/intel-igc-core-2_2.12.5+19302_amd64.deb \
+    && wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.12.5/intel-igc-opencl-2_2.12.5+19302_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/intel-ocloc_25.22.33944.8-0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/intel-opencl-icd_25.22.33944.8-0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/libigdgmm12_22.7.0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/libze-intel-gpu1_25.22.33944.8-0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/ww22.sum \
+    && wget https://github.com/oneapi-src/level-zero/releases/download/v1.21.9/level-zero_1.21.9+u24.04_amd64.deb \
+    && sha256sum --ignore-missing -c ww22.sum \
+    && dpkg -i *.deb \
+    && cd / \ 
+    && rm -rf /tmp/neo \
+    && apt-get remove -y wget \
+    && apt-get autoremove -y \
+    && apt-get autoclean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
+ENV ZES_ENABLE_SYSMAN=1
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]

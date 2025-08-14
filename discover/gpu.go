@@ -5,6 +5,7 @@ package discover
 /*
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
 #cgo windows LDFLAGS: -lpthread
+#cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
 
 #include "gpu_info.h"
 */
@@ -37,9 +38,15 @@ type oneapiHandles struct {
 	deviceCount int
 }
 
+type syclHandles struct {
+	sycl        *C.sycl_handle_t
+	deviceCount int
+}
+
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
+	syclMinimumMemory = 457 * format.MebiByte
 	// TODO OneAPI minimum memory
 )
 
@@ -51,9 +58,11 @@ var (
 	nvcudaLibPath string
 	cudartLibPath string
 	oneapiLibPath string
+	syclLibPath   string
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
+	syclGPUs      []SyclGPUInfo
 
 	// If any discovered GPUs are incompatible, report why
 	unsupportedGPUs []UnsupportedGPUInfo
@@ -174,6 +183,33 @@ func initOneAPIHandles() *oneapiHandles {
 	return oHandles
 }
 
+// Note: gpuMutex must already be held
+func initSyclHandles() *syclHandles {
+	sHandles := &syclHandles{}
+
+	// Short Circuit if we already know which library to use
+	// ignore bootstrap errors in this case since we already recorded them
+	if syclLibPath != "" {
+		sHandles.deviceCount, sHandles.sycl, _, _ = loadSyclMgmt([]string{syclLibPath})
+		return sHandles
+	}
+
+	// Installer payload location if we're running the installed binary
+	syclTargetDir := filepath.Join(LibOllamaPath, "sycl")
+	syclMgmtPatterns := []string{filepath.Join(syclTargetDir, SyclMgmtName)}
+	syclMgmtPatterns = append(syclMgmtPatterns, SyclGlobs...)
+
+	syclLibPaths := FindGPULibs(SyclMgmtName, syclMgmtPatterns)
+	if len(syclLibPaths) > 0 {
+		var err error
+		sHandles.deviceCount, sHandles.sycl, syclLibPath, err = loadSyclMgmt(syclLibPaths)
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
+	}
+	return sHandles
+}
+
 func GetCPUInfo() GpuInfoList {
 	gpuMutex.Lock()
 	if !bootstrapped {
@@ -193,6 +229,7 @@ func GetGPUInfo() GpuInfoList {
 	needRefresh := true
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
+	var sHandles *syclHandles
 	defer func() {
 		if cHandles != nil {
 			if cHandles.cudart != nil {
@@ -209,6 +246,11 @@ func GetGPUInfo() GpuInfoList {
 			if oHandles.oneapi != nil {
 				// TODO - is this needed?
 				C.oneapi_release(*oHandles.oneapi)
+			}
+		}
+		if sHandles != nil {
+			if sHandles.sycl != nil {
+				C.sycl_release(*sHandles.sycl)
 			}
 		}
 	}()
@@ -336,7 +378,7 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		if envconfig.IntelGPU() {
+		if envconfig.IntelGPUInterface() == "oneapi" {
 			oHandles = initOneAPIHandles()
 			if oHandles != nil && oHandles.oneapi != nil {
 				for d := range oHandles.oneapi.num_drivers {
@@ -368,6 +410,46 @@ func GetGPUInfo() GpuInfoList {
 					}
 				}
 			}
+		} else {
+			// else use SYCL
+			sHandles = initSyclHandles()
+			if sHandles != nil && sHandles.sycl != nil {
+				devCount := C.sycl_get_device_count(*sHandles.sycl)
+				for i := range devCount {
+					gpuInfo := SyclGPUInfo{
+						GpuInfo: GpuInfo{
+							Library: "sycl",
+						},
+						index: int(i),
+					}
+
+					C.sycl_check_vram(*sHandles.sycl, i, &memInfo)
+					// Check if free memory equals total memory
+					// This is a heuristic to detect when ext_intel_free_memory is not supported
+					// The C code prints a warning but doesn't return an error
+					if memInfo.free == memInfo.total {
+						slog.Warn("SYCL free memory reporting may be unreliable",
+							"device", i,
+							"hint", "export ZES_ENABLE_SYSMAN=1 for better memory reporting")
+						gpuInfo.UnreliableFreeMemory = true
+					}
+
+					var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+					memInfo.free = C.uint64_t(totalFreeMem)
+					gpuInfo.TotalMemory = uint64(memInfo.total)
+					gpuInfo.FreeMemory = uint64(memInfo.free)
+					gpuInfo.MinimumMemory = syclMinimumMemory
+					gpuInfo.ID = strconv.Itoa(int(i))
+					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+					if syclLibPath != "" {
+						gpuInfo.DependencyPath = []string{filepath.Dir(syclLibPath)}
+					} else {
+						gpuInfo.DependencyPath = []string{LibOllamaPath}
+					}
+					syclGPUs = append(syclGPUs, gpuInfo)
+					slog.Debug("SYCL GPU", "GPU Info", gpuInfo)
+				}
+			}
 		}
 
 		rocmGPUs, err = AMDGetGPUInfo()
@@ -375,7 +457,7 @@ func GetGPUInfo() GpuInfoList {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
 		bootstrapped = true
-		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
+		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(syclGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
 		}
 
@@ -463,16 +545,41 @@ func GetGPUInfo() GpuInfoList {
 			oHandles = initOneAPIHandles()
 		}
 		for i, gpu := range oneapiGPUs {
-			if oHandles.oneapi == nil {
+			if oHandles != nil && oHandles.oneapi != nil {
+				C.oneapi_check_vram(*oHandles.oneapi, C.int(gpu.driverIndex), C.int(gpu.gpuIndex), &memInfo)
+				// TODO - convert this to MinimumMemory based on testing...
+				var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+				memInfo.free = C.uint64_t(totalFreeMem)
+				oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
+			} else {
 				// shouldn't happen
-				slog.Warn("nil oneapi handle with device count", "count", oHandles.deviceCount)
-				continue
+				slog.Warn("nil oneapi handle with device count")
 			}
-			C.oneapi_check_vram(*oHandles.oneapi, C.int(gpu.driverIndex), C.int(gpu.gpuIndex), &memInfo)
-			// TODO - convert this to MinimumMemory based on testing...
-			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-			memInfo.free = C.uint64_t(totalFreeMem)
-			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
+		}
+
+		if sHandles == nil && len(syclGPUs) > 0 {
+			sHandles = initSyclHandles()
+		}
+		for i, gpu := range syclGPUs {
+			if sHandles != nil && sHandles.sycl != nil {
+				C.sycl_check_vram(*sHandles.sycl, C.int(gpu.index), &memInfo)
+				// Check if free memory equals total memory
+				// This is a heuristic to detect when ext_intel_free_memory is not supported
+				// The C code prints a warning but doesn't return an error
+				if memInfo.free == memInfo.total {
+					slog.Warn("SYCL free memory reporting may be unreliable",
+						"device", gpu.index,
+						"hint", "export ZES_ENABLE_SYSMAN=1 for better memory reporting")
+					syclGPUs[i].UnreliableFreeMemory = true
+				}
+
+				var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+				memInfo.free = C.uint64_t(totalFreeMem)
+				syclGPUs[i].FreeMemory = uint64(memInfo.free)
+			} else {
+				// shouldn't happen
+				slog.Warn("nil sycl handle with device count", "count", sHandles.deviceCount)
+			}
 		}
 
 		err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
@@ -489,6 +596,9 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	for _, gpu := range oneapiGPUs {
+		resp = append(resp, gpu.GpuInfo)
+	}
+	for _, gpu := range syclGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	if len(resp) == 0 {
@@ -671,6 +781,36 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 	return 0, nil, "", err
 }
 
+func loadSyclMgmt(syclLibPaths []string) (int, *C.sycl_handle_t, string, error) {
+	var resp C.sycl_init_resp_t
+	resp.oh.verbose = getVerboseState()
+	var err error
+	for _, libPath := range syclLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.sycl_init(lib, &resp)
+		if resp.err != nil {
+			err = fmt.Errorf("Unable to load Sycl management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Error(err.Error())
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			err = nil
+			// Get device count first to check if any devices are available
+			deviceCount := int(C.sycl_get_device_count(resp.oh))
+			if deviceCount > 0 {
+				C.sycl_print_sycl_devices(resp.oh)
+				return deviceCount, &resp.oh, libPath, err
+			}
+			err = fmt.Errorf("No SYCL devices found with library %s", libPath)
+			slog.Debug(err.Error())
+		}
+	}
+	if err == nil {
+		err = fmt.Errorf("No SYCL devices found or libraries available")
+	}
+	return 0, nil, "", err
+}
+
 func getVerboseState() C.uint16_t {
 	if envconfig.LogLevel() < slog.LevelInfo {
 		return C.uint16_t(1)
@@ -693,6 +833,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		return rocmGetVisibleDevicesEnv(l)
 	case "oneapi":
 		return oneapiGetVisibleDevicesEnv(l)
+	case "sycl":
+		return syclGetVisibleDevicesEnv(l)
 	default:
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""

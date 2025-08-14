@@ -52,6 +52,8 @@ jobs:
             container: rocm/dev-ubuntu-22.04:6.1.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: SYCL
+            container: intel/oneapi-basekit:2025.1.3-0-devel-ubuntu22.04
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
@@ -83,18 +85,21 @@ jobs:
           - preset: ROCm
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+          - preset: SYCL
+            install: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e5785fb3-b5a7-4b97-89bc-918adab1f77d/intel-oneapi-base-toolkit-2025.1.3.8_offline.exe
     runs-on: windows
     steps:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm'
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
         id: cache-install
         uses: actions/cache/restore@v4
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\Program Files (x86)\Intel\oneAPI
           key: ${{ matrix.install }}
       - if: matrix.preset == 'CUDA'
         name: Install CUDA ${{ matrix.cuda-version }}
@@ -123,12 +128,41 @@ jobs:
           echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: matrix.preset == 'SYCL'
+        name: Install Intel oneAPI Base Toolkit
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList "-a", "--silent", "--eula", "accept" -NoNewWindow -Wait
+          }
+
+          Write-Host "DEBUG: Running setvars.bat and capturing environment variables..."
+          $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
+          $setvarsOutput | ForEach-Object {
+            if ($_ -match '(.+?)=(.*)') {
+              $name = $matches[1]
+              $value = $matches[2]
+              
+              if ($name -eq "Path") {              
+                # Write the entire PATH value to GITHUB_PATH
+                echo $value | Out-File -FilePath $env:GITHUB_PATH
+                $pathsAdded = $value.Split(';').Count
+              }
+              
+              # Add all variables (except PATH) to GITHUB_ENV
+              if ($name -ne "Path") {
+                echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
+              }
+            }
+          }
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\Program Files (x86)\Intel\oneAPI
           key: ${{ matrix.install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4

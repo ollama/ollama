@@ -42,11 +42,19 @@ var OneapiGlobs = []string{
 	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
 }
 
+var SyclGlobs = []string{
+	".\\lib\\ollama\\sycl*\\ggml-sycl.dll",
+	".\\ggml-sycl.dll",
+	".\\lib\\ggml-sycl.dll",
+	".\\build\\lib\\ollama\\ggml-sycl.dll",
+}
+
 var (
 	CudartMgmtName = "cudart64_*.dll"
 	NvcudaMgmtName = "nvcuda.dll"
 	NvmlMgmtName   = "nvml.dll"
 	OneapiMgmtName = "ze_intel_gpu64.dll"
+	SyclMgmtName   = "ggml-sycl.dll"
 )
 
 func GetCPUMem() (memInfo, error) {
