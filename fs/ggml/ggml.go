@@ -180,7 +180,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"llama4",
 		"mllama",
 		"qwen25vl",
-		"gptoss",
+		"gptoss", "gpt-oss",
 	}, kv.Architecture())
 }
 
@@ -665,7 +665,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 					4*qkvBias.Shape[0],
 			)
 		}
-	case "gptoss":
+	case "gptoss", "gpt-oss":
 		kv = make([]uint64, f.KV().BlockCount())
 		for i := range kv {
 			kv[i] = uint64(float64((embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
