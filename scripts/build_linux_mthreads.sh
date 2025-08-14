@@ -2,38 +2,26 @@
 
 set -eu
 
-# Script to duplicate the linux-build workflow from GitHub Actions for VULKAN builds
-# Usage: ./scripts/build_linux_vulkan.sh [OS] [ARCH] [TARGET]
-# Examples:
-#   ./scripts/build_linux_vulkan.sh linux amd64 archive
-#   ./scripts/build_linux_vulkan.sh linux arm64 archive
+. $(dirname $0)/env.sh
 
-# Default values (can be overridden by command line arguments)
-OS=${1:-linux}
-ARCH=${2:-amd64}
-TARGET=${3:-archive}
+OS="${PLATFORM%%/*}"
+ARCH="${PLATFORM#*/}"
+if [[ ! "$FLAVORS" =~ ^(musa|vulkan)$ ]]; then
+    echo "Error: FLAVORS must be either 'musa' or 'vulkan'"
+    exit 1
+fi
+FLAVOR=${FLAVORS}
+if [ "$FLAVOR" == "musa" ]; then
+    BACKEND_DIR="musa_v4"
+elif [ "$FLAVOR" == "vulkan" ]; then
+    BACKEND_DIR="vulkan_v1"
+fi
 
-echo "Building Ollama Linux VULKAN Release"
-echo "OS: $OS"
-echo "ARCH: $ARCH"
-echo "TARGET: $TARGET"
-echo "Platform: $OS/$ARCH"
-
-# Set up environment variables (similar to setup-environment job)
-VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --always | sed -e "s/^v//g")}
-GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
-
-echo "VERSION: $VERSION"
-echo "GOFLAGS: $GOFLAGS"
+echo "Building Ollama Linux ${FLAVOR^^} Tarball"
 
 # Cleanup previous build files
 echo "Cleaning up previous build files..."
 DIST_DIR="dist/$OS-$ARCH"
-
-# Remove previous build artifacts
-rm -f *.tgz
-rm -f *.tar.in
-echo "Removed previous .tgz and .tar.in files"
 
 # Remove previous dist directory
 if [ -d "$DIST_DIR" ]; then
@@ -50,12 +38,10 @@ echo "Building Docker image with buildx..."
 # Build using Docker (equivalent to docker/build-push-action@v6)
 echo "Starting Docker build..."
 docker buildx build \
-    --platform="$OS/$ARCH" \
-    --target="$TARGET" \
-    --build-arg="GOFLAGS=$GOFLAGS" \
-    --build-arg="CGO_CFLAGS=${CGO_CFLAGS:-}" \
-    --build-arg="CGO_CXXFLAGS=${CGO_CXXFLAGS:-}" \
-    --build-arg="FLAVOR=vulkan" \
+    --platform=${PLATFORM} \
+    ${OLLAMA_COMMON_BUILD_ARGS} \
+    --target=archive \
+    --build-arg="FLAVOR=${FLAVOR}" \
     --output="type=local,dest=$DIST_DIR" \
     .
 
@@ -69,10 +55,10 @@ if [ -d "bin" ] || [ -d "lib/ollama" ]; then
     for COMPONENT in bin/* lib/ollama/*; do
         if [ -e "$COMPONENT" ]; then
             case "$COMPONENT" in
-                bin/ollama)               echo "$COMPONENT" >> "ollama-$OS-$ARCH.tar.in" ;;
-                lib/ollama/*.so)          echo "$COMPONENT" >> "ollama-$OS-$ARCH.tar.in" ;;
-                lib/ollama/vulkan_v1)     echo "$COMPONENT" >> "ollama-$OS-$ARCH.tar.in" ;;
-                *)                        echo "Skipping $COMPONENT" ;;
+                bin/ollama)                echo "$COMPONENT" >> "ollama-$OS-$ARCH.tar.in" ;;
+                lib/ollama/*.so)           echo "$COMPONENT" >> "ollama-$OS-$ARCH.tar.in" ;;
+                lib/ollama/${BACKEND_DIR}) echo "$COMPONENT" >> "ollama-$OS-$ARCH.tar.in" ;;
+                *)                         echo "Skipping $COMPONENT" ;;
             esac
         fi
     done
@@ -109,6 +95,6 @@ echo "Build artifacts created:"
 ls -la *.tgz 2>/dev/null || echo "No .tgz files found"
 
 echo ""
-echo "Linux VULKAN build completed successfully!"
+echo "Linux ${FLAVOR^^} build completed successfully!"
 echo "Artifacts are available in the current directory as .tgz files"
 echo "Build output is in: $DIST_DIR"

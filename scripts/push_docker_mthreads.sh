@@ -6,7 +6,7 @@ set -eu
 
 for FLAVOR in $FLAVORS; do
     MANIFEST_TAG="${FINAL_IMAGE_REPO}:${VERSION}-${FLAVOR}"
-    ARCH=$(basename "${PLATFORM}")
+    ARCH="${PLATFORM#*/}"
     case "$FLAVOR" in
         musa)
             if [ "$PLATFORM" = "linux/amd64" ]; then

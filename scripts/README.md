@@ -30,6 +30,6 @@ DOCKER_ORG=mthreads FLAVORS=vulkan ./scripts/push_docker_mthreads.sh
 ## Build Artifacts
 
 ```bash
-./scripts/build_linux_musa.sh linux amd64 archive
-./scripts/build_linux_vulkan.sh linux arm64 archive
+PLATFORM=linux/amd64 FLAVORS=musa ./scripts/build_linux_mthreads.sh
+PLATFORM=linux/arm64 FLAVORS=vulkan ./scripts/build_linux_mthreads.sh
 ```
