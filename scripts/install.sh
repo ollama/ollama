@@ -170,6 +170,11 @@ configure_systemd() {
     $SUDO usermod -a -G ollama $(whoami)
 
     status "Creating ollama systemd service..."
+    EXTRA_ENV=""
+    if available mthreads-smi; then
+        EXTRA_ENV='Environment="OLLAMA_FLAVOR=vulkan"'
+    fi
+
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
@@ -182,6 +187,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+$EXTRA_ENV
 
 [Install]
 WantedBy=default.target
