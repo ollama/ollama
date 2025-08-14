@@ -1019,6 +1019,12 @@ func (t *Tensor) Floats() (data []float32) {
 	return
 }
 
+func (t *Tensor) BackendSetFromIntSlice(s []int32) {
+	if len(s) > 0 {
+		C.ggml_backend_tensor_set(t.t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.t))
+	}
+}
+
 func (t *Tensor) DType() ml.DType {
 	switch t.t._type {
 	case C.GGML_TYPE_F32:
