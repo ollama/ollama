@@ -170,9 +170,9 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				tagsCopy = append(tagsCopy, ParseTags(tag))
 			}
 
-			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
+			if tt == reflect.TypeFor[Base]() {
 				vv.Set(reflect.ValueOf(base))
-			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
+			} else if tt == reflect.TypeFor[ml.Tensor]() {
 				var fn func([]Tag) [][]string
 				fn = func(tags []Tag) (values [][]string) {
 					if len(tags) < 1 {
