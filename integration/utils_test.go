@@ -472,14 +472,18 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRe
 	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
 }
 
-func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) {
+func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
+	var context []int
 	fn := func(response api.GenerateResponse) error {
 		// fmt.Print(".")
 		buf.Write([]byte(response.Response))
 		if !stallTimer.Reset(streamTimeout) {
 			return errors.New("stall was detected while streaming response, aborting")
+		}
+		if len(response.Context) > 0 {
+			context = response.Context
 		}
 		return nil
 	}
@@ -503,7 +507,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	case <-done:
 		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
 			slog.Warn("model is too large for the target test system", "model", genReq.Model, "error", genErr)
-			return
+			return context
 		}
 		require.NoError(t, genErr, "failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
 		// Verify the response contains the expected data
@@ -520,6 +524,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
 	}
+	return context
 }
 
 // Generate a set of requests
@@ -554,7 +559,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			},
 		},
 		[][]string{
-			{"sunlight", "scattering", "interact", "color", "surface", "depth"},
+			{"sunlight", "scattering", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorbs", "wavelength"},
 			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
 			{"england", "english", "massachusetts", "pilgrims", "colonists", "independence", "british", "feast", "family", "gatherings", "traditions", "turkey", "colonial", "period", "harvest", "agricultural", "european settlers", "american revolution", "civil war", "16th century", "17th century", "native american", "united states"},
 			{"fourth", "july", "declaration", "independence"},
