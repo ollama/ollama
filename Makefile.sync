@@ -24,12 +24,12 @@ ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal: ml/backend/ggml/ggml
 	go generate ./$(@D)
 
 .PHONY: llama/llama.cpp
-llama/llama.cpp: llama/vendor/
-	rsync -arvzc --delete -f "merge $@/.rsync-filter" $< $@
+llama/llama.cpp: llama/vendor
+	rsync -arvzc --delete -f "include LICENSE" -f "merge $@/.rsync-filter" $(addprefix $<,/LICENSE /) $@
 
 .PHONY: ml/backend/ggml/ggml
-ml/backend/ggml/ggml: llama/vendor/ggml/
-	rsync -arvzc --delete -f "merge $@/.rsync-filter" $< $@
+ml/backend/ggml/ggml: llama/vendor
+	rsync -arvzc --delete -f "include LICENSE" -f "merge $@/.rsync-filter" $(addprefix $<,/LICENSE /ggml/) $@
 
 PATCHES=$(wildcard llama/patches/*.patch)
 PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATCHES)))))
