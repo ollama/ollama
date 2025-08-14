@@ -574,8 +574,8 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			},
 		},
 		[][]string{
-			{"sunlight"},
-			{"soil", "organic", "earth", "black", "tan"},
+			{"sunlight", "scattering", "interact"},
+			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles"},
 			{"england", "english", "massachusetts", "pilgrims", "british"},
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide"},
