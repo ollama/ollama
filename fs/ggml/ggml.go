@@ -675,8 +675,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				kv[i] *= context
 			}
 		}
-		fullOffload = 4 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
-		partialOffload = fullOffload
+		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
 	}
 
 	return
