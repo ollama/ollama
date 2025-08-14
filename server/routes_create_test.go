@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/types/model"
 )
 
 var stream bool = false
@@ -613,6 +615,77 @@ func TestCreateTemplateSystem(t *testing.T) {
 			t.Fatalf("expected status code 400, actual %d", w.Code)
 		}
 	})
+}
+
+func TestCreateAndShowRemoteModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:     "test",
+		From:      "bob",
+		RemoteURL: "https://ollama.com",
+		Info: map[string]any{
+			"capabilities":       []string{"completion", "tools", "thinking"},
+			"model_family":       "gptoss",
+			"context_length":     131072,
+			"embedding_length":   2880,
+			"quantization_level": "MXFP4",
+			"parameter_size":     "20.9B",
+		},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("exected status code 200, actual %d", w.Code)
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{Model: "test"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("exected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedDetails := api.ModelDetails{
+		ParentModel:       "",
+		Format:            "",
+		Family:            "gptoss",
+		Families:          []string{"gptoss"},
+		ParameterSize:     "20.9B",
+		QuantizationLevel: "MXFP4",
+	}
+
+	if !reflect.DeepEqual(resp.Details, expectedDetails) {
+		t.Errorf("model details: expected %#v, actual %#v", expectedDetails, resp.Details)
+	}
+
+	expectedCaps := []model.Capability{
+		model.Capability("completion"),
+		model.Capability("tools"),
+		model.Capability("thinking"),
+	}
+
+	if !slices.Equal(resp.Capabilities, expectedCaps) {
+		t.Errorf("capabilities: expected %#v, actual %#v", expectedCaps, resp.Capabilities)
+	}
+
+	ctxlen, ok := resp.ModelInfo["gptoss.context_length"]
+	if !ok || ctxlen != 131072 {
+		t.Errorf("context len: expected %d, actual %d", 131072, ctxlen)
+	}
+
+	embedlen, ok := resp.ModelInfo["gptoss.embedding_length"]
+	if !ok || embedlen != 2880 {
+		t.Errorf("embed len: expected %d, actual %d", 2880, embedlen)
+	}
+
+	fmt.Printf("resp = %#v\n", resp)
+
 }
 
 func TestCreateLicenses(t *testing.T) {

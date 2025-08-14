@@ -74,21 +74,29 @@ func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
 	// Check for completion capability
-	f, err := gguf.Open(m.ModelPath)
-	if err == nil {
-		defer f.Close()
+	if m.ModelPath != "" {
+		f, err := gguf.Open(m.ModelPath)
+		if err == nil {
+			defer f.Close()
 
-		if f.KeyValue("pooling_type").Valid() {
-			capabilities = append(capabilities, model.CapabilityEmbedding)
+			if f.KeyValue("pooling_type").Valid() {
+				capabilities = append(capabilities, model.CapabilityEmbedding)
+			} else {
+				// If no embedding is specified, we assume the model supports completion
+				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
+			if f.KeyValue("vision.block_count").Valid() {
+				capabilities = append(capabilities, model.CapabilityVision)
+			}
 		} else {
-			// If no embedding is specified, we assume the model supports completion
-			capabilities = append(capabilities, model.CapabilityCompletion)
+			slog.Error("couldn't open model file", "error", err)
 		}
-		if f.KeyValue("vision.block_count").Valid() {
-			capabilities = append(capabilities, model.CapabilityVision)
+	} else if len(m.Config.Capabilities) > 0 {
+		for _, c := range m.Config.Capabilities {
+			capabilities = append(capabilities, model.Capability(c))
 		}
 	} else {
-		slog.Error("couldn't open model file", "error", err)
+		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 
 	if m.Template == nil {
@@ -109,6 +117,11 @@ func (m *Model) Capabilities() []model.Capability {
 	// Check for vision capability in projector-based models
 	if len(m.ProjectorPaths) > 0 {
 		capabilities = append(capabilities, model.CapabilityVision)
+	}
+
+	// Skip the thinking check if it's already set
+	if slices.Contains(capabilities, "thinking") {
+		return capabilities
 	}
 
 	// Check for thinking capability
@@ -253,10 +266,19 @@ type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
 	ModelFamily   string   `json:"model_family"`
 	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"`
-	FileType      string   `json:"file_type"`
+	ModelType     string   `json:"model_type"` // shown as Parameter Size
+	FileType      string   `json:"file_type"`  // shown as Quantization Level
 	Renderer      string   `json:"renderer,omitempty"`
 	Parser        string   `json:"parser,omitempty"`
+
+	RemoteURL   string `json:"remote_url,omitempty"`
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// used for remotes
+	Capabilities []string `json:"capabilities,omitempty"`
+	ContextLen   int      `json:"context_length,omitempty"`
+	EmbedLen     int      `json:"embedding_length,omitempty"`
+	BaseName     string   `json:"base_name,omitempty"`
 
 	// required by spec
 	Architecture string `json:"architecture"`

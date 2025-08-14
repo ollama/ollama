@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -35,6 +36,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -46,6 +48,8 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 )
+
+const ConnectInstructions = "To sign-in and connect your Ollama instance, navigate to:\n    https://ollama.com/connect?key=%s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -286,7 +290,17 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		Think: opts.Think,
 	}
 
-	return client.Generate(cmd.Context(), req, func(api.GenerateResponse) error { return nil })
+	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
+		if r.RemoteModel != "" && opts.ShowConnect {
+			p.StopAndClear()
+			if strings.HasPrefix(r.RemoteURL, "https://ollama.com") {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on Ollama Turbo ⚡\n", r.RemoteModel)
+			} else {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", r.RemoteModel, r.RemoteURL)
+			}
+		}
+		return nil
+	})
 }
 
 func StopHandler(cmd *cobra.Command, args []string) error {
@@ -307,9 +321,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
 	opts := runOptions{
-		Model:    args[0],
-		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]any{},
+		Model:       args[0],
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]any{},
+		ShowConnect: true,
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -367,6 +382,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		prompts = append([]string{string(in)}, prompts...)
+		opts.ShowConnect = false
 		opts.WordWrap = false
 		interactive = false
 	}
@@ -433,6 +449,20 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				pubKey, pkErr := auth.GetPublicKey()
+				if pkErr != nil {
+					return pkErr
+				}
+				// the server and the client both have the same public key
+				if pubKey == sErr.PublicKey {
+					encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
+					fmt.Printf("You need to be signed-in to Ollama to run Turbo models.\n\n")
+					fmt.Printf(ConnectInstructions, encKey)
+				}
+				return nil
+			}
 			return err
 		}
 
@@ -451,6 +481,54 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
+}
+
+func SigninHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	user, err := client.Whoami(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	if user != nil && user.Name != "" {
+		fmt.Printf("You are already signed in to ollama.com as user '%s'\n", user.Name)
+		fmt.Println()
+		return nil
+	}
+
+	pubKey, pkErr := auth.GetPublicKey()
+	if pkErr != nil {
+		return pkErr
+	}
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
+
+	fmt.Printf(ConnectInstructions, encKey)
+	return nil
+}
+
+func SignoutHandler(cmd *cobra.Command, args []string) error {
+	pubKey, pkErr := auth.GetPublicKey()
+	if pkErr != nil {
+		return pkErr
+	}
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	err = client.Signout(cmd.Context(), encKey)
+	if err != nil {
+		return err
+	}
+	fmt.Println("You have signed out of ollama.com")
+	fmt.Println()
+	return nil
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -539,7 +617,14 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
+			var size string
+			if m.RemoteModel != "" {
+				size = "-"
+			} else {
+				size = format.HumanBytes(m.Size)
+			}
+
+			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
@@ -625,7 +710,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	}
 	if err := loadOrUnloadModel(cmd, opts); err != nil {
 		if !strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("unable to stop existing running model \"%s\": %s", args[0], err)
+			fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", args[0])
 		}
 	}
 
@@ -736,12 +821,37 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	}
 
 	tableRender("Model", func() (rows [][]string) {
+		if resp.RemoteURL != "" {
+			rows = append(rows, []string{"", "Remote model", resp.RemoteModel})
+			rows = append(rows, []string{"", "Remote URL", resp.RemoteURL})
+		}
+
 		if resp.ModelInfo != nil {
 			arch := resp.ModelInfo["general.architecture"].(string)
 			rows = append(rows, []string{"", "architecture", arch})
-			rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(resp.ModelInfo["general.parameter_count"].(float64)))})
-			rows = append(rows, []string{"", "context length", strconv.FormatFloat(resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64), 'f', -1, 64)})
-			rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64), 'f', -1, 64)})
+
+			var paramStr string
+			if resp.Details.ParameterSize != "" {
+				paramStr = resp.Details.ParameterSize
+			} else if v, ok := resp.ModelInfo["general.parameter_count"]; ok {
+				if f, ok := v.(float64); ok {
+					paramStr = format.HumanNumber(uint64(f))
+				}
+			}
+			rows = append(rows, []string{"", "parameters", paramStr})
+
+			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
+				if f, ok := v.(float64); ok {
+					rows = append(rows, []string{"", "context length", strconv.FormatFloat(f, 'f', -1, 64)})
+				}
+			}
+
+			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
+				if f, ok := v.(float64); ok {
+					rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(f, 'f', -1, 64)})
+				}
+			}
+
 		} else {
 			rows = append(rows, []string{"", "architecture", resp.Details.Family})
 			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
@@ -989,6 +1099,7 @@ type runOptions struct {
 	KeepAlive    *api.Duration
 	Think        *api.ThinkValue
 	HideThinking bool
+	ShowConnect  bool
 }
 
 type displayResponseState struct {
@@ -1292,6 +1403,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
+
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -1544,6 +1656,22 @@ func NewCLI() *cobra.Command {
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
+	signinCmd := &cobra.Command{
+		Use:     "signin",
+		Short:   "Sign-In to ollama.com",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SigninHandler,
+	}
+
+	signoutCmd := &cobra.Command{
+		Use:     "signout",
+		Short:   "Sign-Out from ollama.com",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignoutHandler,
+	}
+
 	listCmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -1638,6 +1766,8 @@ func NewCLI() *cobra.Command {
 		stopCmd,
 		pullCmd,
 		pushCmd,
+		signinCmd,
+		signoutCmd,
 		listCmd,
 		psCmd,
 		copyCmd,
