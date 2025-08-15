@@ -314,6 +314,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
+	// If debug mode is enabled, return the rendered template instead of calling the model
+	if req.DebugRenderOnly {
+		c.JSON(http.StatusOK, api.DebugTemplateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			DebugInfo: api.DebugInfo{
+				RenderedTemplate: prompt,
+				ImageCount:       len(images),
+			},
+		})
+		return
+	}
+
 	var thinkingState *thinking.Parser
 	if !useHarmony {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
@@ -1594,6 +1607,19 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// If debug mode is enabled, return the rendered template instead of calling the model
+	if req.DebugRenderOnly {
+		c.JSON(http.StatusOK, api.DebugTemplateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			DebugInfo: api.DebugInfo{
+				RenderedTemplate: prompt,
+				ImageCount:       len(images),
+			},
+		})
 		return
 	}
 
