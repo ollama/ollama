@@ -1477,14 +1477,14 @@ func (s *Server) PsHandler(c *gin.Context) {
 		mr := api.ProcessModelResponse{
 			Model:     model.ShortName,
 			Name:      model.ShortName,
-			Size:      int64(v.estimatedTotal),
-			SizeVRAM:  int64(v.estimatedVRAM),
+			Size:      int64(v.totalSize),
+			SizeVRAM:  int64(v.vramSize),
 			Digest:    model.Digest,
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
 		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx / v.numParallel
+			mr.ContextLength = v.Options.NumCtx
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just

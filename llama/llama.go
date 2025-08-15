@@ -62,6 +62,22 @@ func BackendInit() {
 	C.llama_backend_init()
 }
 
+func EnumerateGPUs() []string {
+	var ids []string
+
+	for i := range C.ggml_backend_dev_count() {
+		device := C.ggml_backend_dev_get(i)
+
+		if C.ggml_backend_dev_type(device) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
+			var props C.struct_ggml_backend_dev_props
+			C.ggml_backend_dev_get_props(device, &props)
+			ids = append(ids, C.GoString(props.id))
+		}
+	}
+
+	return ids
+}
+
 func GetModelArch(modelPath string) (string, error) {
 	mp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(mp))
