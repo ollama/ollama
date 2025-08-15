@@ -528,6 +528,19 @@ type ProcessModelResponse struct {
 	ContextLength int          `json:"context_length"`
 }
 
+// StatusResponse is the response from the /api/status endpoint.
+type StatusResponse struct {
+	RunningRequests []RequestStatus `json:"running_requests"`
+	PendingRequests []string        `json:"pending_requests"`
+	FreeMemory      uint64          `json:"free_memory"`
+}
+
+// RequestStatus represents information about a running request.
+type RequestStatus struct {
+	ID              string `json:"id"`
+	GeneratedTokens int    `json:"generated_tokens"`
+}
+
 type TokenResponse struct {
 	Token string `json:"token"`
 }

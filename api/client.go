@@ -357,6 +357,15 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	return &lr, nil
 }
 
+// Status gets the current server status including running and pending requests.
+func (c *Client) Status(ctx context.Context) (*StatusResponse, error) {
+	var sr StatusResponse
+	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &sr); err != nil {
+		return nil, err
+	}
+	return &sr, nil
+}
+
 // Copy copies a model - creating a model with another name from an existing
 // model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
