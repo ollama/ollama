@@ -1603,7 +1603,31 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools, req.Think)
+	var harmonyMessageHandler *HarmonyMessageHandler
+	var harmonyToolParser *HarmonyToolCallAccumulator
+
+	useHarmony := shouldUseHarmony(*m)
+
+	processedTools := req.Tools
+	if useHarmony {
+		harmonyMessageHandler = NewHarmonyMessageHandler()
+		var lastMessage *api.Message
+		if len(msgs) > 0 {
+			lastMessage = &msgs[len(msgs)-1]
+		}
+		harmonyMessageHandler.harmonyParser.AddImplicitStartOrPrefill(lastMessage)
+		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+
+		// make a copy of tools to pass to the chat prompt. Function names may be
+		// renamed to be valid Harmony function names.
+		processedTools = make([]api.Tool, len(req.Tools))
+		copy(processedTools, req.Tools)
+		for i, tool := range processedTools {
+			processedTools[i].Function.Name = harmonyMessageHandler.functionNameMap.ConvertAndAdd(tool.Function.Name)
+		}
+	}
+
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1623,25 +1647,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	useHarmony := shouldUseHarmony(*m)
-
 	// Validate Think value: string values currently only allowed for gptoss models
 	if req.Think != nil && req.Think.IsString() && !useHarmony {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
-	}
-
-	var harmonyMessageHandler *HarmonyMessageHandler
-	var harmonyToolParser *HarmonyToolCallAccumulator
-
-	if useHarmony {
-		harmonyMessageHandler = NewHarmonyMessageHandler()
-		var lastMessage *api.Message
-		if len(msgs) > 0 {
-			lastMessage = &msgs[len(msgs)-1]
-		}
-		harmonyMessageHandler.harmonyParser.AddImplicitStartOrPrefill(lastMessage)
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 	}
 
 	var thinkingState *thinking.Parser
@@ -1696,6 +1705,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					toolName, toolContent := harmonyToolParser.Drain()
 					if toolName != nil {
 						*toolName = strings.TrimPrefix(*toolName, "functions.")
+						*toolName = harmonyMessageHandler.functionNameMap.OriginalFromConverted(*toolName)
 						var args api.ToolCallFunctionArguments
 						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
 							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
