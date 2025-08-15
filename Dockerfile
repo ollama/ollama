@@ -86,6 +86,8 @@ RUN go mod download
 COPY . .
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
+ARG CGO_CFLAGS
+ARG CGO_CXXFLAGS
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
