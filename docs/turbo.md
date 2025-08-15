@@ -75,7 +75,7 @@ for part in client.chat('gpt-oss:120b', messages=messages, stream=True):
 import { Ollama } from 'ollama';
 
 const ollama = new Ollama({
-  host: 'https://ollama.com'
+  host: 'https://ollama.com',
   headers: {
 	  Authorization: "Bearer <api key>"
   }
