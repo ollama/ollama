@@ -13,20 +13,18 @@ void main() {
 
     const uint row_dst = gl_GlobalInvocationID.x;
 
-    if (i0 >= p.n_dims) {
-        const uint i = row_dst*ne0 + i0;
-
-        data_d[i + 0] = data_a[i + 0];
-        data_d[i + 1] = data_a[i + 1];
-
-        return;
-    }
-
     const uint row_x     = row_dst % ne1;
     const uint channel_x = row_dst / ne1;
 
     const uint idst = row_dst*ne0 + i0/2;
     const uint ix   = channel_x*p.s2 + row_x*p.s1 + i0/2;
+
+    if (i0 >= p.n_dims) {
+        data_d[idst + i0/2 + 0] = data_a[ix + i0/2 + 0];
+        data_d[idst + i0/2 + 1] = data_a[ix + i0/2 + 1];
+
+        return;
+    }
 
     const float theta_base = data_pos[channel_x] * pow(p.theta_scale, i0/2.0f);
 

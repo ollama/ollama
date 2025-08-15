@@ -1,12 +1,9 @@
 #version 450
 
 #extension GL_EXT_shader_16bit_storage : require
-#extension GL_EXT_spirv_intrinsics: enable
 #extension GL_EXT_control_flow_attributes : require
 
-#if RTE16
-spirv_execution_mode(capabilities = [4467], 4462, 16); // RoundingModeRTE, 16 bits
-#endif
+#include "rte.comp"
 
 layout (push_constant) uniform parameter
 {
@@ -43,11 +40,9 @@ void main() {
     const uint src_base = ic * p.offset_delta + batch * p.batch_offset;
     const uint dst_base = ((batch * p.OH + oh) * p.OW) * p.CHW + ic * (p.KW * p.KH);
     const int oh_s1 = int(oh) * p.s1;
-    const uint ksize = p.OW * (p.KH > 1 ? p.KW : 1);
+    const uint ksize = p.OW * p.KH;
 
     const uint base_linear_idx = gidx * NUM_ITER;
-
-    const uint max_ky = ksize / p.OW;
 
     uint current_kx = base_linear_idx / ksize;
     const uint rem = base_linear_idx - (current_kx * ksize);
@@ -79,7 +74,7 @@ void main() {
 
         if (++current_ix == p.OW) {
             current_ix = 0;
-            if (++current_ky == max_ky) {
+            if (++current_ky == p.KH) {
                 current_ky = 0;
                 current_kx++;
             }

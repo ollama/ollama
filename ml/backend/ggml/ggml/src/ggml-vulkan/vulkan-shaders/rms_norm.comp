@@ -1,10 +1,12 @@
 #version 450
 
-#include "generic_unary_head.comp"
+#include "generic_binary_head.comp"
 #include "types.comp"
 
 #extension GL_EXT_control_flow_attributes : enable
 #define BLOCK_SIZE 512
+
+layout (constant_id = 1) const bool do_multiply = false;
 
 layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -25,6 +27,7 @@ void main() {
     const uint stride_sample    = p.nb03;
 
     uint32_t a_offset = samp*stride_sample + channel*stride_channel + row*stride_row + get_aoffset();
+    uint32_t b_offset = src1_idx(0, row, channel, samp) + get_boffset();
     uint32_t d_offset = ((samp*nchannels + channel)*nrows + row)*ncols + get_doffset();
 
     sum[tid] = FLOAT_TYPE(0.0f); // partial sum for thread in warp
@@ -46,7 +49,19 @@ void main() {
     const FLOAT_TYPE mean = sum[0] / FLOAT_TYPE(ncols);
     const FLOAT_TYPE scale = inversesqrt(mean + FLOAT_TYPE(p.param1));
 
-    [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
-        data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
+    if (do_multiply) {
+        if (ncols > p.ne10) {
+            [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+                data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + fastmod(col, p.ne10)]));
+            }
+        } else {
+            [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+                data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + col]));
+            }
+        }
+    } else {
+        [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+            data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
+        }
     }
 }

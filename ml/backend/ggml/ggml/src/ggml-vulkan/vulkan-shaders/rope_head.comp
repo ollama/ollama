@@ -1,11 +1,8 @@
 #include "types.comp"
 
 #extension GL_EXT_shader_16bit_storage : require
-#extension GL_EXT_spirv_intrinsics: enable
 
-#if RTE16
-spirv_execution_mode(capabilities = [4467], 4462, 16); // RoundingModeRTE, 16 bits
-#endif
+#include "rte.comp"
 
 layout(local_size_x = 1, local_size_y = 256, local_size_z = 1) in;
 

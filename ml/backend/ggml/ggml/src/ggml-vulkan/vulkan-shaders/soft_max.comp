@@ -6,12 +6,21 @@ layout (push_constant) uniform parameter
 {
     uint KX;
     uint KY;
+    uint ne00;
+    uint ne01;
+    uint ne02;
+    uint ne12;
+    uint ne13;
+    uint nb11;
+    uint nb12;
+    uint nb13;
     float scale;
     float max_bias;
     float m0;
     float m1;
     uint n_head_log2;
     uint nrows_x;
+    uint has_sinks;
 } p;
 
 #include "types.comp"
@@ -21,7 +30,8 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
 layout (binding = 1) readonly buffer Y {B_TYPE data_b[];};
-layout (binding = 2) buffer D {D_TYPE data_d[];};
+layout (binding = 2) readonly buffer Z {float data_c[];};
+layout (binding = 3) buffer D {D_TYPE data_d[];};
 
 shared FLOAT_TYPE vals[BLOCK_SIZE];
 
@@ -31,7 +41,15 @@ shared FLOAT_TYPE vals[BLOCK_SIZE];
 void soft_max(uint num_iters) {
     const uint tid = gl_LocalInvocationID.x;
     const uint rowx = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
-    const uint rowy = (p.KY > 0) ? (rowx % p.KY) : 0;
+
+    const uint32_t i03 = rowx / (p.ne01 * p.ne02);
+    const uint32_t i02 = (rowx - i03 * p.ne01 * p.ne02) / p.ne01;
+    const uint32_t i01 = rowx % p.ne01;
+
+    uint rowy_start = 0;
+    if (p.KY > 0) {
+        rowy_start = i01 * p.nb11 + (i02 % p.ne12) * p.nb12 + (i03 % p.ne13) * p.nb13;
+    }
 
     if (rowx >= p.nrows_x) {
         return;
@@ -41,16 +59,16 @@ void soft_max(uint num_iters) {
 
     // ALiBi
     if (p.max_bias > 0.0f) {
-        const uint h = rowx/p.KY; // head index
+        const uint h = (rowx / p.ne01) % p.ne02; // head index
 
         const float base = h < p.n_head_log2 ? p.m0 : p.m1;
-        const uint   exp  = h < p.n_head_log2 ? h + 1 : 2*(h - p.n_head_log2) + 1;
+        const uint   exp = h < p.n_head_log2 ? h + 1 : 2*(h - p.n_head_log2) + 1;
 
         slope = pow(base, exp);
     }
 
     // Find max
-    FLOAT_TYPE max_val = uintBitsToFloat(0xFF800000);
+    FLOAT_TYPE max_val = p.has_sinks == 0 ? uintBitsToFloat(0xFF800000) : data_c[i02];
 
     // Cache values while we compute the max, so we don't need to read them
     // again when we're ready to compute exp(x-max).
@@ -67,7 +85,7 @@ void soft_max(uint num_iters) {
 
         FLOAT_TYPE b = FLOAT_TYPE(0);
         if (p.KY > 0 && col < p.KX) {
-            b = data_b[rowy * p.KX + col];
+            b = data_b[rowy_start + col];
         }
 
         FLOAT_TYPE v = a * p.scale + slope * b;
@@ -111,7 +129,7 @@ void soft_max(uint num_iters) {
         if (idx < DATA_CACHE_SIZE) {
             val = exp(data_cache[idx] - max_val);
         } else {
-            val = exp(FLOAT_TYPE(data_a[i]) * p.scale + (p.KY > 0 ? slope * FLOAT_TYPE(data_b[rowy * p.KX + col]) : FLOAT_TYPE(0.0f)) - max_val);
+            val = exp(FLOAT_TYPE(data_a[i]) * p.scale + (p.KY > 0 ? slope * FLOAT_TYPE(data_b[rowy_start + col]) : FLOAT_TYPE(0.0f)) - max_val);
         }
         sum += val;
         if (idx < DATA_CACHE_SIZE) {
@@ -131,6 +149,10 @@ void soft_max(uint num_iters) {
         barrier();
     }
     sum = vals[0];
+
+    if (p.has_sinks != 0) {
+        sum += FLOAT_TYPE(exp(FLOAT_TYPE(data_c[i02]) - max_val));
+    }
 
     FLOAT_TYPE rcpdivisor = 1.0/sum;
 
