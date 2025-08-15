@@ -76,6 +76,10 @@ if (MUSAToolkit_FOUND)
     add_compile_definitions(GGML_USE_MUSA)
     add_compile_definitions(GGML_CUDA_PEER_MAX_BATCH_SIZE=${GGML_CUDA_PEER_MAX_BATCH_SIZE})
 
+    if (GGML_MUSA_GRAPHS)
+        add_compile_definitions(GGML_MUSA_GRAPHS)
+    endif()
+
     if (GGML_CUDA_FORCE_MMQ)
         add_compile_definitions(GGML_CUDA_FORCE_MMQ)
     endif()
