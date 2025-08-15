@@ -1,0 +1,6 @@
+Flask
+requests
+crewai
+langchain-community
+duckduckgo-search
+websocket-client

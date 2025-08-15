@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Agent Collaboration System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <h1>Multi-Agent Collaboration System</h1>
+    <div id="controls">
+        <label for="model-selector">Select Model:</label>
+        <select id="model-selector">
+            {% for model in models %}
+                <option value="{{ model }}">{{ model }}</option>
+            {% endfor %}
+        </select>
+        <label for="crew-selector">Select Crew:</label>
+        <select id="crew-selector">
+            <option value="chat">Chat</option>
+            <option value="research">Research Crew</option>
+            <option value="image">Image Generation Crew</option>
+        </select>
+    </div>
+    <div id="chat-container">
+        <div id="chat-window"></div>
+        <div id="thinking-indicator" style="display: none;">Thinking...</div>
+        <div id="input-container">
+            <input type="text" id="message-input" placeholder="Type your message here...">
+            <button id="send-button">Send</button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
