@@ -196,7 +196,9 @@ int vk_check_flash_attention(vk_handle_t rh, int i) {
   (*rh.vkGetPhysicalDeviceProperties)(devices[i], &properties);
 
   int supports_nv_coopmat2 = is_extension_supported(&rh, devices[i], VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME);
-  if (!supports_nv_coopmat2) {
+  int supports_nv_coopmat  = is_extension_supported(&rh, devices[i], VK_NV_COOPERATIVE_MATRIX_EXTENSION_NAME);
+  int supports_coopmat  = is_extension_supported(&rh, devices[i], VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+  if (!supports_nv_coopmat && !supports_nv_coopmat2 && !supports_coopmat) {
     free(devices);
     return 1;
   }
