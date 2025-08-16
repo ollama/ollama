@@ -1,0 +1,26 @@
+#version 450
+
+#include "generic_head.comp"
+#include "types.comp"
+
+#extension GL_EXT_control_flow_attributes : enable
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer G {A_TYPE data_g[];};
+layout (binding = 1) readonly buffer X {B_TYPE data_x[];};
+layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint i = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (i >= p.KX) {
+        return;
+    }
+
+    // Compute derivative of SiLU(x): 1/(1+exp(-x)) - x*exp(-x)/(1+exp(-x))^2
+
+    const float xi = float(data_x[i]);
+    const float s = 1.0f / (1.0f + exp(-xi));
+    data_d[i] = D_TYPE(data_g[i] * (s + xi * s * (1 - s)));
+}

@@ -1,0 +1,58 @@
+#version 450
+
+#include "rope_head.comp"
+
+void main() {
+    const uint i0 = 2*gl_GlobalInvocationID.y;
+    uint ne0 = p.ncols;
+    uint ne1 = p.p_delta_rows;
+    uint ne2 = p.ne02;
+
+    if (i0 >= ne0) {
+        return;
+    }
+
+    const uint row_dst = gl_GlobalInvocationID.x;
+
+    const uint row_x     = row_dst % ne1;
+    const uint channel_x = row_dst / ne1;
+
+    const uint idst = row_dst*ne0 + i0/2;
+    const uint ix   = channel_x*p.s2 + row_x*p.s1 + i0/2;
+
+    if (i0 >= p.n_dims) {
+        data_d[idst + i0/2 + 0] = data_a[ix + i0/2 + 0];
+        data_d[idst + i0/2 + 1] = data_a[ix + i0/2 + 1];
+
+        return;
+    }
+
+    const int sect_dims = p.sections[0] + p.sections[1] + p.sections[2] + p.sections[3];
+    const int sec_w = p.sections[1] + p.sections[0];
+    const uint sector = (i0 / 2) % sect_dims;
+
+    float theta_base = 0.0;
+    if (sector < p.sections[0]) {
+        theta_base = data_pos[channel_x]*pow(p.theta_scale, i0/2.0f);
+    }
+    else if (sector >= p.sections[0] && sector < sec_w) {
+        theta_base = data_pos[channel_x + ne2 * 1]*pow(p.theta_scale, i0/2.0f);
+    }
+    else if (sector >= sec_w && sector < sec_w + p.sections[2]) {
+        theta_base = data_pos[channel_x + ne2 * 2]*pow(p.theta_scale, i0/2.0f);
+    }
+    else if (sector >= sec_w + p.sections[2]) {
+        theta_base = data_pos[channel_x + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
+    }
+
+    const float freq_factor = p.has_ff != 0 ? data_ff[i0/2] : 1.0f;
+
+    float cos_theta, sin_theta;
+    rope_yarn(theta_base / freq_factor, i0, cos_theta, sin_theta);
+
+    const float x0 = float(data_a[ix + 0]);
+    const float x1 = float(data_a[ix + p.n_dims/2]);
+
+    data_d[idst + 0]          = D_TYPE(x0*cos_theta - x1*sin_theta);
+    data_d[idst + p.n_dims/2] = D_TYPE(x0*sin_theta + x1*cos_theta);
+}
