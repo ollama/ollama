@@ -1,0 +1,100 @@
+#version 450
+
+layout (push_constant) uniform parameter
+{
+    uint ne; uint a_offset; uint d_offset;
+    uint ne00; uint ne01;
+    uint nb00; uint nb01; uint nb02; uint nb03;
+    uint ne10; uint ne11; uint ne12; uint ne13;
+    float sf0; float sf1; float sf2; float sf3;
+} p;
+
+#include "types.comp"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+// from ggml.h: enum ggml_scale_mode, enum ggml_scale_flag
+#define NEAREST  0
+#define BILINEAR 1
+#define ALIGN_CORNERS (1 << 8)
+
+layout (constant_id = 0) const uint scale_mode = 0;
+
+float fetch_nearest(uint i10, uint i11, uint i12, uint i13) {
+    const uint i00 = uint(i10 / p.sf0);
+    const uint i01 = uint(i11 / p.sf1);
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+
+    return data_a[p.a_offset + i03 * p.nb03 + i02 * p.nb02 + i01 * p.nb01 + i00 * p.nb00];
+}
+
+float fetch_bilinear(ivec2 c0, ivec2 c1, vec2 d, uint i12, uint i13) {
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+    const uint base = p.a_offset + i03 * p.nb03 + i02 * p.nb02;
+
+    const float v00 = data_a[base + c0.y * p.nb01 + c0.x * p.nb00];
+    const float v01 = data_a[base + c0.y * p.nb01 + c1.x * p.nb00];
+    const float v10 = data_a[base + c1.y * p.nb01 + c0.x * p.nb00];
+    const float v11 = data_a[base + c1.y * p.nb01 + c1.x * p.nb00];
+
+    return
+        v00 * (1.0-d.x) * (1.0-d.y) +
+        v01 * d.x       * (1.0-d.y) +
+        v10 * (1.0-d.x) * d.y +
+        v11 * d.x       * d.y;
+}
+
+float interpolate_bilinear(uint i10, uint i11, uint i12, uint i13) {
+    const ivec2 ne0 = ivec2(p.ne00, p.ne01);
+
+    const vec2 c = (vec2(i10, i11) + 0.5) / vec2(p.sf0, p.sf1) - 0.5;
+    const vec2 c0f = floor(c);
+    const vec2 d = c - c0f;
+    const ivec2 c0 = max(ivec2(c0f), 0);
+    const ivec2 c1 = min(ivec2(c0f + 1), ne0 - 1);
+
+    return fetch_bilinear(c0, c1, d, i12, i13);
+}
+
+float interpolate_bilinear_align_corners(uint i10, uint i11, uint i12, uint i13) {
+    const vec2 c = vec2(i10, i11) / vec2(p.sf0, p.sf1);
+    const vec2 c0f = floor(c);
+    const vec2 d = c - c0f;
+    const ivec2 c0 = ivec2(c0f);
+    const ivec2 c1 = c0 + 1;
+
+    return fetch_bilinear(c0, c1, d, i12, i13);
+}
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+    const uint i10 = idx % p.ne10;
+    const uint i11 = (idx / p.ne10) % p.ne11;
+    const uint i12 = (idx / (p.ne10 * p.ne11)) % p.ne12;
+    const uint i13 = (idx / (p.ne10 * p.ne11 * p.ne12)) % p.ne13;
+
+    float result;
+    switch (scale_mode) {
+        case NEAREST:
+            result = fetch_nearest(i10, i11, i12, i13);
+            break;
+        case BILINEAR:
+            result = interpolate_bilinear(i10, i11, i12, i13);
+            break;
+        case BILINEAR | ALIGN_CORNERS:
+            result = interpolate_bilinear_align_corners(i10, i11, i12, i13);
+            break;
+    }
+
+    data_d[p.d_offset + idx] = D_TYPE(result);
+}

@@ -6,6 +6,7 @@ ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
+ARG VULKANVERSION=1.4.313.2
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -16,6 +17,16 @@ RUN yum install -y yum-utils \
     && dnf install -y ccache \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
+ARG VULKANVERSION
+RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
+    && tar xvf /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
+    && dnf -y install ninja-build libcap-devel \
+    && ln -s /usr/bin/python3 /usr/bin/python \  
+    && /${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
+    && /${VULKANVERSION}/vulkansdk -j 8 shaderc
+RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
+    && cp -r /${VULKANVERSION}/x86_64/lib/* /usr/local/lib
+ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
 
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
@@ -77,6 +88,13 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel --preset 'JetPack 6' \
         && cmake --install build --component CUDA --strip --parallel 8
 
+FROM base AS vulkan
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'Vulkan' \
+        && cmake --build --parallel --preset 'Vulkan' \
+        && cmake --install build --component Vulkan --strip --parallel 8 
+
+
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
 COPY go.mod go.sum .
@@ -93,6 +111,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama
+COPY --from=vulkan  dist/lib/ollama/vulkan  /lib/ollama/vulkan
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/cuda_sbsa
@@ -103,12 +122,13 @@ FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
+ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates \
+    && apt-get install -y ca-certificates libcap2 libvulkan1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin
