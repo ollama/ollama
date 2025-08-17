@@ -2,6 +2,16 @@ import App from './app'
 import './app.css'
 import { createRoot } from 'react-dom/client'
 
-const container = document.getElementById('app')
-const root = createRoot(container)
-root.render(<App />)
+try {
+	console.log('[renderer] boot script start')
+	const container = document.getElementById('app')
+	if (!container) {
+		console.error('[renderer] #app container not found')
+	} else {
+		const root = createRoot(container)
+		root.render(<App />)
+		console.log('[renderer] render invoked')
+	}
+} catch (e) {
+	console.error('[renderer] boot error', e)
+}

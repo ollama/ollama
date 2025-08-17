@@ -1301,6 +1301,57 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
+
+	// Tools (local simple implementation)
+	r.GET("/api/tools", func(c *gin.Context) {
+		// Static tool list for now
+		c.JSON(http.StatusOK, gin.H{"tools": []gin.H{
+			{"name": "time.now", "description": "Get current UTC time"},
+			{"name": "echo", "description": "Echo back provided text"},
+		}})
+	})
+	r.POST("/api/tools/execute", func(c *gin.Context) {
+		var body struct {
+			Calls []struct {
+				ID   string         `json:"id"`
+				Name string         `json:"name"`
+				Args map[string]any `json:"arguments"`
+			} `json:"calls"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		allow := map[string]bool{"time.now": true, "echo": true}
+		sanitize := func(s string) string {
+			// basic sanitation: trim and limit length
+			if len(s) > 2048 {
+				s = s[:2048] + "…"
+			}
+			return strings.TrimSpace(s)
+		}
+		results := make([]gin.H, 0, len(body.Calls))
+		now := time.Now().UTC().Format(time.RFC3339)
+		for _, call := range body.Calls {
+			if !allow[call.Name] {
+				results = append(results, gin.H{"id": call.ID, "name": call.Name, "output": "tool not allowed"})
+				continue
+			}
+			var out string
+			switch call.Name {
+			case "time.now":
+				out = now
+			case "echo":
+				if txt, ok := call.Args["text"].(string); ok {
+					out = txt
+				} else {
+					out = ""
+				}
+			}
+			results = append(results, gin.H{"id": call.ID, "name": call.Name, "output": sanitize(out)})
+		}
+		c.JSON(http.StatusOK, gin.H{"results": results})
+	})
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 

@@ -1,0 +1,20 @@
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.drag-region * {
+  -webkit-app-region: no-drag;
+}
+
+/* A fixed variant to sit above all content without eating scroll events under it */
+.drag-region-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px; /* matches hiddenInset overlay height */
+  z-index: 50;
+  -webkit-app-region: drag;
+  pointer-events: auto; /* allow drag */
+  background: transparent; /* keep seamless */
+}

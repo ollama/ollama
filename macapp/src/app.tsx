@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import './chat/tokens.css'
 import copy from 'copy-to-clipboard'
 import { CheckIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline'
 import Store from 'electron-store'
-import { getCurrentWindow, app } from '@electron/remote'
+import { getCurrentWindow } from '@electron/remote'
 
 import { install } from './install'
 import OllamaIcon from './ollama.svg'
+import { ChatView } from './chat/ChatView'
 
 const store = new Store()
 
@@ -16,11 +18,35 @@ enum Step {
 }
 
 export default function () {
+  const [view, setView] = useState<'onboarding' | 'chat' | 'settings'>('onboarding')
   const [step, setStep] = useState<Step>(Step.WELCOME)
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
-
   const command = 'ollama run llama3.2'
 
+  // Decide which view to show on load
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const qv = sp.get('view')
+    if (qv === 'settings') {
+      setView('settings')
+      return
+    }
+    if (qv === 'chat') {
+      setView('chat')
+      return
+    }
+    // No explicit query param, decide based on first-time-run
+    setView(store.get('first-time-run') ? 'chat' : 'onboarding')
+  }, [])
+
+  if (view === 'chat') {
+    return <ChatView />
+  }
+  if (view === 'settings') {
+    return <SettingsPanel />
+  }
+
+  // Onboarding flow
   return (
     <div className='drag'>
       <div className='mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
@@ -72,7 +98,7 @@ export default function () {
             </div>
           </>
         )}
-        {step === Step.FINISH && (
+  {step === Step.FINISH && (
           <>
             <div className='mx-auto flex flex-col space-y-20 text-center'>
               <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Run your first model</h1>
@@ -107,7 +133,7 @@ export default function () {
               <button
                 onClick={() => {
                   store.set('first-time-run', true)
-                  window.close()
+                  setView('chat')
                 }}
                 className='no-drag rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
               >
@@ -117,6 +143,20 @@ export default function () {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+function SettingsPanel() {
+  return (
+    <div className='p-6 text-sm text-gray-200'>
+      <h2 className='text-lg mb-4 font-semibold'>Settings</h2>
+      <p className='text-xs mb-2'>Placeholder settings panel (extend with real preferences).</p>
+      <ul className='list-disc ml-5 space-y-1 text-xs'>
+        <li>Model location (future)</li>
+        <li>Context length (future)</li>
+        <li>Airplane mode toggle (future)</li>
+      </ul>
     </div>
   )
 }

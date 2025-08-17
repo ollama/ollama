@@ -33,6 +33,15 @@ const logger = winston.createLogger({
 })
 
 app.on('ready', () => {
+  // Ensure renderer side electron-store IPC is initialized (avoids blank window if renderer Store() instantiation blocks)
+  try {
+    // @ts-ignore - initRenderer is a static we intentionally invoke before creating BrowserWindow(s)
+    if (typeof (Store as any).initRenderer === 'function') {
+      ;(Store as any).initRenderer()
+    }
+  } catch (e) {
+    console.error('[bootstrap] Store.initRenderer failed', e)
+  }
   const gotTheLock = app.requestSingleInstanceLock()
   if (!gotTheLock) {
     app.exit(0)
@@ -57,6 +66,24 @@ app.on('ready', () => {
   init()
 })
 
+function attachDebug(win: BrowserWindow, label: string) {
+  if (!win) return
+  win.webContents.on('did-fail-load', (_e, ec, desc, url) => {
+    console.error(`[win:${label}] did-fail-load code=${ec} desc=${desc} url=${url}`)
+  })
+  win.webContents.on('crashed', () => {
+    console.error(`[win:${label}] renderer crashed`)
+  })
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error(`[win:${label}] render-process-gone`, details)
+  })
+  win.webContents.on('dom-ready', () => {
+    if (process.env.DEBUG_OLLAMA) {
+      try { win.webContents.openDevTools({ mode: 'detach' }) } catch {}
+    }
+  })
+}
+
 function firstRunWindow() {
   // Create the browser window.
   welcomeWindow = new BrowserWindow({
@@ -75,7 +102,9 @@ function firstRunWindow() {
 
   require('@electron/remote/main').enable(welcomeWindow.webContents)
 
+  console.log('[create] welcome window ->', MAIN_WINDOW_WEBPACK_ENTRY)
   welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+  attachDebug(welcomeWindow, 'welcome')
   welcomeWindow.on('ready-to-show', () => welcomeWindow.show())
   welcomeWindow.on('closed', () => {
     if (process.platform === 'darwin') {
@@ -85,6 +114,8 @@ function firstRunWindow() {
 }
 
 let tray: Tray | null = null
+let mainWindow: BrowserWindow | null = null
+let settingsWindow: BrowserWindow | null = null
 let updateAvailable = false
 const assetPath = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..', 'assets')
 
@@ -104,6 +135,62 @@ function updateTrayIcon() {
   }
 }
 
+function openMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    return
+  }
+  mainWindow = new BrowserWindow({
+    width: 1100,
+    height: 800,
+    show: false,
+    backgroundColor: '#0e0e0e',
+    // For mac we go frameless to allow a seamless surface; keep framed on other platforms
+    ...(process.platform === 'darwin'
+      ? { frame: false as const, titleBarStyle: 'hiddenInset' as const, titleBarOverlay: { color: '#0e0e0e', symbolColor: '#ffffff', height: 32 } as any }
+      : {}),
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  })
+  require('@electron/remote/main').enable(mainWindow.webContents)
+  const url = `${MAIN_WINDOW_WEBPACK_ENTRY}?view=chat`
+  console.log('[create] main window ->', url)
+  mainWindow.loadURL(url)
+  attachDebug(mainWindow, 'main')
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[main] did-finish-load')
+  })
+  mainWindow.webContents.on('dom-ready', () => {
+    console.log('[main] dom-ready')
+  })
+  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    console.log(`[renderer console l${level}] ${message} (${sourceId}:${line})`)
+  })
+  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('closed', () => { mainWindow = null })
+}
+
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore()
+    settingsWindow.focus()
+    return
+  }
+  settingsWindow = new BrowserWindow({
+    width: 900,
+    height: 700,
+    show: false,
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  })
+  require('@electron/remote/main').enable(settingsWindow.webContents)
+  const url = `${MAIN_WINDOW_WEBPACK_ENTRY}?view=settings`
+  console.log('[create] settings window ->', url)
+  settingsWindow.loadURL(url)
+  attachDebug(settingsWindow, 'settings')
+  settingsWindow.on('ready-to-show', () => settingsWindow?.show())
+  settingsWindow.on('closed', () => { settingsWindow = null })
+}
+
 function updateTray() {
   const updateItems: MenuItemConstructorOptions[] = [
     { label: 'An update is available', enabled: false },
@@ -116,6 +203,9 @@ function updateTray() {
 
   const menu = Menu.buildFromTemplate([
     ...(updateAvailable ? updateItems : []),
+    { label: 'Open Ollama', click: () => openMainWindow() },
+    { label: 'Settings...', click: () => openSettingsWindow() },
+    { type: 'separator' },
     { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
   ])
 
@@ -134,11 +224,37 @@ function updateTray() {
 let proc: ChildProcess = null
 
 function server() {
+  // Allow skipping the embedded server for UI debugging
+  if (process.env.OLLAMA_SKIP_SERVER === '1') {
+    logger.info('[server] Skipping server start (OLLAMA_SKIP_SERVER=1)')
+    return
+  }
+
   const binary = app.isPackaged
     ? path.join(process.resourcesPath, 'ollama')
     : path.resolve(process.cwd(), '..', 'ollama')
 
-  proc = spawn(binary, ['serve'])
+  try {
+    // Lazily require fs to reduce startup cost
+    const fs = require('fs') as typeof import('fs')
+    if (!fs.existsSync(binary)) {
+      logger.error(`[server] binary missing at ${binary} – UI will still load. Set OLLAMA_SKIP_SERVER=1 to suppress this message.`)
+      return // Do not crash; continue showing UI
+    }
+  } catch (e) {
+    logger.error(`[server] existence check failed: ${(e as Error).message}`)
+  }
+
+  try {
+    proc = spawn(binary, ['serve'])
+  } catch (e) {
+    logger.error(`[server] spawn failed: ${(e as Error).message}`)
+    return
+  }
+
+  proc.on('error', err => {
+    logger.error(`[server] process error: ${err.message}`)
+  })
 
   proc.stdout.on('data', data => {
     logger.info(data.toString().trim())
@@ -148,7 +264,10 @@ function server() {
     logger.error(data.toString().trim())
   })
 
-  proc.on('exit', restart)
+  proc.on('exit', code => {
+    logger.error(`[server] exited with code ${code}`)
+    restart()
+  })
 }
 
 function restart() {
@@ -254,18 +373,29 @@ function init() {
 
   server()
 
-  if (store.get('first-time-run') && installed()) {
+  const hasRun = !!store.get('first-time-run')
+  const cliInstalled = installed()
+  // Once user has completed first run, always show chat even if CLI temporarily missing
+  const wantChat = hasRun
+  console.log(`[init] hasRun=${hasRun} cliInstalled=${cliInstalled} -> ${wantChat ? 'open chat window' : 'open welcome window'}`)
+
+  if (wantChat) {
+    // Returning user: open main chat window only
+    openMainWindow()
     if (process.platform === 'darwin') {
-      app.dock.hide()
+      // Keep dock visible for primary app usage
+      app.dock.show()
     }
-
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
-    return
+  } else {
+    // First run OR CLI missing: show welcome/onboarding window only
+    firstRunWindow()
+    if (process.platform === 'darwin') {
+      try { app.dock.show() } catch {}
+    }
+    // Ensure we auto-start so users see onboarding again if they quit mid-way
+    app.setLoginItemSettings({ openAtLogin: true })
   }
-
-  // This is the first run or the CLI is no longer installed
-  app.setLoginItemSettings({ openAtLogin: true })
-  firstRunWindow()
 }
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -274,6 +404,12 @@ function init() {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
+  }
+})
+
+app.on('activate', () => {
+  if (process.platform === 'darwin' && !mainWindow && store.get('first-time-run')) {
+    openMainWindow()
   }
 })
 

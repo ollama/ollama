@@ -1,0 +1,92 @@
+:root {
+  /* Color Tokens */
+  --ui-bg: #0e0e0e;
+  --ui-bg-alt: #141414;
+  --ui-panel: #1c1c1c;
+  --ui-panel-alt: #222222;
+  --ui-border-subtle: rgba(255,255,255,0.06);
+  --ui-border-faint: rgba(255,255,255,0.03);
+  --ui-border-strong: rgba(255,255,255,0.12);
+  --ui-accent: #10b981; /* emerald-500 baseline */
+  --ui-accent-hover: #14c690;
+  --ui-danger: #dc2626;
+  --ui-danger-hover: #ef4444;
+  --ui-warn: #f59e0b;
+  --ui-text: #f5f5f5;
+  --ui-text-dim: #b4b4b4;
+  --ui-text-faint: #7a7a7a;
+  --ui-code-bg: #1e1f22;
+  --ui-code-border: rgba(255,255,255,0.08);
+  --ui-pin: #6366f1;
+  --ui-thinking-1: #202020;
+  --ui-thinking-2: #262b33;
+
+  /* Spacing Scale */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 24px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Shadows / Effects */
+  --shadow-soft: 0 0 0 1px var(--ui-border-faint), 0 2px 4px -2px rgba(0,0,0,0.4);
+  --shadow-focus: 0 0 0 1px var(--ui-accent);
+
+  /* Animation Durations */
+  --anim-fast: 120ms;
+  --anim-med: 200ms;
+  --anim-slow: 360ms;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --ui-bg: #fafafa;
+    --ui-bg-alt: #f0f0f0;
+    --ui-panel: #ffffff;
+    --ui-panel-alt: #f5f5f5;
+    --ui-border-subtle: rgba(0,0,0,0.08);
+    --ui-border-faint: rgba(0,0,0,0.04);
+    --ui-border-strong: rgba(0,0,0,0.14);
+    --ui-text: #111111;
+    --ui-text-dim: #4a4a4a;
+    --ui-text-faint: #6a6a6a;
+    --ui-code-bg: #f2f2f4;
+    --ui-code-border: rgba(0,0,0,0.08);
+    --ui-thinking-1: #f0f0f0;
+    --ui-thinking-2: #e5e8ef;
+  }
+}
+
+/* Utility Helpers */
+.token-border-subtle { border: 1px solid var(--ui-border-subtle); }
+.token-border-faint { border: 1px solid var(--ui-border-faint); }
+.token-panel { background: var(--ui-panel); }
+.token-panel-alt { background: var(--ui-panel-alt); }
+.token-accent { color: var(--ui-accent); }
+
+/* Message entry animation */
+@keyframes msg-pop {
+  0% { opacity: 0; transform: translateY(4px) scale(.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.msg-animate { animation: msg-pop var(--anim-fast) ease-out; }
+
+/* Thinking pulse gradient */
+@keyframes thinking-pulse {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.thinking-bg {
+  background: linear-gradient(90deg,var(--ui-thinking-1),var(--ui-thinking-2),var(--ui-thinking-1));
+  background-size: 200% 100%;
+  animation: thinking-pulse 6s linear infinite;
+}
