@@ -1,0 +1,75 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#000000"
+    }
+  },
+  "appearance": {
+    "default": "light"
+  },
+  "styling": {
+    "codeblocks": "system"
+  },
+  "contextual": {
+    "options": ["copy", "chatgpt", "claude", "view"]
+  },
+  "fonts": {
+    "heading": {
+      "family": "Inter"
+    },
+    "body": {
+      "family": "Inter"
+    }
+  },
+  "name": "Ollama",
+  "colors": {
+    "primary": "#000",
+    "light": "#b5b5b5",
+    "dark": "#fff"
+  },
+  "favicon": "/ollama.png",
+  "logo": {
+    "light": "/ollama.png",
+    "dark": "/favicon.svg"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Home",
+            "pages": ["index", "quickstart", "faq", "troubleshooting"]
+          },
+          {
+            "group": "Platforms",
+            "pages": ["linux", "windows", "docker"]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "modelfile",
+              "apis",
+              "openai",
+              "import",
+              "gpu",
+              "benchmark"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": " ",
+            "pages": ["development", "examples", "template"]
+          }
+        ]
+      }
+    ]
+  }
+}
