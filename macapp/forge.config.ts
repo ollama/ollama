@@ -1,12 +1,11 @@
 import type { ForgeConfig } from '@electron-forge/shared-types'
 import { MakerSquirrel } from '@electron-forge/maker-squirrel'
 import { MakerZIP } from '@electron-forge/maker-zip'
-import { PublisherGithub } from '@electron-forge/publisher-github'
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives'
 import { WebpackPlugin } from '@electron-forge/plugin-webpack'
 import * as path from 'path'
 import * as fs from 'fs'
-
+// Using CommonJS module setting (module: "commonjs" in tsconfig). Avoid ESM-only features like import.meta.
 import { mainConfig } from './webpack.main.config'
 import { rendererConfig } from './webpack.renderer.config'
 
@@ -66,6 +65,14 @@ const config: ForgeConfig = {
             html: './src/index.html',
             js: './src/renderer.tsx',
             name: 'main_window',
+            preload: {
+              js: './src/preload.ts',
+            },
+          },
+          {
+            html: './src/quickask.html',
+            js: './src/quickask/quickask_window.tsx',
+            name: 'quickask_window',
             preload: {
               js: './src/preload.ts',
             },

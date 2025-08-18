@@ -1,5 +1,6 @@
 import type { Configuration } from 'webpack'
 
+// Explicit .ts extensions for ESM resolution under Node
 import { rules } from './webpack.rules'
 import { plugins } from './webpack.plugins'
 

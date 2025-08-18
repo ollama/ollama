@@ -1,8 +1,8 @@
-import type IForkTsCheckerWebpackPlugin from 'fork-ts-checker-webpack-plugin'
-import { DefinePlugin } from 'webpack'
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const ForkTsCheckerWebpackPlugin: typeof IForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin')
+import webpack from 'webpack'
+import ForkTsCheckerWebpackPlugin from 'fork-ts-checker-webpack-plugin'
+// When running under native ESM, named imports from CommonJS packages (like 'webpack')
+// are not available directly. We import the namespace/default and destructure.
+const { DefinePlugin } = webpack
 
 export const plugins = [
   new ForkTsCheckerWebpackPlugin({

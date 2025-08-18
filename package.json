@@ -1,0 +1,11 @@
+{
+  "name": "ollama-root",
+  "private": true,
+  "workspaces": ["macapp"],
+  "scripts": {
+    "preinstall": "echo Installing root (delegating to macapp)",
+    "postinstall": "npm --prefix macapp install",
+    "start": "npm --prefix macapp start",
+    "lint": "npm --prefix macapp run lint"
+  }
+}

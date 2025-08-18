@@ -1,24 +1,29 @@
 import { spawn, ChildProcess } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, MenuItemConstructorOptions, nativeTheme } from 'electron'
+import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, MenuItemConstructorOptions, nativeTheme, globalShortcut, ipcMain } from 'electron'
 import Store from 'electron-store'
+import { onSettingsChanged } from './settings/mainStore'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
 import * as path from 'path'
+import * as remoteMain from '@electron/remote/main'
 
 import { v4 as uuidv4 } from 'uuid'
 import { installed } from './install'
-
-require('@electron/remote/main').initialize()
-
-if (require('electron-squirrel-startup')) {
-  app.quit()
-}
+// Initialize remote module
+remoteMain.initialize()
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  if (require('electron-squirrel-startup')) {
+    app.quit()
+  }
+} catch { /* electron-squirrel-startup not present in dev */ }
 
 const store = new Store()
 
 let welcomeWindow: BrowserWindow | null = null
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string
+declare const QUICKASK_WINDOW_WEBPACK_ENTRY: string
 
 const logger = winston.createLogger({
   transports: [
@@ -35,9 +40,9 @@ const logger = winston.createLogger({
 app.on('ready', () => {
   // Ensure renderer side electron-store IPC is initialized (avoids blank window if renderer Store() instantiation blocks)
   try {
-    // @ts-ignore - initRenderer is a static we intentionally invoke before creating BrowserWindow(s)
-    if (typeof (Store as any).initRenderer === 'function') {
-      ;(Store as any).initRenderer()
+    const anyStore: any = Store
+    if (typeof anyStore.initRenderer === 'function') {
+      anyStore.initRenderer()
     }
   } catch (e) {
     console.error('[bootstrap] Store.initRenderer failed', e)
@@ -64,6 +69,26 @@ app.on('ready', () => {
   app.focus({ steal: true })
 
   init()
+  // Listen for settings changes (translucency, etc.)
+  try {
+    function handleTranslucencyChange(enabled: boolean) {
+      try { store.set('mainWindowTranslucent', enabled ? 1 : 0) } catch {}
+      if (process.platform !== 'darwin') return
+      const want = !!enabled
+      if (!!mainWindowStyle.vibrancy === want) return
+      mainWindowStyle.vibrancy = want
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const wasVisible = mainWindow.isVisible()
+        mainWindow.close()
+        openMainWindow(mainWindowStyle)
+        if (wasVisible) mainWindow?.show()
+      }
+    }
+    onSettingsChanged((s, patch) => {
+      if (!patch) return
+      if (patch.path === 'ui.translucency') handleTranslucencyChange(s.ui.translucency)
+    })
+  } catch (e) { console.error('[settings] listener failed', e) }
 })
 
 function attachDebug(win: BrowserWindow, label: string) {
@@ -100,7 +125,7 @@ function firstRunWindow() {
     },
   })
 
-  require('@electron/remote/main').enable(welcomeWindow.webContents)
+  remoteMain.enable(welcomeWindow.webContents)
 
   console.log('[create] welcome window ->', MAIN_WINDOW_WEBPACK_ENTRY)
   welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
@@ -116,15 +141,18 @@ function firstRunWindow() {
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
+let quickAskWindow: BrowserWindow | null = null // legacy fallback only
 let updateAvailable = false
 const assetPath = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..', 'assets')
 
 function trayIconPath() {
-  return nativeTheme.shouldUseDarkColors
-    ? updateAvailable
+  const dark = nativeTheme.shouldUseDarkColors
+  if (dark) {
+    return updateAvailable
       ? path.join(assetPath, 'iconDarkUpdateTemplate.png')
       : path.join(assetPath, 'iconDarkTemplate.png')
-    : updateAvailable
+  }
+  return updateAvailable
     ? path.join(assetPath, 'iconUpdateTemplate.png')
     : path.join(assetPath, 'iconTemplate.png')
 }
@@ -135,30 +163,48 @@ function updateTrayIcon() {
   }
 }
 
-function openMainWindow() {
+interface WindowStyleOptions { vibrancy?: boolean }
+
+function baseWindowOptions(style?: WindowStyleOptions) {
+  const isMac = process.platform === 'darwin'
+  const translucent = style?.vibrancy && isMac
+  return {
+    backgroundColor: translucent ? '#00000000' : '#0e0e0e',
+    transparent: translucent || undefined,
+    vibrancy: translucent ? 'popover' as any : undefined,
+    visualEffectState: translucent ? 'active' as any : undefined,
+  }
+}
+
+let mainWindowStyle: WindowStyleOptions = { vibrancy: !!store.get('mainWindowTranslucent') }
+
+function openMainWindow(opts?: WindowStyleOptions) {
+  if (opts) mainWindowStyle = opts
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
     return
   }
+  const translucent = baseWindowOptions(mainWindowStyle)
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 800,
     show: false,
-    backgroundColor: '#0e0e0e',
-    // For mac we go frameless to allow a seamless surface; keep framed on other platforms
+    ...translucent,
     ...(process.platform === 'darwin'
-      ? { frame: false as const, titleBarStyle: 'hiddenInset' as const, titleBarOverlay: { color: '#0e0e0e', symbolColor: '#ffffff', height: 32 } as any }
+      ? { frame: false as const, titleBarStyle: 'hiddenInset' as const, titleBarOverlay: { color: translucent.backgroundColor || '#0e0e0e', symbolColor: '#ffffff', height: 32 } as any }
       : {}),
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   })
-  require('@electron/remote/main').enable(mainWindow.webContents)
+  remoteMain.enable(mainWindow.webContents)
   const url = `${MAIN_WINDOW_WEBPACK_ENTRY}?view=chat`
   console.log('[create] main window ->', url)
   mainWindow.loadURL(url)
   attachDebug(mainWindow, 'main')
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[main] did-finish-load')
+    // Inform renderer of current style so settings UI can reflect it
+    mainWindow?.webContents.send('main-window:style', { vibrancy: !!mainWindowStyle.vibrancy })
   })
   mainWindow.webContents.on('dom-ready', () => {
     console.log('[main] dom-ready')
@@ -182,13 +228,54 @@ function openSettingsWindow() {
     show: false,
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   })
-  require('@electron/remote/main').enable(settingsWindow.webContents)
+  remoteMain.enable(settingsWindow.webContents)
   const url = `${MAIN_WINDOW_WEBPACK_ENTRY}?view=settings`
   console.log('[create] settings window ->', url)
   settingsWindow.loadURL(url)
   attachDebug(settingsWindow, 'settings')
   settingsWindow.on('ready-to-show', () => settingsWindow?.show())
   settingsWindow.on('closed', () => { settingsWindow = null })
+}
+
+function toggleQuickAskOverlay() {
+  // New behavior: always use a dedicated lightweight window instead of in-main overlay.
+  // If already open, focus or hide if focused.
+  if (quickAskWindow && !quickAskWindow.isDestroyed()) {
+    if (quickAskWindow.isVisible()) {
+      // Toggle visibility
+      quickAskWindow.hide();
+    } else {
+      quickAskWindow.show(); quickAskWindow.focus();
+    }
+    return
+  }
+  const isMac = process.platform === 'darwin'
+  quickAskWindow = new BrowserWindow({
+    width: 680,
+    height: 360,
+    minWidth: 480,
+    minHeight: 260,
+    show: false,
+    frame: !isMac,
+    alwaysOnTop: true,
+    resizable: true,
+    skipTaskbar: true,
+    transparent: isMac,
+    vibrancy: isMac ? 'popover' : undefined,
+    visualEffectState: isMac ? 'active' : undefined,
+    backgroundColor: isMac ? '#00000000' : '#161616',
+    title: 'Quick Ask',
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  })
+  remoteMain.enable(quickAskWindow.webContents)
+  // Reuse main bundle with query; renderer entry detects view=quickask and loads dedicated QuickAsk root.
+  const url = QUICKASK_WINDOW_WEBPACK_ENTRY
+  console.log('[create] quick ask window ->', url)
+  quickAskWindow.loadURL(url)
+  attachDebug(quickAskWindow, 'quickask')
+  quickAskWindow.on('ready-to-show', () => { quickAskWindow?.show(); quickAskWindow?.focus() })
+  quickAskWindow.on('blur', () => { if (quickAskWindow && !quickAskWindow.webContents.isDevToolsOpened()) quickAskWindow.hide() })
+  quickAskWindow.on('closed', () => { quickAskWindow = null })
 }
 
 function updateTray() {
@@ -204,6 +291,7 @@ function updateTray() {
   const menu = Menu.buildFromTemplate([
     ...(updateAvailable ? updateItems : []),
     { label: 'Open Ollama', click: () => openMainWindow() },
+  { label: 'Quick Ask', click: () => toggleQuickAskOverlay() },
     { label: 'Settings...', click: () => openSettingsWindow() },
     { type: 'separator' },
     { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
@@ -279,6 +367,7 @@ app.on('before-quit', () => {
     proc.off('exit', restart)
     proc.kill('SIGINT') // send SIGINT signal to the server, which also stops any loaded llms
   }
+  try { globalShortcut.unregisterAll() } catch {}
 })
 
 const updateURL = `https://ollama.com/api/update?os=${process.platform}&arch=${
@@ -326,6 +415,48 @@ async function checkUpdate() {
   }
 }
 
+function registerGlobalShortcut() {
+  try {
+    const shortcut = process.platform === 'darwin' ? 'Command+Shift+Space' : 'Control+Shift+Space'
+    if (globalShortcut.isRegistered(shortcut)) globalShortcut.unregister(shortcut)
+    const ok = globalShortcut.register(shortcut, () => { toggleQuickAskOverlay() })
+    if (ok) console.log('[shortcut] registered', shortcut)
+    else console.error('[shortcut] failed to register', shortcut)
+  } catch (e) {
+    console.error('[shortcut] error', e)
+  }
+}
+
+function maybePromptMoveToApplications() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return
+  if (app.isInApplicationsFolder()) return
+  const chosen = dialog.showMessageBoxSync({
+    type: 'question',
+    buttons: ['Move to Applications', 'Do Not Move'],
+    message: 'Ollama works best when run from the Applications directory.',
+    defaultId: 0,
+    cancelId: 1,
+  })
+  if (chosen !== 0) return
+  try {
+    app.moveToApplicationsFolder({
+      conflictHandler: conflictType => {
+        if (conflictType === 'existsAndRunning') {
+          dialog.showMessageBoxSync({
+            type: 'info',
+            message: 'Cannot move to Applications directory',
+            detail: 'Another version is currently running. Close it first and retry.',
+          })
+        }
+        return true
+      },
+    })
+    return
+  } catch (e) {
+    logger.error(`[Move to Applications] Failed - ${(e as Error).message}`)
+  }
+}
+
 function init() {
   if (app.isPackaged) {
     checkUpdate()
@@ -335,41 +466,8 @@ function init() {
   }
 
   updateTray()
-
-  if (process.platform === 'darwin') {
-    if (app.isPackaged) {
-      if (!app.isInApplicationsFolder()) {
-        const chosen = dialog.showMessageBoxSync({
-          type: 'question',
-          buttons: ['Move to Applications', 'Do Not Move'],
-          message: 'Ollama works best when run from the Applications directory.',
-          defaultId: 0,
-          cancelId: 1,
-        })
-
-        if (chosen === 0) {
-          try {
-            app.moveToApplicationsFolder({
-              conflictHandler: conflictType => {
-                if (conflictType === 'existsAndRunning') {
-                  dialog.showMessageBoxSync({
-                    type: 'info',
-                    message: 'Cannot move to Applications directory',
-                    detail:
-                      'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
-                  })
-                }
-                return true
-              },
-            })
-            return
-          } catch (e) {
-            logger.error(`[Move to Applications] Failed to move to applications folder - ${e.message}}`)
-          }
-        }
-      }
-    }
-  }
+  registerGlobalShortcut()
+  maybePromptMoveToApplications()
 
   server()
 
@@ -391,12 +489,29 @@ function init() {
     // First run OR CLI missing: show welcome/onboarding window only
     firstRunWindow()
     if (process.platform === 'darwin') {
-      try { app.dock.show() } catch {}
+      try { app.dock.show() } catch { /* dock show may fail in some sandboxed contexts */ }
     }
     // Ensure we auto-start so users see onboarding again if they quit mid-way
     app.setLoginItemSettings({ openAtLogin: true })
   }
 }
+
+// IPC: toggle / set main window translucency
+ipcMain.on('ui:set-translucent-main', (_e, enabled: boolean) => {
+  try {
+    store.set('mainWindowTranslucent', enabled ? 1 : 0)
+    mainWindowStyle.vibrancy = enabled
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Recreate to apply (Electron cannot live-toggle vibrancy reliably across all macOS versions)
+      const wasVisible = mainWindow.isVisible()
+      mainWindow.close()
+      openMainWindow(mainWindowStyle)
+      if (wasVisible) mainWindow?.show()
+    }
+  } catch (e) {
+    console.error('[ipc] set translucent failed', e)
+  }
+})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

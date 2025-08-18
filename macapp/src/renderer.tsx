@@ -1,6 +1,7 @@
 import App from './app'
 import './app.css'
 import { createRoot } from 'react-dom/client'
+import { SettingsProvider } from './settings/SettingsContext'
 
 try {
 	console.log('[renderer] boot script start')
@@ -9,7 +10,7 @@ try {
 		console.error('[renderer] #app container not found')
 	} else {
 		const root = createRoot(container)
-		root.render(<App />)
+		root.render(<SettingsProvider><App /></SettingsProvider>)
 		console.log('[renderer] render invoked')
 	}
 } catch (e) {

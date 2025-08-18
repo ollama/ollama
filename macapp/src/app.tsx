@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { ipcRenderer } from 'electron'
 import './chat/tokens.css'
 import copy from 'copy-to-clipboard'
 import { CheckIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline'
@@ -8,6 +9,8 @@ import { getCurrentWindow } from '@electron/remote'
 import { install } from './install'
 import OllamaIcon from './ollama.svg'
 import { ChatView } from './chat/ChatView'
+import { SettingsPanel } from './settings/SettingsPanel'
+import { QuickAskPanel } from './quickask/QuickAskPanel'
 
 const store = new Store()
 
@@ -18,7 +21,9 @@ enum Step {
 }
 
 export default function () {
+  const standaloneQuick = false // legacy: quick ask now uses its own dedicated window/entry; embedded mode disabled
   const [view, setView] = useState<'onboarding' | 'chat' | 'settings'>('onboarding')
+  const [quickAskVisible, setQuickAskVisible] = useState(false)
   const [step, setStep] = useState<Step>(Step.WELCOME)
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
   const command = 'ollama run llama3.2'
@@ -27,6 +32,9 @@ export default function () {
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search)
     const qv = sp.get('view')
+    if (qv === 'quickask') {
+      // Quick ask is no longer rendered inside main window; ignore.
+    }
     if (qv === 'settings') {
       setView('settings')
       return
@@ -39,38 +47,80 @@ export default function () {
     setView(store.get('first-time-run') ? 'chat' : 'onboarding')
   }, [])
 
-  if (view === 'chat') {
-    return <ChatView />
-  }
-  if (view === 'settings') {
-    return <SettingsPanel />
-  }
+  // Overlay listeners
+  useEffect(() => {
+    function onToggle(_e: any, force?: boolean) { setQuickAskVisible(v => (typeof force === 'boolean' ? force : !v)) }
+    function onShow() { setQuickAskVisible(true) }
+    function onHide() { setQuickAskVisible(false) }
+    ipcRenderer.on('quick-ask:toggle', onToggle)
+    ipcRenderer.on('quick-ask:show', onShow)
+    ipcRenderer.on('quick-ask:hide', onHide)
+    return () => {
+      ipcRenderer.off('quick-ask:toggle', onToggle)
+      ipcRenderer.off('quick-ask:show', onShow)
+      ipcRenderer.off('quick-ask:hide', onHide)
+    }
+  }, [])
 
-  // Onboarding flow
-  return (
-    <div className='drag'>
-      <div className='mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
-        {step === Step.WELCOME && (
-          <>
-            <div className='mx-auto text-center'>
-              <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
-              <p className='mx-auto w-[65%] text-sm text-gray-400'>
-                Let's get you up and running with your own large language models.
-              </p>
-              <button
-                onClick={() => setStep(Step.CLI)}
-                className='no-drag rounded-dm mx-auto my-8 w-[40%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
-              >
-                Next
-              </button>
-            </div>
-            <div className='mx-auto'>
-              <OllamaIcon />
-            </div>
-          </>
-        )}
-        {step === Step.CLI && (
-          <>
+  // Escape to close overlay
+  useEffect(() => {
+    function esc(e: KeyboardEvent) { if (e.key === 'Escape' && quickAskVisible) setQuickAskVisible(false) }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [quickAskVisible])
+
+  const overlay = quickAskVisible && !standaloneQuick ? (
+    <div className='fixed inset-0 z-50 flex items-start justify-center pt-24'>
+      {/* Scrim */}
+      <button
+        className='absolute inset-0 backdrop-blur-sm bg-[rgba(0,0,0,0.32)] opacity-0 animate-[qa-scrim-fade_140ms_ease-out_forwards] cursor-default'
+        aria-label='Close quick ask'
+        onClick={()=>setQuickAskVisible(false)}
+        onKeyDown={(e)=>{ if (e.key === 'Escape') { e.preventDefault(); setQuickAskVisible(false) } }}
+        style={{ border: 'none', padding:0, background:'rgba(0,0,0,0.25)' }}
+      />
+      {/* Panel container */}
+      <div
+        className='relative pointer-events-auto w-[620px] max-w-[92%]'
+        style={{ animation: 'qa-fade-in 120ms ease-out' }}
+      >
+        <QuickAskPanel onClose={() => setQuickAskVisible(false)} standalone={new URLSearchParams(window.location.search).get('standalone') === '1'} />
+      </div>
+      <style>{`@keyframes qa-fade-in { from { opacity:0; transform: translateY(6px) scale(.985); } to { opacity:1; transform: translateY(0) scale(1); } }
+@keyframes qa-scrim-fade { to { opacity:1; } }`}</style>
+    </div>
+  ) : null
+
+  let mainContent: JSX.Element
+  if (view === 'chat') {
+    mainContent = <ChatView />
+  } else if (view === 'settings') {
+    mainContent = <SettingsPanel />
+  } else {
+    // Onboarding flow
+    mainContent = (
+      <div className='drag'>
+        <div className='mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16 relative'>
+          {step === Step.WELCOME && (
+            <>
+              <div className='mx-auto text-center'>
+                <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
+                <p className='mx-auto w-[65%] text-sm text-gray-400'>
+                  Let's get you up and running with your own large language models.
+                </p>
+                <button
+                  onClick={() => setStep(Step.CLI)}
+                  className='no-drag rounded-dm mx-auto my-8 w-[40%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+                >
+                  Next
+                </button>
+              </div>
+              <div className='mx-auto'>
+                <OllamaIcon />
+              </div>
+            </>
+          )}
+          {step === Step.CLI && (
             <div className='mx-auto flex flex-col space-y-28 text-center'>
               <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Install the command line</h1>
               <pre className='mx-auto text-4xl text-gray-400'>&gt; ollama</pre>
@@ -96,10 +146,8 @@ export default function () {
                 </p>
               </div>
             </div>
-          </>
-        )}
-  {step === Step.FINISH && (
-          <>
+          )}
+          {step === Step.FINISH && (
             <div className='mx-auto flex flex-col space-y-20 text-center'>
               <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Run your first model</h1>
               <div className='flex flex-col'>
@@ -140,23 +188,17 @@ export default function () {
                 Finish
               </button>
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  // Standalone quick ask now handled by separate BrowserWindow (`quickask_window` entry). No early return path.
+  return <>
+      {mainContent}
+      {overlay}
+    </>
 }
 
-function SettingsPanel() {
-  return (
-    <div className='p-6 text-sm text-gray-200'>
-      <h2 className='text-lg mb-4 font-semibold'>Settings</h2>
-      <p className='text-xs mb-2'>Placeholder settings panel (extend with real preferences).</p>
-      <ul className='list-disc ml-5 space-y-1 text-xs'>
-        <li>Model location (future)</li>
-        <li>Context length (future)</li>
-        <li>Airplane mode toggle (future)</li>
-      </ul>
-    </div>
-  )
-}
+// SettingsPanel now lives in ./settings/SettingsPanel.tsx

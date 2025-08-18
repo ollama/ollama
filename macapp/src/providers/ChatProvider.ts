@@ -33,6 +33,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   tool_name?: string
+  // Optional stable identifier for rendering/persistence (added later; legacy sessions may not have it)
+  id?: string
 }
 
 export interface ChatTurnRequest {

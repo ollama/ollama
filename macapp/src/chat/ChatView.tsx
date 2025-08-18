@@ -2,13 +2,15 @@ import React, { useState, useRef, useEffect } from 'react'
 import './scrollbar.css'
 import './titlebar.css'
 import { v4 as uuidv4 } from 'uuid'
-import { ChatMessage, ChatProvider, ToolCall, ToolResult, parseMockToolCalls, isToolCallToken } from '../providers/ChatProvider'
-import { normalizeModelId, isAlias } from '../providers/modelNormalize'
+import { ChatMessage, ChatProvider, ToolCall, parseMockToolCalls, isToolCallToken } from '../providers/ChatProvider'
+import { useChatStreaming } from './useChatStreaming'
+import { normalizeModelId } from '../providers/modelNormalize'
 import { LocalProvider } from '../providers/LocalProvider'
 import { DummyTurboProvider } from '../providers/DummyTurboProvider'
 import { TurboProvider } from '../providers/TurboProvider'
 import Store from 'electron-store'
-import { loadSessions, upsertSession, ChatSession, deleteSession as removeSession } from './persistence'
+import { useSettings } from '../settings/SettingsContext'
+import { loadSessions, upsertSession, ChatSession, deleteSession as removeSession, saveSessions } from './persistence'
 import { SessionManager } from './SessionManager'
 import { Markdown } from './Markdown'
 
@@ -62,7 +64,7 @@ function providerForModelGlobal(turboEnabled: boolean): 'local' | 'turbo' {
 export const ChatView: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>(PRESET_MODELS[1])
   const [localModels, setLocalModels] = useState<LocalModelInfo[]>([])
-  const [modelsLoaded, setModelsLoaded] = useState(false)
+  // const [modelsLoaded, setModelsLoaded] = useState(false) // unused
   const [modelError, setModelError] = useState<string | null>(null)
   const [turboEnabled, setTurboEnabled] = useState<boolean>(!!turboStore.get('turboEnabled'))
   const [turboNotice, setTurboNotice] = useState<string | null>(null)
@@ -78,8 +80,10 @@ export const ChatView: React.FC = () => {
   const [input, setInput] = useState('')
   const [thinking, setThinking] = useState('')
   const [toolCalls, setToolCalls] = useState<ToolCallState[]>([])
-  const [loopCount, setLoopCount] = useState(0)
+  // const [loopCount, setLoopCount] = useState(0) // unused after simplification
   const [running, setRunning] = useState(false)
+  // Fast send lock to avoid rapid Enter presses before React state flush sets `running`
+  const runningRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [session, setSession] = useState<ChatSession | null>(null)
   const [sessions, setSessions] = useState<ChatSession[]>([])
@@ -93,19 +97,67 @@ export const ChatView: React.FC = () => {
   const lastPullTargetRef = useRef<string | null>(null)
   // Track per-layer (digest) progress to compute an overall percent correctly
   const pullStatsRef = useRef<{ layers: Record<string,{ total?: number; completed?: number }> }>({ layers: {} })
-  const [pullStatsRefCurrent] = [pullStatsRef] // placeholder to keep lint quiet if unused temporarily
+  // pullStatsRefCurrent placeholder removed (not needed)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try { return !!(window as any).localStorage?.getItem('sidebar-collapsed') } catch { return false }
   })
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const [hasOverflowTop, setHasOverflowTop] = useState(false)
   const [hasOverflowBottom, setHasOverflowBottom] = useState(false)
-  useEffect(() => {
-    try {
-      if (sidebarCollapsed) (window as any).localStorage?.setItem('sidebar-collapsed','1')
-      else (window as any).localStorage?.removeItem('sidebar-collapsed')
-    } catch {}
-  }, [sidebarCollapsed])
+  // Streaming micro-batching buffers to avoid per-token React re-renders causing UI lockups
+  const thinkingBufferRef = useRef('')
+  const textBufferRef = useRef('')
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingThinkingRef = useRef(false) // track whether we have any thinking tokens for labeling
+  // Global showThinking setting
+  const { settings, setValue } = useSettings()
+  const showThinking = settings?.chat.showThinking ?? true
+  function toggleShowThinking() { setValue('chat.showThinking', !showThinking) }
+
+  function flushStreamingBuffers(immediate?: boolean) {
+    // Optionally run immediately (e.g. after turn completes)
+    if (flushTimerRef.current && immediate) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+    if (flushTimerRef.current && !immediate) return
+    if (!immediate) {
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null // timer elapsed
+        doFlush()
+      }, 32) // ~30fps max update cadence
+      return
+    }
+    doFlush()
+  }
+
+  function doFlush() {
+    const think = thinkingBufferRef.current
+    const text = textBufferRef.current
+    if (think) {
+      thinkingBufferRef.current = ''
+      setThinking(prev => prev + think)
+    }
+    if (text) {
+      textBufferRef.current = ''
+      setMessages(prev => {
+        const last = prev[prev.length - 1]
+        if (last && last.role === 'assistant') {
+          return [...prev.slice(0, -1), { ...last, content: last.content + text }]
+        }
+        return [...prev, { role: 'assistant', content: text }]
+      })
+    }
+  }
+
+  // Cleanup timers on unmount
+  useEffect(() => () => { if (flushTimerRef.current) { clearTimeout(flushTimerRef.current) /* cleanup pending flush */ } }, [])
+    useEffect(() => {
+      try {
+        if (sidebarCollapsed) (window as any).localStorage?.setItem('sidebar-collapsed','1')
+        else (window as any).localStorage?.removeItem('sidebar-collapsed')
+      } catch { /* sidebar collapsed state persistence failed */ }
+    }, [sidebarCollapsed])
 
   function handleNewSession() {
     const newSession: ChatSession = {
@@ -126,7 +178,9 @@ export const ChatView: React.FC = () => {
 
   function handleSelectSession(session: ChatSession) {
     setSession(session)
-    setMessages(session.messages)
+    // Backfill ids for legacy messages without one
+    const withIds = session.messages.map(m => m.id ? m : { ...m, id: uuidv4() })
+    setMessages(withIds)
     setError(null)
     setThinking('')
     setToolCalls([])
@@ -149,7 +203,9 @@ export const ChatView: React.FC = () => {
     if (providerName === name) return
     setProviderName(name)
     providerRef.current.cancelCurrent?.()
-    providerRef.current = name === 'local' ? new LocalProvider() : (name === 'turbo-dummy' ? new DummyTurboProvider() : new TurboProvider())
+    if (name === 'local') providerRef.current = new LocalProvider()
+    else if (name === 'turbo-dummy') providerRef.current = new DummyTurboProvider()
+    else providerRef.current = new TurboProvider()
   }
 
   // React when turboEnabled changes: persist & adjust provider if disabling
@@ -157,11 +213,10 @@ export const ChatView: React.FC = () => {
     if (turboEnabled) {
       turboStore.set('turboEnabled', true)
     } else {
-      try { (turboStore as any).delete('turboEnabled') } catch { /* older versions require delete() */ }
+  try { (turboStore as any).delete('turboEnabled') } catch { /* legacy electron-store delete failure ignored */ }
     }
-  const desired = providerForModelGlobal(turboEnabled)
-  if (desired !== providerName) switchProvider(desired)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    const desired = providerForModelGlobal(turboEnabled)
+    if (desired !== providerName) switchProvider(desired)
   }, [turboEnabled])
 
   async function fetchCapabilities(model: string) {
@@ -193,9 +248,8 @@ export const ChatView: React.FC = () => {
         setSupportsThinking(false)
         setReasoningEnabled(false)
       }
-    } catch (e) {
+    } catch {
       if (providerName.startsWith('turbo')) {
-        // likely network or model missing; mark invalid optimisticly if alias
         setPresetMeta(prev => prev.map(p => p.ui === model ? { ...p, valid: false } : p))
       }
       setSupportsThinking(false)
@@ -236,7 +290,8 @@ export const ChatView: React.FC = () => {
   useEffect(() => {
     if (!error) return
     if (missingModel) return // already set
-    const miss = error.match(/model\s+"?([\w:\-\.]+)"?\s+not\s+found/i)
+  // Detect missing model (allow :, -, .) – simplified regex (no unnecessary escapes)
+  const miss = /model\s+"?([\w:.-]+)"?\s+not\s+found/i.exec(error)
     if (miss) setMissingModel(miss[1])
   }, [error, missingModel])
 
@@ -265,9 +320,9 @@ export const ChatView: React.FC = () => {
         const json = await res.json()
         const data = Array.isArray(json.data) ? json.data : []
         const list: LocalModelInfo[] = data.map((m: any) => ({ id: m.id }))
-        if (!cancelled) { setLocalModels(list); setModelsLoaded(true) }
+        if (!cancelled) setLocalModels(list)
       } catch (e:any) {
-        if (!cancelled) { setModelError(e.message || String(e)); setModelsLoaded(true) }
+        if (!cancelled) setModelError(e.message || String(e))
       }
     }
     fetchModels()
@@ -275,63 +330,23 @@ export const ChatView: React.FC = () => {
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
-  async function runTurn(allMessages: ChatMessage[], loopsRemaining: number) {
-    setLoopCount(MAX_LOOPS - loopsRemaining)
-    const provider = providerRef.current
-  const normModel = normalizeModelId(selectedModel) || selectedModel
-  const allowThinking = (supportsThinking === true) && reasoningEnabled
-  await provider.startChatTurn({ messages: allMessages, maxLoopsRemaining: loopsRemaining, model: normModel, think: allowThinking }, {
-      onThinking: d => setThinking(prev => prev + d),
-      onText: d => {
-        setMessages(prev => {
-          const last = prev[prev.length - 1]
-          if (last && last.role === 'assistant') {
-            return [...prev.slice(0, -1), { ...last, content: last.content + d }]
-          }
-          return [...prev, { role: 'assistant', content: d }]
-        })
-      },
-      onToolCall: call => setToolCalls(prev => [...prev, { ...call, status: 'pending' }]),
-      onError: err => console.error(err),
-    })
-  }
+  // Hook encapsulating streaming/loop logic
+  const { agentLoop } = useChatStreaming({
+    providerRef,
+    maxLoops: MAX_LOOPS,
+    selectedModel,
+    normalizeModel: (m: string) => normalizeModelId(m) || m,
+    allowThinking: () => (supportsThinking === true) && reasoningEnabled,
+    getToolCalls: () => toolCalls as any,
+    setToolCalls: updater => setToolCalls(updater as any),
+  })
 
-  async function executePendingTools(): Promise<ToolResult[]> {
-    const pending = toolCalls.filter(t => t.status === 'pending')
-    if (!pending.length) return []
-    const results = await providerRef.current.executeTools?.(pending) || []
-    setToolCalls(prev => prev.map(tc => {
-      const r = results.find(r => r.id === tc.id)
-      return r ? { ...tc, status: 'done', output: r.output } : tc
-    }))
-    return results
-  }
+  function buildUserMessage(content: string): ChatMessage { return { id: uuidv4(), role: 'user', content } }
 
-  async function agentLoop(baseMessages: ChatMessage[]) {
-    let loops = MAX_LOOPS
-    let history = [...baseMessages]
-    while (loops > 0) {
-      await runTurn(history, loops)
-      const newToolCalls = toolCalls.filter(tc => tc.status === 'pending')
-      if (!newToolCalls.length) break
-      const results = await executePendingTools()
-  history = [...history, ...newToolCalls.map(tc => ({ role: 'tool' as const, content: results.find(r => r.id === tc.id)?.output || '', tool_name: tc.name }))]
-      loops--
-    }
-  }
-
-  async function onSend() {
-    if (!input.trim() || running) return
-  // No per-model turbo gating
-    setRunning(true)
-    setThinking('')
-    setError(null)
-    setToolCalls([])
-  const userMsg: ChatMessage = { role: 'user', content: input }
-  lastUserMessageRef.current = userMsg
+  function enqueueUserMessage(userMsg: ChatMessage) {
     setMessages(prev => [...prev, userMsg])
     if (session) {
-      const updated: ChatSession = { ...session, messages: [...messages, userMsg], updatedAt: new Date().toISOString(), title: session.title === 'New Chat' && input.trim() ? input.slice(0, 40) : session.title }
+      const updated: ChatSession = { ...session, messages: [...messages, userMsg], updatedAt: new Date().toISOString(), title: session.title === 'New Chat' && userMsg.content.trim() ? userMsg.content.slice(0, 40) : session.title }
       setSession(updated)
       upsertSession(updated)
       setSessions(prev => {
@@ -339,47 +354,63 @@ export const ChatView: React.FC = () => {
         if (idx >= 0) { const copy = [...prev]; copy[idx] = updated; return copy } else { return [updated, ...prev] }
       })
     }
+  }
 
-    // Detect mock tool call tokens before sending to provider (for dummy provider demonstration)
-    if (isToolCallToken(input)) {
-      const mocks = parseMockToolCalls(input)
+  async function sendMessageFlow(text: string) {
+    const userMsg = buildUserMessage(text)
+    lastUserMessageRef.current = userMsg
+    enqueueUserMessage(userMsg)
+
+    if (isToolCallToken(text)) {
+      const mocks = parseMockToolCalls(text)
       setToolCalls(mocks.map(m => ({ ...m, status: 'pending' })))
-    }
-
-    // If capabilities unknown and not already loading, we disable reasoning for this first send to avoid unsupported error
+    } // no else branch
     if (supportsThinking === null && !capLoading) {
-      // Fire off background fetch if somehow not started (e.g., first initial model on load)
       const norm = normalizeModelId(selectedModel) || selectedModel
       if (!capCache[norm]) fetchCapabilities(selectedModel)
-    }
-
+    } // else capabilities known
     try {
-      await agentLoop([...messages, userMsg])
-    } catch (e:any) {
+      await agentLoop([...messages, userMsg], {
+        onThinking: (d: string) => { pendingThinkingRef.current = true; thinkingBufferRef.current += d; flushStreamingBuffers() },
+        onText: (d: string) => { textBufferRef.current += d; flushStreamingBuffers() },
+  onToolCalls: () => { /* tool calls suppressed in main chat for now */ },
+        flushBuffers: (immediate?: boolean) => flushStreamingBuffers(!!immediate),
+      } as any)
+  } catch (e: any) {
       const errStr = String(e)
       setError(errStr)
-      // Detect missing local model pattern (support ids containing ':' or '-')
-      const miss = errStr.match(/model\s+"?([\w:\-\.]+)"?\s+not\s+found/i)
-      if (miss) {
-        setMissingModel(miss[1] || selectedModel)
-      }
-      const unsupported = /does not support thinking/i.test(errStr)
-      if (unsupported) {
+      const miss = /model\s+"?([\w:.-]+)"?\s+not\s+found/i.exec(errStr)
+      if (miss) setMissingModel(miss[1] || selectedModel)
+      if (/does not support thinking/i.test(errStr)) {
         setSupportsThinking(false)
         setReasoningEnabled(false)
         setThinking('')
         setError(null)
         setDowngradeInfo('Disabled reasoning: model lacks thinking capability.')
         setTimeout(() => setDowngradeInfo(null), 5000)
-        try { await agentLoop([...messages, userMsg]) } catch (e2:any) { setError(e2.message || String(e2)) }
+        try {
+          await agentLoop([...messages, userMsg], {
+            onThinking: (d: string) => { pendingThinkingRef.current = true; thinkingBufferRef.current += d; flushStreamingBuffers() },
+            onText: (d: string) => { textBufferRef.current += d; flushStreamingBuffers() },
+            onToolCalls: () => { /* tool calls suppressed on downgrade retry */ },
+            flushBuffers: (imm?: boolean) => flushStreamingBuffers(!!imm),
+          } as any)
+  } catch (e2: any) { setError(e2.message || String(e2)) }
       }
-    } finally {
-      setRunning(false)
-      setInput('')
+    }
+  }
+
+  async function onSend() {
+    if (!input.trim() || runningRef.current) return
+    runningRef.current = true
+    setRunning(true)
+    setThinking(''); setError(null); setToolCalls([]); pendingThinkingRef.current = false
+    const currentInput = input
+    try { await sendMessageFlow(currentInput) } finally {
+      setRunning(false); runningRef.current = false; setInput('')
       if (session) {
-        const updated: ChatSession = { ...session, messages: [...messages, userMsg, ...([] as ChatMessage[])], updatedAt: new Date().toISOString() }
-        setSession(updated)
-        upsertSession(updated)
+        const updated: ChatSession = { ...session, messages: [...messages], updatedAt: new Date().toISOString() }
+        setSession(updated); upsertSession(updated)
       }
     }
   }
@@ -394,6 +425,56 @@ export const ChatView: React.FC = () => {
     return normName
   }
 
+  // Helper for formatting MB
+  function formatMB(n: number) { return (n/1024/1024).toFixed(1) }
+  function updateInlinePullMessage(finalName: string, succeeded: boolean, percent: number, overallCompleted: number, overallTotal: number, statusNow: string) {
+    setMessages(prev => {
+      const copy = [...prev]
+      for (let i = copy.length - 1; i >= 0; i--) {
+        const m = copy[i]
+        if (m.role === 'system' && m.content.startsWith('Pulling model ' + finalName)) {
+          const pct = Math.round(percent * 100)
+          const completedMB = formatMB(overallCompleted)
+          const totalMB = overallTotal > 0 ? formatMB(overallTotal) : undefined
+          let sizeStr = ''
+          if (overallTotal > 0) sizeStr = ` ${completedMB}MB/${totalMB}MB`
+          else if (overallCompleted > 0) sizeStr = ` ${completedMB}MB`
+          copy[i] = { ...m, content: succeeded ? `Model ${finalName} pulled successfully.` : `Pulling model ${finalName}… ${pct}%${sizeStr} (${statusNow})` }
+          break
+        }
+      }
+      return copy
+    })
+  }
+  function aggregateProgress(evt: any) {
+    if (evt.digest) {
+      const layer = pullStatsRef.current.layers[evt.digest] || (pullStatsRef.current.layers[evt.digest] = {})
+      if (typeof evt.total === 'number') layer.total = evt.total
+      if (typeof evt.completed === 'number') layer.completed = evt.completed
+    }
+    let overallTotal = 0
+    let overallCompleted = 0
+    for (const dg of Object.keys(pullStatsRef.current.layers)) {
+      const l = pullStatsRef.current.layers[dg]
+      const c = l.completed || 0
+      const t = l.total ?? c
+      overallCompleted += c
+      overallTotal += t
+    }
+    let percent = overallTotal > 0 ? overallCompleted / overallTotal : 0
+    if (percent > 1) percent = 1
+    const statusNow = evt.status || pullProgress.status || '…'
+    let succeeded = false
+    setPullProgress(prev => ({ ...prev, status: statusNow, digest: evt.digest || prev.digest, total: overallTotal, completed: overallCompleted, percent }))
+    if (evt.status === 'success') {
+      percent = 1
+      succeeded = true
+      setPullProgress(prev => ({ ...prev, percent: 1, status: 'success' }))
+    }
+    updateInlinePullMessage(lastPullTargetRef.current || '', succeeded, percent, overallCompleted, overallTotal, statusNow)
+    return succeeded
+  }
+
   async function pullModel(name: string) {
     if (pulling) return
     userInitiatedPullRef.current = true
@@ -403,9 +484,9 @@ export const ChatView: React.FC = () => {
     pullAbortRef.current = new AbortController()
     const finalName = resolveModelForPull(name)
     lastPullTargetRef.current = finalName
-    // Insert a system message for inline progress display
-  setMessages(prev => [...prev, { role: 'system', content: `Pulling model ${finalName}…` }])
+    setMessages(prev => [...prev, { id: uuidv4(), role: 'system', content: `Pulling model ${finalName}…` }])
     console.log('[pull] start', { requested: name, finalName })
+
     try {
       const res = await fetch('http://localhost:11434/api/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: finalName }), signal: pullAbortRef.current.signal })
       if (!res.body) throw new Error('No pull stream')
@@ -413,10 +494,8 @@ export const ChatView: React.FC = () => {
       const decoder = new TextDecoder('utf-8')
       let buffered = ''
       let succeeded = false
-      if (!userInitiatedPullRef.current) {
-        throw new Error('Pull not user initiated; aborted')
-      }
-      while (true) {
+      if (!userInitiatedPullRef.current) throw new Error('Pull not user initiated; aborted')
+    for (;;) { // deliberate infinite loop reading stream; exits on done break
         const { done, value } = await reader.read()
         if (done) break
         buffered += decoder.decode(value, { stream: true })
@@ -426,72 +505,32 @@ export const ChatView: React.FC = () => {
           buffered = buffered.slice(idx + 1)
           if (!line) continue
           try {
-            const evt = JSON.parse(line)
-            // Per-layer aggregation
-            if (evt.digest) {
-              const layer = pullStatsRef.current.layers[evt.digest] || (pullStatsRef.current.layers[evt.digest] = {})
-              if (typeof evt.total === 'number') layer.total = evt.total
-              if (typeof evt.completed === 'number') layer.completed = evt.completed
-            }
-            // Aggregate overall progress
-            let overallTotal = 0
-            let overallCompleted = 0
-            for (const dg of Object.keys(pullStatsRef.current.layers)) {
-              const l = pullStatsRef.current.layers[dg]
-              const c = l.completed || 0
-              const t = l.total ?? c // fallback to completed until total known
-              overallCompleted += c
-              overallTotal += t
-            }
-            let percent = overallTotal > 0 ? overallCompleted / overallTotal : 0
-            if (percent > 1) percent = 1
-            const statusNow = evt.status || pullProgress.status || '…'
-            // Update global pull progress state
-            setPullProgress(prev => ({ ...prev, status: statusNow, digest: evt.digest || prev.digest, total: overallTotal, completed: overallCompleted, percent }))
-            if (evt.status === 'success') {
-              percent = 1
-              succeeded = true
-              setPullProgress(prev => ({ ...prev, percent: 1, status: 'success' }))
-            }
-            // Update inline message using local variables to avoid stale closures
-            setMessages(prev => {
-              const copy = [...prev]
-              for (let i = copy.length - 1; i >= 0; i--) {
-                const m = copy[i]
-                if (m.role === 'system' && m.content.startsWith('Pulling model ' + finalName)) {
-                  const pct = Math.round(percent * 100)
-                  const mb = (n:number)=> (n/1024/1024).toFixed(1)
-                  const completedMB = mb(overallCompleted)
-                  const totalMB = overallTotal > 0 ? mb(overallTotal) : undefined
-                  let sizeStr = ''
-                  if (overallTotal > 0) sizeStr = ` ${completedMB}MB/${totalMB}MB`
-                  else if (overallCompleted > 0) sizeStr = ` ${completedMB}MB`
-                  copy[i] = { ...m, content: succeeded ? `Model ${finalName} pulled successfully.` : `Pulling model ${finalName}… ${pct}%${sizeStr} (${statusNow})` }
-                  break
-                }
-              }
-              return copy
-            })
-          } catch {}
+    const evt = JSON.parse(line)
+    if (aggregateProgress(evt)) { succeeded = true }
+      } catch { /* ignore malformed JSON line */ }
         }
       }
-      // Completed; refresh model list on success
       if (succeeded) {
         console.log('[pull] success', finalName)
         setMissingModel(null)
-        // Trigger refresh immediately
         try {
           const res2 = await fetch('http://localhost:11434/v1/models')
           if (res2.ok) {
             const json = await res2.json(); const data = Array.isArray(json.data) ? json.data : []
             setLocalModels(data.map((m: any) => ({ id: m.id })))
           }
-        } catch {}
-        // Retry last user message automatically
+        } catch { /* ignore refresh error */ }
         if (lastUserMessageRef.current) {
           setTimeout(() => {
-            setMessages(prev => [...prev, lastUserMessageRef.current!])
-            agentLoop([...messages, lastUserMessageRef.current!]).catch(err => setError(String(err)))
+            if (lastUserMessageRef.current) {
+              setMessages(prev => [...prev, lastUserMessageRef.current])
+              agentLoop([...messages, lastUserMessageRef.current], {
+                onThinking: (d: string) => { pendingThinkingRef.current = true; thinkingBufferRef.current += d; flushStreamingBuffers() },
+                onText: (d: string) => { textBufferRef.current += d; flushStreamingBuffers() },
+                onToolCalls: () => { /* tool calls suppressed on retry */ },
+                flushBuffers: (imm?: boolean) => flushStreamingBuffers(!!imm),
+              } as any).catch(err => setError(String(err)))
+            }
           }, 300)
         }
       }
@@ -500,21 +539,16 @@ export const ChatView: React.FC = () => {
         setError('Pull canceled')
       } else {
         const msg = e.message || String(e)
-        // Network / server exit cases
-        if (/network error/i.test(msg) || /failed to fetch/i.test(msg)) {
-          setError('Connection lost during pull. Ensure the server is running and retry.')
-        } else {
-          setError(msg)
-        }
+        if (/network error/i.test(msg) || /failed to fetch/i.test(msg)) setError('Connection lost during pull. Ensure the server is running and retry.')
+        else setError(msg)
         console.log('[pull] error', e)
       }
-  // Mark inline message canceled/failed
-  setMessages(prev => prev.map(m => (m.role==='system' && m.content.startsWith('Pulling model '+finalName)) ? { ...m, content: `Model pull for ${finalName} failed: ${error || 'canceled'}` } : m))
+      setMessages(prev => prev.map(m => (m.role==='system' && m.content.startsWith('Pulling model '+finalName)) ? { ...m, content: `Model pull for ${finalName} failed: ${error || 'canceled'}` } : m))
     } finally {
-  pullAbortRef.current = null
-  setPulling(false)
-  userInitiatedPullRef.current = false
-  pullStatsRef.current.layers = {}
+      pullAbortRef.current = null
+      setPulling(false)
+      userInitiatedPullRef.current = false
+      pullStatsRef.current.layers = {}
     }
   }
 
@@ -541,7 +575,7 @@ export const ChatView: React.FC = () => {
     }
     const updated = loadSessions().map(s => s.id === id ? { ...s, title, updatedAt: new Date().toISOString() } : s)
     // persist
-    try { (require('./persistence') as any).saveSessions(updated) } catch {}
+  try { saveSessions(updated) } catch { /* persist rename failed */ }
   }
 
   // Auto-scroll when new messages, thinking updates, or pull progress append content
@@ -577,9 +611,43 @@ export const ChatView: React.FC = () => {
     return () => { el.removeEventListener('scroll', onScroll); ro.disconnect() }
   }, [])
 
-  const isMac = /Mac|Darwin/.test(navigator.platform)
+  // Prefer userAgentData when available; fallback to platform
+  // navigator.platform is deprecated; keep as fallback for older Chromium versions
+  const isMac = (navigator as any).userAgentData ? (navigator as any).userAgentData.platform === 'macOS' : /Mac|Darwin/.test(navigator.platform)
+  // Drag & drop file support
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => {
+    function onDragOver(e: DragEvent) { e.preventDefault(); if (!dragging) setDragging(true) }
+    function onDragLeave(e: DragEvent) { if ((e as any).relatedTarget == null) setDragging(false) }
+    async function onDrop(e: DragEvent) {
+      e.preventDefault(); setDragging(false)
+      const files = Array.from(e.dataTransfer?.files || [])
+          for (const file of files.slice(0,3)) { // limit to first 3
+        if (file.size > 512 * 1024) continue // skip >512KB
+        try {
+          const text = await file.text()
+          const snippet = text.length > 4000 ? text.slice(0,4000) + '\n...[truncated]' : text
+              const userMsg: ChatMessage = { id: uuidv4(), role: 'user', content: `File: ${file.name}\n\n${snippet}` }
+          setMessages(prev => [...prev, userMsg])
+          if (session) {
+            const updated: ChatSession = { ...session, messages: [...messages, userMsg], updatedAt: new Date().toISOString() }
+            setSession(updated); upsertSession(updated)
+          }
+            } catch { /* ignore file read failure */ }
+      }
+    }
+    window.addEventListener('dragover', onDragOver as any)
+    window.addEventListener('dragleave', onDragLeave as any)
+    window.addEventListener('drop', onDrop as any)
+    return () => { window.removeEventListener('dragover', onDragOver as any); window.removeEventListener('dragleave', onDragLeave as any); window.removeEventListener('drop', onDrop as any) }
+  }, [dragging, session, messages])
   return (
   <div className={`relative flex flex-row h-screen w-full overflow-hidden bg-[#0e0e0e] text-gray-200 ${isMac ? 'pt-[32px]' : ''}`}> {/* seamless canvas */}
+      {dragging && (
+        <div className='pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm text-gray-200 text-sm font-semibold border-2 border-dashed border-emerald-500'>
+          Drop files to insert contents
+        </div>
+      )}
       {isMac && <div className='drag-region-fixed' />}
       <SessionManager
         sessions={sessions}
@@ -633,12 +701,15 @@ export const ChatView: React.FC = () => {
               Backend unreachable: {modelError}. The local server may not be running (binary missing or skipped). You can still explore the UI; local models will appear once the server is available.
             </div>
           )}
-          {messages.map((m,i) => {
+      {messages.map((m,i) => {
+            let roleColor = 'text-gray-500'
+            if (m.role === 'user') roleColor = 'text-gray-400'
+            else if (m.role === 'assistant') roleColor = 'text-emerald-400'
             const roleLabel = (
-              <span className={`block text-[11px] uppercase tracking-wide mb-1 font-medium ${m.role==='user' ? 'text-gray-400' : (m.role==='assistant' ? 'text-emerald-400' : 'text-gray-500')}`}>{m.role}</span>
+              <span className={`block text-[11px] uppercase tracking-wide mb-1 font-medium ${roleColor}`}>{m.role}</span>
             )
             return (
-              <div key={i} className='text-sm leading-relaxed rounded-lg px-4 py-3 bg-[#121212] border border-[#1b1b1b]'>
+        <div key={m.id || i} className='text-sm leading-relaxed rounded-lg px-4 py-3 bg-[#121212] border border-[#1b1b1b]'>
                 {roleLabel}
                 {m.role === 'assistant' || m.role === 'system' ? (
                   <Markdown content={m.content} />
@@ -649,10 +720,27 @@ export const ChatView: React.FC = () => {
             )
           })}
           {thinking && (
-            <div className='text-xs'>
-              <div className='mt-2 bg-[#1d1d1d] rounded p-3 font-mono text-[11px] max-h-56 overflow-auto whitespace-pre-wrap border border-gray-700'>
-                {thinking}
+            <div className='text-xs mt-2'>
+              <div className='flex items-center justify-between mb-1 select-none'>
+                <span className='uppercase tracking-wide text-[10px] font-semibold text-amber-300'>Thinking</span>
+                <div className='flex items-center gap-2'>
+                  <button
+                    onClick={() => toggleShowThinking()}
+                    className='text-[10px] px-2 py-[2px] rounded bg-[#2a2a2a] hover:bg-[#333] border border-[#3a3a3a]'
+                    title={showThinking ? 'Hide internal reasoning' : 'Show internal reasoning'}
+                  >{showThinking ? 'Hide' : 'Show'}</button>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(thinking) }}
+                    className='text-[10px] px-2 py-[2px] rounded bg-[#2a2a2a] hover:bg-[#333] border border-[#3a3a3a]'
+                    title='Copy reasoning'
+                  >Copy</button>
+                </div>
               </div>
+              {showThinking && (
+                <div className='bg-[#1d1d1d] rounded p-3 font-mono text-[11px] max-h-56 overflow-auto whitespace-pre-wrap border border-amber-700/40 shadow-inner'>
+                  {thinking}
+                </div>
+              )}
             </div>
           )}
           {error && (
@@ -675,7 +763,7 @@ export const ChatView: React.FC = () => {
               )}
               {!pulling && /Connection lost during pull/.test(error) && lastPullTargetRef.current && (
                 <div className='mt-2'>
-                  <button onClick={()=>pullModel(lastPullTargetRef.current!)} className='mt-1 px-2 py-[2px] text-[10px] bg-amber-600 hover:bg-amber-500 rounded text-white'>Retry Pull {lastPullTargetRef.current}</button>
+                  <button onClick={()=> lastPullTargetRef.current && pullModel(lastPullTargetRef.current)} className='mt-1 px-2 py-[2px] text-[10px] bg-amber-600 hover:bg-amber-500 rounded text-white'>Retry Pull {lastPullTargetRef.current}</button>
                 </div>
               )}
             </div>
@@ -730,26 +818,39 @@ export const ChatView: React.FC = () => {
                 </optgroup>
               </select>
             </div>
-            <button
-              onClick={() => supportsThinking && setReasoningEnabled(r => !r)}
-              disabled={!supportsThinking}
-              title={!supportsThinking ? 'Model does not support reasoning' : (reasoningEnabled ? 'Disable reasoning' : 'Enable reasoning')}
-              className={`text-xs px-2 border-r border-[#262626] ${supportsThinking ? 'opacity-100 hover:bg-[#1f1f1f]' : 'opacity-40 cursor-not-allowed'}`}
-            >R</button>
+            {(() => {
+              let toggleTitle = 'Enable reasoning'
+              if (!supportsThinking) toggleTitle = 'Model does not support reasoning'
+              else if (reasoningEnabled) toggleTitle = 'Disable reasoning'
+              return (
+                <button
+                  onClick={() => supportsThinking && setReasoningEnabled(r => !r)}
+                  disabled={!supportsThinking}
+                  title={toggleTitle}
+                  className={`text-xs px-2 border-r border-[#262626] ${supportsThinking ? 'opacity-100 hover:bg-[#1f1f1f]' : 'opacity-40 cursor-not-allowed'}`}
+                >R</button>
+              )
+            })()}
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key==='Enter' && !e.shiftKey && (e.preventDefault(), onSend())}
-              placeholder='Send a message'
-              className='flex-1 bg-transparent px-2 py-2 text-sm outline-none'
-            />
-            <button
-              onClick={onSend}
+              placeholder={running ? 'Generating…' : 'Send a message'}
               disabled={running}
-        className='px-4 py-2 text-sm font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-500 transition rounded-none'
-            >
-              {running ? '...' : 'Send'}
-            </button>
+              className='flex-1 bg-transparent px-2 py-2 text-sm outline-none disabled:opacity-50'
+            />
+            {running ? (
+              <button
+                onClick={() => providerRef.current.cancelCurrent?.()}
+                className='px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-500 transition rounded-none'
+              >Cancel</button>
+            ) : (
+              <button
+                onClick={onSend}
+                disabled={running}
+                className='px-4 py-2 text-sm font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-500 transition rounded-none'
+              >Send</button>
+            )}
           </div>
       <div className='flex gap-4 mt-1 pl-2 text-[10px] opacity-50 tracking-wide'>
             <div><span className='font-mono'>✔</span> downloaded</div>

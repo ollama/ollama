@@ -10,6 +10,8 @@ interface SessionManagerProps {
   collapsed?: boolean
   onToggle?: () => void
   onRename?: (id: string, title: string) => void
+  // When enabled, search will also scan message content (basic text contains)
+  searchMessages?: boolean
 }
 
 function groupSessions(sessions: ChatSession[]): { label: string; items: ChatSession[] }[] {
@@ -41,13 +43,22 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
   collapsed = false,
   onToggle,
   onRename,
+  searchMessages = true,
 }) => {
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingValue, setEditingValue] = React.useState('')
   const [query, setQuery] = React.useState('')
   const inputRef = React.useRef<HTMLInputElement | null>(null)
   React.useEffect(()=>{ if(editingId && inputRef.current){ inputRef.current.focus(); inputRef.current.select() } },[editingId])
-  const filtered = query.trim() ? sessions.filter(s => (s.title||'').toLowerCase().includes(query.toLowerCase())) : sessions
+  const filtered = query.trim()
+    ? sessions.filter(s => {
+        const q = query.toLowerCase()
+        if ((s.title || '').toLowerCase().includes(q)) return true
+        if (!searchMessages) return false
+        // Light-weight content scan (titles already checked)
+        return s.messages?.some(m => (m.content || '').toLowerCase().includes(q))
+      })
+    : sessions
   const groups = collapsed ? [] : groupSessions(filtered)
   function commitRename() {
     if (editingId && onRename) {
