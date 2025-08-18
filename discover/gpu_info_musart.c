@@ -69,18 +69,15 @@ void musart_init(char *musart_lib_path, musart_init_resp_t *resp) {
   }
 
   int version = 0;
-  musartDriverVersion_t driverVersion;
-  driverVersion.major = 0;
-  driverVersion.minor = 0;
 
   // Report driver version if we're in verbose mode, ignore errors
   ret = (*resp->ch.musaDriverGetVersion)(&version);
   if (ret != MUSART_SUCCESS) {
     LOG(resp->ch.verbose, "musaDriverGetVersion failed: %d\n", ret);
   } else {
-    driverVersion.major = version / 1000;
-    driverVersion.minor = (version - (driverVersion.major * 1000)) / 10;
-    LOG(resp->ch.verbose, "MUSA driver version: %d-%d\n", driverVersion.major, driverVersion.minor);
+    resp->ch.driver_major = version / 10000;
+    resp->ch.driver_minor = (version - (resp->ch.driver_major * 10000)) / 100;
+    LOG(resp->ch.verbose, "MUSA driver version: %d.%d\n", resp->ch.driver_major, resp->ch.driver_minor);
   }
 
   ret = (*resp->ch.musaGetDeviceCount)(&resp->num_devices);

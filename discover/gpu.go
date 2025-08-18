@@ -553,6 +553,8 @@ func GetGPUInfo() GpuInfoList {
 				var driverMinor int
 				if mHandles.musart != nil {
 					C.musart_bootstrap(*mHandles.musart, C.int(i), &memInfo)
+					driverMajor = int(mHandles.musart.driver_major)
+					driverMinor = int(mHandles.musart.driver_minor)
 				} else {
 					C.mtmusa_bootstrap(*mHandles.mtmusa, C.int(i), &memInfo)
 					driverMajor = int(mHandles.mtmusa.driver_major)

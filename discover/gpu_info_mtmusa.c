@@ -84,8 +84,8 @@ void mtmusa_init(char *mtmusa_lib_path, mtmusa_init_resp_t *resp) {
     LOG(resp->ch.verbose, "muDriverGetVersion failed: %d\n", ret);
   } else {
     LOG(resp->ch.verbose, "raw version 0x%x\n", version);
-    resp->ch.driver_major = version / 1000;
-    resp->ch.driver_minor = (version - (resp->ch.driver_major * 1000)) / 10;
+    resp->ch.driver_major = version / 10000;
+    resp->ch.driver_minor = (version - (resp->ch.driver_major * 10000)) / 100;
     LOG(resp->ch.verbose, "MUSA driver version: %d.%d\n", resp->ch.driver_major, resp->ch.driver_minor);
   }
 

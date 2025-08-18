@@ -21,11 +21,6 @@ typedef struct musartMemory_st {
   size_t used;
 } musartMemory_t;
 
-typedef struct musartDriverVersion {
-  int major;
-  int minor;
-} musartDriverVersion_t;
-
 typedef struct musaUUID {
     unsigned char bytes[16];
 } musaUUID_t;
@@ -115,6 +110,8 @@ typedef struct musaDeviceProp {
 typedef struct musart_handle {
   void *handle;
   uint16_t verbose;
+  int driver_major;
+  int driver_minor;
   musartReturn_t (*musaSetDevice)(int device);
   musartReturn_t (*musaDeviceSynchronize)(void);
   musartReturn_t (*musaDeviceReset)(void);
