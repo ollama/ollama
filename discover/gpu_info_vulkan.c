@@ -171,6 +171,15 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
   strncpy(&resp->gpu_name[0], properties.deviceName, GPU_NAME_LEN - 1);
   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
+  const uint8_t *uuid = properties.pipelineCacheUUID;
+  snprintf(&resp->gpu_id[0], GPU_ID_LEN,
+      "GPU-%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+      uuid[0], uuid[1], uuid[2], uuid[3],
+      uuid[4], uuid[5],
+      uuid[6], uuid[7],
+      uuid[8], uuid[9],
+      uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
+    );
   resp->total = (uint64_t) device_memory_total_size;
   resp->free = (uint64_t) device_memory_heap_budget;
   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
