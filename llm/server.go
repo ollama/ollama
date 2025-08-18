@@ -651,7 +651,9 @@ func (s *ollamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requ
 		if !success {
 			s.initModel(ctx, LoadRequest{}, LoadOperationClose)
 		}
-		s.mem.Log(slog.LevelInfo)
+		if s.mem != nil {
+			s.mem.Log(slog.LevelInfo)
+		}
 	}()
 
 	slog.Info("loading model", "model layers", s.totalLayers, "requested", s.options.NumGPU)
