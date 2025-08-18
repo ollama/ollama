@@ -10194,6 +10194,27 @@ static void ggml_vk_get_device_description(int device, char * description, size_
     snprintf(description, description_size, "%s", props.deviceName.data());
 }
 
+static std::string ggml_vk_get_device_id(int device) {
+    ggml_vk_instance_init();
+
+    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
+
+    vk::PhysicalDeviceProperties props;
+    devices[device].getProperties(&props);
+
+    const auto& uuid = props.pipelineCacheUUID;
+    char id[64];
+    snprintf(id, sizeof(id),
+        "GPU-%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+        uuid[0], uuid[1], uuid[2], uuid[3],
+        uuid[4], uuid[5],
+        uuid[6], uuid[7],
+        uuid[8], uuid[9],
+        uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
+    );
+    return std::string(id);
+}
+
 // backend interface
 
 #define UNUSED GGML_UNUSED
@@ -10790,6 +10811,12 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
     ggml_vk_get_device_description(dev_idx, description, description_size);
 }
 
+std::string ggml_backend_vk_get_device_id(int device) {
+    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
+    int dev_idx = vk_instance.device_indices[device];
+    return ggml_vk_get_device_id(dev_idx);
+}
+
 void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
     GGML_ASSERT(device < (int) vk_instance.device_indices.size());
 
@@ -10812,6 +10839,7 @@ struct ggml_backend_vk_device_context {
     size_t device;
     std::string name;
     std::string description;
+    std::string id;
 };
 
 static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
@@ -10822,6 +10850,11 @@ static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
 static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t dev) {
     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
     return ctx->description.c_str();
+}
+
+static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
+    ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
+    return ctx->id.c_str();
 }
 
 static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
@@ -10847,6 +10880,7 @@ static enum ggml_backend_dev_type ggml_backend_vk_device_get_type(ggml_backend_d
 static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
     props->name        = ggml_backend_vk_device_get_name(dev);
     props->description = ggml_backend_vk_device_get_description(dev);
+    props->id          = ggml_backend_vk_device_get_id(dev);
     props->type        = ggml_backend_vk_device_get_type(dev);
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = {
@@ -11265,6 +11299,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->device = i;
                 ctx->name = GGML_VK_NAME + std::to_string(i);
                 ctx->description = desc;
+                ctx->id = ggml_backend_vk_get_device_id(i);
                 devices.push_back(new ggml_backend_device {
                     /* .iface   = */ ggml_backend_vk_device_i,
                     /* .reg     = */ reg,
