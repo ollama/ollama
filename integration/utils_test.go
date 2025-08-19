@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -25,11 +26,11 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/format"
-	"github.com/stretchr/testify/require"
 )
 
 var (
-	smol = "llama3.2:1b"
+	smol   = "llama3.2:1b"
+	stream = false
 )
 
 var (
@@ -435,7 +436,9 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 		}
 		lifecycle.ServerLogFile = fp.Name()
 		fp.Close()
-		require.NoError(t, startServer(t, ctx, testEndpoint))
+		if err := startServer(t, ctx, testEndpoint); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	return client, testEndpoint, func() {
@@ -468,7 +471,9 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRequest, anyResp []string) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, genReq.Model))
+	if err := PullIfMissing(ctx, client, genReq.Model); err != nil {
+		t.Fatal(err)
+	}
 	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
 }
 
@@ -509,7 +514,9 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 			slog.Warn("model is too large for the target test system", "model", genReq.Model, "error", genErr)
 			return context
 		}
-		require.NoError(t, genErr, "failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
+		if genErr != nil {
+			t.Fatalf("failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
+		}
 		// Verify the response contains the expected data
 		response := buf.String()
 		atLeastOne := false
@@ -519,7 +526,9 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 				break
 			}
 		}
-		require.True(t, atLeastOne, "%s: none of %v found in %s", genReq.Model, anyResp, response)
+		if !atLeastOne {
+			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
+		}
 		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
@@ -571,12 +580,48 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 	// TODO use info API in the future
 	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
 		maxVram, err := strconv.ParseUint(s, 10, 64)
-		require.NoError(t, err)
+		if err != nil {
+			t.Fatal(err)
+		}
 		// Don't hammer on small VRAM cards...
 		if maxVram < gb*format.GibiByte {
 			t.Skip("skipping with small VRAM to avoid timeouts")
 		}
 	}
+}
+
+// Skip if the target model isn't X% GPU loaded to avoid excessive runtime
+func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
+	models, err := client.ListRunning(ctx)
+	if err != nil {
+		t.Fatalf("failed to list running models: %s", err)
+	}
+	loaded := []string{}
+	for _, m := range models.Models {
+		loaded = append(loaded, m.Name)
+		if m.Name != model {
+			continue
+		}
+		gpuPercent := 0
+		switch {
+		case m.SizeVRAM == 0:
+			gpuPercent = 0
+		case m.SizeVRAM == m.Size:
+			gpuPercent = 100
+		case m.SizeVRAM > m.Size || m.Size == 0:
+			t.Logf("unexpected size detected: %d", m.SizeVRAM)
+		default:
+			sizeCPU := m.Size - m.SizeVRAM
+			cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 110)
+			gpuPercent = int(100 - cpuPercent)
+		}
+		if gpuPercent < minPercent {
+			t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
+		}
+		t.Logf("model loaded %d", gpuPercent)
+		return
+	}
+	t.Skip(fmt.Sprintf("model %s not loaded - actually loaded: %v", model, loaded))
 }
 
 func getTimeouts(t *testing.T) (soft time.Duration, hard time.Duration) {
