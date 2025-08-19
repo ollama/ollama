@@ -30,7 +30,11 @@ extern "C"
     void common_sampler_caccept(struct common_sampler *sampler, llama_token id, bool apply_grammar);
     llama_token common_sampler_csample(struct common_sampler *sampler, struct llama_context *ctx, int idx);
 
-    int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
+    struct parsed_grammar {
+        char *grammar;
+        size_t length;
+    };
+    struct parsed_grammar *schema_to_grammar(const char *json_schema);
 
 
     struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens);
