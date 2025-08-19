@@ -11,7 +11,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 ## Manual install
 
 > [!NOTE]
-> If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
+> If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/local/lib/ollama` first.
 
 Download and extract the package:
 
@@ -59,7 +59,7 @@ sudo tar -C /usr -xzf ollama-linux-arm64.tgz
 Create a user and group for Ollama:
 
 ```shell
-sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+sudo useradd -r -s /bin/false -U -m -d /usr/local/share/ollama ollama
 sudo usermod -a -G ollama $(whoami)
 ```
 
@@ -71,7 +71,7 @@ Description=Ollama Service
 After=network-online.target
 
 [Service]
-ExecStart=/usr/bin/ollama serve
+ExecStart=/usr/local/bin/ollama serve
 User=ollama
 Group=ollama
 Restart=always
@@ -186,7 +186,7 @@ sudo rm $(which ollama)
 Remove the downloaded models and Ollama service user and group:
 
 ```shell
-sudo rm -r /usr/share/ollama
+sudo rm -r /usr/local/share/ollama
 sudo userdel ollama
 sudo groupdel ollama
 ```
