@@ -65,6 +65,10 @@ func (m *fakeBackend) Get(name string) ml.Tensor {
 	return nil
 }
 
+func (m notTextProcessorModel) ModelName() string {
+	return "notTextProcessorModel"
+}
+
 func TestPopulateFields(t *testing.T) {
 	type fakeLayer struct {
 		Query  *nn.Linear `gguf:"attn_q"`
@@ -183,4 +187,16 @@ func (notTextProcessorModel) Backend() ml.Backend {
 
 func (notTextProcessorModel) Config() config {
 	panic("unimplemented")
+}
+
+func (notTextProcessorModel) Name() string {
+	return "notTextProcessorModel"
+}
+
+func (notTextProcessorModel) Family() string {
+	return "test"
+}
+
+func (m notTextProcessorModel) SetBiasAdapters(options map[string]interface{}) error {
+	return nil
 }
