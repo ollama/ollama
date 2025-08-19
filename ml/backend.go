@@ -396,6 +396,7 @@ type Tensor interface {
 
 	Shape() []int
 	DType() DType
+	Cast(ctx Context, dtype DType) Tensor
 
 	Bytes() []byte
 	Floats() []float32

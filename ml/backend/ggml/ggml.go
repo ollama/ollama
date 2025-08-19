@@ -843,23 +843,7 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		panic("set Input or Layer before creating tensors")
 	}
 
-	var cdtype uint32
-	switch dtype {
-	case ml.DTypeF32:
-		cdtype = C.GGML_TYPE_F32
-	case ml.DTypeF16:
-		cdtype = C.GGML_TYPE_F16
-	case ml.DTypeQ80:
-		cdtype = C.GGML_TYPE_Q8_0
-	case ml.DTypeQ40:
-		cdtype = C.GGML_TYPE_Q4_0
-	case ml.DTypeI32:
-		cdtype = C.GGML_TYPE_I32
-	case ml.DTypeMXFP4:
-		cdtype = C.GGML_TYPE_MXFP4
-	default:
-		panic("unsupported dtype")
-	}
+	cdtype := ggmlDType(dtype)
 
 	if len(shape) < 1 || shape[0] == 0 {
 		var shape C.int64_t = 0
@@ -1053,6 +1037,32 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeMXFP4
 	default:
 		return ml.DTypeOther
+	}
+}
+
+func ggmlDType(dtype ml.DType) uint32 {
+	switch dtype {
+	case ml.DTypeF32:
+		return C.GGML_TYPE_F32
+	case ml.DTypeF16:
+		return C.GGML_TYPE_F16
+	case ml.DTypeQ80:
+		return C.GGML_TYPE_Q8_0
+	case ml.DTypeQ40:
+		return C.GGML_TYPE_Q4_0
+	case ml.DTypeI32:
+		return C.GGML_TYPE_I32
+	case ml.DTypeMXFP4:
+		return C.GGML_TYPE_MXFP4
+	default:
+		panic("unsupported dtype")
+	}
+}
+
+func (t *Tensor) Cast(ctx ml.Context, dtype ml.DType) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_cast(ctx.(*Context).ctx, t.t, ggmlDType(dtype)),
 	}
 }
 
