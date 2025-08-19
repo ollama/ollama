@@ -76,8 +76,29 @@ func init() {
 			}
 		}
 	} else if runtime.GOOS == "darwin" {
-		// TODO
 		AppName += ".app"
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			slog.Warn("error discovering user home directory", "error", err)
+			// Fallback to /tmp if home directory cannot be determined
+			AppDataDir = filepath.Join("/tmp", "Ollama")
+		} else {
+			AppDataDir = filepath.Join(homeDir, "Library", "Application Support", "Ollama")
+		}
+		AppLogFile = filepath.Join(AppDataDir, "app.log")
+		ServerLogFile = filepath.Join(AppDataDir, "server.log")
+		UpgradeLogFile = filepath.Join(AppDataDir, "upgrade.log")
+
+		slog.Info(fmt.Sprintf("Darwin AppDataDir: %s", AppDataDir))
+		slog.Info(fmt.Sprintf("Darwin ServerLogFile: %s", ServerLogFile))
+
+		// Ensure the AppDataDir exists
+		_, err = os.Stat(AppDataDir)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(AppDataDir, 0o755); err != nil {
+				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))
+			}
+		}
 		// } else if runtime.GOOS == "linux" {
 		// TODO
 	}
