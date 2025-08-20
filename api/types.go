@@ -90,6 +90,10 @@ type GenerateRequest struct {
 	// (request that thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
 	Think *ThinkValue `json:"think,omitempty"`
+
+	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
+	// template instead of calling the model.
+	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -120,6 +124,10 @@ type ChatRequest struct {
 	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
 	// for supported models.
 	Think *ThinkValue `json:"think,omitempty"`
+
+	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
+	// template instead of calling the model.
+	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 }
 
 type Tools []Tool
@@ -306,6 +314,19 @@ type ChatResponse struct {
 	Done bool `json:"done"`
 
 	Metrics
+}
+
+// DebugInfo contains debug information for template rendering
+type DebugInfo struct {
+	RenderedTemplate string `json:"rendered_template"`
+	ImageCount       int    `json:"image_count,omitempty"`
+}
+
+// DebugTemplateResponse is returned when _debug_render_only is set to true
+type DebugTemplateResponse struct {
+	Model     string    `json:"model"`
+	CreatedAt time.Time `json:"created_at"`
+	DebugInfo DebugInfo `json:"_debug_info"`
 }
 
 type Metrics struct {
