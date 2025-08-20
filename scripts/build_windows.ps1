@@ -93,18 +93,39 @@ function buildCPU() {
     }
 }
 
-function buildCUDA() {
+function buildCUDA11() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
-        if ("$script:CUDA_DIRS".Contains("v12")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
-            $env:CUDAToolkit_ROOT=$hashEnv[$v12]
-            write-host "Building CUDA v12 backend libraries"
-            & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
+        if ("$script:CUDA_DIRS".Contains("v11")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            $env:CUDAToolkit_ROOT=$cuda
+            write-host "Building CUDA v11 backend libraries"
+            # -DCMAKE_CUDA_COMPILER="${cuda}\bin\nvcc.exe" -G "Visual Studio 16 2019"
+            # -DCMAKE_GENERATOR_TOOLSET="cuda=$cuda"
+            & cmake --fresh  --preset "CUDA 11"  -DCMAKE_CUDA_COMPILER="${cuda}\bin\nvcc.exe" "-DCUDAToolkit_ROOT=$cuda"  --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
+            & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+    }
+}
+
+function buildCUDA13() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v13")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V13")) { $v13="$_" }}
+            $env:CUDAToolkit_ROOT=$hashEnv[$v13]
+            write-host "Building CUDA v13 backend libraries"
+            & cmake --fresh --preset "CUDA 13" --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 13"  --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -252,7 +273,8 @@ checkEnv
 try {
     if ($($args.count) -eq 0) {
         buildCPU
-        buildCUDA
+        buildCUDA11
+        buildCUDA13
         buildROCm
         buildOllama
         buildApp
