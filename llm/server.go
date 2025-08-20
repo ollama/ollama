@@ -492,6 +492,7 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		if !requireFull {
 			g = pickBestPartialFitByLibrary(s.ggml, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
 		} else {
+			slog.Info("model requires more memory than is currently available, evicting a model to make space", "estimate", s.estimate)
 			return ErrLoadRequiredFull
 		}
 	}
@@ -522,10 +523,6 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.System.TotalMemory), "free", format.HumanBytes2(systemInfo.System.FreeMemory), "swap", format.HumanBytes2(systemInfo.System.FreeSwap))
 			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
 		}
-	}
-
-	if requireFull && len(gpus) == 1 && gpus[0].Library == "cpu" && s.estimate.TotalSize > gpus[0].FreeMemory {
-		return ErrLoadRequiredFull
 	}
 
 	slog.Info("offload", "", s.estimate)
