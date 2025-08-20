@@ -142,27 +142,20 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   VkDeviceSize device_memory_heap_budget = 0;
 
   for (uint32_t j = 0; j < device_memory_properties.memoryProperties.memoryHeapCount; j++) {
-      VkMemoryHeap heap = device_memory_properties.memoryProperties.memoryHeaps[j];
+    VkMemoryHeap heap = device_memory_properties.memoryProperties.memoryHeaps[j];
 
-      // Skip if not device-local
-      if (!(heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT))
-          continue;
+    // Skip if not device-local
+    if (!(heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT))
+      continue;
 
-      // Check if this heap is host-visible in any memory type
-      bool host_visible = false;
-      for (uint32_t k = 0; k < device_memory_properties.memoryProperties.memoryTypeCount; k++) {
-          if (device_memory_properties.memoryProperties.memoryTypes[k].heapIndex == j &&
-              (device_memory_properties.memoryProperties.memoryTypes[k].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
-              host_visible = true;
-              break;
-          }
-      }
+    if (heap.size > device_memory_total_size)
+      device_memory_total_size = heap.size;
 
-      // Only count pure VRAM (not host-visible)
-      if (!host_visible) {
-          device_memory_total_size = heap.size;
-          device_memory_heap_budget = physical_device_memory_budget_properties.heapBudget[j];
-      }
+    VkDeviceSize capped_budget = physical_device_memory_budget_properties.heapBudget[j];
+    if (capped_budget > heap.size)
+      capped_budget = heap.size;
+    if (capped_budget > device_memory_heap_budget)
+      device_memory_heap_budget = capped_budget;
   }
 
   free(devices);
