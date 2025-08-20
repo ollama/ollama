@@ -13,7 +13,7 @@ jobs:
     
     strategy:
       matrix:
-        go-version: [1.20.x, 1.21.x]
+        go-version: [1.22.x, 1.23.x]
     
     steps:
     - name: Check out code
@@ -55,7 +55,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: 1.21.x
+        go-version: 1.23.x
         
     - name: Build
       run: go build -v ./...
@@ -71,7 +71,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: 1.21.x
+        go-version: 1.23.x
         
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v3
