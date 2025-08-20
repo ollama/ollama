@@ -95,6 +95,10 @@ TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
 
 `Tools[].Function.Parameters.Properties[].Enum` (list): list of valid values
 
+`IsThinkSet` (boolean): if `Think` is set
+
+`Think` (boolean): if the thinking function of the model is enabled (true) or disabled (false)
+
 ## Tips and Best Practices
 
 Keep the following tips and best practices in mind when working with Go templates:
