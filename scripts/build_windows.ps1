@@ -93,18 +93,59 @@ function buildCPU() {
     }
 }
 
-function buildCUDA() {
+function buildCUDA11() {
+    # CUDA v11 claims to be compatible with MSVC 2022, but the latest updates are no longer compatible
+    # 19.40 is the last compiler version that works, but recent udpates are 19.43
+    # So this pins to MSVC 2019 for best compatibility
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v11")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            write-host "Building CUDA v11 backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake --fresh --preset "CUDA 11" -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v11"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+    }
+}
+
+function buildCUDA12() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
         if ("$script:CUDA_DIRS".Contains("v12")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
-            $env:CUDAToolkit_ROOT=$hashEnv[$v12]
-            write-host "Building CUDA v12 backend libraries"
-            & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            write-host "Building CUDA v12 backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake --fresh --preset "CUDA 12" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v12"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+    }
+}
+
+function buildCUDA13() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v13")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V13")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            $env:CUDAToolkit_ROOT=$cuda
+            write-host "Building CUDA v13 backend libraries $cuda"
+            & cmake --fresh --preset "CUDA 13" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v13"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 13"  --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -252,7 +293,8 @@ checkEnv
 try {
     if ($($args.count) -eq 0) {
         buildCPU
-        buildCUDA
+        buildCUDA11
+        buildCUDA13
         buildROCm
         buildOllama
         buildApp

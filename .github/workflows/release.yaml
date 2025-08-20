@@ -67,18 +67,21 @@ jobs:
             install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
             cuda-version: '11.8'
             flags: ''
+            runner_dir: 'cuda_v11'
           - os: windows
             arch: amd64
             preset: 'CUDA 13'
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cuda-version: '13.0'
             flags: ''
+            runner_dir: 'cuda_v13'
           - os: windows
             arch: amd64
             preset: 'ROCm 6'
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             rocm-version: '6.2'
             flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+            runner_dir: ''
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -144,7 +147,7 @@ jobs:
         run: |
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
+          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} -DOLLAMA_RUNNER_DIR="${{ matrix.runner_dir }}"
           cmake --build --parallel --preset "${{ matrix.preset }}"
           cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
         env:
