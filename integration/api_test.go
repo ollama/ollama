@@ -390,7 +390,7 @@ func TestAPIEmbeddings(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 	req := api.EmbeddingRequest{
-		Model:  "orca-mini",
+		Model:  libraryEmbedModels[0],
 		Prompt: "why is the sky blue?",
 		Options: map[string]interface{}{
 			"temperature": 0,
