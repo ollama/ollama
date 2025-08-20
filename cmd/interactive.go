@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -36,6 +37,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
+		fmt.Fprintln(os.Stderr, "  /export [path]  Export current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
@@ -238,6 +240,82 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
+			continue
+		case strings.HasPrefix(line, "/export"):
+			args := strings.Fields(line)
+
+			if len(opts.Messages) == 0 {
+				fmt.Println("No conversation to export.")
+				continue
+			}
+
+			var outPath string
+			switch len(args) {
+			case 1:
+				home, err := os.UserHomeDir()
+				if err != nil {
+					fmt.Printf("error: couldn't resolve home directory: %v\n", err)
+					continue
+				}
+				exportDir := filepath.Join(home, ".ollama", "exports")
+				if err := os.MkdirAll(exportDir, 0o755); err != nil {
+					fmt.Printf("error: couldn't create export directory: %v\n", err)
+					continue
+				}
+				filename := fmt.Sprintf("chat-%s.txt", time.Now().Format("20060102-150405"))
+				outPath = filepath.Join(exportDir, filename)
+			case 2:
+				p := args[1]
+				if strings.HasPrefix(p, "~/") || p == "~" {
+					if home, err := os.UserHomeDir(); err == nil {
+						p = filepath.Join(home, strings.TrimPrefix(p, "~/"))
+					}
+				}
+				if filepath.IsAbs(p) {
+					outPath = p
+				} else {
+					cwd, err := os.Getwd()
+					if err != nil {
+						fmt.Printf("error: couldn't determine working directory: %v\n", err)
+						continue
+					}
+					outPath = filepath.Join(cwd, p)
+				}
+				// If no extension specified, default to .txt
+				if filepath.Ext(outPath) == "" {
+					outPath += ".txt"
+				}
+				if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+					fmt.Printf("error: couldn't create parent directory: %v\n", err)
+					continue
+				}
+			default:
+				fmt.Println("Usage:\n  /export [path]")
+				continue
+			}
+
+			if _, err := os.Stat(outPath); err == nil {
+				fmt.Printf("File exists: %s\nOverwrite? [y/N]: ", outPath)
+				confirm, err := scanner.Readline()
+				if err != nil {
+					fmt.Println()
+					fmt.Printf("error: %v\n", err)
+					continue
+				}
+				c := strings.ToLower(strings.TrimSpace(confirm))
+				if c != "y" && c != "yes" {
+					fmt.Println("Export canceled.")
+					continue
+				}
+			}
+
+			transcript := buildTranscript(opts.Model, opts.Messages)
+
+			if err := os.WriteFile(outPath, []byte(transcript), 0o644); err != nil {
+				fmt.Printf("error: couldn't write file: %v\n", err)
+				continue
+			}
+			fmt.Printf("Exported to %s\n", outPath)
 			continue
 		case strings.HasPrefix(line, "/clear"):
 			opts.Messages = []api.Message{}
@@ -630,4 +708,30 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+// buildTranscript converts a slice of api.Message to a minimal, readable text transcript.
+func buildTranscript(model string, messages []api.Message) string {
+    var sb strings.Builder
+    if model != "" {
+        fmt.Fprintf(&sb, "%s\n\n", model)
+    }
+    for i, m := range messages {
+        role := m.Role
+        switch role {
+        case "system":
+            role = "System"
+        case "user":
+            role = "User"
+        case "assistant":
+            role = "Assistant"
+        default:
+            role = strings.Title(role)
+        }
+        fmt.Fprintf(&sb, "%s: %s\n", role, m.Content)
+        if i < len(messages)-1 {
+            fmt.Fprintln(&sb)
+        }
+    }
+    return sb.String()
 }
