@@ -30,7 +30,7 @@ func pickBestFullFitByLibrary(f *ggml.GGML, modelPath string, projectors []strin
 			// Try to pack into as few GPUs as possible, starting from 1 GPU
 			for numGPUs := 1; numGPUs <= len(sgl); numGPUs++ {
 				gpuSubset := sgl[:numGPUs]
-				ok, estimatedVRAM := PredictServerFit(gpuSubset, f, adapters, projectors, opts, numParallel)
+				ok, estimatedVRAM := predictServerFit(gpuSubset, f, adapters, projectors, opts, numParallel)
 
 				if ok {
 					slog.Info("new model will fit in available VRAM across minimum required GPUs, loading",
@@ -48,7 +48,7 @@ func pickBestFullFitByLibrary(f *ggml.GGML, modelPath string, projectors []strin
 			// - try subsets of GPUs instead of just falling back to 1 or all in a family
 
 			// Now try all the GPUS (OLLAMA_SCHED_SPREAD is set)
-			if ok, estimatedVRAM := PredictServerFit(sgl, f, adapters, projectors, opts, numParallel); ok {
+			if ok, estimatedVRAM := predictServerFit(sgl, f, adapters, projectors, opts, numParallel); ok {
 				slog.Info("new model will fit in available VRAM, loading",
 					"model", modelPath,
 					"library", sgl[0].Library,
@@ -71,7 +71,7 @@ func pickBestPartialFitByLibrary(f *ggml.GGML, projectors []string, adapters []s
 	var bestEstimate uint64
 	var bestFit int
 	for i, gl := range byLibrary {
-		_, estimatedVRAM := PredictServerFit(gl, f, adapters, projectors, opts, numParallel)
+		_, estimatedVRAM := predictServerFit(gl, f, adapters, projectors, opts, numParallel)
 		if estimatedVRAM > bestEstimate {
 			bestEstimate = estimatedVRAM
 			bestFit = i
@@ -81,7 +81,7 @@ func pickBestPartialFitByLibrary(f *ggml.GGML, projectors []string, adapters []s
 }
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
-func PredictServerFit(allGpus discover.GpuInfoList, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (bool, uint64) {
+func predictServerFit(allGpus discover.GpuInfoList, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (bool, uint64) {
 	// Split up the GPUs by type and try them
 	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
@@ -96,6 +96,10 @@ func PredictServerFit(allGpus discover.GpuInfoList, f *ggml.GGML, adapters, proj
 			if layerCount > 0 && layerCount >= opts.NumGPU {
 				return true, estimatedVRAM
 			}
+		}
+
+		if len(gpus) == 1 && gpus[0].Library == "cpu" && estimate.TotalSize <= gpus[0].FreeMemory {
+			return true, estimatedVRAM
 		}
 	}
 	return false, estimatedVRAM
