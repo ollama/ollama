@@ -109,7 +109,7 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 					r = 0x0143
 				case r <= 0x0020:
 					r = r + 0x0100
-				case r >= 0x007e && r <= 0x00a0:
+				case r >= 0x007f && r <= 0x00a0:
 					r = r + 0x00a2
 				}
 
