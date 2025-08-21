@@ -1374,13 +1374,15 @@ func (d DoneReason) String() string {
 }
 
 type CompletionResponse struct {
-	Content            string        `json:"content"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
+	Content            string         `json:"content"`
+	Thinking           string         `json:"thinking"`
+	ToolCalls          []api.ToolCall `json:"tool_calls"`
+	DoneReason         DoneReason     `json:"done_reason"`
+	Done               bool           `json:"done"`
+	PromptEvalCount    int            `json:"prompt_eval_count"`
+	PromptEvalDuration time.Duration  `json:"prompt_eval_duration"`
+	EvalCount          int            `json:"eval_count"`
+	EvalDuration       time.Duration  `json:"eval_duration"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -1511,10 +1513,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return ctx.Err()
 			}
 
-			if c.Content != "" {
-				fn(CompletionResponse{
-					Content: c.Content,
-				})
+			if c.Content != "" || c.Thinking != "" || len(c.ToolCalls) > 0 {
+				fn(c)
 			}
 
 			if c.Done {
