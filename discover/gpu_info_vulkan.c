@@ -4,13 +4,6 @@
 #include <stdbool.h>
 #include "gpu_info_vulkan.h"
 
-// Compatibility macros for older Vulkan versions
-#ifndef VK_API_VERSION_MAJOR
-#define VK_API_VERSION_MAJOR VK_VERSION_MAJOR
-#define VK_API_VERSION_MINOR VK_VERSION_MINOR
-#define VK_API_VERSION_PATCH VK_VERSION_PATCH
-#endif
-
 void vk_init(char* vk_lib_path, vk_init_resp_t *resp) {
   const int buflen = 256;
   char buf[buflen + 1];
