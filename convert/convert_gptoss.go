@@ -206,5 +206,5 @@ func (m *mxfp4) WriteTo(w io.Writer) (int64, error) {
 		return 0, err
 	}
 
-	return 0, nil
+	return int64(len(u8s)), nil
 }
