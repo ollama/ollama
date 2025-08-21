@@ -63,11 +63,11 @@ var (
 	bootstrapErrors []error
 )
 
-// With our current CUDA compile flags, older than 3.5 will not work properly
+// With our current CUDA compile flags, older than 5.0 will not work properly
 // (string values used to allow ldflags overrides at build time)
 var (
-	CudaComputeMajorMin = "3"
-	CudaComputeMinorMin = "5"
+	CudaComputeMajorMin = "5"
+	CudaComputeMinorMin = "0"
 )
 
 var RocmComputeMajorMin = "9"

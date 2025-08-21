@@ -63,11 +63,11 @@ jobs:
         include:
           - os: windows
             arch: amd64
-            preset: 'CUDA 11'
-            install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
-            cuda-version: '11.8'
+            preset: 'CUDA 12'
+            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            cuda-version: '12.8'
             flags: ''
-            runner_dir: 'cuda_v11'
+            runner_dir: 'cuda_v12'
           - os: windows
             arch: amd64
             preset: 'CUDA 13'

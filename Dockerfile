@@ -40,13 +40,23 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --install build --component CPU --strip --parallel 8
 
 FROM base AS cuda-11
-ARG CUDA12VERSION=11.8
-RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
+ARG CUDA11VERSION=11.8
+RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 11' -DOLLAMA_RUNNER_DIR="cuda_v11" \
         && cmake --build --parallel --preset 'CUDA 11' \
         && cmake --install build --component CUDA --strip --parallel 8
+
+FROM base AS cuda-12
+ARG CUDA12VERSION=12.8
+RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
+ENV PATH=/usr/local/cuda-12/bin:$PATH
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'CUDA 12' -DOLLAMA_RUNNER_DIR="cuda_v12"\
+        && cmake --build --parallel --preset 'CUDA 12' \
+        && cmake --install build --component CUDA --strip --parallel 8
+
 
 FROM base AS cuda-13
 ARG CUDA13VERSION=13.0
@@ -102,11 +112,13 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
+# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
-COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
+# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/cuda_jetpack5
 COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6

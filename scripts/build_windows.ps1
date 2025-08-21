@@ -120,8 +120,8 @@ function buildCUDA12() {
     if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
-        if ("$script:CUDA_DIRS".Contains("v12")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+        if ("$script:CUDA_DIRS".Contains("v12.8")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12_8")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
             write-host "Building CUDA v12 backend libraries $cuda"
             $env:CUDAToolkit_ROOT=$cuda
             & cmake --fresh --preset "CUDA 12" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v12"
@@ -293,7 +293,7 @@ checkEnv
 try {
     if ($($args.count) -eq 0) {
         buildCPU
-        buildCUDA11
+        buildCUDA12
         buildCUDA13
         buildROCm
         buildOllama

@@ -51,7 +51,7 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		if gpuInfo.computeMajor > 7 || (gpuInfo.computeMajor == 7 && gpuInfo.computeMinor >= 5) {
 			slog.Warn("old CUDA driver detected - please upgrade to a newer driver for best performance", "version", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
 		}
-		return "v11"
+		return "v12"
 	}
 	return "v13"
 }
