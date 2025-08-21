@@ -535,6 +535,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 				const BS = 17                             // MXFP4 block size
 				bts := make([]byte, 8*BS*format.KibiByte) // ~128k block aligned
 				var s uint64
+				var tmp [16]byte
 				for s < t.Size() {
 					// Stop if either the parent context has been canceled or if any of the other tensors returned an error
 					if err := ctx.Err(); err != nil {
@@ -546,37 +547,13 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 						return err
 					}
 					for j := range n / BS {
-						for i := 1; i < BS; i++ {
-							// swap nibbles
-							t_lo := bts[j*BS+i] & 0x0F
-							t_hi := bts[j*BS+i] & 0xF0
-							bts[j*BS+i] = (t_lo << 4) | (t_hi >> 4)
-						}
 						// transform aaaa...bbbb... to abababab...
-						oi := 0
-						tmp := [16]byte{}
 						for i := 1; i < 9; i++ {
-							blk_a0 := bts[j*BS+i] & 0xF0
-							blk_a1 := bts[j*BS+i] << 4
-							blk_b0 := bts[j*BS+i+8] >> 4
-							blk_b1 := bts[j*BS+i+8] & 0x0F
-							// swap once more
-							out0 := blk_a0 | blk_b0
-							out1 := blk_a1 | blk_b1
-							out_h0 := out0 & 0xF0
-							out_l0 := out0 & 0x0F
-							out_h1 := out1 & 0xF0
-							out_l1 := out1 & 0x0F
-							out0 = (out_h0 >> 4) | (out_l0 << 4)
-							out1 = (out_h1 >> 4) | (out_l1 << 4)
-							tmp[oi] = out0
-							oi++
-							tmp[oi] = out1
-							oi++
+							a, b := bts[j*BS+i], bts[j*BS+i+8]
+							tmp[2*(i-1)] = (a & 0x0F) | (b << 4)
+							tmp[2*(i-1)+1] = (a >> 4) | (b & 0xF0)
 						}
-						for i := range tmp {
-							bts[j*BS+i+1] = tmp[i]
-						}
+						copy(bts[j*BS+1:j*BS+17], tmp[:])
 					}
 
 					for _, tt := range tts {
