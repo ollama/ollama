@@ -87,9 +87,6 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
-	// true if the sequence if finished and marked for removal on next pass
-	finished bool
-
 	// True if we have to skip this sequence to shift the cache
 	skipForShift bool
 
@@ -321,10 +318,6 @@ type Server struct {
 	// Used to signal a hard failure during async processing which will panic the runner
 	hardErrCh chan error
 
-	// A prior batch that's still being processed
-	// only read or written by forwardBatch
-	pendingBatch *batchState
-
 	// Simple counter used only for trace logging batches
 	batchID int
 
@@ -388,25 +381,14 @@ func flushPending(seq *Sequence) bool {
 	}
 }
 
-func (s *Server) finishSequence(seqIndex int, reason llm.DoneReason) {
+func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	seq := s.seqs[seqIndex]
-
-	// finish could be called multiple times since we prepare 1 batch ahead
-	// and multiple scenarios can lead to finishing a sequence
-	// ensure only the first finish called is processed
-	if seq.finished {
-		return
-	}
 
 	flushPending(seq)
 	seq.doneReason = reason
-	seq.finished = true
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
-}
-
-func (s *Server) removeFinishedSequence(seqIndex int) {
 	s.seqs[seqIndex] = nil
 	s.seqsSem.Release(1)
 }
@@ -416,7 +398,7 @@ func (s *Server) removeFinishedSequence(seqIndex int) {
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
-	var bs *batchState
+	var activeBatch batchState
 	for {
 		select {
 		case <-ctx.Done():
@@ -425,35 +407,31 @@ func (s *Server) run(ctx context.Context) {
 			panic(err)
 		default:
 			var err error
-			bs, err = s.forwardBatch()
+			activeBatch, err = s.forwardBatch(activeBatch)
 			if err != nil {
 				panic(err)
 			}
-			if bs == nil {
-				continue
-			}
-			go s.computeBatch(bs)
+			go s.computeBatch(activeBatch)
 		}
 	}
 }
 
 // forwardBatch will calculate a batch.
-func (s *Server) forwardBatch() (*batchState, error) {
+func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, err error) {
 	inputsReady := false
-	var inputsReadyCh chan struct{}
 
 	// If we have a pending batch still processing, wait until Compute has started
 	// before setting up the next batch so the seqs inputs are ready to receive their
 	// token values and we get the correct input pointers for the batchInputs
-	if s.pendingBatch != nil {
-		slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch waiting for compute to start", "pendingBatch.id", s.pendingBatch.id)
-		<-s.pendingBatch.computeStartedCh
-		slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch compute started, setting up next batch", "pendingBatch.id", s.pendingBatch.id, "id", s.batchID)
-		inputsReadyCh = s.pendingBatch.outputsReadyCh // Chain the ouputs from the pending batch to the next inputs batch
+	if pendingBatch.ctx != nil {
+		slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch waiting for compute to start", "pendingBatch.id", pendingBatch.id)
+		<-pendingBatch.computeStartedCh
+		slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch compute started, setting up next batch", "pendingBatch.id", pendingBatch.id, "id", s.batchID)
+		nextBatch.inputsReadyCh = pendingBatch.outputsReadyCh // Chain the ouputs from the pending batch to the next inputs batch
 	} else {
 		slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch no pending batch detected", "batchID", s.batchID)
 		inputsReady = true // No pendingBatch, so the inputs will be ready in the seqs immediately
-		inputsReadyCh = make(chan struct{}, 1)
+		nextBatch.inputsReadyCh = make(chan struct{}, 1)
 	}
 
 	s.mu.Lock()
@@ -464,53 +442,32 @@ func (s *Server) forwardBatch() (*batchState, error) {
 
 	// If new sequences have been added with an active batch we delay preparing the next batch
 	// until Compute has finished
-	if s.pendingBatch != nil {
+	if pendingBatch.ctx != nil {
 		for seqIdx := range s.seqs {
-			if s.seqs[seqIdx] != s.pendingBatch.seqs[seqIdx] {
-				slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch seqs changed, waiting for compute to finish to pick up new sequence(s)", "pendingBatch.id", s.pendingBatch.id)
+			if s.seqs[seqIdx] != pendingBatch.seqs[seqIdx] {
+				slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch seqs changed, waiting for compute to finish to pick up new sequence(s)", "pendingBatch.id", pendingBatch.id)
 				s.mu.Unlock() // release the lock so computeBatch can finish up
-				<-s.pendingBatch.outputsReadyCh
-				slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch pending batch outputs ready", "pendingBatch.id", s.pendingBatch.id)
+				<-pendingBatch.outputsReadyCh
+				slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch pending batch outputs ready", "pendingBatch.id", pendingBatch.id)
 				s.mu.Lock()
 				inputsReady = true // pendingBatch completed, so the inputs are ready in the seqs
 				break
 			}
 		}
 	}
-	// Clear pending Batch - we'll set it if we have a batch with any inputs
-	s.pendingBatch = nil
 
-	// Remove any finished sequences before recording the active set of seqs in the batch
-	for seqIdx := range s.seqs {
-		seq := s.seqs[seqIdx]
-		if seq == nil {
-			continue
+	nextBatch.ctx = s.model.Backend().NewContext()
+	defer func() {
+		if err != nil {
+			nextBatch.ctx.Close()
+			nextBatch.ctx = nil
 		}
-		if seq.finished {
-			s.removeFinishedSequence(seqIdx)
-			continue
-		}
-		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.finishSequence(seqIdx, llm.DoneReasonLength)
-			s.removeFinishedSequence(seqIdx)
-			continue
-		}
-	}
-
-	// next batch
-	nb := &batchState{
-		id:               s.batchID,
-		initSeqIdx:       s.nextSeq - 1,
-		seqs:             make([]*Sequence, len(s.seqs)),
-		inputsReadyCh:    inputsReadyCh,
-		computeStartedCh: make(chan struct{}, 1),
-		outputsReadyCh:   make(chan struct{}, 1),
-	}
-	ctx := s.model.Backend().NewContext()
-	nb.ctx = ctx
-
-	// Record the sequences at the time we create the batch so we can detect if new sequences are added on the next pass
-	copy(nb.seqs, s.seqs)
+	}()
+	nextBatch.id = s.batchID
+	nextBatch.initSeqIdx = s.nextSeq - 1
+	nextBatch.seqs = append([]*Sequence{}, s.seqs...)
+	nextBatch.computeStartedCh = make(chan struct{}, 1)
+	nextBatch.outputsReadyCh = make(chan struct{}, 1)
 
 	// Prepare the seqs and batch, but defer the input token values as we may not be ready yet
 	var batchInputs []*input.Input
@@ -522,6 +479,13 @@ func (s *Server) forwardBatch() (*batchState, error) {
 		seqIdx = (seqIdx + 1) % len(s.seqs)
 		seq := s.seqs[seqIdx]
 		if seq == nil {
+			continue
+		}
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
+			s.removeSequence(seqIdx, llm.DoneReasonLength)
+			nextBatch.seqs[seqIdx] = nil
 			continue
 		}
 
@@ -560,7 +524,7 @@ func (s *Server) forwardBatch() (*batchState, error) {
 					break
 				}
 
-				err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
+				err = s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 				if err != nil {
 					var reprocess *ErrReprocessInputs
 					if errors.As(err, &reprocess) {
@@ -568,20 +532,20 @@ func (s *Server) forwardBatch() (*batchState, error) {
 						seq.inputs = append(reprocess.Inputs, seq.inputs...)
 						// Skip this sequence but continue processing the rest
 						seq.skipForShift = true // cleared in computeBatch below for the next batch
+						err = nil
 						continue
 					} else {
-						ctx.Close()
-						return nil, err
+						return
 					}
 				}
 			}
 
 			batchInputs = append(batchInputs, seq.inputs[i])
 			if inp.Multimodal != nil {
-				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, false)
+				var mm []input.Multimodal
+				mm, err = seq.mmStore.getMultimodal(s.model.Backend(), nextBatch.ctx, inp.Multimodal, false)
 				if err != nil {
-					ctx.Close()
-					return nil, err
+					return
 				}
 				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})
 			}
@@ -589,8 +553,6 @@ func (s *Server) forwardBatch() (*batchState, error) {
 			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
 			batch.Sequences = append(batch.Sequences, seq.cache.Id)
 
-			// TODO BUG HERE!!!
-			// Somehow sometimes iBatch isn't set correctly
 			seq.iBatch = len(batch.Outputs)
 			if i+1 == len(seq.inputs) {
 				batch.Outputs = append(batch.Outputs, int32(len(batchInputs)-1))
@@ -610,57 +572,55 @@ func (s *Server) forwardBatch() (*batchState, error) {
 
 	if len(batchInputs) == 0 {
 		slog.Log(context.TODO(), logutil.LevelTrace, "forwardBatch no batchInputs, going idle", "batchID", s.batchID)
-		ctx.Close()
-		return nil, nil
+		nextBatch.ctx.Close()
+		nextBatch.ctx = nil
+		return
 	}
 	s.batchID++
 
-	var err error
 	// Actual batchInputs values will be injected into the modelInput tensor before calling Compute
-	nb.modelInput, nb.modelOutput, err = model.Forward(ctx, s.model, make([]int32, len(batchInputs)), batch)
+	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
+	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
-		ctx.Close()
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		err = fmt.Errorf("failed to build graph: %w", err)
+		return
 	}
-	nb.batchInputs = batchInputs
-	nb.batch = batch
-
-	// computeBatch will close the context in the batch upon completion
-	s.pendingBatch = nb
+	nextBatch.modelInput = batch.Inputs
+	nextBatch.batchInputs = batchInputs
+	nextBatch.batch = batch
 
 	if inputsReady {
-		nb.inputsReadyCh <- struct{}{}
+		nextBatch.inputsReadyCh <- struct{}{}
 	}
-
-	return nb, nil
+	return
 }
 
 // Async processing of the next batch
-func (s *Server) computeBatch(bs *batchState) {
-	if bs == nil || bs.ctx == nil {
+func (s *Server) computeBatch(activeBatch batchState) {
+	if activeBatch.ctx == nil {
 		// Nothing to compute
 		return
 	}
-	defer bs.ctx.Close()
+	defer activeBatch.ctx.Close()
 
 	// Wait until inputs are ready
-	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: waiting for inputs to be ready", "batchID", bs.id)
-	<-bs.inputsReadyCh
-	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: inputs are ready", "batchID", bs.id)
+	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: waiting for inputs to be ready", "batchID", activeBatch.id)
+	<-activeBatch.inputsReadyCh
+	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: inputs are ready", "batchID", activeBatch.id)
 
 	// Once we complete, signal the next batch of inputs are ready
 	// This will unblock the next computeBatch, or forwardBatch if new seqs come in
 	defer func() {
-		slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: outputs are ready", "batchID", bs.id)
-		bs.outputsReadyCh <- struct{}{}
+		slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: outputs are ready", "batchID", activeBatch.id)
+		activeBatch.outputsReadyCh <- struct{}{}
 	}()
 
 	s.mu.Lock()
 
 	// Gather the actual input token values now that they're ready
-	batchInputs := make([]int32, len(bs.batchInputs))
+	batchInputs := make([]int32, len(activeBatch.batchInputs))
 	for i := range batchInputs {
-		batchInputs[i] = bs.batchInputs[i].Token
+		batchInputs[i] = activeBatch.batchInputs[i].Token
 	}
 
 	// TODO the following logic could be run in a go routine to possibly speed up getting to Compute
@@ -677,7 +637,7 @@ func (s *Server) computeBatch(bs *batchState) {
 			continue
 		}
 		// Skip over any newly added sequences
-		if bs.seqs[i] == nil {
+		if activeBatch.seqs[i] == nil {
 			continue
 		}
 
@@ -707,32 +667,32 @@ func (s *Server) computeBatch(bs *batchState) {
 
 	// At this point the seqs are ready for forwardBatch to move forward so unblock
 	s.mu.Unlock()
-	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: signaling computeStartedCh", "batchID", bs.id)
-	bs.computeStartedCh <- struct{}{}
+	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
+	activeBatch.computeStartedCh <- struct{}{}
 
-	bs.modelInput.BackendSetFromIntSlice(batchInputs)
-	bs.ctx.Compute(bs.modelOutput)
-	logits := bs.modelOutput.Floats()
+	activeBatch.modelInput.BackendSetFromIntSlice(batchInputs)
+	activeBatch.ctx.Compute(activeBatch.modelOutput)
+	logits := activeBatch.modelOutput.Floats()
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: logits ready", "batchID", bs.id)
+	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: logits ready", "batchID", activeBatch.id)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: decoding", "batchID", bs.id)
+	slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: decoding", "batchID", activeBatch.id)
 	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
 		}
 		// Skip over any newly added sequences
-		if bs.seqs[i] == nil {
+		if activeBatch.seqs[i] == nil {
 			continue
 		}
 
 		// Detect if the sequence we're processing has already been completed and replaced
 		// with a new sequence
-		if seq != bs.seqs[i] {
-			slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: sequence replaced, discarding its results", "batchID", bs.id, "seqIdx", i)
+		if seq != activeBatch.seqs[i] {
+			slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
 			continue
 		}
 
@@ -748,14 +708,14 @@ func (s *Server) computeBatch(bs *batchState) {
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			// TODO(jessegross): Embedding support
-			slog.Warn("generation of embedding outputs not yet supported", "id", bs.id, "seqIdx", i)
-			s.finishSequence(i, llm.DoneReasonStop)
+			slog.Warn("generation of embedding outputs not yet supported", "id", activeBatch.id, "seqIdx", i)
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
 		// sample a token
-		vocabSize := len(logits) / len(bs.batch.Outputs)
-		slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: vocab details", "batchID", bs.id, "seqIdx", i, "len(logits)", len(logits), "len(bs.batch.Outputs)", len(bs.batch.Outputs), "vocabSize", vocabSize, "seq.iBatch", seq.iBatch)
+		vocabSize := len(logits) / len(activeBatch.batch.Outputs)
+		slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(logits), "len(activeBatch.batch.Outputs)", len(activeBatch.batch.Outputs), "vocabSize", vocabSize, "seq.iBatch", seq.iBatch)
 		token, err := seq.sampler.Sample(logits[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize])
 		if err != nil {
 			s.hardErrCh <- fmt.Errorf("failed to sample token: %w", err)
@@ -769,8 +729,8 @@ func (s *Server) computeBatch(bs *batchState) {
 			// TODO (jmorganca): we should send this back
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
-			slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: EOS", "batchID", bs.id, "seqIdx", i)
-			s.finishSequence(i, llm.DoneReasonStop)
+			slog.Log(context.TODO(), logutil.LevelTrace, "computeBatch: EOS", "batchID", activeBatch.id, "seqIdx", i)
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
@@ -781,7 +741,7 @@ func (s *Server) computeBatch(bs *batchState) {
 		}
 
 		if nextBatchTokens[i] == nil {
-			slog.Error("batch corrupted", "id", bs.id, "batch", bs.batch, "seqIdx", i, "seq", seq)
+			slog.Error("batch corrupted", "id", activeBatch.id, "batch", activeBatch.batch, "seqIdx", i, "seq", seq)
 			s.hardErrCh <- fmt.Errorf("expected a single token during decode")
 			return
 		}
@@ -815,7 +775,7 @@ func (s *Server) computeBatch(bs *batchState) {
 
 			seq.cache.Inputs = seq.cache.Inputs[:tokenLen]
 
-			s.finishSequence(i, llm.DoneReasonStop)
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
@@ -828,7 +788,7 @@ func (s *Server) computeBatch(bs *batchState) {
 		}
 
 		if !flushPending(seq) {
-			s.finishSequence(i, llm.DoneReasonConnectionClosed)
+			s.removeSequence(i, llm.DoneReasonConnectionClosed)
 		}
 	}
 }
