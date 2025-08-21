@@ -172,7 +172,19 @@ func (m *mxfp4) WriteTo(w io.Writer) (int64, error) {
 		blocksDims[i] = int(d)
 	}
 
-	var blocks tensor.Tensor = tensor.New(tensor.WithShape(blocksDims...), tensor.WithBacking(b.Bytes()))
+	bts := b.Bytes()
+	var tmp [16]byte
+	for i := 0; i < b.Len(); i += 16 {
+		for j := range 8 {
+			a, b := bts[i+j], bts[i+j+8]
+			tmp[2*j+0] = (a & 0x0F) | (b << 4)
+			tmp[2*j+1] = (a >> 4) | (b & 0xF0)
+		}
+
+		copy(bts[i:i+16], tmp[:])
+	}
+
+	var blocks tensor.Tensor = tensor.New(tensor.WithShape(blocksDims...), tensor.WithBacking(bts))
 
 	var s bytes.Buffer
 	if _, err := m.scales.WriteTo(&s); err != nil {
