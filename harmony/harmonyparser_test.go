@@ -1,4 +1,4 @@
-package server
+package harmony
 
 import (
 	"fmt"

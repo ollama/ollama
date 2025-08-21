@@ -1,10 +1,9 @@
-package server
+package harmony
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -19,18 +18,6 @@ const (
 	harmonyParserState_ParsingHeader
 	harmonyParserState_ParsingContent
 )
-
-func shouldUseHarmony(model Model) bool {
-	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
-		// heuristic to check whether the template expects to be parsed via harmony:
-		// search for harmony tags that are nearly always used
-		if model.Template.Contains("<|start|>") && model.Template.Contains("<|end|>") {
-			return true
-		}
-	}
-
-	return false
-}
 
 func (s harmonyParserState) String() string {
 	switch s {
@@ -277,20 +264,20 @@ const (
 // This is a higher level interface that maps harmony concepts into ollama concepts
 type HarmonyMessageHandler struct {
 	state           harmonyMessageState
-	harmonyParser   *HarmonyParser
-	functionNameMap *FunctionNameMap
+	HarmonyParser   *HarmonyParser
+	FunctionNameMap *FunctionNameMap
 }
 
 // NewHarmonyMessageHandler creates a new message handler
 func NewHarmonyMessageHandler() *HarmonyMessageHandler {
 	return &HarmonyMessageHandler{
 		state: harmonyMessageState_Normal,
-		harmonyParser: &HarmonyParser{
+		HarmonyParser: &HarmonyParser{
 			MessageStartTag: "<|start|>",
 			MessageEndTag:   "<|end|>",
 			HeaderEndTag:    "<|message|>",
 		},
-		functionNameMap: NewFunctionNameMap(),
+		FunctionNameMap: NewFunctionNameMap(),
 	}
 }
 
@@ -301,7 +288,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 	thinkingSb := strings.Builder{}
 	toolContentSb := strings.Builder{}
 
-	events := h.harmonyParser.AddContent(content)
+	events := h.HarmonyParser.AddContent(content)
 	for _, event := range events {
 		switch event := event.(type) {
 		case HarmonyEventHeaderComplete:
