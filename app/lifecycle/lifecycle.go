@@ -82,7 +82,9 @@ func Run() {
 		}
 	}
 
-	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	if !envconfig.SkipUpdateCheck {
+		StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	}
 
 	t.Run()
 	cancel()
