@@ -188,7 +188,7 @@ var (
 	// Enable the new memory estimation logic
 	NewMemoryEstimates = Bool("OLLAMA_NEW_ESTIMATES")
 	// Disable the periodic update checker
-	SkipUpate = Bool("OLLAMA_SKIP_UPDATE_CHECK")
+	SkipUpdateCheck = Bool("OLLAMA_SKIP_UPDATE_CHECK")
 )
 
 func String(s string) func() string {
@@ -275,7 +275,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 		"OLLAMA_NEW_ESTIMATES":     {"OLLAMA_NEW_ESTIMATES", NewMemoryEstimates(), "Enable the new memory estimation logic"},
-		"OLLAMA_SKIP_UPDATE_CHECK": {"OLLAMA_SKIP_UPDATE_CHECK", SkipUpate(), "Disable the periodic update checker"},
+		"OLLAMA_SKIP_UPDATE_CHECK": {"OLLAMA_SKIP_UPDATE_CHECK", SkipUpdateCheck(), "Disable the periodic update checker"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
