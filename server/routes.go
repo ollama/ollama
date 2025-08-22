@@ -1660,6 +1660,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			OpeningTag: openingTag,
 			ClosingTag: closingTag,
 		}
+
+		if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
+			thinkingState.AddContent(openingTag)
+		}
 	}
 
 	var toolParser *tools.Parser
