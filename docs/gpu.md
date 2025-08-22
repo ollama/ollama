@@ -65,6 +65,9 @@ With ROCm v6.1, the following GPUs are supported on Windows.
 | AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`    |
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` |
 
+### Known Workarounds
+
+- The RX Vega 56 requires `HSA_ENABLE_SDMA=0` to disable SDMA
 
 ### Overrides on Linux
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In

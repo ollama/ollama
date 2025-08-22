@@ -26,29 +26,6 @@ var (
 	GetLogicalProcessorInformationEx = k32.NewProc("GetLogicalProcessorInformationEx")
 )
 
-var CudartGlobs = []string{
-	"c:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin\\cudart64_*.dll",
-}
-
-var NvmlGlobs = []string{
-	"c:\\Windows\\System32\\nvml.dll",
-}
-
-var NvcudaGlobs = []string{
-	"c:\\windows\\system*\\nvcuda.dll",
-}
-
-var OneapiGlobs = []string{
-	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
-}
-
-var (
-	CudartMgmtName = "cudart64_*.dll"
-	NvcudaMgmtName = "nvcuda.dll"
-	NvmlMgmtName   = "nvml.dll"
-	OneapiMgmtName = "ze_intel_gpu64.dll"
-)
-
 func GetCPUMem() (memInfo, error) {
 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}
 	r1, _, err := globalMemoryStatusExProc.Call(uintptr(unsafe.Pointer(&memStatus)))
@@ -231,4 +208,9 @@ func GetCPUDetails() ([]CPU, error) {
 		cpus[i].ThreadCount = pkg.threadCount
 	}
 	return cpus, nil
+}
+
+func IsNUMA() bool {
+	// numa support in ggml is linux only
+	return false
 }

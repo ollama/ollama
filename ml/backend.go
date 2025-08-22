@@ -29,6 +29,9 @@ type Backend interface {
 	Get(name string) Tensor
 	NewContext() Context
 	NewContextSize(size int) Context
+
+	// Enumerate the devices available for inference via this backend
+	BackendDevices() []DeviceInfo
 }
 
 // BackendCacheConfig should be implemented by backends that need special output
@@ -299,6 +302,61 @@ func sumMemory(mem []Memory) uint64 {
 	}
 
 	return sum
+}
+
+type DeviceInfo struct {
+	// Name is the name of the device as labeled by the backend. It
+	// may not be persistent across instances of the runner.
+	Name string `json:"name"`
+
+	// Description is the longer user-friendly identification of the device
+	Description string `json:"description"`
+
+	// ID is an identifier for the device for matching with system
+	// management libraries.
+	ID string `json:"id"`
+
+	// Library identifies which library is used for the device (e.g. CUDA, HIP, etc.)
+	Library string `json:"backend,omitempty"`
+
+	// Integrated is set true for integrated GPUs, false for Discrete GPUs
+	Integrated bool `json:"integration,omitempty"`
+
+	// PCIID is the bus, device and domain ID of the device for deduplication
+	// when discovered by multiple backends
+	PCIID string `json:"pci_id,omitempty"`
+
+	// TotalMemory is the total amount of memory the device can use for loading models
+	TotalMemory uint64 `json:"total_memory"`
+
+	// FreeMemory is the amount of memory currently available on the device for loading models
+	FreeMemory uint64 `json:"free_memory,omitempty"`
+
+	// ComputeMajor is the major version of capabilities of the device
+	// if unsupported by the backend, -1 will be returned
+	ComputeMajor int
+
+	// ComputeMinor is the minor version of capabilities of the device
+	// if unsupported by the backend, -1 will be returned
+	ComputeMinor int
+
+	// Driver Information
+	DriverMajor int `json:"driver_major,omitempty"`
+	DriverMinor int `json:"driver_minor,omitempty"`
+
+	// Where backends were loaded from
+	LibraryPath []string
+}
+
+func (d DeviceInfo) Compute() string {
+	// AMD gfx is encoded into the major minor in hex form
+	if strings.EqualFold(d.Library, "HIP") {
+		return fmt.Sprintf("gfx%x%02x", d.ComputeMajor, d.ComputeMinor)
+	}
+	return strconv.Itoa(d.ComputeMajor) + "." + strconv.Itoa(d.ComputeMinor)
+}
+func (d DeviceInfo) Driver() string {
+	return strconv.Itoa(d.DriverMajor) + "." + strconv.Itoa(d.DriverMinor)
 }
 
 // Log prints a high level summary of the memory (allocated or not)
