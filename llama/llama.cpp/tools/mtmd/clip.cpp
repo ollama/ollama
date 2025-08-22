@@ -3791,7 +3791,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
             } else if (ctx->minicpmv_version == 5) {
                 return 2560;
             } else if (ctx->minicpmv_version == 6) {
-                return 2560;
+                return 4096;
             }
             GGML_ABORT("Unknown minicpmv version");
         case PROJECTOR_TYPE_GLM_EDGE:
