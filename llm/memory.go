@@ -196,7 +196,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	useFlashAttention := (envconfig.FlashAttention() || f.FlashAttention()) &&
-		discover.GetGPUInfo().FlashAttentionSupported() &&
+		(discover.GpuInfoList)(gpus).FlashAttentionSupported() &&
 		f.SupportsFlashAttention()
 
 	var kvct string

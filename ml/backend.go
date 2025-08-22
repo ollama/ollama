@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,9 @@ type Backend interface {
 	Get(name string) Tensor
 	NewContext() Context
 	NewContextSize(size int) Context
+
+	// Enumerate the devices available for inference via this backend
+	BackendDevices() []DeviceInfo
 }
 
 // BackendCacheConfig should be implemented by backends that need special output
@@ -299,6 +303,116 @@ func sumMemory(mem []Memory) uint64 {
 	}
 
 	return sum
+}
+
+// Minimal unique device identification
+type DeviceID struct {
+	// ID is an identifier for the device for matching with system
+	// management libraries.
+	// This ID represents a "post filtered" view of the enumerated devices
+	// if the ID is numeric
+	ID string `json:"id"`
+
+	// Library identifies which library is used for the device (e.g. CUDA, HIP, etc.)
+	Library string `json:"backend,omitempty"`
+}
+
+type DeviceInfo struct {
+	DeviceID
+
+	// Name is the name of the device as labeled by the backend. It
+	// may not be persistent across instances of the runner.
+	Name string `json:"name"`
+
+	// Description is the longer user-friendly identification of the device
+	Description string `json:"description"`
+
+	// FilterID is populated with the unfiltered device ID if a numeric ID is used
+	// so the device can be included.
+	FilteredID string `json:"filtered_id,omitempty"`
+
+	// Integrated is set true for integrated GPUs, false for Discrete GPUs
+	Integrated bool `json:"integration,omitempty"`
+
+	// PCIID is the bus, device and domain ID of the device for deduplication
+	// when discovered by multiple backends
+	PCIID string `json:"pci_id,omitempty"`
+
+	// TotalMemory is the total amount of memory the device can use for loading models
+	TotalMemory uint64 `json:"total_memory"`
+
+	// FreeMemory is the amount of memory currently available on the device for loading models
+	FreeMemory uint64 `json:"free_memory,omitempty"`
+
+	// ComputeMajor is the major version of capabilities of the device
+	// if unsupported by the backend, -1 will be returned
+	ComputeMajor int
+
+	// ComputeMinor is the minor version of capabilities of the device
+	// if unsupported by the backend, -1 will be returned
+	ComputeMinor int
+
+	// Driver Information
+	DriverMajor int `json:"driver_major,omitempty"`
+	DriverMinor int `json:"driver_minor,omitempty"`
+
+	// Where backends were loaded from
+	LibraryPath []string
+}
+
+func (d DeviceInfo) Compute() string {
+	// AMD gfx is encoded into the major minor in hex form
+	if strings.EqualFold(d.Library, "HIP") {
+		return fmt.Sprintf("gfx%x%02x", d.ComputeMajor, d.ComputeMinor)
+	}
+	return strconv.Itoa(d.ComputeMajor) + "." + strconv.Itoa(d.ComputeMinor)
+}
+
+func (d DeviceInfo) Driver() string {
+	return strconv.Itoa(d.DriverMajor) + "." + strconv.Itoa(d.DriverMinor)
+}
+
+type DeviceComparison int
+
+const (
+	UniqueDevice      DeviceComparison = iota
+	SameBackendDevice                  // The device is the same, and the library/backend is the same
+	DuplicateDevice                    // The same physical device but different library/backend (overlapping device)
+)
+
+func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
+	if a.PCIID != b.PCIID {
+		return UniqueDevice
+	}
+	if a.Library == b.Library {
+		return SameBackendDevice
+	}
+	return DuplicateDevice
+}
+
+// For a SameBackendDevice, return true if b is better than a
+// e.g. newer GPU library version
+func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
+	aLib := a.LibraryPath[len(a.LibraryPath)-1]
+	bLib := b.LibraryPath[len(b.LibraryPath)-1]
+	if aLib == bLib {
+		return false
+	}
+	aLibSplit := strings.SplitN(aLib, "_", 2)
+	bLibSplit := strings.SplitN(bLib, "_", 2)
+	if len(aLibSplit) < 2 || len(bLibSplit) < 2 {
+		return false
+	}
+	if aLibSplit[0] != bLibSplit[0] {
+		slog.Debug("unexpected libraries", "a", aLib, "b", bLib)
+		return false
+	}
+	if aLibSplit[1] == bLibSplit[1] {
+		return false
+	}
+	cmp := []string{aLibSplit[1], bLibSplit[1]}
+	sort.Sort(sort.Reverse(sort.StringSlice(cmp)))
+	return cmp[0] == bLibSplit[1]
 }
 
 // Log prints a high level summary of the memory (allocated or not)

@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -52,8 +53,8 @@ type Scheduler struct {
 
 	loadFn       func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool
 	newServerFn  func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
-	getGpuFn     func() discover.GpuInfoList
-	getCpuFn     func() discover.GpuInfoList
+	getGpuFn     func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList
+	getCpuFn     func() discover.GpuInfo
 	reschedDelay time.Duration
 }
 
@@ -148,7 +149,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				s.loadedMu.Lock()
 				runner := s.loaded[pending.model.ModelPath]
 				loadedCount := len(s.loaded)
+				runnersSnapshot := make([]discover.FilteredRunnerDiscovery, 0, len(s.loaded))
+				for _, r := range s.loaded {
+					runnersSnapshot = append(runnersSnapshot, r)
+				}
 				s.loadedMu.Unlock()
+
 				if runner != nil {
 					if runner.needsReload(ctx, pending) {
 						slog.Debug("reloading", "runner", runner)
@@ -166,9 +172,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					// Get a refreshed GPU list
 					var gpus discover.GpuInfoList
 					if pending.opts.NumGPU == 0 {
-						gpus = s.getCpuFn()
+						gpus = discover.GpuInfoList{s.getCpuFn()}
 					} else {
-						gpus = s.getGpuFn()
+						gpus = s.getGpuFn(ctx, runnersSnapshot)
 					}
 
 					if envconfig.MaxRunners() <= 0 {
@@ -343,7 +349,11 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				runner.refMu.Unlock()
 			} else {
 				slog.Debug("starting background wait for VRAM recovery", "runner", runner)
-				finished := runner.waitForVRAMRecovery()
+				runnersSnapshot := make([]discover.FilteredRunnerDiscovery, 0, len(s.loaded))
+				for _, r := range s.loaded {
+					runnersSnapshot = append(runnersSnapshot, r)
+				}
+				finished := runner.waitForVRAMRecovery(runnersSnapshot)
 				runner.unload()
 				delete(s.loaded, runner.modelPath)
 				s.loadedMu.Unlock()
@@ -571,7 +581,6 @@ func (runner *runnerRef) unload() {
 		runner.llama.Close()
 	}
 	runner.model = nil
-	runner.llama = nil
 	runner.Options = nil
 	runner.gpus = nil
 }
@@ -618,7 +627,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 // a before and after GPU memory allocation.  The returned channel
 // will be notified when we're done waiting, or have timed out and should
 // proceed anyway
-func (runner *runnerRef) waitForVRAMRecovery() chan any {
+func (runner *runnerRef) waitForVRAMRecovery(runners []discover.FilteredRunnerDiscovery) chan any {
 	finished := make(chan any, 1)
 
 	// CPU or Metal don't need checking, so no waiting required
@@ -633,7 +642,7 @@ func (runner *runnerRef) waitForVRAMRecovery() chan any {
 	start := time.Now()
 
 	// Establish a baseline before we unload
-	gpusBefore := discover.GetGPUInfo()
+	gpusBefore := discover.GetGPUInfo(context.Background(), runners)
 	var totalMemoryBefore, freeMemoryBefore uint64
 	for _, gpu := range gpusBefore {
 		totalMemoryBefore += gpu.TotalMemory
@@ -651,7 +660,7 @@ func (runner *runnerRef) waitForVRAMRecovery() chan any {
 			}
 
 			// Query GPUs, look for free to go back up
-			gpusNow := discover.GetGPUInfo()
+			gpusNow := discover.GetGPUInfo(context.Background(), runners)
 			var totalMemoryNow, freeMemoryNow uint64
 			for _, gpu := range gpusNow {
 				totalMemoryNow += gpu.TotalMemory
@@ -693,6 +702,37 @@ func (runner *runnerRef) LogValue() slog.Value {
 		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
 	}
 	return slog.GroupValue(attrs...)
+}
+
+// Implements discover.RunnerDiscovery
+func (runner *runnerRef) GetPort() int {
+	if runner.llama != nil {
+		return runner.llama.Pid()
+	}
+	return -1
+}
+
+func (runner *runnerRef) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
+	if runner.llama != nil {
+		return runner.llama.GetDeviceInfos(ctx)
+	}
+	return nil
+}
+
+func (runner *runnerRef) GetActiveDeviceIDs() []ml.DeviceID {
+	devIDs := make([]ml.DeviceID, len(runner.gpus))
+	for i := range devIDs {
+		devIDs[i].ID = runner.gpus[i].ID
+		devIDs[i].Library = runner.gpus[i].Library
+	}
+	return devIDs
+}
+
+func (runner *runnerRef) HasExited() bool {
+	if runner.llama != nil {
+		return runner.llama.HasExited()
+	}
+	return true
 }
 
 type ByDurationAndName []*runnerRef

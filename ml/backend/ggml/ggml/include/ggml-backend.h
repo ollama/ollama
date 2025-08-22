@@ -158,6 +158,15 @@ extern "C" {
         size_t memory_total;
         enum ggml_backend_dev_type type;
         struct ggml_backend_dev_caps caps;
+        int driver_major;
+        int driver_minor;
+        int compute_major;
+        int compute_minor;
+        int integrated;
+        int pci_bus_id;
+        int pci_device_id;
+        int pci_domain_id;
+        const char *library;
     };
 
     GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);

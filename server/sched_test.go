@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestMain(m *testing.M) {
@@ -150,18 +151,18 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vra
 	return b
 }
 
-func getGpuFn() discover.GpuInfoList {
+func getGpuFn(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList {
 	g := discover.GpuInfo{Library: "metal"}
 	g.TotalMemory = 24 * format.GigaByte
 	g.FreeMemory = 12 * format.GigaByte
 	return []discover.GpuInfo{g}
 }
 
-func getCpuFn() discover.GpuInfoList {
+func getCpuFn() discover.GpuInfo {
 	g := discover.GpuInfo{Library: "cpu"}
 	g.TotalMemory = 32 * format.GigaByte
 	g.FreeMemory = 26 * format.GigaByte
-	return []discover.GpuInfo{g}
+	return g
 }
 
 func TestRequestsSameModelSameRequest(t *testing.T) {
@@ -460,7 +461,7 @@ func TestPrematureExpired(t *testing.T) {
 	// Same model, same request
 	scenario1a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, nil)
 	s := InitScheduler(ctx)
-	s.getGpuFn = func() discover.GpuInfoList {
+	s.getGpuFn = func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList {
 		g := discover.GpuInfo{Library: "metal"}
 		g.TotalMemory = 24 * format.GigaByte
 		g.FreeMemory = 12 * format.GigaByte
@@ -732,7 +733,11 @@ func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
 }
-func (s *mockLlm) VRAMSize() uint64              { return s.vramSize }
-func (s *mockLlm) TotalSize() uint64             { return s.totalSize }
-func (s *mockLlm) VRAMByGPU(gpuid string) uint64 { return s.vramByGPU[gpuid] }
-func (s *mockLlm) Pid() int                      { return -1 }
+func (s *mockLlm) VRAMSize() uint64                                   { return s.vramSize }
+func (s *mockLlm) TotalSize() uint64                                  { return s.totalSize }
+func (s *mockLlm) VRAMByGPU(gpuid string) uint64                      { return s.vramByGPU[gpuid] }
+func (s *mockLlm) Pid() int                                           { return -1 }
+func (s *mockLlm) GetPort() int                                       { return -1 }
+func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
+func (s *mockLlm) HasExited() bool                                    { return false }
+func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
