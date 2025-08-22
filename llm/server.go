@@ -78,6 +78,8 @@ type LlamaServer interface {
 	TotalSize() uint64
 	VRAMByGPU(gpuID string) uint64
 	Pid() int
+	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
+	HasExited() bool
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -361,12 +363,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 
-		envWorkarounds := []string{}
-		for _, gpu := range gpus {
-			envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
-		}
 		// Always filter down the set of GPUs in case there are any unsupported devices that might crash
-		envWorkarounds = append(envWorkarounds, gpus.GetVisibleDevicesEnv()...)
+		envWorkarounds := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path variable with our adjusted version
@@ -524,7 +522,7 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 			s.options.NumGPU = 0
 		case gpus[0].Library != "metal" && s.estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			gpus = discover.GetCPUInfo()
+			gpus = discover.GpuInfoList{discover.GetCPUInfo()}
 		case s.options.NumGPU < 0 && s.estimate.Layers > 0 && gpus[0].Library != "cpu":
 			s.options.NumGPU = s.estimate.Layers
 		}
@@ -1310,6 +1308,30 @@ func (s *llmServer) Pid() int {
 		return s.cmd.Process.Pid
 	}
 	return -1
+}
+
+func (s *llmServer) GetPort() int {
+	return s.port
+}
+
+func (s *llmServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
+	// llama engine does not currently support VRAM query, short circuit
+	if s.textProcessor == nil {
+		slog.Debug("llamarunner free vram reporting not supported")
+		return nil
+	}
+	devices, err := discover.GetDevicesFromRunner(ctx, s)
+	if err != nil {
+		slog.Debug("failure refreshing GPU information", "error", err)
+	}
+	return devices
+}
+
+func (s *llmServer) HasExited() bool {
+	if s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0 {
+		return true
+	}
+	return false
 }
 
 var grammarJSON = `
