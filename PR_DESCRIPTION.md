@@ -17,15 +17,16 @@ Token counting, prompt chunking, and model-aligned behavior require access to a 
 ## Design Notes
 
 ### Vocab-Only Target
-- **Primary path**: Load only vocabulary (no context weights/VRAM)
+- **Primary path**: Load only vocabulary (no context weights/VRAM) ✅ **IMPLEMENTED**
 - **Fallback**: Use existing scheduler infrastructure for compatibility
-- **Future**: Wire to llama.cpp vocab-only API once available
+- **Future**: ✅ **COMPLETED** - Using llama.cpp vocab-only API via existing bindings
 
 ### Implementation Details
 - **LRU cache**: 8-model capacity with automatic eviction
 - **Concurrency-safe**: Mutex-protected operations
 - **Debug logging**: `OLLAMA_TOKENIZER_DEBUG=1` for observability
 - **Sentinel errors**: Clear fallback detection for monitoring
+- **Vocab-only API**: ✅ **COMPLETED** - Direct integration with llama.cpp via Go bindings
 
 ### Architecture
 ```
@@ -61,8 +62,8 @@ server/routes.go → tokenizerloader.Get() → vocab-only OR fallback
 ## Follow-ups
 
 ### Immediate
-- [ ] Wire `openVocabOnly()` to llama.cpp vocab-only API (PR #8106)
-- [ ] Implement `Tokenize()`/`Detokenize()` on `vocabOnlyModel`
+- [x] Wire `openVocabOnly()` to llama.cpp vocab-only API (PR #8106)
+- [x] Implement `Tokenize()`/`Detokenize()` on `vocabOnlyModel`
 
 ### SDK Integration
 - [ ] ollama-python: [tracking doc](upstream-links/tokenize-python.md)
