@@ -40,13 +40,7 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_temperature",
 				Description: "Retrieve the temperature for a given location",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"city"},
 					Properties: map[string]api.ToolProperty{
@@ -68,13 +62,7 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_conditions",
 				Description: "Retrieve the current weather conditions for a given location",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type: "object",
 					Properties: map[string]api.ToolProperty{
 						"location": {
@@ -104,13 +92,7 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_address",
 				Description: "Get the address of a given location",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type: "object",
 					Properties: map[string]api.ToolProperty{
 						"location": {
@@ -126,13 +108,7 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "add",
 				Description: "Add two numbers",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type: "object",
 					Properties: map[string]api.ToolProperty{
 						"a": {
