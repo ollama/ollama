@@ -78,7 +78,7 @@ func (c *InputCache) Close() {
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
-// through LoadCacheSlot) require a lock to be be held that serializes
+// through LoadCacheSlot) require a lock to be held that serializes
 // these operations with each other and processBatch
 
 type InputCacheSlot struct {
