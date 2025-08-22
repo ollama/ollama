@@ -1204,6 +1204,136 @@ func allowedHost(host string) bool {
 	return false
 }
 
+type tokenizeRequest struct {
+	Model     string         `json:"model"`
+	Content   string         `json:"content"`
+	MediaType string         `json:"media_type,omitempty"`
+	KeepAlive *api.Duration  `json:"keep_alive,omitempty"`
+	Options   map[string]any `json:"options"`
+}
+
+type tokenizeResponse struct {
+	Model         string        `json:"model"`
+	Tokens        []int         `json:"tokens"`
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration  time.Duration `json:"load_duration,omitempty"`
+}
+
+type detokenizeRequest struct {
+	Model     string         `json:"model"`
+	Tokens    []int          `json:"tokens"`
+	MediaType string         `json:"media_type,omitempty"`
+	KeepAlive *api.Duration  `json:"keep_alive,omitempty"`
+	Options   map[string]any `json:"options"`
+}
+
+type detokenizeResponse struct {
+	Model         string        `json:"model"`
+	Content       string        `json:"content"`
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration  time.Duration `json:"load_duration,omitempty"`
+}
+
+func (s *Server) TokenizeHandler(c *gin.Context) {
+	checkpointStart := time.Now()
+
+	var req tokenizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.MediaType == "" {
+		req.MediaType = "text"
+	}
+	if req.MediaType != "text" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("media_type '%s' not supported", req.MediaType)})
+		return
+	}
+
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	tokens, err := r.Tokenize(c.Request.Context(), req.Content)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+
+	resp := tokenizeResponse{
+		Model:         req.Model,
+		Tokens:        tokens,
+		TotalDuration: time.Since(checkpointStart),
+		LoadDuration:  checkpointLoaded.Sub(checkpointStart),
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (s *Server) DetokenizeHandler(c *gin.Context) {
+	checkpointStart := time.Now()
+
+	var req detokenizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.MediaType == "" {
+		req.MediaType = "text"
+	}
+	if req.MediaType != "text" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("media_type '%s' not supported", req.MediaType)})
+		return
+	}
+
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	content, err := r.Detokenize(c.Request.Context(), req.Tokens)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+
+	resp := detokenizeResponse{
+		Model:         req.Model,
+		Content:       content,
+		TotalDuration: time.Since(checkpointStart),
+		LoadDuration:  checkpointLoaded.Sub(checkpointStart),
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if addr == nil {
@@ -1303,6 +1433,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
