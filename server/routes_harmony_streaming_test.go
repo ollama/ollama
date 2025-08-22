@@ -255,8 +255,8 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 					unloadedCh:    make(chan any, 1),
 					loaded:        make(map[string]*runnerRef),
 					newServerFn:   newMockServer(&mock),
-					getGpuFn:      discover.GetGPUInfo,
-					getCpuFn:      discover.GetCPUInfo,
+					getGpuFn:      getGpuFn,
+					getCpuFn:      getCpuFn,
 					reschedDelay:  100 * time.Millisecond,
 					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 						req.successCh <- &runnerRef{
@@ -406,8 +406,8 @@ func TestChatHarmonyParserStreamingSimple(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  100 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				req.successCh <- &runnerRef{

@@ -203,6 +203,8 @@ add_library(ggml-base
             ggml-threading.h
             ggml-quants.c
             ggml-quants.h
+            mem_hip.cpp
+            mem_nvml.cpp
             gguf.cpp)
 
 target_include_directories(ggml-base PRIVATE .)
