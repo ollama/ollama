@@ -53,7 +53,7 @@ type Scheduler struct {
 	loadFn       func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool
 	newServerFn  func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
 	getGpuFn     func() discover.GpuInfoList
-	getCpuFn     func() discover.GpuInfoList
+	getCpuFn     func() discover.GpuInfo
 	reschedDelay time.Duration
 }
 
@@ -166,7 +166,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					// Get a refreshed GPU list
 					var gpus discover.GpuInfoList
 					if pending.opts.NumGPU == 0 {
-						gpus = s.getCpuFn()
+						gpus = discover.GpuInfoList{s.getCpuFn()}
 					} else {
 						gpus = s.getGpuFn()
 					}

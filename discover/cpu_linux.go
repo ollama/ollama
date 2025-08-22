@@ -5,53 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/format"
-)
-
-var CudartGlobs = []string{
-	"/usr/local/cuda/lib64/libcudart.so*",
-	"/usr/lib/x86_64-linux-gnu/nvidia/current/libcudart.so*",
-	"/usr/lib/x86_64-linux-gnu/libcudart.so*",
-	"/usr/lib/wsl/lib/libcudart.so*",
-	"/usr/lib/wsl/drivers/*/libcudart.so*",
-	"/opt/cuda/lib64/libcudart.so*",
-	"/usr/local/cuda*/targets/aarch64-linux/lib/libcudart.so*",
-	"/usr/lib/aarch64-linux-gnu/nvidia/current/libcudart.so*",
-	"/usr/lib/aarch64-linux-gnu/libcudart.so*",
-	"/usr/local/cuda/lib*/libcudart.so*",
-	"/usr/lib*/libcudart.so*",
-	"/usr/local/lib*/libcudart.so*",
-}
-
-var NvmlGlobs = []string{}
-
-var NvcudaGlobs = []string{
-	"/usr/local/cuda*/targets/*/lib/libcuda.so*",
-	"/usr/lib/*-linux-gnu/nvidia/current/libcuda.so*",
-	"/usr/lib/*-linux-gnu/libcuda.so*",
-	"/usr/lib/wsl/lib/libcuda.so*",
-	"/usr/lib/wsl/drivers/*/libcuda.so*",
-	"/opt/cuda/lib*/libcuda.so*",
-	"/usr/local/cuda/lib*/libcuda.so*",
-	"/usr/lib*/libcuda.so*",
-	"/usr/local/lib*/libcuda.so*",
-}
-
-var OneapiGlobs = []string{
-	"/usr/lib/x86_64-linux-gnu/libze_intel_gpu.so*",
-	"/usr/lib*/libze_intel_gpu.so*",
-}
-
-var (
-	CudartMgmtName = "libcudart.so*"
-	NvcudaMgmtName = "libcuda.so*"
-	NvmlMgmtName   = "" // not currently wired on linux
-	OneapiMgmtName = "libze_intel_gpu.so*"
 )
 
 func GetCPUMem() (memInfo, error) {
@@ -195,4 +155,16 @@ func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 		result = append(result, *socketByID[k])
 	}
 	return result, nil
+}
+
+func IsNUMA() bool {
+	ids := map[string]any{}
+	packageIds, _ := filepath.Glob("/sys/devices/system/cpu/cpu*/topology/physical_package_id")
+	for _, packageId := range packageIds {
+		id, err := os.ReadFile(packageId)
+		if err == nil {
+			ids[strings.TrimSpace(string(id))] = struct{}{}
+		}
+	}
+	return len(ids) > 1
 }

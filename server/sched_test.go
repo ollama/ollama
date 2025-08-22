@@ -157,11 +157,11 @@ func getGpuFn() discover.GpuInfoList {
 	return []discover.GpuInfo{g}
 }
 
-func getCpuFn() discover.GpuInfoList {
+func getCpuFn() discover.GpuInfo {
 	g := discover.GpuInfo{Library: "cpu"}
 	g.TotalMemory = 32 * format.GigaByte
 	g.FreeMemory = 26 * format.GigaByte
-	return []discover.GpuInfo{g}
+	return g
 }
 
 func TestRequestsSameModelSameRequest(t *testing.T) {
