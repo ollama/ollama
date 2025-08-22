@@ -38,6 +38,7 @@ import (
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
+	"github.com/ollama/ollama/server/tokenizerloader"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
@@ -1205,11 +1206,9 @@ func allowedHost(host string) bool {
 }
 
 type tokenizeRequest struct {
-	Model     string         `json:"model"`
-	Content   string         `json:"content"`
-	MediaType string         `json:"media_type,omitempty"`
-	KeepAlive *api.Duration  `json:"keep_alive,omitempty"`
-	Options   map[string]any `json:"options"`
+	Model   string         `json:"model"`
+	Content string         `json:"content"`
+	Options map[string]any `json:"options"`
 }
 
 type tokenizeResponse struct {
@@ -1220,11 +1219,9 @@ type tokenizeResponse struct {
 }
 
 type detokenizeRequest struct {
-	Model     string         `json:"model"`
-	Tokens    []int          `json:"tokens"`
-	MediaType string         `json:"media_type,omitempty"`
-	KeepAlive *api.Duration  `json:"keep_alive,omitempty"`
-	Options   map[string]any `json:"options"`
+	Model   string         `json:"model"`
+	Tokens  []int          `json:"tokens"`
+	Options map[string]any `json:"options"`
 }
 
 type detokenizeResponse struct {
@@ -1247,32 +1244,30 @@ func (s *Server) TokenizeHandler(c *gin.Context) {
 		return
 	}
 
-	if req.MediaType == "" {
-		req.MediaType = "text"
-	}
-	if req.MediaType != "text" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("media_type '%s' not supported", req.MediaType)})
-		return
-	}
-
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	tk, isFallback, err := tokenizerloader.Get(c.Request.Context(), name.String())
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
 
 	checkpointLoaded := time.Now()
 
-	tokens, err := r.Tokenize(c.Request.Context(), req.Content)
+	tokens, err := tk.Tokenize(req.Content)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
+	}
+
+	if isFallback {
+		slog.Debug("tokenize: using fallback scheduler", "model", req.Model)
+	} else {
+		slog.Debug("tokenize: using vocab-only", "model", req.Model)
 	}
 
 	resp := tokenizeResponse{
@@ -1297,32 +1292,30 @@ func (s *Server) DetokenizeHandler(c *gin.Context) {
 		return
 	}
 
-	if req.MediaType == "" {
-		req.MediaType = "text"
-	}
-	if req.MediaType != "text" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("media_type '%s' not supported", req.MediaType)})
-		return
-	}
-
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	tk, isFallback, err := tokenizerloader.Get(c.Request.Context(), name.String())
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
 
 	checkpointLoaded := time.Now()
 
-	content, err := r.Detokenize(c.Request.Context(), req.Tokens)
+	content, err := tk.Detokenize(req.Tokens)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
+	}
+
+	if isFallback {
+		slog.Debug("detokenize: using fallback scheduler", "model", req.Model)
+	} else {
+		slog.Debug("detokenize: using vocab-only", "model", req.Model)
 	}
 
 	resp := detokenizeResponse{
@@ -1454,6 +1447,26 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		}
 		return rs, nil
 	}
+
+	tokenizerloader.RegisterFallbackHooks(
+		func(modelName, text string) ([]int, error) {
+			// Use the same path you already use in TokenizeHandler to schedule a runner
+			name := model.ParseName(modelName)
+			r, _, _, err := s.scheduleRunner(context.Background(), name.String(), []model.Capability{}, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			return r.Tokenize(context.Background(), text)
+		},
+		func(modelName string, tokens []int) (string, error) {
+			name := model.ParseName(modelName)
+			r, _, _, err := s.scheduleRunner(context.Background(), name.String(), []model.Capability{}, nil, nil)
+			if err != nil {
+				return "", err
+			}
+			return r.Detokenize(context.Background(), tokens)
+		},
+	)
 
 	return r, nil
 }
