@@ -436,3 +436,50 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestToolFunctionParameters_String(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   ToolFunctionParameters
+		expected string
+	}{
+		{
+			name: "simple object with string property",
+			params: ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"name"},
+				Properties: map[string]ToolProperty{
+					"name": {
+						Type:        PropertyType{"string"},
+						Description: "The name of the person",
+					},
+				},
+			},
+			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"The name of the person"}}}`,
+		},
+		{
+			name: "marshal failure returns empty string",
+			params: ToolFunctionParameters{
+				Type: "object",
+				Defs: func() any {
+					// Create a cycle that will cause json.Marshal to fail
+					type selfRef struct {
+						Self *selfRef
+					}
+					s := &selfRef{}
+					s.Self = s
+					return s
+				}(),
+				Properties: map[string]ToolProperty{},
+			},
+			expected: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := test.params.String()
+			assert.Equal(t, test.expected, result)
+		})
+	}
+}
