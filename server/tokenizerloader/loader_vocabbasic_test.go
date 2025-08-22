@@ -17,9 +17,9 @@ type fakeTok struct {
 	text   string
 }
 
-func (f *fakeTok) Tokenize(s string) ([]int, error)        { return f.tokens, nil }
-func (f *fakeTok) Detokenize(ids []int) (string, error)     { return f.text, nil }
-func (f *fakeTok) Close() error                             { return nil }
+func (f *fakeTok) Tokenize(s string) ([]int, error)     { return f.tokens, nil }
+func (f *fakeTok) Detokenize(ids []int) (string, error) { return f.text, nil }
+func (f *fakeTok) Close() error                         { return nil }
 
 func TestGet_VocabOnlyPreferred_NoFallback(t *testing.T) {
 	_ = os.Setenv("OLLAMA_TOKENIZER_DEBUG", "1")
@@ -82,7 +82,7 @@ func TestGet_FallbackWhenVocabOnlyUnavailable(t *testing.T) {
 
 	// Inject a vocab-only opener that reports unavailability
 	SetOpenVocabOnlyForTest(func(ctx context.Context, model string) (Tokenizer, error) {
-		return nil, errVocabOnlyUnavailable
+		return nil, ErrVocabOnlyUnavailable
 	})
 
 	// Fallback hooks emulate scheduler behavior

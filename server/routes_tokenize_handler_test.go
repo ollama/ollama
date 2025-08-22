@@ -1,98 +1,125 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"sync/atomic"
+	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/server/tokenizerloader"
 )
 
 func TestTokenizeHandler_UsesVocabOnly_NoFallback(t *testing.T) {
-	_ = os.Setenv("OLLAMA_TOKENIZER_DEBUG", "1")
-	t.Cleanup(func() { _ = os.Unsetenv("OLLAMA_TOKENIZER_DEBUG") })
+	gin.SetMode(gin.TestMode)
 
-	// Reset tokenizer state
+	// Arrange: make vocab-only path return our fake
+	wantTok := &fakeTokHTTP{tokens: map[string][]int{"hello": {7080, 29477}}}
 	tokenizerloader.ResetForTest()
-
-	// Inject vocab-only success
 	tokenizerloader.SetOpenVocabOnlyForTest(func(ctx context.Context, model string) (tokenizerloader.Tokenizer, error) {
-		return &fakeTokHTTP{tokens: []int{1234}}, nil
+		return wantTok, nil
 	})
-
-	// Fallback hooks that would bump a counter if triggered
-	var fallbackHit atomic.Int32
 	tokenizerloader.RegisterFallbackHooks(
-		func(ctx context.Context, model, text string) ([]int, error) {
-			fallbackHit.Add(1)
-			return []int{9}, nil
-		},
-		func(ctx context.Context, model string, ids []int) (string, error) {
-			fallbackHit.Add(1)
-			return "fallback", nil
-		},
+		func(model, text string) ([]int, error) { return nil, fmt.Errorf("should not hit fallback") },
+		func(model string, ids []int) (string, error) { return "", fmt.Errorf("should not hit fallback") },
 	)
 
-	// Build a lightweight server with just the routes
-	s := &Server{}
-	rc := newTestRegistry(t) // provide a minimal registry if your GenerateRoutes needs one
-	h, err := s.GenerateRoutes(rc)
-	if err != nil {
-		t.Fatalf("GenerateRoutes: %v", err)
-	}
+	s := &Server{} // zero value ok; handler calls tokenizerloader.Get
+	r := gin.New()
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
 
-	body := map[string]any{
-		"model":   "mistral:latest",
-		"content": "hello",
-	}
-	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/tokenize", bytes.NewReader(b))
+	// Act: call /api/tokenize
+	body := `{"model":"mistral:latest","content":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tokenize", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("unexpected status: %d, body=%s", w.Code, w.Body.String())
+	// Assert
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
 	}
-
-	// Ensure fallback was NOT used
-	if fallbackHit.Load() != 0 {
-		t.Fatalf("fallback should not be used when vocab-only is available")
-	}
-
-	// Basic shape check on response
 	var resp struct {
 		Model  string `json:"model"`
 		Tokens []int  `json:"tokens"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("bad json: %v", err)
+		t.Fatalf("json: %v", err)
 	}
 	if resp.Model != "mistral:latest" {
-		t.Fatalf("wrong model in response: %q", resp.Model)
+		t.Fatalf("model mismatch: %s", resp.Model)
 	}
-	if len(resp.Tokens) != 1 || resp.Tokens[0] != 1234 {
-		t.Fatalf("unexpected tokens in response: %v", resp.Tokens)
+	if len(resp.Tokens) != 2 || resp.Tokens[0] != 7080 || resp.Tokens[1] != 29477 {
+		t.Fatalf("tokens mismatch: %+v", resp.Tokens)
+	}
+}
+
+func TestTokenizeHandler_FallbackWhenVocabOnlyUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Arrange: make vocab-only path return error so fallback is used
+	tokenizerloader.ResetForTest()
+	tokenizerloader.SetOpenVocabOnlyForTest(func(ctx context.Context, model string) (tokenizerloader.Tokenizer, error) {
+		return nil, tokenizerloader.ErrVocabOnlyUnavailable
+	})
+	tokenizerloader.RegisterFallbackHooks(
+		func(model, text string) ([]int, error) { return []int{2050}, nil },
+		func(model string, ids []int) (string, error) { return " fam", nil },
+	)
+
+	s := &Server{} // zero value ok; handler calls tokenizerloader.Get
+	r := gin.New()
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
+
+	// Act: call /api/tokenize
+	body := `{"model":"mistral:latest","content":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tokenize", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Assert
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Model  string `json:"model"`
+		Tokens []int  `json:"tokens"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if resp.Model != "mistral:latest" {
+		t.Fatalf("model mismatch: %s", resp.Model)
+	}
+	if len(resp.Tokens) != 1 || resp.Tokens[0] != 2050 {
+		t.Fatalf("tokens mismatch: %+v", resp.Tokens)
 	}
 }
 
 // --- helpers ---
 
-type fakeTokHTTP struct{ tokens []int }
-
-func (f *fakeTokHTTP) Tokenize(ctx context.Context, s string) ([]int, error) { return f.tokens, nil }
-func (f *fakeTokHTTP) Detokenize(ctx context.Context, ids []int) (string, error) {
-	return "unused", nil
+type fakeTokHTTP struct {
+	tokens map[string][]int
 }
 
-// newTestRegistry returns a minimal registry acceptable to GenerateRoutes.
-// If your code needs a real registry, adapt accordingly (or stub its methods).
-func newTestRegistry(t *testing.T) *Registry {
-	t.Helper()
-	return &Registry{} // adjust if your Server.GenerateRoutes requires fields
+func (f *fakeTokHTTP) Close() error { return nil }
+
+func (f *fakeTokHTTP) Tokenize(text string) ([]int, error) {
+	if t, ok := f.tokens[text]; ok {
+		return t, nil
+	}
+	return []int{42}, nil
+}
+
+func (f *fakeTokHTTP) Detokenize(ids []int) (string, error) {
+	if len(ids) == 1 && ids[0] == 2050 {
+		return " fam", nil
+	}
+	return "hello", nil
 }

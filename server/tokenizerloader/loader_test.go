@@ -26,8 +26,8 @@ func (m *mockVocabOnlyModel) Close() error {
 }
 
 func TestLRUEvictionDoesNotPanic(t *testing.T) {
-	c := cache()
-	c.capacity = 2
+	// Create a new cache instance for testing
+	c := newLRU(2)
 	m1 := &mockVocabOnlyModel{modelName: "a"}
 	m2 := &mockVocabOnlyModel{modelName: "b"}
 	m3 := &mockVocabOnlyModel{modelName: "c"}
@@ -41,8 +41,8 @@ func TestLRUEvictionDoesNotPanic(t *testing.T) {
 }
 
 func TestConcurrencySafety(t *testing.T) {
-	c := cache()
-	c.capacity = 100 // increase capacity for this test
+	// Create a new cache instance for testing
+	c := newLRU(100) // increase capacity for this test
 
 	var wg sync.WaitGroup
 	numGoroutines := 10

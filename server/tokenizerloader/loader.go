@@ -56,11 +56,11 @@ type vocabOnlyModel struct {
 }
 
 // Sentinel error for vocab-only unavailability
-var errVocabOnlyUnavailable = errors.New("vocab-only unavailable")
+var ErrVocabOnlyUnavailable = errors.New("vocab-only unavailable")
 
 // MUST be a var so tests can override it.
 var openVocabOnly = func(ctx context.Context, model string) (Tokenizer, error) {
-	return nil, errVocabOnlyUnavailable
+	return nil, ErrVocabOnlyUnavailable
 }
 
 func (m *vocabOnlyModel) Close() error {
@@ -75,13 +75,13 @@ func (m *vocabOnlyModel) Tokenize(text string) ([]int, error) {
 	if m.model == nil {
 		return nil, fmt.Errorf("model not loaded")
 	}
-	
+
 	// Use the existing Tokenize method from the llama package
 	tokens, err := m.model.Tokenize(text, false, false) // no special tokens, no parsing
 	if err != nil {
 		return nil, fmt.Errorf("tokenization failed: %w", err)
 	}
-	
+
 	return tokens, nil
 }
 
@@ -89,14 +89,14 @@ func (m *vocabOnlyModel) Detokenize(tokens []int) (string, error) {
 	if m.model == nil {
 		return "", fmt.Errorf("model not loaded")
 	}
-	
+
 	// Use the TokenToPiece method to convert each token back to text
 	var result strings.Builder
-	
+
 	for i, token := range tokens {
 		// Get the text piece for this token
 		piece := m.model.TokenToPiece(token)
-		
+
 		// Handle special cases
 		if piece == "" {
 			// Fallback: try to reconstruct from the token ID
@@ -112,7 +112,7 @@ func (m *vocabOnlyModel) Detokenize(tokens []int) (string, error) {
 			result.WriteString(piece)
 		}
 	}
-	
+
 	return result.String(), nil
 }
 
@@ -121,14 +121,14 @@ func findModelPath(modelName string) (string, error) {
 	// This is a simplified implementation - in practice, you'd want to use
 	// the existing model loading infrastructure from the server
 	// For now, we'll assume the model is in a standard location
-	
+
 	// Check common model directories
 	modelDirs := []string{
 		"./models",
 		"~/.ollama/models",
 		"/usr/local/share/ollama/models",
 	}
-	
+
 	for _, dir := range modelDirs {
 		// Expand ~ to home directory
 		if strings.HasPrefix(dir, "~") {
@@ -138,19 +138,19 @@ func findModelPath(modelName string) (string, error) {
 			}
 			dir = filepath.Join(home, dir[1:])
 		}
-		
+
 		// Look for .gguf files
 		pattern := filepath.Join(dir, modelName, "*.gguf")
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			continue
 		}
-		
+
 		if len(matches) > 0 {
 			return matches[0], nil
 		}
 	}
-	
+
 	return "", fmt.Errorf("model %s not found in standard locations", modelName)
 }
 
@@ -170,17 +170,15 @@ type lruCache struct {
 	// optional timestamps per key if you want TTL eviction
 }
 
-var (
-	cacheOnce sync.Once
-	cacheInst *lruCache
-)
-
 // ---- cache + reset plumbing (names can match your existing types) ----
 
 var (
-	cacheMu  sync.Mutex
-	tokCache *lruCache // or your cache type
+	cacheMu sync.Mutex
+	cache   *lruCache
+	mu      sync.Mutex
 )
+
+const defaultCapacity = 8
 
 func init() {
 	initCache()
@@ -189,12 +187,15 @@ func init() {
 func initCache() {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	tokCache = newLRU(8) // whatever you use in prod
+	cache = newLRU(defaultCapacity)
 }
 
 // unexported reset that tests can call via a test helper
 func reset() {
-	initCache()
+	// Create a new cache instance without locking to avoid deadlock
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	cache = newLRU(defaultCapacity)
 }
 
 func newLRU(capacity int) *lruCache {
@@ -204,18 +205,6 @@ func newLRU(capacity int) *lruCache {
 		capacity: capacity,
 		ttl:      30 * time.Minute, // soft TTL; can be refined
 	}
-}
-
-func cache() *lruCache {
-	cacheOnce.Do(func() {
-		cacheInst = &lruCache{
-			ll:       list.New(),
-			items:    make(map[string]*list.Element),
-			capacity: 8,                // small default; adjust if needed
-			ttl:      30 * time.Minute, // soft TTL; can be refined
-		}
-	})
-	return cacheInst
 }
 
 func (c *lruCache) get(key string) Tokenizer {
@@ -258,7 +247,7 @@ func (c *lruCache) evictOldest() {
 }
 
 func getVocabOnly(modelName string) (Tokenizer, error) {
-	if m := cache().get(modelName); m != nil {
+	if m := cache.get(modelName); m != nil {
 		if os.Getenv("OLLAMA_TOKENIZER_DEBUG") == "1" {
 			slog.Debug("tokenizer: vocab-only cache hit", "model", modelName)
 		}
@@ -269,9 +258,9 @@ func getVocabOnly(modelName string) (Tokenizer, error) {
 		slog.Debug("tokenizer: attempting vocab-only load", "model", modelName)
 	}
 
-	m, err := openVocabOnly(context.Background(), modelName) // Pass a dummy context
+	m, err := openVocabOnly(context.Background(), modelName)
 	if err != nil {
-		if err == errVocabOnlyUnavailable {
+		if err == ErrVocabOnlyUnavailable {
 			if os.Getenv("OLLAMA_TOKENIZER_DEBUG") == "1" {
 				slog.Debug("tokenizer: vocab-only unavailable, falling back to scheduler", "model", modelName)
 			}
@@ -284,7 +273,7 @@ func getVocabOnly(modelName string) (Tokenizer, error) {
 		slog.Debug("tokenizer: vocab-only load successful", "model", modelName)
 	}
 
-	cache().add(modelName, m)
+	cache.add(modelName, m)
 	return m, nil
 }
 
