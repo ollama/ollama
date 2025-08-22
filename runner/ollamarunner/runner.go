@@ -30,6 +30,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -781,6 +782,15 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var harmonyMessageHandler *harmony.HarmonyMessageHandler
+	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
+	if req.FunctionNameMap != nil {
+		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
+		harmonyMessageHandler.FunctionNameMap = req.FunctionNameMap
+		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(req.PrefillContent)
+		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+	}
+
 	if req.Options == nil {
 		opts := api.DefaultOptions()
 		req.Options = &opts
@@ -871,8 +881,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
+				var thinking string
+				if harmonyMessageHandler != nil {
+					var toolContent string
+					content, thinking, toolContent = harmonyMessageHandler.AddContent(content, harmonyToolParser)
+					harmonyToolParser.Add(toolContent)
+				}
+
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content: content,
+					Content:  content,
+					Thinking: thinking,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
@@ -881,7 +899,29 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
+				var toolCalls []api.ToolCall
+				if harmonyMessageHandler != nil {
+					toolName, toolContent := harmonyToolParser.Drain()
+					if toolName != nil {
+						*toolName = strings.TrimPrefix(*toolName, "functions.")
+						*toolName = harmonyMessageHandler.FunctionNameMap.OriginalFromConverted(*toolName)
+						var args api.ToolCallFunctionArguments
+						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
+							http.Error(w, fmt.Sprintf("failed to unmarshal tool call function arguments: %v", err), http.StatusInternalServerError)
+							close(seq.quit)
+							return
+						}
+						toolCalls = append(toolCalls, api.ToolCall{
+							Function: api.ToolCallFunction{
+								Name:      *toolName,
+								Arguments: args,
+							},
+						})
+					}
+				}
+
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
+					ToolCalls:          toolCalls,
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
