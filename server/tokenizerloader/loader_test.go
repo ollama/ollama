@@ -8,12 +8,29 @@ import (
 	"testing"
 )
 
+// Mock vocabOnlyModel for testing
+type mockVocabOnlyModel struct {
+	modelName string
+}
+
+func (m *mockVocabOnlyModel) Tokenize(text string) ([]int, error) {
+	return []int{1, 2, 3}, nil // mock tokens
+}
+
+func (m *mockVocabOnlyModel) Detokenize(tokens []int) (string, error) {
+	return "mock text", nil
+}
+
+func (m *mockVocabOnlyModel) Close() error {
+	return nil
+}
+
 func TestLRUEvictionDoesNotPanic(t *testing.T) {
 	c := cache()
 	c.capacity = 2
-	m1 := &vocabOnlyModel{modelName: "a"}
-	m2 := &vocabOnlyModel{modelName: "b"}
-	m3 := &vocabOnlyModel{modelName: "c"}
+	m1 := &mockVocabOnlyModel{modelName: "a"}
+	m2 := &mockVocabOnlyModel{modelName: "b"}
+	m3 := &mockVocabOnlyModel{modelName: "c"}
 	c.add("a", m1)
 	c.add("b", m2)
 	c.add("c", m3) // evicts "a"
@@ -38,7 +55,7 @@ func TestConcurrencySafety(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				modelName := fmt.Sprintf("model-%d-%d", id, j)
-				model := &vocabOnlyModel{modelName: modelName}
+				model := &mockVocabOnlyModel{modelName: modelName}
 				c.add(modelName, model)
 			}
 		}(i)

@@ -14,14 +14,19 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/ollama/ollama/llama"
 )
 
 // Public interface the routes will use.
 type Tokenizer interface {
 	Tokenize(text string) ([]int, error)
 	Detokenize(tokens []int) (string, error)
+	Close() error
 }
 
 // Factory: returns a Tokenizer for modelName (vocab-only if possible, else fallback).
@@ -46,8 +51,7 @@ func Get(ctx context.Context, modelName string) (Tokenizer, bool, error) {
 //
 // Stub interface we'll fill in as the internal hook becomes available.
 type vocabOnlyModel struct {
-	modelName string
-	// add fields required by llama.cpp vocab-only open
+	model *llama.Model
 }
 
 // Sentinel error for vocab-only unavailability
@@ -56,21 +60,126 @@ var errVocabOnlyUnavailable = fmt.Errorf("vocab-only open not available")
 // Replace these with real llama.cpp hooks when available.
 func openVocabOnly(modelName string) (*vocabOnlyModel, error) {
 	// TODO: call llama.cpp vocab-only API once available; see PR #8106 discussion
-	return nil, errVocabOnlyUnavailable
+	// For now, we'll use the existing llama package with vocab_only=true
+	
+	// Find the model file path
+	modelPath, err := findModelPath(modelName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find model path: %w", err)
+	}
+	
+	// Load model with vocab_only=true
+	params := llama.ModelParams{
+		VocabOnly: true,
+		UseMmap:   true,
+	}
+	
+	model, err := llama.LoadModelFromFile(modelPath, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load vocab-only model: %w", err)
+	}
+	
+	return &vocabOnlyModel{
+		model: model,
+	}, nil
 }
-func (m *vocabOnlyModel) Close() error { return nil }
+
+func (m *vocabOnlyModel) Close() error {
+	if m.model != nil {
+		llama.FreeModel(m.model)
+		m.model = nil
+	}
+	return nil
+}
+
 func (m *vocabOnlyModel) Tokenize(text string) ([]int, error) {
-	return nil, fmt.Errorf("vocab-only tokenize not implemented")
+	if m.model == nil {
+		return nil, fmt.Errorf("model not loaded")
+	}
+	
+	// Use the existing Tokenize method from the llama package
+	tokens, err := m.model.Tokenize(text, false, false) // no special tokens, no parsing
+	if err != nil {
+		return nil, fmt.Errorf("tokenization failed: %w", err)
+	}
+	
+	return tokens, nil
 }
+
 func (m *vocabOnlyModel) Detokenize(tokens []int) (string, error) {
-	return "", fmt.Errorf("vocab-only detokenize not implemented")
+	if m.model == nil {
+		return "", fmt.Errorf("model not loaded")
+	}
+	
+	// Use the TokenToPiece method to convert each token back to text
+	var result strings.Builder
+	
+	for i, token := range tokens {
+		// Get the text piece for this token
+		piece := m.model.TokenToPiece(token)
+		
+		// Handle special cases
+		if piece == "" {
+			// Fallback: try to reconstruct from the token ID
+			if i > 0 {
+				result.WriteString(" ")
+			}
+			result.WriteString(fmt.Sprintf("[token_%d]", token))
+		} else {
+			// Add space between tokens if needed (most tokenizers add leading space)
+			if i > 0 && !strings.HasPrefix(piece, " ") {
+				result.WriteString(" ")
+			}
+			result.WriteString(piece)
+		}
+	}
+	
+	return result.String(), nil
+}
+
+// Helper function to find model path
+func findModelPath(modelName string) (string, error) {
+	// This is a simplified implementation - in practice, you'd want to use
+	// the existing model loading infrastructure from the server
+	// For now, we'll assume the model is in a standard location
+	
+	// Check common model directories
+	modelDirs := []string{
+		"./models",
+		"~/.ollama/models",
+		"/usr/local/share/ollama/models",
+	}
+	
+	for _, dir := range modelDirs {
+		// Expand ~ to home directory
+		if strings.HasPrefix(dir, "~") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				continue
+			}
+			dir = filepath.Join(home, dir[1:])
+		}
+		
+		// Look for .gguf files
+		pattern := filepath.Join(dir, modelName, "*.gguf")
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		
+		if len(matches) > 0 {
+			return matches[0], nil
+		}
+	}
+	
+	return "", fmt.Errorf("model %s not found in standard locations", modelName)
 }
 
 /* -------------------- LRU cache for vocab-only models -------------------- */
 
 type cacheEntry struct {
 	key   string
-	model *vocabOnlyModel
+	model Tokenizer
 }
 
 type lruCache struct {
@@ -99,7 +208,7 @@ func cache() *lruCache {
 	return cacheInst
 }
 
-func (c *lruCache) get(key string) *vocabOnlyModel {
+func (c *lruCache) get(key string) Tokenizer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ele, ok := c.items[key]; ok {
@@ -109,7 +218,7 @@ func (c *lruCache) get(key string) *vocabOnlyModel {
 	return nil
 }
 
-func (c *lruCache) add(key string, m *vocabOnlyModel) {
+func (c *lruCache) add(key string, m Tokenizer) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ele, ok := c.items[key]; ok {
@@ -208,4 +317,9 @@ func (f *fallbackTokenizer) Detokenize(tokens []int) (string, error) {
 		return "", fmt.Errorf("fallback detokenize hook not set")
 	}
 	return fallbackDetokenizeFn(f.modelName, tokens)
+}
+
+func (f *fallbackTokenizer) Close() error {
+	// No cleanup needed for fallback tokenizer
+	return nil
 }
