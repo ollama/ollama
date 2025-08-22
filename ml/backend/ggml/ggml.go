@@ -547,8 +547,8 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 						return err
 					}
 					for j := range n / BS {
-						// transform aaaa...bbbb... to abababab...
 						for i := 1; i < 9; i++ {
+							// transform a1b2c3 ... x7y8z9 -> 71xa82yb93zc
 							a, b := bts[j*BS+i], bts[j*BS+i+8]
 							tmp[2*(i-1)] = (a & 0x0F) | (b << 4)
 							tmp[2*(i-1)+1] = (a >> 4) | (b & 0xF0)
