@@ -28,6 +28,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -1235,6 +1236,46 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// load is the handler called by the Ollama server to process different
+// load operations
+func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	s.loadMu.Lock()
+	defer s.loadMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	m := s.model
+
+	if m == nil {
+		// Dummy load to get the backend wired up
+		f, err := os.CreateTemp("", "*.bin")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		if err := ggml.WriteGGUF(f, ggml.KV{
+			"general.architecture": "llama",
+			"tokenizer.ggml.model": "gpt2",
+		}, nil); err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		m, err = model.New(f.Name(), ml.BackendParams{AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	infos := m.Backend().BackendDevices()
+	if err := json.NewEncoder(w).Encode(&infos); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
 func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
@@ -1275,6 +1316,7 @@ func Execute(args []string) error {
 
 	mux := http.NewServeMux()
 	// TODO: support embeddings
+	mux.HandleFunc("GET /info", server.info)
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("POST /embedding", server.embeddings)
 	mux.HandleFunc("POST /completion", server.completion)
