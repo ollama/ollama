@@ -382,7 +382,7 @@ type EmbedRequest struct {
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
-	Truncate *bool `json:"truncate,omitempty"`
+	Truncate types.Null[bool] `json:"truncate,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`

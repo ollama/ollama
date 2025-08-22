@@ -487,12 +487,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	truncate := true
-
-	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
-	}
-
 	var input []string
 
 	switch i := req.Input.(type) {
@@ -541,6 +535,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	var count int
+	truncate := req.Truncate.Value(true)
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
