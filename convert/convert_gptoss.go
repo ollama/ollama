@@ -176,6 +176,7 @@ func (m *mxfp4) WriteTo(w io.Writer) (int64, error) {
 	var tmp [16]byte
 	for i := 0; i < b.Len(); i += 16 {
 		for j := range 8 {
+			// transform a1b2c3 ... x7y8z9 -> 71xa82yb93zc
 			a, b := bts[i+j], bts[i+j+8]
 			tmp[2*j+0] = (a & 0x0F) | (b << 4)
 			tmp[2*j+1] = (a >> 4) | (b & 0xF0)
