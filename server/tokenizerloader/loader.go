@@ -11,6 +11,7 @@ package tokenizerloader
 import (
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -55,33 +56,11 @@ type vocabOnlyModel struct {
 }
 
 // Sentinel error for vocab-only unavailability
-var errVocabOnlyUnavailable = fmt.Errorf("vocab-only open not available")
+var errVocabOnlyUnavailable = errors.New("vocab-only unavailable")
 
-// Replace these with real llama.cpp hooks when available.
-func openVocabOnly(modelName string) (*vocabOnlyModel, error) {
-	// TODO: call llama.cpp vocab-only API once available; see PR #8106 discussion
-	// For now, we'll use the existing llama package with vocab_only=true
-	
-	// Find the model file path
-	modelPath, err := findModelPath(modelName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find model path: %w", err)
-	}
-	
-	// Load model with vocab_only=true
-	params := llama.ModelParams{
-		VocabOnly: true,
-		UseMmap:   true,
-	}
-	
-	model, err := llama.LoadModelFromFile(modelPath, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load vocab-only model: %w", err)
-	}
-	
-	return &vocabOnlyModel{
-		model: model,
-	}, nil
+// MUST be a var so tests can override it.
+var openVocabOnly = func(ctx context.Context, model string) (Tokenizer, error) {
+	return nil, errVocabOnlyUnavailable
 }
 
 func (m *vocabOnlyModel) Close() error {
@@ -196,6 +175,37 @@ var (
 	cacheInst *lruCache
 )
 
+// ---- cache + reset plumbing (names can match your existing types) ----
+
+var (
+	cacheMu  sync.Mutex
+	tokCache *lruCache // or your cache type
+)
+
+func init() {
+	initCache()
+}
+
+func initCache() {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	tokCache = newLRU(8) // whatever you use in prod
+}
+
+// unexported reset that tests can call via a test helper
+func reset() {
+	initCache()
+}
+
+func newLRU(capacity int) *lruCache {
+	return &lruCache{
+		ll:       list.New(),
+		items:    make(map[string]*list.Element),
+		capacity: capacity,
+		ttl:      30 * time.Minute, // soft TTL; can be refined
+	}
+}
+
 func cache() *lruCache {
 	cacheOnce.Do(func() {
 		cacheInst = &lruCache{
@@ -259,7 +269,7 @@ func getVocabOnly(modelName string) (Tokenizer, error) {
 		slog.Debug("tokenizer: attempting vocab-only load", "model", modelName)
 	}
 
-	m, err := openVocabOnly(modelName)
+	m, err := openVocabOnly(context.Background(), modelName) // Pass a dummy context
 	if err != nil {
 		if err == errVocabOnlyUnavailable {
 			if os.Getenv("OLLAMA_TOKENIZER_DEBUG") == "1" {
