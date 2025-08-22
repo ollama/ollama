@@ -196,7 +196,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	useFlashAttention := (envconfig.FlashAttention() || f.FlashAttention()) &&
-		discover.GetGPUInfo().FlashAttentionSupported() &&
+		(discover.GpuInfoList)(gpus).FlashAttentionSupported() &&
 		f.SupportsFlashAttention()
 
 	var kvct string
@@ -231,7 +231,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// on metal there's no partial offload overhead
-	if gpus[0].Library == "metal" {
+	if gpus[0].Library == "Metal" {
 		graphPartialOffload = graphFullOffload
 	} else if len(gpus) > 1 {
 		// multigpu should always use the partial graph size

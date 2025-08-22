@@ -16,8 +16,8 @@ import (
 
 func TestLLMServerFitGPU(t *testing.T) {
 	type gpu struct {
-		library string
-		free    int
+		id   ml.DeviceID
+		free int
 	}
 
 	tests := []struct {
@@ -37,91 +37,91 @@ func TestLLMServerFitGPU(t *testing.T) {
 		},
 		{
 			name:     "Full single GPU",
-			gpus:     []gpu{{free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
 			layers:   []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   -1,
-			expected: ml.GPULayersList{{ID: "gpu0", Layers: []int{0, 1, 2}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{0, 1, 2}}},
 		},
 		{
 			name:     "Partial single GPU",
-			gpus:     []gpu{{free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
 			layers:   []int{100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte},
 			numGPU:   -1,
-			expected: ml.GPULayersList{{ID: "gpu0", Layers: []int{1, 2}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{1, 2}}},
 		},
 		{
 			name:     "Single GPU with numGPU 1",
-			gpus:     []gpu{{free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
 			layers:   []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   1,
-			expected: ml.GPULayersList{{ID: "gpu0", Layers: []int{1}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{1}}},
 		},
 		{
 			name:     "Single GPU with numGPU 0",
-			gpus:     []gpu{{free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
 			layers:   []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   0,
 			expected: ml.GPULayersList{},
 		},
 		{
 			name:     "Single GPU with numGPU 999",
-			gpus:     []gpu{{free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
 			layers:   []int{100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte},
 			numGPU:   999,
-			expected: ml.GPULayersList{{ID: "gpu0", Layers: []int{0, 1, 2, 3}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{0, 1, 2, 3}}},
 		},
 		{
 			name:     "Multi GPU fits on one",
-			gpus:     []gpu{{free: 128 * format.MebiByte}, {free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   -1,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{0, 1, 2}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1"}, Layers: []int{0, 1, 2}}},
 		},
 		{
 			name:     "Multi GPU split",
-			gpus:     []gpu{{free: 128 * format.MebiByte}, {free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{256 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   -1,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{0}}, {ID: "gpu0", Layers: []int{1, 2}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1"}, Layers: []int{0}}, {DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{1, 2}}},
 		},
 		{
 			name:     "Multi GPU partial",
-			gpus:     []gpu{{free: 128 * format.MebiByte}, {free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{256 * format.MebiByte, 256 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   -1,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{1}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1"}, Layers: []int{1}}},
 		},
 		{
 			name:     "Multi GPU numGPU 1",
-			gpus:     []gpu{{free: 128 * format.MebiByte}, {free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   1,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{1}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1"}, Layers: []int{1}}},
 		},
 		{
 			name:     "Multi GPU numGPU 2",
-			gpus:     []gpu{{free: 128 * format.MebiByte}, {free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{256 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   2,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{0}}, {ID: "gpu0", Layers: []int{1}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1"}, Layers: []int{0}}, {DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{1}}},
 		},
 		{
 			name:     "Multi GPU numGPU 999",
-			gpus:     []gpu{{free: 128 * format.MebiByte}, {free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{256 * format.MebiByte, 256 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   999,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{0, 1}}, {ID: "gpu0", Layers: []int{2}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1"}, Layers: []int{0, 1}}, {DeviceID: ml.DeviceID{ID: "gpu0"}, Layers: []int{2}}},
 		},
 		{
 			name:     "Multi GPU different libraries",
-			gpus:     []gpu{{library: "cuda", free: 128 * format.MebiByte}, {library: "rocm", free: 256 * format.MebiByte}},
+			gpus:     []gpu{{id: ml.DeviceID{Library: "CUDA", ID: "gpu0"}, free: 128 * format.MebiByte}, {id: ml.DeviceID{Library: "ROCm", ID: "gpu1"}, free: 256 * format.MebiByte}},
 			layers:   []int{128 * format.MebiByte, 128 * format.MebiByte, 50 * format.MebiByte},
 			numGPU:   -1,
-			expected: ml.GPULayersList{{ID: "gpu1", Layers: []int{0, 1}}},
+			expected: ml.GPULayersList{{DeviceID: ml.DeviceID{ID: "gpu1", Library: "ROCm"}, Layers: []int{0, 1}}},
 		},
 		{
 			name:        "requireFull",
-			gpus:        []gpu{{free: 256 * format.MebiByte}},
+			gpus:        []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
 			layers:      []int{100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte},
 			numGPU:      -1,
 			requireFull: true,
@@ -138,8 +138,7 @@ func TestLLMServerFitGPU(t *testing.T) {
 
 			gpus := make(discover.GpuInfoList, len(tt.gpus))
 			for i := range tt.gpus {
-				gpus[i].ID = fmt.Sprintf("gpu%d", i)
-				gpus[i].Library = tt.gpus[i].library
+				gpus[i].DeviceID = tt.gpus[i].id
 				gpus[i].FreeMemory = uint64(tt.gpus[i].free)
 			}
 
@@ -164,7 +163,7 @@ func TestLLMServerFitGPU(t *testing.T) {
 			}
 
 			for i := range s.mem.GPUs {
-				s.mem.GPUs[i].ID = fmt.Sprintf("gpu%d", i)
+				s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
 				s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
 				s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 			}
