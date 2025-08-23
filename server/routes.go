@@ -440,7 +440,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		var r api.GenerateResponse
 		var sbThinking strings.Builder
 		var sbContent strings.Builder
@@ -701,7 +701,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		waitForStream(c, ch)
 		return
 	}
@@ -756,7 +756,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		waitForStream(c, ch)
 		return
 	}
@@ -1775,7 +1775,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		var resp api.ChatResponse
 		var toolCalls []api.ToolCall
 		var sbThinking strings.Builder
