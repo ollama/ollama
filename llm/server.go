@@ -1376,6 +1376,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			break
 		case `"json"`:
 			req.Grammar = grammarJSON
+		case `"GBNF"`:
+			if req.Grammar == "" {
+				return fmt.Errorf("missing grammer: format \"GBNF\" is set but \"grammar\" is empty")
+			}
 		default:
 			if req.Format[0] != '{' {
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
