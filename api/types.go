@@ -72,6 +72,9 @@ type GenerateRequest struct {
 	// Format specifies the format to return a response in.
 	Format json.RawMessage `json:"format,omitempty"`
 
+	// Grammar is the GBNF grammer to return the response as.
+	Grammar string `json:"grammar,omitempty"`
+
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
@@ -107,8 +110,11 @@ type ChatRequest struct {
 	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
-	// Format is the format to return the response in (e.g. "json").
+	// Format is the format to return the response in (e.g. "json" or "GBNF").
 	Format json.RawMessage `json:"format,omitempty"`
+
+	// Grammar is the GBNF grammer to return the response as.
+	Grammar string `json:"grammar,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
 	// following the request.
