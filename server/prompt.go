@@ -17,14 +17,42 @@ import (
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
-// chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
-// latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (prompt string, images []llm.ImageData, _ error) {
+// If truncation is enabled, chatPrompt truncates any messages that exceed the context window of the model, making sure
+// to always include 1) the latest message and 2) system messages. If truncation is disabled and the composed prompt
+// would exceed the context window, it returns an error.
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, images []llm.ImageData, _ error) {
 	var system []api.Message
 
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
 	// Clip images are represented as 768 tokens, each an embedding
 	imageNumTokens := 768
+
+	// If truncation is disabled, validate the full composed prompt fits within the context window
+	if !truncate {
+		thinkVal := false
+		thinkLevel := ""
+		if think != nil {
+			thinkVal = think.Bool()
+			thinkLevel = think.String()
+		}
+		var full bytes.Buffer
+		if err := m.Template.Execute(&full, template.Values{Messages: msgs, Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
+			return "", nil, err
+		}
+		s, err := tokenize(ctx, full.String())
+		if err != nil {
+			return "", nil, err
+		}
+		ctxLen := len(s)
+		if m.ProjectorPaths != nil {
+			for _, m := range msgs {
+				ctxLen += imageNumTokens * len(m.Images)
+			}
+		}
+		if ctxLen > opts.NumCtx {
+			return "", nil, errors.New("input length exceeds maximum context length")
+		}
+	}
 
 	n := len(msgs) - 1
 	// in reverse, find all messages that fit into context window
@@ -65,8 +93,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		}
 
 		if ctxLen > opts.NumCtx {
-			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
-			break
+			if truncate {
+				slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
+				break
+			} else {
+				return "", nil, errors.New("input length exceeds maximum context length")
+			}
 		} else {
 			n = i
 		}
