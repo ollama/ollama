@@ -187,6 +187,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable the new memory estimation logic
 	NewMemoryEstimates = Bool("OLLAMA_NEW_ESTIMATES")
+	// Ignore free memory size checks
+	IgnoreMemSize = Bool("OLLAMA_IGNORE_MEMSIZE")
 )
 
 func String(s string) func() string {
@@ -272,7 +274,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
-		"OLLAMA_NEW_ESTIMATES":     {"OLLAMA_NEW_ESTIMATES", NewMemoryEstimates(), "Enable the new memory estimation logic"},
+		"OLLAMA_IGNORE_MEMSIZE":    {"OLLAMA_IGNORE_MEMSIZE", NewMemoryEstimates(), "Ignore free memory size checks (default: false)"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
