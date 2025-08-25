@@ -773,6 +773,13 @@ func (f GGML) SupportsFlashAttention() bool {
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
 }
 
+// FlashAttention checks if the model should enable flash attention
+func (f GGML) FlashAttention() bool {
+	return slices.Contains([]string{
+		"gptoss", "gpt-oss",
+	}, f.KV().String("general.architecture"))
+}
+
 // kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
 func kvCacheBytesPerElement(cacheType string) float64 {
 	switch cacheType {
