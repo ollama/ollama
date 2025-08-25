@@ -1544,7 +1544,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	// expire the runner
-	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+	if len(req.Messages) == 0 && req.KeepAlive != nil && req.KeepAlive.Duration == 0 {
 		model, err := GetModel(req.Model)
 		if err != nil {
 			switch {

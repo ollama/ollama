@@ -25,7 +25,7 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 		{
 			name: "Positive Float",
 			req:  `{ "keep_alive": 42.5 }`,
-			exp:  &Duration{42 * time.Second},
+			exp:  &Duration{42500 * time.Millisecond},
 		},
 		{
 			name: "Positive Integer String",
