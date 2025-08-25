@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/types"
 )
 
 func TestGenerateDebugRenderOnly(t *testing.T) {
@@ -53,7 +54,6 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 	go s.sched.Run(t.Context())
 
 	// Create a test model
-	stream := false
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
@@ -82,7 +82,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 		Model:    "test-model",
 		Files:    map[string]string{"file.gguf": digest},
 		Template: "{{ .Prompt }}",
-		Stream:   &stream,
+		Stream:   streamFalse,
 	})
 
 	if w.Code != http.StatusOK {
@@ -172,7 +172,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 			}
 			t.Run(tt.name+streamSuffix, func(t *testing.T) {
 				req := tt.request
-				req.Stream = &stream
+				req.Stream = types.NullWithValue(stream)
 				w := createRequest(t, s.GenerateHandler, req)
 
 				if tt.expectDebug {
@@ -246,7 +246,6 @@ func TestChatDebugRenderOnly(t *testing.T) {
 	go s.sched.Run(t.Context())
 
 	// Create a test model
-	stream := false
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
@@ -275,7 +274,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 		Model:    "test-model",
 		Files:    map[string]string{"file.gguf": digest},
 		Template: "{{ if .Tools }}{{ .Tools }}{{ end }}{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}",
-		Stream:   &stream,
+		Stream:   streamFalse,
 	})
 
 	if w.Code != http.StatusOK {
@@ -377,7 +376,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 			}
 			t.Run(tt.name+streamSuffix, func(t *testing.T) {
 				req := tt.request
-				req.Stream = &stream
+				req.Stream = types.NullWithValue(stream)
 				w := createRequest(t, s.ChatHandler, req)
 
 				if tt.expectDebug {

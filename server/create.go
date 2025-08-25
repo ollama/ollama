@@ -146,7 +146,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		ch <- api.ProgressResponse{Status: "success"}
 	}()
 
-	if r.Stream != nil && !*r.Stream {
+	if !r.Stream.Value(true) {
 		waitForStream(c, ch)
 		return
 	}
