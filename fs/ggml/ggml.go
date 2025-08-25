@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 
@@ -275,7 +276,7 @@ type Tensor struct {
 
 func (t Tensor) block() (n int) {
 	if _, err := fmt.Sscanf(t.Name, "blk.%d.", &n); err != nil {
-		return -1
+		return math.MaxInt
 	}
 
 	return
