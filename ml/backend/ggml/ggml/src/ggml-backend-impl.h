@@ -32,6 +32,7 @@ extern "C" {
         struct ggml_backend_buffer_type_i  iface;
         ggml_backend_dev_t device;
         void * context;
+        bool no_alloc;
     };
 
     //
@@ -63,6 +64,7 @@ extern "C" {
         void * context;
         size_t size;
         enum ggml_backend_buffer_usage usage;
+        bool no_alloc;
     };
 
     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(

@@ -32,6 +32,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
@@ -54,11 +55,16 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
+// Low VRAM mode is based on the sum of total VRAM (not free) and triggers
+// reduced context length on some models
+var lowVRAMThreshold uint64 = 20 * format.GibiByte
+
 var mode string = gin.DebugMode
 
 type Server struct {
 	addr    net.Addr
 	sched   *Scheduler
+	lowVRAM bool
 	metrics *telemetry.Metrics
 }
 
@@ -117,8 +123,9 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	// This model requires a minimum context to function effectively
-	if slices.Contains(model.Config.ModelFamilies, "gptoss") {
+	// This model is much more capable with a larger context, so set that
+	// unless it would penalize performance too much
+	if !s.lowVRAM && slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
@@ -203,7 +210,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// Validate Think value: string values currently only allowed for gptoss models
 	if req.Think != nil && req.Think.IsString() && !useHarmony {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.AsString())})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
 
@@ -211,7 +218,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
-	if req.Think != nil && req.Think.AsBool() {
+	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
 		// TODO(drifkin): consider adding a warning if it's false and the model
 		// doesn't support thinking. It's not strictly required, but it can be a
@@ -286,10 +293,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
 		}
 
-		values.Think = req.Think != nil && req.Think.AsBool()
+		values.Think = req.Think != nil && req.Think.Bool()
 		values.ThinkLevel = ""
 		if req.Think != nil {
-			values.ThinkLevel = req.Think.AsString()
+			values.ThinkLevel = req.Think.String()
 		}
 		values.IsThinkSet = req.Think != nil
 
@@ -312,10 +319,23 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
+	// If debug mode is enabled, return the rendered template instead of calling the model
+	if req.DebugRenderOnly {
+		c.JSON(http.StatusOK, api.DebugTemplateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			DebugInfo: api.DebugInfo{
+				RenderedTemplate: prompt,
+				ImageCount:       len(images),
+			},
+		})
+		return
+	}
+
 	var thinkingState *thinking.Parser
 	if !useHarmony {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
-		if req.Think != nil && req.Think.AsBool() && openingTag != "" && closingTag != "" {
+		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
@@ -369,7 +389,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						*toolName = strings.TrimPrefix(*toolName, "functions.")
 						var args api.ToolCallFunctionArguments
 						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							ch <- gin.H{"error parsing tool call": err.Error()}
+							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
+							ch <- gin.H{"error": errStr}
 							return
 						}
 
@@ -1419,6 +1440,15 @@ func Serve(ln net.Listener) error {
 	gpus := discover.GetGPUInfo()
 	gpus.LogDetails()
 
+	var totalVRAM uint64
+	for _, gpu := range gpus {
+		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
+	}
+	if totalVRAM < lowVRAMThreshold {
+		s.lowVRAM = true
+		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
+	}
+
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
 	// otherwise error out quickly
@@ -1497,14 +1527,14 @@ func (s *Server) PsHandler(c *gin.Context) {
 		mr := api.ProcessModelResponse{
 			Model:     model.ShortName,
 			Name:      model.ShortName,
-			Size:      int64(v.estimatedTotal),
-			SizeVRAM:  int64(v.estimatedVRAM),
+			Size:      int64(v.totalSize),
+			SizeVRAM:  int64(v.vramSize),
 			Digest:    model.Digest,
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
 		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx / v.numParallel
+			mr.ContextLength = v.Options.NumCtx
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -1567,7 +1597,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
-	if req.Think != nil && req.Think.AsBool() {
+	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
 	}
 
@@ -1610,24 +1640,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools, req.Think)
-	if err != nil {
-		slog.Error("chat prompt error", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	useHarmony := shouldUseHarmony(*m)
-
-	// Validate Think value: string values currently only allowed for gptoss models
-	if req.Think != nil && req.Think.IsString() && !useHarmony {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.AsString())})
-		return
-	}
-
 	var harmonyMessageHandler *HarmonyMessageHandler
 	var harmonyToolParser *HarmonyToolCallAccumulator
 
+	useHarmony := shouldUseHarmony(*m)
+
+	processedTools := req.Tools
 	if useHarmony {
 		harmonyMessageHandler = NewHarmonyMessageHandler()
 		var lastMessage *api.Message
@@ -1636,11 +1654,45 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 		harmonyMessageHandler.harmonyParser.AddImplicitStartOrPrefill(lastMessage)
 		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+
+		// make a copy of tools to pass to the chat prompt. Function names may be
+		// renamed to be valid Harmony function names.
+		processedTools = make([]api.Tool, len(req.Tools))
+		copy(processedTools, req.Tools)
+		for i, tool := range processedTools {
+			processedTools[i].Function.Name = harmonyMessageHandler.functionNameMap.ConvertAndAdd(tool.Function.Name)
+		}
+	}
+
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
+	if err != nil {
+		slog.Error("chat prompt error", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// If debug mode is enabled, return the rendered template instead of calling the model
+	if req.DebugRenderOnly {
+		c.JSON(http.StatusOK, api.DebugTemplateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			DebugInfo: api.DebugInfo{
+				RenderedTemplate: prompt,
+				ImageCount:       len(images),
+			},
+		})
+		return
+	}
+
+	// Validate Think value: string values currently only allowed for gptoss models
+	if req.Think != nil && req.Think.IsString() && !useHarmony {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
+		return
 	}
 
 	var thinkingState *thinking.Parser
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if req.Think != nil && req.Think.AsBool() && openingTag != "" && closingTag != "" {
+	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 		thinkingState = &thinking.Parser{
 			OpeningTag: openingTag,
 			ClosingTag: closingTag,
@@ -1701,9 +1753,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					toolName, toolContent := harmonyToolParser.Drain()
 					if toolName != nil {
 						*toolName = strings.TrimPrefix(*toolName, "functions.")
+						*toolName = harmonyMessageHandler.functionNameMap.OriginalFromConverted(*toolName)
 						var args api.ToolCallFunctionArguments
 						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							ch <- gin.H{"error parsing tool call": err.Error()}
+							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
+							ch <- gin.H{"error": errStr}
 							return
 						}
 						res.Message.ToolCalls = []api.ToolCall{{Function: api.ToolCallFunction{Name: *toolName, Arguments: args}}}

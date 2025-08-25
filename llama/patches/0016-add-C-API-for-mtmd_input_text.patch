@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Tue, 24 Jun 2025 16:55:31 -0600
+Subject: [PATCH] add C API for mtmd_input_text
+
+Signed-off-by: Gabe Goodhart <ghart@us.ibm.com>
+---
+ tools/mtmd/mtmd.cpp | 10 ++++++++++
+ tools/mtmd/mtmd.h   |  3 +++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
+index a05373d5..6f70f7f4 100644
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -79,6 +79,16 @@ enum mtmd_slice_tmpl {
+     // TODO @ngxson : add support for idefics (SmolVLM)
+ };
+ 
++mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {
++    return new mtmd_input_text{text, add_special, parse_special};
++}
++
++void mtmd_input_text_free(mtmd_input_text* input_text) {
++    if (input_text) {
++        delete input_text;
++    }
++}
++
+ const char * mtmd_default_marker() {
+     return "<__media__>";
+ }
+diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
+index f4ea07d3..cf287224 100644
+--- a/tools/mtmd/mtmd.h
++++ b/tools/mtmd/mtmd.h
+@@ -75,6 +75,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
+ typedef struct mtmd_input_chunks mtmd_input_chunks;
+ typedef struct mtmd_input_text   mtmd_input_text;
+ 
++MTMD_API mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special);
++MTMD_API void mtmd_input_text_free(mtmd_input_text* input_text);
++
+ struct mtmd_context_params {
+     bool use_gpu;
+     bool print_timings;
