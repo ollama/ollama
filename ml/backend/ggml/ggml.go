@@ -629,6 +629,18 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 		})
 	}
 
+	// Cleanup any backend state from devices that we didn't end up using
+nextDevice:
+	for _, d := range append(gpus, append(accels, cpus...)...) {
+		for _, backend := range b.schedBackends {
+			if d == C.ggml_backend_get_device(backend) {
+				continue nextDevice
+			}
+		}
+
+		C.ggml_backend_dev_reset(d)
+	}
+
 	if err := g.Wait(); err != nil {
 		return err
 	}
