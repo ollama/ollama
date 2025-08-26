@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
+var (
 	smol = "llama3.2:1b"
 )
 
@@ -37,6 +37,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"gpt-oss:20b",
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
 		"deepseek-r1:1.5b",
@@ -126,6 +127,7 @@ var (
 		"gemma3n",
 		"glm4",
 		"goliath",
+		"gpt-oss:20b",
 		"granite-code",
 		"granite3-dense",
 		"granite3-guardian",
@@ -255,8 +257,13 @@ var (
 	}
 )
 
-func Init() {
+func init() {
 	lifecycle.InitLogging()
+	custom := os.Getenv("OLLAMA_TEST_SMOL_MODEL")
+	if custom != "" {
+		slog.Info("setting smol test model to " + custom)
+		smol = custom
+	}
 }
 
 func FindPort() string {
@@ -465,14 +472,18 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRe
 	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
 }
 
-func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) {
+func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
+	var context []int
 	fn := func(response api.GenerateResponse) error {
 		// fmt.Print(".")
 		buf.Write([]byte(response.Response))
 		if !stallTimer.Reset(streamTimeout) {
 			return errors.New("stall was detected while streaming response, aborting")
+		}
+		if len(response.Context) > 0 {
+			context = response.Context
 		}
 		return nil
 	}
@@ -496,7 +507,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	case <-done:
 		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
 			slog.Warn("model is too large for the target test system", "model", genReq.Model, "error", genErr)
-			return
+			return context
 		}
 		require.NoError(t, genErr, "failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
 		// Verify the response contains the expected data
@@ -513,6 +524,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
 	}
+	return context
 }
 
 // Generate a set of requests
@@ -521,55 +533,35 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
 				Model:     smol,
-				Prompt:    "why is the ocean blue?",
+				Prompt:    "why is the ocean blue? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "why is the color of dirt brown?",
+				Prompt:    "why is the color of dirt brown? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Prompt:    "what is the origin of the US thanksgiving holiday? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of independence day?",
+				Prompt:    "what is the origin of independence day? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the composition of air?",
+				Prompt:    "what is the composition of air? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			},
 		},
 		[][]string{
-			{"sunlight"},
-			{"soil", "organic", "earth", "black", "tan"},
-			{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"sunlight", "scattering", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorbs", "wavelength"},
+			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
+			{"england", "english", "massachusetts", "pilgrims", "colonists", "independence", "british", "feast", "family", "gatherings", "traditions", "turkey", "colonial", "period", "harvest", "agricultural", "european settlers", "american revolution", "civil war", "16th century", "17th century", "native american", "united states"},
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}

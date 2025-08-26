@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Gross <jesse@ollama.com>
+Date: Wed, 23 Jul 2025 11:58:49 -0700
+Subject: [PATCH] ggml: No-alloc mode
+
+Callers can set a backend buffer type to be no-alloc, meaning that
+it does not allocate memory for tensors or operations. This can
+be used for calculating memory requirements. Tensors and graphs
+must be recreated with no-alloc set to false before loading data.
+
+Defaults to false for newly created backend buffer types.
+---
+ ggml/include/ggml-backend.h  |  1 +
+ ggml/src/ggml-backend-impl.h |  2 ++
+ ggml/src/ggml-backend.cpp    | 19 ++++++++++++++++++-
+ 3 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 9424394e..b602a7c7 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -35,6 +35,7 @@ extern "C" {
+     //
+ 
+     GGML_API const char *          ggml_backend_buft_name          (ggml_backend_buffer_type_t buft);
++    GGML_API void                  ggml_backend_buft_set_alloc     (ggml_backend_buffer_type_t buft, bool alloc);
+     GGML_API ggml_backend_buffer_t ggml_backend_buft_alloc_buffer  (ggml_backend_buffer_type_t buft, size_t size);
+     GGML_API size_t                ggml_backend_buft_get_alignment (ggml_backend_buffer_type_t buft);
+     GGML_API size_t                ggml_backend_buft_get_max_size  (ggml_backend_buffer_type_t buft);
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index c36c12d6..81749a5a 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -32,6 +32,7 @@ extern "C" {
+         struct ggml_backend_buffer_type_i  iface;
+         ggml_backend_dev_t device;
+         void * context;
++        bool no_alloc;
+     };
+ 
+     //
+@@ -63,6 +64,7 @@ extern "C" {
+         void * context;
+         size_t size;
+         enum ggml_backend_buffer_usage usage;
++        bool no_alloc;
+     };
+ 
+     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index eded0291..05a842ed 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -35,12 +35,22 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
+     return buft->iface.get_name(buft);
+ }
+ 
++void ggml_backend_buft_set_alloc(ggml_backend_buffer_type_t buft, bool alloc) {
++    buft->no_alloc = !alloc;
++}
++
+ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+     if (size == 0) {
+         // return a dummy buffer for zero-sized allocations
+         return ggml_backend_buffer_init(buft, {}, NULL, 0);
+     }
+ 
++    if (buft->no_alloc) {
++        ggml_backend_buffer_t buf = ggml_backend_buffer_init(buft, {}, NULL, size);
++        buf->no_alloc = true;
++        return buf;
++    }
++
+     return buft->iface.alloc_buffer(buft, size);
+ }
+ 
+@@ -89,7 +99,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
+         /* .buft      = */ buft,
+         /* .context   = */ context,
+         /* .size      = */ size,
+-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
++        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY,
++        /* .no_alloc  = */ false
+     };
+ 
+     return buffer;
+@@ -119,6 +130,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
+         return NULL;
+     }
+ 
++    // If we aren't allocating memory, return a placeholder non-NULL pointer
++    // that meets alignment requirements
++    if (buffer->no_alloc) {
++        return (void *)ggml_backend_buffer_get_alignment(buffer);
++    }
++
+     void * base = buffer->iface.get_base(buffer);
+ 
+     GGML_ASSERT(base != NULL && "backend buffer base cannot be NULL");
