@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/semaphore"
 
@@ -1364,9 +1365,67 @@ type CompletionResponse struct {
 	EvalDuration       time.Duration `json:"eval_duration"`
 }
 
+// unicodeBufferHandler wraps a completion response callback to handle partial UTF-8 sequences.
+// This function creates a stateful closure that is NOT safe for concurrent use.
+// Each completion request should create its own handler instance.
+func unicodeBufferHandler(fn func(CompletionResponse)) func(CompletionResponse) {
+	var pendingUTF8 string
+
+	return func(resp CompletionResponse) {
+		if resp.Content == "" && !resp.Done {
+			// No content to process, just pass through
+			fn(resp)
+			return
+		}
+
+		// Combine any pending UTF-8 with current content
+		combinedContent := pendingUTF8 + resp.Content
+		pendingUTF8 = ""
+
+		// Check if combined content is valid UTF-8
+		if utf8.ValidString(combinedContent) {
+			// Valid UTF-8, send it
+			resp.Content = combinedContent
+			fn(resp)
+		} else {
+			// Invalid UTF-8
+			if resp.Done {
+				// This is the final response, trim incomplete UTF-8
+				trimmedContent := combinedContent
+				for !utf8.ValidString(trimmedContent) && len(trimmedContent) > 0 {
+					trimmedContent = trimmedContent[:len(trimmedContent)-1]
+				}
+				resp.Content = trimmedContent
+				fn(resp)
+			} else {
+				// Not final response, split valid and invalid parts
+				validPrefix := combinedContent
+				for !utf8.ValidString(validPrefix) && len(validPrefix) > 0 {
+					validPrefix = validPrefix[:len(validPrefix)-1]
+				}
+
+				if len(validPrefix) > 0 {
+					// Send valid prefix
+					resp.Content = validPrefix
+					fn(resp)
+					// Buffer the remainder
+					pendingUTF8 = combinedContent[len(validPrefix):]
+				} else {
+					// No valid prefix, buffer everything
+					pendingUTF8 = combinedContent
+					// Don't send this response
+				}
+			}
+		}
+	}
+}
+
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
 	slog.Debug("completion request", "images", len(req.Images), "prompt", len(req.Prompt), "format", string(req.Format))
 	slog.Log(ctx, logutil.LevelTrace, "completion request", "prompt", req.Prompt)
+
+	// Wrap the callback with unicode buffer handling
+	unicodeFn := unicodeBufferHandler(fn)
 
 	if len(req.Format) > 0 {
 		switch string(req.Format) {
@@ -1493,13 +1552,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 
 			if c.Content != "" {
-				fn(CompletionResponse{
+				unicodeFn(CompletionResponse{
 					Content: c.Content,
 				})
 			}
 
 			if c.Done {
-				fn(c)
+				unicodeFn(c)
 				return nil
 			}
 		}
