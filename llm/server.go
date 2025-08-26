@@ -195,6 +195,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
 	// that can handle it.
 	fa := envconfig.FlashAttention()
+	if f.FlashAttention() {
+		slog.Info("model wants flash attention")
+		fa = true
+	}
+
 	if fa && !gpus.FlashAttentionSupported() {
 		slog.Warn("flash attention enabled but not supported by gpu")
 		fa = false
