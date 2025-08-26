@@ -290,24 +290,24 @@ func (t Tensor) blockSize() uint64 {
 func (t TensorType) BlockSize() uint64 {
 	switch t {
 	case
-		0,  // F32
-		1,  // F16
-		24, // I8
-		25, // I16
-		26, // I32
-		27, // I64
-		28, // F64
-		30: // BF16
+		TensorTypeF32,
+		TensorTypeF16,
+		TensorTypeI8,
+		TensorTypeI16,
+		TensorTypeI32,
+		TensorTypeI64,
+		TensorTypeF64,
+		TensorTypeBF16:
 		return 1
 	case
-		2,  // Q4_0
-		3,  // Q4_1
-		4,  // MXFP4
-		6,  // Q5_0
-		7,  // Q5_1
-		8,  // Q8_0
-		9,  // Q8_1
-		20: // IQ4_NL
+		TensorTypeQ4_0,
+		TensorTypeQ4_1,
+		TensorTypeQ5_0,
+		TensorTypeQ5_1,
+		TensorTypeQ8_0,
+		TensorTypeQ8_1,
+		tensorTypeIQ4_NL,
+		4, TensorTypeMXFP4:
 		return 32
 	default:
 		return 256
@@ -330,8 +330,6 @@ func (t TensorType) TypeSize() uint64 {
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
-	case TensorTypeMXFP4, 39:
-		return 1 + blockSize/2
 	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
 	case TensorTypeQ5_1:
@@ -382,6 +380,8 @@ func (t TensorType) TypeSize() uint64 {
 		return blockSize/8 + blockSize/16 + blockSize/32
 	case TensorTypeBF16:
 		return 2
+	case 4, TensorTypeMXFP4:
+		return 1 + blockSize/2
 	default:
 		return 0
 	}

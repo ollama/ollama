@@ -33,8 +33,8 @@ func (t tensorBase) Shape() []uint64 {
 const (
 	tensorKindFP32 uint32 = iota
 	tensorKindFP16
-	tensorKindMXFP4 = 4
 	tensorKindBF16  = 30
+	tensorKindMXFP4 = 39
 )
 
 func (t tensorBase) Kind() uint32 {
