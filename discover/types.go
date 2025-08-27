@@ -1,10 +1,13 @@
 package discover
 
 import (
-	"fmt"
 	"log/slog"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/ml"
 )
 
 type memInfo struct {
@@ -26,9 +29,6 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 
 	// Any extra PATH/LD_LIBRARY_PATH dependencies required for the Library to operate properly
 	DependencyPath []string `json:"lib_path,omitempty"`
-
-	// Extra environment variables specific to the GPU as list of [key,value]
-	EnvWorkarounds [][2]string `json:"envs,omitempty"`
 
 	// Set to true if we can NOT reliably discover FreeMemory.  A value of true indicates
 	// the FreeMemory is best effort, and may over or under report actual memory usage
@@ -69,37 +69,8 @@ type CPU struct {
 	ThreadCount         int
 }
 
-type CudaGPUInfo struct {
-	GpuInfo
-	OSOverhead   uint64 // Memory overhead between the driver library and management library
-	index        int    //nolint:unused,nolintlint
-	computeMajor int    //nolint:unused,nolintlint
-	computeMinor int    //nolint:unused,nolintlint
-}
-type CudaGPUInfoList []CudaGPUInfo
-
-type RocmGPUInfo struct {
-	GpuInfo
-	usedFilepath string //nolint:unused,nolintlint
-	index        int    //nolint:unused,nolintlint
-}
-type RocmGPUInfoList []RocmGPUInfo
-
-type OneapiGPUInfo struct {
-	GpuInfo
-	driverIndex int //nolint:unused,nolintlint
-	gpuIndex    int //nolint:unused,nolintlint
-}
-type OneapiGPUInfoList []OneapiGPUInfo
-
 type GpuInfoList []GpuInfo
 
-type UnsupportedGPUInfo struct {
-	GpuInfo
-	Reason string `json:"reason"`
-}
-
-// Split up the set of gpu info's by Library and variant
 func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	resp := []GpuInfoList{}
 	libs := []string{}
@@ -124,18 +95,48 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	return resp
 }
 
-// Report the GPU information into the log an Info level
-func (l GpuInfoList) LogDetails() {
-	for _, g := range l {
+func LogDetails(devices []ml.DeviceInfo) {
+	for _, dev := range devices {
+		var libs []string
+		for _, dir := range dev.LibraryPath {
+			if strings.Contains(dir, filepath.Join("lib", "ollama")) {
+				libs = append(libs, filepath.Base(dir))
+			}
+		}
+		typeStr := "discrete"
+		if dev.Integrated {
+			typeStr = "iGPU"
+		}
 		slog.Info("inference compute",
-			"id", g.ID,
-			"library", g.Library,
-			"variant", g.Variant,
-			"compute", g.Compute,
-			"driver", fmt.Sprintf("%d.%d", g.DriverMajor, g.DriverMinor),
-			"name", g.Name,
-			"total", format.HumanBytes2(g.TotalMemory),
-			"available", format.HumanBytes2(g.FreeMemory),
+			"id", dev.ID,
+			"library", dev.Library,
+			"compute", dev.Compute(),
+			"name", dev.Name,
+			"description", dev.Description,
+			"libdirs", strings.Join(libs, ","),
+			"driver", dev.Driver(),
+			"pci_id", dev.PCIID,
+			"type", typeStr,
+			"total", format.HumanBytes2(dev.TotalMemory),
+			"available", format.HumanBytes2(dev.FreeMemory),
+		)
+	}
+	// CPU inference
+	if len(devices) == 0 {
+		dev, _ := GetCPUMem()
+		// TODO more details about CPU
+		slog.Info("inference compute",
+			"id", "cpu",
+			"library", "cpu",
+			"compute", "",
+			"name", "cpu",
+			"description", "cpu",
+			"libdirs", "ollama",
+			"driver", "",
+			"pci_id", "",
+			"type", "",
+			"total", format.HumanBytes2(dev.TotalMemory),
+			"available", format.HumanBytes2(dev.FreeMemory),
 		)
 	}
 }
@@ -148,20 +149,19 @@ func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
 
 type SystemInfo struct {
-	System          CPUInfo              `json:"system"`
-	GPUs            []GpuInfo            `json:"gpus"`
-	UnsupportedGPUs []UnsupportedGPUInfo `json:"unsupported_gpus"`
-	DiscoveryErrors []string             `json:"discovery_errors"`
+	System CPUInfo   `json:"system"`
+	GPUs   []GpuInfo `json:"gpus"`
 }
 
 // Return the optimal number of threads to use for inference
-func (si SystemInfo) GetOptimalThreadCount() int {
-	if len(si.System.CPUs) == 0 {
-		return 0
+func GetOptimalThreadCount() int {
+	cpus, err := GetCPUDetails()
+	if err != nil {
+		slog.Debug("failed to lookup CPU details, falling back to logical processor count for num threads", "error", err)
+		return runtime.NumCPU()
 	}
-
 	coreCount := 0
-	for _, c := range si.System.CPUs {
+	for _, c := range cpus {
 		coreCount += c.CoreCount - c.EfficiencyCoreCount
 	}
 
