@@ -194,10 +194,11 @@ func processSystemLogicalProcessorInforationList(buf []byte) []*winPackage {
 	return packages
 }
 
-func GetCPUDetails() ([]CPU, error) {
+func GetCPUDetails() []CPU {
 	buf, err := getLogicalProcessorInformationEx()
 	if err != nil {
-		return nil, err
+		slog.Warn("failed to get CPU details", "error", err)
+		return nil
 	}
 	packages := processSystemLogicalProcessorInforationList(buf)
 	cpus := make([]CPU, len(packages))
@@ -207,7 +208,7 @@ func GetCPUDetails() ([]CPU, error) {
 		cpus[i].EfficiencyCoreCount = pkg.efficiencyCoreCount
 		cpus[i].ThreadCount = pkg.threadCount
 	}
-	return cpus, nil
+	return cpus
 }
 
 func IsNUMA() bool {

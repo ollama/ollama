@@ -245,10 +245,11 @@ struct IADLXGPUMetrics { const IADLXGPUMetricsVtbl *pVtbl; };
 struct {
   void *handle;
   ADLX_RESULT (*ADLXInitialize)(adlx_uint64 version, IADLXSystem** ppSystem);
+  ADLX_RESULT (*ADLXInitializeWithIncompatibleDriver)(adlx_uint64 version, IADLXSystem** ppSystem);
+  ADLX_RESULT (*ADLXQueryVersion)(const char** version);
   ADLX_RESULT (*ADLXTerminate)();
-
   IADLXSystem *sys;
-} adlx;
+} adlx { NULL, NULL, NULL, NULL, NULL, NULL };
 static std::mutex ggml_adlx_lock;
 
 
@@ -268,8 +269,10 @@ int ggml_hip_mgmt_init() {
     }
 
     adlx.ADLXInitialize = (ADLX_RESULT (*)(adlx_uint64 version, IADLXSystem **ppSystem)) GetProcAddress((HMODULE)(adlx.handle), "ADLXInitialize");
+    adlx.ADLXInitializeWithIncompatibleDriver = (ADLX_RESULT (*)(adlx_uint64 version, IADLXSystem **ppSystem)) GetProcAddress((HMODULE)(adlx.handle), "ADLXInitializeWithIncompatibleDriver");
     adlx.ADLXTerminate = (ADLX_RESULT (*)()) GetProcAddress((HMODULE)(adlx.handle), "ADLXTerminate");
-    if (adlx.ADLXInitialize == NULL || adlx.ADLXTerminate == NULL) {
+    adlx.ADLXQueryVersion = (ADLX_RESULT (*)(const char **version)) GetProcAddress((HMODULE)(adlx.handle), "ADLXQueryVersion");
+    if (adlx.ADLXInitialize == NULL || adlx.ADLXInitializeWithIncompatibleDriver == NULL || adlx.ADLXTerminate == NULL) {
         GGML_LOG_INFO("%s unable to locate required symbols in amdadlx64.dll, falling back to hip free memory reporting");
         FreeLibrary((HMODULE)(adlx.handle));
         adlx.handle = NULL;
@@ -278,10 +281,28 @@ int ggml_hip_mgmt_init() {
 
     SetErrorMode(old_mode);
 
+    // Aid in troubleshooting...
+    if (adlx.ADLXQueryVersion != NULL) {
+        const char *version = NULL;
+        ADLX_RESULT status = adlx.ADLXQueryVersion(&version);
+        if (ADLX_SUCCEEDED(status)) {
+            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);  
+        }
+    }
+
     ADLX_RESULT status = adlx.ADLXInitialize(ADLX_FULL_VERSION, &adlx.sys);
-    if (status != ADLX_OK) {
-        GGML_LOG_INFO("%s failed to initialize Adlx %d\n", __func__, status);
-        return status;
+    if (ADLX_FAILED(status)) {
+        // GGML_LOG_DEBUG("%s failed to initialize ADLX error=%d - attempting with incompatible driver...\n", __func__, status);
+        // Try with the incompatible driver
+        status = adlx.ADLXInitializeWithIncompatibleDriver(ADLX_FULL_VERSION, &adlx.sys);
+        if (ADLX_FAILED(status)) {
+            GGML_LOG_INFO("%s failed to initialize ADLX error=%d\n", __func__, status);
+            FreeLibrary((HMODULE)(adlx.handle));
+            adlx.handle = NULL;
+            adlx.sys = NULL;
+            return status;
+        }
+        // GGML_LOG_DEBUG("%s initialized ADLX with incpomatible driver\n", __func__);
     }
     return ADLX_OK;
 }
@@ -293,7 +314,7 @@ void ggml_hip_mgmt_release() {
         return;
     }
     ADLX_RESULT status = adlx.ADLXTerminate();
-    if (status != ADLX_OK) {
+    if (ADLX_FAILED(status)) {
         GGML_LOG_INFO("%s failed to terminate Adlx %d\n", __func__, status);
         // Unload anyway...
     }
@@ -303,6 +324,7 @@ void ggml_hip_mgmt_release() {
 
 #define adlx_gdm_cleanup \
     if (gpuMetricsSupport != NULL) gpuMetricsSupport->pVtbl->Release(gpuMetricsSupport); \
+    if (gpuMetrics != NULL) gpuMetrics->pVtbl->Release(gpuMetrics); \
     if (perfMonitoringServices != NULL) perfMonitoringServices->pVtbl->Release(perfMonitoringServices); \
     if (gpus != NULL) gpus->pVtbl->Release(gpus); \
     if (gpu != NULL) gpu->pVtbl->Release(gpu)

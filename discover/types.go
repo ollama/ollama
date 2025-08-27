@@ -1,9 +1,9 @@
 package discover
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -155,14 +155,13 @@ type SystemInfo struct {
 }
 
 // Return the optimal number of threads to use for inference
-func GetOptimalThreadCount() int {
-	cpus, err := GetCPUDetails()
-	if err != nil {
-		slog.Debug("failed to lookup CPU details, falling back to logical processor count for num threads", "error", err)
-		return runtime.NumCPU()
+func (si SystemInfo) GetOptimalThreadCount() int {
+	if len(si.System.CPUs) == 0 {
+		return 0
 	}
+
 	coreCount := 0
-	for _, c := range cpus {
+	for _, c := range si.System.CPUs {
 		coreCount += c.CoreCount - c.EfficiencyCoreCount
 	}
 
@@ -173,13 +172,41 @@ func GetOptimalThreadCount() int {
 func (l GpuInfoList) FlashAttentionSupported() bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
-			gpu.Library == "metal" ||
-			(gpu.Library == "cuda" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "rocm"
+			gpu.Name == "Metal" ||
+			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7) ||
+			gpu.Library == "HIP"
 
 		if !supportsFA {
 			return false
 		}
 	}
 	return true
+}
+
+type BaseRunner interface {
+	// GetPort returns the localhost port number the runner is running on
+	GetPort() int
+
+	// HasExited indicates if the runner is no longer running.  This can be used during
+	// bootstrap to detect if a given filtered device is incompatible and triggered an assert
+	HasExited() bool
+}
+
+type RunnerDiscovery interface {
+	BaseRunner
+
+	// GetDeviceInfos will perform a query of the underlying device libraries
+	// for device identification and free VRAM information
+	// During bootstrap scenarios, this routine may take seconds to complete
+	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
+}
+
+type FilteredRunnerDiscovery interface {
+	RunnerDiscovery
+
+	// GetActiveDeviceIDs returns the filtered set of devices actively in
+	// use by this runner for running models.  If the runner is a bootstrap runner, no devices
+	// will be active yet so no device IDs are returned.
+	// This routine will not query the underlying device and will return immediately
+	GetActiveDeviceIDs() []ml.DeviceID
 }

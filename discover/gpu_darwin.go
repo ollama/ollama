@@ -2,8 +2,8 @@ package discover
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Foundation -framework CoreGraphics
-#include "cpu_info_darwin.h"
+#cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework Metal
+#include "gpu_info_darwin.h"
 */
 import "C"
 
@@ -26,7 +26,7 @@ func GetCPUMem() (memInfo, error) {
 	}, nil
 }
 
-func GetCPUDetails() ([]CPU, error) {
+func GetCPUDetails() []CPU {
 	query := "hw.perflevel0.physicalcpu"
 	perfCores, err := syscall.SysctlUint32(query)
 	if err != nil {
@@ -40,13 +40,12 @@ func GetCPUDetails() ([]CPU, error) {
 	logicalCores, _ := syscall.SysctlUint32(query)
 
 	return []CPU{
-			{
-				CoreCount:           int(perfCores + efficiencyCores),
-				EfficiencyCoreCount: int(efficiencyCores),
-				ThreadCount:         int(logicalCores),
-			},
+		{
+			CoreCount:           int(perfCores + efficiencyCores),
+			EfficiencyCoreCount: int(efficiencyCores),
+			ThreadCount:         int(logicalCores),
 		},
-		nil
+	}
 }
 
 func IsNUMA() bool {

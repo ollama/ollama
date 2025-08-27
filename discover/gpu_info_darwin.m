@@ -1,6 +1,13 @@
 #import <Foundation/Foundation.h>
 #import <mach/mach.h>
-#include "cpu_info_darwin.h"
+#include "gpu_info_darwin.h"
+
+uint64_t getRecommendedMaxVRAM() {
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  uint64_t result = device.recommendedMaxWorkingSetSize;
+  CFRelease(device);
+  return result;
+}
 
 // getPhysicalMemory returns the total physical memory in bytes
 uint64_t getPhysicalMemory() {

@@ -78,6 +78,8 @@ type LlamaServer interface {
 	TotalSize() uint64
 	VRAMByGPU(gpuID string) uint64
 	Pid() int
+	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
+	HasExited() bool
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -175,7 +177,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
-	defaultThreads := discover.GetOptimalThreadCount()
+	defaultThreads := discover.GetSystemInfo().GetOptimalThreadCount()
 	if opts.NumThread > 0 {
 		loadRequest.NumThreads = opts.NumThread
 	} else if defaultThreads > 0 {
@@ -361,7 +363,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 
 		// Always filter down the set of GPUs in case there are any unsupported devices that might crash
-		envWorkarounds := append(envWorkarounds, gpus.GetVisibleDevicesEnv()...)
+		envWorkarounds := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path variable with our adjusted version
@@ -492,10 +494,10 @@ type LoadResponse struct {
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
 
 func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) error {
-	systemInfo := discover.GetCPUInfo()
-	systemTotalMemory := systemInfo.TotalMemory
-	systemFreeMemory := systemInfo.FreeMemory
-	systemSwapFreeMemory := systemInfo.FreeSwap
+	systemInfo := discover.GetSystemInfo()
+	systemTotalMemory := systemInfo.System.TotalMemory
+	systemFreeMemory := systemInfo.System.FreeMemory
+	systemSwapFreeMemory := systemInfo.System.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
 	g := pickBestFullFitByLibrary(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
@@ -513,7 +515,7 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 
 	if len(gpus) > 1 || gpus[0].Library != "cpu" {
 		switch {
-		case gpus[0].Library == "metal" && s.estimate.VRAMSize > systemInfo.TotalMemory:
+		case gpus[0].Library == "metal" && s.estimate.VRAMSize > systemInfo.System.TotalMemory:
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			s.options.NumGPU = 0
@@ -529,9 +531,9 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 	// Darwin has fully dynamic swap so has no direct concept of free swap space
 	if runtime.GOOS != "darwin" {
 		systemMemoryRequired := s.estimate.TotalSize - s.estimate.VRAMSize
-		available := systemInfo.FreeMemory + systemInfo.FreeSwap
+		available := systemInfo.System.FreeMemory + systemInfo.System.FreeSwap
 		if systemMemoryRequired > available {
-			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.System.TotalMemory), "free", format.HumanBytes2(systemInfo.System.FreeMemory), "swap", format.HumanBytes2(systemInfo.System.FreeSwap))
 			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
 		}
 	}
@@ -559,7 +561,7 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		// Linux  with a model larger than free space, mmap leads to thrashing
 		// For CPU loads we want the memory to be allocated, not FS cache
 		if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && s.options.UseMMap == nil) ||
-			(runtime.GOOS == "linux" && systemInfo.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
+			(runtime.GOOS == "linux" && systemInfo.System.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
 			(gpus[0].Library == "cpu" && s.options.UseMMap == nil) ||
 			(s.options.UseMMap != nil && !*s.options.UseMMap) {
 			s.loadRequest.UseMmap = false
@@ -1305,6 +1307,30 @@ func (s *llmServer) Pid() int {
 		return s.cmd.Process.Pid
 	}
 	return -1
+}
+
+func (s *llmServer) GetPort() int {
+	return s.port
+}
+
+func (s *llmServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
+	// llama engine does not currently support VRAM query, short circuit
+	if s.textProcessor == nil {
+		slog.Debug("llamarunner free vram reporting not supported")
+		return nil
+	}
+	devices, err := discover.GetDevicesFromRunner(ctx, s)
+	if err != nil {
+		slog.Debug("failure refreshing GPU information", "error", err)
+	}
+	return devices
+}
+
+func (s *llmServer) HasExited() bool {
+	if s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0 {
+		return true
+	}
+	return false
 }
 
 var grammarJSON = `

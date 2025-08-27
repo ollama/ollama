@@ -304,7 +304,21 @@ func sumMemory(mem []Memory) uint64 {
 	return sum
 }
 
+// Minimal unique device identification
+type DeviceID struct {
+	// ID is an identifier for the device for matching with system
+	// management libraries.
+	// This ID represents a "post filtered" view of the enumerated devices
+	// if the ID is numeric
+	ID string `json:"id"`
+
+	// Library identifies which library is used for the device (e.g. CUDA, HIP, etc.)
+	Library string `json:"backend,omitempty"`
+}
+
 type DeviceInfo struct {
+	DeviceID
+
 	// Name is the name of the device as labeled by the backend. It
 	// may not be persistent across instances of the runner.
 	Name string `json:"name"`
@@ -312,12 +326,9 @@ type DeviceInfo struct {
 	// Description is the longer user-friendly identification of the device
 	Description string `json:"description"`
 
-	// ID is an identifier for the device for matching with system
-	// management libraries.
-	ID string `json:"id"`
-
-	// Library identifies which library is used for the device (e.g. CUDA, HIP, etc.)
-	Library string `json:"backend,omitempty"`
+	// FilterID is populated with the unfiltered device ID if a numeric ID is used
+	// so the device can be included.
+	FilteredID string `json:"filtered_id,omitempty"`
 
 	// Integrated is set true for integrated GPUs, false for Discrete GPUs
 	Integrated bool `json:"integration,omitempty"`
@@ -355,8 +366,27 @@ func (d DeviceInfo) Compute() string {
 	}
 	return strconv.Itoa(d.ComputeMajor) + "." + strconv.Itoa(d.ComputeMinor)
 }
+
 func (d DeviceInfo) Driver() string {
 	return strconv.Itoa(d.DriverMajor) + "." + strconv.Itoa(d.DriverMinor)
+}
+
+type DeviceComparison int
+
+const (
+	UniqueDevice      DeviceComparison = iota
+	SameBackendDevice                  // The device is the same, and the library/backend is the same
+	DuplicateDevice                    // The same physical device but different library/backend (overlapping device)
+)
+
+func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
+	if a.PCIID != b.PCIID {
+		return UniqueDevice
+	}
+	if a.Library == b.Library {
+		return SameBackendDevice
+	}
+	return DuplicateDevice
 }
 
 // Log prints a high level summary of the memory (allocated or not)

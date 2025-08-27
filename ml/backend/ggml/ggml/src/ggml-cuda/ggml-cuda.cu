@@ -286,6 +286,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
     for (int id = 0; id < info.device_count; ++id) {
         int device_vmm = 0;
 
+#if defined(GGML_USE_HIP)
+        if (std::getenv("GGML_ROCBLAS_INIT") != NULL) {
+            GGML_LOG_INFO("%s: initializing rocBLAS on device %d\n", __func__, id);
+            CUDA_CHECK(cudaSetDevice(id));
+            // rocblas_initialize will SIGABRT if the GPU isn't supported
+            rocblas_initialize();
+            GGML_LOG_INFO("%s: rocBLAS initialized on device %d\n", __func__, id);
+        }
+#endif
+
 #if defined(GGML_USE_VMM)
         CUdevice device;
         CU_CHECK(cuDeviceGet(&device, id));
@@ -3255,7 +3265,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
     if (ggml_hip_mgmt_init() == 0) {
         int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
         if (status == 0) {
-            GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %llu total: %llu\n", __func__, free, total);
+            GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
             ggml_hip_mgmt_release();
             return;
         }
@@ -3265,7 +3275,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
     if (ggml_nvml_init() == 0) {
         int status = ggml_nvml_get_device_memory(ctx->id.c_str(), free, total);
         if (status == 0) {
-            GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %llu total: %llu\n", __func__, free, total);
+            GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
             ggml_nvml_release();
             return;
         }
@@ -3290,9 +3300,8 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
     // Memory reporting is disabled to avoid allocation of a CUDA primary context (~300 MB per device).
     // If you need the memory data, call ggml_backend_dev_memory() explicitly.
     props->memory_total = props->memory_free = 0;
-    
+
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
-    ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
 #if defined(GGML_USE_HIP)
     int cc = ggml_cuda_info().devices[ctx->device].cc - GGML_CUDA_CC_OFFSET_AMD;
     props->compute_major = cc / 0x100;

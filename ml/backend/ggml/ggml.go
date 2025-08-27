@@ -728,14 +728,28 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 	deviceInfos := []ml.DeviceInfo{}
 
 	for _, dev := range gpus {
+		// If we have a model loaded, and it's only loaded on a subset of the devices
+		// skip idle/unused devices to avoid initializing them and causing VRAM allocations
+		if b.allocMemory {
+			idleDev := true
+			for _, backend := range b.schedBackends {
+				if dev == C.ggml_backend_get_device(backend) {
+					idleDev = false
+					break
+				}
+			}
+			if idleDev {
+				slog.Debug("skipping unused backend device", "description", C.GoString(C.ggml_backend_dev_description(dev)))
+				continue
+			}
+		}
+
 		info := ml.DeviceInfo{}
 		props := C.struct_ggml_backend_dev_props{}
 		C.ggml_backend_dev_get_props(dev, &props)
 		info.Name = C.GoString(props.name)
 		info.Description = C.GoString(props.description)
 		info.ID = C.GoString(props.id)
-		info.TotalMemory = (uint64)(props.memory_total)
-		info.FreeMemory = (uint64)(props.memory_free)
 		info.ComputeMajor = (int)(props.compute_major)
 		info.ComputeMinor = (int)(props.compute_minor)
 		info.DriverMajor = (int)(props.driver_major)
@@ -746,6 +760,10 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		}
 		info.PCIID = fmt.Sprintf("%02x:%02x.%x", props.pci_bus_id, props.pci_device_id, props.pci_domain_id)
 		info.LibraryPath = split
+
+		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
+		info.TotalMemory = (uint64)(props.memory_total)
+		info.FreeMemory = (uint64)(props.memory_free)
 
 		deviceInfos = append(deviceInfos, info)
 	}

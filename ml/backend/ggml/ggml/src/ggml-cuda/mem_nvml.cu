@@ -36,7 +36,7 @@ struct {
   nvmlReturn_t (*nvmlShutdown)(void);
   nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
   nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
-} nvml;
+} nvml { NULL, NULL, NULL, NULL, NULL };
 static std::mutex ggml_nvml_lock;
 
 int ggml_nvml_init() {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,16 +67,17 @@ type linuxCpuInfo struct {
 	CoreID     string `cpuinfo:"core id"`
 }
 
-func GetCPUDetails() ([]CPU, error) {
+func GetCPUDetails() []CPU {
 	file, err := os.Open(CpuInfoFilename)
 	if err != nil {
-		return nil, err
+		slog.Warn("failed to get CPU details", "error", err)
+		return nil
 	}
 	defer file.Close()
 	return linuxCPUDetails(file)
 }
 
-func linuxCPUDetails(file io.Reader) ([]CPU, error) {
+func linuxCPUDetails(file io.Reader) []CPU {
 	reColumns := regexp.MustCompile("\t+: ")
 	scanner := bufio.NewScanner(file)
 	cpuInfos := []linuxCpuInfo{}
@@ -154,7 +156,7 @@ func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 	for _, k := range keys {
 		result = append(result, *socketByID[k])
 	}
-	return result, nil
+	return result
 }
 
 func IsNUMA() bool {

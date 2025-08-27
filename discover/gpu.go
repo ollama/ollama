@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/ml"
 )
 
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
@@ -28,9 +30,13 @@ func GetCPUInfo() GpuInfo {
 	}
 }
 
-func GetGPUInfo() GpuInfoList {
-	resp := []GpuInfo{}
+func GetGPUInfo(ctx context.Context, runners []FilteredRunnerDiscovery) GpuInfoList {
+	devs := GPUDevices(ctx, runners)
+	return devInfoToInfoList(devs)
+}
 
+func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
+	resp := []GpuInfo{}
 	// Our current packaging model places ggml-hip in the main directory
 	// but keeps rocm in an isolated directory.  We have to add it to
 	// the [LD_LIBRARY_]PATH so ggml-hip will load properly
@@ -39,7 +45,7 @@ func GetGPUInfo() GpuInfoList {
 		rocmDir = ""
 	}
 
-	for _, dev := range GPUDevices() {
+	for _, dev := range devs {
 		info := GpuInfo{
 			ID:   dev.ID,
 			Name: dev.Description,
@@ -90,75 +96,49 @@ func GetGPUInfo() GpuInfoList {
 // filtering will no longer be necessary.  Instead the runner can be told which
 // of the set of GPUs to utilize and handle filtering itself, instead of relying
 // on the env var to hide devices from the underlying GPU libraries
-func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
+func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 	if len(l) == 0 {
 		return nil
 	}
-	switch l[0].Library {
-	case "cuda", "CUDA":
-		return cudaGetVisibleDevicesEnv(l)
-	case "rocm", "HIP":
-		return rocmGetVisibleDevicesEnv(l)
-	default:
-		slog.Debug("no filter required for library " + l[0].Library)
-		return "", ""
-	}
-	return vd
+	return []string{rocmGetVisibleDevicesEnv(l)}
 }
 
-func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
+func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
-		if info.Library != "rocm" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
+		if info.Library != "HIP" {
 			continue
 		}
 		ids = append(ids, info.ID)
 	}
-	var envVar string
+	if len(ids) == 0 {
+		return ""
+	}
+	envVar := "ROCR_VISIBLE_DEVICES="
 	if runtime.GOOS != "linux" {
-		envVar = "HIP_VISIBLE_DEVICES"
-	} else {
-		envVar = "ROCR_VISIBLE_DEVICES"
+		envVar = "HIP_VISIBLE_DEVICES="
 	}
 	// There are 3 potential env vars to use to select GPUs.
 	// ROCR_VISIBLE_DEVICES supports UUID or numeric but does not work on Windows
 	// HIP_VISIBLE_DEVICES supports numeric IDs only
 	// GPU_DEVICE_ORDINAL supports numeric IDs only
-	return envVar, strings.Join(ids, ",")
+	return envVar + strings.Join(ids, ",")
 }
 
-func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
-	ids := []string{}
-	for _, info := range gpuInfo {
-		if info.Library != "cuda" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("cudaGetVisibleDevicesEnv skipping over non-cuda device", "library", info.Library)
-			continue
-		}
-		ids = append(ids, info.ID)
-	}
-	return "CUDA_VISIBLE_DEVICES", strings.Join(ids, ",")
-}
-
+// GetSystemInfo returns the last cached state of the GPUs on the system
 func GetSystemInfo() SystemInfo {
-	gpus := GetGPUInfo()
+	deviceMu.Lock()
+	defer deviceMu.Unlock()
+	gpus := devInfoToInfoList(devices)
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		gpus = []GpuInfo{}
 	}
-	details, err := GetCPUDetails()
-	if err != nil {
-		slog.Warn("failed to look up CPU details", "error", err)
-	}
-
-	sys := CPUInfo{
-		CPUs:    details,
-		GpuInfo: GetCPUInfo(),
-	}
 
 	return SystemInfo{
-		System: sys,
-		GPUs:   gpus,
+		System: CPUInfo{
+			CPUs:    GetCPUDetails(),
+			GpuInfo: GetCPUInfo(),
+		},
+		GPUs: gpus,
 	}
 }
