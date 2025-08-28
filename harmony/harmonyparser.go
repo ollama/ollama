@@ -1,7 +1,6 @@
 package harmony
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -292,7 +291,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 	for _, event := range events {
 		switch event := event.(type) {
 		case HarmonyEventHeaderComplete:
-			slog.Log(context.TODO(), logutil.LevelTrace, "harmony event header complete", "header", event.Header)
+			logutil.Trace("harmony event header complete", "header", event.Header)
 			switch event.Header.Channel {
 			case "analysis":
 				if event.Header.Recipient != "" {
@@ -315,7 +314,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 				h.state = harmonyMessageState_Normal
 			}
 		case HarmonyEventContentEmitted:
-			slog.Log(context.TODO(), logutil.LevelTrace, "harmony event content", "content", event.Content, "state", h.state)
+			logutil.Trace("harmony event content", "content", event.Content, "state", h.state)
 			if h.state == harmonyMessageState_Normal {
 				contentSb.WriteString(event.Content)
 			} else if h.state == harmonyMessageState_Thinking {
