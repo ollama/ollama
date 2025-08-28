@@ -484,7 +484,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		seq.numPredicted++
 
 		// if it's an end of sequence token, break
-		if s.model.TokenIsEog(token) {
+		if s.model.TokenIsEog(token) && !seq.samplingCtx.IgnoreEOS() {
 			// TODO (jmorganca): we should send this back
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
@@ -575,6 +575,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		PenaltyPresent: req.Options.PresencePenalty,
 		Seed:           uint32(req.Options.Seed),
 		Grammar:        req.Grammar,
+		IgnoreEOS:      req.Options.IgnoreEOS,
 	}
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
