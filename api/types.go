@@ -894,7 +894,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if t < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		} else {
-			d.Duration = time.Duration(int(t) * int(time.Second))
+			d.Duration = time.Duration(t * float64(time.Second))
 		}
 	case string:
 		d.Duration, err = time.ParseDuration(t)
