@@ -694,9 +694,7 @@ func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 		return nil
 	}
 	vd := []string{}
-	if tmp := cudaGetVisibleDevicesEnv(l); tmp != "" {
-		vd = append(vd, tmp)
-	}
+	// Only filter the AMD GPUs at this level, let all NVIDIA devices through
 	if tmp := rocmGetVisibleDevicesEnv(l); tmp != "" {
 		vd = append(vd, tmp)
 	}

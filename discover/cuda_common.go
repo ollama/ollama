@@ -16,31 +16,6 @@ import (
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
-func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
-	ids := []string{}
-	for _, info := range gpuInfo {
-		if info.Library != "cuda" {
-			continue
-		}
-		ids = append(ids, info.ID)
-	}
-	if len(ids) == 0 {
-		return ""
-	}
-	// Handle mixed scenarios - ROCm will filter by CUDA_VISIBLE_DEVICES as well
-	for _, info := range gpuInfo {
-		if info.Library == "rocm" {
-			if _, err := strconv.Atoi(info.ID); err == nil {
-				ids = append(ids, fmt.Sprintf("%d", info.filterID))
-			} else {
-				ids = append(ids, info.ID)
-			}
-		}
-	}
-
-	return "CUDA_VISIBLE_DEVICES=" + strings.Join(ids, ",")
-}
-
 func cudaVariant(gpuInfo CudaGPUInfo) string {
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
 		if CudaTegra != "" {

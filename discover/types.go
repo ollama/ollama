@@ -37,7 +37,7 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 
 	// GPU information
 	ID       string `json:"gpu_id"` // string to use for selection of this specific GPU
-	filterID int    // AMD Workaround: The numeric ID of the device used to filter out other devices
+	filterID int    //nolint:unused,nolintlint // AMD Workaround: The numeric ID of the device used to filter out other devices
 	Name     string `json:"name"`    // user friendly name if available
 	Compute  string `json:"compute"` // Compute Capability or gfx
 
