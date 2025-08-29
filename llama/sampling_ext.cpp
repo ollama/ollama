@@ -22,6 +22,7 @@ struct common_sampler *common_sampler_cinit(const struct llama_model *model, str
         sparams.penalty_present = params->penalty_present;
         sparams.seed = params->seed;
         sparams.grammar = params->grammar;
+        sparams.ignore_eos = params->ignore_eos;
         sparams.xtc_probability = 0.0;
         sparams.xtc_threshold = 0.5;
         return common_sampler_init(model, sparams);
@@ -40,6 +41,10 @@ void common_sampler_creset(struct common_sampler *sampler) {
 
 void common_sampler_caccept(struct common_sampler *sampler, llama_token id, bool apply_grammar) {
     common_sampler_accept(sampler, id, apply_grammar);
+}
+
+bool common_sampler_cignore_eos(struct common_sampler *sampler){
+    return common_sampler_ignore_eos(sampler);
 }
 
 llama_token common_sampler_csample(struct common_sampler *sampler, struct llama_context *ctx, int idx) {
