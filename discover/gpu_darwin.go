@@ -62,9 +62,9 @@ func GetCPUMem() (memInfo, error) {
 	}, nil
 }
 
-func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
+func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 	// No-op on darwin
-	return "", ""
+	return nil
 }
 
 func GetSystemInfo() SystemInfo {

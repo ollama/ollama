@@ -277,6 +277,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 					FreeMemory:  (totalMemory - usedMemory),
 				},
 				ID:            ID,
+				filterID:      gpuOrdinalID,
 				Name:          name,
 				Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
 				MinimumMemory: rocmMinimumMemory,
@@ -394,7 +395,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 
 		// Check for env var workarounds
 		if name == "1002:687f" { // Vega RX 56
-			gpuInfo.EnvWorkarounds = append(gpuInfo.EnvWorkarounds, [2]string{"HSA_ENABLE_SDMA", "0"})
+			gpuInfo.EnvWorkarounds = append(gpuInfo.EnvWorkarounds, "HSA_ENABLE_SDMA=0")
 		}
 
 		// The GPU has passed all the verification steps and is supported
@@ -523,19 +524,26 @@ func verifyKFDDriverAccess() error {
 	return nil
 }
 
-func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
+func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
 		if info.Library != "rocm" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
 			continue
 		}
-		ids = append(ids, info.ID)
+		// If the devices requires a numeric ID, for filtering purposes, we use the unfiltered ID number
+		if _, err := strconv.Atoi(info.ID); err == nil {
+			ids = append(ids, fmt.Sprintf("%d", info.filterID))
+		} else {
+			ids = append(ids, info.ID)
+		}
 	}
+	if len(ids) == 0 {
+		return ""
+	}
+
 	// There are 3 potential env vars to use to select GPUs.
 	// ROCR_VISIBLE_DEVICES supports UUID or numeric so is our preferred on linux
 	// GPU_DEVICE_ORDINAL supports numeric IDs only
 	// HIP_VISIBLE_DEVICES supports numeric IDs only
-	return "ROCR_VISIBLE_DEVICES", strings.Join(ids, ",")
+	return "ROCR_VISIBLE_DEVICES=" + strings.Join(ids, ",")
 }
