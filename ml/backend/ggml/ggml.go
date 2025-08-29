@@ -82,6 +82,7 @@ type Backend struct {
 	// to the name that is used by the model definition
 	tensorLoadTargets map[string][]string
 
+	schedMu       sync.Mutex // Only one Compute can run at a time
 	sched         C.ggml_backend_sched_t
 	schedBackends []C.ggml_backend_t
 	schedBufts    []C.ggml_backend_buffer_type_t
@@ -758,6 +759,15 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 }
 
 func (c *Context) Compute(tensors ...ml.Tensor) {
+	c.ComputeWithNotify(nil, tensors...)
+}
+
+func (c *Context) ComputeWithNotify(cb func(), tensors ...ml.Tensor) {
+	c.b.schedMu.Lock()
+	defer c.b.schedMu.Unlock()
+	if cb != nil {
+		go cb()
+	}
 	if status := C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph); status != C.GGML_STATUS_SUCCESS {
 		panic(fmt.Errorf("error computing ggml graph: %v", status))
 	}
@@ -1008,6 +1018,12 @@ func (t *Tensor) Floats() (data []float32) {
 	}
 
 	return
+}
+
+func (t *Tensor) SetValueFromIntSlice(s []int32) {
+	if len(s) > 0 {
+		C.ggml_backend_tensor_set(t.t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.t))
+	}
 }
 
 func (t *Tensor) DType() ml.DType {

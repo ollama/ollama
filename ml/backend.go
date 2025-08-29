@@ -372,6 +372,7 @@ type Context interface {
 
 	Forward(...Tensor) Context
 	Compute(...Tensor)
+	ComputeWithNotify(func(), ...Tensor) // notify callback once compute has begun
 
 	// Reserve is analogous to Compute but rather than executing a
 	// graph, simply preallocates memory. Typically called with a
@@ -400,6 +401,8 @@ type Tensor interface {
 
 	Bytes() []byte
 	Floats() []float32
+
+	SetValueFromIntSlice(s []int32)
 
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor

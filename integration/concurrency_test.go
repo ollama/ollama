@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -79,21 +77,21 @@ func TestMultiModelStress(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// All models compatible with ollama-engine
 	smallModels := []string{
 		"llama3.2:1b",
 		"qwen3:0.6b",
-		"gemma:2b",
-		"deepseek-r1:1.5b",
-		"starcoder2:3b",
+		"gemma2:2b",
+		"deepseek-r1:1.5b", // qwen2 arch
+		"gemma3:270m",
 	}
 	mediumModels := []string{
-		"qwen3:8b",
-		"llama2",
-		"deepseek-r1:7b",
-		"mistral",
-		"dolphin-mistral",
-		"gemma:7b",
-		"codellama:7b",
+		"llama3.2:3b",    // ~3.4G
+		"qwen3:8b",       // ~6.6G
+		"gpt-oss:20b",    // ~15G
+		"deepseek-r1:7b", // ~5.6G
+		"gemma3:4b",      // ~5.8G
+		"gemma2:9b",      // ~8.1G
 	}
 
 	var chosenModels []string
@@ -114,7 +112,9 @@ func TestMultiModelStress(t *testing.T) {
 
 	// Make sure all the models are pulled before we get started
 	for _, model := range chosenModels {
-		require.NoError(t, PullIfMissing(ctx, client, model))
+		if err := PullIfMissing(ctx, client, model); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Determine how many models we can load in parallel before we exceed VRAM
