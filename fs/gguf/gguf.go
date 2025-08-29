@@ -35,9 +35,10 @@ type File struct {
 	Magic   [4]byte
 	Version uint32
 
-	keyValues *lazy[KeyValue]
-	tensors   *lazy[TensorInfo]
-	offset    int64
+	keyValues   *lazy[KeyValue]
+	tensorInfos *lazy[TensorInfo]
+	offset      int64
+	n           uint64
 
 	file   *os.File
 	reader *bufferedReader
@@ -69,12 +70,12 @@ func Open(path string) (f *File, err error) {
 		return nil, fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
 	}
 
-	f.tensors, err = newLazy(f, f.readTensor)
+	f.tensorInfos, err = newLazy(f, f.readTensor)
 	if err != nil {
 		return nil, err
 	}
 
-	f.tensors.successFunc = func() error {
+	f.tensorInfos.successFunc = func() error {
 		offset := f.reader.offset
 
 		alignment := cmp.Or(f.KeyValue("general.alignment").Int(), 32)
@@ -119,12 +120,15 @@ func (f *File) readTensor() (TensorInfo, error) {
 		return TensorInfo{}, err
 	}
 
-	return TensorInfo{
+	tensorInfo := TensorInfo{
 		Name:   name,
 		Offset: offset,
 		Shape:  shape,
 		Type:   TensorType(type_),
-	}, nil
+	}
+
+	f.n += tensorInfo.NumValues()
+	return tensorInfo, nil
 }
 
 func (f *File) readKeyValue() (KeyValue, error) {
@@ -308,7 +312,7 @@ func readArrayString(f *File, n uint64) (*lazy[string], error) {
 
 func (f *File) Close() error {
 	f.keyValues.stop()
-	f.tensors.stop()
+	f.tensorInfos.stop()
 	return f.file.Close()
 }
 
@@ -341,15 +345,15 @@ func (f *File) KeyValues() iter.Seq2[int, KeyValue] {
 }
 
 func (f *File) TensorInfo(name string) TensorInfo {
-	if index := slices.IndexFunc(f.tensors.values, func(t TensorInfo) bool {
+	if index := slices.IndexFunc(f.tensorInfos.values, func(t TensorInfo) bool {
 		return t.Name == name
 	}); index >= 0 {
-		return f.tensors.values[index]
+		return f.tensorInfos.values[index]
 	}
 
 	// fast-forward through key values if we haven't already
 	_ = f.keyValues.rest()
-	for tensor, ok := f.tensors.next(); ok; tensor, ok = f.tensors.next() {
+	for tensor, ok := f.tensorInfos.next(); ok; tensor, ok = f.tensorInfos.next() {
 		if tensor.Name == name {
 			return tensor
 		}
@@ -359,13 +363,13 @@ func (f *File) TensorInfo(name string) TensorInfo {
 }
 
 func (f *File) NumTensors() int {
-	return int(f.tensors.count)
+	return int(f.tensorInfos.count)
 }
 
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 	// fast forward through key values if we haven't already
-	f.keyValues.rest()
-	return f.tensors.All()
+	_ = f.keyValues.rest()
+	return f.tensorInfos.All()
 }
 
 func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
@@ -375,6 +379,11 @@ func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
 	}
 
 	// fast forward through tensor info if we haven't already
-	_ = f.tensors.rest()
-	return t, io.NewSectionReader(f.file, f.offset+int64(t.Offset), t.NumBytes()), nil
+	_ = f.tensorInfos.rest()
+	return t, io.NewSectionReader(f.file, f.offset+int64(t.Offset), int64(t.NumBytes())), nil
+}
+
+func (f *File) NumValues() uint64 {
+	_ = f.tensorInfos.rest()
+	return f.n
 }

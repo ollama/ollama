@@ -1,6 +1,7 @@
 package gguf
 
 import (
+	"encoding/json"
 	"iter"
 	"log/slog"
 	"reflect"
@@ -13,56 +14,15 @@ type KeyValue struct {
 }
 
 func (kv KeyValue) Valid() bool {
-	return kv.Key != "" && kv.Value.value != nil
+	return kv.Key != "" && kv.value != nil
 }
 
 type Value struct {
 	value any
 }
 
-func value[T any](v Value, kinds ...reflect.Kind) (t T) {
-	vv := reflect.ValueOf(v.value)
-	if slices.Contains(kinds, vv.Kind()) {
-		t = vv.Convert(reflect.TypeOf(t)).Interface().(T)
-	}
-	return
-}
-
-func values[T any](v Value, kinds ...reflect.Kind) (ts []T) {
-	switch vv := reflect.ValueOf(v.value); vv.Kind() {
-	case reflect.Ptr:
-		out := vv.MethodByName("Values").Call(nil)
-		if len(out) > 0 && out[0].IsValid() {
-			next, stop := iter.Pull(out[0].Seq())
-			defer stop()
-
-			ts = make([]T, vv.Elem().FieldByName("count").Uint())
-			for i := range ts {
-				t, ok := next()
-				if !ok {
-					slog.Error("error reading value", "index", i)
-					return nil
-				}
-
-				ts[i] = t.Convert(reflect.TypeOf(ts[i])).Interface().(T)
-			}
-
-			return ts
-		}
-
-	case reflect.Slice:
-		if slices.Contains(kinds, vv.Type().Elem().Kind()) {
-			ts = make([]T, vv.Len())
-			for i := range vv.Len() {
-				ts[i] = vv.Index(i).Convert(reflect.TypeOf(ts[i])).Interface().(T)
-			}
-		}
-	}
-	return
-}
-
-func (v Value) Any() any {
-	return v.value
+func (v Value) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.value)
 }
 
 // Int returns Value as a signed integer. If it is not a signed integer, it returns 0.
@@ -113,4 +73,45 @@ func (v Value) String() string {
 // Strings returns Value as a string slice. If it is not a string slice, it returns nil.
 func (v Value) Strings() (strings []string) {
 	return values[string](v, reflect.String)
+}
+
+func value[T any](v Value, kinds ...reflect.Kind) (t T) {
+	vv := reflect.ValueOf(v.value)
+	if slices.Contains(kinds, vv.Kind()) {
+		t = vv.Convert(reflect.TypeOf(t)).Interface().(T)
+	}
+	return
+}
+
+func values[T any](v Value, kinds ...reflect.Kind) (ts []T) {
+	switch vv := reflect.ValueOf(v.value); vv.Kind() {
+	case reflect.Ptr:
+		out := vv.MethodByName("Values").Call(nil)
+		if len(out) > 0 && out[0].IsValid() {
+			next, stop := iter.Pull(out[0].Seq())
+			defer stop()
+
+			ts = make([]T, vv.Elem().FieldByName("count").Uint())
+			for i := range ts {
+				t, ok := next()
+				if !ok {
+					slog.Error("error reading value", "index", i)
+					return nil
+				}
+
+				ts[i] = t.Convert(reflect.TypeOf(ts[i])).Interface().(T)
+			}
+
+			return ts
+		}
+
+	case reflect.Slice:
+		if slices.Contains(kinds, vv.Type().Elem().Kind()) {
+			ts = make([]T, vv.Len())
+			for i := range vv.Len() {
+				ts[i] = vv.Index(i).Convert(reflect.TypeOf(ts[i])).Interface().(T)
+			}
+		}
+	}
+	return
 }
