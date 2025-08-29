@@ -134,16 +134,16 @@ type separator struct {
 	y bool
 }
 
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var result []input.Input
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
 	for _, inp := range inputs {
 		if len(inp.Multimodal) == 0 {
 			result = append(result, inp)
 			continue
 		}
 
-		var imageInputs []input.Input
-		imageInputs = append(imageInputs, input.Input{Token: 200080}) // <|image_start|>
+		var imageInputs []*input.Input
+		imageInputs = append(imageInputs, &input.Input{Token: 200080}) // <|image_start|>
 
 		for i, mm := range inp.Multimodal {
 			patchesPerChunk := mm.Tensor.Dim(1)
@@ -151,20 +151,20 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			if i < len(inp.Multimodal)-1 {
 				separator := mm.Data.(*separator)
 
-				imageInputs = append(imageInputs, input.Input{Token: 200092, Multimodal: []input.Multimodal{{Tensor: mm.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
-				imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 200092}}, patchesPerChunk-1)...)
+				imageInputs = append(imageInputs, &input.Input{Token: 200092, Multimodal: []input.Multimodal{{Tensor: mm.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
+				imageInputs = append(imageInputs, slices.Repeat([]*input.Input{{Token: 200092}}, patchesPerChunk-1)...)
 
 				if separator.x {
-					imageInputs = append(imageInputs, input.Input{Token: 200084}) // <|tile_x_separator|>
+					imageInputs = append(imageInputs, &input.Input{Token: 200084}) // <|tile_x_separator|>
 				}
 				if separator.y {
-					imageInputs = append(imageInputs, input.Input{Token: 200085}) // <|tile_y_separator|>
+					imageInputs = append(imageInputs, &input.Input{Token: 200085}) // <|tile_y_separator|>
 				}
 			} else {
-				imageInputs = append(imageInputs, input.Input{Token: 200090})                                                                                                                      // <|image|>
-				imageInputs = append(imageInputs, input.Input{Token: 200092, Multimodal: []input.Multimodal{{Tensor: mm.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
-				imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 200092}}, patchesPerChunk-1)...)
-				imageInputs = append(imageInputs, input.Input{Token: 200080}) // <|image_end|>
+				imageInputs = append(imageInputs, &input.Input{Token: 200090})                                                                                                                      // <|image|>
+				imageInputs = append(imageInputs, &input.Input{Token: 200092, Multimodal: []input.Multimodal{{Tensor: mm.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
+				imageInputs = append(imageInputs, slices.Repeat([]*input.Input{{Token: 200092}}, patchesPerChunk-1)...)
+				imageInputs = append(imageInputs, &input.Input{Token: 200080}) // <|image_end|>
 			}
 		}
 
