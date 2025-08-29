@@ -61,6 +61,20 @@ func (e testError) Error() string {
 	return e.message
 }
 
+func GenerateLargeMessage(prefix string, size int) string {
+	out := prefix
+	// Repeat message until we can't
+	for len(out) < size-len(prefix)-1 {
+		out = out + prefix + " "
+	}
+
+	// Fill with dots
+	for len(out) < size {
+		out = out + "."
+	}
+	return out
+}
+
 func TestClientStream(t *testing.T) {
 	testCases := []struct {
 		name      string
@@ -109,6 +123,14 @@ func TestClientStream(t *testing.T) {
 					Done:       true,
 					DoneReason: "stop",
 				},
+			},
+		},
+		{
+			name: "large response",
+			responses: []any{
+				ChatResponse{Message: Message{
+					Content: GenerateLargeMessage("Something trivial with a very large context", 512*1024),
+				}},
 			},
 		},
 	}
@@ -164,6 +186,12 @@ func TestClientStream(t *testing.T) {
 				}
 				return
 			}
+
+			// Test success-calls get he right number of responses
+			if len(tc.responses) != len(receivedChunks) {
+				t.Errorf("expected %d responses, got %d", len(tc.responses), len(receivedChunks))
+			}
+
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
