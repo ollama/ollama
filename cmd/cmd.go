@@ -1620,6 +1620,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NUM_PARALLEL"],
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
+				envVars["OLLAMA_IP_ALLOWLIST"],
 				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_KV_CACHE_TYPE"],
