@@ -26,6 +26,7 @@ set(GGML_CUDA_PEER_MAX_BATCH_SIZE 128)
 set(GGML_CUDA_GRAPHS ON)
 set(GGML_CUDA_FA ON)
 set(GGML_CUDA_COMPRESSION_MODE default)
+set(GGML_OPENVINO ON)
 
 if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
     OR (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64|ARM64|ARMv[0-9]+"))
@@ -135,5 +136,21 @@ if(CMAKE_HIP_COMPILER)
                 break()
             endif()
         endforeach()
+    endif()
+endif()
+
+# Include OpenVINO backend if enabled
+if(GGML_OPENVINO)
+    find_package(OpenVINO QUIET)
+    if(OpenVINO_FOUND)
+        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-openvino)
+        # The backend is already included by ggml_add_backend(OPENVINO) in src/CMakeLists.txt
+        install(TARGETS ggml-openvino
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT OPENVINO
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT OPENVINO
+        )
+        message(STATUS "OpenVINO backend enabled")
+    else()
+        message(WARNING "OpenVINO package not found, disabling OpenVINO backend")
     endif()
 endif()

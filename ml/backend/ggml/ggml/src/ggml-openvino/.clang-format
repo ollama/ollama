@@ -1,0 +1,143 @@
+---
+# Override root .clang-format
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+ReferenceAlignment: Left
+PointerAlignment: Left
+Cpp11BracedListStyle: true
+AccessModifierOffset: -4
+BinPackArguments: false
+BreakBeforeBraces: Attach
+IndentCaseBlocks: false
+IndentCaseLabels: false
+
+Language:        Cpp
+AlignAfterOpenBracket: Align
+AlignArrayOfStructures: Left
+AlignConsecutiveBitFields: AcrossComments
+AlignConsecutiveMacros: AcrossComments
+# AlignConsecutiveShortCaseStatements: AcrossComments
+AlignEscapedNewlines: Left # LeftWithLastLine
+AlignOperands:   Align
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: false
+# AllowBreakBeforeNoexceptSpecifier: OnlyWithParen
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: Inline
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakBeforeMultilineStrings: true
+BinPackParameters: true
+BitFieldColonSpacing: Both
+# BreakAdjacentStringLiterals: true
+BreakAfterAttributes: Never
+BreakBeforeBinaryOperators: None
+BreakBeforeInlineASMColon: OnlyMultiline
+BreakBeforeTernaryOperators: false
+# BreakBinaryOperations: Never
+BreakConstructorInitializers: AfterColon
+# BreakFunctionDefinitionParameters: false
+BreakInheritanceList: AfterComma
+BreakStringLiterals: true
+# BreakTemplateDeclarations: Yes
+ColumnLimit:     120
+CommentPragmas:  '^ IWYU pragma:'
+CompactNamespaces: false
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+DerivePointerAlignment: false
+DisableFormat:   false
+EmptyLineBeforeAccessModifier: Leave
+EmptyLineAfterAccessModifier: Never
+ExperimentalAutoDetectBinPacking: false
+FixNamespaceComments: true
+IncludeBlocks:   Regroup
+IncludeCategories:
+  - Regex:           '^<.*\.h>'
+    Priority:        1
+    SortPriority:    0
+  - Regex:           '^<.*'
+    Priority:        2
+    SortPriority:    0
+  - Regex:           '.*'
+    Priority:        3
+    SortPriority:    0
+IncludeIsMainRegex: '([-_](test|unittest))?$'
+IncludeIsMainSourceRegex: ''
+IndentAccessModifiers: false
+IndentExternBlock: NoIndent
+IndentGotoLabels: false
+IndentPPDirectives: AfterHash
+IndentWidth:     4
+IndentWrappedFunctionNames: false
+InsertBraces:    true # NOTE: may lead to incorrect formatting
+InsertNewlineAtEOF: true
+JavaScriptQuotes: Leave
+JavaScriptWrapImports: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+LambdaBodyIndentation: Signature
+LineEnding: LF
+MacroBlockBegin: ''
+MacroBlockEnd:   ''
+MaxEmptyLinesToKeep: 1
+NamespaceIndentation: None
+ObjCBinPackProtocolList: Auto
+ObjCBlockIndentWidth: 4
+ObjCSpaceAfterProperty: true
+ObjCSpaceBeforeProtocolList: true
+PPIndentWidth: -1
+PackConstructorInitializers: CurrentLine
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakString: 1000
+PenaltyBreakTemplateDeclaration: 10
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 200
+QualifierAlignment: Left
+#QualifierOrder: ['static', 'inline', 'friend', 'constexpr', 'const', 'volatile', 'type', 'restrict']
+RawStringFormats:
+  - Language:        Cpp
+    Delimiters:
+      - cc
+      - CC
+      - cpp
+      - Cpp
+      - CPP
+      - 'c++'
+      - 'C++'
+    CanonicalDelimiter: ''
+ReflowComments:  false # IndentOnly
+SeparateDefinitionBlocks: Always
+SortIncludes:    CaseInsensitive
+SortUsingDeclarations: LexicographicNumeric
+SpaceAfterCStyleCast: true
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles:  Never
+SpacesInLineCommentPrefix:
+  Minimum: 1
+  Maximum: -1
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpaceBeforeSquareBrackets: false
+Standard:        c++17
+TabWidth:        4
+UseTab:          Never
+WhitespaceSensitiveMacros: ['STRINGIZE']
+...
