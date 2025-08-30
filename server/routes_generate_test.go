@@ -839,6 +839,23 @@ func TestGenerate(t *testing.T) {
 		checkGenerateResponse(t, w.Body, "test", "Hi!")
 	})
 
+	// New: truncate=false should return 400 when prompt exceeds context
+	t.Run("generate truncate=false over context returns 400", func(t *testing.T) {
+		// shrink context via options
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: strings.Repeat("word ", 9000), // large prompt
+			Options: map[string]any{
+				"num_ctx": 64,
+			},
+			Truncate: func() *bool { b := false; return &b }(),
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+	})
+
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:  "test-system",
 		From:   "test",
@@ -885,6 +902,24 @@ func TestGenerate(t *testing.T) {
 		}
 
 		checkGenerateResponse(t, w.Body, "test-system", "Abra kadabra!")
+	})
+
+	// New: chat truncate=false should return 400 when messages exceed context
+	t.Run("chat truncate=false over context returns 400", func(t *testing.T) {
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: strings.Repeat("x ", 9000)},
+			},
+			Options: map[string]any{
+				"num_ctx": 64,
+			},
+			Truncate: func() *bool { b := false; return &b }(),
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
 	})
 
 	t.Run("prompt with template", func(t *testing.T) {
