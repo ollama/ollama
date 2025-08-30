@@ -57,7 +57,6 @@ var (
 	cudartLibPath string
 	oneapiLibPath string
 	vulkanLibPath string
-	libcapLibPath string
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
@@ -187,19 +186,18 @@ func initVulkanHandles() *vulkanHandles {
 	vHandles := &vulkanHandles{}
 
 	// Short Circuit if we already know which library to use
-	if vulkanLibPath != "" && libcapLibPath != "" {
-		vHandles.deviceCount, vHandles.vulkan, _, _ = LoadVulkanMgmt([]string{vulkanLibPath}, []string{libcapLibPath})
+	if vulkanLibPath != "" {
+		vHandles.deviceCount, vHandles.vulkan, _ = LoadVulkanMgmt([]string{vulkanLibPath})
 		return vHandles
 	}
 
 	vulkanPaths := FindGPULibs(VulkanMgmtName, VulkanGlobs)
-	libcapPaths := FindLibCapLibs()
 
-	if len(vulkanPaths) > 0 && len(libcapPaths) > 0 {
-		slog.Info("vulkan: load libvulkan and libcap ok")
-		vHandles.deviceCount, vHandles.vulkan, vulkanLibPath, libcapLibPath = LoadVulkanMgmt(vulkanPaths, libcapPaths)
+	if len(vulkanPaths) > 0 {
+		slog.Info("vulkan: load libvulkan ok")
+		vHandles.deviceCount, vHandles.vulkan, vulkanLibPath = LoadVulkanMgmt(vulkanPaths)
 	} else {
-		slog.Info("vulkan: failed to load libvulkan or libcap")
+		slog.Info("vulkan: failed to load libvulkan")
 	}
 
 	return vHandles
@@ -760,32 +758,27 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 	return 0, nil, "", err
 }
 
-func LoadVulkanMgmt(vulkanLibPaths []string, capLibPaths []string) (int, *C.vk_handle_t, string, string) {
+func LoadVulkanMgmt(vulkanLibPaths []string) (int, *C.vk_handle_t, string) {
 	var resp C.vk_init_resp_t
 	resp.ch.verbose = getVerboseState()
 	for _, vkLibPath := range vulkanLibPaths {
-		for _, capLibPath := range capLibPaths {
-			vkLib := C.CString(vkLibPath)
-			capLib := C.CString(capLibPath)
-			defer C.free(unsafe.Pointer(vkLib))
-			defer C.free(unsafe.Pointer(capLib))
+		vkLib := C.CString(vkLibPath)
+		defer C.free(unsafe.Pointer(vkLib))
 
-			C.vk_init(vkLib, capLib, &resp)
-			if resp.err != nil {
-				slog.Error(
-					"Unable to load vulkan",
-					"vulkan_library", vkLibPath,
-					"cap_library", capLibPath,
-					"error", C.GoString(resp.err),
-				)
-				C.free(unsafe.Pointer(resp.err))
-			} else {
-				return int(resp.num_devices), &resp.ch, vkLibPath, capLibPath
-			}
+		C.vk_init(vkLib, &resp)
+		if resp.err != nil {
+			slog.Error(
+				"Unable to load vulkan",
+				"vulkan_library", vkLibPath,
+				"error", C.GoString(resp.err),
+			)
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			return int(resp.num_devices), &resp.ch, vkLibPath
 		}
 	}
 
-	return 0, nil, "", ""
+	return 0, nil, ""
 }
 
 func getVerboseState() C.uint16_t {

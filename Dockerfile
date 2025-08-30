@@ -20,7 +20,7 @@ ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 ARG VULKANVERSION
 RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
     && tar xvf /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
-    && dnf -y install ninja-build libcap-devel \
+    && dnf -y install ninja-build \
     && ln -s /usr/bin/python3 /usr/bin/python \  
     && /${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
     && /${VULKANVERSION}/vulkansdk -j 8 shaderc
@@ -126,7 +126,7 @@ COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates libcap2 libvulkan1 \
+    && apt-get install -y ca-certificates libvulkan1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin
