@@ -717,11 +717,14 @@ func TestHomogeneousGPUs(t *testing.T) {
 		gpus := []discover.GpuInfo{
 			{Library: "cuda"},
 			{Library: "rocm"},
+			{Library: "vulkan"},
 		}
 		gpus[0].TotalMemory = 1 * format.GibiByte
 		gpus[0].FreeMemory = 256 * format.MebiByte
 		gpus[1].TotalMemory = 1 * format.GibiByte
 		gpus[1].FreeMemory = 256 * format.MebiByte
+		gpus[2].TotalMemory = 1 * format.GibiByte
+		gpus[2].FreeMemory = 256 * format.MebiByte
 		return gpus
 	}
 	s.getCpuFn = getCpuFn
