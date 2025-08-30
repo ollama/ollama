@@ -1,10 +1,10 @@
 # `llama`
 
-This package provides Go bindings to [llama.cpp](https://github.com/ggerganov/llama.cpp).
+This package provides Go bindings to [llama.cpp](https://github.com/ggml-org/llama.cpp).
 
 ## Vendoring
 
-Ollama vendors [llama.cpp](https://github.com/ggerganov/llama.cpp/) and [ggml](https://github.com/ggerganov/llama.cpp/tree/master/ggml/src). While we generally strive to contribute changes back upstream to avoid drift, we carry a small set of patches which are applied to the tracking commit.
+Ollama vendors [llama.cpp](https://github.com/ggml-org/llama.cpp/) and [ggml](https://github.com/ggml-org/llama.cpp/tree/master/ggml/src). While we generally strive to contribute changes back upstream to avoid drift, we carry a small set of patches which are applied to the tracking commit.
 
 If you update the vendoring code, start by running the following command to establish the tracking llama.cpp repo in the `./vendor/` directory.
 
