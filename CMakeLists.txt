@@ -81,7 +81,7 @@ if(CMAKE_CUDA_COMPILER)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
     install(TARGETS ggml-cuda
         RUNTIME_DEPENDENCIES
-            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
+            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
             PRE_INCLUDE_REGEXES cublas cublasLt cudart
             PRE_EXCLUDE_REGEXES ".*"
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CUDA
