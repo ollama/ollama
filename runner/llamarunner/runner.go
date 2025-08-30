@@ -829,6 +829,16 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
+		// Add diffusion parameters to ModelParams
+		params.DiffusionSteps = req.DiffusionSteps
+		params.DiffusionVisualMode = req.DiffusionVisualMode
+		params.DiffusionEps = req.DiffusionEps
+		params.DiffusionBlockLength = req.DiffusionBlockLength
+		params.DiffusionAlgorithm = req.DiffusionAlgorithm
+		params.DiffusionAlgTemp = req.DiffusionAlgTemp
+		params.DiffusionCfgScale = req.DiffusionCfgScale
+		params.DiffusionAddGumbelNoise = req.DiffusionAddGumbelNoise
+
 		s.status = llm.ServerStatusLoadingModel
 		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
 

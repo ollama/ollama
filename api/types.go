@@ -345,6 +345,18 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
+// DiffusionOptions specifies diffusion model parameters
+type DiffusionOptions struct {
+	Steps         *int32   `json:"steps,omitempty"`          // Diffusion steps (default: 128)
+	VisualMode    *bool    `json:"visual_mode,omitempty"`    // Enable visual mode
+	Eps           *float32 `json:"eps,omitempty"`            // Epsilon for timesteps
+	BlockLength   *int32   `json:"block_length,omitempty"`   // Block length for generation
+	Algorithm     *int32   `json:"algorithm,omitempty"`      // Algorithm type (default: 4)
+	AlgTemp       *float32 `json:"alg_temp,omitempty"`       // Algorithm temperature
+	CfgScale      *float32 `json:"cfg_scale,omitempty"`      // Classifier-free guidance scale
+	AddGumbelNoise *bool   `json:"add_gumbel_noise,omitempty"` // Add Gumbel noise
+}
+
 // Options specified in [GenerateRequest].  If you add a new option here, also
 // add it to the API docs.
 type Options struct {
@@ -364,6 +376,9 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// Diffusion parameters for diffusion models
+	Diffusion *DiffusionOptions `json:"diffusion,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -649,6 +664,26 @@ func (opts *Options) FromMap(m map[string]any) error {
 	}
 
 	for key, val := range m {
+		// Handle diffusion parameters specially
+		if key == "diffusion" {
+			if val == nil {
+				continue
+			}
+			diffusionMap, ok := val.(map[string]any)
+			if !ok {
+				return fmt.Errorf("option %q must be an object", key)
+			}
+			
+			if opts.Diffusion == nil {
+				opts.Diffusion = &DiffusionOptions{}
+			}
+			
+			if err := opts.Diffusion.FromMap(diffusionMap); err != nil {
+				return fmt.Errorf("error parsing diffusion options: %v", err)
+			}
+			continue
+		}
+		
 		opt, ok := jsonOpts[key]
 		if !ok {
 			slog.Warn("invalid option provided", "option", key)
@@ -720,6 +755,72 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 			default:
 				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
+			}
+		}
+	}
+
+	return nil
+}
+
+// FromMap populates DiffusionOptions from a map
+func (opts *DiffusionOptions) FromMap(m map[string]any) error {
+	valueOpts := reflect.ValueOf(opts).Elem()
+	typeOpts := reflect.TypeOf(opts).Elem()
+
+	// build map of json struct tags to their types
+	jsonOpts := make(map[string]reflect.StructField)
+	for _, field := range reflect.VisibleFields(typeOpts) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag != "" {
+			jsonOpts[jsonTag] = field
+		}
+	}
+
+	for key, val := range m {
+		opt, ok := jsonOpts[key]
+		if !ok {
+			slog.Warn("invalid diffusion option provided", "option", key)
+			continue
+		}
+
+		field := valueOpts.FieldByName(opt.Name)
+		if field.IsValid() && field.CanSet() {
+			if val == nil {
+				continue
+			}
+
+			switch field.Kind() {
+			case reflect.Pointer:
+				switch field.Type().Elem().Kind() {
+				case reflect.Int32:
+					switch t := val.(type) {
+					case int64:
+						v := int32(t)
+						field.Set(reflect.ValueOf(&v))
+					case float64:
+						v := int32(t)
+						field.Set(reflect.ValueOf(&v))
+					default:
+						return fmt.Errorf("diffusion option %q must be of type integer", key)
+					}
+				case reflect.Float32:
+					val, ok := val.(float64)
+					if !ok {
+						return fmt.Errorf("diffusion option %q must be of type float32", key)
+					}
+					v := float32(val)
+					field.Set(reflect.ValueOf(&v))
+				case reflect.Bool:
+					val, ok := val.(bool)
+					if !ok {
+						return fmt.Errorf("diffusion option %q must be of type boolean", key)
+					}
+					field.Set(reflect.ValueOf(&val))
+				default:
+					return fmt.Errorf("unknown diffusion type: %v", field.Type().Elem().Kind())
+				}
+			default:
+				return fmt.Errorf("unknown diffusion field kind: %v", field.Kind())
 			}
 		}
 	}
@@ -921,8 +1022,58 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 	}
 
 	out := make(map[string]any)
+	diffusionParams := make(map[string]any)
+	
 	// iterate params and set values based on json struct tags
 	for key, vals := range params {
+		// Handle diffusion parameters specially
+		if strings.HasPrefix(key, "diffusion_") || key == "cfg_scale" {
+			var paramName string
+			switch key {
+			case "diffusion_steps":
+				paramName = "steps"
+			case "diffusion_visual_mode":
+				paramName = "visual_mode"
+			case "diffusion_eps":
+				paramName = "eps"
+			case "diffusion_block_length":
+				paramName = "block_length"
+			case "diffusion_algorithm":
+				paramName = "algorithm"
+			case "diffusion_alg_temp":
+				paramName = "alg_temp"
+			case "cfg_scale":
+				paramName = "cfg_scale"
+			case "diffusion_add_gumbel_noise":
+				paramName = "add_gumbel_noise"
+			default:
+				return nil, fmt.Errorf("unknown diffusion parameter '%s'", key)
+			}
+			
+			// Parse the value based on type
+			switch paramName {
+			case "steps", "block_length", "algorithm":
+				intVal, err := strconv.ParseInt(vals[0], 10, 32)
+				if err != nil {
+					return nil, fmt.Errorf("invalid int value %s for %s", vals[0], key)
+				}
+				diffusionParams[paramName] = int32(intVal)
+			case "eps", "alg_temp", "cfg_scale":
+				floatVal, err := strconv.ParseFloat(vals[0], 32)
+				if err != nil {
+					return nil, fmt.Errorf("invalid float value %s for %s", vals[0], key)
+				}
+				diffusionParams[paramName] = float32(floatVal)
+			case "visual_mode", "add_gumbel_noise":
+				boolVal, err := strconv.ParseBool(vals[0])
+				if err != nil {
+					return nil, fmt.Errorf("invalid bool value %s for %s", vals[0], key)
+				}
+				diffusionParams[paramName] = boolVal
+			}
+			continue
+		}
+		
 		if opt, ok := jsonOpts[key]; !ok {
 			return nil, fmt.Errorf("unknown parameter '%s'", key)
 		} else {
@@ -971,6 +1122,11 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 				}
 			}
 		}
+	}
+
+	// Add diffusion parameters if any were found
+	if len(diffusionParams) > 0 {
+		out["diffusion"] = diffusionParams
 	}
 
 	return out, nil
