@@ -1,6 +1,7 @@
 package logutil
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -26,4 +27,12 @@ func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 			return attr
 		},
 	}))
+}
+
+func Trace(msg string, args ...any) {
+	slog.Log(context.TODO(), LevelTrace, msg, args...)
+}
+
+func TraceContext(ctx context.Context, msg string, args ...any) {
+	slog.Log(ctx, LevelTrace, msg, args...)
 }
