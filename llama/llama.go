@@ -214,6 +214,16 @@ type ModelParams struct {
 	TensorSplit  []float32
 	Progress     func(float32)
 	VocabOnly    bool
+
+	// Diffusion parameters for diffusion models
+	DiffusionSteps         int32
+	DiffusionVisualMode    bool
+	DiffusionEps           float32
+	DiffusionBlockLength   int32
+	DiffusionAlgorithm     int32
+	DiffusionAlgTemp       float32
+	DiffusionCfgScale      float32
+	DiffusionAddGumbelNoise bool
 }
 
 //export llamaProgressCallback
@@ -397,6 +407,11 @@ func (b *Batch) Free() {
 
 type Model struct {
 	c *C.struct_llama_model
+}
+
+// IsDiffusion returns true if the model is a diffusion-based model
+func (m *Model) IsDiffusion() bool {
+	return bool(C.llama_model_is_diffusion(m.c))
 }
 
 func (m *Model) TokenToPiece(token int) string {
