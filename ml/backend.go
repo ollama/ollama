@@ -266,7 +266,7 @@ func (m DeviceMemory) LogValue() slog.Value {
 // allocation is guaranteed to be provided so that if it failed, the caller can
 // accommodate that to make forward progress.
 type BackendMemory struct {
-	// InputsWeights are always located on the CPU and cannot be moved
+	// InputWeights are always located on the CPU and cannot be moved
 	InputWeights Memory
 
 	// CPU model components are located in system memory. This does not
