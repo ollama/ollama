@@ -413,6 +413,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) (Open source document management system to organize, tag, search, and automate your files with powerful Ollama driven workflows.)
 - [Serene Pub](https://github.com/doolijb/serene-pub) (Beginner friendly, open source AI Roleplaying App for Windows, Mac OS and Linux. Search, download and use models with Ollama all inside the app.)
 - [Andes](https://github.com/aqerd/andes) (A Visual Studio Code extension that provides a local UI interface for Ollama models)
+- [OllamaChat](https://github.com/vaccarov/OllamaChat) A modern, multi-languages dashboard with import/export, voice transcription, image analysis and remote use capabilities
 
 ### Cloud
 
