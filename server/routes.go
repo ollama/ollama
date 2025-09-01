@@ -340,6 +340,29 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// Honor truncate=false for generate: if composed prompt exceeds context window, error instead of truncating
+	truncate := true
+	if req.Truncate != nil && !*req.Truncate {
+		truncate = false
+	}
+	if !truncate {
+		tokens, err := r.Tokenize(c.Request.Context(), prompt)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		ctxLen := len(tokens)
+		if len(m.ProjectorPaths) > 0 {
+			// Roughly estimate image token budget similar to chat prompt handling
+			imageNumTokens := 768
+			ctxLen += imageNumTokens * len(images)
+		}
+		if ctxLen > opts.NumCtx {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
+			return
+		}
+	}
+
 	var thinkingState *thinking.Parser
 	if !useHarmony {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
@@ -1640,7 +1663,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
+	// Determine truncate behavior: default true (truncate), allow false to error
+	truncate := true
+	if req.Truncate != nil && !*req.Truncate {
+		truncate = false
+	}
+
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
