@@ -1612,6 +1612,7 @@ func NewCLI() *cobra.Command {
 			appendEnvDocs(cmd, []envconfig.EnvVar{
 				envVars["OLLAMA_DEBUG"],
 				envVars["OLLAMA_HOST"],
+				envVars["OLLAMA_CONTEXT_LENGTH"],
 				envVars["OLLAMA_KEEP_ALIVE"],
 				envVars["OLLAMA_MAX_LOADED_MODELS"],
 				envVars["OLLAMA_MAX_QUEUE"],

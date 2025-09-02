@@ -18,7 +18,7 @@ type Model struct {
 	model.Base
 	model.SentencePieceModel
 
-	*VisionModel `gguf:"v,vision"`
+	*VisionModel `gguf:"v"`
 	*TextModel
 
 	*MultiModalProjector `gguf:"mm"`
