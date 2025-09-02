@@ -219,7 +219,11 @@ function init() {
 
   if (process.platform === 'darwin') {
     if (app.isPackaged) {
-      if (!app.isInApplicationsFolder()) {
+      // Support for home applications folder (e.g. `~/Applications`) which is useful when installed in environments
+      // where the user is not the administrator
+      const isInHomeApplicationsFolder = app.getAppPath().includes(path.join(app.getPath('home'), 'Applications'))
+
+      if (!app.isInApplicationsFolder() && !isInHomeApplicationsFolder) {
         const chosen = dialog.showMessageBoxSync({
           type: 'question',
           buttons: ['Move to Applications', 'Do Not Move'],
