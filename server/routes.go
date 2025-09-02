@@ -196,12 +196,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	useHarmony := harmony.ShouldUseHarmony(m.Config.ModelFamily, m.Template) && !req.Raw
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
+	var functionNameMap *harmony.FunctionNameMap
+
 	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStart()
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+		functionNameMap = harmony.NewFunctionNameMap()
 	}
 
 	// Validate Think value: string values currently only allowed for gptoss models
@@ -345,16 +343,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:     prompt,
+			Images:     images,
+			Format:     req.Format,
+			Options:    opts,
+			UseHarmony: useHarmony,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
 				Response:  cr.Content,
 				Done:      cr.Done,
+				Thinking:  cr.Thinking,
+				ToolCalls: cr.ToolCalls,
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
@@ -363,12 +364,22 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				},
 			}
 
+			if res.Done {
+				res.DoneReason = cr.DoneReason.String()
+				res.TotalDuration = time.Since(checkpointStart)
+				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
 			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(cr.Content, harmonyToolParser)
-				res.Response = content
-				res.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
-			} else if thinkingState != nil {
+				for i, tool := range res.ToolCalls {
+					res.ToolCalls[i].Function.Name = functionNameMap.OriginalFromConverted(tool.Function.Name)
+				}
+				if res.Response != "" || res.Thinking != "" || len(res.ToolCalls) > 0 || res.Done {
+					ch <- res
+				}
+				return
+			}
+			if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
 				res.Response = content
@@ -379,30 +390,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
-				if useHarmony {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-
-						res.ToolCalls = append(res.ToolCalls, api.ToolCall{
-							Function: api.ToolCallFunction{
-								Name:      *toolName,
-								Arguments: args,
-							},
-						})
-					}
-				}
-
-				res.DoneReason = cr.DoneReason.String()
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
 					if err != nil {
@@ -1686,12 +1673,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:          prompt,
-			Images:          images,
-			Format:          req.Format,
-			Options:         opts,
-			FunctionNameMap: functionNameMap,
-			PrefillContent:  prefillContentOrThinking,
+			Prompt:         prompt,
+			Images:         images,
+			Format:         req.Format,
+			Options:        opts,
+			UseHarmony:     useHarmony,
+			PrefillContent: prefillContentOrThinking,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
@@ -1713,6 +1700,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			if useHarmony {
 				// only send messages with meaningful content (empty messages confuse clients)
+				for i, tool := range res.Message.ToolCalls {
+					res.Message.ToolCalls[i].Function.Name = functionNameMap.OriginalFromConverted(tool.Function.Name)
+				}
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
 					ch <- res
 				}

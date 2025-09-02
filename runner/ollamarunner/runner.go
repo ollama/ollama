@@ -784,9 +784,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 	var harmonyMessageHandler *harmony.HarmonyMessageHandler
 	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-	if req.FunctionNameMap != nil {
+	if req.UseHarmony {
 		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.FunctionNameMap = req.FunctionNameMap
 		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(req.PrefillContent)
 		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 	}
@@ -901,10 +900,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			} else {
 				var toolCalls []api.ToolCall
 				if harmonyMessageHandler != nil {
+					// these tools still need to be transformed to the original function name
 					toolName, toolContent := harmonyToolParser.Drain()
 					if toolName != nil {
 						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						*toolName = harmonyMessageHandler.FunctionNameMap.OriginalFromConverted(*toolName)
 						var args api.ToolCallFunctionArguments
 						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
 							http.Error(w, fmt.Sprintf("failed to unmarshal tool call function arguments: %v", err), http.StatusInternalServerError)
