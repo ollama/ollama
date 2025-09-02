@@ -31,7 +31,6 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
-	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -1348,9 +1347,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar         string // set before sending the request to the subprocess
-	FunctionNameMap *harmony.FunctionNameMap
-	PrefillContent  *bool
+	Grammar        string // set before sending the request to the subprocess
+	UseHarmony     bool
+	PrefillContent *bool
 }
 
 // DoneReason represents the reason why a completion response is done
