@@ -1,12 +1,10 @@
 package model
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
-	"log/slog"
 	"os"
 	"reflect"
 	"strconv"
@@ -198,7 +196,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				names := fn(tagsCopy)
 				for _, name := range names {
 					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
-						slog.Log(context.TODO(), logutil.LevelTrace, "found tensor", "", tensor)
+						logutil.Trace("found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}

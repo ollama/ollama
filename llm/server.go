@@ -865,7 +865,7 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 		}
 		layers[i] += memory.CPU.Weights[i].Size
 		layers[i] += memory.CPU.Cache[i].Size
-		slog.Log(context.TODO(), logutil.LevelTrace, "layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
+		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
 	gpuLayers := ml.GPULayersList{}
