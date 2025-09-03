@@ -38,8 +38,9 @@ func TestAllMiniLMEmbeddings(t *testing.T) {
 	defer cleanup()
 
 	req := api.EmbeddingRequest{
-		Model:  "all-minilm",
-		Prompt: "why is the sky blue?",
+		Model:     "all-minilm",
+		Prompt:    "why is the sky blue?",
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 	}
 
 	res, err := embeddingTestHelper(ctx, client, t, req)
