@@ -1,7 +1,6 @@
 package harmony
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -735,26 +734,4 @@ func TestHarmonyMessageHandlerStreamingScenarios(t *testing.T) {
 			t.Fatalf("unexpected tool args: got %s want %s", got, want)
 		}
 	})
-}
-
-func TestFunctionNameMapJSONRoundTrip(t *testing.T) {
-	m := NewFunctionNameMap()
-	gotConverted := m.ConvertAndAdd("get weather")
-	if gotConverted == "" {
-		t.Fatal("conversion returned empty")
-	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var m2 FunctionNameMap
-	if err := json.Unmarshal(b, &m2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if m2.userToHarmony["get weather"] != gotConverted {
-		t.Fatalf("userToHarmony lost: got %q want %q", m2.userToHarmony["get weather"], gotConverted)
-	}
-	if m2.harmonyToUser[gotConverted] != "get weather" {
-		t.Fatalf("harmonyToUser lost: got %q want %q", m2.harmonyToUser[gotConverted], "get weather")
-	}
 }

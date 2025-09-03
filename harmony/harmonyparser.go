@@ -1,10 +1,8 @@
 package harmony
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -391,38 +389,6 @@ func (a *HarmonyToolCallAccumulator) Content() string {
 type FunctionNameMap struct {
 	userToHarmony map[string]string
 	harmonyToUser map[string]string
-}
-
-func (m FunctionNameMap) MarshalJSON() ([]byte, error) {
-	// necessary to avoid exposing map internals
-	type alias struct {
-		UserToHarmony map[string]string `json:"userToHarmony"`
-		HarmonyToUser map[string]string `json:"harmonyToUser"`
-	}
-	return json.Marshal(alias{
-		UserToHarmony: m.userToHarmony,
-		HarmonyToUser: m.harmonyToUser,
-	})
-}
-
-func (m *FunctionNameMap) UnmarshalJSON(b []byte) error {
-	type alias struct {
-		UserToHarmony map[string]string `json:"userToHarmony"`
-		HarmonyToUser map[string]string `json:"harmonyToUser"`
-	}
-	var a alias
-	if err := json.Unmarshal(b, &a); err != nil {
-		return err
-	}
-	if m.userToHarmony == nil {
-		m.userToHarmony = make(map[string]string)
-	}
-	if m.harmonyToUser == nil {
-		m.harmonyToUser = make(map[string]string)
-	}
-	maps.Copy(m.userToHarmony, a.UserToHarmony)
-	maps.Copy(m.harmonyToUser, a.HarmonyToUser)
-	return nil
 }
 
 func NewFunctionNameMap() *FunctionNameMap {
