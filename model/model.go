@@ -5,6 +5,7 @@ import (
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -103,6 +104,10 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	}
 
 	arch := b.Config().Architecture()
+	if b.Config().Uint("pooling_type", math.MaxUint32) != math.MaxUint32 {
+		arch = arch + "_embed"
+	}
+
 	f, ok := models[arch]
 	if !ok {
 		return nil, fmt.Errorf("unsupported model architecture %q", arch)
