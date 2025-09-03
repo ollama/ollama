@@ -246,7 +246,7 @@ func filesForModel(path string) ([]string, error) {
 		for _, match := range matches {
 			if ct, err := detectContentType(match); err != nil {
 				return nil, err
-			} else if ct != contentType {
+			} else if len(contentType) > 0 && ct != contentType {
 				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
 			}
 		}
@@ -255,7 +255,7 @@ func filesForModel(path string) ([]string, error) {
 	}
 
 	var files []string
-	if st, _ := glob(filepath.Join(path, "*.safetensors"), "application/octet-stream"); len(st) > 0 {
+	if st, _ := glob(filepath.Join(path, "*.safetensors"), ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
