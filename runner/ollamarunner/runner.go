@@ -814,7 +814,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.TopP,
 		req.Options.MinP,
 		req.Options.Seed,
-		grammar,
+		nil,
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
@@ -865,6 +865,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO(parthsareen): generalize grammar enablement on the fly for all thinking models
+	if harmonyMessageHandler == nil {
+		seq.sampler.SetGrammar(grammar)
+	}
+
+	grammarSet := false
 	for {
 		select {
 		case <-r.Context().Done():
@@ -877,6 +883,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					var toolContent string
 					content, thinking, toolContent = harmonyMessageHandler.AddContent(content, harmonyToolParser)
 					harmonyToolParser.Add(toolContent)
+					if harmonyMessageHandler.HarmonyParser.ConstrainAllowed && !grammarSet {
+						seq.sampler.SetGrammar(grammar)
+						grammarSet = true
+					}
 				}
 
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{

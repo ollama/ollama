@@ -48,12 +48,13 @@ func (s harmonyParserState) String() string {
 }
 
 type HarmonyParser struct {
-	state           harmonyParserState
-	MessageStartTag string
-	MessageEndTag   string
-	HeaderEndTag    string
-	acc             strings.Builder
-	lifetimeAcc     strings.Builder
+	state            harmonyParserState
+	MessageStartTag  string
+	MessageEndTag    string
+	HeaderEndTag     string
+	ConstrainAllowed bool
+	acc              strings.Builder
+	lifetimeAcc      strings.Builder
 }
 
 type HarmonyEvent interface {
@@ -328,6 +329,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 				}
 			case "final":
 				h.state = harmonyMessageState_Normal
+				h.HarmonyParser.ConstrainAllowed = true
 			}
 		case HarmonyEventContentEmitted:
 			logutil.Trace("harmony event content", "content", event.Content, "state", h.state)
