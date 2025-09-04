@@ -892,6 +892,10 @@ struct clip_graph {
             } else if (ctx->model.hparams.minicpmv_version == 5) {
                 // MiniCPM-V 4.0
                 num_query = 64;
+            } else if (ctx->minicpmv_version == 5) {
+                num_query = 64;
+            } else if (ctx->minicpmv_version == 6) {
+                num_query = 64;
             }
 
             ggml_tensor * Q = ggml_add(ctx0,
