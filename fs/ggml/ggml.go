@@ -550,7 +550,9 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCountMax()
+	headsArr := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKVMax()
+	headsKVArr := f.KV().HeadCountKV()
 	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
 
 	embeddingHeads := f.KV().EmbeddingHeadCountMax()
@@ -560,10 +562,32 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
+
+	// default for models unless special-cased below
 	var kvTotal uint64
 	kv = make([]uint64, f.KV().BlockCount())
 	for i := range kv {
-		kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+		headsL := headsArr[i]
+		headsKVL := headsKVArr[i]
+		if headsL > 0 && headsKVL > 0 {
+			// full attention layer
+			// NOTE: Assumes uniform values for all attn layers
+			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsL) * bytesPerElement)
+		} else if headsL > 0 {
+			// recurrent layer
+			ssmDConv := f.KV().SSMConvKernel()
+			ssmDState := f.KV().SSMStateSize()
+			ssmDInner := f.KV().SSMInnerSize()
+			ssmNGroups := f.KV().SSMGroupCount()
+			nEmbdR := uint64(0)
+			if ssmDConv > 0 {
+				nEmbdR = (ssmDConv - 1) * (ssmDInner + 2*ssmNGroups*ssmDState)
+			}
+			nEmbdS := ssmDState * ssmDInner
+			kv[i] = (nEmbdR + nEmbdS) * uint64(bytesPerElement)
+		} else {
+			slog.Debug("zero-cache layer size", "layer_index", i)
+		}
 		kvTotal += kv[i]
 	}
 
