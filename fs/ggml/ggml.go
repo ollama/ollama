@@ -57,15 +57,54 @@ func (kv KV) EmbeddingLength() uint64 {
 	return uint64(kv.Uint("embedding_length"))
 }
 
+func (kv KV) HeadCount() []uint64 {
+	headCountDefault := uint32(1)
+	headCount := kv.UintOrArrayValueAsArray("attention.head_count", headCountDefault)
+	if len(headCount) == 1 {
+		headCountDefault = headCount[0]
+	}
+	nLayers := int(kv.BlockCount())
+	if len(headCount) > nLayers {
+		slog.Warn("got more elements of attention.head_count than layers", "len(headCount)", len(headCount), "layers", nLayers)
+	}
+	out := make([]uint64, nLayers)
+	for i := range nLayers {
+		if i >= len(headCount) {
+			out[i] = uint64(headCountDefault)
+		} else {
+			out[i] = uint64(headCount[i])
+		}
+	}
+	return out
+}
+
 func (kv KV) HeadCountMax() uint64 {
-	// TODO(drifkin): using the max value can cause an overestimation. In the
-	// future if array values become more popular, we can adapt the more invasive
-	// <https://github.com/ollama/ollama/pull/10225>
 	return uint64(kv.UintOrMaxArrayValue("attention.head_count", 1))
 }
 
 func (kv KV) HeadCountMin() uint64 {
 	return uint64(kv.UintOrMinArrayValue("attention.head_count", 1))
+}
+
+func (kv KV) HeadCountKV() []uint64 {
+	headCountKVDefault := uint32(1)
+	headCountKV := kv.UintOrArrayValueAsArray("attention.head_count_kv", headCountKVDefault)
+	if len(headCountKV) == 1 {
+		headCountKVDefault = headCountKV[0]
+	}
+	nLayers := int(kv.BlockCount())
+	if len(headCountKV) > nLayers {
+		slog.Warn("got more elements of attention.head_count than layers", "len(headCountKV)", len(headCountKV), "layers", nLayers)
+	}
+	out := make([]uint64, nLayers)
+	for i := range nLayers {
+		if i >= len(headCountKV) {
+			out[i] = uint64(headCountKVDefault)
+		} else {
+			out[i] = uint64(headCountKV[i])
+		}
+	}
+	return out
 }
 
 func (kv KV) HeadCountKVMax() uint64 {
@@ -131,22 +170,27 @@ func (kv KV) UintOrMinArrayValue(key string, defaultValue uint32) uint32 {
 }
 
 func (kv KV) UintOrArrayValue(key string, defaultValue uint32) (uint32, uint32) {
+	arrVal := kv.UintOrArrayValueAsArray(key, defaultValue)
+	return slices.Min(arrVal), slices.Max(arrVal)
+}
+
+func (kv KV) UintOrArrayValueAsArray(key string, defaultValue uint32) []uint32 {
 	if u32, ok := keyValue(kv, key, uint32(0)); ok {
-		return u32, u32
+		return []uint32{u32}
 	} else if u32s, ok := keyValue(kv, key, &array[uint32]{}); ok {
-		min := slices.Min(u32s.values)
-		max := slices.Max(u32s.values)
-		return min, max
+		return u32s.values
 	} else if i32s, ok := keyValue(kv, key, &array[int32]{}); ok {
-		min := slices.Min(i32s.values)
-		max := slices.Max(i32s.values)
-		if min < 0 || max < 0 {
-			slog.Warn("array values are unexpectedly negative", "key", key, "min", min, "max", max)
+		dst := make([]uint32, len(i32s.values))
+		for i, v := range i32s.values {
+			if v < 0 {
+				slog.Warn("array values are unexpectedly negative", "key", key, "i", i, "v", v)
+			}
+			dst[i] = uint32(v)
 		}
-		return uint32(min), uint32(max)
+		return dst
 	}
 
-	return defaultValue, defaultValue
+	return []uint32{defaultValue}
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
