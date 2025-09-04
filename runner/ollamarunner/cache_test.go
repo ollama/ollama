@@ -393,7 +393,7 @@ func TestLoadCacheSlot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			slot, remainingPrompt, err := tt.cache.LoadCacheSlot(tt.prompt)
+			slot, remainingPrompt, err := tt.cache.LoadCacheSlot(tt.prompt, true)
 
 			// Check error state
 			if (err != nil) != tt.wantErr {
