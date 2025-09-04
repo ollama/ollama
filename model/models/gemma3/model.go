@@ -18,7 +18,7 @@ type Model struct {
 	model.Base
 	model.SentencePieceModel
 
-	*VisionModel `gguf:"v,vision"`
+	*VisionModel `gguf:"v"`
 	*TextModel
 
 	*MultiModalProjector `gguf:"mm"`
@@ -112,8 +112,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }
 
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var result []input.Input
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
 
 	for _, inp := range inputs {
 		if len(inp.Multimodal) == 0 {
@@ -122,17 +122,17 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			inputMultimodal := inp.Multimodal[0].Tensor
 
 			result = append(result,
-				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3}, // "\n\n"
-				input.Input{Token: 255999},                                     // "<start_of_image>""
-				input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
+				&input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3}, // "\n\n"
+				&input.Input{Token: 255999},                                     // "<start_of_image>""
+				&input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
 			)
 
 			// add image token placeholders
-			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
+			result = append(result, slices.Repeat([]*input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
 
 			result = append(result,
-				input.Input{Token: 256000}, // <end_of_image>
-				input.Input{Token: 108},    // "\n\n"
+				&input.Input{Token: 256000}, // <end_of_image>
+				&input.Input{Token: 108},    // "\n\n"
 			)
 		}
 	}

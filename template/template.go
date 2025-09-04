@@ -6,15 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 	"sync"
 	"text/template"
 	"text/template/parse"
+	"time"
 
 	"github.com/agnivade/levenshtein"
-	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/api"
 )
@@ -121,6 +122,21 @@ var funcs = template.FuncMap{
 		b, _ := json.Marshal(v)
 		return string(b)
 	},
+	"currentDate": func(args ...string) string {
+		// Currently ignoring the format argument, but accepting it for future use
+		// Default format is YYYY-MM-DD
+		return time.Now().Format("2006-01-02")
+	},
+	"toTypeScriptType": func(v any) string {
+		if param, ok := v.(api.ToolProperty); ok {
+			return param.ToTypeScriptType()
+		}
+		// Handle pointer case
+		if param, ok := v.(*api.ToolProperty); ok && param != nil {
+			return param.ToTypeScriptType()
+		}
+		return "any"
+	},
 }
 
 func Parse(s string) (*Template, error) {
@@ -157,9 +173,11 @@ func (t *Template) Vars() []string {
 		set[strings.ToLower(n)] = struct{}{}
 	}
 
-	vars = maps.Keys(set)
-	slices.Sort(vars)
-	return vars
+	return slices.Sorted(maps.Keys(set))
+}
+
+func (t *Template) Contains(s string) bool {
+	return strings.Contains(t.raw, s)
 }
 
 type Values struct {
@@ -168,6 +186,8 @@ type Values struct {
 	Prompt string
 	Suffix string
 	Think  bool
+	// ThinkLevel contains the thinking level if Think is true and a string value was provided
+	ThinkLevel string
 	// whether or not the user explicitly set the thinking flag (vs. it being
 	// implicitly false). Templates can't see whether `Think` is nil
 	IsThinkSet bool
@@ -230,6 +250,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Suffix":     v.Suffix,
 			"Response":   "",
 			"Think":      v.Think,
+			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
 		})
 	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
@@ -239,6 +260,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Tools":      v.Tools,
 			"Response":   "",
 			"Think":      v.Think,
+			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
 		})
 	}
@@ -253,6 +275,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 				"Prompt":     prompt,
 				"Response":   response,
 				"Think":      v.Think,
+				"ThinkLevel": v.ThinkLevel,
 				"IsThinkSet": v.IsThinkSet,
 			}); err != nil {
 				return err
@@ -300,6 +323,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		"Prompt":     prompt,
 		"Response":   response,
 		"Think":      v.Think,
+		"ThinkLevel": v.ThinkLevel,
 		"IsThinkSet": v.IsThinkSet,
 	}); err != nil {
 		return err

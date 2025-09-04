@@ -8,11 +8,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strings"
-
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -260,11 +259,8 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 		tokens[token.ID] = token
 	}
 
-	keys := maps.Keys(tokens)
-	slices.Sort(keys)
-
 	v := Vocabulary{Model: "gpt2"}
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(tokens)) {
 		token := tokens[k]
 		v.Tokens = append(v.Tokens, token.Content)
 		v.Scores = append(v.Scores, float32(token.ID))
