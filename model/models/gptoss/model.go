@@ -41,8 +41,8 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 		}
 
 		var outputs ml.Tensor
-		if len(batch.Outputs) > 0 && i == len(m.TransformerBlocks)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+		if i == len(m.TransformerBlocks)-1 {
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, one, m.Cache, &m.Options)
