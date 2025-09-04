@@ -139,6 +139,26 @@ func (kv KV) ChatTemplate() string {
 	return kv.String("tokenizer.chat_template")
 }
 
+// ssm architecture parameters
+
+func (kv KV) SSMConvKernel() uint64 {
+	return uint64(kv.Uint("ssm.conv_kernel"))
+}
+
+func (kv KV) SSMInnerSize() uint64 {
+	return uint64(kv.Uint("ssm.inner_size"))
+}
+
+func (kv KV) SSMStateSize() uint64 {
+	return uint64(kv.Uint("ssm.state_size"))
+}
+
+func (kv KV) SSMGroupCount() uint64 {
+	return uint64(kv.Uint("ssm.group_count"))
+}
+
+// general types
+
 func (kv KV) String(key string, defaultValue ...string) string {
 	val, _ := keyValue(kv, key, append(defaultValue, "")...)
 	return val
