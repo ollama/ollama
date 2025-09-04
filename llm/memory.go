@@ -195,17 +195,19 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	var kvct string
-	if envconfig.FlashAttention() &&
+	useFlashAttention := (envconfig.FlashAttention() || f.FlashAttention()) &&
 		discover.GetGPUInfo().FlashAttentionSupported() &&
-		f.SupportsFlashAttention() {
+		f.SupportsFlashAttention()
+
+	var kvct string
+	if useFlashAttention {
 		requested := strings.ToLower(envconfig.KvCacheType())
 		if requested != "" && f.SupportsKVCacheType(requested) {
 			kvct = requested
 		}
 	}
 
-	kv, graphPartialOffload, graphFullOffload := f.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), numParallel, kvct)
+	kv, graphPartialOffload, graphFullOffload := f.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), numParallel, kvct, useFlashAttention)
 
 	if len(kv) > 0 {
 		layerSize += kv[0]

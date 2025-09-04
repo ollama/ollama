@@ -1,12 +1,10 @@
 package model
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
-	"log/slog"
 	"os"
 	"reflect"
 	"strconv"
@@ -64,7 +62,7 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize([]input.Input) ([]input.Input, error)
+	PostTokenize([]*input.Input) ([]*input.Input, error)
 }
 
 // Base implements the common fields and methods for all models
@@ -198,7 +196,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				names := fn(tagsCopy)
 				for _, name := range names {
 					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
-						slog.Log(context.TODO(), logutil.LevelTrace, "found tensor", "", tensor)
+						logutil.Trace("found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}
@@ -278,7 +276,7 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Tensor, error) {
+func Forward(ctx ml.Context, m Model, batch input.Batch) (ml.Tensor, error) {
 	if len(batch.Positions) != len(batch.Sequences) {
 		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
 	}
@@ -286,8 +284,6 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 	if len(batch.Positions) < 1 {
 		return nil, errors.New("batch size cannot be less than 1")
 	}
-
-	batch.Inputs = ctx.Input().FromIntSlice(inputs, len(inputs))
 
 	cache := m.Config().Cache
 	if cache != nil {
@@ -302,7 +298,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 		return nil, err
 	}
 
-	ctx.Forward(t).Compute(t)
+	ctx.Forward(t)
 
 	return t, nil
 }
