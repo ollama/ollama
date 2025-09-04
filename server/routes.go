@@ -1597,6 +1597,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	var functionNameMap *harmony.FunctionNameMap
 	var prefill string
 	// TODO(parthsareen/drifkin): renderer should be here for the template to allow prefill
+	// the tool mapping should live alongside the renderer and potentially move to the runner
 	if useHarmony {
 		functionNameMap = harmony.NewFunctionNameMap()
 		var lastMessage *api.Message
@@ -1604,13 +1605,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			lastMessage = &msgs[len(msgs)-1]
 		}
 
-		// prefill: if the last message is an assistant message, choose channel based on available fields
-		if lastMessage != nil && lastMessage.Role == "assistant" {
-			if lastMessage.Content != "" {
-				prefill = "<|start|>assistant<|channel|>final<|message|>"
-			} else if lastMessage.Thinking != "" {
-				prefill = "<|start|>assistant<|channel|>analysis<|message|>"
-			}
+		if lastMessage != nil {
+			prefill = harmony.Prefill(lastMessage.Role, lastMessage.Content, lastMessage.Thinking)
 		}
 		// make a copy of tools to pass to the chat prompt. Function names may be
 		// renamed to be valid Harmony function names.
@@ -1696,10 +1692,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if useHarmony {
-				// only send messages with meaningful content (empty messages confuse clients)
 				for i, tool := range res.Message.ToolCalls {
 					res.Message.ToolCalls[i].Function.Name = functionNameMap.OriginalFromConverted(tool.Function.Name)
 				}
+				// only send messages with meaningful content (empty messages confuse clients)
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
 					ch <- res
 				}

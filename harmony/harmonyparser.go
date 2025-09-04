@@ -97,6 +97,20 @@ func (s *HarmonyParser) AddImplicitStartWithPrefill(prefill string) {
 	s.AddImplicitStart()
 }
 
+// Prefill returns a token sequence if there is content or thinking in the last message
+func Prefill(role, content, thinking string) string {
+	if role != "assistant" {
+		return ""
+	}
+	if strings.TrimSpace(content) != "" {
+		return "<|start|>assistant<|channel|>final<|message|>"
+	}
+	if strings.TrimSpace(thinking) != "" {
+		return "<|start|>assistant<|channel|>analysis<|message|>"
+	}
+	return ""
+}
+
 func (s *HarmonyParser) AddContent(content string) []HarmonyEvent {
 	s.lifetimeAcc.WriteString(content)
 	s.acc.WriteString(content)
