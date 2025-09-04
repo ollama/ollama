@@ -27,6 +27,14 @@
       }
     },
     {
+      "name": "CUDA 13",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "75;80;86;87;89;90;90a;100;110;120;121",
+        "CMAKE_CUDA_FLAGS": "-t 2"
+      }
+    },
+    {
       "name": "JetPack 5",
       "inherits": [ "CUDA" ],
       "cacheVariables": {
@@ -76,6 +84,11 @@
       "name": "CUDA 12",
       "inherits": [ "CUDA" ],
       "configurePreset": "CUDA 12"
+    },
+    {
+      "name": "CUDA 13",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 13"
     },
     {
       "name": "JetPack 5",
