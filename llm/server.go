@@ -1347,9 +1347,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar        string // set before sending the request to the subprocess
-	UseHarmony     bool
-	PrefillContent *bool
+	Grammar    string // set before sending the request to the subprocess
+	UseHarmony bool
+	Prefill    string
 }
 
 // DoneReason represents the reason why a completion response is done

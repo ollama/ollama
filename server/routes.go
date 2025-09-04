@@ -1595,7 +1595,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	processedTools := req.Tools
 	var functionNameMap *harmony.FunctionNameMap
-	var prefillContentOrThinking *bool
+	var prefill string
+	// TODO(parthsareen/drifkin): renderer should be here for the template to allow prefill
 	if useHarmony {
 		functionNameMap = harmony.NewFunctionNameMap()
 		var lastMessage *api.Message
@@ -1603,16 +1604,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			lastMessage = &msgs[len(msgs)-1]
 		}
 
-		// prefill content or thinking flag if the last message is an assistant message
+		// prefill: if the last message is an assistant message, choose channel based on available fields
 		if lastMessage != nil && lastMessage.Role == "assistant" {
 			if lastMessage.Content != "" {
-				trueVal := true
-				// true sets content to be prefilled
-				prefillContentOrThinking = &trueVal
+				prefill = "<|start|>assistant<|channel|>final<|message|>"
 			} else if lastMessage.Thinking != "" {
-				// false sets thinking to be prefilled
-				falseVal := false
-				prefillContentOrThinking = &falseVal
+				prefill = "<|start|>assistant<|channel|>analysis<|message|>"
 			}
 		}
 		// make a copy of tools to pass to the chat prompt. Function names may be
@@ -1673,12 +1670,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:         prompt,
-			Images:         images,
-			Format:         req.Format,
-			Options:        opts,
-			UseHarmony:     useHarmony,
-			PrefillContent: prefillContentOrThinking,
+			Prompt:     prompt,
+			Images:     images,
+			Format:     req.Format,
+			Options:    opts,
+			UseHarmony: useHarmony,
+			Prefill:    prefill,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,

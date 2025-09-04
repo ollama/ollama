@@ -88,18 +88,12 @@ func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
 }
 
-// AddImplicitStartOrPrefill adds content or thinking to the accumulator else adds start tag
-func (s *HarmonyParser) AddImplicitStartOrPrefill(prefillContentOrThinking *bool) {
-	if prefillContentOrThinking != nil {
-		if *prefillContentOrThinking {
-			s.acc.WriteString("<|start|>assistant<|channel|>final<|message|>")
-			return
-		} else {
-			s.acc.WriteString("<|start|>assistant<|channel|>analysis<|message|>")
-			return
-		}
+// AddImplicitStartWithPrefill writes the provided prefill string to the accumulator
+func (s *HarmonyParser) AddImplicitStartWithPrefill(prefill string) {
+	if prefill != "" {
+		s.acc.WriteString(prefill)
+		return
 	}
-
 	s.AddImplicitStart()
 }
 

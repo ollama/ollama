@@ -786,7 +786,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
 	if req.UseHarmony {
 		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(req.PrefillContent)
+		harmonyMessageHandler.HarmonyParser.AddImplicitStartWithPrefill(req.Prefill)
 		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 	}
 
