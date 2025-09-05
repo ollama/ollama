@@ -114,7 +114,6 @@ if(CMAKE_HIP_COMPILER)
 
         target_compile_definitions(ggml-hip PRIVATE GGML_HIP_NO_VMM)
 
-        set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
             RUNTIME_DEPENDENCY_SET rocm
             RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP
@@ -125,13 +124,13 @@ if(CMAKE_HIP_COMPILER)
                 PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu numa elf
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
-            RUNTIME DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
-            LIBRARY DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP
         )
 
         foreach(HIP_LIB_BIN_INSTALL_DIR IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
             if(EXISTS ${HIP_LIB_BIN_INSTALL_DIR}/rocblas)
-                install(DIRECTORY ${HIP_LIB_BIN_INSTALL_DIR}/rocblas DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP)
+                install(DIRECTORY ${HIP_LIB_BIN_INSTALL_DIR}/rocblas DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP)
                 break()
             endif()
         endforeach()
@@ -141,12 +140,11 @@ endif()
 find_package(Vulkan)
 if(Vulkan_FOUND)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
-    set(OLLAMA_VULKAN_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/vulkan)
     install(TARGETS ggml-vulkan
         RUNTIME_DEPENDENCIES
             PRE_INCLUDE_REGEXES vulkan
             PRE_EXCLUDE_REGEXES ".*"
-        RUNTIME DESTINATION ${OLLAMA_VULKAN_INSTALL_DIR} COMPONENT Vulkan
-        LIBRARY DESTINATION ${OLLAMA_VULKAN_INSTALL_DIR} COMPONENT Vulkan
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
     )
 endif()

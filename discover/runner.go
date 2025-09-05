@@ -92,6 +92,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// are enumerated, but not actually supported.
 		// We run this in serial to avoid potentially initializing a GPU multiple
 		// times concurrently leading to memory contention
+		// TODO refactor so we group the lib dirs and do serial per version, but parallel for different libs
 		for dir := range libDirs {
 			var dirs []string
 			if dir == "" {
@@ -125,8 +126,10 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 					} else {
 						envVar = "ROCR_VISIBLE_DEVICES"
 					}
-				} else {
+				} else if devices[i].Library == "CUDA" {
 					envVar = "CUDA_VISIBLE_DEVICES"
+				} else if devices[i].Library == "VULKAN" {
+					envVar = "GGML_VK_VISIBLE_DEVICES"
 				}
 
 				extraEnvs := []string{

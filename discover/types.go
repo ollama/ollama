@@ -36,10 +36,11 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	UnreliableFreeMemory bool
 
 	// GPU information
-	ID       string `json:"gpu_id"` // string to use for selection of this specific GPU
-	filterID string // AMD Workaround: The numeric ID of the device used to filter out other devices
-	Name     string `json:"name"`    // user friendly name if available
-	Compute  string `json:"compute"` // Compute Capability or gfx
+	ID             string `json:"gpu_id"` // string to use for selection of this specific GPU
+	filterID       string // AMD Workaround: The numeric ID of the device used to filter out other devices
+	Name           string `json:"name"`            // user friendly name if available
+	Compute        string `json:"compute"`         // Compute Capability or gfx
+	FlashAttention bool   `json:"flash_attention"` // is flash attention supported
 
 	// Driver Information - TODO no need to put this on each GPU
 	DriverMajor int `json:"driver_major,omitempty"`
@@ -174,7 +175,8 @@ func (l GpuInfoList) FlashAttentionSupported() bool {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" ||
 			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "HIP"
+			gpu.Library == "HIP" ||
+			gpu.Library == "VULKAN"
 
 		if !supportsFA {
 			return false

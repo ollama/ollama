@@ -165,12 +165,11 @@ function buildROCm() {
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-            & cmake --fresh --preset "ROCm 6" -G Ninja `
+            & cmake --fresh --preset "ROCm 6" -G Ninja --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="rocm" `
                 -DCMAKE_C_COMPILER=clang `
                 -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
-                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
-                --install-prefix $script:DIST_DIR
+                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
@@ -186,7 +185,7 @@ function buildROCm() {
 function buildVulkan(){
     if ($env:VULKAN_SDK) {
         write-host "Building Vulkan backend libraries"
-        & cmake --fresh --preset Vulkan --install-prefix $script:DIST_DIR
+        & cmake --fresh --preset Vulkan --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="vulkan"
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --build --preset Vulkan  --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}

@@ -71,10 +71,8 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 		} else {
 			info.Compute = fmt.Sprintf("%d.%d", dev.ComputeMajor, dev.ComputeMinor)
 		}
+		// TODO any special processing of Vulkan devices?
 		resp = append(resp, info)
-	}
-	for _, gpu := range vulkanGPUs {
-		resp = append(resp, gpu.GpuInfo)
 	}
 	if len(resp) == 0 {
 		mem, err := GetCPUMem()
@@ -93,18 +91,20 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variable
-//
-// # If different libraries are detected, the first one is what we use
-//
-// TODO once we're purely running on the new runner, this level of device
-// filtering will no longer be necessary.  Instead the runner can be told which
-// of the set of GPUs to utilize and handle filtering itself, instead of relying
-// on the env var to hide devices from the underlying GPU libraries
 func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 	if len(l) == 0 {
 		return nil
 	}
-	return []string{rocmGetVisibleDevicesEnv(l)}
+	res := []string{}
+	envVar := rocmGetVisibleDevicesEnv(l)
+	if envVar != "" {
+		res = append(res, envVar)
+	}
+	envVar = vkGetVisibleDevicesEnv(l)
+	if envVar != "" {
+		res = append(res, envVar)
+	}
+	return res
 }
 
 func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
@@ -131,6 +131,22 @@ func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	// ROCR_VISIBLE_DEVICES supports UUID or numeric but does not work on Windows
 	// HIP_VISIBLE_DEVICES supports numeric IDs only
 	// GPU_DEVICE_ORDINAL supports numeric IDs only
+	return envVar + strings.Join(ids, ",")
+}
+
+func vkGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
+	ids := []string{}
+	for _, info := range gpuInfo {
+		if info.Library != "VULKAN" {
+			continue
+		}
+		ids = append(ids, info.ID)
+
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	envVar := "GGML_VK_VISIBLE_DEVICES="
 	return envVar + strings.Join(ids, ",")
 }
 
