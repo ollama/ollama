@@ -24,7 +24,7 @@ type Options struct {
 
 type Model struct {
 	model.Base
-	model.SentencePieceModel
+	model.SentencePiece
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -40,7 +40,7 @@ const (
 
 func New(c fs.Config) (model.Model, error) {
 	m := Model{
-		SentencePieceModel: model.NewSentencePieceModel(
+		SentencePiece: model.NewSentencePiece(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
