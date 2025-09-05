@@ -566,6 +566,8 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	// default for models unless special-cased below
 	var kvTotal uint64
 	kv = make([]uint64, f.KV().BlockCount())
+	kvSizeAttn := uint64(0)
+	kvSizeRecurrent := uint64(0)
 	for i := range kv {
 		headsL := headsArr[i]
 		headsKVL := headsKVArr[i]
@@ -573,6 +575,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 			// full attention layer
 			// NOTE: Assumes uniform values for all attn layers
 			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsL) * bytesPerElement)
+			kvSizeAttn += kv[i]
 		} else if headsL > 0 {
 			// recurrent layer
 			ssmDConv := f.KV().SSMConvKernel()
@@ -584,12 +587,19 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				nEmbdR = (ssmDConv - 1) * (ssmDInner + 2*ssmNGroups*ssmDState)
 			}
 			nEmbdS := ssmDState * ssmDInner
-			kv[i] = (nEmbdR + nEmbdS) * uint64(bytesPerElement)
+
+			// recurrent always uses F32 in llama.cpp backend
+			// https://github.com/ggml-org/llama.cpp/blob/master/src/llama-model.cpp#L18644
+			bytesPerElementRecurrent := kvCacheBytesPerElement("f32")
+
+			kv[i] = (nEmbdR + nEmbdS) * uint64(bytesPerElementRecurrent)
+			kvSizeRecurrent += kv[i]
 		} else {
 			slog.Debug("zero-cache layer size", "layer_index", i)
 		}
 		kvTotal += kv[i]
 	}
+	slog.Debug("cache size estimate", "attention MiB", float32(kvSizeAttn)/(1024.*1024.), "attention bytes", kvSizeAttn, "recurrent MiB", float32(kvSizeRecurrent)/(1024.*1024.), "recurrent bytes", kvSizeRecurrent)
 
 	switch f.KV().Architecture() {
 	case "llama", "llama4":
@@ -882,6 +892,8 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
+	case "f32":
+		return 4 // f32 (default for recurrent)
 	default:
 		return 2 // f16 (default)
 	}
