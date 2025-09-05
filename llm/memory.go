@@ -209,8 +209,6 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 
 	kv, graphPartialOffload, graphFullOffload := f.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), numParallel, kvct, useFlashAttention)
 
-	slog.Debug("ggml graph size", "kv", kv, "graphPartialOffload", graphPartialOffload, "graphFullOffload", graphFullOffload)
-
 	if len(kv) > 0 {
 		layerSize += kv[0]
 	}
