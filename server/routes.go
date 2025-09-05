@@ -222,21 +222,31 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	caps := []model.Capability{model.CapabilityCompletion}
-	if req.Suffix != "" {
-		caps = append(caps, model.CapabilityInsert)
-	}
-	if req.Think != nil && req.Think.Bool() {
-		caps = append(caps, model.CapabilityThinking)
-		// TODO(drifkin): consider adding a warning if it's false and the model
-		// doesn't support thinking. It's not strictly required, but it can be a
-		// hint that the user is on an older qwen3/r1 model that doesn't have an
-		// updated template supporting thinking
+	caps := []model.Capability{}
+	
+	// Check if this is a diffusion model
+	if m.IsDiffusionModel() {
+		caps = append(caps, model.CapabilityDiffusion)
+	} else {
+		caps = append(caps, model.CapabilityCompletion)
+		if req.Suffix != "" {
+			caps = append(caps, model.CapabilityInsert)
+		}
+		if req.Think != nil && req.Think.Bool() {
+			caps = append(caps, model.CapabilityThinking)
+			// TODO(drifkin): consider adding a warning if it's false and the model
+			// doesn't support thinking. It's not strictly required, but it can be a
+			// hint that the user is on an older qwen3/r1 model that doesn't have an
+			// updated template supporting thinking
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
+		return
+	} else if errors.Is(err, errCapabilityDiffusion) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support diffusion", req.Model)})
 		return
 	} else if err != nil {
 		handleScheduleError(c, req.Model, err)
@@ -1585,6 +1595,25 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	name, err := getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	// Check if this is a diffusion model - diffusion models don't support chat
+	m, err := GetModel(name.String())
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case err.Error() == errtypes.InvalidModelNameErrMsg:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	
+	if m.IsDiffusionModel() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("diffusion model '%s' does not support chat - use the generate endpoint instead", req.Model)})
 		return
 	}
 

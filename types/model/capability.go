@@ -9,6 +9,7 @@ const (
 	CapabilityVision     = Capability("vision")
 	CapabilityEmbedding  = Capability("embedding")
 	CapabilityThinking   = Capability("thinking")
+	CapabilityDiffusion  = Capability("diffusion")
 )
 
 func (c Capability) String() string {
