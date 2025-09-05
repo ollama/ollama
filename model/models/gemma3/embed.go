@@ -13,7 +13,7 @@ import (
 
 type embedModel struct {
 	model.Base
-	model.SentencePieceModel
+	model.SentencePiece
 
 	*TextModel
 	PoolingType uint32
@@ -42,7 +42,7 @@ func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, erro
 
 func newEmbedModel(c fs.Config) (model.Model, error) {
 	m := &embedModel{
-		SentencePieceModel: model.NewSentencePieceModel(
+		SentencePiece: model.NewSentencePiece(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
