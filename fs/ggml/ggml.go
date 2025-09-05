@@ -563,7 +563,16 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
 
-	// default for models unless special-cased below
+	// Default for models unless special-cased below. These defaults mirror the
+	// cache usage in llama.cpp under the assumption that models without special
+	// cases below will use the llamarunner and caching will be handled by the
+	// llama.cpp layer.
+	//
+	// This also assumes that a layer without heads or headsKV set is recurrent
+	// which is usually the case. Some models (eg nemotronh) use "blocks" in
+	// place of layers where some are MLP blocks that don't have any cache.
+	// Models like this will need a special case below to be accurately
+	// estimated.
 	var kvTotal uint64
 	kv = make([]uint64, f.KV().BlockCount())
 	kvSizeAttn := uint64(0)
@@ -576,7 +585,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 			// NOTE: Assumes uniform values for all attn layers
 			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKVL) * bytesPerElement)
 			kvSizeAttn += kv[i]
-		} else if headsL > 0 {
+		} else {
 			// recurrent layer
 			ssmDConv := f.KV().SSMConvKernel()
 			ssmDState := f.KV().SSMStateSize()
@@ -594,12 +603,10 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 
 			kv[i] = (nEmbdR + nEmbdS) * uint64(bytesPerElementRecurrent)
 			kvSizeRecurrent += kv[i]
-		} else {
-			slog.Debug("zero-cache layer size", "layer_index", i)
 		}
 		kvTotal += kv[i]
 	}
-	slog.Debug("cache size estimate", "attention MiB", float32(kvSizeAttn)/(1024.*1024.), "attention bytes", kvSizeAttn, "recurrent MiB", float32(kvSizeRecurrent)/(1024.*1024.), "recurrent bytes", kvSizeRecurrent)
+	slog.Debug("default cache size estimate", "attention MiB", float32(kvSizeAttn)/(1024.*1024.), "attention bytes", kvSizeAttn, "recurrent MiB", float32(kvSizeRecurrent)/(1024.*1024.), "recurrent bytes", kvSizeRecurrent)
 
 	switch f.KV().Architecture() {
 	case "llama", "llama4":
