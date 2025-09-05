@@ -574,7 +574,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		if headsL > 0 && headsKVL > 0 {
 			// full attention layer
 			// NOTE: Assumes uniform values for all attn layers
-			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsL) * bytesPerElement)
+			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKVL) * bytesPerElement)
 			kvSizeAttn += kv[i]
 		} else if headsL > 0 {
 			// recurrent layer
