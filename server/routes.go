@@ -62,6 +62,8 @@ func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
 }
 
+var ipAllowList, _ = tools.NewIPAllowList(os.Getenv("OLLAMA_IP_ALLOWLIST"))
+
 var useClient2 = experimentEnabled("client2")
 
 // Low VRAM mode is based on the sum of total VRAM (not free) and triggers
@@ -1206,6 +1208,17 @@ func allowedHost(host string) bool {
 
 func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	return func(c *gin.Context) {
+
+		remoteIP, err := netip.ParseAddr(c.ClientIP())
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid client IP: %s", c.ClientIP())})
+			return
+		}
+		if !ipAllowList.IsAllowed(remoteIP) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("IP address not allowed: %s", remoteIP)})
+			return
+		}
+
 		if addr == nil {
 			c.Next()
 			return
