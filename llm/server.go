@@ -1362,6 +1362,8 @@ const (
 	DoneReasonLength
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
+	// DoneReasonTokenRepeatLimit indicates the completion stopped due to a token repeat limit
+	DoneReasonTokenRepeatLimit
 )
 
 func (d DoneReason) String() string {
@@ -1370,6 +1372,8 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
+	case DoneReasonTokenRepeatLimit:
+		return "token repeat limit"
 	default:
 		return "" // closed
 	}
@@ -1502,7 +1506,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
 			switch {
-			case lastToken != "" && (strings.TrimSpace(c.Content) == lastToken || strings.TrimSpace(c.Thinking) == lastToken):
+			case strings.TrimSpace(c.Content) == lastToken && c.Content != "":
 				tokenRepeat++
 			default:
 				lastToken = strings.TrimSpace(c.Content)

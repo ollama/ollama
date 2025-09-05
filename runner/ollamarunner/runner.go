@@ -872,6 +872,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
 		return
 	}
+	var lastToken string
+	tokenRepeat := 0
+	const tokenRepeatLimit = 30
 
 	for {
 		select {
@@ -880,6 +883,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
+				if lastToken != "" && (strings.TrimSpace(content) == lastToken) {
+					tokenRepeat++
+				}
+				if tokenRepeat == tokenRepeatLimit {
+					http.Error(w, "token repeat limit reached", http.StatusInternalServerError)
+					seq.doneReason = llm.DoneReasonTokenRepeatLimit
+					close(seq.quit)
+					return
+				}
+
 				var thinking string
 				if harmonyMessageHandler != nil {
 					var toolContent string
