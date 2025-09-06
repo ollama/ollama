@@ -245,66 +245,73 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 // Set aside VRAM per GPU
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
-type EnvVar struct {
-	Name        string
-	Value       any
-	Description string
+type vars []struct {
+	enable              bool
+	name, usage         string
+	value, defaultValue any
 }
 
-func AsMap() map[string]EnvVar {
-	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
-		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
-		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
-		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
-		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
-		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
-		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
-		"OLLAMA_NEW_ESTIMATES":     {"OLLAMA_NEW_ESTIMATES", NewMemoryEstimates(), "Enable the new memory estimation logic"},
-
-		// Informational
-		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
-		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
-		"NO_PROXY":    {"NO_PROXY", String("NO_PROXY")(), "No proxy"},
+func (s vars) LogValue() slog.Value {
+	attrs := make([]slog.Attr, len(s))
+	for i, e := range s {
+		if e.enable {
+			attrs[i] = slog.Any(e.name, e.value)
+		}
 	}
-
-	if runtime.GOOS != "windows" {
-		// Windows environment variables are case-insensitive so there's no need to duplicate them
-		ret["http_proxy"] = EnvVar{"http_proxy", String("http_proxy")(), "HTTP proxy"}
-		ret["https_proxy"] = EnvVar{"https_proxy", String("https_proxy")(), "HTTPS proxy"}
-		ret["no_proxy"] = EnvVar{"no_proxy", String("no_proxy")(), "No proxy"}
-	}
-
-	if runtime.GOOS != "darwin" {
-		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
-		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible by numeric ID"}
-		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible by UUID or numeric ID"}
-		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
-		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
-		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
-	}
-
-	return ret
+	return slog.GroupValue(attrs...)
 }
 
-func Values() map[string]string {
-	vals := make(map[string]string)
-	for k, v := range AsMap() {
-		vals[k] = fmt.Sprintf("%v", v.Value)
+func All() vars {
+	return vars{
+		{true, "OLLAMA_DEBUG", "Show additional debug information (e.g. OLLAMA_DEBUG=1). Verbosity increase with value", LogLevel(), nil},
+		{true, "OLLAMA_FLASH_ATTENTION", "Enable flash attention", FlashAttention(), nil},
+		{true, "OLLAMA_KV_CACHE_TYPE", "Quantization type for the K/V cache", KvCacheType(), nil},
+		{true, "OLLAMA_GPU_OVERHEAD", "Reserve a portion of VRAM per GPU (bytes)", GpuOverhead(), 0},
+		{true, "OLLAMA_HOST", "IP Address for the ollama server", Host(), "127.0.0.1:11434"},
+		{true, "OLLAMA_KEEP_ALIVE", "The duration that models stay loaded in memory", KeepAlive(), 5 * time.Minute},
+		{true, "OLLAMA_LLM_LIBRARY", "Set LLM library to bypass autodetection", LLMLibrary(), nil},
+		{true, "OLLAMA_LOAD_TIMEOUT", "How long to allow model loads to stall before giving up", LoadTimeout(), 5 * time.Minute},
+		{true, "OLLAMA_MAX_LOADED_MODELS", "Maximum number of loaded models per GPU", MaxRunners(), 0},
+		{true, "OLLAMA_MAX_QUEUE", "Maximum number of queued requests", MaxQueue(), 512},
+		{true, "OLLAMA_MODELS", "The path to the models directory", Models(), filepath.Join(os.Getenv("HOME"), ".ollama", "models")},
+		{true, "OLLAMA_NOHISTORY", "Do not preserve readline history", NoHistory(), false},
+		{true, "OLLAMA_NOPRUNE", "Do not prune model blobs on startup", NoPrune(), false},
+		{true, "OLLAMA_NUM_PARALLEL", "Maximum number of parallel requests", NumParallel(), 1},
+		{true, "OLLAMA_ORIGINS", "A comma separated list of allowed origins", AllowedOrigins(), nil},
+		{true, "OLLAMA_SCHED_SPREAD", "Always schedule model across all GPUs", SchedSpread(), false},
+		{true, "OLLAMA_MULTIUSER_CACHE", "Optimize prompt caching for multi-user scenarios", MultiUserCache(), false},
+		{true, "OLLAMA_CONTEXT_LENGTH", "Context length to use unless otherwise specified", ContextLength(), 4096},
+		{true, "OLLAMA_NEW_ENGINE", "Enable the new Ollama engine", NewEngine(), false},
+		{true, "OLLAMA_NEW_ESTIMATES", "Enable the new memory estimation logic", NewMemoryEstimates(), false},
+		{runtime.GOOS != "windows", "HTTP_PROXY", "HTTP proxy", String("http_proxy")(), nil},
+		{runtime.GOOS != "windows", "HTTPS_PROXY", "HTTPS proxy", String("https_proxy")(), nil},
+		{runtime.GOOS != "windows", "NO_PROXY", "No proxy", String("no_proxy")(), nil},
+		{runtime.GOOS != "darwin", "CUDA_VISIBLE_DEVICES", "Set which NVIDIA devices are visible", CudaVisibleDevices(), nil},
+		{runtime.GOOS != "darwin", "HIP_VISIBLE_DEVICES", "Set which AMD devices are visible by numeric ID", HipVisibleDevices(), nil},
+		{runtime.GOOS != "darwin", "ROCR_VISIBLE_DEVICES", "Set which AMD devices are visible by UUID or numeric ID", RocrVisibleDevices(), nil},
+		{runtime.GOOS != "darwin", "GPU_DEVICE_ORDINAL", "Set which AMD devices are visible by numeric ID", GpuDeviceOrdinal(), nil},
+		{runtime.GOOS != "darwin", "HSA_OVERRIDE_GFX_VERSION", "Override the gfx used for all detected AMD GPUs", HsaOverrideGfxVersion(), nil},
+		{runtime.GOOS != "darwin", "OLLAMA_INTEL_GPU", "Enable experimental Intel GPU detection", IntelGPU(), false},
 	}
-	return vals
+}
+
+func Usage(s ...string) map[string]string {
+	vars := All()
+	tmp := make(map[string]int)
+	for i, v := range vars {
+		tmp[v.name] = i
+	}
+
+	m := make(map[string]string, len(s))
+	for _, k := range s {
+		if i, ok := tmp[k]; ok {
+			m[k] = vars[i].usage
+			if vars[i].defaultValue != nil {
+				m[k] += fmt.Sprintf(" (default: %v)", vars[i].defaultValue)
+			}
+		}
+	}
+	return m
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces

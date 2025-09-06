@@ -1328,7 +1328,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
-	slog.Info("server config", "env", envconfig.Values())
+	slog.Info("server environment configuration", "", envconfig.All())
 
 	blobsDir, err := GetBlobsPath("")
 	if err != nil {
