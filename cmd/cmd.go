@@ -320,6 +320,22 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.Format = format
 
+	grammarFile, err := cmd.Flags().GetString("grammarfile")
+	if err != nil {
+		return err
+	}
+
+	if grammarFile != "" {
+
+		grammarContent, err := os.ReadFile(grammarFile)
+		if err != nil {
+			return fmt.Errorf("failed to read grammar file: %w", err)
+		}
+		opts.Grammar = string(grammarContent)
+	} else {
+		opts.Grammar = ""
+	}
+
 	thinkFlag := cmd.Flags().Lookup("think")
 	if thinkFlag.Changed {
 		thinkStr, err := cmd.Flags().GetString("think")
@@ -984,6 +1000,7 @@ type runOptions struct {
 	Messages     []api.Message
 	WordWrap     bool
 	Format       string
+	Grammar      string
 	System       string
 	Images       []api.ImageData
 	Options      map[string]any
@@ -1149,10 +1166,15 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		opts.Format = `"` + opts.Format + `"`
 	}
 
+	if opts.Format == "GBNF" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
 		Format:   json.RawMessage(opts.Format),
+		Grammar:  opts.Grammar,
 		Options:  opts.Options,
 		Think:    opts.Think,
 	}
@@ -1505,7 +1527,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().String("format", "", "Response format (e.g. json or gbnf)")
+	runCmd.Flags().String("grammarfile", "", "Path to a GBNF grammar file")
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
