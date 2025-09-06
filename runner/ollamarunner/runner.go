@@ -786,7 +786,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
 	if req.UseHarmony {
 		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartWithPrefill(req.Prefill)
+		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(req.LastMessage)
 		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 	}
 
@@ -883,7 +883,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				if lastToken != "" && (strings.TrimSpace(content) == lastToken) {
+				if strings.TrimSpace(content) == lastToken {
 					tokenRepeat++
 				}
 				if tokenRepeat == tokenRepeatLimit {
@@ -892,6 +892,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					close(seq.quit)
 					return
 				}
+				lastToken = strings.TrimSpace(content)
 
 				var thinking string
 				if harmonyMessageHandler != nil {

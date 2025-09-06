@@ -1347,9 +1347,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar    string // set before sending the request to the subprocess
-	UseHarmony bool
-	Prefill    string
+	Grammar     string // set before sending the request to the subprocess
+	UseHarmony  bool
+	LastMessage *api.Message
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1373,7 +1373,7 @@ func (d DoneReason) String() string {
 	case DoneReasonStop:
 		return "stop"
 	case DoneReasonTokenRepeatLimit:
-		return "token repeat limit"
+		return "token_repeat_limit"
 	default:
 		return "" // closed
 	}
@@ -1506,6 +1506,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
 			switch {
+			// TODO(parthsareen): token repeat limit is now handled in the runner, this currently support legacy model and can be removed in the future
 			case strings.TrimSpace(c.Content) == lastToken && c.Content != "":
 				tokenRepeat++
 			default:

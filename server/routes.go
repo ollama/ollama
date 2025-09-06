@@ -1595,19 +1595,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	processedTools := req.Tools
 	var functionNameMap *harmony.FunctionNameMap
-	var prefill string
-	// TODO(parthsareen/drifkin): renderer should be here for the template to allow prefill
-	// the tool mapping should live alongside the renderer and potentially move to the runner
+	// TODO(parthsareen): this can be abstracted to not be model specific and potentially moved to the runner
 	if useHarmony {
 		functionNameMap = harmony.NewFunctionNameMap()
-		var lastMessage *api.Message
-		if len(msgs) > 0 {
-			lastMessage = &msgs[len(msgs)-1]
-		}
-
-		if lastMessage != nil {
-			prefill = harmony.Prefill(lastMessage.Role, lastMessage.Content, lastMessage.Thinking)
-		}
 		// make a copy of tools to pass to the chat prompt. Function names may be
 		// renamed to be valid Harmony function names.
 		processedTools = make([]api.Tool, len(req.Tools))
@@ -1666,12 +1656,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:     prompt,
-			Images:     images,
-			Format:     req.Format,
-			Options:    opts,
-			UseHarmony: useHarmony,
-			Prefill:    prefill,
+			Prompt:      prompt,
+			Images:      images,
+			Format:      req.Format,
+			Options:     opts,
+			UseHarmony:  useHarmony,
+			LastMessage: &msgs[len(msgs)-1],
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,

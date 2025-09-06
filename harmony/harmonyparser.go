@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/template"
 )
@@ -88,27 +89,26 @@ func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
 }
 
-// AddImplicitStartWithPrefill writes the provided prefill string to the accumulator
-func (s *HarmonyParser) AddImplicitStartWithPrefill(prefill string) {
-	if prefill != "" {
-		s.acc.WriteString(prefill)
+// AddImplicitStartOrPrefill adds an implicit start tag or prefill content based on the last message
+func (s *HarmonyParser) AddImplicitStartOrPrefill(lastMessage *api.Message) {
+	if lastMessage == nil {
+		s.AddImplicitStart()
 		return
 	}
-	s.AddImplicitStart()
-}
 
-// Prefill returns a token sequence if there is content or thinking in the last message
-func Prefill(role, content, thinking string) string {
-	if role != "assistant" {
-		return ""
+	if lastMessage.Role != "assistant" {
+		s.AddImplicitStart()
+		return
 	}
-	if strings.TrimSpace(content) != "" {
-		return "<|start|>assistant<|channel|>final<|message|>"
+
+	switch {
+	case strings.TrimSpace(lastMessage.Content) != "":
+		s.acc.WriteString("<|start|>assistant<|channel|>final<|message|>")
+	case strings.TrimSpace(lastMessage.Thinking) != "":
+		s.acc.WriteString("<|start|>assistant<|channel|>analysis<|message|>")
+	default:
+		s.AddImplicitStart()
 	}
-	if strings.TrimSpace(thinking) != "" {
-		return "<|start|>assistant<|channel|>analysis<|message|>"
-	}
-	return ""
 }
 
 func (s *HarmonyParser) AddContent(content string) []HarmonyEvent {
