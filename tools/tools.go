@@ -224,45 +224,22 @@ func findArguments(buffer []byte) (map[string]any, int) {
 		return nil, 0
 	}
 
-	start := -1
 	var braces int
-	var inString, escaped bool
+	var start int = -1
 
-	for i := range buffer {
-		c := buffer[i]
-
-		if escaped {
-			escaped = false
-			continue
-		}
-
-		if c == '\\' {
-			escaped = true
-			continue
-		}
-
-		if c == '"' {
-			inString = !inString
-			continue
-		}
-
-		if inString {
-			continue
-		}
-
+	for i, c := range buffer {
 		if c == '{' {
 			if braces == 0 {
 				start = i
 			}
 			braces++
-		} else if c == '}' {
+		} else if c == '}' && braces > 0 {
 			braces--
 			if braces == 0 && start != -1 {
 				object := buffer[start : i+1]
 
 				var data map[string]any
 				if err := json.Unmarshal(object, &data); err != nil {
-					// not a valid object, keep looking
 					start = -1
 					continue
 				}
@@ -304,10 +281,6 @@ func findArguments(buffer []byte) (map[string]any, int) {
 				}
 
 				return data, i
-			}
-
-			if braces < 0 {
-				braces = 0
 			}
 		}
 	}
