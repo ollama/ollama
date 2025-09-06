@@ -61,7 +61,7 @@ type Causal struct {
 	curCellRange cellRange
 
 	// curSequences is the sequences corresponding to this pass's entries in the cache
-	curSequences []int
+	curSequences []int32
 
 	// curPositions is the positions corresponding to this pass's entries in the cache
 	curPositions []int32
@@ -73,7 +73,7 @@ type Causal struct {
 	cells []cacheCell
 
 	// maps from sequence to the range of locations where it is stored in the cache
-	cellRanges map[int]cellRange
+	cellRanges map[int32]cellRange
 
 	// ** cache data storage **
 
@@ -85,7 +85,7 @@ type Causal struct {
 
 type cacheCell struct {
 	pos       int32
-	sequences []int
+	sequences []int32
 }
 
 type cellRange struct {
@@ -178,7 +178,7 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity
 	c.cells = make([]cacheCell, cacheSize)
 
 	c.DType = dtype
-	c.cellRanges = make(map[int]cellRange)
+	c.cellRanges = make(map[int32]cellRange)
 	c.backend = backend
 	c.maxBatch = maxBatch
 }
@@ -199,9 +199,9 @@ func (c *Causal) Close() {
 
 func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	c.curReserve = reserve
-	c.curBatchSize = len(batch.Positions)
-	c.curSequences = batch.Sequences
-	c.curPositions = batch.Positions
+	c.curBatchSize = batch.Positions.Dim(0)
+	c.curSequences = batch.Sequences.Ints()
+	c.curPositions = batch.Positions.Ints()
 	c.opts.Except = nil
 
 	if !c.curReserve {
@@ -218,10 +218,10 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 			return err
 		}
 
-		for i, pos := range batch.Positions {
-			seq := batch.Sequences[i]
+		for i, pos := range c.curPositions {
+			seq := c.curSequences[i]
 
-			c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
+			c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int32{seq}}
 
 			seqRange, ok := c.cellRanges[seq]
 			if !ok {
@@ -289,7 +289,7 @@ func (c *Causal) updateSlidingWindow() {
 	}
 
 	// create a map of unique sequences to the lowest position in that sequence
-	lowestPos := make(map[int]int32)
+	lowestPos := make(map[int32]int32)
 	for i := range c.curPositions {
 		seq := c.curSequences[i]
 
@@ -315,7 +315,7 @@ func (c *Causal) updateSlidingWindow() {
 		for i := oldRange.min; i <= oldRange.max; i++ {
 			if slices.Contains(c.cells[i].sequences, seq) {
 				if c.cells[i].pos < pos-c.swaMemorySize {
-					c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int) bool { return s == seq })
+					c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int32) bool { return s == seq })
 				} else {
 					newRange.min = min(newRange.min, i)
 					newRange.max = max(newRange.max, i)
@@ -622,13 +622,13 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 }
 
-func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
+func (c *Causal) CopyPrefix(srcSeq, dstSeq int32, len int32) {
 	seqRange := newRange()
 
 	for i := range c.cells {
 		// Remove the contents of dstSeq so that we only have the copied prefix, metadata will be reset at the end
 		if slices.Contains(c.cells[i].sequences, dstSeq) {
-			c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int) bool { return s == dstSeq })
+			c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int32) bool { return s == dstSeq })
 		}
 
 		if slices.Contains(c.cells[i].sequences, srcSeq) && c.cells[i].pos < len {
@@ -645,7 +645,7 @@ func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	c.cellRanges[dstSeq] = seqRange
 }
 
-func (c *Causal) CanResume(seq int, pos int32) bool {
+func (c *Causal) CanResume(seq, pos int32) bool {
 	if c.swaMemorySize == math.MaxInt32 {
 		return true
 	}
@@ -674,7 +674,7 @@ func (c *Causal) CanResume(seq int, pos int32) bool {
 	return posWindowStart >= lastWindowStart
 }
 
-func (c *Causal) shift(seq int, beginIndex, offset int32) error {
+func (c *Causal) shift(seq, beginIndex, offset int32) error {
 	if c.shiftFn == nil {
 		return ErrNotSupported
 	}
@@ -740,7 +740,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 	return nil
 }
 
-func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
+func (c *Causal) Remove(seq, beginIndex, endIndex int32) error {
 	// TODO(jessegross): We should check to see if removing the middle of the sequence will
 	// cause the sliding window to encompass tokens that we no longer have. If so, then we
 	// should return an error, which will trigger the runner to evaluate the full history and
@@ -757,10 +757,10 @@ func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
 	for i := range c.cells {
 		if slices.Contains(c.cells[i].sequences, seq) {
 			if c.cells[i].pos >= beginIndex && c.cells[i].pos < endIndex {
-				c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int) bool { return s == seq })
+				c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int32) bool { return s == seq })
 			} else {
 				if c.cells[i].pos >= endIndex {
-					if slices.ContainsFunc(c.cells[i].sequences, func(s int) bool { return s != seq }) {
+					if slices.ContainsFunc(c.cells[i].sequences, func(s int32) bool { return s != seq }) {
 						return errors.New("shifting cells shared by multiple sequences not supported")
 					}
 

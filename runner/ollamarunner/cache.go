@@ -41,7 +41,7 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 	slots := make([]InputCacheSlot, numSlots)
 
 	for i := range slots {
-		slots[i] = InputCacheSlot{Id: i}
+		slots[i] = InputCacheSlot{Id: int32(i)}
 	}
 
 	cache := model.Config().Cache
@@ -83,7 +83,7 @@ func (c *InputCache) Close() {
 
 type InputCacheSlot struct {
 	// Index in the KV cache
-	Id int
+	Id int32
 
 	// Inputs that are stored in the KV cache
 	Inputs []*input.Input

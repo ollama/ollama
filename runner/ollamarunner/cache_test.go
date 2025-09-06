@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/model/input"
 )
 
@@ -73,7 +73,7 @@ func TestCountCommon(t *testing.T) {
 
 func TestFindCacheSlot(t *testing.T) {
 	type expected struct {
-		result int
+		result int32
 		len    int32
 	}
 
@@ -302,7 +302,7 @@ func TestLoadCacheSlot(t *testing.T) {
 		cache          InputCache
 		prompt         []*input.Input
 		wantErr        bool
-		expectedSlotId int
+		expectedSlotId int32
 		expectedPrompt int // expected length of remaining prompt
 	}{
 		{
@@ -427,26 +427,16 @@ func TestLoadCacheSlot(t *testing.T) {
 // Mock implementation of the Cache interface
 type mockCache struct {
 	shouldFail bool
+	kvcache.Cache
 }
 
 // Implement only the methods needed for the test
-func (m *mockCache) Remove(seq int, beginIndex, endIndex int32) error {
+func (m *mockCache) Remove(seq, beginIndex, endIndex int32) error {
 	if m.shouldFail {
 		return fmt.Errorf("mock cache removal error")
 	}
 	return nil
 }
-
-// Stub implementations for other interface methods
-func (m *mockCache) SetLayer(layer int)                                                            {}
-func (m *mockCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor)                          { return nil, nil, nil }
-func (m *mockCache) Put(ctx ml.Context, key, value ml.Tensor)                                      {}
-func (m *mockCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {}
-func (m *mockCache) Close()                                                                        {}
-func (m *mockCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error            { return nil }
-func (m *mockCache) CopyPrefix(srcSeq, dstSeq int, len int32)                                      {}
-func (m *mockCache) SetConfig(ml.CacheConfig)                                                      {}
-func (m *mockCache) CanResume(seq int, pos int32) bool                                             { return true }
 
 func TestShiftCacheSlot(t *testing.T) {
 	tests := []struct {

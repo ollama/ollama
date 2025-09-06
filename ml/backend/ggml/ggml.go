@@ -1004,6 +1004,9 @@ func (t *Tensor) Bytes() (data []byte) {
 
 		t.sync()
 		C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	} else if bts := C.ggml_get_data(t.t); bts != nil {
+		// tensor is in cpu memory
+		data = C.GoBytes(bts, C.int(C.ggml_nbytes(t.t)))
 	}
 
 	return
@@ -1015,6 +1018,23 @@ func (t *Tensor) Floats() (data []float32) {
 
 		t.sync()
 		C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	} else if bts := C.ggml_get_data(t.t); bts != nil {
+		// tensor is in cpu memory
+		data = unsafe.Slice((*float32)(bts), C.ggml_nelements(t.t))
+	}
+
+	return
+}
+
+func (t *Tensor) Ints() (data []int32) {
+	if t.sync != nil {
+		data = make([]int32, C.ggml_nelements(t.t))
+
+		t.sync()
+		C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	} else if bts := C.ggml_get_data(t.t); bts != nil {
+		// tensor is in cpu memory
+		data = unsafe.Slice((*int32)(bts), C.ggml_nelements(t.t))
 	}
 
 	return

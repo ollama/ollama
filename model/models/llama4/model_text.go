@@ -208,18 +208,18 @@ func newTextModel(c fs.Config) *TextModel {
 	}
 }
 
-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
-	hiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
+func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {
+	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)
 
 	for _, mi := range batch.Multimodal {
 		img := mi.Multimodal[0].Tensor
-		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
+		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, int(mi.Index)*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
 	}
 
 	var attentionScales ml.Tensor
 	if m.attentionTemperatureTuning {
-		scales := make([]float32, len(batch.Positions))
-		for i, p := range batch.Positions {
+		scales := make([]float32, batch.Positions.Dim(0))
+		for i, p := range batch.Positions.Ints() {
 			scales[i] = float32(math.Log(math.Floor(((float64(p)+1.0)/float64(m.attentionFloorScale))+1.0))*m.attentionScale + 1.0)
 		}
 
@@ -237,10 +237,10 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 
 		var lastLayerOutputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
+			lastLayerOutputs = batch.Outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, attentionScales, lastLayerOutputs, cache, useChunkedAttention, m.TextOptions)
+		hiddenStates = layer.Forward(ctx, hiddenStates, batch.Positions, attentionScales, lastLayerOutputs, cache, useChunkedAttention, m.TextOptions)
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)

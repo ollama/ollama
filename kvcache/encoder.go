@@ -91,7 +91,7 @@ func (c *EncoderCache) Close() {
 func (c *EncoderCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	// We work with the most recent image
 	if len(batch.Multimodal) > 0 {
-		c.curPos = batch.Positions[batch.Multimodal[len(batch.Multimodal)-1].Index]
+		c.curPos = batch.Positions.Ints()[batch.Multimodal[len(batch.Multimodal)-1].Index]
 	}
 
 	c.curReserve = reserve
@@ -139,15 +139,15 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 	)
 }
 
-func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
+func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq, len int32) {
 	panic("encoder cache does not support multiple sequences")
 }
 
-func (c *EncoderCache) CanResume(seq int, pos int32) bool {
+func (c *EncoderCache) CanResume(seq, pos int32) bool {
 	return true
 }
 
-func (c *EncoderCache) Remove(seq int, beginIndex, endIndex int32) error {
+func (c *EncoderCache) Remove(seq, beginIndex, endIndex int32) error {
 	if c.encoderPos >= beginIndex && c.encoderPos < endIndex {
 		c.encoderCached = false
 	}

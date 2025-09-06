@@ -45,7 +45,7 @@ type Input struct {
 // as the position - to find that use the index with the
 // Positions slice.
 type MultimodalIndex struct {
-	Index      int
+	Index      int32
 	Multimodal []Multimodal
 }
 
@@ -54,19 +54,19 @@ type Batch struct {
 	// Inputs is the input tokens, including placeholders for multimodal inputs.
 	Inputs ml.Tensor
 
+	// Positions is the position for each Input, relative to its sequence. Equal
+	// in length to Inputs.
+	Positions ml.Tensor
+
+	// Sequences is the sequence for each Input. Equal in length to Inputs.
+	Sequences ml.Tensor
+
+	// Outputs are the set of indicies into Inputs for which output data should
+	// be returned.
+	Outputs ml.Tensor
+
 	// Multimodal is a set of multimodal embeddings previously created by
 	// EncodeMultimodal, along with an index into Inputs. Unused for text-only
 	// models or for batches without multimodal elements.
 	Multimodal []MultimodalIndex
-
-	// Positions is the position for each Input, relative to its sequence. Equal
-	// in length to Inputs.
-	Positions []int32
-
-	// Sequences is the sequence for each Input. Equal in length to Inputs.
-	Sequences []int
-
-	// Outputs are the set of indicies into Inputs for which output data should
-	// be returned.
-	Outputs []int32
 }

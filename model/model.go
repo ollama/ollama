@@ -282,11 +282,11 @@ func canNil(t reflect.Type) bool {
 }
 
 func Forward(ctx ml.Context, m Model, batch input.Batch) (ml.Tensor, error) {
-	if len(batch.Positions) != len(batch.Sequences) {
-		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
+	if batch.Positions.Dim(0) != batch.Sequences.Dim(0) {
+		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", batch.Positions.Dim(0), batch.Sequences.Dim(0))
 	}
 
-	if len(batch.Positions) < 1 {
+	if batch.Positions.Dim(0) < 1 {
 		return nil, errors.New("batch size cannot be less than 1")
 	}
 

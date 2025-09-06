@@ -13,7 +13,7 @@ type testCase struct {
 	name          string
 	in            []float32
 	inShape       []int
-	seqs          []int
+	seqs          []int32
 	pos           []int32
 	expected      []float32
 	expectedShape []int
@@ -32,7 +32,7 @@ func TestStore(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{111, 211, 121, 221, 131, 231, 112, 212, 122, 222, 132, 232, 113, 213, 123, 223, 133, 233, 114, 214, 124, 224, 134, 234},
 			inShape:       []int{2, 3, 4},
-			seqs:          []int{0, 0, 0, 0},
+			seqs:          []int32{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{111, 211, 121, 221, 131, 231, 112, 212, 122, 222, 132, 232, 113, 213, 123, 223, 133, 233, 114, 214, 124, 224, 134, 234},
 			expectedShape: []int{2, 3, 4},
@@ -42,7 +42,7 @@ func TestStore(t *testing.T) {
 			name:          "SecondBatch",
 			in:            []float32{115, 215, 125, 225, 135, 235},
 			inShape:       []int{2, 3, 1},
-			seqs:          []int{0},
+			seqs:          []int32{0},
 			pos:           []int32{4},
 			expected:      []float32{111, 211, 121, 221, 131, 231, 112, 212, 122, 222, 132, 232, 113, 213, 123, 223, 133, 233, 114, 214, 124, 224, 134, 234, 115, 215, 125, 225, 135, 235},
 			expectedShape: []int{2, 3, 5},
@@ -67,7 +67,7 @@ func TestSWA(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
-			seqs:          []int{0, 0, 0, 0},
+			seqs:          []int32{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
@@ -82,7 +82,7 @@ func TestSWA(t *testing.T) {
 			name:          "SecondBatch",
 			in:            []float32{5, 6},
 			inShape:       []int{1, 1, 2},
-			seqs:          []int{0, 0},
+			seqs:          []int32{0, 0},
 			pos:           []int32{4, 5},
 			expected:      []float32{5, 6, 3, 4},
 			expectedShape: []int{1, 1, 4},
@@ -110,7 +110,7 @@ func TestSWAMem(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
-			seqs:          []int{0, 0, 0, 0},
+			seqs:          []int32{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
@@ -125,7 +125,7 @@ func TestSWAMem(t *testing.T) {
 			name:          "SecondBatch",
 			in:            []float32{5, 6},
 			inShape:       []int{1, 1, 2},
-			seqs:          []int{0, 0},
+			seqs:          []int32{0, 0},
 			pos:           []int32{4, 5},
 			expected:      []float32{4, 5, 6},
 			expectedShape: []int{1, 1, 3},
@@ -155,7 +155,7 @@ func TestChunkedAttention(t *testing.T) {
 				name:          "FirstBatch",
 				in:            []float32{1, 2, 3, 4},
 				inShape:       []int{1, 1, 4},
-				seqs:          []int{0, 0, 0, 0},
+				seqs:          []int32{0, 0, 0, 0},
 				pos:           []int32{0, 1, 2, 3},
 				expected:      []float32{1, 2, 3, 4},
 				expectedShape: []int{1, 1, 4},
@@ -170,7 +170,7 @@ func TestChunkedAttention(t *testing.T) {
 				name:          "SecondBatch",
 				in:            []float32{5, 6, 7},
 				inShape:       []int{1, 1, 3},
-				seqs:          []int{0, 0, 0},
+				seqs:          []int32{0, 0, 0},
 				pos:           []int32{4, 5, 6},
 				expected:      []float32{1, 2, 3, 4, 5, 6, 7},
 				expectedShape: []int{1, 1, 7},
@@ -184,7 +184,7 @@ func TestChunkedAttention(t *testing.T) {
 				name:          "ThirdBatch",
 				in:            []float32{8, 9},
 				inShape:       []int{1, 1, 2},
-				seqs:          []int{0, 0},
+				seqs:          []int32{0, 0},
 				pos:           []int32{7, 8},
 				expected:      []float32{1, 2, 3, 4, 5, 6, 7, 8, 9},
 				expectedShape: []int{1, 1, 9},
@@ -209,7 +209,7 @@ func TestSequences(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
-			seqs:          []int{0, 0, 1, 1},
+			seqs:          []int32{0, 0, 1, 1},
 			pos:           []int32{0, 1, 0, 1},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
@@ -219,7 +219,7 @@ func TestSequences(t *testing.T) {
 			name:          "SecondBatch",
 			in:            []float32{5, 6},
 			inShape:       []int{1, 1, 2},
-			seqs:          []int{0, 1},
+			seqs:          []int32{0, 1},
 			pos:           []int32{2, 2},
 			expected:      []float32{1, 2, 3, 4, 5, 6},
 			expectedShape: []int{1, 1, 6},
@@ -244,7 +244,7 @@ func TestRemove(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
-			seqs:          []int{0, 0, 1, 1},
+			seqs:          []int32{0, 0, 1, 1},
 			pos:           []int32{0, 1, 0, 1},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
@@ -264,7 +264,7 @@ func TestRemove(t *testing.T) {
 			name:          "RemoveEnd",
 			in:            []float32{5, 6},
 			inShape:       []int{1, 1, 2},
-			seqs:          []int{0, 1},
+			seqs:          []int32{0, 1},
 			pos:           []int32{1, 2},
 			expected:      []float32{1, 2, 3, 4, 5, 6},
 			expectedShape: []int{1, 1, 6},
@@ -284,7 +284,7 @@ func TestRemove(t *testing.T) {
 			name:          "RemoveMiddle",
 			in:            []float32{7, 8},
 			inShape:       []int{1, 1, 2},
-			seqs:          []int{0, 0},
+			seqs:          []int32{0, 0},
 			pos:           []int32{1, 2},
 			expected:      []float32{7, 8, 3, 4, 4},
 			expectedShape: []int{1, 1, 5},
@@ -309,7 +309,7 @@ func TestDefrag(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 			inShape:       []int{1, 1, 16},
-			seqs:          []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+			seqs:          []int32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 			expected:      []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 			expectedShape: []int{1, 1, 16},
@@ -334,7 +334,7 @@ func TestDefrag(t *testing.T) {
 			name:          "Defrag",
 			in:            []float32{17, 18, 19},
 			inShape:       []int{1, 1, 3},
-			seqs:          []int{0, 0, 0},
+			seqs:          []int32{0, 0, 0},
 			pos:           []int32{16, 17, 18},
 			expected:      []float32{1, 2, 12, 13, 3, 4, 5, 6, 7, 8, 9, 10, 11, 17, 18, 19},
 			expectedShape: []int{1, 1, 16},
@@ -357,7 +357,7 @@ func TestCopy(t *testing.T) {
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
-			seqs:          []int{0, 0, 0, 0},
+			seqs:          []int32{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
@@ -374,7 +374,7 @@ func TestCopy(t *testing.T) {
 			name:          "Copy",
 			in:            []float32{5, 6},
 			inShape:       []int{1, 1, 2},
-			seqs:          []int{1, 1},
+			seqs:          []int32{1, 1},
 			pos:           []int32{3, 4},
 			expected:      []float32{1, 2, 3, 4, 5, 6},
 			expectedShape: []int{1, 1, 6},
@@ -391,7 +391,10 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			context := backend.NewContext()
 			defer context.Close()
 
-			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs}, false)
+			err := cache.StartForward(context, input.Batch{
+				Positions: context.FromIntSlice(test.pos, len(test.pos)),
+				Sequences: context.FromIntSlice(test.seqs, len(test.pos)),
+			}, false)
 			if err != nil {
 				panic(err)
 			}
@@ -431,8 +434,8 @@ func TestCanResume(t *testing.T) {
 	defer context.Close()
 
 	err := cache.StartForward(context, input.Batch{
-		Positions: []int32{0, 1, 2, 3},
-		Sequences: []int{0, 0, 0, 0},
+		Positions: context.FromIntSlice([]int32{0, 1, 2, 3}, 4),
+		Sequences: context.FromIntSlice([]int32{0, 0, 0, 0}, 4),
 	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
@@ -458,8 +461,8 @@ func TestCanResume(t *testing.T) {
 
 	// shift window by adding position 4
 	err = cache.StartForward(context, input.Batch{
-		Positions: []int32{4, 5},
-		Sequences: []int{0, 0},
+		Positions: context.FromIntSlice([]int32{4, 5}, 2),
+		Sequences: context.FromIntSlice([]int32{0, 0}, 2),
 	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
@@ -503,8 +506,8 @@ func TestCanResumeSWAMem(t *testing.T) {
 	defer context.Close()
 
 	err := cache.StartForward(context, input.Batch{
-		Positions: []int32{0, 1, 2, 3, 4, 5},
-		Sequences: []int{0, 0, 0, 0, 0, 0},
+		Positions: context.FromIntSlice([]int32{0, 1, 2, 3, 4, 5}, 6),
+		Sequences: context.FromIntSlice([]int32{0, 0, 0, 0, 0, 0}, 6),
 	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
@@ -516,8 +519,8 @@ func TestCanResumeSWAMem(t *testing.T) {
 
 	// shift window by adding position 6
 	err = cache.StartForward(context, input.Batch{
-		Positions: []int32{6, 7},
-		Sequences: []int{0, 0},
+		Positions: context.FromIntSlice([]int32{6, 7}, 2),
+		Sequences: context.FromIntSlice([]int32{0, 0}, 2),
 	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
@@ -666,6 +669,14 @@ func (t *testTensor) DType() ml.DType {
 func (t *testTensor) Floats() []float32 {
 	out := make([]float32, len(t.data))
 	copy(out, t.data)
+	return out
+}
+
+func (t *testTensor) Ints() []int32 {
+	out := make([]int32, len(t.data))
+	for i := range out {
+		out[i] = int32(t.data[i])
+	}
 	return out
 }
 

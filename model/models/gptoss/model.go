@@ -30,7 +30,6 @@ type Transformer struct {
 // Forward implements model.Model.
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	one := ctx.Input().FromFloatSlice([]float32{1}, 1)
 	for i, block := range m.TransformerBlocks {
@@ -41,11 +40,11 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 		}
 
 		var outputs ml.Tensor
-		if len(batch.Outputs) > 0 && i == len(m.TransformerBlocks)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+		if i == len(m.TransformerBlocks)-1 {
+			outputs = batch.Outputs
 		}
 
-		hiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, one, m.Cache, &m.Options)
+		hiddenStates = block.Forward(ctx, hiddenStates, batch.Positions, outputs, one, m.Cache, &m.Options)
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)

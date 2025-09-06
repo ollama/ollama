@@ -29,7 +29,6 @@ type TextModel struct {
 }
 
 func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	// Create a tensor of a single float32 value of 1.0 to use for altup correction
 	one := ctx.Input().FromFloatSlice([]float32{1.0}, 1)
 
@@ -66,7 +65,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 		// inputPerLayer = inputsPerLayer[:, i, :]
 		inputPerLayer := inputsPerLayer.View(ctx, i*inputsPerLayer.Stride(1), inputsPerLayer.Dim(0), inputsPerLayer.Stride(2), inputsPerLayer.Dim(2))
-		hiddenStates = layer.Forward(ctx, hiddenStates, inputPerLayer, positions, one, cache, i >= firstSharedKeyValue, ropeBase, float64(m.activationSparsityScale[i]), &m.TextOptions)
+		hiddenStates = layer.Forward(ctx, hiddenStates, inputPerLayer, batch.Positions, one, cache, i >= firstSharedKeyValue, ropeBase, float64(m.activationSparsityScale[i]), &m.TextOptions)
 	}
 
 	// hiddenStates = hiddenStates[:, :, 0]
@@ -83,7 +82,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 	hiddenStates = hiddenStates.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx).Mean(ctx)
 	hiddenStates = hiddenStates.Permute(ctx, 2, 0, 1, 3).Contiguous(ctx)
-	hiddenStates = hiddenStates.Rows(ctx, ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs)))
+	hiddenStates = hiddenStates.Rows(ctx, batch.Outputs)
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
 	return m.Output.Forward(ctx, hiddenStates), nil

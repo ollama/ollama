@@ -401,6 +401,7 @@ type Tensor interface {
 
 	Bytes() []byte
 	Floats() []float32
+	Ints() []int32
 
 	SetValueFromIntSlice(s []int32)
 

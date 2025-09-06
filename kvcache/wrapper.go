@@ -42,13 +42,15 @@ func (c *WrapperCache) Close() {
 }
 
 func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
+	curPositions := batch.Positions.Ints()
+	curSequences := batch.Sequences.Ints()
 	for i, cache := range c.caches {
 		err := cache.StartForward(ctx, batch, reserve)
 		if err != nil {
 			// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail
 			for j := i - 1; j >= 0; j-- {
-				for k := range batch.Positions {
-					_ = c.caches[j].Remove(batch.Sequences[k], batch.Positions[k], math.MaxInt32)
+				for k := range curPositions {
+					_ = c.caches[j].Remove(curSequences[int32(k)], curPositions[k], math.MaxInt32)
 				}
 			}
 			return err
@@ -81,13 +83,13 @@ func (c *WrapperCache) Put(ctx ml.Context, key, value ml.Tensor) {
 	c.caches[c.curType].Put(ctx, key, value)
 }
 
-func (c *WrapperCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
+func (c *WrapperCache) CopyPrefix(srcSeq, dstSeq, len int32) {
 	for _, cache := range c.caches {
 		cache.CopyPrefix(srcSeq, dstSeq, len)
 	}
 }
 
-func (c *WrapperCache) CanResume(seq int, pos int32) bool {
+func (c *WrapperCache) CanResume(seq, pos int32) bool {
 	for _, cache := range c.caches {
 		if !cache.CanResume(seq, pos) {
 			return false
@@ -97,7 +99,7 @@ func (c *WrapperCache) CanResume(seq int, pos int32) bool {
 	return true
 }
 
-func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {
+func (c *WrapperCache) Remove(seq, beginIndex, endIndex int32) error {
 	// If the one of these fails, the caller is supposed to retry with endIndex set to math.MaxInt32, which should not fail
 	for _, cache := range c.caches {
 		err := cache.Remove(seq, beginIndex, endIndex)
