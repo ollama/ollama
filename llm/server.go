@@ -564,6 +564,7 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		// For CPU loads we want the memory to be allocated, not FS cache
 		if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && s.options.UseMMap == nil) ||
 			(runtime.GOOS == "linux" && systemInfo.System.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
+			(gpus[0].Library == "vulkan" && s.options.UseMMap == nil) ||
 			(gpus[0].Library == "cpu" && s.options.UseMMap == nil) ||
 			(s.options.UseMMap != nil && !*s.options.UseMMap) {
 			s.loadRequest.UseMmap = false

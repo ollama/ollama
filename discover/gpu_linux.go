@@ -52,7 +52,14 @@ var (
 	NvcudaMgmtName = "libcuda.so*"
 	NvmlMgmtName   = "" // not currently wired on linux
 	OneapiMgmtName = "libze_intel_gpu.so*"
+	VulkanMgmtName = "libvulkan.so*"
 )
+
+var VulkanGlobs = []string{
+	"/usr/lib/x86_64-linux-gnu/libvulkan.so*",
+	"/usr/lib/aarch64-linux-gnu/libvulkan.so*",
+	"/usr/lib*/libvulkan.so*",
+}
 
 func GetCPUMem() (memInfo, error) {
 	var mem memInfo
