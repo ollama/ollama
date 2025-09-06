@@ -536,7 +536,9 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		available := systemInfo.System.FreeMemory + systemInfo.System.FreeSwap
 		if systemMemoryRequired > available {
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.System.TotalMemory), "free", format.HumanBytes2(systemInfo.System.FreeMemory), "swap", format.HumanBytes2(systemInfo.System.FreeSwap))
-			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
+			if !envconfig.IgnoreMemSize() {
+				return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
+			}
 		}
 	}
 
@@ -1318,18 +1320,18 @@ object ::=
   "{" ws (
          string ":" ws value
     ("," ws string ":" ws value)*
-  )? ws "}" 
+  )? ws "}"
 array  ::=
   "[" ws (
             value
     ("," ws value)*
-  )? ws "]" 
+  )? ws "]"
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" 
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? 
+  )* "\""
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 # Optional space: by convention, applied in this grammar after literal chars when allowed
 ws ::= ([ \t\n] ws)?
 `
