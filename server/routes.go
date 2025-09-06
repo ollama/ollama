@@ -31,7 +31,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
@@ -534,11 +534,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, _, err := getModelData(m.ModelPath, false)
+	f, err := gguf.Open(m.ModelPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	defer f.Close()
 
 	var count int
 	for i, s := range input {
@@ -548,7 +549,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return
 		}
 
-		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
+		ctxLen := min(opts.NumCtx, int(f.KeyValue("context_length").Int()))
 		if len(tokens) > ctxLen {
 			if !truncate {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
@@ -951,53 +952,63 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
-	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
+	f, err := gguf.Open(m.ModelPath)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 
-	delete(kvData, "general.name")
-	delete(kvData, "tokenizer.chat_template")
-	resp.ModelInfo = kvData
-
-	tensorData := make([]api.Tensor, len(tensors.Items()))
-	for cnt, t := range tensors.Items() {
-		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+	resp.ModelInfo = make(map[string]any, f.NumKeyValues())
+	for _, keyValue := range f.KeyValues() {
+		if !slices.Contains([]string{"general.name", "tokenizer.chat_template"}, keyValue.Key) {
+			resp.ModelInfo[keyValue.Key] = keyValue.Value
+		}
 	}
-	resp.Tensors = tensorData
+
+	resp.Tensors = make([]api.Tensor, f.NumTensors())
+	for i, tensorInfo := range f.TensorInfos() {
+		resp.Tensors[i] = api.Tensor{
+			Name:  tensorInfo.Name,
+			Type:  tensorInfo.Type.String(),
+			Shape: tensorInfo.Shape,
+		}
+	}
+	resp.ModelInfo["general.parameter_count"] = f.NumValues()
 
 	if len(m.ProjectorPaths) > 0 {
-		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
+		f, err := gguf.Open(m.ProjectorPaths[0])
 		if err != nil {
 			return nil, err
 		}
-		resp.ProjectorInfo = projectorData
+		defer f.Close()
+
+		resp.ProjectorInfo = make(map[string]any, f.NumKeyValues())
+		for _, keyValue := range f.KeyValues() {
+			resp.ProjectorInfo[keyValue.Key] = keyValue.Value
+		}
 	}
 
 	return resp, nil
 }
 
-func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
-	maxArraySize := 0
-	if verbose {
-		maxArraySize = -1
-	}
-	data, err := llm.LoadModel(digest, maxArraySize)
+func getModelData(digest string, verbose bool) ([]gguf.KeyValue, []gguf.TensorInfo, error) {
+	f, err := gguf.Open(digest)
 	if err != nil {
-		return nil, ggml.Tensors{}, err
+		return nil, nil, err
+	}
+	defer f.Close()
+
+	keyValues := make([]gguf.KeyValue, f.NumKeyValues())
+	for i, keyValue := range f.KeyValues() {
+		keyValues[i] = keyValue
 	}
 
-	kv := data.KV()
-
-	if !verbose {
-		for k := range kv {
-			if t, ok := kv[k].([]any); len(t) > 5 && ok {
-				kv[k] = []any{}
-			}
-		}
+	tensorInfos := make([]gguf.TensorInfo, f.NumTensors())
+	for i, info := range f.TensorInfos() {
+		tensorInfos[i] = info
 	}
 
-	return kv, data.Tensors(), nil
+	return keyValues, tensorInfos, nil
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
