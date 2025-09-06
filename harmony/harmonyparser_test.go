@@ -3,6 +3,7 @@ package harmony
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -534,4 +535,203 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHarmonyMessageHandlerStreamingScenarios(t *testing.T) {
+	t.Run("thinking_then_content_streams", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		type step struct {
+			in           string
+			wantContent  string
+			wantThinking string
+		}
+		steps := []step{
+			{in: "<|channel|>analysis<|message|>Thinking...", wantThinking: "Thinking..."},
+			{in: "<|end|>", wantThinking: ""},
+			{in: "<|start|>assistant<|message|>Answer", wantContent: "Answer"},
+			{in: "<|end|>", wantContent: ""},
+		}
+		for i, s := range steps {
+			content, thinking, tool := handler.AddContent(s.in, tp)
+			if tool != "" {
+				tp.Add(tool)
+			}
+			if content != s.wantContent || thinking != s.wantThinking {
+				t.Fatalf("step %d: got (content=%q thinking=%q), want (content=%q thinking=%q)", i, content, thinking, s.wantContent, s.wantThinking)
+			}
+		}
+	})
+
+	t.Run("content_streams_as_it_arrives", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		inputs := []string{
+			"<|start|>assistant<|message|>Hello",
+			", world",
+			"!<|end|>",
+		}
+		var got []string
+		for _, in := range inputs {
+			content, thinking, tool := handler.AddContent(in, tp)
+			if tool != "" {
+				tp.Add(tool)
+			}
+			if thinking != "" {
+				t.Fatalf("unexpected thinking %q", thinking)
+			}
+			if content != "" {
+				got = append(got, content)
+			}
+		}
+		want := []string{"Hello", ", world", "!"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("content pieces mismatch: got %v want %v", got, want)
+		}
+	})
+
+	t.Run("thinking_streams_separately_from_content", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		inputs := []string{
+			"<|channel|>analysis<|message|>Thinking...",
+			"<|end|>",
+			"<|start|>assistant<|message|>Answer",
+			"<|end|>",
+		}
+		var got []string
+		for _, in := range inputs {
+			content, thinking, tool := handler.AddContent(in, tp)
+			if tool != "" {
+				tp.Add(tool)
+			}
+			if thinking != "" {
+				got = append(got, thinking)
+			}
+			if content != "" {
+				got = append(got, content)
+			}
+		}
+		want := []string{"Thinking...", "Answer"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("content pieces mismatch: got %v want %v", got, want)
+		}
+	})
+
+	t.Run("partial_tags_buffer_until_complete", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		inputs := []string{
+			"<|chan",
+			"nel|>analysis<|mess",
+			"age|>Deep ",
+			"thought",
+			"<|end|>",
+			"<|start|>assistant<|message|>Done",
+			"<|end|>",
+		}
+		var thinkingPieces []string
+		var contentPieces []string
+		for _, in := range inputs {
+			content, thinking, tool := handler.AddContent(in, tp)
+			if tool != "" {
+				tp.Add(tool)
+			}
+			if thinking != "" {
+				thinkingPieces = append(thinkingPieces, thinking)
+			}
+			if content != "" {
+				contentPieces = append(contentPieces, content)
+			}
+		}
+		if want := []string{"Deep ", "thought"}; !reflect.DeepEqual(thinkingPieces, want) {
+			t.Fatalf("thinking pieces mismatch: got %v want %v", thinkingPieces, want)
+		}
+		if want := []string{"Done"}; !reflect.DeepEqual(contentPieces, want) {
+			t.Fatalf("content pieces mismatch: got %v want %v", contentPieces, want)
+		}
+	})
+
+	t.Run("simple_assistant_after_analysis", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		inputs := []string{
+			"<|channel|>analysis<|message|>Think",
+			"<|end|>",
+			"<|start|>assistant<|message|>Answer",
+			"<|end|>",
+		}
+		var contentSb, thinkingSb strings.Builder
+		for _, in := range inputs {
+			content, thinking, tool := handler.AddContent(in, tp)
+			if tool != "" {
+				tp.Add(tool)
+			}
+			contentSb.WriteString(content)
+			thinkingSb.WriteString(thinking)
+		}
+		if contentSb.String() != "Answer" {
+			t.Fatalf("content mismatch: got %q want %q", contentSb.String(), "Answer")
+		}
+		if thinkingSb.String() != "Think" {
+			t.Fatalf("thinking mismatch: got %q want %q", thinkingSb.String(), "Think")
+		}
+	})
+
+	t.Run("tool_call_parsed_and_returned_correctly", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		inputs := []string{
+			"<|channel|>commentary to=functions.calculate<|message|>{\"expression\":\"2+2\"}<|end|>",
+		}
+		for _, in := range inputs {
+			content, thinking, tool := handler.AddContent(in, tp)
+			if content != "" || thinking != "" {
+				continue
+			}
+			if tool != "" {
+				tp.Add(tool)
+			}
+		}
+		name, args := tp.Drain()
+		if name == nil || *name != "functions.calculate" {
+			t.Fatalf("unexpected tool name: %v", name)
+		}
+		if got, want := args, "{\"expression\":\"2+2\"}"; got != want {
+			t.Fatalf("unexpected tool args: got %s want %s", got, want)
+		}
+	})
+
+	t.Run("tool_call_across_chunks", func(t *testing.T) {
+		handler := NewHarmonyMessageHandler()
+		handler.HarmonyParser.AddImplicitStart()
+		tp := handler.CreateToolParser()
+		inputs := []string{
+			"<|channel|>commentary to=functions.calculate<|message|>{\"expression\":\"2+",
+			"2\"}",
+			"<|end|>",
+		}
+		for _, in := range inputs {
+			content, thinking, tool := handler.AddContent(in, tp)
+			if content != "" || thinking != "" {
+				continue
+			}
+			if tool != "" {
+				tp.Add(tool)
+			}
+		}
+		name, args := tp.Drain()
+		if name == nil || *name != "functions.calculate" {
+			t.Fatalf("unexpected tool name: %v", name)
+		}
+		if got, want := args, "{\"expression\":\"2+2\"}"; got != want {
+			t.Fatalf("unexpected tool args: got %s want %s", got, want)
+		}
+	})
 }
