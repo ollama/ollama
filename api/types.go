@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -64,7 +65,7 @@ type GenerateRequest struct {
 	Context []int `json:"context,omitempty"`
 
 	// Stream specifies whether the response is streaming; it is true by default.
-	Stream *bool `json:"stream,omitempty"`
+	Stream types.Null[bool] `json:"stream,omitempty"`
 
 	// Raw set to true means that no formatting will be applied to the prompt.
 	Raw bool `json:"raw,omitempty"`
@@ -105,7 +106,7 @@ type ChatRequest struct {
 	Messages []Message `json:"messages"`
 
 	// Stream enables streaming of returned responses; true by default.
-	Stream *bool `json:"stream,omitempty"`
+	Stream types.Null[bool] `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
 	Format json.RawMessage `json:"format,omitempty"`
@@ -388,7 +389,7 @@ type EmbedRequest struct {
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
-	Truncate *bool `json:"truncate,omitempty"`
+	Truncate types.Null[bool] `json:"truncate,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
@@ -427,9 +428,9 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model    string `json:"model"`
-	Stream   *bool  `json:"stream,omitempty"`
-	Quantize string `json:"quantize,omitempty"`
+	Model    string           `json:"model"`
+	Stream   types.Null[bool] `json:"stream,omitempty"`
+	Quantize string           `json:"quantize,omitempty"`
 
 	From       string            `json:"from,omitempty"`
 	Files      map[string]string `json:"files,omitempty"`
@@ -493,11 +494,11 @@ type CopyRequest struct {
 
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
-	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
-	Username string `json:"username"`           // Deprecated: ignored
-	Password string `json:"password"`           // Deprecated: ignored
-	Stream   *bool  `json:"stream,omitempty"`
+	Model    string           `json:"model"`
+	Insecure bool             `json:"insecure,omitempty"`
+	Username string           `json:"username"` // Deprecated: ignored
+	Password string           `json:"password"` // Deprecated: ignored
+	Stream   types.Null[bool] `json:"stream,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -514,11 +515,11 @@ type ProgressResponse struct {
 
 // PushRequest is the request passed to [Client.Push].
 type PushRequest struct {
-	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Stream   *bool  `json:"stream,omitempty"`
+	Model    string           `json:"model"`
+	Insecure bool             `json:"insecure,omitempty"`
+	Username string           `json:"username"` // Deprecated: ignored
+	Password string           `json:"password"` // Deprecated: ignored
+	Stream   types.Null[bool] `json:"stream,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`

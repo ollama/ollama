@@ -440,7 +440,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		var r api.GenerateResponse
 		var sbThinking strings.Builder
 		var sbContent strings.Builder
@@ -485,12 +485,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	case err != nil:
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-
-	truncate := true
-
-	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
 	}
 
 	var input []string
@@ -541,6 +535,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	var count int
+	truncate := req.Truncate.Value(true)
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
@@ -701,7 +696,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		waitForStream(c, ch)
 		return
 	}
@@ -756,7 +751,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		waitForStream(c, ch)
 		return
 	}
@@ -1775,7 +1770,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if !req.Stream.Value(true) {
 		var resp api.ChatResponse
 		var toolCalls []api.ToolCall
 		var sbThinking strings.Builder

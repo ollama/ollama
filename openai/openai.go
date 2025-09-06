@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -571,7 +572,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Messages: messages,
 		Format:   format,
 		Options:  options,
-		Stream:   &r.Stream,
+		Stream:   types.NullWithValue(r.Stream),
 		Tools:    r.Tools,
 		Think:    think,
 	}, nil
@@ -650,7 +651,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		Model:   r.Model,
 		Prompt:  r.Prompt,
 		Options: options,
-		Stream:  &r.Stream,
+		Stream:  types.NullWithValue(r.Stream),
 		Suffix:  r.Suffix,
 	}, nil
 }
