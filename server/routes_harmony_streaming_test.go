@@ -277,10 +277,11 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 					getGpuFn:      discover.GetGPUInfo,
 					getCpuFn:      discover.GetCPUInfo,
 					reschedDelay:  100 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
+					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}
+						return false
 					},
 				},
 			}
@@ -427,10 +428,11 @@ func TestChatHarmonyParserStreamingSimple(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  100 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
+				return false
 			},
 		},
 	}
@@ -608,10 +610,11 @@ func TestChatHarmonyParserStreaming(t *testing.T) {
 					getGpuFn:      discover.GetGPUInfo,
 					getCpuFn:      discover.GetCPUInfo,
 					reschedDelay:  250 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
+					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}
+						return false
 					},
 				},
 			}

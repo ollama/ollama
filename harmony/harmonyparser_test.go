@@ -1,4 +1,4 @@
-package server
+package harmony
 
 import (
 	"fmt"
@@ -462,6 +462,74 @@ func TestHarmonyParserStreaming(t *testing.T) {
 				gotEvents := parser.AddContent(step.input)
 				if !reflect.DeepEqual(gotEvents, step.wantEvents) {
 					t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
+				}
+			}
+		})
+	}
+}
+
+// TestFunctionConvertToValidChars tests only FunctionNameMap.convert(), which doesn't
+// handle any saving (and therefore no dupe handling)
+func TestFunctionConvertToValidChars(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "replace spaces with underscores", in: "get weather", want: "get_weather"},
+		{name: "replace hyphens with underscores", in: "get-weather", want: "get_weather"},
+		{name: "replace periods with underscores", in: "get.weather", want: "get_weather"},
+		{name: "disallow non-word characters", in: "get weather!", want: "get_weather"},
+		{name: "strip out invalid non-alphanumeric unicode characters", in: "a🫠bc", want: "abc"},
+		{name: "names that only contain invalid characters", in: "🫠", want: "unnamed"},
+		{name: "leading number", in: "123", want: "_123"},
+		{name: "$ allowed", in: "$", want: "$"},
+		// show that we allow weird unicode letter characters, though we might want
+		// to convert them to their closest ASCII equivalents in the future
+		{name: "allow weird unicode letter characters", in: "𝓸𝓵𝓵𝓪𝓶𝓪", want: "𝓸𝓵𝓵𝓪𝓶𝓪"},
+		// names that look like words but are invalid (i.e., not ID_Start/ID_Continue)
+		{name: "disallow non-word characters that look like words", in: "ⓞⓛⓛⓐⓜⓐ123", want: "_123"},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewFunctionNameMap()
+			got := parser.convertToValidChars(tt.in)
+			if got != tt.want {
+				t.Errorf("case %d: got %q, want %q", i, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFunctionConvertAndAdd(t *testing.T) {
+	// make a fresh map for each test, but within a test use the same map so we can test for dupe handling
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{name: "basic dupe handling", in: []string{"get weather", "get weather"}, want: []string{"get_weather", "get_weather_2"}},
+		{name: "dupes from different user-specified names", in: []string{"get weather", "get_weather", "get-weather"}, want: []string{"get_weather", "get_weather_2", "get_weather_3"}},
+		{name: "non dupes after dupes", in: []string{"get weather", "get_weather", "get-weather", "something-different"}, want: []string{"get_weather", "get_weather_2", "get_weather_3", "something_different"}},
+		{name: "multiple sets of dupes", in: []string{"a", "a", "b", "a", "a", "b", "a"}, want: []string{"a", "a_2", "b", "a_3", "a_4", "b_2", "a_5"}},
+	}
+
+	for i, tt := range tests {
+		parser := NewFunctionNameMap()
+		t.Run(tt.name, func(t *testing.T) {
+			for j, in := range tt.in {
+				got := parser.ConvertAndAdd(in)
+				want := tt.want[j]
+				if got != want {
+					t.Errorf("case %d: got %q, want %q", i, got, want)
+				}
+				// check that the maps are correct
+				if parser.userToHarmony[in] != want {
+					t.Errorf("case %d: userToHarmony[%q] = %q, want %q", i, in, parser.userToHarmony[in], want)
+				}
+				if parser.harmonyToUser[want] != in {
+					t.Errorf("case %d: harmonyToUser[%q] = %q, want %q", i, want, parser.harmonyToUser[want], in)
 				}
 			}
 		})

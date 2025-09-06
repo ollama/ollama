@@ -2,7 +2,6 @@ package model
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -109,7 +108,7 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 					r = 0x0143
 				case r <= 0x0020:
 					r = r + 0x0100
-				case r >= 0x007e && r <= 0x00a0:
+				case r >= 0x007f && r <= 0x00a0:
 					r = r + 0x00a2
 				}
 
@@ -202,12 +201,11 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "string", s, "ids", ids)
-
 	if addSpecial && len(ids) > 0 {
 		ids = bpe.vocab.addSpecials(ids)
 	}
 
+	logutil.Trace("encoded", "string", s, "ids", ids)
 	return ids, nil
 }
 
@@ -243,6 +241,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
+	logutil.Trace("decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
 	return sb.String(), nil
 }
