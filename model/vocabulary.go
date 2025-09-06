@@ -22,14 +22,34 @@ type Vocabulary struct {
 	BOS, EOS       []int32
 	AddBOS, AddEOS bool
 
-	specialOnce sync.Once
-	special     []string
+	special []string
 
 	valuesOnce sync.Once
 	values     map[string]int32
 
 	mergeOnce sync.Once
 	merge     map[string]int32
+}
+
+func NewVocabulary(values []string, types []int32, scores []float32, merges []string, bos, eos []int32, addBOS, addEOS bool) *Vocabulary {
+	v := &Vocabulary{
+		Values: values,
+		Types:  types,
+		Scores: scores,
+		Merges: merges,
+		BOS:    bos,
+		EOS:    eos,
+		AddBOS: addBOS,
+		AddEOS: addEOS,
+	}
+	// Precompute special tokens slice
+	v.special = make([]string, 0, len(values)/10)
+	for i, t := range v.Types {
+		if t == TOKEN_TYPE_CONTROL || t == TOKEN_TYPE_USER_DEFINED {
+			v.special = append(v.special, v.Values[i])
+		}
+	}
+	return v
 }
 
 func (v *Vocabulary) Is(id int32, special Special) bool {
@@ -85,14 +105,6 @@ func (v *Vocabulary) Decode(id int32) string {
 }
 
 func (v *Vocabulary) SpecialVocabulary() []string {
-	v.specialOnce.Do(func() {
-		for i := range v.Values {
-			if v.Types[i] == TOKEN_TYPE_CONTROL || v.Types[i] == TOKEN_TYPE_USER_DEFINED {
-				v.special = append(v.special, v.Values[i])
-			}
-		}
-	})
-
 	return v.special
 }
 
