@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
 )
 
@@ -275,7 +277,7 @@ type Tensor struct {
 
 func (t Tensor) block() (n int) {
 	if _, err := fmt.Sscanf(t.Name, "blk.%d.", &n); err != nil {
-		return -1
+		return math.MaxInt
 	}
 
 	return
@@ -288,24 +290,24 @@ func (t Tensor) blockSize() uint64 {
 func (t TensorType) BlockSize() uint64 {
 	switch t {
 	case
-		0,  // F32
-		1,  // F16
-		24, // I8
-		25, // I16
-		26, // I32
-		27, // I64
-		28, // F64
-		30: // BF16
+		TensorTypeF32,
+		TensorTypeF16,
+		TensorTypeI8,
+		TensorTypeI16,
+		TensorTypeI32,
+		TensorTypeI64,
+		TensorTypeF64,
+		TensorTypeBF16:
 		return 1
 	case
-		2,  // Q4_0
-		3,  // Q4_1
-		4,  // MXFP4
-		6,  // Q5_0
-		7,  // Q5_1
-		8,  // Q8_0
-		9,  // Q8_1
-		20: // IQ4_NL
+		TensorTypeQ4_0,
+		TensorTypeQ4_1,
+		TensorTypeQ5_0,
+		TensorTypeQ5_1,
+		TensorTypeQ8_0,
+		TensorTypeQ8_1,
+		tensorTypeIQ4_NL,
+		4, TensorTypeMXFP4:
 		return 32
 	default:
 		return 256
@@ -328,8 +330,6 @@ func (t TensorType) TypeSize() uint64 {
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
-	case TensorTypeMXFP4, 39:
-		return 1 + blockSize/2
 	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
 	case TensorTypeQ5_1:
@@ -380,6 +380,8 @@ func (t TensorType) TypeSize() uint64 {
 		return blockSize/8 + blockSize/16 + blockSize/32
 	case TensorTypeBF16:
 		return 2
+	case 4, TensorTypeMXFP4:
+		return 1 + blockSize/2
 	default:
 		return 0
 	}
@@ -479,7 +481,7 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention bool) (kv []uint64, partialOffload, fullOffload uint64) {
 	context *= uint64(numParallel)
 
 	embedding := f.KV().EmbeddingLength()
@@ -677,7 +679,12 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				kv[i] *= context
 			}
 		}
+
 		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
+		if useFlashAttention {
+			// rough estimate of graph size with flash attention on
+			partialOffload = (4*uint64(numParallel) + context>>10 + 110) * format.MebiByte
+		}
 	}
 
 	return
@@ -771,6 +778,13 @@ func (f GGML) SupportsFlashAttention() bool {
 	headCountK := f.KV().EmbeddingHeadCountK()
 	headCountV := f.KV().EmbeddingHeadCountV()
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
+}
+
+// FlashAttention checks if the model should enable flash attention
+func (f GGML) FlashAttention() bool {
+	return slices.Contains([]string{
+		"gptoss", "gpt-oss",
+	}, f.KV().String("general.architecture"))
 }
 
 // kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type

@@ -18,7 +18,7 @@ type Model struct {
 	model.BytePairEncoding
 
 	*TextModel
-	*VisionModel         `gguf:"v,vision"`
+	*VisionModel         `gguf:"v"`
 	*MultiModalProjector `gguf:"mm"`
 
 	ImageProcessor
@@ -133,22 +133,22 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 // [IMG]...[IMG][IMG_BREAK][IMG]...[IMG][IMG_BREAK][IMG]...[IMG][IMG_END]
 // Each sequence of [IMG]...[IMG] is a set of patches of vision embeddings
 // that can be processed together.
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var result []input.Input
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
 	for _, inp := range inputs {
 		if len(inp.Multimodal) == 0 {
 			result = append(result, inp)
 		} else {
 			for i, row := range inp.Multimodal {
 				// [IMG]
-				result = append(result, input.Input{Token: 10, Multimodal: []input.Multimodal{{Tensor: row.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: row.Tensor.Dim(1)})
-				result = append(result, slices.Repeat([]input.Input{{Token: 10}}, row.Tensor.Dim(1)-1)...)
+				result = append(result, &input.Input{Token: 10, Multimodal: []input.Multimodal{{Tensor: row.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: row.Tensor.Dim(1)})
+				result = append(result, slices.Repeat([]*input.Input{{Token: 10}}, row.Tensor.Dim(1)-1)...)
 				if i == len(inp.Multimodal)-1 {
 					// [IMG_END]
-					result = append(result, input.Input{Token: 13})
+					result = append(result, &input.Input{Token: 13})
 				} else {
 					// [IMG_BREAK]
-					result = append(result, input.Input{Token: 12})
+					result = append(result, &input.Input{Token: 12})
 				}
 			}
 		}
