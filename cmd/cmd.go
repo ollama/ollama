@@ -22,9 +22,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
@@ -33,6 +35,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
+	"golang.org/x/sys/windows"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -45,6 +48,13 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
+)
+
+// Windows syscall variables (only used on Windows)
+var (
+	user32     *windows.LazyDLL
+	msgBoxProc *windows.LazyProc
+	syscallMu  sync.Mutex
 )
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
@@ -1329,8 +1339,18 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
+	host := envconfig.Host().Host
+	ln, err := net.Listen("tcp", host)
 	if err != nil {
+		// Check if this is a port binding error
+		if strings.Contains(err.Error(), "address already in use") || 
+		   strings.Contains(err.Error(), "Only one usage of each socket address") ||
+		   strings.Contains(err.Error(), "bind: An attempt was made to access a socket in a way forbidden by its access permissions") {
+			// On Windows, show a user-friendly dialog
+			if runtime.GOOS == "windows" {
+				showWindowsPortError(host)
+			}
+		}
 		return err
 	}
 
@@ -1340,6 +1360,88 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	}
 
 	return err
+}
+
+// showWindowsPortError shows a Windows message box for port errors
+func showWindowsPortError(host string) {
+	// For Windows, we'll try to show a message box directly
+	if runtime.GOOS == "windows" {
+		showWindowsMessageBox(host)
+	}
+	
+	// Always fall back to console output
+	_, port, err := net.SplitHostPort(host)
+	if err != nil || port == "" {
+		port = "11434" // Default port
+	}
+	
+	fmt.Fprintf(os.Stderr, "Ollama could not start because port %s is already in use by another application.\n", port)
+	fmt.Fprintf(os.Stderr, "\nPlease either:\n")
+	fmt.Fprintf(os.Stderr, "1. Close the application using port %s and restart Ollama, or\n", port)
+	fmt.Fprintf(os.Stderr, "2. Set the OLLAMA_HOST environment variable to use a different port.\n")
+	fmt.Fprintf(os.Stderr, "\nExample: OLLAMA_HOST=127.0.0.1:11435\n")
+	fmt.Fprintf(os.Stderr, "\nPress Enter to exit...")
+	fmt.Scanln() // Wait for user input before closing
+}
+
+// showWindowsMessageBox tries to show a Windows message box for port errors
+func showWindowsMessageBox(host string) {
+	// Only attempt on Windows
+	if runtime.GOOS != "windows" {
+		return
+	}
+	
+	// Get the port from the host
+	_, port, err := net.SplitHostPort(host)
+	if err != nil || port == "" {
+		port = "11434" // Default port
+	}
+	
+	// Try to show a Windows message box
+	defer func() {
+		// Recover from any panics in the syscall
+		if r := recover(); r != nil {
+			// Silently fail if we can't show a message box
+		}
+	}()
+	
+	// Import Windows syscalls
+	syscallMu.Lock()
+	defer syscallMu.Unlock()
+	
+	if user32 == nil {
+		// Load user32.dll
+		dll := windows.NewLazySystemDLL("user32.dll")
+		user32 = dll
+		msgBoxProc = dll.NewProc("MessageBoxW")
+	}
+	
+	// Prepare the message
+	message := fmt.Sprintf("Ollama could not start because port %s is already in use by another application.\n\n"+
+		"Please either:\n"+
+		"1. Close the application using port %s and restart Ollama, or\n"+
+		"2. Set the OLLAMA_HOST environment variable to use a different port.\n\n"+
+		"Example: OLLAMA_HOST=127.0.0.1:11435", port, port)
+	
+	title := "Ollama - Port in Use"
+	
+	// Convert to UTF16
+	messagePtr, _ := windows.UTF16PtrFromString(message)
+	titlePtr, _ := windows.UTF16PtrFromString(title)
+	
+	// Constants for MessageBox
+	const (
+		MB_OK       = 0x00000000
+		MB_ICONERROR = 0x00000010
+	)
+	
+	// Call MessageBoxW
+	msgBoxProc.Call(
+		0, // HWND (null)
+		uintptr(unsafe.Pointer(messagePtr)),
+		uintptr(unsafe.Pointer(titlePtr)),
+		MB_OK|MB_ICONERROR,
+	)
 }
 
 func initializeKeypair() error {
