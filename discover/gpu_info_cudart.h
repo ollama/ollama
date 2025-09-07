@@ -29,11 +29,6 @@ typedef struct cudartMemory_st {
   size_t used;
 } cudartMemory_t;
 
-typedef struct cudartDriverVersion {
-  int major;
-  int minor;
-} cudartDriverVersion_t;
-
 typedef struct cudaUUID {
     unsigned char bytes[16];
 } cudaUUID_t;
@@ -123,6 +118,8 @@ typedef struct cudaDeviceProp {
 typedef struct cudart_handle {
   void *handle;
   uint16_t verbose;
+  int driver_major;
+  int driver_minor;
   cudartReturn_t (*cudaSetDevice)(int device);
   cudartReturn_t (*cudaDeviceSynchronize)(void);
   cudartReturn_t (*cudaDeviceReset)(void);

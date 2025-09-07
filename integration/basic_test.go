@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBlueSky(t *testing.T) {
@@ -37,8 +36,8 @@ func TestUnicode(t *testing.T) {
 	// Set up the test data
 	req := api.GenerateRequest{
 		// DeepSeek has a Unicode tokenizer regex, making it a unicode torture test
-		Model:  "deepseek-coder-v2:16b-lite-instruct-q2_K",
-		Prompt: "天空为什么是蓝色的?",
+		Model:  "deepseek-coder-v2:16b-lite-instruct-q2_K", // TODO is there an ollama-engine model we can switch to and keep the coverage?
+		Prompt: "天空为什么是蓝色的?",                               // Why is the sky blue?
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,
@@ -50,8 +49,20 @@ func TestUnicode(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	DoGenerate(ctx, t, client, req, []string{"散射", "频率"}, 120*time.Second, 120*time.Second)
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatal(err)
+	}
+	slog.Info("loading", "model", req.Model)
+	err := client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
+	if err != nil {
+		t.Fatalf("failed to load model %s: %s", req.Model, err)
+	}
+	skipIfNotGPULoaded(ctx, t, client, req.Model, 100)
+
+	DoGenerate(ctx, t, client, req, []string{
+		"散射", // scattering
+		"频率", // frequency
+	}, 120*time.Second, 120*time.Second)
 }
 
 func TestExtendedUnicodeOutput(t *testing.T) {
@@ -69,7 +80,9 @@ func TestExtendedUnicodeOutput(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatal(err)
+	}
 	DoGenerate(ctx, t, client, req, []string{"😀", "😊", "😁", "😂", "😄", "😃"}, 120*time.Second, 120*time.Second)
 }
 
@@ -84,7 +97,9 @@ func TestUnicodeModelDir(t *testing.T) {
 	}
 
 	modelDir, err := os.MkdirTemp("", "ollama_埃")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(modelDir)
 	slog.Info("unicode", "OLLAMA_MODELS", modelDir)
 

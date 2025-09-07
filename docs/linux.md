@@ -16,7 +16,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 Download and extract the package:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
+curl -LO https://ollama.com/download/ollama-linux-amd64.tgz
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 
@@ -34,7 +34,11 @@ ollama -v
 
 ### AMD GPU install
 
-If you have an AMD GPU, also download and extract the additional ROCm package:
+If you have an AMD GPU, **also** download and extract the additional ROCm package:
+
+> [!IMPORTANT]
+> The ROCm tgz contains only AMD dependent libraries.  You must extract **both** `ollama-linux-amd64.tgz` and `ollama-linux-amd64-rocm.tgz` into the same location.
+
 
 ```shell
 curl -L https://ollama.com/download/ollama-linux-amd64-rocm.tgz -o ollama-linux-amd64-rocm.tgz

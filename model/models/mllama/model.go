@@ -17,7 +17,7 @@ type Model struct {
 	model.Base
 	model.BytePairEncoding
 
-	*VisionModel `gguf:"v,vision"`
+	*VisionModel `gguf:"v"`
 	*TextModel
 
 	Projector *nn.Linear `gguf:"mm.0"`
@@ -90,7 +90,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return []input.Multimodal{{Tensor: projectedOutputs}}, nil
 }
 
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	for i := range inputs {
 		if inputs[i].Multimodal != nil {
 			inputs[i].Token = 128256 // <|image|>

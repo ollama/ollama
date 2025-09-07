@@ -70,11 +70,15 @@ func kvCacheTypeFromStr(s string) ml.DType {
 }
 
 func (c *InputCache) Close() {
+	if c == nil {
+		return
+	}
+
 	c.cache.Close()
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
-// through LoadCacheSlot) require a lock to be be held that serializes
+// through LoadCacheSlot) require a lock to be held that serializes
 // these operations with each other and processBatch
 
 type InputCacheSlot struct {
@@ -82,7 +86,7 @@ type InputCacheSlot struct {
 	Id int
 
 	// Inputs that are stored in the KV cache
-	Inputs []input.Input
+	Inputs []*input.Input
 
 	// is this cache actively being processed as part of a sequence?
 	InUse bool
@@ -91,7 +95,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []input.Input, error) {
+func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*InputCacheSlot, []*input.Input, error) {
 	var slot *InputCacheSlot
 	var numPast int32
 	var err error
@@ -107,6 +111,10 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if !cachePrompt {
+		numPast = 0
 	}
 
 	slot.InUse = true
@@ -142,7 +150,7 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 	return slot, prompt, nil
 }
 
-func (c *InputCache) findLongestCacheSlot(prompt []input.Input) (*InputCacheSlot, int32, error) {
+func (c *InputCache) findLongestCacheSlot(prompt []*input.Input) (*InputCacheSlot, int32, error) {
 	longest := int32(-1)
 	var longestSlot *InputCacheSlot
 
@@ -165,7 +173,7 @@ func (c *InputCache) findLongestCacheSlot(prompt []input.Input) (*InputCacheSlot
 	return longestSlot, longest, nil
 }
 
-func (c *InputCache) findBestCacheSlot(prompt []input.Input) (*InputCacheSlot, int32, error) {
+func (c *InputCache) findBestCacheSlot(prompt []*input.Input) (*InputCacheSlot, int32, error) {
 	oldest := time.Now()
 	var oldestSlot *InputCacheSlot
 
@@ -201,7 +209,7 @@ func (c *InputCache) findBestCacheSlot(prompt []input.Input) (*InputCacheSlot, i
 	if longest > 0 && longestSlot != oldestSlot {
 		slog.Debug("forking cache slot", "src", longestSlot.Id, "dst", oldestSlot.Id, "inputs", longest, "total",
 			len(longestSlot.Inputs))
-		oldestSlot.Inputs = make([]input.Input, longest)
+		oldestSlot.Inputs = make([]*input.Input, longest)
 		copy(oldestSlot.Inputs, longestSlot.Inputs[:longest])
 		if c.cache != nil {
 			c.cache.CopyPrefix(longestSlot.Id, oldestSlot.Id, longest)
@@ -211,7 +219,7 @@ func (c *InputCache) findBestCacheSlot(prompt []input.Input) (*InputCacheSlot, i
 	return oldestSlot, longest, nil
 }
 
-func countCommonPrefix(a []input.Input, b []input.Input) int32 {
+func countCommonPrefix(a []*input.Input, b []*input.Input) int32 {
 	var count int32
 
 	for i := range a {
@@ -246,7 +254,7 @@ func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
 }
 
 type ErrReprocessInputs struct {
-	Inputs []input.Input
+	Inputs []*input.Input
 }
 
 func (e *ErrReprocessInputs) Error() string {
@@ -279,13 +287,13 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 				"id", slot.Id, "error", err)
 
 			// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
-			newInputs := make([]input.Input, numKeep+inputLen-(numKeep+discard))
+			newInputs := make([]*input.Input, numKeep+inputLen-(numKeep+discard))
 			copy(newInputs[:numKeep], slot.Inputs[:numKeep])
 			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
 
 			// Reset the cache
 			_ = c.cache.Remove(slot.Id, 0, math.MaxInt32)
-			slot.Inputs = []input.Input{}
+			slot.Inputs = []*input.Input{}
 
 			// Return error with inputs that need to be reprocessed
 			return &ErrReprocessInputs{Inputs: newInputs}
