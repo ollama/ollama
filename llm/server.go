@@ -1347,7 +1347,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar string // set before sending the request to the subprocess
+	Grammar       string // set before sending the request to the subprocess
+	UseHarmony    bool
+	PrefillString string
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1360,6 +1362,8 @@ const (
 	DoneReasonLength
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
+	// DoneReasonTokenRepeatLimit indicates the completion stopped due to a token repeat limit
+	DoneReasonTokenRepeatLimit
 )
 
 func (d DoneReason) String() string {
@@ -1368,19 +1372,23 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
+	case DoneReasonTokenRepeatLimit:
+		return "token_repeat_limit"
 	default:
 		return "" // closed
 	}
 }
 
 type CompletionResponse struct {
-	Content            string        `json:"content"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
+	Content            string         `json:"content"`
+	Thinking           string         `json:"thinking"`
+	ToolCalls          []api.ToolCall `json:"tool_calls"`
+	DoneReason         DoneReason     `json:"done_reason"`
+	Done               bool           `json:"done"`
+	PromptEvalCount    int            `json:"prompt_eval_count"`
+	PromptEvalDuration time.Duration  `json:"prompt_eval_duration"`
+	EvalCount          int            `json:"eval_count"`
+	EvalDuration       time.Duration  `json:"eval_duration"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -1498,7 +1506,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
 			switch {
-			case strings.TrimSpace(c.Content) == lastToken:
+			// TODO(parthsareen): token repeat limit is now handled in the runner, this currently support legacy model and can be removed in the future
+			case strings.TrimSpace(c.Content) == lastToken && c.Content != "":
 				tokenRepeat++
 			default:
 				lastToken = strings.TrimSpace(c.Content)
@@ -1511,15 +1520,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return ctx.Err()
 			}
 
-			if c.Content != "" {
-				fn(CompletionResponse{
-					Content: c.Content,
-				})
-			}
-
 			if c.Done {
 				fn(c)
 				return nil
+			}
+
+			if c.Content != "" || c.Thinking != "" || len(c.ToolCalls) > 0 {
+				fn(c)
 			}
 		}
 	}
