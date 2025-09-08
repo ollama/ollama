@@ -89,24 +89,26 @@ func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
 }
 
-// AddImplicitStartOrPrefill adds an implicit start tag or prefill content based on the last message
-func (s *HarmonyParser) AddImplicitStartOrPrefill(lastMessage *api.Message) {
-	if lastMessage == nil {
-		s.AddImplicitStart()
-		return
-	}
-
+func Prefill(lastMessage api.Message) string {
 	if lastMessage.Role != "assistant" {
-		s.AddImplicitStart()
-		return
+		return ""
 	}
 
 	switch {
 	case strings.TrimSpace(lastMessage.Content) != "":
-		s.acc.WriteString("<|start|>assistant<|channel|>final<|message|>")
+		return "<|start|>assistant<|channel|>final<|message|>"
 	case strings.TrimSpace(lastMessage.Thinking) != "":
-		s.acc.WriteString("<|start|>assistant<|channel|>analysis<|message|>")
+		return "<|start|>assistant<|channel|>analysis<|message|>"
 	default:
+		return ""
+	}
+}
+
+// AddImplicitStartOrPrefill adds an implicit start tag or prefill string if provided
+func (s *HarmonyParser) AddImplicitStartOrPrefill(prefillString string) {
+	if strings.TrimSpace(prefillString) != "" {
+		s.acc.WriteString(prefillString)
+	} else {
 		s.AddImplicitStart()
 	}
 }
