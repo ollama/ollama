@@ -1,6 +1,10 @@
 package nn
 
-import "github.com/ollama/ollama/ml"
+import (
+	"fmt"
+
+	"github.com/ollama/ollama/ml"
+)
 
 type Linear struct {
 	Weight ml.Tensor `gguf:"weight"`
@@ -8,7 +12,8 @@ type Linear struct {
 }
 
 func (m *Linear) Forward(ctx ml.Context, t ml.Tensor) ml.Tensor {
-	t = m.Weight.Mulmat(ctx, t)
+	t = m.Weight.MulmatFullPrec(ctx, t)
+	fmt.Printf("DEBUG: bias: %v\n", m.Bias)
 	if m.Bias != nil {
 		t = t.Add(ctx, m.Bias)
 	}

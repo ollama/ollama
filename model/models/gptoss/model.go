@@ -2,6 +2,7 @@ package gptoss
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"strings"
 
@@ -114,14 +115,19 @@ type AttentionBlock struct {
 }
 
 func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+	fmt.Printf("DEBUG: options: %v\n", opts)
 	batchSize := hiddenStates.Dim(1)
+	fmt.Printf("DEBUG: batchSize: %v\n", batchSize)
+	fmt.Printf("DEBUG: hiddenStates: %v\n", hiddenStates.Shape())
 
 	residual := hiddenStates
 	hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
+	fmt.Printf("DEBUG: hiddenStates: %v\n", hiddenStates.Shape())
 
 	var query, key, value ml.Tensor
 	if attn.QKV != nil {
 		qkv := attn.QKV.Forward(ctx, hiddenStates)
+		fmt.Printf("DEBUG: qkv: %v\n", qkv.Shape())
 
 		// query = qkv[..., : num_attention_heads * head_dim].reshape(batch_size, num_attention_heads, head_dim)
 		query = qkv.View(ctx,
@@ -130,6 +136,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 			opts.numHeads, qkv.Stride(1),
 			batchSize,
 		)
+		fmt.Printf("DEBUG: query: %v\n", query.Shape())
 
 		// key = qkv[..., num_attention_heads * head_dim:(num_attention_heads + num_key_value_heads) * head_dim].reshape(batch_size, num_key_value_heads, head_dim)
 		key = qkv.View(ctx,
@@ -138,6 +145,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 			opts.numKVHeads, qkv.Stride(1),
 			batchSize,
 		)
+		fmt.Printf("DEBUG: key: %v\n", key.Shape())
 
 		// value = qkv[..., (num_attention_heads  + num_key_value_heads) * head_dim:].reshape(batch_size, num_key_value_heads, head_dim)
 		value = qkv.View(ctx,
@@ -146,22 +154,33 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 			opts.numKVHeads, qkv.Stride(1),
 			batchSize,
 		)
+		fmt.Printf("DEBUG: value: %v\n", value.Shape())
 	} else {
 		query = attn.Query.Forward(ctx, hiddenStates)
+		fmt.Printf("DEBUG: query: %v\n", query.Shape())
 		query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
+		fmt.Printf("DEBUG: query: %v\n", query.Shape())
 
 		key = attn.Key.Forward(ctx, hiddenStates)
+		fmt.Printf("DEBUG: key: %v\n", key.Shape())
 		key = key.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
+		fmt.Printf("DEBUG: key: %v\n", key.Shape())
 
 		value = attn.Value.Forward(ctx, hiddenStates)
+		fmt.Printf("DEBUG: value: %v\n", value.Shape())
 		value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
+		fmt.Printf("DEBUG: value: %v\n", value.Shape())
 	}
 
 	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	fmt.Printf("DEBUG: query: %v\n", query.Shape())
+	fmt.Printf("DEBUG: key: %v\n", key.Shape())
 
 	attention := nn.AttentionWithSinks(ctx, query, key, value, attn.Sinks, 1/math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
+	fmt.Printf("DEBUG: attention: %v\n", attention.Shape())
+	fmt.Printf("DEBUG: residual: %v\n", residual.Shape())
 	return attn.Output.Forward(ctx, attention).Add(ctx, residual)
 }
 

@@ -332,11 +332,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				}
 			}
 
-			if layerIndex >= 0 {
+			if layerIndex >= 0 && layerIndex < 1 {
 				createTensor(tensor{source: t}, layers[layerIndex].bts, layerIndex)
 			} else {
 				// load all other tensors on the cpu
-				createTensor(tensor{source: t}, input.bts, -1)
+				// createTensor(tensor{source: t}, input.bts, -1)
 			}
 		}
 	}
@@ -507,12 +507,15 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
-				target := b.tensorLoadTargets[t.Name][i]
-				if target == "" {
-					target = t.Name
+				target, ok := b.tensorLoadTargets[t.Name] // [i]
+				if !ok {
+					return nil
+				}
+				if target[i] == "" {
+					target[i] = t.Name
 				}
 
-				tt, ok := b.tensors[target]
+				tt, ok := b.tensors[target[i]]
 				if !ok {
 					return fmt.Errorf("unassigned tensor: %s", t.Name)
 				}
