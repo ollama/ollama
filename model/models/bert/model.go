@@ -2,12 +2,12 @@ package bert
 
 import (
 	"cmp"
-	"errors"
 	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
@@ -37,15 +37,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		hiddenStates = layer.Forward(ctx, hiddenStates, &m.Options)
 	}
 
-	switch m.poolingType {
-	case 0: // None
-	case 1: // Mean
-		hiddenStates = hiddenStates.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx).Mean(ctx)
-		hiddenStates = hiddenStates.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
-	default:
-		return nil, errors.New("unsupported pooling type")
-	}
-
+	hiddenStates = pooling.Pooling(ctx, hiddenStates, m.poolingType)
 	return hiddenStates, nil
 }
 
@@ -123,7 +115,7 @@ type Options struct {
 	numKVHeads,
 	keyLength,
 	valueLength int
-	poolingType int
+	poolingType pooling.Type
 	eps         float32
 }
 
@@ -164,7 +156,7 @@ func New(c fs.Config) (model.Model, error) {
 			numHeads:    int(c.Uint("attention.head_count")),
 			numKVHeads:  int(c.Uint("attention.head_count_kv")),
 			eps:         c.Float("attention.layer_norm_epsilon"),
-			poolingType: int(c.Uint("pooling_type")),
+			poolingType: pooling.Type(c.Uint("pooling_type")),
 		},
 	}, nil
 }
