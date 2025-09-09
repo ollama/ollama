@@ -864,12 +864,16 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 
 // SupportsKVCacheType checks if the requested cache type is supported
 func (f GGML) SupportsKVCacheType(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" {
+		return true
+	}
+
 	if arch := f.KV().Architecture(); slices.Contains([]string{"gptoss", "gpt-oss"}, arch) {
 		// gpt-oss uses attention with sinks which does not support quantized cache types
-		slog.Warn("model only supports non-quantized cache types ", "mode", arch)
-		return cacheType == "f16"
+		slog.Warn("model only supports non-quantized cache types", "model", arch)
+		return false
 	}
-	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
+	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention

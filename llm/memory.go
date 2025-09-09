@@ -202,7 +202,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	var kvct string
 	if useFlashAttention {
 		requested := strings.ToLower(envconfig.KvCacheType())
-		if requested != "" && f.SupportsKVCacheType(requested) {
+		if f.SupportsKVCacheType(requested) {
 			kvct = requested
 		}
 	}
