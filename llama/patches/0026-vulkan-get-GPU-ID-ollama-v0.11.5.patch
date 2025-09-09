@@ -1,38 +1,17 @@
-From e0ba120c913a2931010a31e0fdf160697a15b9f1 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Xiaodong Ye <xiaodong.ye@mthreads.com>
 Date: Mon, 18 Aug 2025 12:48:07 +0800
 Subject: [PATCH] vulkan: get GPU ID (ollama v0.11.5)
 
 Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
 ---
- discover/gpu_info_vulkan.c                    |  9 +++++
- .../ggml/ggml/src/ggml-vulkan/ggml-vulkan.cpp | 35 +++++++++++++++++++
- 2 files changed, 44 insertions(+)
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 35 ++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
 
-diff --git a/discover/gpu_info_vulkan.c b/discover/gpu_info_vulkan.c
-index 6d67353d..afac97dd 100644
---- a/discover/gpu_info_vulkan.c
-+++ b/discover/gpu_info_vulkan.c
-@@ -171,6 +171,15 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
-   snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
-   strncpy(&resp->gpu_name[0], properties.deviceName, GPU_NAME_LEN - 1);
-   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
-+  const uint8_t *uuid = properties.pipelineCacheUUID;
-+  snprintf(&resp->gpu_id[0], GPU_ID_LEN,
-+      "GPU-%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-+      uuid[0], uuid[1], uuid[2], uuid[3],
-+      uuid[4], uuid[5],
-+      uuid[6], uuid[7],
-+      uuid[8], uuid[9],
-+      uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
-+    );
-   resp->total = (uint64_t) device_memory_total_size;
-   resp->free = (uint64_t) device_memory_heap_budget;
-   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
-diff --git a/ml/backend/ggml/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ml/backend/ggml/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 index 4070e248..1c8c15d5 100644
---- a/ml/backend/ggml/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-+++ b/ml/backend/ggml/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -10194,6 +10194,27 @@ static void ggml_vk_get_device_description(int device, char * description, size_
      snprintf(description, description_size, "%s", props.deviceName.data());
  }
