@@ -173,6 +173,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		opts.NumCtx = int(trainCtx)
 	}
 
+	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
+
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
 	defaultThreads := discover.GetSystemInfo().GetOptimalThreadCount()
