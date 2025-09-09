@@ -789,7 +789,7 @@ func (c *Context) ComputeWithNotify(cb func(), tensors ...ml.Tensor) {
 }
 
 func (c *Context) Reserve() {
-	reserved := C.ggml_backend_sched_reserve(c.b.sched, c.graph)
+	reserved := C.ggml_backend_sched_reserve_ext(c.b.sched, c.graph, C._Bool(c.b.allocMemory))
 
 	slog.Debug("compute graph", "nodes", C.ggml_graph_n_nodes(c.graph), "splits", C.ggml_backend_sched_get_n_splits(c.b.sched))
 

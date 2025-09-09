@@ -46,7 +46,14 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t 
     }
 
     if (buft->no_alloc) {
-        ggml_backend_buffer_t buf = ggml_backend_buffer_init(buft, {}, NULL, size);
+        ggml_backend_buffer_t buf;
+
+        if (buft->iface.noalloc_buffer != NULL) {
+            buf = buft->iface.noalloc_buffer(buft, size);
+        } else {
+            buf = ggml_backend_buffer_init(buft, {}, NULL, size);
+        }
+
         buf->no_alloc = true;
         return buf;
     }
@@ -1533,6 +1540,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
         for (int c = 0; c < sched->n_copies; c++) {
             ggml_backend_event_free(sched->events[b][c]);
         }
+
+        if (sched->backends[b]->iface.reset != NULL) {
+            sched->backends[b]->iface.reset(sched->backends[b]);
+        }
     }
     ggml_gallocr_free(sched->galloc);
     ggml_free(sched->ctx);
@@ -1562,6 +1573,10 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
 }
 
 bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph) {
+    return ggml_backend_sched_reserve_ext(sched, measure_graph, true);
+}
+
+bool ggml_backend_sched_reserve_ext(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, bool alloc) {
     GGML_ASSERT((int)sched->hash_set.size >= measure_graph->n_nodes + measure_graph->n_leafs);
 
     ggml_backend_sched_synchronize(sched);
@@ -1570,6 +1585,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
 
     if (!ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids)) {
         return false;
+    }
+
+    if (!ggml_gallocr_alloc_graph(sched->galloc, &sched->graph)) {
+        return false;
+    }
+
+    struct ggml_backend_sched_split * splits = sched->splits;
+    for (int i = 0; i < sched->n_splits; i++) {
+        struct ggml_backend_sched_split * split = &splits[i];
+        int split_backend_id = split->backend_id;
+        ggml_backend_t split_backend = sched->backends[split_backend_id];
+
+        if (split_backend->iface.graph_reserve != NULL) {
+            enum ggml_status ec = split_backend->iface.graph_reserve(split_backend, &split->graph, alloc);
+            if (ec != GGML_STATUS_SUCCESS) {
+                return false;
+            }
+        }
     }
 
     ggml_backend_sched_reset(sched);
@@ -1662,6 +1695,10 @@ struct ggml_backend_buffer_status ggml_backend_sched_get_attempted_buffer_size(g
 
     struct ggml_allocr_buffer_status allocr_status = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
     struct ggml_backend_buffer_status status = {allocr_status.size, allocr_status.allocated};
+
+    if (backend->iface.buffer_size != NULL) {
+        status.size += backend->iface.buffer_size(backend);
+    }
 
     return status;
 }

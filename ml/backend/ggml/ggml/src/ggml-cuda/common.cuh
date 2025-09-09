@@ -35,6 +35,19 @@
 #include "vendors/cuda.h"
 #endif // defined(GGML_USE_HIP)
 
+extern bool reserving_graph;
+
+static cudaError_t cudaMemcpyAsyncReplacement ( void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
+    if (!reserving_graph) {
+        return cudaMemcpyAsync(dst, src, count, kind, stream);
+    } else {
+        return cudaSuccess;
+    }
+}
+
+#undef cudaMemcpyAsync
+#define cudaMemcpyAsync cudaMemcpyAsyncReplacement
+
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
 #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
 
@@ -771,6 +784,8 @@ struct ggml_cuda_pool {
 
     virtual void * alloc(size_t size, size_t * actual_size) = 0;
     virtual void free(void * ptr, size_t size) = 0;
+
+    virtual size_t alloc_size() = 0;
 };
 
 template<typename T>

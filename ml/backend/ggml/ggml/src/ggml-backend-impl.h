@@ -26,6 +26,8 @@ extern "C" {
         size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
+
+        ggml_backend_buffer_t (*noalloc_buffer)(ggml_backend_buffer_type_t buft, size_t size);
     };
 
     struct ggml_backend_buffer_type {
@@ -116,6 +118,10 @@ extern "C" {
         void (*event_record)(ggml_backend_t backend, ggml_backend_event_t event);
         // wait for an event on on a different stream
         void (*event_wait)  (ggml_backend_t backend, ggml_backend_event_t event);
+
+        enum ggml_status          (*graph_reserve)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, bool alloc);
+        size_t                    (*buffer_size)       (ggml_backend_t backend);
+        void                      (*reset)             (ggml_backend_t backend);
     };
 
     struct ggml_backend {
