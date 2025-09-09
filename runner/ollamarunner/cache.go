@@ -34,8 +34,8 @@ type InputCache struct {
 func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, batchSize int, multiUserCache bool) (*InputCache, error) {
 	numCtx := kvSize / int32(numSlots)
 
-	if numCtx < 1 {
-		return nil, fmt.Errorf("must have at least one kv cache entry per parallel sequence (kv: %v parallel: %v)", kvSize, numSlots)
+	if int(numCtx) < batchSize {
+		return nil, fmt.Errorf("kv size must be at least as large as batch size * parallel (kv: %v batch: %v parallel: %v)", kvSize, batchSize, numSlots)
 	}
 
 	slots := make([]InputCacheSlot, numSlots)

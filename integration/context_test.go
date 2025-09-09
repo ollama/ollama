@@ -36,7 +36,7 @@ func TestLongInputContext(t *testing.T) {
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
 		t.Fatalf("PullIfMissing failed: %v", err)
 	}
-	DoGenerate(ctx, t, client, req, []string{"russia", "germany", "france", "england", "austria", "prussia", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
+	DoGenerate(ctx, t, client, req, []string{"russia", "germany", "france", "england", "austria", "prussia", "europe", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
 }
 
 func TestContextExhaustion(t *testing.T) {
