@@ -14,7 +14,7 @@ import (
 
 type Model struct {
 	model.Base
-	model.WordPiece
+	model.TextProcessor
 
 	TokenEmbedding     *nn.Embedding `gguf:"token_embd"`
 	TypeEmbedding      *nn.Embedding `gguf:"token_types"`
@@ -124,8 +124,10 @@ func (o Options) headDim() int {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	return &Model{
-		WordPiece: model.NewWordPiece(
+	var processor model.TextProcessor
+	switch c.String("tokenizer.ggml.model", "bert") {
+	case "bert":
+		processor = model.NewWordPiece(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
@@ -149,8 +151,14 @@ func New(c fs.Config) (model.Model, error) {
 					)),
 				},
 			},
-		),
-		Layers: make([]EncoderLayer, c.Uint("block_count")),
+		)
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
+	return &Model{
+		TextProcessor: processor,
+		Layers:        make([]EncoderLayer, c.Uint("block_count")),
 		Options: Options{
 			hiddenSize:  int(c.Uint("embedding_length")),
 			numHeads:    int(c.Uint("attention.head_count")),
