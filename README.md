@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://ollama.com">
-    <img alt="ollama" width="240" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+    <img width="240" alt="ollama" src="https://github.com/user-attachments/assets/4f2058e5-7da4-43b3-916f-1905abc99d04" />
   </a>
 </div>
 
@@ -46,106 +46,30 @@ To run and chat with [Gemma 3](https://ollama.com/library/gemma3):
 ollama run gemma3
 ```
 
-## Model library
+## Models
 
-Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
+| Model       | Parameters | Size  | Download                 |
+| ----------- | ---------- | ----- | ------------------------ |
+| Gemma 3     | 1B         | 815MB | `ollama run gemma3:1b`   |
+| Gemma 3     | 4B         | 3.3GB | `ollama run gemma3`      |
+| DeepSeek-R1 | 7B         | 4.7GB | `ollama run deepseek-r1` |
+| gpt-oss     | 20B        | 14GB  | `ollama run gpt-oss`     |
 
-Here are some example models that can be downloaded:
-
-| Model              | Parameters | Size  | Download                         |
-| ------------------ | ---------- | ----- | -------------------------------- |
-| Gemma 3            | 1B         | 815MB | `ollama run gemma3:1b`           |
-| Gemma 3            | 4B         | 3.3GB | `ollama run gemma3`              |
-| Gemma 3            | 12B        | 8.1GB | `ollama run gemma3:12b`          |
-| Gemma 3            | 27B        | 17GB  | `ollama run gemma3:27b`          |
-| QwQ                | 32B        | 20GB  | `ollama run qwq`                 |
-| DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
-| DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
-| Llama 4            | 109B       | 67GB  | `ollama run llama4:scout`        |
-| Llama 4            | 400B       | 245GB | `ollama run llama4:maverick`     |
-| Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
-| Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
-| Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
-| Llama 3.2 Vision   | 11B        | 7.9GB | `ollama run llama3.2-vision`     |
-| Llama 3.2 Vision   | 90B        | 55GB  | `ollama run llama3.2-vision:90b` |
-| Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`            |
-| Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
-| Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
-| Phi 4 Mini         | 3.8B       | 2.5GB | `ollama run phi4-mini`           |
-| Mistral            | 7B         | 4.1GB | `ollama run mistral`             |
-| Moondream 2        | 1.4B       | 829MB | `ollama run moondream`           |
-| Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`         |
-| Starling           | 7B         | 4.1GB | `ollama run starling-lm`         |
-| Code Llama         | 7B         | 3.8GB | `ollama run codellama`           |
-| Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored`   |
-| LLaVA              | 7B         | 4.5GB | `ollama run llava`               |
-| Granite-3.3         | 8B         | 4.9GB | `ollama run granite3.3`          |
-
-> [!NOTE]
-> You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
-
-## Customize a model
-
-### Import from GGUF
-
-Ollama supports importing GGUF models in the Modelfile:
-
-1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
-
-   ```
-   FROM ./vicuna-33b.Q4_0.gguf
-   ```
-
-2. Create the model in Ollama
-
-   ```shell
-   ollama create example -f Modelfile
-   ```
-
-3. Run the model
-
-   ```shell
-   ollama run example
-   ```
-
-### Import from Safetensors
-
-See the [guide](docs/import.md) on importing models for more information.
-
-### Customize a prompt
-
-Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
-
-```shell
-ollama pull llama3.2
-```
-
-Create a `Modelfile`:
-
-```
-FROM llama3.2
-
-# set the temperature to 1 [higher is more creative, lower is more coherent]
-PARAMETER temperature 1
-
-# set the system message
-SYSTEM """
-You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
-"""
-```
-
-Next, create and run the model:
-
-```
-ollama create mario -f ./Modelfile
-ollama run mario
->>> hi
-Hello! It's your friend Mario.
-```
-
-For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+See a full list of models on [ollama.com](https://ollama.com/models)
 
 ## CLI Reference
+
+### Download a model
+
+```shell
+ollama pull gemma3
+```
+
+### Remove a model
+
+```shell
+ollama rm gemma3
+```
 
 ### Create a model
 
@@ -155,24 +79,22 @@ For more information on working with a Modelfile, see the [Modelfile](docs/model
 ollama create mymodel -f ./Modelfile
 ```
 
-### Pull a model
+### Show model information
 
 ```shell
-ollama pull llama3.2
-```
-
-> This command can also be used to update a local model. Only the diff will be pulled.
-
-### Remove a model
-
-```shell
-ollama rm llama3.2
+ollama show gemma3
 ```
 
 ### Copy a model
 
 ```shell
-ollama cp llama3.2 my-model
+ollama cp gemma3 my-model
+```
+
+### List models on your computer
+
+```shell
+ollama list
 ```
 
 ### Multiline input
@@ -189,29 +111,13 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ### Multimodal models
 
 ```
-ollama run llava "What's in this image? /Users/jmorgan/Desktop/smile.png"
+ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
-
-> **Output**: The image features a yellow smiley face, which is likely the central focus of the picture.
 
 ### Pass the prompt as an argument
 
 ```shell
-ollama run llama3.2 "Summarize this file: $(cat README.md)"
-```
-
-> **Output**: Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
-
-### Show model information
-
-```shell
-ollama show llama3.2
-```
-
-### List models on your computer
-
-```shell
-ollama list
+ollama run gemma3 "Summarize this file: $(cat README.md)"
 ```
 
 ### List which models are currently loaded
@@ -223,30 +129,20 @@ ollama ps
 ### Stop a model which is currently running
 
 ```shell
-ollama stop llama3.2
+ollama stop gemma3
 ```
 
 ### Start Ollama
 
-`ollama serve` is used when you want to start ollama without running the desktop application.
+To run Ollama's server, use:
+
+```shell
+ollama serve
+```
 
 ## Building
 
-See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
-
-### Running local builds
-
-Next, start the server:
-
-```shell
-./ollama serve
-```
-
-Finally, in a separate shell, run a model:
-
-```shell
-./ollama run llama3.2
-```
+See the [development guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
 
 ## REST API
 
@@ -256,23 +152,12 @@ Ollama has a REST API for running and managing models.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.2",
+  "model": "gemma3",
   "prompt":"Why is the sky blue?"
 }'
 ```
 
-### Chat with a model
-
-```shell
-curl http://localhost:11434/api/chat -d '{
-  "model": "llama3.2",
-  "messages": [
-    { "role": "user", "content": "why is the sky blue?" }
-  ]
-}'
-```
-
-See the [API documentation](./docs/api.md) for all endpoints.
+See the [API documentation](./docs/api.md) for more information.
 
 ## Community Integrations
 
@@ -406,7 +291,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 - [Tiny Notepad](https://pypi.org/project/tiny-notepad) (A lightweight, notepad-like interface to chat with ollama available on PyPI)
-- [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.) 
+- [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.)
 - [GPTranslate](https://github.com/philberndt/GPTranslate) (A fast and lightweight, AI powered desktop translation application written with Rust and Tauri. Features real-time translation with OpenAI/Azure/Ollama.)
 - [ollama launcher](https://github.com/NGC13009/ollama-launcher) (A launcher for Ollama, aiming to provide users with convenient functions such as ollama server launching, management, or configuration.)
 - [ai-hub](https://github.com/Aj-Seven/ai-hub) (AI Hub supports multiple models via API keys and Chat support via Ollama API.)
@@ -469,7 +354,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Database
 
 - [pgai](https://github.com/timescale/pgai) - PostgreSQL as a vector database (Create and search embeddings from Ollama models using pgvector)
-   - [Get started guide](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md)
+  - [Get started guide](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md)
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Connects Ollama models with nearly 200 data platforms and apps)
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) with [example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama)
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) (AI-powered SQL client and admin tool for popular databases)
@@ -610,6 +495,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) project founded by Georgi Gerganov.
 
 ### Observability
+
 - [Opik](https://www.comet.com/docs/opik/cookbook/ollama) is an open-source platform to debug, evaluate, and monitor your LLM applications, RAG systems, and agentic workflows with comprehensive tracing, automated evaluations, and production-ready dashboards. Opik supports native intergration to Ollama.
 - [Lunary](https://lunary.ai/docs/integrations/ollama) is the leading open-source LLM observability platform. It provides a variety of enterprise-grade features such as real-time analytics, prompt templates management, PII masking, and comprehensive agent tracing.
 - [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
