@@ -159,7 +159,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
 			bt := C.ggml_backend_dev_buffer_type(d)
 			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, bt)
-			C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))
 
 			btDeviceMemory[C.ggml_backend_dev_buffer_type(d)] = &requiredMemory.CPU
 		}
@@ -181,7 +180,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			d:   d,
 			bts: append([]C.ggml_backend_buffer_type_t{bt}, cpuDeviceBufferType.bts...),
 		})
-		C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))
 
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
@@ -337,35 +335,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	// allocate buffers for each context
-	bbs := make(map[*C.struct_ggml_context]C.ggml_backend_buffer_t, len(ctxs))
-	for bt, c := range ctxs {
-		if C.ggml_get_first_tensor(c) == nil {
-			continue
-		}
-
-		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
-		if b == nil {
-			for _, b := range bbs {
-				C.ggml_backend_buffer_free(b)
-			}
-
-			for _, ctx := range ctxs {
-				C.ggml_free(ctx)
-			}
-
-			panic(ml.ErrNoMem{BackendMemory: requiredMemory})
-		}
-
-		C.ggml_backend_buffer_set_usage(b, C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS)
-		bbs[c] = b
-	}
-
-	for bs := range maps.Values(bbs) {
-		logutil.Trace("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
-			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
-	}
-
 	// map tensor names to tensors for easy lookup later
 	tensors := make(map[string]*C.struct_ggml_tensor)
 	for _, c := range ctxs {
@@ -403,6 +372,46 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
+
+	sched := C.ggml_backend_sched_new_ext(
+		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
+		(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
+		C.int(len(schedBackends)),
+		C.size_t(maxGraphNodes),
+		C._Bool(false),
+		C._Bool(false),
+		C._Bool(params.AllocMemory),
+	)
+
+	// allocate buffers for each context
+	bbs := make(map[*C.struct_ggml_context]C.ggml_backend_buffer_t, len(ctxs))
+	for bt, c := range ctxs {
+		if C.ggml_get_first_tensor(c) == nil {
+			continue
+		}
+
+		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
+		if b == nil {
+			for _, b := range bbs {
+				C.ggml_backend_buffer_free(b)
+			}
+
+			for _, ctx := range ctxs {
+				C.ggml_free(ctx)
+			}
+
+			panic(ml.ErrNoMem{BackendMemory: requiredMemory})
+		}
+
+		C.ggml_backend_buffer_set_usage(b, C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS)
+		bbs[c] = b
+	}
+
+	for bs := range maps.Values(bbs) {
+		logutil.Trace("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
+			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
+	}
+
 	return &Backend{
 		modelPath:         modelPath,
 		allocMemory:       params.AllocMemory,
@@ -410,18 +419,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		meta:              meta,
 		tensorLoadTargets: targets,
 		tensors:           tensors,
-		sched: C.ggml_backend_sched_new(
-			(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
-			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
-			C.int(len(schedBackends)),
-			C.size_t(maxGraphNodes),
-			C._Bool(false),
-			C._Bool(false),
-		),
-		schedBackends: schedBackends,
-		schedBufts:    schedBufts,
-		input:         deviceBufferTypes[input.d],
-		output:        output.d,
+		sched:             sched,
+		schedBackends:     schedBackends,
+		schedBufts:        schedBufts,
+		input:             deviceBufferTypes[input.d],
+		output:            output.d,
 		layers: func() map[int]layerDevice {
 			m := make(map[int]layerDevice)
 			for i, layer := range layers {

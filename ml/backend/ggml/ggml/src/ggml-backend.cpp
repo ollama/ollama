@@ -35,10 +35,6 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
     return buft->iface.get_name(buft);
 }
 
-void ggml_backend_buft_set_alloc(ggml_backend_buffer_type_t buft, bool alloc) {
-    buft->no_alloc = !alloc;
-}
-
 ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     if (size == 0) {
         // return a dummy buffer for zero-sized allocations
@@ -46,7 +42,14 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t 
     }
 
     if (buft->no_alloc) {
-        ggml_backend_buffer_t buf = ggml_backend_buffer_init(buft, {}, NULL, size);
+        ggml_backend_buffer_t buf;
+
+        if (buft->iface.noalloc_buffer != NULL) {
+            buf = buft->iface.noalloc_buffer(buft, size);
+        } else {
+            buf = ggml_backend_buffer_init(buft, {}, NULL, size);
+        }
+
         buf->no_alloc = true;
         return buf;
     }
@@ -688,6 +691,12 @@ struct ggml_backend_sched {
     bool op_offload;
 
     int debug;
+
+    // allocate buffers on attached ggml_backend_buffer_type_t's and during reservation
+    // if false, dummy buffers are used for faster memory sizing calculations
+    // the scheduler needs to be recreated with allocated buffers before it can be used
+    // for computation
+    bool alloc_buffers;
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -1474,6 +1483,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
         size_t graph_size,
         bool parallel,
         bool op_offload) {
+            return ggml_backend_sched_new_ext(backends, bufts, n_backends, graph_size, parallel, op_offload, true);
+        }
+
+ggml_backend_sched_t ggml_backend_sched_new_ext(
+        ggml_backend_t * backends,
+        ggml_backend_buffer_type_t * bufts,
+        int n_backends,
+        size_t graph_size,
+        bool parallel,
+        bool op_offload,
+        bool alloc_buffers) {
     GGML_ASSERT(n_backends > 0);
     GGML_ASSERT(n_backends <= GGML_SCHED_MAX_BACKENDS);
     GGML_ASSERT(ggml_backend_dev_type(ggml_backend_get_device(backends[n_backends - 1])) == GGML_BACKEND_DEVICE_TYPE_CPU);
@@ -1515,10 +1535,13 @@ ggml_backend_sched_t ggml_backend_sched_new(
                 sched->events[b][c] = ggml_backend_event_new(backends[b]->device);
             }
         }
+
+        sched->bufts[b]->no_alloc = !alloc_buffers;
     }
 
     sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
     sched->op_offload = op_offload;
+    sched->alloc_buffers = alloc_buffers;
 
     ggml_backend_sched_reset(sched);
 
@@ -1532,6 +1555,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
     for (int b = 0; b < sched->n_backends; b++) {
         for (int c = 0; c < sched->n_copies; c++) {
             ggml_backend_event_free(sched->events[b][c]);
+        }
+
+        if (sched->backends[b]->iface.reset != NULL) {
+            sched->backends[b]->iface.reset(sched->backends[b]);
         }
     }
     ggml_gallocr_free(sched->galloc);
@@ -1570,6 +1597,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
 
     if (!ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids)) {
         return false;
+    }
+
+    if (!ggml_gallocr_alloc_graph(sched->galloc, &sched->graph)) {
+        return false;
+    }
+
+    struct ggml_backend_sched_split * splits = sched->splits;
+    for (int i = 0; i < sched->n_splits; i++) {
+        struct ggml_backend_sched_split * split = &splits[i];
+        int split_backend_id = split->backend_id;
+        ggml_backend_t split_backend = sched->backends[split_backend_id];
+
+        if (split_backend->iface.graph_reserve != NULL) {
+            enum ggml_status ec = split_backend->iface.graph_reserve(split_backend, &split->graph, sched->alloc_buffers);
+            if (ec != GGML_STATUS_SUCCESS) {
+                return false;
+            }
+        }
     }
 
     ggml_backend_sched_reset(sched);
@@ -1660,7 +1705,13 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, 
     int backend_index = ggml_backend_sched_backend_id(sched, backend);
     GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
 
-    return ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
+    size_t size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
+
+    if (backend->iface.buffer_size != NULL) {
+        size += backend->iface.buffer_size(backend);
+    }
+
+    return size;
 }
 
 void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
