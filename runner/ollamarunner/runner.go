@@ -775,6 +775,24 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	}
 }
 
+// checkAndUpdateTokenRepeat updates the token repeat state and returns true
+// when the repeat limit has been reached.
+func checkAndUpdateTokenRepeat(content string, lastToken *string, tokenRepeat *int, limit int) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == *lastToken {
+		*tokenRepeat++
+	}
+	*lastToken = trimmed
+	return *tokenRepeat == limit
+}
+
+var (
+	lastToken   string
+	tokenRepeat int
+)
+
+const tokenRepeatLimit = 30
+
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var req llm.CompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -872,9 +890,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
 		return
 	}
-	var lastToken string
-	tokenRepeat := 0
-	const tokenRepeatLimit = 30
 
 	for {
 		select {
@@ -883,16 +898,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				if strings.TrimSpace(content) == lastToken {
-					tokenRepeat++
-				}
-				if tokenRepeat == tokenRepeatLimit {
+				if checkAndUpdateTokenRepeat(content, &lastToken, &tokenRepeat, tokenRepeatLimit) {
 					http.Error(w, "token repeat limit reached", http.StatusInternalServerError)
 					seq.doneReason = llm.DoneReasonTokenRepeatLimit
 					close(seq.quit)
 					return
 				}
-				lastToken = strings.TrimSpace(content)
 
 				var thinking string
 				if harmonyMessageHandler != nil {
