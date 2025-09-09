@@ -278,6 +278,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [ollama-co2](https://github.com/carbonatedWaterOrg/ollama-co2) (FastAPI web interface for monitoring and managing local and remote Ollama servers with real-time model monitoring and concurrent downloads)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
