@@ -16,6 +16,9 @@ typedef struct {
   void (*vkGetPhysicalDeviceProperties)(
     VkPhysicalDevice                            physicalDevice,
     VkPhysicalDeviceProperties*                 pProperties);
+  void (*vkGetPhysicalDeviceProperties2)(
+    VkPhysicalDevice                             physicalDevice,
+    VkPhysicalDeviceProperties2*                 pProperties);
   VkResult (*vkEnumerateDeviceExtensionProperties)(
       VkPhysicalDevice                            physicalDevice,
       const char*                                 pLayerName,

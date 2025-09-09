@@ -41,6 +41,7 @@ void vk_init(char* vk_lib_path, vk_init_resp_t *resp) {
     void **p;
   } l[] = {
       {"vkGetPhysicalDeviceProperties", (void *)&resp->ch.vkGetPhysicalDeviceProperties},
+      {"vkGetPhysicalDeviceProperties2", (void *)&resp->ch.vkGetPhysicalDeviceProperties2},
       {"vkEnumerateDeviceExtensionProperties", (void *)&resp->ch.vkEnumerateDeviceExtensionProperties},
       {"vkCreateInstance", (void *)&resp->ch.vkCreateInstance},
       {"vkEnumeratePhysicalDevices", (void *)&resp->ch.vkEnumeratePhysicalDevices},
@@ -176,6 +177,15 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
     return;
   }
 
+  VkPhysicalDeviceProperties2 device_props2 = {};
+  device_props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+
+  VkPhysicalDeviceIDProperties id_props = {};
+  id_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+
+  device_props2.pNext = &id_props;
+  (*rh.vkGetPhysicalDeviceProperties2)(devices[i], &device_props2);
+
   VkPhysicalDeviceMemoryBudgetPropertiesEXT physical_device_memory_budget_properties;
   physical_device_memory_budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
   physical_device_memory_budget_properties.pNext = NULL;
@@ -204,9 +214,9 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
   strncpy(&resp->gpu_name[0], properties.deviceName, GPU_NAME_LEN - 1);
   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
-  const uint8_t *uuid = properties.pipelineCacheUUID;
+  const uint8_t *uuid = id_props.deviceUUID;
   snprintf(&resp->gpu_id[0], GPU_ID_LEN,
-      "GPU-%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+      "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
       uuid[0], uuid[1], uuid[2], uuid[3],
       uuid[4], uuid[5],
       uuid[6], uuid[7],
