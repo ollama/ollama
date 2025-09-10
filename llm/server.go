@@ -148,7 +148,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	var textProcessor model.TextProcessor
 	var err error
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
-		textProcessor, err = model.NewTextProcessor(modelPath)
+		if len(projectors) == 0 {
+			textProcessor, err = model.NewTextProcessor(modelPath)
+		} else {
+			err = errors.New("split vision models aren't supported")
+		}
 		if err != nil {
 			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
 			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
