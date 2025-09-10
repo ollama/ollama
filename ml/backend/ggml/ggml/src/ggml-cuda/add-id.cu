@@ -11,14 +11,14 @@ static __global__ void add_id_kernel(
     const int64_t i1 = blockIdx.x;
     const int64_t i2 = blockIdx.y;
 
-    const int i11 = *(int32_t *) ((char *) src2 + i1*sizeof(int32_t) + i2*nb21);
+    const int i11 = *(const int32_t *) ((const char *) src2 + i1*sizeof(int32_t) + i2*nb21);
 
     const size_t nb1 = ne0 * sizeof(float);
     const size_t nb2 = ne1 * nb1;
 
     float * dst_row = (float *)((char *)dst + i1*nb1 + i2*nb2);
-    const float * src0_row = (const float *)((char *)src0 +  i1*nb01 + i2*nb02);
-    const float * src1_row = (const float *)((char *)src1 + i11*nb11);
+    const float * src0_row = (const float *)((const char *)src0 +  i1*nb01 + i2*nb02);
+    const float * src1_row = (const float *)((const char *)src1 + i11*nb11);
 
     for (int64_t i0 = threadIdx.x; i0 < ne0; i0 += blockDim.x) {
         dst_row[i0] = src0_row[i0] + src1_row[i0];

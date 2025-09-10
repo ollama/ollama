@@ -16,9 +16,10 @@ enum llama_expert_gating_func_type {
 };
 
 enum llama_swa_type {
-    LLAMA_SWA_TYPE_NONE     = 0,
-    LLAMA_SWA_TYPE_STANDARD = 1,
-    LLAMA_SWA_TYPE_CHUNKED  = 2,
+    LLAMA_SWA_TYPE_NONE      = 0,
+    LLAMA_SWA_TYPE_STANDARD  = 1,
+    LLAMA_SWA_TYPE_CHUNKED   = 2,
+    LLAMA_SWA_TYPE_SYMMETRIC = 3,
 };
 
 struct llama_hparams_posnet {
@@ -41,6 +42,7 @@ struct llama_hparams {
     uint32_t n_embd;
     uint32_t n_embd_features = 0;
     uint32_t n_layer;
+     int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
     uint32_t n_rot;
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
@@ -159,6 +161,7 @@ struct llama_hparams {
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141
     llama_token dec_start_token_id = LLAMA_TOKEN_NULL;
+    uint32_t    dec_n_layer        = 0;
 
     enum llama_pooling_type      pooling_type            = LLAMA_POOLING_TYPE_NONE;
     enum llama_rope_type         rope_type               = LLAMA_ROPE_TYPE_NONE;
@@ -226,6 +229,16 @@ struct llama_hparams {
     bool n_bskcn(uint32_t n, uint32_t il) const;
 
     bool is_swa(uint32_t il) const;
+
+    bool has_kv(uint32_t il) const;
+
+    // number of layers for which has_kv() returns true
+    uint32_t n_layer_kv() const;
+
+    // note that this function uses different SWA parameters from those in the hparams
+    // TODO: think of a better place for this function
+    // TODO: pack the SWA params in a struct?
+    static bool is_masked_swa(uint32_t n_swa, llama_swa_type swa_type, llama_pos p0, llama_pos p1);
 };
 
 static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
