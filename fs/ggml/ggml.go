@@ -1,14 +1,17 @@
 package ggml
 
 import (
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
 )
 
@@ -54,15 +57,54 @@ func (kv KV) EmbeddingLength() uint64 {
 	return uint64(kv.Uint("embedding_length"))
 }
 
+func (kv KV) HeadCount() []uint64 {
+	headCountDefault := uint32(1)
+	headCount := kv.UintOrArrayValueAsArray("attention.head_count", headCountDefault)
+	if len(headCount) == 1 {
+		headCountDefault = headCount[0]
+	}
+	nLayers := int(kv.BlockCount())
+	if len(headCount) > nLayers {
+		slog.Warn("got more elements of attention.head_count than layers", "len(headCount)", len(headCount), "layers", nLayers)
+	}
+	out := make([]uint64, nLayers)
+	for i := range nLayers {
+		if i >= len(headCount) {
+			out[i] = uint64(headCountDefault)
+		} else {
+			out[i] = uint64(headCount[i])
+		}
+	}
+	return out
+}
+
 func (kv KV) HeadCountMax() uint64 {
-	// TODO(drifkin): using the max value can cause an overestimation. In the
-	// future if array values become more popular, we can adapt the more invasive
-	// <https://github.com/ollama/ollama/pull/10225>
 	return uint64(kv.UintOrMaxArrayValue("attention.head_count", 1))
 }
 
 func (kv KV) HeadCountMin() uint64 {
 	return uint64(kv.UintOrMinArrayValue("attention.head_count", 1))
+}
+
+func (kv KV) HeadCountKV() []uint64 {
+	headCountKVDefault := uint32(1)
+	headCountKV := kv.UintOrArrayValueAsArray("attention.head_count_kv", headCountKVDefault)
+	if len(headCountKV) == 1 {
+		headCountKVDefault = headCountKV[0]
+	}
+	nLayers := int(kv.BlockCount())
+	if len(headCountKV) > nLayers {
+		slog.Warn("got more elements of attention.head_count than layers", "len(headCountKV)", len(headCountKV), "layers", nLayers)
+	}
+	out := make([]uint64, nLayers)
+	for i := range nLayers {
+		if i >= len(headCountKV) {
+			out[i] = uint64(headCountKVDefault)
+		} else {
+			out[i] = uint64(headCountKV[i])
+		}
+	}
+	return out
 }
 
 func (kv KV) HeadCountKVMax() uint64 {
@@ -97,6 +139,26 @@ func (kv KV) ChatTemplate() string {
 	return kv.String("tokenizer.chat_template")
 }
 
+// ssm architecture parameters
+
+func (kv KV) SSMConvKernel() uint64 {
+	return uint64(kv.Uint("ssm.conv_kernel"))
+}
+
+func (kv KV) SSMInnerSize() uint64 {
+	return uint64(kv.Uint("ssm.inner_size"))
+}
+
+func (kv KV) SSMStateSize() uint64 {
+	return uint64(kv.Uint("ssm.state_size"))
+}
+
+func (kv KV) SSMGroupCount() uint64 {
+	return uint64(kv.Uint("ssm.group_count"))
+}
+
+// general types
+
 func (kv KV) String(key string, defaultValue ...string) string {
 	val, _ := keyValue(kv, key, append(defaultValue, "")...)
 	return val
@@ -128,22 +190,27 @@ func (kv KV) UintOrMinArrayValue(key string, defaultValue uint32) uint32 {
 }
 
 func (kv KV) UintOrArrayValue(key string, defaultValue uint32) (uint32, uint32) {
+	arrVal := kv.UintOrArrayValueAsArray(key, defaultValue)
+	return slices.Min(arrVal), slices.Max(arrVal)
+}
+
+func (kv KV) UintOrArrayValueAsArray(key string, defaultValue uint32) []uint32 {
 	if u32, ok := keyValue(kv, key, uint32(0)); ok {
-		return u32, u32
+		return []uint32{u32}
 	} else if u32s, ok := keyValue(kv, key, &array[uint32]{}); ok {
-		min := slices.Min(u32s.values)
-		max := slices.Max(u32s.values)
-		return min, max
+		return u32s.values
 	} else if i32s, ok := keyValue(kv, key, &array[int32]{}); ok {
-		min := slices.Min(i32s.values)
-		max := slices.Max(i32s.values)
-		if min < 0 || max < 0 {
-			slog.Warn("array values are unexpectedly negative", "key", key, "min", min, "max", max)
+		dst := make([]uint32, len(i32s.values))
+		for i, v := range i32s.values {
+			if v < 0 {
+				slog.Warn("array values are unexpectedly negative", "key", key, "i", i, "v", v)
+			}
+			dst[i] = uint32(v)
 		}
-		return uint32(min), uint32(max)
+		return dst
 	}
 
-	return defaultValue, defaultValue
+	return []uint32{defaultValue}
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
@@ -179,6 +246,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"llama4",
 		"mllama",
 		"qwen25vl",
+		"gptoss", "gpt-oss",
 	}, kv.Architecture())
 }
 
@@ -273,36 +341,37 @@ type Tensor struct {
 
 func (t Tensor) block() (n int) {
 	if _, err := fmt.Sscanf(t.Name, "blk.%d.", &n); err != nil {
-		return -1
+		return math.MaxInt
 	}
 
 	return
 }
 
 func (t Tensor) blockSize() uint64 {
-	return (TensorType)(t.Kind).BlockSize()
+	return TensorType(t.Kind).BlockSize()
 }
 
 func (t TensorType) BlockSize() uint64 {
 	switch t {
 	case
-		0,  // F32
-		1,  // F16
-		24, // I8
-		25, // I16
-		26, // I32
-		27, // I64
-		28, // F64
-		30: // BF16
+		TensorTypeF32,
+		TensorTypeF16,
+		TensorTypeI8,
+		TensorTypeI16,
+		TensorTypeI32,
+		TensorTypeI64,
+		TensorTypeF64,
+		TensorTypeBF16:
 		return 1
 	case
-		2,  // Q4_0
-		3,  // Q4_1
-		6,  // Q5_0
-		7,  // Q5_1
-		8,  // Q8_0
-		9,  // Q8_1
-		20: // IQ4_NL
+		TensorTypeQ4_0,
+		TensorTypeQ4_1,
+		TensorTypeQ5_0,
+		TensorTypeQ5_1,
+		TensorTypeQ8_0,
+		TensorTypeQ8_1,
+		tensorTypeIQ4_NL,
+		4, TensorTypeMXFP4:
 		return 32
 	default:
 		return 256
@@ -375,6 +444,8 @@ func (t TensorType) TypeSize() uint64 {
 		return blockSize/8 + blockSize/16 + blockSize/32
 	case TensorTypeBF16:
 		return 2
+	case 4, TensorTypeMXFP4:
+		return 1 + blockSize/2
 	default:
 		return 0
 	}
@@ -474,10 +545,14 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention bool) (kv []uint64, partialOffload, fullOffload uint64) {
+	context *= uint64(numParallel)
+
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCountMax()
+	headsArr := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKVMax()
+	headsKVArr := f.KV().HeadCountKV()
 	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
 
 	embeddingHeads := f.KV().EmbeddingHeadCountMax()
@@ -487,10 +562,51 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
+
+	// Default for models unless special-cased below. These defaults mirror the
+	// cache usage in llama.cpp under the assumption that models without special
+	// cases below will use the llamarunner and caching will be handled by the
+	// llama.cpp layer.
+	//
+	// This also assumes that a layer without heads or headsKV set is recurrent
+	// which is usually the case. Some models (eg nemotronh) use "blocks" in
+	// place of layers where some are MLP blocks that don't have any cache.
+	// Models like this will need a special case below to be accurately
+	// estimated.
+	var kvTotal uint64
 	kv = make([]uint64, f.KV().BlockCount())
+	kvSizeAttn := uint64(0)
+	kvSizeRecurrent := uint64(0)
 	for i := range kv {
-		kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+		headsL := headsArr[i]
+		headsKVL := headsKVArr[i]
+		if headsL > 0 && headsKVL > 0 {
+			// full attention layer
+			// NOTE: Assumes uniform values for all attn layers
+			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKVL) * bytesPerElement)
+			kvSizeAttn += kv[i]
+		} else {
+			// recurrent layer
+			ssmDConv := f.KV().SSMConvKernel()
+			ssmDState := f.KV().SSMStateSize()
+			ssmDInner := f.KV().SSMInnerSize()
+			ssmNGroups := f.KV().SSMGroupCount()
+			nEmbdR := uint64(0)
+			if ssmDConv > 0 {
+				nEmbdR = (ssmDConv - 1) * (ssmDInner + 2*ssmNGroups*ssmDState)
+			}
+			nEmbdS := ssmDState * ssmDInner
+
+			// recurrent always uses F32 in llama.cpp backend
+			// https://github.com/ggml-org/llama.cpp/blob/master/src/llama-model.cpp#L18644
+			bytesPerElementRecurrent := kvCacheBytesPerElement("f32")
+
+			kv[i] = (nEmbdR + nEmbdS) * uint64(bytesPerElementRecurrent)
+			kvSizeRecurrent += kv[i]
+		}
+		kvTotal += kv[i]
 	}
+	slog.Debug("default cache size estimate", "attention MiB", float32(kvSizeAttn)/(1024.*1024.), "attention bytes", kvSizeAttn, "recurrent MiB", float32(kvSizeRecurrent)/(1024.*1024.), "recurrent bytes", kvSizeRecurrent)
 
 	switch f.KV().Architecture() {
 	case "llama", "llama4":
@@ -658,6 +774,22 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 					4*qkvBias.Shape[0],
 			)
 		}
+	case "gptoss", "gpt-oss":
+		kv = make([]uint64, f.KV().BlockCount())
+		for i := range kv {
+			kv[i] = uint64(float64((embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+			if i%2 == 0 {
+				kv[i] *= (uint64(numParallel)*4096 + batch)
+			} else {
+				kv[i] *= context
+			}
+		}
+
+		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
+		if useFlashAttention {
+			// rough estimate of graph size with flash attention on
+			partialOffload = (4*uint64(numParallel) + context>>10 + 110) * format.MebiByte
+		}
 	}
 
 	return
@@ -732,6 +864,11 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 
 // SupportsKVCacheType checks if the requested cache type is supported
 func (f GGML) SupportsKVCacheType(cacheType string) bool {
+	if arch := f.KV().Architecture(); slices.Contains([]string{"gptoss", "gpt-oss"}, arch) {
+		// gpt-oss uses attention with sinks which does not support quantized cache types
+		slog.Warn("model only supports non-quantized cache types ", "mode", arch)
+		return cacheType == "f16"
+	}
 	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
 }
 
@@ -748,6 +885,13 @@ func (f GGML) SupportsFlashAttention() bool {
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
 }
 
+// FlashAttention checks if the model should enable flash attention
+func (f GGML) FlashAttention() bool {
+	return slices.Contains([]string{
+		"gptoss", "gpt-oss",
+	}, f.KV().String("general.architecture"))
+}
+
 // kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
 func kvCacheBytesPerElement(cacheType string) float64 {
 	switch cacheType {
@@ -755,6 +899,8 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
+	case "f32":
+		return 4 // f32 (default for recurrent)
 	default:
 		return 2 // f16 (default)
 	}

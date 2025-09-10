@@ -20,9 +20,9 @@ Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 4096 tokens. 
+By default, Ollama uses a context window size of 4096 tokens for most models. The `gpt-oss` model has a default context window size of 8192 tokens.
 
-This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use: 
+This can be overridden in Settings in the Windows and macOS App, or with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use:
 
 ```shell
 OLLAMA_CONTEXT_LENGTH=8192 ollama serve
@@ -46,6 +46,8 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+Setting the context length higher may cause the model to not be able to fit onto the GPU which make the model run more slowly.
+
 ## How can I tell if my model was loaded onto the GPU?
 
 Use the `ollama ps` command to see what models are currently loaded into memory.
@@ -57,8 +59,8 @@ ollama ps
 > **Output**:
 >
 > ```
-> NAME      	ID          	SIZE 	PROCESSOR	UNTIL
-> llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
+> NAME           ID              SIZE     PROCESSOR    CONTEXT    UNTIL
+> gpt-oss:20b    05afbac4bad6    16 GB    100% GPU     8192       4 minutes from now
 > ```
 
 The `Processor` column will show which memory the model was loaded in to:
@@ -148,9 +150,11 @@ docker build -t ollama-with-ca .
 docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-with-ca
 ```
 
-## Does Ollama send my prompts and answers back to ollama.com?
+## Does Ollama send my prompts and responses back to ollama.com?
 
-No. Ollama runs locally, and conversation data does not leave your machine.
+If you're running a model locally, your prompts and responses will always stay on your machine. Ollama Turbo in the App allows you to run your queries on Ollama's servers if you don't have a powerful enough GPU. Web search lets a model query the web, giving you more accurate and up-to-date information. Both Turbo and web search require sending your prompts and responses to Ollama.com. This data is neither logged nor stored.
+
+If you don't want to see the Turbo and web search options in the app, you can disable them in Settings by turning on Airplane mode. In Airplane mode, all models will run locally, and your prompts and responses will stay on your machine.
 
 ## How can I expose Ollama on my network?
 

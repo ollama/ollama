@@ -26,6 +26,10 @@ type Parser struct {
 	n      int
 }
 
+func (p *Parser) GetBuffer() []byte {
+	return p.buffer
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
@@ -220,22 +224,45 @@ func findArguments(buffer []byte) (map[string]any, int) {
 		return nil, 0
 	}
 
+	start := -1
 	var braces int
-	var start int = -1
+	var inString, escaped bool
 
-	for i, c := range buffer {
+	for i := range buffer {
+		c := buffer[i]
+
+		if escaped {
+			escaped = false
+			continue
+		}
+
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+
+		if inString {
+			continue
+		}
+
 		if c == '{' {
 			if braces == 0 {
 				start = i
 			}
 			braces++
-		} else if c == '}' && braces > 0 {
+		} else if c == '}' {
 			braces--
 			if braces == 0 && start != -1 {
 				object := buffer[start : i+1]
 
 				var data map[string]any
 				if err := json.Unmarshal(object, &data); err != nil {
+					// not a valid object, keep looking
 					start = -1
 					continue
 				}
@@ -277,6 +304,10 @@ func findArguments(buffer []byte) (map[string]any, int) {
 				}
 
 				return data, i
+			}
+
+			if braces < 0 {
+				braces = 0
 			}
 		}
 	}

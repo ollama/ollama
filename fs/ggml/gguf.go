@@ -533,12 +533,15 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 		}
 	}
 
-	slices.SortStableFunc(ts, func(a, b *Tensor) int {
-		if i, j := a.block(), b.block(); i > 0 && j > 0 {
-			return cmp.Compare(i, j)
-		}
-		return cmp.Compare(a.Name, b.Name)
-	})
+	slices.SortStableFunc(
+		ts,
+		func(a, b *Tensor) int {
+			return cmp.Or(
+				cmp.Compare(a.block(), b.block()),
+				cmp.Compare(a.Name, b.Name),
+			)
+		},
+	)
 
 	var s uint64
 	for i := range ts {

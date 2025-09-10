@@ -281,10 +281,10 @@ ggml_backend_t ggml_backend_blas_init(void) {
     ggml_backend_blas_context * ctx = new ggml_backend_blas_context;
 
     ggml_backend_t backend = new ggml_backend {
-        /* .guid      = */ ggml_backend_blas_guid(),
-        /* .interface = */ blas_backend_i,
-        /* .device    = */ ggml_backend_reg_dev_get(ggml_backend_blas_reg(), 0),
-        /* .context   = */ ctx,
+        /* .guid    = */ ggml_backend_blas_guid(),
+        /* .iface   = */ blas_backend_i,
+        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_blas_reg(), 0),
+        /* .context = */ ctx,
     };
 
 #if defined(OPENBLAS_VERSION) && defined(GGML_USE_OPENMP)
@@ -505,6 +505,11 @@ static const struct ggml_backend_reg_i ggml_backend_blas_reg_i = {
 };
 
 ggml_backend_reg_t ggml_backend_blas_reg(void) {
+    // MacOS prior to v14 does not include cblas_sgemm - disable this backend if it isn't available
+    if (&cblas_sgemm == NULL) {
+        GGML_LOG_INFO("Disabling ggml-blas backend on old MacOS version\n");
+        return NULL;
+    }
     static struct ggml_backend_reg ggml_backend_blas_reg = {
         /* .api_version = */ GGML_BACKEND_API_VERSION,
         /* .iface       = */ ggml_backend_blas_reg_i,

@@ -500,11 +500,11 @@ The `message` object has the following fields:
 - `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
-- `tool_name` (optional): add the name of the tool that was executed to inform the model of the result 
+- `tool_name` (optional): add the name of the tool that was executed to inform the model of the result
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
+- `format`: the format to return a response in. Format can be `json` or a JSON schema.
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
@@ -1593,7 +1593,7 @@ Then there is a series of downloading responses. Until any of the download is co
 
 ```json
 {
-  "status": "downloading digestname",
+  "status": "pulling digestname",
   "digest": "digestname",
   "total": 2142590208,
   "completed": 241970

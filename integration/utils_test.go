@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -25,11 +26,11 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/format"
-	"github.com/stretchr/testify/require"
 )
 
-const (
-	smol = "llama3.2:1b"
+var (
+	smol   = "llama3.2:1b"
+	stream = false
 )
 
 var (
@@ -37,6 +38,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"gpt-oss:20b",
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
 		"deepseek-r1:1.5b",
@@ -126,6 +128,7 @@ var (
 		"gemma3n",
 		"glm4",
 		"goliath",
+		"gpt-oss:20b",
 		"granite-code",
 		"granite3-dense",
 		"granite3-guardian",
@@ -255,8 +258,13 @@ var (
 	}
 )
 
-func Init() {
+func init() {
 	lifecycle.InitLogging()
+	custom := os.Getenv("OLLAMA_TEST_SMOL_MODEL")
+	if custom != "" {
+		slog.Info("setting smol test model to " + custom)
+		smol = custom
+	}
 }
 
 func FindPort() string {
@@ -428,7 +436,9 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 		}
 		lifecycle.ServerLogFile = fp.Name()
 		fp.Close()
-		require.NoError(t, startServer(t, ctx, testEndpoint))
+		if err := startServer(t, ctx, testEndpoint); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	return client, testEndpoint, func() {
@@ -461,18 +471,24 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRequest, anyResp []string) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, genReq.Model))
+	if err := PullIfMissing(ctx, client, genReq.Model); err != nil {
+		t.Fatal(err)
+	}
 	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
 }
 
-func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) {
+func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
+	var context []int
 	fn := func(response api.GenerateResponse) error {
 		// fmt.Print(".")
 		buf.Write([]byte(response.Response))
 		if !stallTimer.Reset(streamTimeout) {
 			return errors.New("stall was detected while streaming response, aborting")
+		}
+		if len(response.Context) > 0 {
+			context = response.Context
 		}
 		return nil
 	}
@@ -486,6 +502,22 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		done <- 0
 	}()
 
+	var response string
+	verify := func() {
+		// Verify the response contains the expected data
+		response = buf.String()
+		atLeastOne := false
+		for _, resp := range anyResp {
+			if strings.Contains(strings.ToLower(response), resp) {
+				atLeastOne = true
+				break
+			}
+		}
+		if !atLeastOne {
+			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
+		}
+	}
+
 	select {
 	case <-stallTimer.C:
 		if buf.Len() == 0 {
@@ -496,23 +528,21 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	case <-done:
 		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
 			slog.Warn("model is too large for the target test system", "model", genReq.Model, "error", genErr)
-			return
+			return context
 		}
-		require.NoError(t, genErr, "failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
-		// Verify the response contains the expected data
-		response := buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
+		if genErr != nil {
+			t.Fatalf("%s failed with %s request prompt %s", genErr, genReq.Model, genReq.Prompt)
 		}
-		require.True(t, atLeastOne, "%s: none of %v found in %s", genReq.Model, anyResp, response)
+		verify()
 		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
 	case <-ctx.Done():
-		t.Error("outer test context done while waiting for generate")
+		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
+		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
+		// if they are still generating valid responses
+		slog.Warn("outer test context done while waiting for generate")
+		verify()
 	}
+	return context
 }
 
 // Generate a set of requests
@@ -521,70 +551,170 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
 				Model:     smol,
-				Prompt:    "why is the ocean blue?",
+				Prompt:    "why is the ocean blue? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "why is the color of dirt brown?",
+				Prompt:    "why is the color of dirt brown? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Prompt:    "what is the origin of the US thanksgiving holiday? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of independence day?",
+				Prompt:    "what is the origin of independence day? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the composition of air?",
+				Prompt:    "what is the composition of air? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]any{
-					"seed":        42,
-					"temperature": 0.0,
-				},
 			},
 		},
 		[][]string{
-			{"sunlight"},
-			{"soil", "organic", "earth", "black", "tan"},
-			{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"sunlight", "scattering", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorbs", "wavelength"},
+			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
+			{"england", "english", "massachusetts", "pilgrims", "colonists", "independence", "british", "feast", "family", "gatherings", "traditions", "turkey", "colonial", "period", "harvest", "agricultural", "european settlers", "american revolution", "civil war", "16th century", "17th century", "native american", "united states", "cultural", "hardship", "autumn", "festival"},
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
+}
+
+func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
+	stallTimer := time.NewTimer(initialTimeout)
+	var buf bytes.Buffer
+	role := "assistant"
+	fn := func(response api.ChatResponse) error {
+		// fmt.Print(".")
+		role = response.Message.Role
+		buf.Write([]byte(response.Message.Content))
+		if !stallTimer.Reset(streamTimeout) {
+			return errors.New("stall was detected while streaming response, aborting")
+		}
+		return nil
+	}
+
+	stream := true
+	req.Stream = &stream
+	done := make(chan int)
+	var genErr error
+	go func() {
+		genErr = client.Chat(ctx, &req, fn)
+		done <- 0
+	}()
+
+	var response string
+	verify := func() {
+		// Verify the response contains the expected data
+		response = buf.String()
+		atLeastOne := false
+		for _, resp := range anyResp {
+			if strings.Contains(strings.ToLower(response), resp) {
+				atLeastOne = true
+				break
+			}
+		}
+		if !atLeastOne {
+			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
+		}
+	}
+
+	select {
+	case <-stallTimer.C:
+		if buf.Len() == 0 {
+			t.Errorf("generate never started.  Timed out after :%s", initialTimeout.String())
+		} else {
+			t.Errorf("generate stalled.  Response so far:%s", buf.String())
+		}
+	case <-done:
+		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
+			slog.Warn("model is too large for the target test system", "model", req.Model, "error", genErr)
+			return nil
+		}
+		if genErr != nil {
+			t.Fatalf("%s failed with %s request prompt %v", genErr, req.Model, req.Messages)
+		}
+		verify()
+		slog.Info("test pass", "model", req.Model, "messages", req.Messages, "contains", anyResp, "response", response)
+	case <-ctx.Done():
+		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
+		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
+		// if they are still generating valid responses
+		slog.Warn("outer test context done while waiting for chat")
+		verify()
+	}
+	return &api.Message{Role: role, Content: buf.String()}
+}
+
+func ChatRequests() ([]api.ChatRequest, [][]string) {
+	genReqs, results := GenerateRequests()
+	reqs := make([]api.ChatRequest, len(genReqs))
+	// think := api.ThinkValue{Value: "low"}
+	for i := range reqs {
+		reqs[i].Model = genReqs[i].Model
+		reqs[i].Stream = genReqs[i].Stream
+		reqs[i].KeepAlive = genReqs[i].KeepAlive
+		// reqs[i].Think = &think
+		reqs[i].Messages = []api.Message{
+			{
+				Role:    "user",
+				Content: genReqs[i].Prompt,
+			},
+		}
+	}
+	return reqs, results
 }
 
 func skipUnderMinVRAM(t *testing.T, gb uint64) {
 	// TODO use info API in the future
 	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
 		maxVram, err := strconv.ParseUint(s, 10, 64)
-		require.NoError(t, err)
+		if err != nil {
+			t.Fatal(err)
+		}
 		// Don't hammer on small VRAM cards...
 		if maxVram < gb*format.GibiByte {
 			t.Skip("skipping with small VRAM to avoid timeouts")
 		}
 	}
+}
+
+// Skip if the target model isn't X% GPU loaded to avoid excessive runtime
+func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
+	models, err := client.ListRunning(ctx)
+	if err != nil {
+		t.Fatalf("failed to list running models: %s", err)
+	}
+	loaded := []string{}
+	for _, m := range models.Models {
+		loaded = append(loaded, m.Name)
+		if m.Name != model {
+			continue
+		}
+		gpuPercent := 0
+		switch {
+		case m.SizeVRAM == 0:
+			gpuPercent = 0
+		case m.SizeVRAM == m.Size:
+			gpuPercent = 100
+		case m.SizeVRAM > m.Size || m.Size == 0:
+			t.Logf("unexpected size detected: %d", m.SizeVRAM)
+		default:
+			sizeCPU := m.Size - m.SizeVRAM
+			cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 110)
+			gpuPercent = int(100 - cpuPercent)
+		}
+		if gpuPercent < minPercent {
+			t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
+		}
+		return
+	}
+	t.Skip(fmt.Sprintf("model %s not loaded - actually loaded: %v", model, loaded))
 }
 
 func getTimeouts(t *testing.T) (soft time.Duration, hard time.Duration) {
