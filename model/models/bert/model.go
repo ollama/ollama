@@ -38,6 +38,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	}
 
 	hiddenStates = pooling.Pooling(ctx, hiddenStates, m.poolingType)
+	if m.normalize {
+		hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
+	}
+
 	return hiddenStates, nil
 }
 
@@ -117,6 +121,7 @@ type Options struct {
 	valueLength int
 	poolingType pooling.Type
 	eps         float32
+	normalize   bool
 }
 
 func (o Options) headDim() int {
@@ -165,6 +170,7 @@ func New(c fs.Config) (model.Model, error) {
 			numKVHeads:  int(c.Uint("attention.head_count_kv")),
 			eps:         c.Float("attention.layer_norm_epsilon"),
 			poolingType: pooling.Type(c.Uint("pooling_type")),
+			normalize:   c.Bool("normalize_embeddings", true),
 		},
 	}, nil
 }

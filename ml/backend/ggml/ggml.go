@@ -1205,6 +1205,13 @@ func (t *Tensor) AddID(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) L2Norm(ctx ml.Context, eps float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_l2_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+	}
+}
+
 func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	tt := C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))
 	if w != nil {
