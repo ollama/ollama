@@ -345,8 +345,8 @@ func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 	return positionalEmbedding
 }
 
-// newVisionModel creates a new instance of the Qwen vision model
-func newVisionModel(c fs.Config) *VisionModel {
+// NewVisionModel creates a new instance of the Qwen vision model
+func NewVisionModel(c fs.Config) *VisionModel {
 	patchSize := int(c.Uint("vision.patch_size", 14))
 	hiddenSize := int(c.Uint("vision.embedding_length", 1280))
 	numHeads := int(c.Uint("vision.attention.head_count", 16))

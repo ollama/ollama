@@ -1,4 +1,4 @@
-package qwen25vl
+package qwen3vl
 
 import (
 	"bytes"
@@ -11,22 +11,28 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/model/models/qwen25vl"
+	"github.com/ollama/ollama/model/models/qwen3"
 )
 
 type Model struct {
 	model.Base
 	model.BytePairEncoding
 
-	*TextModel
-	*VisionModel `gguf:"v"`
+	TextModel *qwen3.Model
+	*qwen25vl.VisionModel
 
-	ImageProcessor
+	qwen25vl.ImageProcessor
 }
 
-// Implement MultimodalProcessor interface
 var _ model.MultimodalProcessor = (*Model)(nil)
 
 func New(c fs.Config) (model.Model, error) {
+	textModel, err := qwen3.New(c)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
@@ -43,9 +49,9 @@ func New(c fs.Config) (model.Model, error) {
 				),
 			},
 		),
-		TextModel:      NewTextModel(c),
-		VisionModel:    NewVisionModel(c),
-		ImageProcessor: NewImageProcessor(c),
+		TextModel:      textModel.(*qwen3.Model),
+		VisionModel:    qwen25vl.NewVisionModel(c),
+		ImageProcessor: qwen25vl.NewImageProcessor(c),
 	}
 
 	m.Cache = kvcache.NewCausalCache(m.TextModel.Shift)
@@ -53,7 +59,7 @@ func New(c fs.Config) (model.Model, error) {
 	return m, nil
 }
 
-func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *Grid, error) {
+func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *qwen25vl.Grid, error) {
 	image, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
 		return nil, nil, err
@@ -88,7 +94,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }
 
-// PostTokenize arranges Qwen-2.5-VL's inputs for the forward pass
+// PostTokenize arranges Qwen-3-VL's inputs for the forward pass
 func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	var result []*input.Input
 
@@ -139,12 +145,9 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache)
+	return m.TextModel.Forward(ctx, batch)
 }
 
 func init() {
-	model.Register("qwen25vl", New)
+	model.Register("qwen3vl", New)
 }

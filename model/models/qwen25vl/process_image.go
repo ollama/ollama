@@ -11,40 +11,40 @@ import (
 
 // ImageProcessor contains configuration for the Qwen 2.5 VL image processing
 type ImageProcessor struct {
-	numChannels       int
-	patchSize         int
-	temporalPatchSize int
-	mergeSize         int
-	minPixels         int
-	maxPixels         int
-	factor            int
-	rescaleFactor     float32
-	imageMean         []float32
-	imageStd          []float32
+	NumChannels       int
+	PatchSize         int
+	TemporalPatchSize int
+	MergeSize         int
+	MinPixels         int
+	MaxPixels         int
+	Factor            int
+	RescaleFactor     float32
+	ImageMean         []float32
+	ImageStd          []float32
 }
 
 // newImageProcessor creates a new image processor with default values
-func newImageProcessor(c fs.Config) ImageProcessor {
+func NewImageProcessor(c fs.Config) ImageProcessor {
 	patchSize := int(c.Uint("vision.patch_size", 14))
 	mergeSize := int(c.Uint("vision.spatial_merge_size", 2))
 
 	return ImageProcessor{
-		numChannels:       int(c.Uint("vision.num_channels", 3)), // not set
-		patchSize:         patchSize,
-		temporalPatchSize: 2,
-		mergeSize:         mergeSize,
-		minPixels:         56 * 56,
-		maxPixels:         int(c.Uint("vision.max_pixels", 28*28*1280)), // 1MP limit
-		factor:            patchSize * mergeSize,
-		rescaleFactor:     1.0 / 255.0,
-		imageMean:         imageproc.ClipDefaultMean[:],
-		imageStd:          imageproc.ClipDefaultSTD[:],
+		NumChannels:       int(c.Uint("vision.num_channels", 3)), // not set
+		PatchSize:         patchSize,
+		TemporalPatchSize: 2,
+		MergeSize:         mergeSize,
+		MinPixels:         56 * 56,
+		MaxPixels:         int(c.Uint("vision.max_pixels", 28*28*1280)), // 1MP limit
+		Factor:            patchSize * mergeSize,
+		RescaleFactor:     1.0 / 255.0,
+		ImageMean:         imageproc.ClipDefaultMean[:],
+		ImageStd:          imageproc.ClipDefaultSTD[:],
 	}
 }
 
 // SmartResize implements the smart resize algorithm
 func (p *ImageProcessor) SmartResize(height, width int) (int, int) {
-	factor := p.factor
+	factor := p.Factor
 
 	if height < factor || width < factor {
 		panic(fmt.Sprintf("height:%d or width:%d must be larger than factor:%d", height, width, factor))
@@ -57,13 +57,13 @@ func (p *ImageProcessor) SmartResize(height, width int) (int, int) {
 	hBar := round(float64(height)/float64(factor)) * factor
 	wBar := round(float64(width)/float64(factor)) * factor
 
-	if hBar*wBar > p.maxPixels {
-		beta := math.Sqrt(float64(height*width) / float64(p.maxPixels))
+	if hBar*wBar > p.MaxPixels {
+		beta := math.Sqrt(float64(height*width) / float64(p.MaxPixels))
 
 		hBar = int(math.Floor(float64(height)/beta/float64(factor))) * factor
 		wBar = int(math.Floor(float64(width)/beta/float64(factor))) * factor
-	} else if hBar*wBar < p.minPixels {
-		beta := math.Sqrt(float64(p.minPixels) / float64(height*width))
+	} else if hBar*wBar < p.MinPixels {
+		beta := math.Sqrt(float64(p.MinPixels) / float64(height*width))
 
 		hBar = int(math.Ceil(float64(height)*beta/float64(factor))) * factor
 		wBar = int(math.Ceil(float64(width)*beta/float64(factor))) * factor
@@ -90,16 +90,16 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error)
 
 	normalizedPixels := imageproc.Normalize(
 		resizedImg,
-		[3]float32{p.imageMean[0], p.imageMean[1], p.imageMean[2]},
-		[3]float32{p.imageStd[0], p.imageStd[1], p.imageStd[2]},
+		[3]float32{p.ImageMean[0], p.ImageMean[1], p.ImageMean[2]},
+		[3]float32{p.ImageStd[0], p.ImageStd[1], p.ImageStd[2]},
 		true, // rescale
 		true, // channelFirst
 	)
 
 	// Calculate grid dimensions
 	grid := &Grid{
-		Height:   resizedHeight / p.patchSize,
-		Width:    resizedWidth / p.patchSize,
+		Height:   resizedHeight / p.PatchSize,
+		Width:    resizedWidth / p.PatchSize,
 		Temporal: 1, // For single images, temporal dimension is 1
 	}
 
@@ -113,10 +113,10 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error)
 }
 
 func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid *Grid) ([]float32, error) {
-	channels := p.numChannels
-	patchSize := p.patchSize
-	mergeSize := p.mergeSize
-	temporalPatchSize := p.temporalPatchSize
+	channels := p.NumChannels
+	patchSize := p.PatchSize
+	mergeSize := p.MergeSize
+	temporalPatchSize := p.TemporalPatchSize
 
 	// Calculate output dimensions
 	numPatches := grid.Temporal * grid.Height * grid.Width
