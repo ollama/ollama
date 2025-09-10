@@ -27,12 +27,12 @@ static __global__ void dequantize_block(const void * __restrict__ vx, dst_t * __
     const int64_t y_offset = qr == 1 ? 1 : qk/2;
 
     // dequantize
-    dfloat2 v;
+    float2 v;
     dequantize_kernel(vx, ib, iqs, v);
 
     const int64_t iy0 = ((i03*ne02 + i02)*ne01 + i01)*ne00 + iybs + iqs;
-    y[iy0 + 0]        = float(v.x);
-    y[iy0 + y_offset] = float(v.y);
+    y[iy0 + 0]        = ggml_cuda_cast<dst_t>(v.x);
+    y[iy0 + y_offset] = ggml_cuda_cast<dst_t>(v.y);
 }
 
 template <bool need_check>
@@ -71,9 +71,7 @@ static __global__ void dequantize_block_q8_0_f16(const void * __restrict__ vx, h
         y2[iy/2 + threadIdx.x] = __hmul2(make_half2(qs.x, qs.y), __half2half2(d));
     }
 #else
-    GGML_UNUSED(vx);
-    GGML_UNUSED(y);
-    GGML_UNUSED(k);
+    GGML_UNUSED_VARS(vx, y, k);
     NO_DEVICE_CODE;
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_PASCAL
 }
@@ -630,7 +628,7 @@ static __global__ void convert_unary(
 
     const int64_t ix = i03*s03 + i02*s02 + i01*s01 + i00;
     const int64_t iy = ((i03*ne02 + i02)*ne01 + i01)*ne00 + i00;
-    y[iy] = float(x[ix]);
+    y[iy] = ggml_cuda_cast<dst_t>(x[ix]);
 }
 
 template <typename src_t, typename dst_t>
