@@ -725,7 +725,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // attention layers have a non-zero number of kv heads
         int32_t n_attn_layer = model.hparams.n_layer - std::count(n_head_kv_iter, n_head_kv_iter + model.hparams.n_layer, 0);
         if (llama_model_has_encoder(&model)) {
-            n_attn_layer *= 3;
+            // now n_attn_layer is the number of attention layers in the encoder
+            // for each decoder block, there are 2 attention layers
+            n_attn_layer += 2 * model.hparams.dec_n_layer;
         }
         GGML_ASSERT((qs.n_attention_wv == n_attn_layer - pruned_attention_w) && "n_attention_wv is unexpected");
     }
@@ -920,7 +922,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
             new_type = tensor->type;
             new_data = tensor->data;
             new_size = ggml_nbytes(tensor);
-            LLAMA_LOG_INFO("size = %8.3f MB\n", ggml_nbytes(tensor)/1024.0/1024.0);
+            LLAMA_LOG_INFO("size = %8.3f MiB\n", ggml_nbytes(tensor)/1024.0/1024.0);
         } else {
             const int64_t nelements = ggml_nelements(tensor);
 
@@ -1037,8 +1039,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     }
     close_ofstream();
 
-    LLAMA_LOG_INFO("%s: model size  = %8.2f MB\n", __func__, total_size_org/1024.0/1024.0);
-    LLAMA_LOG_INFO("%s: quant size  = %8.2f MB\n", __func__, total_size_new/1024.0/1024.0);
+    LLAMA_LOG_INFO("%s: model size  = %8.2f MiB\n", __func__, total_size_org/1024.0/1024.0);
+    LLAMA_LOG_INFO("%s: quant size  = %8.2f MiB\n", __func__, total_size_new/1024.0/1024.0);
 
     if (qs.n_fallback > 0) {
         LLAMA_LOG_WARN("%s: WARNING: %d of %d tensor(s) required fallback quantization\n",
