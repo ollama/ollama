@@ -874,15 +874,15 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				if parser != nil && parser.TokenRepeatLimit(content) {
-					http.Error(w, "token repeat limit reached", http.StatusInternalServerError)
+				var thinking string
+				var err error
+				content, thinking, err = parser.AddContent(content)
+				if err != nil {
+					fmt.Println("err", err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
 					seq.doneReason = llm.DoneReasonTokenRepeatLimit
 					close(seq.quit)
 					return
-				}
-				var thinking string
-				if parser != nil {
-					content, thinking = parser.AddContent(content)
 				}
 
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
@@ -896,11 +896,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				var toolCalls []api.ToolCall
-				if parser != nil {
-					toolCalls = parser.Drain()
-				}
-
+				toolCalls := parser.Drain()
+				fmt.Println("toolCalls", toolCalls)
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					ToolCalls:          toolCalls,
 					Done:               true,

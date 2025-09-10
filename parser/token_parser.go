@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -16,12 +17,12 @@ const (
 )
 
 type TokenParser struct {
-	messageHandler  MessageHandler
-	parserInternals ParserInternals
-	toolParser      ToolParser
-	lastToken       string
-	tokenRepeat     int
-	repeatLimit     int
+	messageHandler MessageHandler
+	parserEngine   ParserInternals
+	toolParser     ToolParser
+	lastToken      string
+	tokenRepeat    int
+	repeatLimit    int
 }
 
 const defaultTokenRepeatLimit = 30
@@ -39,40 +40,68 @@ type ToolParser interface {
 	Drain() (toolName *string, toolContent string)
 }
 
-func NewTokenParser(parserType TokenParserType, prefillString string) *TokenParser {
+// Default implementation for the TokenParser interface as a no-op passthrough
+type defaultMessageHandler struct{}
+
+func (defaultMessageHandler) AddContent(token string) (string, string, string) {
+	return token, "", ""
+}
+
+type defaultEngine struct{}
+
+func (defaultEngine) AddImplicitStartOrPrefill(prefillString string) {}
+
+type defaultToolParser struct{}
+
+func (defaultToolParser) Add(token string) {}
+
+func (defaultToolParser) Drain() (*string, string) { return nil, "" }
+
+func NewTokenParser(parserType TokenParserType, prefillString string) TokenParser {
 	switch parserType {
 	case TokenParserTypeHarmony:
 		harmonyMessageHandler := harmony.NewHarmonyMessageHandler()
 		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(prefillString)
-		return &TokenParser{
-			messageHandler:  harmonyMessageHandler,
-			parserInternals: harmonyMessageHandler.HarmonyParser,
-			toolParser:      harmonyMessageHandler.ToolParser,
-			repeatLimit:     defaultTokenRepeatLimit,
+		return TokenParser{
+			messageHandler: harmonyMessageHandler,
+			parserEngine:   harmonyMessageHandler.HarmonyParser,
+			toolParser:     harmonyMessageHandler.ToolParser,
+			repeatLimit:    defaultTokenRepeatLimit,
 		}
 
 	default:
-		return nil
+		return TokenParser{
+			messageHandler: defaultMessageHandler{},
+			parserEngine:   defaultEngine{},
+			toolParser:     defaultToolParser{},
+			repeatLimit:    30,
+		}
 	}
 }
 
-func (p *TokenParser) AddContent(token string) (string, string) {
+func (p *TokenParser) AddContent(token string) (string, string, error) {
+	if p.repeatLimitReached(token) {
+		return "", "", errors.New("token repeat limit reached")
+	}
 	content, thinking, toolContent := p.messageHandler.AddContent(token)
 	p.toolParser.Add(toolContent)
-	return content, thinking
+	return content, thinking, nil
 }
 
-// TokenRepeatLimit updates repeat counters and returns true if the repeat limit is reached.
-func (p *TokenParser) TokenRepeatLimit(content string) bool {
+// repeatLimitReached updates repeat counters and returns true if the repeat limit is reached.
+func (p *TokenParser) repeatLimitReached(token string) bool {
 	if p == nil {
 		return false
 	}
-	trimmed := strings.TrimSpace(content)
+	trimmed := strings.TrimSpace(token)
 	if trimmed == p.lastToken {
 		p.tokenRepeat++
+	} else {
+		p.tokenRepeat = 0
 	}
 	p.lastToken = trimmed
-	return p.tokenRepeat == p.repeatLimit
+
+	return p.tokenRepeat >= p.repeatLimit
 }
 
 // TODO: update to work with multiple toolcalls - unmarshalling should also happen on parser level
