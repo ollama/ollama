@@ -13,14 +13,12 @@ package deepseek3
 import (
 	"cmp"
 	"fmt"
-	"math"
 
 	// "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -42,7 +40,7 @@ type Transformer struct {
 
 type TransformerBlock struct {
 	Attention *AttentionBlock
-	// MLP       *MLPBlock
+	MLP       *MLPBlock
 	// MoE       *MoEBlock
 	// the only diff is its MLP or MoE
 }
@@ -86,6 +84,13 @@ func (o Options) RoPEOptions() []func(*rope.Options) {
 	}
 }
 
+type MLPBlock struct {
+	Norm *nn.RMSNorm `gguf:"ffn_norm"`
+	Up   *nn.Linear  `gguf:"ffn_up"`
+	Down *nn.Linear  `gguf:"ffn_down"`
+	Gate *nn.Linear  `gguf:"ffn_gate"`
+}
+
 type AttentionBlock struct {
 	Norm *nn.RMSNorm `gguf:"attn_norm"`
 
@@ -102,6 +107,23 @@ type AttentionBlock struct {
 
 	Output *nn.Linear `gguf:"attn_out,alt:attn_output"` // where does attn_out come from?
 }
+
+// func yarnGetMScale(scale float64, mscale float64) float64 {
+// 	if scale <= 1 {
+// 		return 1.0
+// 	}
+// 	return 0.1*mscale*math.Log(scale) + 1.0
+// }
+
+// // function for scaling factor
+// func getScalingFactor(opts *Options) float64 {
+// 	scaling := math.Pow(float64(opts.qkHeadDim), -0.5)
+// 	if rope.MScaleAllDim != 0 {
+// 		mscale := yarnGetMScale(rope.Factor, rope.MScaleAllDim)
+// 		scaling *= mscale * mscale
+// 	}
+// 	return scaling
+// }
 
 // func (attn *AttentionBlock) Forward(ctx ml.Context, ...) {
 func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -132,7 +154,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 
 	}
 
-	return query
+	// return query
 
 	// Debug: Print tensor shapes before reshape
 	fmt.Printf("DEBUG: query shape before reshape: %v\n", query.Shape())
@@ -148,11 +170,18 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	// query shape: [192, 128, 4] -> qPass: [128, 128, 4], qRot: [64, 128, 4]
 	fmt.Printf("DEBUG: query after reshape: %v\n", query.Shape())
 
+	// qPass = qPass.Contiguous(ctx)
+
+	query = query.Permute(ctx, 0, 2, 1, 3)
+	// query = query.Contiguous(ctx)
+
 	qPass := query.View(ctx, 0, opts.qkNopeHeadDim, query.Stride(1), query.Dim(1), query.Stride(2), query.Dim(2))
 	fmt.Printf("DEBUG: qPass: %v\n", qPass.Shape())
 
 	qRot := query.View(ctx, opts.qkNopeHeadDim*query.Stride(0), opts.qkRopeHeadDim, query.Stride(1), query.Dim(1), query.Stride(2), query.Dim(2))
 	fmt.Printf("DEBUG: qRot: %v\n", qRot.Shape())
+
+	// return qRot.Contiguous(ctx)
 
 	compressedKV := attn.KVA.Forward(ctx, hiddenStates)
 	fmt.Printf("DEBUG: compressedKV: %v\n", compressedKV.Shape())
@@ -185,8 +214,26 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	actualKVHeadDim := kPass.Dim(0) / opts.numKVHeads // 32768 / 128 = 256
 	fmt.Printf("DEBUG: reshaping kPass [%d, %d] -> [%d, %d, %d]\n", kPass.Dim(0), kPass.Dim(1), actualKVHeadDim, opts.numKVHeads, seqLength)
 
-	kPass = kPass.Reshape(ctx, actualKVHeadDim, opts.numKVHeads, seqLength)
-	fmt.Printf("DEBUG: kPass after reshape: %v\n", kPass.Shape())
+	// should this be view instead?
+	kPass = kPass.Reshape(ctx, actualKVHeadDim, opts.numKVHeads, seqLength) // how to do this with view?
+	// kPass = kPass.View(ctx, 0, actualKVHeadDim, opts.numKVHeads, seqLength)
+
+	// kPass = kPass.View(
+	// 	ctx,
+	// 	0,               // offset into buffer
+	// 	actualKVHeadDim, // ne0
+	// 	kPass.Stride(1), // nb1
+	// 	opts.numKVHeads, // ne1
+	// 	kPass.Stride(2), // nb2
+	// 	seqLength,       // ne2
+	// )
+	fmt.Printf("DEBUG: kPass after view: %v\n", kPass.Shape())
+
+	kPass = kPass.Permute(ctx, 0, 2, 1, 3)
+	fmt.Printf("DEBUG: kPass after permute: %v\n", kPass.Shape())
+
+	// kPass = kPass.Reshape(ctx, actualKVHeadDim, opts.numKVHeads, seqLength)
+	// fmt.Printf("DEBUG: kPass after reshape: %v\n", kPass.Shape())
 	// Split kPass into key and value parts along the head dimension
 	// kPass shape: [256, 128, 4] -> split into key part and value part
 	// Note: opts.kqNopeHeadDim should be the key part size, opts.vHeadDim should be value part size
@@ -204,15 +251,17 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: keyPass: %v\n", kPass.Shape())
 
 	// Extract value part (remaining dimensions)
-	value := kPass.View(ctx, opts.kqNopeHeadDim*kPass.Stride(0), opts.vHeadDim, kPass.Stride(1), kPass.Dim(1), kPass.Stride(2), kPass.Dim(2))
+	value := kPass.View(ctx, opts.kqNopeHeadDim*kPass.Stride(0), opts.vHeadDim, kPass.Stride(1), kPass.Dim(1), kPass.Stride(2), kPass.Dim(2)).Contiguous(ctx)
 	fmt.Printf("DEBUG: value: %v\n", value.Shape())
 
 	// Use keyPart as kPass for the rest of the computation
 	// kPass = keyPart
 
 	// Make kRot contiguous before reshaping (View operations create non-contiguous tensors)
+	fmt.Printf("DEBUG: kRot before cont: %v\n", kRot.Shape())
 	kRot = kRot.Contiguous(ctx)
-	fmt.Printf("DEBUG: turn kRot contiguous\n")
+	fmt.Printf("DEBUG: kRot after cont: %v\n", kRot.Shape())
+	// fmt.Printf("DEBUG: turn kRot contiguous\n")
 
 	// k_rot = k_rot.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
 	// kRot = kRot.Reshape(ctx, opts.qkRopeHeadDim, opts.numKVHeads, seqLength)
@@ -221,9 +270,17 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	// kRot = kRot.Reshape(ctx, opts.qkRopeHeadDim, 1, seqLength, batchSize)
 	fmt.Printf("DEBUG: opts.qkRopeHeadDim: %v\n", opts.qkRopeHeadDim)
 	fmt.Printf("DEBUG: kRot.Dim(0): %v\n", kRot.Dim(0))
-	kRot = kRot.Reshape(ctx, opts.qkRopeHeadDim, 1, seqLength)
+	fmt.Printf("DEBUG: kRot before reshape: %v\n", kRot.Shape())
 
-	fmt.Printf("DEBUG: kRot after reshape: %v\n", kRot.Shape())
+	kRot = kRot.Reshape(ctx, opts.qkRopeHeadDim, seqLength, 1)
+
+	// kRot = kRot.View(ctx, 0, opts.qkRopeHeadDim, kRot.Stride(1), kRot.Dim(1), kRot.Stride(2), kRot.Dim(2))
+
+	fmt.Printf("DEBUG: kRot after reshape (NOW RESHAPE): %v\n", kRot.Shape())
+	kRot = kRot.Contiguous(ctx)
+	fmt.Printf("DEBUG: kRot after cont: %v\n", kRot.Shape())
+
+	// fmt.Printf("DEBUG: kRot after reshape: %v\n", kRot.Shape())
 	// fmt.Printf("DEBUG: qRot check shape: %v\n", qRot.Shape())
 
 	// interleave is just a memory optimization, so we might be able to skip
@@ -236,8 +293,8 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: opts.ropeBase: %v\n", opts.ropeBase)
 	fmt.Printf("DEBUG: opts.ropeScale: %v\n", opts.ropeScale)
 	fmt.Printf("DEBUG: opts.RoPEOptions(): %v\n", opts.RoPEOptions())
-	// qRot = fast.RoPE(ctx, qRot, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+
+	// qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 
 	fmt.Printf("DEBUG: qRot after RoPE: %v\n", qRot.Shape())
 
@@ -248,20 +305,36 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: opts.ropeBase: %v\n", opts.ropeBase)
 	fmt.Printf("DEBUG: opts.ropeScale: %v\n", opts.ropeScale)
 	fmt.Printf("DEBUG: opts.RoPEOptions(): %v\n", opts.RoPEOptions())
-	// kRot = fast.RoPE(ctx, kRot, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	// kRot = fast.RoPE(ctx, kRot, positions, opts.kvLoraRank, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+
+	// kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	fmt.Printf("DEBUG: kRot after RoPE: %v\n", kRot.Shape())
 	fmt.Printf("DEBUG: kPass shape: %v\n", kPass.Shape())
 
-	kRot = kRot.Repeat(ctx, 1, kPass.Dim(1))
+	kRot = kRot.Repeat(ctx, 2, kPass.Dim(2))
+	kRot = kRot.Contiguous(ctx)
 
-	// here is where we die
-	fmt.Printf("DEBUG: kRot: %v\n", kRot.Shape())
+	fmt.Printf("DEBUG: kRot after Expanding: %v\n", kRot.Shape())
 
-	query = qPass.Concat(ctx, qRot, 0)
+	fmt.Printf("DEBUG: qPass: %v\n", qPass.Shape())
+	fmt.Printf("DEBUG: qRot: %v\n", qRot.Shape())
+
+	// q_pass shape before CAT: torch.Size([1, 128, 4, 128])
+	// q_rot shape before CAT: torch.Size([1, 128, 4, 64])
+	// query_states shape: torch.Size([1, 128, 4, 192])
+
+	// k_pass shape before CAT: torch.Size([1, 128, 4, 128])
+	// k_rot shape before CAT: torch.Size([1, 128, 4, 64])
+
+	query = qPass.Concat(ctx, qRot, 0).Contiguous(ctx)
+
+	// return query.Contiguous(ctx)
+
 	fmt.Printf("DEBUG: query: %v\n", query.Shape())
-	key := kPass.Concat(ctx, kRot, 0)
+
+	fmt.Printf("DEBUG: kRot: %v\n", kRot.Shape())
+	fmt.Printf("DEBUG: kPass: %v\n", kPass.Shape())
+
+	key := kPass.Concat(ctx, kRot, 0).Contiguous(ctx)
 	fmt.Printf("DEBUG: key: %v\n", key.Shape())
 
 	fmt.Printf("DEBUG: attnImplementation: %v\n", opts.attnImplementation)
@@ -273,8 +346,39 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 
 	// ripped this from llama4/model.go
 	// what is the format of the attention? is 1/math.Sqrt(headDim) the scale?
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
+
+	// 1./math.Sqrt(float64(opts.headDim())) is the scaling factor
+	// so what is the scaling factor here?
+
+	fmt.Printf("DEBUG: query **: %v\n", query.Contiguous(ctx).Shape())
+	fmt.Printf("DEBUG: key **: %v\n", key.Contiguous(ctx).Shape())
+	fmt.Printf("DEBUG: value **: %v\n", value.Contiguous(ctx).Shape())
+
+	// return value.Contiguous(ctx)
+
+	// return query.Contiguous(ctx)
+
+	// return key.Contiguous(ctx)
+
+	// scaling := 0.1352337788608801
+	// fmt.Printf("DEBUG: scaling: %v\n", scaling)
+
+	// testing := 1. / math.Sqrt(float64(opts.headDim()))
+	// fmt.Printf("DEBUG: testing: %v\n", testing)
+
+	// attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
+
+	// Ensure [d_k, kv_heads, seq_len] for key/value
+
+	print("DEBUG: cache: %v\n", cache)
+
+	// query = query.Permute(ctx, 0, 2, 1, 3)
+
+	attention := nn.Attention(ctx, query, key, value, 1, cache)
+
 	fmt.Printf("DEBUG: attention: %v\n", attention.Shape())
+
+	return attention.Contiguous(ctx)
 
 	fmt.Printf("DEBUG: attnImplementation: %v\n", opts.attnImplementation)
 
@@ -288,6 +392,8 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: attention.Dim(0)*attention.Dim(1): %v\n", attention.Dim(0)*attention.Dim(1))
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
 
+	// return attention
+
 	fmt.Printf("DEBUG: attention: %v\n", attention.Shape())
 	return attn.Output.Forward(ctx, attention).Add(ctx, residual)
 }
@@ -299,6 +405,10 @@ func New(c fs.Config) (model.Model, error) {
 		// 	c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 		// ),
 	}
+	// m.Cache = kvcache.NewCausalCache(nil)
+
+	m.Cache = kvcache.NewCausalCache(nil)
+
 	return &m, nil
 }
 

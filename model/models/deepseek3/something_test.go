@@ -164,8 +164,43 @@ func TestForward(t *testing.T) {
 		ropeScale: 1,
 	}
 
+	// cache := m.(*Transformer).Cache
+	// cache := m.(*Transformer).Cache
+
+	// cache.Init(m.Backend(), ml.DTypeF16, 1, 4096, 512)
+	// print("DEBUG: completed init\n")
+
+	// N := 128
+	// positionIndices2 := make([]int32, N)
+	// for i := 0; i < N; i++ {
+	// 	positionIndices2[i] = int32(i)
+	// }
+	// // positions2 := ctx.Input().FromIntSlice(positionIndices2, 128)
+
+	// sequences := make([]int, len(positionIndices2)) // []int{0,0,0,0}
+	// batch := input.Batch{
+	// 	Positions: positionIndices2, // []int32{0,1,2,3}
+	// 	Sequences: sequences,
+	// }
+	// if err := cache.StartForward(ctx, batch, false); err != nil {
+	// 	t.Fatal(err)
+	// }
+
+	// print("DEBUG: completed start forward\n")
+	// result := attentionBlock.Forward(ctx, hiddenStates, positions, cache, options)
 	result := attentionBlock.Forward(ctx, hiddenStates, positions, nil, options)
+
 	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
-	t.Log(ml.Dump(ctx, result)) // default formatting
+	t.Log(ml.Dump(ctx, result, ml.DumpWithPrecision(10))) // default formatting
+
+	// save result in a binary file
+	// filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/qPass.bin"
+	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/attn_output.bin"
+	print("DEBUG: filePath: %v\n", filePath)
+	err = os.WriteFile(filePath, result.Bytes(), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
 }

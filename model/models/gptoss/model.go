@@ -156,6 +156,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 		)
 		fmt.Printf("DEBUG: value: %v\n", value.Shape())
 	} else {
+
 		query = attn.Query.Forward(ctx, hiddenStates)
 		fmt.Printf("DEBUG: query: %v\n", query.Shape())
 		query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
@@ -172,10 +173,12 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 		fmt.Printf("DEBUG: value: %v\n", value.Shape())
 	}
 
-	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	fmt.Printf("DEBUG: query: %v\n", query.Shape())
-	fmt.Printf("DEBUG: key: %v\n", key.Shape())
+	// query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	// key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+
+	fmt.Printf("DEBUG: query **: %v\n", query.Contiguous(ctx).Shape())
+	fmt.Printf("DEBUG: key **: %v\n", key.Contiguous(ctx).Shape())
+	fmt.Printf("DEBUG: value **: %v\n", value.Contiguous(ctx).Shape())
 
 	attention := nn.AttentionWithSinks(ctx, query, key, value, attn.Sinks, 1/math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
