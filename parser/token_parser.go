@@ -33,6 +33,7 @@ type MessageHandler interface {
 
 type ParserInternals interface {
 	AddImplicitStartOrPrefill(prefillString string)
+	ConstraintsAllowed() bool
 }
 
 type ToolParser interface {
@@ -50,6 +51,10 @@ func (defaultMessageHandler) AddContent(token string) (string, string, string) {
 type defaultEngine struct{}
 
 func (defaultEngine) AddImplicitStartOrPrefill(prefillString string) {}
+
+func (defaultEngine) ConstraintsAllowed() bool {
+	return true
+}
 
 type defaultToolParser struct{}
 
@@ -102,6 +107,10 @@ func (p *TokenParser) repeatLimitReached(token string) bool {
 	p.lastToken = trimmed
 
 	return p.tokenRepeat >= p.repeatLimit
+}
+
+func (p *TokenParser) ConstraintsAllowed() bool {
+	return p.parserEngine.ConstraintsAllowed()
 }
 
 // TODO: update to work with multiple toolcalls - unmarshalling should also happen on parser level

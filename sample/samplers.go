@@ -25,6 +25,10 @@ type Sampler struct {
 	grammar     *GrammarSampler
 }
 
+func (s *Sampler) SetGrammar(grammar *GrammarSampler) {
+	s.grammar = grammar
+}
+
 func (s *Sampler) Sample(logits []float32) (int32, error) {
 	if len(logits) == 0 {
 		return -1, errors.New("sample: no logits provided to sample")

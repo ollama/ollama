@@ -782,8 +782,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenParser := parser.NewTokenParser(req.ParserType, req.PrefillString)
-
 	if req.Options == nil {
 		opts := api.DefaultOptions()
 		req.Options = &opts
@@ -816,7 +814,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.TopP,
 		req.Options.MinP,
 		req.Options.Seed,
-		grammar,
+		nil,
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
@@ -829,6 +827,14 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	tokenParser := parser.NewTokenParser(req.ParserType, req.PrefillString)
+	switch req.ParserType {
+	case parser.TokenParserTypeHarmony:
+		// Do not set grammar until model allows constraining
+	default:
+		seq.sampler.SetGrammar(grammar)
 	}
 
 	// Ensure there is a place to put the sequence, released when removed from s.seqs
@@ -867,6 +873,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	grammarSet := false
 	for {
 		select {
 		case <-r.Context().Done():
@@ -881,6 +888,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					close(seq.quit)
 					return
+				}
+
+				if !grammarSet && grammar != nil && tokenParser.ConstraintsAllowed() {
+					seq.sampler.SetGrammar(grammar)
+					grammarSet = true
 				}
 
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
