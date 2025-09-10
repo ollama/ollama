@@ -289,6 +289,7 @@ type HarmonyMessageHandler struct {
 	state           harmonyMessageState
 	HarmonyParser   *HarmonyParser
 	FunctionNameMap *FunctionNameMap
+	ToolParser      *HarmonyToolCallAccumulator
 }
 
 // NewHarmonyMessageHandler creates a new message handler
@@ -301,12 +302,16 @@ func NewHarmonyMessageHandler() *HarmonyMessageHandler {
 			HeaderEndTag:    "<|message|>",
 		},
 		FunctionNameMap: NewFunctionNameMap(),
+		ToolParser: &HarmonyToolCallAccumulator{
+			state:           harmonyToolCallState_Normal,
+			currentToolName: nil,
+		},
 	}
 }
 
 // AddContent processes the content and returns the content, thinking, and tool content.
 // content and thinking are already fully parsed, but tool content still needs to be passed to the tool parser
-func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyToolCallAccumulator) (string, string, string) {
+func (h *HarmonyMessageHandler) AddContent(content string) (string, string, string) {
 	contentSb := strings.Builder{}
 	thinkingSb := strings.Builder{}
 	toolContentSb := strings.Builder{}
@@ -323,14 +328,14 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 					// event.Header.Recipient is the tool name, something like
 					// "browser.search" for a built-in, or "functions.calc" for a
 					// custom one
-					toolParser.SetToolName(event.Header.Recipient)
+					h.ToolParser.SetToolName(event.Header.Recipient)
 				} else {
 					h.state = harmonyMessageState_Thinking
 				}
 			case "commentary":
 				if event.Header.Recipient != "" {
 					h.state = harmonyMessageState_ToolCalling
-					toolParser.SetToolName(event.Header.Recipient)
+					h.ToolParser.SetToolName(event.Header.Recipient)
 				} else {
 					h.state = harmonyMessageState_Normal
 				}
@@ -351,13 +356,6 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 		}
 	}
 	return contentSb.String(), thinkingSb.String(), toolContentSb.String()
-}
-
-func (h *HarmonyMessageHandler) CreateToolParser() *HarmonyToolCallAccumulator {
-	return &HarmonyToolCallAccumulator{
-		state:           harmonyToolCallState_Normal,
-		currentToolName: nil,
-	}
 }
 
 type harmonyToolCallState int

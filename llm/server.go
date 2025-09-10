@@ -35,6 +35,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/parser"
 )
 
 type filteredEnv []string
@@ -1350,7 +1351,7 @@ type CompletionRequest struct {
 	Options *api.Options
 
 	Grammar       string // set before sending the request to the subprocess
-	UseHarmony    bool
+	TokenParser   parser.TokenParserType
 	PrefillString string
 }
 
