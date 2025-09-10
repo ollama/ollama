@@ -782,7 +782,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parser := parser.NewTokenParser(req.ParserType, req.PrefillString)
+	tokenParser := parser.NewTokenParser(req.ParserType, req.PrefillString)
 
 	if req.Options == nil {
 		opts := api.DefaultOptions()
@@ -876,11 +876,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			if ok {
 				var thinking string
 				var err error
-				content, thinking, err = parser.AddContent(content)
+				content, thinking, err = tokenParser.AddContent(content)
 				if err != nil {
-					fmt.Println("err", err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
-					seq.doneReason = llm.DoneReasonTokenRepeatLimit
 					close(seq.quit)
 					return
 				}
@@ -896,8 +894,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				toolCalls := parser.Drain()
-				fmt.Println("toolCalls", toolCalls)
+				toolCalls := tokenParser.Drain()
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					ToolCalls:          toolCalls,
 					Done:               true,

@@ -1365,8 +1365,6 @@ const (
 	DoneReasonLength
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
-	// DoneReasonTokenRepeatLimit indicates the completion stopped due to a token repeat limit
-	DoneReasonTokenRepeatLimit
 )
 
 func (d DoneReason) String() string {
@@ -1375,8 +1373,6 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
-	case DoneReasonTokenRepeatLimit:
-		return "token_repeat_limit"
 	default:
 		return "" // closed
 	}
