@@ -10199,13 +10199,15 @@ static std::string ggml_vk_get_device_id(int device) {
 
     std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
 
-    vk::PhysicalDeviceProperties props;
-    devices[device].getProperties(&props);
+    vk::PhysicalDeviceProperties2 props;
+    vk::PhysicalDeviceIDProperties deviceIDProps;
+    props.pNext = &deviceIDProps;
+    devices[device].getProperties2(&props);
 
-    const auto& uuid = props.pipelineCacheUUID;
+    const auto& uuid = deviceIDProps.deviceUUID;
     char id[64];
     snprintf(id, sizeof(id),
-        "GPU-%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         uuid[0], uuid[1], uuid[2], uuid[3],
         uuid[4], uuid[5],
         uuid[6], uuid[7],
