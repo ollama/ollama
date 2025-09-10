@@ -19,7 +19,12 @@ type TokenParser struct {
 	messageHandler  MessageHandler
 	parserInternals ParserInternals
 	toolParser      ToolParser
+	lastToken       string
+	tokenRepeat     int
+	repeatLimit     int
 }
+
+const defaultTokenRepeatLimit = 30
 
 type MessageHandler interface {
 	AddContent(token string) (content, thinking string, toolContent string)
@@ -43,6 +48,7 @@ func NewTokenParser(parserType TokenParserType, prefillString string) *TokenPars
 			messageHandler:  harmonyMessageHandler,
 			parserInternals: harmonyMessageHandler.HarmonyParser,
 			toolParser:      harmonyMessageHandler.ToolParser,
+			repeatLimit:     defaultTokenRepeatLimit,
 		}
 
 	default:
@@ -54,6 +60,19 @@ func (p *TokenParser) AddContent(token string) (string, string) {
 	content, thinking, toolContent := p.messageHandler.AddContent(token)
 	p.toolParser.Add(toolContent)
 	return content, thinking
+}
+
+// TokenRepeatLimit updates repeat counters and returns true if the repeat limit is reached.
+func (p *TokenParser) TokenRepeatLimit(content string) bool {
+	if p == nil {
+		return false
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == p.lastToken {
+		p.tokenRepeat++
+	}
+	p.lastToken = trimmed
+	return p.tokenRepeat == p.repeatLimit
 }
 
 // TODO: update to work with multiple toolcalls - unmarshalling should also happen on parser level

@@ -197,11 +197,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	useHarmony := harmony.ShouldUseHarmony(m.Config.ModelFamily, m.Template) && !req.Raw
-	var tokenParserType parser.TokenParserType
+	var parserType parser.TokenParserType
 	if useHarmony {
-		tokenParserType = parser.TokenParserTypeHarmony
+		parserType = parser.TokenParserTypeHarmony
 	} else {
-		tokenParserType = parser.TokenParserTypeDefault
+		parserType = parser.TokenParserTypeDefault
 	}
 	var functionNameMap *harmony.FunctionNameMap
 
@@ -350,11 +350,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:      prompt,
-			Images:      images,
-			Format:      req.Format,
-			Options:     opts,
-			TokenParser: tokenParserType,
+			Prompt:     prompt,
+			Images:     images,
+			Format:     req.Format,
+			Options:    opts,
+			ParserType: parserType,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -1599,11 +1599,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	msgs = filterThinkTags(msgs, m)
 
 	useHarmony := harmony.ShouldUseHarmony(m.Config.ModelFamily, m.Template)
-	var tokenParserType parser.TokenParserType
+	var parserType parser.TokenParserType
 	if useHarmony {
-		tokenParserType = parser.TokenParserTypeHarmony
+		parserType = parser.TokenParserTypeHarmony
 	} else {
-		tokenParserType = parser.TokenParserTypeDefault
+		parserType = parser.TokenParserTypeDefault
 	}
 
 	processedTools := req.Tools
@@ -1675,7 +1675,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Images:        images,
 			Format:        req.Format,
 			Options:       opts,
-			TokenParser:   tokenParserType,
+			ParserType:    parserType,
 			PrefillString: prefillString,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{

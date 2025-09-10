@@ -1351,7 +1351,7 @@ type CompletionRequest struct {
 	Options *api.Options
 
 	Grammar       string // set before sending the request to the subprocess
-	TokenParser   parser.TokenParserType
+	ParserType    parser.TokenParserType
 	PrefillString string
 }
 
