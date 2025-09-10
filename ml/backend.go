@@ -416,6 +416,7 @@ type Tensor interface {
 	AddID(ctx Context, t2, ids Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
+	L2Norm(ctx Context, eps float32) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor

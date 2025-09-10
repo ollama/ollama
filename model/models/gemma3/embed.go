@@ -26,7 +26,7 @@ func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, erro
 	for _, dense := range m.Dense {
 		hiddenStates = dense.Forward(ctx, hiddenStates)
 	}
-
+	hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
 	return hiddenStates, nil
 }
 
