@@ -39,7 +39,7 @@ PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATC
 apply-patches: $(PATCHED)
 
 llama/patches/.%.patched: llama/patches/%.patch
-	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 --whitespace=fix $(realpath $<); then \
+	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then \
 		touch $@;                                                                           \
 	else                                                                                    \
 		echo "Patch failed. Resolve any conflicts then continue.";                          \
