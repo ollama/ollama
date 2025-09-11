@@ -599,7 +599,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
-	batch.Outputs = nextBatch.ctx.Input().FromIntSlice(batchOutputs, len(batchOutputs))
+	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -692,7 +692,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	// At this point the seqs are ready for forwardBatch to move forward so unblock
 	s.mu.Unlock()
 
-	activeBatch.batch.Inputs.SetValueFromIntSlice(batchInputs)
+	activeBatch.batch.Inputs.FromInts(batchInputs)
 	activeBatch.ctx.ComputeWithNotify(
 		func() {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
@@ -1090,7 +1090,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Positions[i] = int32(i)
 	}
 
-	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
+	batch.Inputs = ctx.Input().FromInts(batchInputs, len(batchInputs))
 	batch.Outputs = ctx.Input().Empty(ml.DTypeI32, s.parallel)
 
 	cache := s.model.Config().Cache

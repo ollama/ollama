@@ -393,7 +393,7 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 		mask[i] = float32(math.Inf(-1))
 	}
 
-	maskTensor := ctx.Input().FromFloatSlice(mask, length, batchSize)
+	maskTensor := ctx.Input().FromFloats(mask, length, batchSize)
 
 	if c.config.MaskDType != ml.DTypeF32 {
 		maskTensor = maskTensor.Cast(ctx, c.config.MaskDType)
@@ -725,7 +725,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 		offsets = offsets[batchFirst : batchLast+1]
 
 		ctx := c.backend.NewContext()
-		kShift := ctx.Input().FromIntSlice(offsets, len(offsets))
+		kShift := ctx.Input().FromInts(offsets, len(offsets))
 
 		for i, key := range c.keys {
 			if key == nil {
