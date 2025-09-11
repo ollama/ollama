@@ -35,6 +35,7 @@ import (
 	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
@@ -329,10 +330,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
-		c.JSON(http.StatusOK, api.DebugTemplateResponse{
+		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
-			DebugInfo: api.DebugInfo{
+			DebugInfo: &api.DebugInfo{
 				RenderedTemplate: prompt,
 				ImageCount:       len(images),
 			},
@@ -1617,10 +1618,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
+	var builtinParser parsers.BuiltinParser
+	if m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+	}
+
 	var harmonyMessageHandler *harmony.HarmonyMessageHandler
 	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
 
-	useHarmony := shouldUseHarmony(m)
+	useHarmony := shouldUseHarmony(m) || m.Config.Parser == "harmony"
 
 	processedTools := req.Tools
 	if useHarmony {
@@ -1650,10 +1656,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
-		c.JSON(http.StatusOK, api.DebugTemplateResponse{
+		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
-			DebugInfo: api.DebugInfo{
+			DebugInfo: &api.DebugInfo{
 				RenderedTemplate: prompt,
 				ImageCount:       len(images),
 			},
@@ -1713,6 +1719,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
+			// TODO(drifkin): fold this as much as possibleinto the generic m.Config.Parser logic
 			if useHarmony {
 				content, thinking, toolContent := harmonyMessageHandler.AddContent(r.Content, harmonyToolParser)
 				res.Message.Content = content
@@ -1737,6 +1744,27 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				// only send messages with meaningful content (empty messages confuse clients)
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
 					ch <- res
+				}
+
+				return
+			} else if builtinParser != nil {
+				slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
+
+				content, thinking, toolCalls, err := builtinParser.Add(r.Content, req.Tools)
+				if err != nil {
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
+
+				res.Message.Content = content
+				res.Message.Thinking = thinking
+				res.Message.ToolCalls = toolCalls
+
+				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done {
+					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
+					ch <- res
+				} else {
+					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
 				}
 
 				return

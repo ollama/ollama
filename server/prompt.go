@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/template"
 )
 
@@ -41,18 +42,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			}
 		}
 
-		thinkVal := false
-		thinkLevel := ""
-		if think != nil {
-			thinkVal = think.Bool()
-			thinkLevel = think.String()
-		}
-		var b bytes.Buffer
-		if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[i:]...), Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
+		p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+		if err != nil {
 			return "", nil, err
 		}
 
-		s, err := tokenize(ctx, b.String())
+		s, err := tokenize(ctx, p)
 		if err != nil {
 			return "", nil, err
 		}
@@ -101,6 +96,23 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	// truncate any messages that do not fit into the context window
+	p, err := renderPrompt(m, append(system, msgs[currMsgIdx:]...), tools, think)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return p, images, nil
+}
+
+func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	if m.Config.Renderer != "" {
+		rendered, err := renderers.RenderWithRenderer(m.Config.Renderer, msgs, tools, think)
+		if err != nil {
+			return "", err
+		}
+		return rendered, nil
+	}
+
 	var b bytes.Buffer
 	thinkVal := false
 	thinkLevel := ""
@@ -108,9 +120,8 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		thinkVal = think.Bool()
 		thinkLevel = think.String()
 	}
-	if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[currMsgIdx:]...), Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
-		return "", nil, err
+	if err := m.Template.Execute(&b, template.Values{Messages: msgs, Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
+		return "", err
 	}
-
-	return b.String(), images, nil
+	return b.String(), nil
 }

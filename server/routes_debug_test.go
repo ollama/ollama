@@ -180,7 +180,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 						t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
 					}
 
-					var response api.DebugTemplateResponse
+					var response api.GenerateResponse
 					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatalf("failed to unmarshal response: %v", err)
 					}
@@ -385,7 +385,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 						t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
 					}
 
-					var response api.DebugTemplateResponse
+					var response api.ChatResponse
 					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatalf("failed to unmarshal response: %v", err)
 					}
