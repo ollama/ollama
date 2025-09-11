@@ -92,6 +92,9 @@ If none of those resolve the problem, gather additional information and file an 
 - Set `CUDA_ERROR_LEVEL=50` and try again to get more diagnostic logs
 - Check dmesg for any errors `sudo dmesg | grep -i nvrm` and `sudo dmesg | grep -i nvidia`
 
+You may get more details for initialization failures by enabling debug prints in the uvm driver.  You should only use this temporarily while troubleshooting
+- `sudo rmmod nvidia_uvm` then `sudo modprobe nvidia_uvm uvm_debug_prints=1`
+
 
 ## AMD GPU Discovery
 

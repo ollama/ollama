@@ -36,6 +36,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -45,18 +46,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
-
-func shouldUseHarmony(model *Model) bool {
-	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
-		// heuristic to check whether the template expects to be parsed via harmony:
-		// search for harmony tags that are nearly always used
-		if model.Template.Contains("<|start|>") && model.Template.Contains("<|end|>") {
-			return true
-		}
-	}
-
-	return false
-}
 
 func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
@@ -207,13 +196,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	useHarmony := shouldUseHarmony(m) && !req.Raw
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
+	useHarmony := harmony.ShouldUseHarmony(m.Config.ModelFamily, m.Template) && !req.Raw
+	var parserType parser.TokenParserType
 	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStart()
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+		parserType = parser.TokenParserTypeHarmony
+	} else {
+		parserType = parser.TokenParserTypeDefault
+	}
+	var functionNameMap *harmony.FunctionNameMap
+
+	if useHarmony {
+		functionNameMap = harmony.NewFunctionNameMap()
 	}
 
 	// Validate Think value: string values currently only allowed for gptoss models
@@ -357,16 +350,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:     prompt,
+			Images:     images,
+			Format:     req.Format,
+			Options:    opts,
+			ParserType: parserType,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
 				Response:  cr.Content,
 				Done:      cr.Done,
+				Thinking:  cr.Thinking,
+				ToolCalls: cr.ToolCalls,
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
@@ -375,12 +371,22 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				},
 			}
 
+			if res.Done {
+				res.DoneReason = cr.DoneReason.String()
+				res.TotalDuration = time.Since(checkpointStart)
+				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
 			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(cr.Content, harmonyToolParser)
-				res.Response = content
-				res.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
-			} else if thinkingState != nil {
+				for i, tool := range res.ToolCalls {
+					res.ToolCalls[i].Function.Name = functionNameMap.OriginalFromConverted(tool.Function.Name)
+				}
+				if res.Response != "" || res.Thinking != "" || len(res.ToolCalls) > 0 || res.Done {
+					ch <- res
+				}
+				return
+			}
+			if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
 				res.Response = content
@@ -391,30 +397,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
-				if useHarmony {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-
-						res.ToolCalls = append(res.ToolCalls, api.ToolCall{
-							Function: api.ToolCallFunction{
-								Name:      *toolName,
-								Arguments: args,
-							},
-						})
-					}
-				}
-
-				res.DoneReason = cr.DoneReason.String()
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
 					if err != nil {
@@ -1616,27 +1598,27 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-
-	useHarmony := shouldUseHarmony(m)
+	useHarmony := harmony.ShouldUseHarmony(m.Config.ModelFamily, m.Template)
+	var parserType parser.TokenParserType
+	if useHarmony {
+		parserType = parser.TokenParserTypeHarmony
+	} else {
+		parserType = parser.TokenParserTypeDefault
+	}
 
 	processedTools := req.Tools
+	var functionNameMap *harmony.FunctionNameMap
+	var prefillString string
+	// TODO(parthsareen): this can be abstracted to not be model specific and potentially moved to the runner
 	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		var lastMessage *api.Message
-		if len(msgs) > 0 {
-			lastMessage = &msgs[len(msgs)-1]
-		}
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(lastMessage)
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
-
+		prefillString = harmony.Prefill(msgs[len(msgs)-1])
+		functionNameMap = harmony.NewFunctionNameMap()
 		// make a copy of tools to pass to the chat prompt. Function names may be
 		// renamed to be valid Harmony function names.
 		processedTools = make([]api.Tool, len(req.Tools))
 		copy(processedTools, req.Tools)
 		for i, tool := range processedTools {
-			processedTools[i].Function.Name = harmonyMessageHandler.FunctionNameMap.ConvertAndAdd(tool.Function.Name)
+			processedTools[i].Function.Name = functionNameMap.ConvertAndAdd(tool.Function.Name)
 		}
 	}
 
@@ -1689,15 +1671,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:        prompt,
+			Images:        images,
+			Format:        req.Format,
+			Options:       opts,
+			ParserType:    parserType,
+			PrefillString: prefillString,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
-				Message:   api.Message{Role: "assistant", Content: r.Content},
+				Message:   api.Message{Role: "assistant", Content: r.Content, Thinking: r.Thinking, ToolCalls: r.ToolCalls},
 				Done:      r.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
@@ -1713,31 +1697,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(r.Content, harmonyToolParser)
-				res.Message.Content = content
-				res.Message.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
-
-				if r.Done {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						*toolName = harmonyMessageHandler.FunctionNameMap.OriginalFromConverted(*toolName)
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-						res.Message.ToolCalls = []api.ToolCall{{Function: api.ToolCallFunction{Name: *toolName, Arguments: args}}}
-					}
+				for i, tool := range res.Message.ToolCalls {
+					res.Message.ToolCalls[i].Function.Name = functionNameMap.OriginalFromConverted(tool.Function.Name)
 				}
-
 				// only send messages with meaningful content (empty messages confuse clients)
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
 					ch <- res
 				}
-
 				return
 			}
 

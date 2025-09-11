@@ -121,6 +121,7 @@ func TestMultiModelStress(t *testing.T) {
 	// The intent is to go 1 over what can fit so we force the scheduler to thrash
 	targetLoadCount := 0
 	slog.Info("Loading models to find how many can fit in VRAM before overflowing")
+chooseModels:
 	for i, model := range chosenModels {
 		req := &api.GenerateRequest{Model: model}
 		slog.Info("loading", "model", model)
@@ -141,6 +142,13 @@ func TestMultiModelStress(t *testing.T) {
 				}
 				slog.Info("found model load capacity", "target", targetLoadCount, "current", loaded, "chosen", chosenModels[:targetLoadCount])
 				break
+			}
+			// Effectively limit model count to 2 on CPU only systems to avoid thrashing and timeouts
+			for _, m := range models.Models {
+				if m.SizeVRAM == 0 {
+					slog.Info("model running on CPU", "name", m.Name, "target", targetLoadCount, "chosen", chosenModels[:targetLoadCount])
+					break chooseModels
+				}
 			}
 		}
 	}

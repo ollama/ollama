@@ -46,7 +46,7 @@ jobs:
         include:
           - preset: CPU
           - preset: CUDA
-            container: nvidia/cuda:12.8.1-devel-ubuntu22.04
+            container: nvidia/cuda:13.0.0-devel-ubuntu22.04
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
           - preset: ROCm
             container: rocm/dev-ubuntu-22.04:6.1.2
@@ -78,7 +78,7 @@ jobs:
         include:
           - preset: CPU
           - preset: CUDA
-            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
           - preset: ROCm
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
@@ -102,7 +102,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-            Start-Process -FilePath .\install.exe -ArgumentList (@("-s", "cudart_12.8", "nvcc_12.8", "cublas_12.8", "cublas_dev_12.8")) -NoNewWindow -Wait
+            Start-Process -FilePath .\install.exe -ArgumentList (@("-s", "cudart_13.0", "nvcc_13.0", "cublas_13.0", "cublas_dev_13.0")) -NoNewWindow -Wait
           }
 
           $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
