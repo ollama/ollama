@@ -12,11 +12,11 @@ Defaults to false for newly created backend buffer types.
 ---
  ggml/include/ggml-backend.h  |  1 +
  ggml/src/ggml-backend-impl.h |  2 ++
- ggml/src/ggml-backend.cpp    | 19 ++++++++++++++++++-
- 3 files changed, 21 insertions(+), 1 deletion(-)
+ ggml/src/ggml-backend.cpp    | 18 +++++++++++++++++-
+ 3 files changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 9424394e..b602a7c7 100644
+index 814873c1..f1225c17 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -35,6 +35,7 @@ extern "C" {
@@ -28,7 +28,7 @@ index 9424394e..b602a7c7 100644
      GGML_API size_t                ggml_backend_buft_get_alignment (ggml_backend_buffer_type_t buft);
      GGML_API size_t                ggml_backend_buft_get_max_size  (ggml_backend_buffer_type_t buft);
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index c36c12d6..81749a5a 100644
+index 2db5c4e0..1eae3b48 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -32,6 +32,7 @@ extern "C" {
@@ -48,10 +48,10 @@ index c36c12d6..81749a5a 100644
  
      GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index eded0291..05a842ed 100644
+index 5dd9d138..3cf6fbaf 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -35,12 +35,22 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
+@@ -35,12 +35,21 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
      return buft->iface.get_name(buft);
  }
  
@@ -70,11 +70,10 @@ index eded0291..05a842ed 100644
 +        buf->no_alloc = true;
 +        return buf;
 +    }
-+
+     GGML_ASSERT(buft);
      return buft->iface.alloc_buffer(buft, size);
  }
- 
-@@ -89,7 +99,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
+@@ -95,7 +104,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
          /* .buft      = */ buft,
          /* .context   = */ context,
          /* .size      = */ size,
@@ -84,7 +83,7 @@ index eded0291..05a842ed 100644
      };
  
      return buffer;
-@@ -119,6 +130,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -127,6 +137,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
          return NULL;
      }
  
@@ -97,3 +96,6 @@ index eded0291..05a842ed 100644
      void * base = buffer->iface.get_base(buffer);
  
      GGML_ASSERT(base != NULL && "backend buffer base cannot be NULL");
+-- 
+2.43.0
+
