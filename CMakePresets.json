@@ -30,7 +30,7 @@
       "name": "CUDA 12",
       "inherits": [ "CUDA" ],
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "50;60;61;70;75;80;86;87;89;90;90a;120",
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;60-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual",
         "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2"
       }
     },

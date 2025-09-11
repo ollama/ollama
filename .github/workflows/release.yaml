@@ -64,14 +64,14 @@ jobs:
           - os: windows
             arch: amd64
             preset: 'CUDA 12'
-            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            install: https://developer.download.nvidia.com/compute/cuda/12.1.1/local_installers/cuda_12.1.1_531.14_windows.exe
             cuda-components:
               - '"cudart"'
               - '"nvcc"'
               - '"cublas"'
               - '"cublas_dev"'
-            cuda-version: '12.8'
-            flags: ''
+            cuda-version: '12.1'
+            flags: '-G "Visual Studio 16 2019"'
             runner_dir: 'cuda_v12'
           - os: windows
             arch: amd64
