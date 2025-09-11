@@ -219,7 +219,7 @@ function init() {
 
   if (process.platform === 'darwin') {
     if (app.isPackaged) {
-      if (!app.isInApplicationsFolder()) {
+      if (!app.isInApplicationsFolder() && !app.getAppPath().includes(path.join(app.getPath('home'), 'Applications'))) {
         const chosen = dialog.showMessageBoxSync({
           type: 'question',
           buttons: ['Move to Applications', 'Do Not Move'],
