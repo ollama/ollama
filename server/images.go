@@ -24,6 +24,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
@@ -94,8 +95,9 @@ func (m *Model) Capabilities() []model.Capability {
 		return capabilities
 	}
 
+	builtinParser := parsers.ParserForName(m.Config.Parser)
 	// Check for tools capability
-	if slices.Contains(m.Template.Vars(), "tools") {
+	if slices.Contains(m.Template.Vars(), "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
 		capabilities = append(capabilities, model.CapabilityTools)
 	}
 
@@ -112,7 +114,8 @@ func (m *Model) Capabilities() []model.Capability {
 	// Check for thinking capability
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	hasTags := openingTag != "" && closingTag != ""
-	if hasTags || slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily) {
+	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
+	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
@@ -198,6 +201,20 @@ func (m *Model) String() string {
 		})
 	}
 
+	if m.Config.Renderer != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "renderer",
+			Args: m.Config.Renderer,
+		})
+	}
+
+	if m.Config.Parser != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "parser",
+			Args: m.Config.Parser,
+		})
+	}
+
 	for k, v := range m.Options {
 		switch v := v.(type) {
 		case []any:
@@ -238,6 +255,8 @@ type ConfigV2 struct {
 	ModelFamilies []string `json:"model_families"`
 	ModelType     string   `json:"model_type"`
 	FileType      string   `json:"file_type"`
+	Renderer      string   `json:"renderer,omitempty"`
+	Parser        string   `json:"parser,omitempty"`
 
 	// required by spec
 	Architecture string `json:"architecture"`
