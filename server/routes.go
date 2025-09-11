@@ -558,7 +558,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			if err != nil {
 				return err
 			}
-			embeddings[i] = normalize(embedding)
+			// TODO: this first normalization should be done by the model
+			embedding = normalize(embedding)
+			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
+				embedding = normalize(embedding[:req.Dimensions])
+			}
+			embeddings[i] = embedding
 			return nil
 		})
 	}
@@ -584,11 +589,7 @@ func normalize(vec []float32) []float32 {
 		sum += v * v
 	}
 
-	norm := float32(0.0)
-	if sum > 0 {
-		norm = float32(1.0 / math.Sqrt(float64(sum)))
-	}
-
+	norm := float32(1.0 / max(math.Sqrt(float64(sum)), 1e-12))
 	for i := range vec {
 		vec[i] *= norm
 	}
