@@ -162,11 +162,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 	}
 
-	newEstimates := textProcessor != nil && envconfig.NewMemoryEstimates()
-	if newEstimates {
-		slog.Info("enabling new memory estimates")
-	}
-
 	// Verify the requested context size is <= the model training size
 	trainCtx := f.KV().ContextLength()
 	if opts.NumCtx > int(trainCtx) && trainCtx > 0 {
@@ -434,7 +429,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			}
 		}()
 
-		if newEstimates {
+		if textProcessor != nil {
 			return &ollamaServer{llmServer: s}, nil
 		} else {
 			return &llamaServer{llmServer: s, ggml: f}, nil
