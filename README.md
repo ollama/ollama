@@ -484,6 +484,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 - [Nix package](https://search.nixos.org/packages?show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
+- [Chocolatey](https://community.chocolatey.org/packages/Ollama)
 
 ### Libraries
 
