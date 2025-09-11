@@ -18,7 +18,6 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -1101,9 +1100,13 @@ func (s *Server) allocModel(
 	// Convert memory allocation panics to errors
 	defer func() {
 		if r := recover(); r != nil {
-			debug.PrintStack()
 			if err, ok := r.(error); ok {
-				panicErr = err
+				var noMem ml.ErrNoMem
+				if errors.As(err, &noMem) {
+					panicErr = noMem
+				} else {
+					panic(r)
+				}
 			} else {
 				panic(r)
 			}
