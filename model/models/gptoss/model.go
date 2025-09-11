@@ -30,9 +30,9 @@ type Transformer struct {
 // Forward implements model.Model.
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
-	one := ctx.Input().FromFloatSlice([]float32{1}, 1)
+	one := ctx.Input().FromFloats([]float32{1}, 1)
 	for i, block := range m.TransformerBlocks {
 		m.Cache.SetLayer(i)
 		if c, ok := m.Cache.(*kvcache.WrapperCache); ok {
