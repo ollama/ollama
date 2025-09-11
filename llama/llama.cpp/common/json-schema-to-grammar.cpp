@@ -843,9 +843,10 @@ public:
                 _build_object_rule(
                     properties, required, name,
                     schema.contains("additionalProperties") ? schema["additionalProperties"] : json()));
-        } else if ((schema_type.is_null() || schema_type == "object") && schema.contains("allOf")) {
+        } else if ((schema_type.is_null() || schema_type == "object" || schema_type == "string") && schema.contains("allOf")) {
             std::unordered_set<std::string> required;
             std::vector<std::pair<std::string, json>> properties;
+            std::map<std::string, size_t> enum_values;
             std::string hybrid_name = name;
             std::function<void(const json &, bool)> add_component = [&](const json & comp_schema, bool is_required) {
                 if (comp_schema.contains("$ref")) {
@@ -856,6 +857,14 @@ public:
                         if (is_required) {
                             required.insert(prop.key());
                         }
+                    }
+                } else if (comp_schema.contains("enum")) {
+                    for (const auto & v : comp_schema["enum"]) {
+                        const auto rule = _generate_constant_rule(v);
+                        if (enum_values.find(rule) == enum_values.end()) {
+                            enum_values[rule] = 0;
+                        }
+                        enum_values[rule] += 1;
                     }
                 } else {
                   // todo warning
@@ -868,6 +877,17 @@ public:
                     }
                 } else {
                     add_component(t, true);
+                }
+            }
+            if (!enum_values.empty()) {
+                std::vector<std::string> enum_intersection;
+                for (const auto & p : enum_values) {
+                    if (p.second == schema["allOf"].size()) {
+                        enum_intersection.push_back(p.first);
+                    }
+                }
+                if (!enum_intersection.empty()) {
+                    return _add_rule(rule_name, "(" + string_join(enum_intersection, " | ") + ") space");
                 }
             }
             return _add_rule(rule_name, _build_object_rule(properties, required, hybrid_name, json()));

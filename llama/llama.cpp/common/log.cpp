@@ -4,15 +4,50 @@
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <sstream>
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#    include <io.h>
+#    include <windows.h>
+#    define isatty _isatty
+#    define fileno _fileno
+#else
+#    include <unistd.h>
+#endif // defined(_WIN32)
+
 int common_log_verbosity_thold = LOG_DEFAULT_LLAMA;
 
 void common_log_set_verbosity_thold(int verbosity) {
     common_log_verbosity_thold = verbosity;
+}
+
+// Auto-detect if colors should be enabled based on terminal and environment
+static bool common_log_should_use_colors_auto() {
+    // Check NO_COLOR environment variable (https://no-color.org/)
+    if (const char * no_color = std::getenv("NO_COLOR")) {
+        if (no_color[0] != '\0') {
+            return false;
+        }
+    }
+
+    // Check TERM environment variable
+    if (const char * term = std::getenv("TERM")) {
+        if (std::strcmp(term, "dumb") == 0) {
+            return false;
+        }
+    }
+
+    // Check if stdout and stderr are connected to a terminal
+    // We check both because log messages can go to either
+    bool stdout_is_tty = isatty(fileno(stdout));
+    bool stderr_is_tty = isatty(fileno(stderr));
+
+    return stdout_is_tty || stderr_is_tty;
 }
 
 static int64_t t_us() {
@@ -353,6 +388,11 @@ struct common_log * common_log_init() {
 
 struct common_log * common_log_main() {
     static struct common_log log;
+    static std::once_flag    init_flag;
+    std::call_once(init_flag, [&]() {
+        // Set default to auto-detect colors
+        log.set_colors(common_log_should_use_colors_auto());
+    });
 
     return &log;
 }
@@ -380,8 +420,19 @@ void common_log_set_file(struct common_log * log, const char * file) {
     log->set_file(file);
 }
 
-void common_log_set_colors(struct common_log * log, bool colors) {
-    log->set_colors(colors);
+void common_log_set_colors(struct common_log * log, log_colors colors) {
+    if (colors == LOG_COLORS_AUTO) {
+        log->set_colors(common_log_should_use_colors_auto());
+        return;
+    }
+
+    if (colors == LOG_COLORS_DISABLED) {
+        log->set_colors(false);
+        return;
+    }
+
+    GGML_ASSERT(colors == LOG_COLORS_ENABLED);
+    log->set_colors(true);
 }
 
 void common_log_set_prefix(struct common_log * log, bool prefix) {

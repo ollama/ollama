@@ -34,10 +34,7 @@ static  __global__ void conv_transpose_1d_kernel(
         }
     }
     dst[global_index] = accumulator;
-    GGML_UNUSED(p0); GGML_UNUSED(d0); GGML_UNUSED(src0_ne3);
-    GGML_UNUSED(src1_ne3); GGML_UNUSED(dst_ne3);
-    GGML_UNUSED(src1_ne1); GGML_UNUSED(dst_ne1);
-    GGML_UNUSED(src1_ne2); GGML_UNUSED(dst_ne2);
+    GGML_UNUSED_VARS(p0, d0, src0_ne3, src1_ne3, dst_ne3, src1_ne1, dst_ne1, src1_ne2, dst_ne2);
 }
 
 static void conv_transpose_1d_f32_f32_cuda(

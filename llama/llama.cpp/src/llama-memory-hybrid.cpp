@@ -9,32 +9,29 @@
 //
 
 llama_memory_hybrid::llama_memory_hybrid(
-    const llama_model & model,
-                         /* attn */
-            ggml_type    type_k,
-            ggml_type    type_v,
-                 bool    v_trans,
-             uint32_t    kv_size,
-             uint32_t    n_pad,
-             uint32_t    n_swa,
-       llama_swa_type    swa_type,
-                         /* recurrent */
-            ggml_type    type_r,
-            ggml_type    type_s,
-             uint32_t    rs_size,
-                         /* common */
-             uint32_t    n_seq_max,
-                 bool    offload,
-                 bool    unified,
-                         /* layer filters */
-      layer_filter_cb && filter_attn,
-      layer_filter_cb && filter_recr) :
+        const llama_model & model,
+                            /* attn */
+                ggml_type   type_k,
+                ggml_type   type_v,
+                     bool   v_trans,
+                 uint32_t   kv_size,
+                 uint32_t   n_pad,
+                 uint32_t   n_swa,
+           llama_swa_type   swa_type,
+                            /* recurrent */
+                ggml_type   type_r,
+                ggml_type   type_s,
+                 uint32_t   rs_size,
+                            /* common */
+                 uint32_t   n_seq_max,
+                     bool   offload,
+                     bool   unified,
+                            /* layer filters */
+    const layer_filter_cb & filter_attn,
+    const layer_filter_cb & filter_recr) :
     hparams(model.hparams),
-    mem_attn(new llama_kv_cache_unified(
+    mem_attn(new llama_kv_cache(
         model,
-        filter_attn == nullptr ?
-            [&](int32_t il) { return !hparams.is_recurrent(il); }
-            : filter_attn,
         type_k,
         type_v,
         v_trans,
@@ -44,18 +41,22 @@ llama_memory_hybrid::llama_memory_hybrid(
         n_seq_max,
         n_pad,
         n_swa,
-        swa_type
+        swa_type,
+        filter_attn == nullptr ?
+            [&](int32_t il) { return !hparams.is_recurrent(il); }
+            : filter_attn,
+        nullptr
     )),
     mem_recr(new llama_memory_recurrent(
         model,
-        filter_recr == nullptr ?
-            [&](int32_t il) { return hparams.is_recurrent(il); }
-            : filter_recr,
         type_r,
         type_s,
         offload,
         rs_size,
-        n_seq_max
+        n_seq_max,
+        filter_recr == nullptr ?
+            [&](int32_t il) { return hparams.is_recurrent(il); }
+            : filter_recr
     )) {}
 
 llama_memory_context_ptr llama_memory_hybrid::init_batch(llama_batch_allocr & balloc, uint32_t n_ubatch, bool embd_all) {
@@ -165,17 +166,21 @@ llama_pos llama_memory_hybrid::seq_pos_max(llama_seq_id seq_id) const {
     return std::min(mem_attn->seq_pos_max(seq_id), mem_recr->seq_pos_max(seq_id));
 }
 
-void llama_memory_hybrid::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
+void llama_memory_hybrid::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
+    GGML_UNUSED(flags);
+
     mem_attn->state_write(io, seq_id);
     mem_recr->state_write(io, seq_id);
 }
 
-void llama_memory_hybrid::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
+void llama_memory_hybrid::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    GGML_UNUSED(flags);
+
     mem_attn->state_read(io, seq_id);
     mem_recr->state_read(io, seq_id);
 }
 
-llama_kv_cache_unified * llama_memory_hybrid::get_mem_attn() const {
+llama_kv_cache * llama_memory_hybrid::get_mem_attn() const {
     return mem_attn.get();
 }
 
@@ -206,7 +211,7 @@ llama_memory_hybrid_context::llama_memory_hybrid_context(
         std::vector<llama_ubatch>   ubatches) :
     ubatches(std::move(ubatches)),
     // note: here we copy the ubatches. not sure if this is ideal
-    ctx_attn(new llama_kv_cache_unified_context(mem->get_mem_attn(), std::move(sinfos_attn), this->ubatches)),
+    ctx_attn(new llama_kv_cache_context(mem->get_mem_attn(), std::move(sinfos_attn), this->ubatches)),
     ctx_recr(new llama_memory_recurrent_context(mem->get_mem_recr(),                        this->ubatches)),
     status(llama_memory_status_combine(ctx_attn->get_status(), ctx_recr->get_status())) {
 }
@@ -244,8 +249,8 @@ const llama_ubatch & llama_memory_hybrid_context::get_ubatch() const {
     return ubatches[i_next];
 }
 
-const llama_kv_cache_unified_context * llama_memory_hybrid_context::get_attn() const {
-    return static_cast<const llama_kv_cache_unified_context *>(ctx_attn.get());
+const llama_kv_cache_context * llama_memory_hybrid_context::get_attn() const {
+    return static_cast<const llama_kv_cache_context *>(ctx_attn.get());
 }
 
 const llama_memory_recurrent_context * llama_memory_hybrid_context::get_recr() const {

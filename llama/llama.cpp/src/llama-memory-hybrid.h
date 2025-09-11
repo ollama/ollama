@@ -2,7 +2,7 @@
 
 #include "llama-batch.h"
 #include "llama-graph.h"
-#include "llama-kv-cache-unified.h"
+#include "llama-kv-cache.h"
 #include "llama-memory.h"
 #include "llama-memory-recurrent.h"
 
@@ -13,36 +13,32 @@
 // llama_memory_hybrid
 //
 
-// utilizes instances of llama_memory_recurrent and llama_kv_cache_unified to
+// utilizes instances of llama_memory_recurrent and llama_kv_cache to
 //   support models where each layer may be either attention-based or recurrent
 
 class llama_memory_hybrid : public llama_memory_i {
 public:
-
-    // this callback is used to filter out layers that should not be included in the cache
-    using layer_filter_cb = std::function<bool(int32_t il)>;
-
     llama_memory_hybrid(
         const llama_model & model,
                             /* attn */
-                ggml_type    type_k,
-                ggml_type    type_v,
-                     bool    v_trans,
-                 uint32_t    kv_size,
-                 uint32_t    n_pad,
-                 uint32_t    n_swa,
-           llama_swa_type    swa_type,
-                             /* recurrent */
-                ggml_type    type_r,
-                ggml_type    type_s,
-                 uint32_t    rs_size,
-                             /* common */
-                 uint32_t    n_seq_max,
-                     bool    offload,
-                     bool    unified,
-                             /* layer filters */
-          layer_filter_cb && filter_attn = nullptr,
-          layer_filter_cb && filter_recr = nullptr);
+                ggml_type   type_k,
+                ggml_type   type_v,
+                     bool   v_trans,
+                 uint32_t   kv_size,
+                 uint32_t   n_pad,
+                 uint32_t   n_swa,
+           llama_swa_type   swa_type,
+                            /* recurrent */
+                ggml_type   type_r,
+                ggml_type   type_s,
+                 uint32_t   rs_size,
+                            /* common */
+                 uint32_t   n_seq_max,
+                     bool   offload,
+                     bool   unified,
+                            /* layer filters */
+    const layer_filter_cb & filter_attn = nullptr,
+    const layer_filter_cb & filter_recr = nullptr);
 
     ~llama_memory_hybrid() = default;
 
@@ -74,26 +70,26 @@ public:
 
     // state write/load
 
-    void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1) const override;
-    void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1)       override;
+    void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) const override;
+    void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0)       override;
 
     //
     // llama_memory_hybrid specific API
     //
 
-    llama_kv_cache_unified * get_mem_attn() const;
+    llama_kv_cache * get_mem_attn() const;
     llama_memory_recurrent * get_mem_recr() const;
 
 private:
     const llama_hparams & hparams;
 
-    const std::unique_ptr<llama_kv_cache_unified> mem_attn;
+    const std::unique_ptr<llama_kv_cache> mem_attn;
     const std::unique_ptr<llama_memory_recurrent> mem_recr;
 };
 
 class llama_memory_hybrid_context : public llama_memory_context_i {
 public:
-    using slot_info_vec_t = llama_kv_cache_unified::slot_info_vec_t;
+    using slot_info_vec_t = llama_kv_cache::slot_info_vec_t;
 
     // init failure
     explicit llama_memory_hybrid_context(llama_memory_status status);
@@ -125,7 +121,7 @@ public:
     // llama_memory_hybrid_context
     //
 
-    const llama_kv_cache_unified_context * get_attn() const;
+    const llama_kv_cache_context * get_attn() const;
     const llama_memory_recurrent_context * get_recr() const;
 
 private:

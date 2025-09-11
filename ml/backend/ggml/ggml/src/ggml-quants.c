@@ -566,7 +566,7 @@ static float make_q3_quants(int n, int nmax, const float * GGML_RESTRICT x, int8
         for (int i = 0; i < n; ++i) {
             L[i] += nmax;
         }
-        return sumlx / suml2;
+        return suml2 > 0.0f ? sumlx / suml2 : 0.0f;
     }
     for (int i = 0; i < n; ++i) {
         int l = nearest_int(iscale * x[i]);
@@ -901,7 +901,7 @@ static float make_qp_quants(int n, int nmax, const float * GGML_RESTRICT x, uint
     for (int i = 0; i < n; ++i) {
         max = MAX(max, x[i]);
     }
-    if (!max) { // all zero
+    if (max < GROUP_MAX_EPS) { // all zero
         for (int i = 0; i < n; ++i) { L[i] = 0; }
         return 0.f;
     }
@@ -966,7 +966,7 @@ static float make_qp_quants(int n, int nmax, const float * GGML_RESTRICT x, uint
             break;
         }
     }
-    return sumlx/suml2;
+    return suml2 > 0.0f ? sumlx / suml2 : 0.0f;
 }
 
 static void quantize_row_q2_K_impl(const float * GGML_RESTRICT x, block_q2_K * GGML_RESTRICT y, int k, const float * GGML_RESTRICT quant_weights) {
@@ -4266,7 +4266,7 @@ static void quantize_row_iq1_s_impl(const float * GGML_RESTRICT x, void * GGML_R
                     sumw[j+1] = sumw[j] + weight[i];
                 }
             }
-            float best_score = -FLT_MIN, scale = max;
+            float best_score = -FLT_MAX, scale = max;
             int besti1 = -1, besti2 = -1, best_shift = 0;
             for (int i1 = 0; i1 <= block_size; ++i1) {
                 for (int i2 = i1; i2 <= block_size; ++i2) {
@@ -4442,7 +4442,7 @@ static void quantize_row_iq1_m_impl(const float * GGML_RESTRICT x, void * GGML_R
                 idx[2*j] = j;
             }
             qsort(pairs, block_size, 2*sizeof(float), iq1_sort_helper);
-            float best_score = -FLT_MIN, scale = max;
+            float best_score = -FLT_MAX, scale = max;
             int besti1 = -1, besti2 = -1, best_k = -1;
             // 0: +, +
             // 1: +, -

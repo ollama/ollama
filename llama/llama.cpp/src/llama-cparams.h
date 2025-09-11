@@ -24,7 +24,6 @@ struct llama_cparams {
     float yarn_attn_factor;
     float yarn_beta_fast;
     float yarn_beta_slow;
-    float defrag_thold;
 
     bool embeddings;
     bool causal_attn;

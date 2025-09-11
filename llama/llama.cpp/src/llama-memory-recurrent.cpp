@@ -16,13 +16,13 @@
 //
 
 llama_memory_recurrent::llama_memory_recurrent(
-        const llama_model &  model,
-          layer_filter_cb && filter,
-                ggml_type    type_r,
-                ggml_type    type_s,
-                     bool    offload,
-                 uint32_t    mem_size,
-                 uint32_t    n_seq_max) : hparams(model.hparams), n_seq_max(n_seq_max) {
+        const llama_model & model,
+                ggml_type   type_r,
+                ggml_type   type_s,
+                     bool   offload,
+                 uint32_t   mem_size,
+                 uint32_t   n_seq_max,
+    const layer_filter_cb & filter) : hparams(model.hparams), n_seq_max(n_seq_max) {
     const int32_t n_layer = hparams.n_layer;
 
     head = 0;
@@ -680,7 +680,9 @@ size_t llama_memory_recurrent::size_s_bytes() const {
     return size_s_bytes;
 }
 
-void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
+void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
+    GGML_UNUSED(flags);
+
     std::vector<std::pair<uint32_t, uint32_t>> cell_ranges; // ranges, from inclusive, to exclusive
     uint32_t cell_count = 0;
 
@@ -718,7 +720,9 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
     state_write_data(io, cell_ranges);
 }
 
-void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
+void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    GGML_UNUSED(flags);
+
     uint32_t cell_count;
     io.read_to(&cell_count, sizeof(cell_count));
 
