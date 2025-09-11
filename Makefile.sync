@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/ggml-org/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=e54d41befcc1575f4c898c5ff4ef43970cead75f
+FETCH_HEAD=00681dfc16ba4cebb9c7fbd2cf2656e06a0692a4
 
 .PHONY: help
 help:
@@ -39,7 +39,7 @@ PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATC
 apply-patches: $(PATCHED)
 
 llama/patches/.%.patched: llama/patches/%.patch
-	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then \
+	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 --whitespace=fix $(realpath $<); then \
 		touch $@;                                                                           \
 	else                                                                                    \
 		echo "Patch failed. Resolve any conflicts then continue.";                          \
