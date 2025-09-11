@@ -979,3 +979,84 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 
 	return out, nil
 }
+
+type SystemModelInfo struct {
+	// Store is the location where the server stores models in the filesystem.
+	Store string `json:"store"`
+
+	// Count is the number of models currently stored in the filesystem.
+	Count int `json:"count"`
+
+	// FilesystemUsed is the number of bytes used on the filesystem to store models
+	FilesystemUsed uint64 `json:"filesystem_used"`
+
+	// Running is the number of models currently running in the server.
+	Running int `json:"running"`
+
+	// VRAMUsed is the amount of GPU VRAM consumed by the loaded models
+	VRAMUsed uint64 `json:"vram_used"`
+}
+
+type SystemComputeInfo struct {
+	// Cores is the number of detected CPU Cores in the system
+	CPUCores int `json:"cpu_cores"`
+
+	// TotalMemory is the amount of system memory discovered by the server
+	TotalMemory uint64 `json:"total_memory"`
+
+	// FreeMemory is the amount of system memory available for loading new models
+	FreeMemory uint64 `json:"free_memory"`
+
+	// FreeSwap is the amount of swap space available for loading new models
+	FreeSwap uint64 `json:"free_swap"`
+}
+
+type GPUInfo struct {
+	// ID is the unique identifier to use for selection of this specific GPU by device vendor
+	ID string `json:"gpu_id"`
+
+	// Name is the model or other identifying information about the GPU
+	Name string `json:"name"`
+
+	// TotalMemory is the amount of video memory on the GPU
+	TotalMemory uint64 `json:"total_memory"`
+
+	// FreeMemory is the amount of video memory on the GPU available for loading new models
+	FreeMemory uint64 `json:"free_memory"`
+
+	// Compute is the GPU capability version information, specific to each device vendor
+	Compute string `json:"compute"`
+
+	// Driver is the device driver detected for this GPU
+	Driver string `json:"driver"`
+
+	// Runner is the default runner for this GPU
+	Runner string `json:"runner"`
+}
+
+type UnsupportedGPUInfo struct {
+	GPUInfo
+
+	// Error explains the reason why this GPU can not be used for running models
+	Error string `json:"error"`
+}
+type ComputeInfo struct {
+	SystemCompute SystemComputeInfo `json:"system_compute"`
+
+	SupportedGPUs []GPUInfo `json:"supported_gpus"`
+
+	UnsupportedGPUs []UnsupportedGPUInfo `json:"unsupported_gpus"`
+
+	// DiscoveryErrors contains any errors encountered while trying to discover GPUs
+	DiscoveryErrors []string `json:"discovery_errors"`
+}
+
+// InfoResponse is the response returned from [Client.Info].
+type InfoResponse struct {
+	// Version is the current version of the server.
+	Version string `json:"version"`
+
+	Models SystemModelInfo `json:"models"`
+
+	ComputeInfo ComputeInfo `json:"compute"`
+}
