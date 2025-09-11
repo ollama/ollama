@@ -84,6 +84,12 @@ type GenerateRequest struct {
 	// set through this field, if the model supports it.
 	Options map[string]any `json:"options"`
 
+	// Truncate controls behavior when the input exceeds the context window.
+	// If true or omitted (default), Ollama will truncate inputs to fit.
+	// If false, the server will return HTTP 400 when the input exceeds the
+	// effective context length instead of truncating.
+	Truncate *bool `json:"truncate,omitempty"`
+
 	// Think controls whether thinking/reasoning models will think before
 	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
 	// for supported models. Needs to be a pointer so we can distinguish between false
@@ -119,6 +125,12 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
+
+	// Truncate controls behavior when the composed chat prompt exceeds the
+	// context window. If true or omitted (default), Ollama will truncate
+	// messages to fit the context (keeping the latest message and any system
+	// messages). If false, the server will return HTTP 400 instead.
+	Truncate *bool `json:"truncate,omitempty"`
 
 	// Think controls whether thinking/reasoning models will think before
 	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
