@@ -16060,7 +16060,7 @@ struct llm_build_solar : public llm_graph_context {
 
                 cur = build_attn(inp_attn,
                         model.layers[il].wo, model.layers[il].bo,
-                        Qcur, Kcur, Vcur, nullptr, nullptr, build_attn, kq_scale, il);
+                        Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
                 cb(cur, "attn_out", il);
             }
 
