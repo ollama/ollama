@@ -284,6 +284,11 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.MinimumMemory = cudaMinimumMemory
 				gpuInfo.DriverMajor = driverMajor
 				gpuInfo.DriverMinor = driverMinor
+				// Compression requires driver 12.4 or newer
+				if gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor < 4 {
+					slog.Error("CUDA devices require driver 550 or newer (v12.4)", "driver", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
+					continue
+				}
 				variant := cudaVariant(gpuInfo)
 
 				// Start with our bundled libraries
