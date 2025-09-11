@@ -363,7 +363,6 @@ func NewBackend(modelPath string, params BackendParams) (Backend, error) {
 
 type Context interface {
 	Empty(dtype DType, shape ...int) Tensor
-	Zeros(dtype DType, shape ...int) Tensor
 	FromFloatSlice(s []float32, shape ...int) Tensor
 	FromIntSlice(s []int32, shape ...int) Tensor
 

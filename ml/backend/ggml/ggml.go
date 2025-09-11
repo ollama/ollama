@@ -887,14 +887,6 @@ func (c *Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	return c.newTensor(dtype, shape)
 }
 
-func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
-	t := c.newTensor(dtype, shape)
-	if c.b.allocMemory {
-		C.ggml_set_zero(t.(*Tensor).t)
-	}
-	return t
-}
-
 func checkShape[S ~[]E, E any](s S, shape ...int) {
 	n := len(s)
 
