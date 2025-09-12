@@ -193,6 +193,38 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		loadRequest.ProjectorPath = projectors[0]
 	}
 
+	// Set diffusion parameters if they are provided
+	if opts.Diffusion != nil {
+		if opts.Diffusion.Steps != nil {
+			loadRequest.DiffusionSteps = *opts.Diffusion.Steps
+		} else {
+			loadRequest.DiffusionSteps = 128 // default value from llama.cpp
+		}
+		if opts.Diffusion.VisualMode != nil {
+			loadRequest.DiffusionVisualMode = *opts.Diffusion.VisualMode
+		}
+		if opts.Diffusion.Eps != nil {
+			loadRequest.DiffusionEps = *opts.Diffusion.Eps
+		}
+		if opts.Diffusion.BlockLength != nil {
+			loadRequest.DiffusionBlockLength = *opts.Diffusion.BlockLength
+		}
+		if opts.Diffusion.Algorithm != nil {
+			loadRequest.DiffusionAlgorithm = *opts.Diffusion.Algorithm
+		} else {
+			loadRequest.DiffusionAlgorithm = 4 // default value from llama.cpp
+		}
+		if opts.Diffusion.AlgTemp != nil {
+			loadRequest.DiffusionAlgTemp = *opts.Diffusion.AlgTemp
+		}
+		if opts.Diffusion.CfgScale != nil {
+			loadRequest.DiffusionCfgScale = *opts.Diffusion.CfgScale
+		}
+		if opts.Diffusion.AddGumbelNoise != nil {
+			loadRequest.DiffusionAddGumbelNoise = *opts.Diffusion.AddGumbelNoise
+		}
+	}
+
 	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
 	// that can handle it.
 	fa := envconfig.FlashAttention()
@@ -482,6 +514,16 @@ type LoadRequest struct {
 	NumThreads     int
 	GPULayers      ml.GPULayersList
 	MultiUserCache bool
+
+	// Diffusion parameters for diffusion models
+	DiffusionSteps         int32
+	DiffusionVisualMode    bool
+	DiffusionEps           float32
+	DiffusionBlockLength   int32
+	DiffusionAlgorithm     int32
+	DiffusionAlgTemp       float32
+	DiffusionCfgScale      float32
+	DiffusionAddGumbelNoise bool
 
 	// Legacy fields - not used with the Ollama engine
 	ProjectorPath string

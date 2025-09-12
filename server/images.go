@@ -24,6 +24,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
@@ -39,6 +40,7 @@ var (
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
+	errCapabilityDiffusion  = errors.New("diffusion")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -72,6 +74,11 @@ type Model struct {
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
+	// Check for diffusion capability first
+	if m.IsDiffusionModel() {
+		capabilities = append(capabilities, model.CapabilityDiffusion)
+	}
+
 	// Check for completion capability
 	f, err := gguf.Open(m.ModelPath)
 	if err == nil {
@@ -79,8 +86,8 @@ func (m *Model) Capabilities() []model.Capability {
 
 		if f.KeyValue("pooling_type").Valid() {
 			capabilities = append(capabilities, model.CapabilityEmbedding)
-		} else {
-			// If no embedding is specified, we assume the model supports completion
+		} else if !m.IsDiffusionModel() {
+			// If no embedding is specified and not a diffusion model, assume completion
 			capabilities = append(capabilities, model.CapabilityCompletion)
 		}
 		if f.KeyValue("vision.block_count").Valid() {
@@ -133,6 +140,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
+		model.CapabilityDiffusion:  errCapabilityDiffusion,
 	}
 
 	for _, cap := range want {
@@ -160,6 +168,18 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 	}
 
 	return err
+}
+
+// IsDiffusionModel checks if the model is a diffusion-based model
+func (m *Model) IsDiffusionModel() bool {
+	arch, err := llama.GetModelArch(m.ModelPath)
+	if err != nil {
+		slog.Debug("failed to get model architecture", "model", m.ModelPath, "error", err)
+		return false
+	}
+	
+	// Check if the architecture is a diffusion model (Dream, LLaDA, etc.)
+	return arch == "dream" || arch == "llada"
 }
 
 func (m *Model) String() string {
