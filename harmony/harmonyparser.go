@@ -47,12 +47,13 @@ func (s harmonyParserState) String() string {
 }
 
 type HarmonyParser struct {
-	state           harmonyParserState
-	MessageStartTag string
-	MessageEndTag   string
-	HeaderEndTag    string
-	acc             strings.Builder
-	lifetimeAcc     strings.Builder
+	state              harmonyParserState
+	MessageStartTag    string
+	MessageEndTag      string
+	HeaderEndTag       string
+	constraintsAllowed bool
+	acc                strings.Builder
+	lifetimeAcc        strings.Builder
 }
 
 type HarmonyEvent interface {
@@ -87,6 +88,10 @@ type HarmonyHeader struct {
 
 func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
+}
+
+func (s *HarmonyParser) ConstraintsAllowed() bool {
+	return s.constraintsAllowed
 }
 
 func Prefill(lastMessage api.Message) string {
@@ -341,6 +346,7 @@ func (h *HarmonyMessageHandler) AddContent(content string) (string, string, stri
 				}
 			case "final":
 				h.state = harmonyMessageState_Normal
+				h.HarmonyParser.constraintsAllowed = true
 			}
 		case HarmonyEventContentEmitted:
 			logutil.Trace("harmony event content", "content", event.Content, "state", h.state)

@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
+	"sync"
 
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/model"
@@ -23,6 +24,12 @@ type Sampler struct {
 	minP        float32
 	temperature float32
 	grammar     *GrammarSampler
+}
+
+func (s *Sampler) SetGrammar(grammar *GrammarSampler, mutex *sync.Mutex) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	s.grammar = grammar
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
