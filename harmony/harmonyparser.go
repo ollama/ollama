@@ -3,28 +3,14 @@ package harmony
 import (
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
-	"github.com/ollama/ollama/template"
 )
 
 type harmonyParserState int
-
-func ShouldUseHarmony(modelFamily string, template *template.Template) bool {
-	if slices.Contains([]string{"gptoss", "gpt-oss"}, modelFamily) {
-		// heuristic to check whether the template expects to be parsed via harmony:
-		// search for harmony tags that are nearly always used
-		if template.Contains("<|start|>") && template.Contains("<|end|>") {
-			return true
-		}
-	}
-
-	return false
-}
 
 const (
 	harmonyParserState_LookingForMessageStart harmonyParserState = iota
@@ -89,28 +75,18 @@ func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
 }
 
-func Prefill(lastMessage api.Message) string {
-	if lastMessage.Role != "assistant" {
-		return ""
+func (s *HarmonyParser) AddImplicitStartOrPrefill(lastMessage *api.Message) {
+	if lastMessage != nil && lastMessage.Role == "assistant" {
+		// handle prefilling conditions
+		if lastMessage.Content != "" {
+			s.acc.WriteString("<|start|>assistant<|channel|>final<|message|>")
+			return
+		} else if lastMessage.Thinking != "" {
+			s.acc.WriteString("<|start|>assistant<|channel|>analysis<|message|>")
+			return
+		}
 	}
-
-	switch {
-	case strings.TrimSpace(lastMessage.Content) != "":
-		return "<|start|>assistant<|channel|>final<|message|>"
-	case strings.TrimSpace(lastMessage.Thinking) != "":
-		return "<|start|>assistant<|channel|>analysis<|message|>"
-	default:
-		return ""
-	}
-}
-
-// AddImplicitStartOrPrefill adds an implicit start tag or prefill string if provided
-func (s *HarmonyParser) AddImplicitStartOrPrefill(prefillString string) {
-	if strings.TrimSpace(prefillString) != "" {
-		s.acc.WriteString(prefillString)
-	} else {
-		s.AddImplicitStart()
-	}
+	s.AddImplicitStart()
 }
 
 func (s *HarmonyParser) AddContent(content string) []HarmonyEvent {

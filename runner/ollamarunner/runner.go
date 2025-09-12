@@ -29,7 +29,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -781,14 +780,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-	if req.UseHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(req.PrefillString)
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
-	}
-
 	if req.Options == nil {
 		opts := api.DefaultOptions()
 		req.Options = &opts
@@ -871,9 +862,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
 		return
 	}
-	var lastToken string
-	tokenRepeat := 0
-	const tokenRepeatLimit = 30
 
 	for {
 		select {
@@ -882,27 +870,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				if strings.TrimSpace(content) == lastToken {
-					tokenRepeat++
-				}
-				if tokenRepeat == tokenRepeatLimit {
-					http.Error(w, "token repeat limit reached", http.StatusInternalServerError)
-					seq.doneReason = llm.DoneReasonTokenRepeatLimit
-					close(seq.quit)
-					return
-				}
-				lastToken = strings.TrimSpace(content)
-
-				var thinking string
-				if harmonyMessageHandler != nil {
-					var toolContent string
-					content, thinking, toolContent = harmonyMessageHandler.AddContent(content, harmonyToolParser)
-					harmonyToolParser.Add(toolContent)
-				}
-
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content:  content,
-					Thinking: thinking,
+					Content: content,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
@@ -911,29 +880,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				var toolCalls []api.ToolCall
-				if harmonyMessageHandler != nil {
-					// these tools still need to be transformed to the original function name
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							http.Error(w, fmt.Sprintf("failed to unmarshal tool call function arguments: %v", err), http.StatusInternalServerError)
-							close(seq.quit)
-							return
-						}
-						toolCalls = append(toolCalls, api.ToolCall{
-							Function: api.ToolCallFunction{
-								Name:      *toolName,
-								Arguments: args,
-							},
-						})
-					}
-				}
-
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					ToolCalls:          toolCalls,
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
