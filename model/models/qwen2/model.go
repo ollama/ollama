@@ -102,7 +102,7 @@ type Model struct {
 
 // Forward implements model.Model.
 func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -111,7 +111,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, &m.Options)

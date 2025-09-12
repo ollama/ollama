@@ -375,7 +375,7 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 		mask[i] = float32(math.Inf(-1))
 	}
 
-	maskTensor := ctx.Input().FromFloatSlice(mask, length, batchSize)
+	maskTensor := ctx.Input().FromFloats(mask, length, batchSize)
 
 	if c.config.MaskDType != ml.DTypeF32 {
 		maskTensor = maskTensor.Cast(ctx, c.config.MaskDType)
@@ -596,14 +596,14 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 
 	if _, ok := c.keys[c.curLayer]; !ok {
-		c.keys[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, kHeadDim, numKVHeads, len(c.cells))
+		c.keys[c.curLayer] = c.ctxs[c.curLayer].Empty(c.DType, kHeadDim, numKVHeads, len(c.cells))
 	}
 
 	if _, ok := c.values[c.curLayer]; !ok {
 		if c.config.PermutedV {
-			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, len(c.cells), vHeadDim, numKVHeads)
+			c.values[c.curLayer] = c.ctxs[c.curLayer].Empty(c.DType, len(c.cells), vHeadDim, numKVHeads)
 		} else {
-			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, vHeadDim, numKVHeads, len(c.cells))
+			c.values[c.curLayer] = c.ctxs[c.curLayer].Empty(c.DType, vHeadDim, numKVHeads, len(c.cells))
 		}
 	}
 
@@ -707,7 +707,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 		offsets = offsets[batchFirst : batchLast+1]
 
 		ctx := c.backend.NewContext()
-		kShift := ctx.Input().FromIntSlice(offsets, len(offsets))
+		kShift := ctx.Input().FromInts(offsets, len(offsets))
 
 		for i, key := range c.keys {
 			if key == nil {

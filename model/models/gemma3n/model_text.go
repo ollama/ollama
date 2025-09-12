@@ -29,9 +29,9 @@ type TextModel struct {
 }
 
 func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 	// Create a tensor of a single float32 value of 1.0 to use for altup correction
-	one := ctx.Input().FromFloatSlice([]float32{1.0}, 1)
+	one := ctx.Input().FromFloats([]float32{1.0}, 1)
 
 	inputs := m.TokenEmbedding.Forward(ctx, batch.Inputs, math.Sqrt(float64(m.hiddenSize)))
 	inputsPerLayer := m.PerLayerProjector.Forward(ctx, batch, inputs, &m.TextOptions)
@@ -83,7 +83,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 	hiddenStates = hiddenStates.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx).Mean(ctx)
 	hiddenStates = hiddenStates.Permute(ctx, 2, 0, 1, 3).Contiguous(ctx)
-	hiddenStates = hiddenStates.Rows(ctx, ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs)))
+	hiddenStates = hiddenStates.Rows(ctx, batch.Outputs)
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
 	return m.Output.Forward(ctx, hiddenStates), nil

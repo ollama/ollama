@@ -245,7 +245,7 @@ func (m *VisionModel) rotaryEmbedding(ctx ml.Context) (ml.Tensor, ml.Tensor) {
 		}
 	}
 
-	ropeFreqs := ctx.Input().FromFloatSlice(freqs, freqDim/2, numPatches, 2)
+	ropeFreqs := ctx.Input().FromFloats(freqs, freqDim/2, numPatches, 2)
 
 	ropeFreqs = ropeFreqs.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	ropeFreqs = ropeFreqs.Reshape(ctx, freqDim, 1, numPatches)

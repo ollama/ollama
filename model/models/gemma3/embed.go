@@ -22,7 +22,6 @@ type embedModel struct {
 }
 
 func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	batch.Outputs = batch.Positions // return all positions
 	hiddenStates := m.TextModel.Forward(ctx, batch, m.Cache)
 
 	switch m.PoolingType {
