@@ -290,7 +290,7 @@ func TestParseNameFromFilepath(t *testing.T) {
 
 func TestDisplayShortest(t *testing.T) {
 	cases := map[string]string{
-		"registry.ollama.ai/library/model:latest": "model:latest",
+		"registry.ollama.ai/library/model:latest": "model",
 		"registry.ollama.ai/library/model:tag":    "model:tag",
 		"registry.ollama.ai/namespace/model:tag":  "namespace/model:tag",
 		"host/namespace/model:tag":                "host/namespace/model:tag",
