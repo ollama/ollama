@@ -561,7 +561,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of the US thanksgiving holiday? Be brief but factual in your reply",
+				Prompt:    "how do rainbows form? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
@@ -579,9 +579,9 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		[][]string{
 			{"sunlight", "scattering", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorbs", "wavelength"},
 			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
-			{"england", "english", "massachusetts", "pilgrims", "colonists", "independence", "british", "feast", "family", "gatherings", "traditions", "turkey", "colonial", "period", "harvest", "agricultural", "european settlers", "american revolution", "civil war", "16th century", "17th century", "native american", "united states", "cultural", "hardship", "autumn", "festival"},
+			{"water", "droplet", "refracted", "reflect", "color", "spectrum"},
 			{"fourth", "july", "declaration", "independence"},
-			{"nitrogen", "oxygen", "carbon", "dioxide"},
+			{"nitrogen", "oxygen", "carbon", "dioxide", "water", "vapor"},
 		}
 }
 
