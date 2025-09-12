@@ -36,7 +36,7 @@ RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CPU' \
-        && cmake --build --parallel --preset 'CPU' \
+        && cmake --build --parallel 8 --preset 'CPU' \
         && cmake --install build --component CPU --strip --parallel 8
 
 FROM base AS cuda-11
@@ -45,7 +45,7 @@ RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 11' -DOLLAMA_RUNNER_DIR="cuda_v11" \
-        && cmake --build --parallel --preset 'CUDA 11' \
+        && cmake --build --parallel 8 --preset 'CUDA 11' \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS cuda-12
@@ -54,7 +54,7 @@ RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 12' -DOLLAMA_RUNNER_DIR="cuda_v12"\
-        && cmake --build --parallel --preset 'CUDA 12' \
+        && cmake --build --parallel 8 --preset 'CUDA 12' \
         && cmake --install build --component CUDA --strip --parallel 8
 
 
@@ -64,7 +64,7 @@ RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 13' -DOLLAMA_RUNNER_DIR="cuda_v13" \
-        && cmake --build --parallel --preset 'CUDA 13' \
+        && cmake --build --parallel 8 --preset 'CUDA 13' \
         && cmake --install build --component CUDA --strip --parallel 8
 
 
@@ -72,7 +72,7 @@ FROM base AS rocm-6
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 6' -DOLLAMA_RUNNER_DIR="rocm" \
-        && cmake --build --parallel --preset 'ROCm 6' \
+        && cmake --build --parallel 8 --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel 8
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
@@ -83,7 +83,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'JetPack 5' -DOLLAMA_RUNNER_DIR="cuda_jetpack5" \
-        && cmake --build --parallel --preset 'JetPack 5' \
+        && cmake --build --parallel 8 --preset 'JetPack 5' \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
@@ -94,7 +94,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'JetPack 6' -DOLLAMA_RUNNER_DIR="cuda_jetpack6" \
-        && cmake --build --parallel --preset 'JetPack 6' \
+        && cmake --build --parallel 8 --preset 'JetPack 6' \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS build
