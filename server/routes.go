@@ -488,7 +488,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	truncate := true
-
 	if req.Truncate != nil && !*req.Truncate {
 		truncate = false
 	}
@@ -555,7 +554,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				return
 			}
 
+			if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
+				ctxLen--
+			}
+
+			if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
+				ctxLen--
+			}
+
 			tokens = tokens[:ctxLen]
+
 			s, err = r.Detokenize(c.Request.Context(), tokens)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
