@@ -56,10 +56,8 @@ func ensureThinkingSupport(ctx context.Context, client *api.Client, name string)
 	if err != nil {
 		return
 	}
-	for _, cap := range resp.Capabilities {
-		if cap == model.CapabilityThinking {
-			return
-		}
+	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+		return
 	}
 	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
 }

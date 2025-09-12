@@ -388,7 +388,11 @@ type EmbedRequest struct {
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Truncate truncates the input to fit the model's max sequence length.
 	Truncate *bool `json:"truncate,omitempty"`
+
+	// Dimensions truncates the output embedding to the specified dimension.
+	Dimensions int `json:"dimensions,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
