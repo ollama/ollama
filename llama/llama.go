@@ -539,7 +539,6 @@ func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 		copy(rows, s)
 		for i := range numTokens {
 			chunkEmbed[i] = rows[i*numEmbed : (i+1)*numEmbed]
-			// slog.Debug("image embe
 		}
 		embed = append(embed, chunkEmbed...)
 	}
