@@ -5,14 +5,14 @@ Subject: [PATCH] vulkan: get GPU ID (ollama v0.11.5)
 
 Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
 ---
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 35 ++++++++++++++++++++++++++++
- 1 file changed, 35 insertions(+)
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 37 ++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 4070e248..1c8c15d5 100644
+index 4070e248..671323ad 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -10194,6 +10194,27 @@ static void ggml_vk_get_device_description(int device, char * description, size_
+@@ -10194,6 +10194,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
      snprintf(description, description_size, "%s", props.deviceName.data());
  }
  
@@ -42,7 +42,7 @@ index 4070e248..1c8c15d5 100644
  // backend interface
  
  #define UNUSED GGML_UNUSED
-@@ -10790,6 +10811,12 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+@@ -10790,6 +10813,12 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
      ggml_vk_get_device_description(dev_idx, description, description_size);
  }
  
@@ -55,7 +55,7 @@ index 4070e248..1c8c15d5 100644
  void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
      GGML_ASSERT(device < (int) vk_instance.device_indices.size());
  
-@@ -10812,6 +10839,7 @@ struct ggml_backend_vk_device_context {
+@@ -10812,6 +10841,7 @@ struct ggml_backend_vk_device_context {
      size_t device;
      std::string name;
      std::string description;
@@ -63,7 +63,7 @@ index 4070e248..1c8c15d5 100644
  };
  
  static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
-@@ -10824,6 +10852,11 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+@@ -10824,6 +10854,11 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
      return ctx->description.c_str();
  }
  
@@ -75,7 +75,7 @@ index 4070e248..1c8c15d5 100644
  static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
      ggml_backend_vk_get_device_memory(ctx->device, free, total);
-@@ -10847,6 +10880,7 @@ static enum ggml_backend_dev_type ggml_backend_vk_device_get_type(ggml_backend_d
+@@ -10847,6 +10882,7 @@ static enum ggml_backend_dev_type ggml_backend_vk_device_get_type(ggml_backend_d
  static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
      props->name        = ggml_backend_vk_device_get_name(dev);
      props->description = ggml_backend_vk_device_get_description(dev);
@@ -83,7 +83,7 @@ index 4070e248..1c8c15d5 100644
      props->type        = ggml_backend_vk_device_get_type(dev);
      ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
      props->caps = {
-@@ -11265,6 +11299,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -11265,6 +11301,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                  ctx->device = i;
                  ctx->name = GGML_VK_NAME + std::to_string(i);
                  ctx->description = desc;
@@ -92,5 +92,4 @@ index 4070e248..1c8c15d5 100644
                      /* .iface   = */ ggml_backend_vk_device_i,
                      /* .reg     = */ reg,
 -- 
-2.25.1
-
+2.51.0
