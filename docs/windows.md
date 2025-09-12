@@ -13,7 +13,7 @@ terminal application. As usual the Ollama [api](./api.md) will be served on
 ## System Requirements
 
 * Windows 10 22H2 or newer, Home or Pro
-* NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
+* NVIDIA 531 or newer Drivers if you have an NVIDIA card
 * AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
 
 Ollama uses unicode characters for progress indication, which may render as unknown squares in some older terminal fonts in Windows 10. If you see this, try changing your terminal font settings.
@@ -60,17 +60,47 @@ The Ollama Windows installer registers an Uninstaller application.  Under `Add o
 ## Standalone CLI
 
 The easiest way to install Ollama on Windows is to use the `OllamaSetup.exe`
-installer. It installs in your account without requiring Administrator rights.
-We update Ollama regularly to support the latest models, and this installer will
-help you keep up to date.
+installer which includes a Desktop GUI. It installs in your account without
+requiring Administrator rights. We update Ollama regularly to support the latest
+models, and this installer will help you keep up to date.
 
-If you'd like to install or integrate Ollama as a service, a standalone
-`ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
-and GPU library dependencies for Nvidia.  If you have an AMD GPU, also download
-and extract the additional ROCm package `ollama-windows-amd64-rocm.zip` into the
-same directory.  Both zip files are necessary for a complete AMD installation.
-This allows for embedding Ollama in existing applications, or running it as a
-system service via `ollama serve` with tools such as [NSSM](https://nssm.cc/). 
+If you would like to manually install the Ollama CLI, run Ollama as a system
+service via `ollama serve` with tools such as [NSSM](https://nssm.cc/), or embed
+Ollama in existing applications, we provide a set of standalone zip files. You
+must extract at least the base CPU zip file and optionally one or more GPU zip
+files into the same location.   
 
-> [!NOTE]  
-> If you are upgrading from a prior version, you should remove the old directories first.
+
+> [!NOTE]
+> If you are upgrading from a prior version, you **MUST** remove the old Ollama version first.
+
+Download and extract the base CPU package:
+
+```powershell
+$ProgressPreference="silent"
+$ollamaDir="c:\Program Files\Ollama"
+
+Invoke-WebRequest -Uri https://ollama.com/download/ollama-windows-amd64-cpu.zip -OutFile ollama-windows-amd64-cpu.zip
+Remove-Item -ErrorAction 0 -Recurse $ollamaDir
+Expand-Archive -Path ollama-windows-amd64-cpu.zip -DestinationPath $ollamaDir
+```
+
+### NVIDIA v13 (driver 580 or newer)
+Compute Capability 7.5 or newer (e.g. RTX 2080 or newer)
+```powershell
+Invoke-WebRequest -Uri https://ollama.com/download/ollama-windows-amd64-cuda-v13.zip -OutFile ollama-windows-amd64-cuda-v13.zip
+Expand-Archive -Path ollama-windows-amd64-cuda-v13.zip -DestinationPath $ollamaDir
+```
+
+### NVIDIA v12 (driver 575 or older)
+Compute Capability 5.0 or newer (e.g. GTX 750 or newer)
+```powershell
+Invoke-WebRequest -Uri https://ollama.com/download/ollama-windows-amd64-cuda-v12.zip -OutFile ollama-windows-amd64-cuda-v12.zip
+Expand-Archive -Path ollama-windows-amd64-cuda-v12.zip -DestinationPath $ollamaDir
+```
+
+### AMD GPUs
+```powershell
+Invoke-WebRequest -Uri https://ollama.com/download/ollama-windows-amd64-rocm.zip -OutFile ollama-windows-amd64-rocm.zip
+Expand-Archive -Path ollama-windows-amd64-rocm.zip -DestinationPath $ollamaDir
+```

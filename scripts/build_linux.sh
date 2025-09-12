@@ -40,16 +40,24 @@ fi
 # buildx behavior changes for single vs. multiplatform
 echo "Compressing linux tar bundles..."
 if echo $PLATFORM | grep "," > /dev/null ; then
-        tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | pigz -9vc >./dist/ollama-linux-arm64.tgz
+        tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 --exclude cuda_v12 --exclude cuda_v13 . | pigz -9vc >./dist/ollama-linux-arm64-cpu.tgz
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
-        tar c -C ./dist/linux_amd64 --exclude rocm . | pigz -9vc >./dist/ollama-linux-amd64.tgz
+        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_v12  | pigz -9vc >./dist/ollama-linux-arm64-cuda-v12.tgz
+        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_v13  | pigz -9vc >./dist/ollama-linux-arm64-cuda-v13.tgz
+        tar c -C ./dist/linux_amd64 --exclude rocm --exclude cuda_v12 --exclude cuda_v13 . | pigz -9vc >./dist/ollama-linux-amd64-cpu.tgz
         tar c -C ./dist/linux_amd64 ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
+        tar c -C ./dist/linux_amd64 ./lib/ollama/cuda_v12  | pigz -9vc >./dist/ollama-linux-amd64-cuda-v12.tgz
+        tar c -C ./dist/linux_amd64 ./lib/ollama/cuda_v13  | pigz -9vc >./dist/ollama-linux-amd64-cuda-v13.tgz
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
-        tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | pigz -9vc >./dist/ollama-linux-arm64.tgz
+        tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 --exclude cuda_v12 --exclude cuda_v13 bin lib | pigz -9vc >./dist/ollama-linux-arm64-cpu.tgz
+        tar c -C ./dist/ ./lib/ollama/cuda_v12  | pigz -9vc >./dist/ollama-linux-arm64-cuda-v12.tgz
+        tar c -C ./dist/ ./lib/ollama/cuda_v13  | pigz -9vc >./dist/ollama-linux-arm64-cuda-v13.tgz
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
-        tar c -C ./dist/ --exclude rocm bin lib | pigz -9vc >./dist/ollama-linux-amd64.tgz
+        tar c -C ./dist/ --exclude rocm --exclude cuda_v12 --exclude cuda_v13 bin lib | pigz -9vc >./dist/ollama-linux-amd64-cpu.tgz
         tar c -C ./dist/ ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
+        tar c -C ./dist/ ./lib/ollama/cuda_v12  | pigz -9vc >./dist/ollama-linux-amd64-cuda-v12.tgz
+        tar c -C ./dist/ ./lib/ollama/cuda_v13  | pigz -9vc >./dist/ollama-linux-amd64-cuda-v13.tgz
 fi
