@@ -103,7 +103,9 @@ func eat(s *Parser) (string, string, bool) {
 			// note that we use the original content, not the trimmed one because we
 			// don't want to eat any whitespace in the real content if there were no
 			// thinking tags
-			return "", s.acc.String(), false
+			untrimmed := s.acc.String()
+			s.acc.Reset()
+			return "", untrimmed, false
 		}
 	case thinkingState_ThinkingStartedEatingWhitespace:
 		trimmed := strings.TrimLeftFunc(s.acc.String(), unicode.IsSpace)

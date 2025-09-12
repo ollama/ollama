@@ -32,6 +32,7 @@ extern "C" {
         struct ggml_backend_buffer_type_i  iface;
         ggml_backend_dev_t device;
         void * context;
+        bool no_alloc;
     };
 
     //
@@ -63,6 +64,7 @@ extern "C" {
         void * context;
         size_t size;
         enum ggml_backend_buffer_usage usage;
+        bool no_alloc;
     };
 
     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
@@ -176,6 +178,10 @@ extern "C" {
         ggml_backend_event_t (*event_new)         (ggml_backend_dev_t dev);
         void                 (*event_free)        (ggml_backend_dev_t dev, ggml_backend_event_t event);
         void                 (*event_synchronize) (ggml_backend_dev_t dev, ggml_backend_event_t event);
+
+        // (optional) reset device, clearing existing allocations and context
+        // the caller must ensure that there are no outstanding buffers, as these will become invalid
+        void (*reset)(ggml_backend_dev_t dev);
     };
 
     struct ggml_backend_device {

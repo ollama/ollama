@@ -69,18 +69,15 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
   }
 
   int version = 0;
-  cudartDriverVersion_t driverVersion;
-  driverVersion.major = 0;
-  driverVersion.minor = 0;
 
   // Report driver version if we're in verbose mode, ignore errors
   ret = (*resp->ch.cudaDriverGetVersion)(&version);
   if (ret != CUDART_SUCCESS) {
     LOG(resp->ch.verbose, "cudaDriverGetVersion failed: %d\n", ret);
   } else {
-    driverVersion.major = version / 1000;
-    driverVersion.minor = (version - (driverVersion.major * 1000)) / 10;
-    LOG(resp->ch.verbose, "CUDA driver version: %d-%d\n", driverVersion.major, driverVersion.minor);
+    resp->ch.driver_major = version / 1000;
+    resp->ch.driver_minor = (version - (resp->ch.driver_major * 1000)) / 10;
+    LOG(resp->ch.verbose, "CUDA driver version: %d-%d\n", resp->ch.driver_major, resp->ch.driver_minor);
   }
 
   ret = (*resp->ch.cudaGetDeviceCount)(&resp->num_devices);

@@ -207,6 +207,36 @@ func TestLlama(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("roundtriping 0x00-0xFF", func(t *testing.T) {
+		t.Parallel()
+
+		for b := 0x00; b <= 0xFF; b++ {
+			input := string(rune(b))
+			ids, err := tokenizer.Encode(input, false)
+			if err != nil {
+				t.Errorf("failed to encode rune 0x%02X: %v", b, err)
+				continue
+			}
+
+			decoded, err := tokenizer.Decode(ids)
+			if err != nil {
+				t.Errorf("failed to decode rune 0x%02X: %v", b, err)
+				continue
+			}
+
+			if b == 0x00 {
+				if len(decoded) != 0 {
+					t.Errorf("Decode(Encode(0x00)) should be empty, got %v", ids)
+				}
+				continue
+			}
+
+			if decoded != input {
+				t.Errorf("rune 0x%02X failed roundtrip: got %q, want %q", b, decoded, input)
+			}
+		}
+	})
 }
 
 func BenchmarkBytePairEncoding(b *testing.B) {

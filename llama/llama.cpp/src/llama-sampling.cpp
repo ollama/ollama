@@ -798,7 +798,7 @@ static void llama_sampler_min_p_apply(struct llama_sampler * smpl, llama_token_d
         }
 
         // if we have enough values the operation was a success
-        if (filtered_tokens.size() >= ctx->min_keep) {
+        if (!filtered_tokens.empty() && filtered_tokens.size() >= ctx->min_keep) {
             memcpy(cur_p->data, filtered_tokens.data(), filtered_tokens.size()*sizeof(llama_token_data));
             cur_p->size = filtered_tokens.size();
             min_p_applied = true;
@@ -909,7 +909,7 @@ static void llama_sampler_typical_apply(struct llama_sampler * smpl, llama_token
         cum_sum += cur_p->data[idx].p;
 
         // Check if the running sum is greater than typical or if we have kept at least min_keep tokens
-        if (cum_sum > ctx->p && i >= ctx->min_keep - 1) {
+        if (cum_sum > ctx->p && (ctx->min_keep == 0 || i >= ctx->min_keep - 1)) {
             last_idx = i + 1;
             break;
         }

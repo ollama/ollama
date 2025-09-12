@@ -17,29 +17,98 @@ void ggml_vec_dot_f32(int n, float * GGML_RESTRICT s, size_t bs, const float * G
 
 #if defined(GGML_SIMD)
     float sumf = 0.0f;
-    const int np = (n & ~(GGML_F32_STEP - 1));
 
-    GGML_F32_VEC sum[GGML_F32_ARR] = { GGML_F32_VEC_ZERO };
+    #if defined(__ARM_FEATURE_SVE)
+        const int sve_register_length = ggml_cpu_get_sve_cnt() * 8;
+        const int ggml_f32_epr = sve_register_length / 32;//8;//svcntw(); // SVE128:4, SVE256:8, SVE512:16
+        const int ggml_f32_step = 8 * ggml_f32_epr; // choose 8 SVE registers
 
-    GGML_F32_VEC ax[GGML_F32_ARR];
-    GGML_F32_VEC ay[GGML_F32_ARR];
+        const int np = (n & ~(ggml_f32_step - 1));
+        svfloat32_t sum1 = svdup_n_f32(0.0f);
+        svfloat32_t sum2 = svdup_n_f32(0.0f);
+        svfloat32_t sum3 = svdup_n_f32(0.0f);
+        svfloat32_t sum4 = svdup_n_f32(0.0f);
+        svfloat32_t sum5 = svdup_n_f32(0.0f);
+        svfloat32_t sum6 = svdup_n_f32(0.0f);
+        svfloat32_t sum7 = svdup_n_f32(0.0f);
+        svfloat32_t sum8 = svdup_n_f32(0.0f);
+        svfloat32_t ax1,ax2,ax3,ax4,ax5,ax6,ax7,ax8;
+        svfloat32_t ay1,ay2,ay3,ay4,ay5,ay6,ay7,ay8;
+        for (int i = 0; i < np; i += ggml_f32_step) {
+            ax1 = GGML_F32_VEC_LOAD(x + i);
+            ay1 = GGML_F32_VEC_LOAD(y + i);
+            sum1 = GGML_F32_VEC_FMA(sum1, ax1, ay1);
 
-    for (int i = 0; i < np; i += GGML_F32_STEP) {
-        for (int j = 0; j < GGML_F32_ARR; j++) {
-            ax[j] = GGML_F32_VEC_LOAD(x + i + j*GGML_F32_EPR);
-            ay[j] = GGML_F32_VEC_LOAD(y + i + j*GGML_F32_EPR);
+            ax2 = GGML_F32_VEC_LOAD(x + i + 1*ggml_f32_epr);
+            ay2 = GGML_F32_VEC_LOAD(y + i + 1*ggml_f32_epr);
+            sum2 = GGML_F32_VEC_FMA(sum2, ax2, ay2);
 
-            sum[j] = GGML_F32_VEC_FMA(sum[j], ax[j], ay[j]);
+            ax3 = GGML_F32_VEC_LOAD(x + i + 2*ggml_f32_epr);
+            ay3 = GGML_F32_VEC_LOAD(y + i + 2*ggml_f32_epr);
+            sum3 = GGML_F32_VEC_FMA(sum3, ax3, ay3);
+
+            ax4 = GGML_F32_VEC_LOAD(x + i + 3*ggml_f32_epr);
+            ay4 = GGML_F32_VEC_LOAD(y + i + 3*ggml_f32_epr);
+            sum4 = GGML_F32_VEC_FMA(sum4, ax4, ay4);
+
+            ax5 = GGML_F32_VEC_LOAD(x + i + 4*ggml_f32_epr);
+            ay5 = GGML_F32_VEC_LOAD(y + i + 4*ggml_f32_epr);
+            sum5 = GGML_F32_VEC_FMA(sum5, ax5, ay5);
+
+            ax6 = GGML_F32_VEC_LOAD(x + i + 5*ggml_f32_epr);
+            ay6 = GGML_F32_VEC_LOAD(y + i + 5*ggml_f32_epr);
+            sum6 = GGML_F32_VEC_FMA(sum6, ax6, ay6);
+
+            ax7 = GGML_F32_VEC_LOAD(x + i + 6*ggml_f32_epr);
+            ay7 = GGML_F32_VEC_LOAD(y + i + 6*ggml_f32_epr);
+            sum7 = GGML_F32_VEC_FMA(sum7, ax7, ay7);
+
+            ax8 = GGML_F32_VEC_LOAD(x + i + 7*ggml_f32_epr);
+            ay8 = GGML_F32_VEC_LOAD(y + i + 7*ggml_f32_epr);
+            sum8 = GGML_F32_VEC_FMA(sum8, ax8, ay8);
         }
-    }
+        // leftovers
+        // Since 8 unrolls are done in above loop, leftovers lie in range [0, ggml_f32_step] which is handled in below loop
+        const int np2 = (n & ~(ggml_f32_epr - 1));
+        for (int i = np; i < np2; i += ggml_f32_epr) {
+            ax1 = GGML_F32_VEC_LOAD(x + i);
+            ay1 = GGML_F32_VEC_LOAD(y + i);
+            sum1 = GGML_F32_VEC_FMA(sum1, ax1, ay1);
+        }
+        // maximum number of leftover elements will be less that ggml_f32_epr. Apply predicated svmad on available elements only
+        if (np2 < n) {
+            svbool_t pg = svwhilelt_b32(np2, n);
+            ax1 = svld1_f32(pg, x + np2);
+            ay1 = svld1_f32(pg, y + np2);
+            sum1 = svmad_f32_m(pg, ax1, ay1, sum1);
+        }
+        // reduce sum1,sum2 to sum1
+        GGML_F32_VEC_REDUCE(sumf, sum1, sum2, sum3, sum4, sum5, sum6, sum7, sum8);
+    #else
+        const int np = (n & ~(GGML_F32_STEP - 1));
 
-    // reduce sum0..sum3 to sum0
-    GGML_F32_VEC_REDUCE(sumf, sum);
+        GGML_F32_VEC sum[GGML_F32_ARR] = { GGML_F32_VEC_ZERO };
 
-    // leftovers
-    for (int i = np; i < n; ++i) {
-        sumf += x[i]*y[i];
-    }
+        GGML_F32_VEC ax[GGML_F32_ARR];
+        GGML_F32_VEC ay[GGML_F32_ARR];
+
+        for (int i = 0; i < np; i += GGML_F32_STEP) {
+            for (int j = 0; j < GGML_F32_ARR; j++) {
+                ax[j] = GGML_F32_VEC_LOAD(x + i + j*GGML_F32_EPR);
+                ay[j] = GGML_F32_VEC_LOAD(y + i + j*GGML_F32_EPR);
+
+                sum[j] = GGML_F32_VEC_FMA(sum[j], ax[j], ay[j]);
+            }
+        }
+
+        // reduce sum0..sum3 to sum0
+        GGML_F32_VEC_REDUCE(sumf, sum);
+
+        // leftovers
+        for (int i = np; i < n; ++i) {
+            sumf += x[i]*y[i];
+        }
+    #endif
 #else
     // scalar
     ggml_float sumf = 0.0;
@@ -150,11 +219,14 @@ void ggml_vec_dot_f16(int n, float * GGML_RESTRICT s, size_t bs, ggml_fp16_t * G
 
     // leftovers
     for (int i = np; i < n; ++i) {
-        sumf += (ggml_float)(GGML_FP16_TO_FP32(x[i])*GGML_FP16_TO_FP32(y[i]));
+        sumf += (ggml_float)(GGML_CPU_FP16_TO_FP32(x[i])*GGML_CPU_FP16_TO_FP32(y[i]));
     }
+
+    // if you hit this, you are likely running outside the FP range
+    assert(!isnan(sumf) && !isinf(sumf));
 #else
     for (int i = 0; i < n; ++i) {
-        sumf += (ggml_float)(GGML_FP16_TO_FP32(x[i])*GGML_FP16_TO_FP32(y[i]));
+        sumf += (ggml_float)(GGML_CPU_FP16_TO_FP32(x[i])*GGML_CPU_FP16_TO_FP32(y[i]));
     }
 #endif
 
@@ -182,6 +254,30 @@ void ggml_vec_silu_f32(const int n, float * y, const float * x) {
 #endif
     for (; i < n; ++i) {
         y[i] = ggml_silu_f32(x[i]);
+    }
+}
+
+void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * g) {
+    int i = 0;
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 15 < n; i += 16) {
+        _mm512_storeu_ps(y + i, _mm512_mul_ps(ggml_v_silu(_mm512_loadu_ps(x + i)), _mm512_loadu_ps(g + i)));
+    }
+#elif defined(__AVX2__) && defined(__FMA__)
+    for (; i + 7 < n; i += 8) {
+        _mm256_storeu_ps(y + i, _mm256_mul_ps(ggml_v_silu(_mm256_loadu_ps(x + i)), _mm256_loadu_ps(g + i)));
+    }
+#elif defined(__SSE2__)
+    for (; i + 3 < n; i += 4) {
+        _mm_storeu_ps(y + i, _mm_mul_ps(ggml_v_silu(_mm_loadu_ps(x + i)), _mm_loadu_ps(g + i)));
+    }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+    for (; i + 3 < n; i += 4) {
+        vst1q_f32(y + i, vmulq_f32(ggml_v_silu(vld1q_f32(x + i)), vld1q_f32(g + i)));
+    }
+#endif
+    for (; i < n; ++i) {
+        y[i] = ggml_silu_f32(x[i]) * g[i];
     }
 }
 
@@ -249,94 +345,4 @@ ggml_float ggml_vec_log_soft_max_f32(const int n, float * y, const float * x, fl
         sum += (ggml_float)expf(val);
     }
     return sum = (ggml_float)logf(sum);
-}
-
-#define MXFP4 32
-typedef struct {
-    uint8_t d;              // scale E8M0 float 
-    uint8_t qs[MXFP4 / 2];  // (32) 4 bit elements E2M1 float
-} block_mxfp4;
-static_assert(sizeof(block_mxfp4) == sizeof(uint8_t) + MXFP4/2, "wrong mxfp4 block size/padding");
-#define MXFP4_VALS {0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0}
-
-void ggml_vec_dot_mxfp4(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const float * GGML_RESTRICT y, size_t by, int nrc) {
-    assert(nrc == 1);
-    GGML_UNUSED(nrc);
-    GGML_UNUSED(bx);
-    GGML_UNUSED(by);
-    GGML_UNUSED(bs);
-    ggml_float mxfp4_table[] = MXFP4_VALS;
-
-#if defined(GGML_SIMD)
-    float sumf = 0.0f;
-    const int np = (n & ~(GGML_F32_STEP - 1));
-    const block_mxfp4 * GGML_RESTRICT xx = (const block_mxfp4 *) vx;
-    GGML_F32_VEC sum[GGML_F32_ARR] = { GGML_F32_VEC_ZERO };
-
-    GGML_F32_VEC scalev;
-    GGML_F32_VEC ax[GGML_F32_ARR];
-    GGML_F32_VEC ay[GGML_F32_ARR];
-    for (int i = 0; i < np; i += GGML_F32_STEP) { // ARM: +16  AVX512: +64
-        for (int j = 0; j < GGML_F32_ARR; j++) { // ARM: 0 .. 4 AVX512: 0 .. 4
-            // convert GGML_F32_ARR X elements 
-            const int ib = (i + j*GGML_F32_EPR) / MXFP4;
-            const block_mxfp4 * GGML_RESTRICT x = &xx[ib];
-            union {
-                uint32_t as_bits;
-                float as_value;
-            } scale;
-            scale.as_bits = (((uint32_t)x->d) << 23);
-            scalev = GGML_F32_VEC_SET1(scale.as_value);
-            float xf[GGML_F32_EPR]= {0.f};
-            assert(((i+j*GGML_F32_EPR) % MXFP4)+GGML_F32_ARR < MXFP4 && "block overrun");
-            for (int qi = 0; qi < GGML_F32_EPR/2 ; ++qi) {
-                xf[qi*2] = mxfp4_table[(x->qs[((i+j*GGML_F32_EPR)%MXFP4)/2+qi] & 0xf)];
-                xf[qi*2+1] = mxfp4_table[(x->qs[((i+j*GGML_F32_EPR)%MXFP4)/2+qi] & 0xf0) >> 4];
-            }
-
-            ax[j] = GGML_F32_VEC_MUL(GGML_F32_VEC_LOAD(xf), scalev);
-            ay[j] = GGML_F32_VEC_LOAD(y + i + j*GGML_F32_EPR);
-            sum[j] = GGML_F32_VEC_FMA(sum[j], ax[j], ay[j]);
-        }
-    }
-    GGML_F32_VEC_REDUCE(sumf, sum);
-
-    // leftovers
-    for (int i = np; i < n; i+=2) {
-        const int ib = i / MXFP4;
-        const block_mxfp4 * GGML_RESTRICT x = &xx[ib];
-        union {
-            uint32_t as_bits;
-            float as_value;
-        } scale;
-        scale.as_bits = (((uint32_t)x->d) << 23);
-        sumf += y[i] * scale.as_value * mxfp4_table[(x->qs[(i%MXFP4)/2] & 0xf)];
-        sumf += y[i+1] * scale.as_value * mxfp4_table[(x->qs[(i%MXFP4)/2] & 0xf0) >> 4];
-    }
-
-
-#else // defined(GGML_SIMD)
-    const int nb = n / MXFP4;
-    assert(n % MXFP4 == 0);
-
-    int yi = 0;
-
-    const block_mxfp4 * GGML_RESTRICT xx = (const block_mxfp4 *) vx;
-
-    ggml_float sumf = 0.0;
-    for (int ib = 0; ib < nb; ++ib) {
-        const block_mxfp4 * GGML_RESTRICT x = &xx[ib + 0];
-        union {
-            uint32_t as_bits;
-            float as_value;
-        } scale;
-        scale.as_bits = (((uint32_t)x->d) << 23);
-        for (int i = 0; i < MXFP4/2; ++i) {
-            sumf += mxfp4_table[(x->qs[i] & 0xf)] * (ggml_float)(scale.as_value) * (ggml_float)(y[ib*MXFP4 + i*2]);
-            sumf += mxfp4_table[(x->qs[i] & 0xf0) >> 4] * (ggml_float)(scale.as_value) * (ggml_float)(y[ib*MXFP4 + i*2+1]);
-        }
-    }
-#endif
-
-    *s = sumf;
 }

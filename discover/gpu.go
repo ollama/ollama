@@ -263,6 +263,8 @@ func GetGPUInfo() GpuInfoList {
 				var driverMinor int
 				if cHandles.cudart != nil {
 					C.cudart_bootstrap(*cHandles.cudart, C.int(i), &memInfo)
+					driverMajor = int(cHandles.cudart.driver_major)
+					driverMinor = int(cHandles.cudart.driver_minor)
 				} else {
 					C.nvcuda_bootstrap(*cHandles.nvcuda, C.int(i), &memInfo)
 					driverMajor = int(cHandles.nvcuda.driver_major)
@@ -369,6 +371,15 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		rocmGPUs, err = AMDGetGPUInfo()
+
+		// The ID field is used in context of the filtered set of GPUS
+		// so we have to replace any of these numeric IDs with their
+		// placement in this set of GPUs
+		for i := range rocmGPUs {
+			if _, err := strconv.Atoi(rocmGPUs[i].ID); err == nil {
+				rocmGPUs[i].ID = strconv.Itoa(i)
+			}
+		}
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
@@ -678,23 +689,16 @@ func getVerboseState() C.uint16_t {
 
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variable
-//
-// If different libraries are detected, the first one is what we use
-func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
+func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 	if len(l) == 0 {
-		return "", ""
+		return nil
 	}
-	switch l[0].Library {
-	case "cuda":
-		return cudaGetVisibleDevicesEnv(l)
-	case "rocm":
-		return rocmGetVisibleDevicesEnv(l)
-	case "oneapi":
-		return oneapiGetVisibleDevicesEnv(l)
-	default:
-		slog.Debug("no filter required for library " + l[0].Library)
-		return "", ""
+	vd := []string{}
+	// Only filter the AMD GPUs at this level, let all NVIDIA devices through
+	if tmp := rocmGetVisibleDevicesEnv(l); tmp != "" {
+		vd = append(vd, tmp)
 	}
+	return vd
 }
 
 func GetSystemInfo() SystemInfo {
