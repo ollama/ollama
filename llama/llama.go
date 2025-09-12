@@ -568,6 +568,7 @@ type SamplingParams struct {
 	PenalizeNl     bool
 	Seed           uint32
 	Grammar        string
+	IgnoreEOS      bool
 }
 
 func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, error) {
@@ -582,6 +583,7 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
 	cparams.penalty_present = C.float(params.PenaltyPresent)
 	cparams.seed = C.uint32_t(params.Seed)
+	cparams.ignore_eos = C.bool(params.IgnoreEOS)
 
 	grammar := C.CString(params.Grammar)
 	defer C.free(unsafe.Pointer(grammar))
@@ -607,6 +609,10 @@ func (s *SamplingContext) Sample(llamaContext *Context, idx int) int {
 
 func (s *SamplingContext) Accept(id int, applyGrammar bool) {
 	C.common_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
+}
+
+func (s *SamplingContext) IgnoreEOS() bool {
+	return bool(C.common_sampler_cignore_eos(s.c))
 }
 
 // SchemaToGrammar converts the provided JSON schema to a grammar. It returns

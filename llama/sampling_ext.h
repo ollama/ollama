@@ -21,6 +21,7 @@ extern "C"
         float penalty_freq;
         float penalty_present;
         uint32_t seed;
+        bool ignore_eos;
         char *grammar;
     };
 
@@ -28,6 +29,7 @@ extern "C"
     void common_sampler_cfree(struct common_sampler *sampler);
     void common_sampler_creset(struct common_sampler *sampler);
     void common_sampler_caccept(struct common_sampler *sampler, llama_token id, bool apply_grammar);
+    bool common_sampler_cignore_eos(struct common_sampler *sampler);
     llama_token common_sampler_csample(struct common_sampler *sampler, struct llama_context *ctx, int idx);
 
     int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
