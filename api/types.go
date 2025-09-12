@@ -313,10 +313,11 @@ func (t *ToolFunction) String() string {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
-	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason,omitempty"`
+	Model      string     `json:"model"`
+	CreatedAt  time.Time  `json:"created_at"`
+	Message    Message    `json:"message"`
+	DoneReason string     `json:"done_reason,omitempty"`
+	DebugInfo  *DebugInfo `json:"_debug_info,omitempty"`
 
 	Done bool `json:"done"`
 
@@ -327,13 +328,6 @@ type ChatResponse struct {
 type DebugInfo struct {
 	RenderedTemplate string `json:"rendered_template"`
 	ImageCount       int    `json:"image_count,omitempty"`
-}
-
-// DebugTemplateResponse is returned when _debug_render_only is set to true
-type DebugTemplateResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	DebugInfo DebugInfo `json:"_debug_info"`
 }
 
 type Metrics struct {
@@ -443,6 +437,8 @@ type CreateRequest struct {
 	System     string            `json:"system,omitempty"`
 	Parameters map[string]any    `json:"parameters,omitempty"`
 	Messages   []Message         `json:"messages,omitempty"`
+	Renderer   string            `json:"renderer,omitempty"`
+	Parser     string            `json:"parser,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -480,6 +476,8 @@ type ShowResponse struct {
 	Parameters    string             `json:"parameters,omitempty"`
 	Template      string             `json:"template,omitempty"`
 	System        string             `json:"system,omitempty"`
+	Renderer      string             `json:"renderer,omitempty"`
+	Parser        string             `json:"parser,omitempty"`
 	Details       ModelDetails       `json:"details,omitempty"`
 	Messages      []Message          `json:"messages,omitempty"`
 	ModelInfo     map[string]any     `json:"model_info,omitempty"`
@@ -592,6 +590,8 @@ type GenerateResponse struct {
 	Metrics
 
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 }
 
 // ModelDetails provides details about a model.
