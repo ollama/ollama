@@ -519,7 +519,7 @@ func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	for i := range int(nChunks) {
 		chunk := C.mtmd_input_chunks_get(ic, C.size_t(i))
 		numTokens := int(C.mtmd_input_chunk_get_n_tokens(chunk))
-		lastChunkSize = numTokens
+		lastChunkSize = max(lastChunkSize, numTokens)
 
 		// Encode the chunk
 		if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
