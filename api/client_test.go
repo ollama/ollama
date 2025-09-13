@@ -143,7 +143,7 @@ func TestClientStream(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient, "")
 
 			var receivedChunks []ChatResponse
 			err := client.stream(t.Context(), http.MethodPost, "/v1/chat", nil, func(chunk []byte) error {
@@ -226,7 +226,7 @@ func TestClientDo(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient, "")
 
 			var resp struct {
 				ID      string `json:"id"`
