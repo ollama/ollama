@@ -4,6 +4,7 @@ package wintray
 
 import (
 	"runtime"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -25,6 +26,7 @@ var (
 	pLoadCursor            = u32.NewProc("LoadCursorW")
 	pLoadIcon              = u32.NewProc("LoadIconW")
 	pLoadImage             = u32.NewProc("LoadImageW")
+	pMessageBox            = u32.NewProc("MessageBoxW")
 	pPostMessage           = u32.NewProc("PostMessageW")
 	pPostQuitMessage       = u32.NewProc("PostQuitMessage")
 	pRegisterClass         = u32.NewProc("RegisterClassExW")
@@ -77,6 +79,19 @@ const (
 	WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
 	WS_SYSMENU          = 0x00080000
 	WS_THICKFRAME       = 0x00040000
+	
+	// MessageBox flags
+	MB_OK                = 0x00000000
+	MB_OKCANCEL          = 0x00000001
+	MB_ABORTRETRYIGNORE  = 0x00000002
+	MB_YESNOCANCEL       = 0x00000003
+	MB_YESNO             = 0x00000004
+	MB_RETRYCANCEL       = 0x00000005
+	MB_CANCELTRYCONTINUE = 0x00000006
+	MB_ICONERROR         = 0x00000010
+	MB_ICONQUESTION      = 0x00000020
+	MB_ICONWARNING       = 0x00000030
+	MB_ICONINFORMATION   = 0x00000040
 )
 
 // Not sure if this is actually needed on windows
@@ -88,4 +103,20 @@ func init() {
 // https://msdn.microsoft.com/en-us/library/windows/desktop/dd162805(v=vs.85).aspx
 type point struct {
 	X, Y int32
+}
+
+// MessageBox displays a message box with the specified message, title, and style.
+// Returns the user's response (IDOK, IDCANCEL, etc.)
+func MessageBox(hwnd uintptr, text, caption string, style uint) int {
+	textPtr, _ := windows.UTF16PtrFromString(text)
+	captionPtr, _ := windows.UTF16PtrFromString(caption)
+	
+	ret, _, _ := pMessageBox.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(textPtr)),
+		uintptr(unsafe.Pointer(captionPtr)),
+		uintptr(style),
+	)
+	
+	return int(ret)
 }
