@@ -49,7 +49,7 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS cuda-12
-ARG CUDA12VERSION=12.8
+ARG CUDA12VERSION=12.1
 RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
