@@ -180,6 +180,15 @@ function buildROCm() {
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
+        if ($env:VULKAN_SDK) {
+            write-host "Building Vulkan backend libraries"     
+            & cmake --fresh --preset Vulkan --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset Vulkan  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component Vulkan --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
     }
 }
 

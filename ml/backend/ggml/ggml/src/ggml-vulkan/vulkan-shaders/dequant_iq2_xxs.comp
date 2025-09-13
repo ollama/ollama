@@ -1,0 +1,48 @@
+#version 450
+
+#include "dequant_head.comp"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_iq2_xxs data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    // Each thread handles 1 scale block (32 values)
+    // Each block is described by 4 lattice indices, 4x7 sign bits and 4 scale bits
+    const uint ib = gl_WorkGroupID.x * 32 + gl_LocalInvocationID.x / 8;
+
+    init_iq_shmem(gl_WorkGroupSize);
+
+    if (ib >= p.nel / 256) {
+        return;
+    }
+
+    const uint is = gl_LocalInvocationID.x % 8;
+    const uint b_idx = 256 * ib + 32 * is;
+
+    const float d = float(data_a[ib].d);
+    uint signscale = pack32(u8vec4(
+        data_a[ib].qs[8*is + 4],
+        data_a[ib].qs[8*is + 5],
+        data_a[ib].qs[8*is + 6],
+        data_a[ib].qs[8*is + 7]
+    ));
+    const float db = d * (0.5 + (signscale >> 28)) * 0.25;
+
+    [[unroll]] for (uint l = 0; l < 4; ++l) {
+        const uint sign7 = bitfieldExtract(signscale, 7 * int(l), 7);
+        const uint sign8 = sign7 | (bitCount(sign7) << 7); // parity bit
+        const uvec2 grid = iq2xxs_grid[data_a[ib].qs[8 * is + l]];
+        const u8vec4 grid0 = unpack8(grid.x);
+        const u8vec4 grid1 = unpack8(grid.y);
+        data_b[b_idx + 8 * l + 0] = D_TYPE(db * grid0.x * ((sign8 & 1) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 1] = D_TYPE(db * grid0.y * ((sign8 & 2) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 2] = D_TYPE(db * grid0.z * ((sign8 & 4) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 3] = D_TYPE(db * grid0.w * ((sign8 & 8) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 4] = D_TYPE(db * grid1.x * ((sign8 & 16) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 5] = D_TYPE(db * grid1.y * ((sign8 & 32) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 6] = D_TYPE(db * grid1.z * ((sign8 & 64) != 0 ? -1.0 : 1.0));
+        data_b[b_idx + 8 * l + 7] = D_TYPE(db * grid1.w * ((sign8 & 128) != 0 ? -1.0 : 1.0));
+    }
+}

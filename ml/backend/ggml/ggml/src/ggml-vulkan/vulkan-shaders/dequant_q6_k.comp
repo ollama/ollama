@@ -1,0 +1,33 @@
+#version 450
+
+#include "dequant_head.comp"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    [[unroll]] for (uint wgy = 0; wgy < 256; wgy++) {
+        const uint i = gl_WorkGroupID.x * 256 + wgy;
+        if (i >= p.nel / QUANT_K) {
+            return;
+        }
+        const uint tid = gl_LocalInvocationID.x;
+        const uint ip = tid / 32;
+        const uint il = tid - 32 * ip;
+        const uint is = 8 * ip + il / 16;
+
+        const uint y_idx = i * QUANT_K + 128 * ip + il;
+
+        const uint ql_idx = 64 * ip + il;
+        const uint8_t qh = data_a[i].qh[32 * ip + il];
+
+        const FLOAT_TYPE d = FLOAT_TYPE(data_a[i].d);
+
+        data_b[y_idx +  0] = D_TYPE(d * FLOAT_TYPE(data_a[i].scales[is + 0] * (int8_t((data_a[i].ql[ql_idx +  0] & 0xF) | (((qh >> 0) & 3) << 4)) - 32)));
+        data_b[y_idx + 32] = D_TYPE(d * FLOAT_TYPE(data_a[i].scales[is + 2] * (int8_t((data_a[i].ql[ql_idx + 32] & 0xF) | (((qh >> 2) & 3) << 4)) - 32)));
+        data_b[y_idx + 64] = D_TYPE(d * FLOAT_TYPE(data_a[i].scales[is + 4] * (int8_t((data_a[i].ql[ql_idx +  0] >>  4) | (((qh >> 4) & 3) << 4)) - 32)));
+        data_b[y_idx + 96] = D_TYPE(d * FLOAT_TYPE(data_a[i].scales[is + 6] * (int8_t((data_a[i].ql[ql_idx + 32] >>  4) | (((qh >> 6) & 3) << 4)) - 32)));
+    }
+}
