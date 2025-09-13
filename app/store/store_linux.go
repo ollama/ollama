@@ -3,6 +3,8 @@ package store
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func getStorePath() string {
@@ -11,6 +13,5 @@ func getStorePath() string {
 		return "/etc/ollama/config.json"
 	}
 
-	home := os.Getenv("HOME")
-	return filepath.Join(home, ".ollama", "config.json")
+	return filepath.Join(envconfig.ConfigDir(), "config.json")
 }
