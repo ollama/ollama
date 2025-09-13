@@ -116,6 +116,9 @@ extern "C" {
         void (*event_record)(ggml_backend_t backend, ggml_backend_event_t event);
         // wait for an event on on a different stream
         void (*event_wait)  (ggml_backend_t backend, ggml_backend_event_t event);
+
+        // (optional) sort/optimize the nodes in the graph
+        void                      (*optimize_graph)    (ggml_backend_t backend, struct ggml_cgraph * cgraph);
     };
 
     struct ggml_backend {

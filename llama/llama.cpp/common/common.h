@@ -2,14 +2,17 @@
 
 #pragma once
 
-#include "llama-cpp.h"
-
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <map>
 #include <sstream>
+#include <cmath>
+
+#include "ggml-opt.h"
+#include "llama-cpp.h"
 
 #ifdef _WIN32
 #define DIRECTORY_SEPARATOR '\\'
@@ -30,6 +33,9 @@
 struct common_adapter_lora_info {
     std::string path;
     float scale;
+
+    std::string task_name;
+    std::string prompt_prefix;
 
     struct llama_adapter_lora * ptr;
 };
@@ -82,6 +88,7 @@ enum llama_example {
     LLAMA_EXAMPLE_PARALLEL,
     LLAMA_EXAMPLE_TTS,
     LLAMA_EXAMPLE_DIFFUSION,
+    LLAMA_EXAMPLE_FINETUNE,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -202,6 +209,7 @@ struct common_params_speculative {
     float   p_split      =  0.1f; // speculative decoding split probability
     float   p_min        = 0.75f; // minimum speculative decoding probability (greedy)
     std::vector<std::pair<std::string, std::string>> replacements; // main to speculative model replacements
+    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
 
     ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
     ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
@@ -234,13 +242,35 @@ struct common_params_diffusion {
     bool    add_gumbel_noise = false; // add gumbel noise to the logits if temp > 0.0
 };
 
+// reasoning API response format (not to be confused as chat template's reasoning format)
 enum common_reasoning_format {
     COMMON_REASONING_FORMAT_NONE,
-    COMMON_REASONING_FORMAT_AUTO,
+    COMMON_REASONING_FORMAT_AUTO,            // Same as deepseek, using `message.reasoning_content`
     COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY, // Extract thinking tag contents and return as `message.reasoning_content`, or leave inline in <think> tags in stream mode
     COMMON_REASONING_FORMAT_DEEPSEEK,        // Extract thinking tag contents and return as `message.reasoning_content`, including in streaming deltas.
-    COMMON_REASONING_FORMAT_GRANITE,         // Extract thinking tag contents and return as `message.reasoning_content`, including in streaming deltas.
+    // do not extend this enum unless you absolutely have to
+    // in most cases, use COMMON_REASONING_FORMAT_AUTO
+    // see: https://github.com/ggml-org/llama.cpp/pull/15408
 };
+
+
+struct lr_opt {
+    float    lr0          = 1e-5; // learning rate at first epoch
+    float    lr_min       = -1;
+    float    decay_epochs = -1;   // if >0, the learning rate starts at lr0 and decays to lr_min after this many epochs
+    float    scale_epoch  = 0;
+    float    wd           = 0;
+    unsigned epochs       = 2;
+
+    unsigned epoch; // set by optimizer outer (epochs) loop
+    // learning rate decay - constant LR per epoch only for now
+    float get_lr(float e) const;
+    float get_lr() const { return get_lr(epoch); }
+    // must call after arg parse, before get_lr
+    void init();
+};
+
+struct ggml_opt_optimizer_params common_opt_lr_pars(void * userdata);
 
 struct common_params {
     int32_t n_predict             =    -1; // new tokens to predict
@@ -261,7 +291,6 @@ struct common_params {
     float   yarn_beta_fast        = 32.0f; // YaRN low correction dim
     float   yarn_beta_slow        =  1.0f; // YaRN high correction dim
     int32_t yarn_orig_ctx         =     0; // YaRN original context length
-    float   defrag_thold          =  0.1f; // KV cache defragmentation threshold
 
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
@@ -283,6 +312,7 @@ struct common_params {
     enum llama_rope_scaling_type rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED;
     enum llama_pooling_type      pooling_type      = LLAMA_POOLING_TYPE_UNSPECIFIED; // pooling type for embeddings
     enum llama_attention_type    attention_type    = LLAMA_ATTENTION_TYPE_UNSPECIFIED; // attention type for embeddings
+    enum llama_flash_attn_type   flash_attn_type   = LLAMA_FLASH_ATTN_TYPE_AUTO; // whether to use Flash Attention
 
     struct common_params_sampling    sampling;
     struct common_params_speculative speculative;
@@ -346,9 +376,8 @@ struct common_params {
     bool multiline_input   = false; // reverse the usage of `\`
     bool simple_io         = false; // improves compatibility with subprocesses and limited consoles
     bool cont_batching     = true;  // insert new sequences for decoding on-the-fly
-    bool flash_attn        = false; // flash attention
     bool no_perf           = false; // disable performance metrics
-    bool ctx_shift         = true;  // context shift on inifinite text generation
+    bool ctx_shift         = false;  // context shift on infinite text generation
     bool swa_full          = false; // use full-size SWA cache (https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
     bool kv_unified        = false; // enable unified KV cache
 
@@ -376,6 +405,11 @@ struct common_params {
     bool no_mmproj = false;         // explicitly disable multimodal model
     std::vector<std::string> image; // path to image file(s)
 
+    // finetune
+    struct lr_opt lr;
+    enum ggml_opt_optimizer_type optimizer = GGML_OPT_OPTIMIZER_TYPE_ADAMW;
+    float val_split = 0.05f; // fraction of the data used for the validation set
+
     // embedding
     bool embedding         = false; // get only sentence embedding
     int32_t embd_normalize = 2;     // normalisation for embeddings (-1=none, 0=max absolute int16, 1=taxicab, 2=euclidean, >2=p-norm)
@@ -384,11 +418,12 @@ struct common_params {
     std::string cls_sep    = "\t";  // separator of classification sequences
 
     // server params
-    int32_t port           = 8080;         // server listens on this network port
-    int32_t timeout_read   = 600;          // http read timeout in seconds
-    int32_t timeout_write  = timeout_read; // http write timeout in seconds
-    int32_t n_threads_http = -1;           // number of threads to process HTTP requests (TODO: support threadpool)
-    int32_t n_cache_reuse  = 0;            // min chunk size to reuse from the cache via KV shifting
+    int32_t port              = 8080;         // server listens on this network port
+    int32_t timeout_read      = 600;          // http read timeout in seconds
+    int32_t timeout_write     = timeout_read; // http write timeout in seconds
+    int32_t n_threads_http    = -1;           // number of threads to process HTTP requests (TODO: support threadpool)
+    int32_t n_cache_reuse     = 0;            // min chunk size to reuse from the cache via KV shifting
+    int32_t n_swa_checkpoints = 3;            // max number of SWA checkpoints per slot
 
     std::string hostname      = "127.0.0.1";
     std::string public_path   = "";                                                                         // NOLINT
@@ -409,7 +444,7 @@ struct common_params {
 
     // "advanced" endpoints are disabled by default for better security
     bool webui            = true;
-    bool endpoint_slots   = false;
+    bool endpoint_slots   = true;
     bool endpoint_props   = false; // only control POST requests, not GET
     bool endpoint_metrics = false;
 
@@ -703,3 +738,6 @@ const char * const LLM_KV_SPLIT_TENSORS_COUNT = "split.tensors.count";
 //
 
 ggml_opt_dataset_t common_opt_dataset_init(struct llama_context * ctx, const std::vector<llama_token> & tokens, int64_t stride);
+
+// "adamw" or "sgd" (case insensitive)
+enum ggml_opt_optimizer_type common_opt_get_optimizer(const char *);

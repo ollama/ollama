@@ -11,10 +11,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  4 files changed, 192 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 854f1c2b..a2924757 100644
+index 212e52ef..66bbb0ef 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -8146,6 +8146,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -8663,6 +8663,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -60,7 +60,7 @@ index 854f1c2b..a2924757 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -8157,6 +8196,10 @@ void ggml_compute_forward_argsort(
+@@ -8674,6 +8713,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -196,12 +196,12 @@ index 607ded85..53b02634 100644
 +    }
  }
 diff --git a/ggml/src/ggml-cuda/cpy-utils.cuh b/ggml/src/ggml-cuda/cpy-utils.cuh
-index 410c12b7..b8e9e107 100644
+index e621cb98..597c0c8b 100644
 --- a/ggml/src/ggml-cuda/cpy-utils.cuh
 +++ b/ggml/src/ggml-cuda/cpy-utils.cuh
-@@ -223,3 +223,9 @@ template<typename src_t, typename dst_t>
+@@ -215,3 +215,9 @@ template<typename src_t, typename dst_t>
  static __device__ void cpy_1_flt(const char * cxi, char * cdsti) {
-     convert_flt((const src_t *)cxi, (dst_t *)cdsti);
+     *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);
  }
 +
 +static __device__ void cpy_1_i32_i32(const char * cxi, char * cdsti) {
@@ -210,10 +210,10 @@ index 410c12b7..b8e9e107 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index f9bb0256..9c3774e5 100644
+index 8567c3d5..e090c624 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -278,6 +278,47 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -277,6 +277,47 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, cdst_indirect, graph_cpynode_index++);
  }
  
@@ -261,7 +261,7 @@ index f9bb0256..9c3774e5 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1, bool disable_indirection_for_this_node) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -369,6 +410,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -368,6 +409,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
          ggml_cpy_flt_cuda<half, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
      } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
          ggml_cpy_flt_cuda<half, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);

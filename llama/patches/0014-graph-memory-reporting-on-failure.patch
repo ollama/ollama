@@ -28,7 +28,7 @@ index 2cb150fd..781b1e10 100644
  // Create a buffer and allocate all the tensors in a ggml_context
  GGML_API struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index a2977ea2..8a91b381 100644
+index 4f246f6c..b71b994c 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -304,6 +304,12 @@ extern "C" {
@@ -134,10 +134,10 @@ index 8b6e6028..41c8c4a2 100644
  
  static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buffers) {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 97f47abd..eded0291 100644
+index 48270d9e..5dd9d138 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -1631,6 +1631,16 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
+@@ -1801,6 +1801,16 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
      return ggml_gallocr_get_buffer_size(sched->galloc, backend_index);
  }
  
@@ -152,5 +152,5 @@ index 97f47abd..eded0291 100644
 +}
 +
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
+     GGML_ASSERT(sched);
      int backend_index = ggml_backend_sched_backend_id(sched, backend);
-     GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
