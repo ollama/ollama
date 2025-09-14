@@ -928,7 +928,7 @@ kernel void kernel_add_fuse_impl(
 
 typedef decltype(kernel_add_fuse_impl<2>) kernel_add_fuse_t;
 
-template [[host_name("kernel_add")]]        kernel kernel_add_fuse_t kernel_add_fuse_impl<1>;
+template [[host_name("kernel_add_fuse_1")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<1>;
 template [[host_name("kernel_add_fuse_2")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<2>;
 template [[host_name("kernel_add_fuse_3")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<3>;
 template [[host_name("kernel_add_fuse_4")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<4>;
@@ -937,7 +937,7 @@ template [[host_name("kernel_add_fuse_6")]] kernel kernel_add_fuse_t kernel_add_
 template [[host_name("kernel_add_fuse_7")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<7>;
 template [[host_name("kernel_add_fuse_8")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<8>;
 
-kernel void kernel_sub(
+kernel void kernel_sub_fuse_1(
         constant ggml_metal_kargs_bin & args,
         device const char * src0,
         device const char * src1,
@@ -963,7 +963,7 @@ kernel void kernel_sub(
     }
 }
 
-kernel void kernel_mul(
+kernel void kernel_mul_fuse_1(
         constant ggml_metal_kargs_bin & args,
         device const char * src0,
         device const char * src1,
@@ -996,7 +996,7 @@ kernel void kernel_mul(
     }
 }
 
-kernel void kernel_div(
+kernel void kernel_div_fuse_1(
         constant ggml_metal_kargs_bin & args,
         device const char * src0,
         device const char * src1,
@@ -1096,23 +1096,17 @@ kernel void kernel_add_row_c4_fuse_impl(
         device const char * src1,
         device       char * dst,
         uint tpig[[thread_position_in_grid]]) {
-
     const uint nb = args.ne00/4;
     const uint i  = tpig % nb;
 
     device const float4 * src0_row = (device const float4 *) (src0);
     device       float4 *  dst_row = (device       float4 *) (dst);
 
-    device const float4 * src1_row[F];
-    for (short j = 0; j < F; ++j) {
-        src1_row[j] = (device const float4 *) (src1 + args.o1[j]);
-    }
-
     float4 res = src0_row[tpig];
 
 #pragma unroll(F)
     for (short j = 0; j < F; ++j) {
-        res += src1_row[j][i];
+        res += ((device const float4 *) (src1 + args.o1[j]))[i];
     }
 
     dst_row[tpig] = res;
@@ -1120,7 +1114,7 @@ kernel void kernel_add_row_c4_fuse_impl(
 
 typedef decltype(kernel_add_row_c4_fuse_impl<1>) kernel_add_row_c4_fuse_t;
 
-template [[host_name("kernel_add_row_c4")]]        kernel kernel_add_row_c4_fuse_t kernel_add_row_c4_fuse_impl<1>;
+template [[host_name("kernel_add_row_c4_fuse_1")]] kernel kernel_add_row_c4_fuse_t kernel_add_row_c4_fuse_impl<1>;
 template [[host_name("kernel_add_row_c4_fuse_2")]] kernel kernel_add_row_c4_fuse_t kernel_add_row_c4_fuse_impl<2>;
 template [[host_name("kernel_add_row_c4_fuse_3")]] kernel kernel_add_row_c4_fuse_t kernel_add_row_c4_fuse_impl<3>;
 template [[host_name("kernel_add_row_c4_fuse_4")]] kernel kernel_add_row_c4_fuse_t kernel_add_row_c4_fuse_impl<4>;
@@ -1160,7 +1154,7 @@ kernel void kernel_sub_row_c4_fuse_impl(
 
 typedef decltype(kernel_sub_row_c4_fuse_impl<1>) kernel_sub_row_c4_fuse_t;
 
-template [[host_name("kernel_sub_row_c4")]] kernel kernel_sub_row_c4_fuse_t kernel_sub_row_c4_fuse_impl<1>;
+template [[host_name("kernel_sub_row_c4_fuse_1")]] kernel kernel_sub_row_c4_fuse_t kernel_sub_row_c4_fuse_impl<1>;
 
 template <short F>
 kernel void kernel_mul_row_c4_fuse_impl(
@@ -1193,7 +1187,7 @@ kernel void kernel_mul_row_c4_fuse_impl(
 
 typedef decltype(kernel_mul_row_c4_fuse_impl<1>) kernel_mul_row_c4_fuse_t;
 
-template [[host_name("kernel_mul_row_c4")]] kernel kernel_mul_row_c4_fuse_t kernel_mul_row_c4_fuse_impl<1>;
+template [[host_name("kernel_mul_row_c4_fuse_1")]] kernel kernel_mul_row_c4_fuse_t kernel_mul_row_c4_fuse_impl<1>;
 
 template <short F>
 kernel void kernel_div_row_c4_fuse_impl(
@@ -1226,7 +1220,7 @@ kernel void kernel_div_row_c4_fuse_impl(
 
 typedef decltype(kernel_div_row_c4_fuse_impl<1>) kernel_div_row_c4_fuse_t;
 
-template [[host_name("kernel_div_row_c4")]] kernel kernel_div_row_c4_fuse_t kernel_div_row_c4_fuse_impl<1>;
+template [[host_name("kernel_div_row_c4_fuse_1")]] kernel kernel_div_row_c4_fuse_t kernel_div_row_c4_fuse_impl<1>;
 
 kernel void kernel_scale(
         device const float * src0,

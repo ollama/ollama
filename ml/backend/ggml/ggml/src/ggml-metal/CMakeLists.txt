@@ -6,6 +6,7 @@ message(STATUS "Metal framework found")
 
 ggml_add_backend_library(ggml-metal
                          ggml-metal.m
+                         ggml-metal-common.cpp
                         )
 
 target_link_libraries(ggml-metal PRIVATE
