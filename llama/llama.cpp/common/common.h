@@ -193,10 +193,11 @@ struct common_params_sampling {
 };
 
 struct common_params_model {
-    std::string path    = ""; // model local path                                           // NOLINT
-    std::string url     = ""; // model url to download                                      // NOLINT
-    std::string hf_repo = ""; // HF repo                                                    // NOLINT
-    std::string hf_file = ""; // HF file                                                    // NOLINT
+    std::string path        = ""; // model local path                                       // NOLINT
+    std::string url         = ""; // model url to download                                  // NOLINT
+    std::string hf_repo     = ""; // HF repo                                                // NOLINT
+    std::string hf_file     = ""; // HF file                                                // NOLINT
+    std::string docker_repo = ""; // Docker repo                                            // NOLINT
 };
 
 struct common_params_speculative {
@@ -452,7 +453,7 @@ struct common_params {
 
     std::string slot_save_path;
 
-    float slot_prompt_similarity = 0.5f;
+    float slot_prompt_similarity = 0.1f;
 
     // batched-bench params
     bool is_pp_shared = false;

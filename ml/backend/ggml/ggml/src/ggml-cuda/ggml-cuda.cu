@@ -3283,6 +3283,7 @@ struct ggml_backend_cuda_device_context {
     int device;
     std::string name;
     std::string description;
+    std::string pci_bus_id;
     std::string id;
 };
 
@@ -3313,10 +3314,13 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
 }
 
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+
     props->name        = ggml_backend_cuda_device_get_name(dev);
     props->description = ggml_backend_cuda_device_get_description(dev);
     props->id          = ggml_backend_cuda_device_get_id(dev);
     props->type        = ggml_backend_cuda_device_get_type(dev);
+    props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
 
     // Memory reporting is disabled to avoid allocation of a CUDA primary context (~300 MB per device).
     // If you need the memory data, call ggml_backend_dev_memory() explicitly.
@@ -3892,6 +3896,10 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
                 dev_ctx->description = prop.name;
                 dev_ctx->id = ggml_cuda_parse_uuid(prop, i);
+
+                char pci_bus_id[16] = {};
+                snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
+                dev_ctx->pci_bus_id = pci_bus_id;
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,

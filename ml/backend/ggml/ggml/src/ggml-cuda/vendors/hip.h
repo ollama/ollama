@@ -163,6 +163,14 @@
 #define GCN
 #endif
 
+#if defined(__gfx900__) || defined(__gfx906__)
+#define GCN5
+#endif
+
+#if defined(__gfx803__)
+#define GCN4
+#endif
+
 #if defined(__gfx908__) || defined(__gfx90a__) || defined(__gfx942__)
 #define CDNA // For the entire family
 #endif
