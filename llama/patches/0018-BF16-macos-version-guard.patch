@@ -9,10 +9,10 @@ Only enable BF16 on supported MacOS versions (v14+)
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index de3a6a21..92526ed5 100644
+index 005e25b6..edcdacc2 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -120,7 +120,11 @@
+@@ -127,7 +127,11 @@
              ctx->has_bfloat |= [ctx->mtl_device supportsFamily:MTLGPUFamilyApple6];
  
  #if defined(GGML_METAL_USE_BF16)
