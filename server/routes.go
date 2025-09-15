@@ -348,6 +348,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
 			}
+			if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
+				thinkingState.AddContent(openingTag)
+			}
 		}
 	}
 
