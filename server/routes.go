@@ -1618,7 +1618,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	var builtinParser parsers.BuiltinParser
+	var builtinParser parsers.Parser
 	if m.Config.Parser != "" {
 		builtinParser = parsers.ParserForName(m.Config.Parser)
 	}

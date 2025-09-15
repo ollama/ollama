@@ -4,13 +4,13 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type BuiltinParser interface {
+type Parser interface {
 	Add(s string, tools []api.Tool) (content string, thinking string, calls []api.ToolCall, err error)
 	HasToolSupport() bool
 	HasThinkingSupport() bool
 }
 
-func ParserForName(name string) BuiltinParser {
+func ParserForName(name string) Parser {
 	switch name {
 	case "qwen3-coder":
 		parser := &Qwen3CoderParser{}

@@ -17,13 +17,13 @@ var (
 // renderAdditionalKeys renders all JSON fields except the ones in handledKeys
 // This follows the same approach from the reference implementation, which gives
 // a particular key ordering
-func renderAdditionalKeys(obj interface{}, handledKeys map[string]bool) string {
+func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 	data, err := json.Marshal(obj)
 	if err != nil {
 		return ""
 	}
 
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		return ""
 	}
@@ -36,7 +36,7 @@ func renderAdditionalKeys(obj interface{}, handledKeys map[string]bool) string {
 
 		// Check if value is a map or array (needs JSON serialization)
 		switch v := value.(type) {
-		case map[string]interface{}, []interface{}:
+		case map[string]any, []any:
 			jsonBytes, _ := json.Marshal(v)
 			// TODO(drifkin): it would be nice to format the JSON here similarly to
 			// python's default json.dumps behavior (spaces after commas and colons).
