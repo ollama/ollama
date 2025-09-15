@@ -141,6 +141,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	IgnoreEOS        bool           `json:"ignore_eos"`
 }
 
 type Completion struct {
@@ -646,6 +647,8 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	} else {
 		options["top_p"] = 1.0
 	}
+
+	options["ignore_eos"] = r.IgnoreEOS
 
 	return api.GenerateRequest{
 		Model:   r.Model,

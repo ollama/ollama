@@ -297,6 +297,10 @@ void common_sampler_free(struct common_sampler * gsmpl) {
     }
 }
 
+bool common_sampler_ignore_eos(struct common_sampler * gsmpl){
+    return gsmpl->params.ignore_eos;
+}
+
 void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool accept_grammar) {
     if (accept_grammar) {
         llama_sampler_accept(gsmpl->grmr, token);

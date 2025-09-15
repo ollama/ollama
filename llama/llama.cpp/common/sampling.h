@@ -40,6 +40,8 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, co
 
 void common_sampler_free(struct common_sampler * gsmpl);
 
+bool common_sampler_ignore_eos(struct common_sampler * gsmpl);
+
 // if accept_grammar is true, the token is accepted both by the sampling chain and the grammar
 void                    common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool accept_grammar);
 void                    common_sampler_reset (struct common_sampler * gsmpl);
