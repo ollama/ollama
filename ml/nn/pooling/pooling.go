@@ -20,6 +20,7 @@ const (
 func (t Type) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
 	switch t {
 	case TypeNone:
+		// this should not be possible but just in case, return the input
 		return hiddenStates
 	case TypeMean:
 		hiddenStates = hiddenStates.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx).Mean(ctx)
