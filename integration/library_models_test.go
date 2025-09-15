@@ -32,14 +32,14 @@ func TestLibraryModelsGenerate(t *testing.T) {
 			}
 			req := api.GenerateRequest{
 				Model:     model,
-				Prompt:    "why is the sky blue?",
+				Prompt:    blueSkyPrompt,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"temperature": 0.1,
 					"seed":        123,
 				},
 			}
-			anyResp := []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength"}
+			anyResp := blueSkyExpected
 			// Special cases
 			if model == "duckdb-nsql" {
 				anyResp = []string{"select", "from"}

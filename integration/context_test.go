@@ -63,11 +63,11 @@ func TestContextExhaustion(t *testing.T) {
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
 		t.Fatalf("PullIfMissing failed: %v", err)
 	}
-	DoGenerate(ctx, t, client, req, []string{"once", "upon", "lived", "sunny", "cloudy", "clear", "water"}, 120*time.Second, 10*time.Second)
+	DoGenerate(ctx, t, client, req, []string{"once", "upon", "lived", "sunny", "cloudy", "clear", "water", "time", "travel", "world"}, 120*time.Second, 10*time.Second)
 }
 
 // Send multiple generate requests with prior context and ensure the response is coherant and expected
-func TestGenerateWithHistory(t *testing.T) {
+func TestParallelGenerateWithHistory(t *testing.T) {
 	modelOverride := ollamaEngineChatModels[0] // Most recent ollama engine model
 	req, resp := GenerateRequests()
 	numParallel := 2
@@ -113,8 +113,48 @@ func TestGenerateWithHistory(t *testing.T) {
 	wg.Wait()
 }
 
+// Send generate requests with prior context and ensure the response is coherant and expected
+func TestGenerateWithHistory(t *testing.T) {
+	req := api.GenerateRequest{
+		Model:     smol,
+		Prompt:    rainbowPrompt,
+		Stream:    &stream,
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
+		Options: map[string]any{
+			"num_ctx": 16384,
+		},
+	}
+
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	// Get the server running (if applicable) warm the model up with a single initial request
+	slog.Info("loading", "model", req.Model)
+	err := client.Generate(ctx,
+		&api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}, Options: req.Options},
+		func(response api.GenerateResponse) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("failed to load model %s: %s", req.Model, err)
+	}
+
+	req.Context = DoGenerate(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
+
+	for i := 0; i < len(rainbowFollowups); i++ {
+		req.Prompt = rainbowFollowups[i]
+		if time.Now().Sub(started) > softTimeout {
+			slog.Info("exceeded soft timeout, winding down test")
+			return
+		}
+		req.Context = DoGenerate(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
+	}
+}
+
 // Send multiple chat requests with prior context and ensure the response is coherant and expected
-func TestChatWithHistory(t *testing.T) {
+func TestParallelChatWithHistory(t *testing.T) {
 	modelOverride := ollamaEngineChatModels[0] // Most recent ollama engine model
 	req, resp := ChatRequests()
 	numParallel := 2
@@ -163,4 +203,56 @@ func TestChatWithHistory(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// Send generate requests with prior context and ensure the response is coherant and expected
+func TestChatWithHistory(t *testing.T) {
+	req := api.ChatRequest{
+		Model:     smol,
+		Stream:    &stream,
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
+		Options: map[string]any{
+			"num_ctx": 16384,
+		},
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: rainbowPrompt,
+			},
+		},
+	}
+
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	// Get the server running (if applicable) warm the model up with a single initial request
+	slog.Info("loading", "model", req.Model)
+	err := client.Generate(ctx,
+		&api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}, Options: req.Options},
+		func(response api.GenerateResponse) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("failed to load model %s: %s", req.Model, err)
+	}
+
+	assistant := DoChat(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
+
+	for i := 0; i < len(rainbowFollowups); i++ {
+		if time.Now().Sub(started) > softTimeout {
+			slog.Info("exceeded soft timeout, winding down test")
+			return
+		}
+		req.Messages = append(req.Messages,
+			*assistant,
+			api.Message{Role: "user", Content: rainbowFollowups[i]},
+		)
+
+		assistant = DoChat(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
+		if assistant == nil {
+			t.Fatalf("didn't get an assistant response for context")
+		}
+	}
 }

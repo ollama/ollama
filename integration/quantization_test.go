@@ -76,7 +76,7 @@ func TestQuantization(t *testing.T) {
 				stream := true
 				genReq := api.GenerateRequest{
 					Model:     newName,
-					Prompt:    "why is the sky blue?",
+					Prompt:    blueSkyPrompt,
 					KeepAlive: &api.Duration{Duration: 3 * time.Second},
 					Options: map[string]any{
 						"seed":        42,
@@ -88,14 +88,13 @@ func TestQuantization(t *testing.T) {
 
 				// Some smaller quantizations can cause models to have poor quality
 				// or get stuck in repetition loops, so we stop as soon as we have any matches
-				anyResp := []string{"rayleigh", "scattering", "day", "sun", "moon", "color", "nitrogen", "oxygen"}
 				reqCtx, reqCancel := context.WithCancel(ctx)
 				atLeastOne := false
 				var buf bytes.Buffer
 				genfn := func(response api.GenerateResponse) error {
 					buf.Write([]byte(response.Response))
 					fullResp := strings.ToLower(buf.String())
-					for _, resp := range anyResp {
+					for _, resp := range blueSkyExpected {
 						if strings.Contains(fullResp, resp) {
 							atLeastOne = true
 							t.Log(fullResp)

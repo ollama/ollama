@@ -151,7 +151,7 @@ func TestModelsPerf(t *testing.T) {
 					prompt  string
 					anyResp []string
 				}{
-					{"why is the sky blue?", []string{"rayleigh", "scattering", "atmosphere", "nitrogen", "oxygen"}},
+					{blueSkyPrompt, blueSkyExpected},
 					{maxPrompt, []string{"shakespeare", "oppression", "sorrows", "gutenberg", "child", "license", "sonnet", "melancholy"}},
 				}
 				var gpuPercent int
@@ -241,11 +241,12 @@ func TestModelsPerf(t *testing.T) {
 							}
 						}
 					}
+					// Round the logged prompt count for comparisons across versions/configurations which can vary slightly
 					fmt.Fprintf(os.Stderr, "MODEL_PERF_HEADER:%s,%s,%s,%s,%s,%s,%s\n",
 						"MODEL",
 						"CONTEXT",
 						"GPU PERCENT",
-						"PROMPT COUNT",
+						"APPROX PROMPT COUNT",
 						"LOAD TIME",
 						"PROMPT EVAL TPS",
 						"EVAL TPS",
@@ -254,7 +255,7 @@ func TestModelsPerf(t *testing.T) {
 						model,
 						numCtx,
 						gpuPercent,
-						resp.PromptEvalCount,
+						(resp.PromptEvalCount/10)*10,
 						float64(resp.LoadDuration)/1000000000.0,
 						float64(resp.PromptEvalCount)/(float64(resp.PromptEvalDuration)/1000000000.0),
 						float64(resp.EvalCount)/(float64(resp.EvalDuration)/1000000000.0),
