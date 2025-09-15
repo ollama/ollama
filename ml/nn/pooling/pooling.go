@@ -17,8 +17,8 @@ const (
 	TypeUnspecified = 0xFFFFFFFF
 )
 
-func Pooling(ctx ml.Context, hiddenStates ml.Tensor, poolingType Type) ml.Tensor {
-	switch poolingType {
+func (t Type) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
+	switch t {
 	case TypeNone:
 		return hiddenStates
 	case TypeMean:
