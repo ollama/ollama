@@ -179,16 +179,18 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 	for i, layer := range m.Layers {
 		// gemma alternates between the sliding window (local) and causal (global)
 		// kv cache every 6 layers
-		cacheType := cacheTypeSWA
-		if (i+1)%gemmaGlobalCacheCount == 0 {
-			cacheType = cacheTypeCausal
-		}
-		cache.SetLayer(i)
-		wc := cache.(*kvcache.WrapperCache)
-		wc.SetLayerType(cacheType)
+		if cache != nil {
+			cacheType := cacheTypeSWA
+			if (i+1)%gemmaGlobalCacheCount == 0 {
+				cacheType = cacheTypeCausal
+			}
+			cache.SetLayer(i)
+			wc := cache.(*kvcache.WrapperCache)
+			wc.SetLayerType(cacheType)
 
-		if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
-			causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
+			if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
+				causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
+			}
 		}
 
 		var lastLayerOutputs ml.Tensor
