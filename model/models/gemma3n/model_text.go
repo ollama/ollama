@@ -170,8 +170,7 @@ func (d TextLayer) Forward(ctx ml.Context, hiddenStates, perLayerInput, position
 	}
 
 	active = d.PerLayerInputGate.Forward(ctx, active)
-	active = active.GELU(ctx)
-	active = active.Mul(ctx, perLayerInput)
+	active = active.GELU(ctx, perLayerInput)
 
 	active = d.PerLayerProjection.Forward(ctx, active)
 	active = d.PostPerLayerNorm.Forward(ctx, active, opts.eps)
@@ -292,7 +291,7 @@ func (mlp TextMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, activationSpa
 		hiddenStates = hiddenStates.Sub(ctx, cutoff).RELU(ctx)
 	}
 
-	hiddenStates = hiddenStates.GELU(ctx).Mul(ctx, upStates)
+	hiddenStates = hiddenStates.GELU(ctx, upStates)
 	hiddenStates = mlp.Down.Forward(ctx, hiddenStates)
 	return hiddenStates
 }

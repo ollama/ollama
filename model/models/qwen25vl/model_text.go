@@ -90,7 +90,7 @@ type MLP struct {
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextOptions) ml.Tensor {
 	// Apply SwiGLU activation gating
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	// Project back to hidden dimension
 	return mlp.Down.Forward(ctx, hiddenState)
 }
