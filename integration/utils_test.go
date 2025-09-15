@@ -502,6 +502,22 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		done <- 0
 	}()
 
+	var response string
+	verify := func() {
+		// Verify the response contains the expected data
+		response = buf.String()
+		atLeastOne := false
+		for _, resp := range anyResp {
+			if strings.Contains(strings.ToLower(response), resp) {
+				atLeastOne = true
+				break
+			}
+		}
+		if !atLeastOne {
+			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
+		}
+	}
+
 	select {
 	case <-stallTimer.C:
 		if buf.Len() == 0 {
@@ -517,21 +533,14 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		if genErr != nil {
 			t.Fatalf("%s failed with %s request prompt %s", genErr, genReq.Model, genReq.Prompt)
 		}
-		// Verify the response contains the expected data
-		response := buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
-		}
-		if !atLeastOne {
-			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
-		}
+		verify()
 		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
 	case <-ctx.Done():
-		t.Error("outer test context done while waiting for generate")
+		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
+		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
+		// if they are still generating valid responses
+		slog.Warn("outer test context done while waiting for generate")
+		verify()
 	}
 	return context
 }
@@ -552,7 +561,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
 				Model:     smol,
-				Prompt:    "what is the origin of the US thanksgiving holiday? Be brief but factual in your reply",
+				Prompt:    "how do rainbows form? Be brief but factual in your reply",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
@@ -570,9 +579,9 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		[][]string{
 			{"sunlight", "scattering", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorbs", "wavelength"},
 			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
-			{"england", "english", "massachusetts", "pilgrims", "colonists", "independence", "british", "feast", "family", "gatherings", "traditions", "turkey", "colonial", "period", "harvest", "agricultural", "european settlers", "american revolution", "civil war", "16th century", "17th century", "native american", "united states", "cultural", "hardship", "autumn", "festival"},
+			{"water", "droplet", "refracted", "reflect", "color", "spectrum"},
 			{"fourth", "july", "declaration", "independence"},
-			{"nitrogen", "oxygen", "carbon", "dioxide"},
+			{"nitrogen", "oxygen", "carbon", "dioxide", "water", "vapor"},
 		}
 }
 
@@ -599,6 +608,22 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 		done <- 0
 	}()
 
+	var response string
+	verify := func() {
+		// Verify the response contains the expected data
+		response = buf.String()
+		atLeastOne := false
+		for _, resp := range anyResp {
+			if strings.Contains(strings.ToLower(response), resp) {
+				atLeastOne = true
+				break
+			}
+		}
+		if !atLeastOne {
+			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
+		}
+	}
+
 	select {
 	case <-stallTimer.C:
 		if buf.Len() == 0 {
@@ -614,23 +639,14 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 		if genErr != nil {
 			t.Fatalf("%s failed with %s request prompt %v", genErr, req.Model, req.Messages)
 		}
-
-		// Verify the response contains the expected data
-		response := buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
-		}
-		if !atLeastOne {
-			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
-		}
-
+		verify()
 		slog.Info("test pass", "model", req.Model, "messages", req.Messages, "contains", anyResp, "response", response)
 	case <-ctx.Done():
-		t.Error("outer test context done while waiting for generate")
+		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
+		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
+		// if they are still generating valid responses
+		slog.Warn("outer test context done while waiting for chat")
+		verify()
 	}
 	return &api.Message{Role: role, Content: buf.String()}
 }

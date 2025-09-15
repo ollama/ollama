@@ -76,8 +76,9 @@ type JsonSchema struct {
 }
 
 type EmbedRequest struct {
-	Input any    `json:"input"`
-	Model string `json:"model"`
+	Input      any    `json:"input"`
+	Model      string `json:"model"`
+	Dimensions int    `json:"dimensions,omitempty"`
 }
 
 type StreamOptions struct {
@@ -1005,7 +1006,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input}); err != nil {
+		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input, Dimensions: req.Dimensions}); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}

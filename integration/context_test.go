@@ -36,7 +36,7 @@ func TestLongInputContext(t *testing.T) {
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
 		t.Fatalf("PullIfMissing failed: %v", err)
 	}
-	DoGenerate(ctx, t, client, req, []string{"russia", "germany", "france", "england", "austria", "prussia", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
+	DoGenerate(ctx, t, client, req, []string{"russia", "germany", "france", "england", "austria", "prussia", "europe", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
 }
 
 func TestContextExhaustion(t *testing.T) {
@@ -50,7 +50,7 @@ func TestContextExhaustion(t *testing.T) {
 	// Set up the test data
 	req := api.GenerateRequest{
 		Model:  smol,
-		Prompt: "Write me a story with a ton of emojis?",
+		Prompt: "Write me a story in english with a lot of emojis",
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,

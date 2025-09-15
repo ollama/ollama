@@ -148,7 +148,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	var textProcessor model.TextProcessor
 	var err error
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
-		textProcessor, err = model.NewTextProcessor(modelPath)
+		if len(projectors) == 0 {
+			textProcessor, err = model.NewTextProcessor(modelPath)
+		} else {
+			err = errors.New("split vision models aren't supported")
+		}
 		if err != nil {
 			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
 			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
@@ -161,17 +165,14 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 	}
 
-	newEstimates := textProcessor != nil && envconfig.NewMemoryEstimates()
-	if newEstimates {
-		slog.Info("enabling new memory estimates")
-	}
-
 	// Verify the requested context size is <= the model training size
 	trainCtx := f.KV().ContextLength()
 	if opts.NumCtx > int(trainCtx) && trainCtx > 0 {
 		slog.Warn("requested context size too large for model", "num_ctx", opts.NumCtx, "n_ctx_train", trainCtx)
 		opts.NumCtx = int(trainCtx)
 	}
+
+	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
@@ -218,7 +219,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 		// Flash Attention also supports kv cache quantization
 		// Enable if the requested and kv cache type is supported by the model
-		if kvct != "" && f.SupportsKVCacheType(kvct) {
+		if f.SupportsKVCacheType(kvct) {
 			loadRequest.KvCacheType = kvct
 		} else {
 			slog.Warn("kv cache type not supported by model", "type", kvct)
@@ -431,7 +432,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			}
 		}()
 
-		if newEstimates {
+		if textProcessor != nil {
 			return &ollamaServer{llmServer: s}, nil
 		} else {
 			return &llamaServer{llmServer: s, ggml: f}, nil

@@ -181,12 +181,11 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 	}
 
-	logutil.Trace("encoded", "string", s, "ids", ids)
-
 	if addSpecial && len(ids) > 0 {
 		ids = spm.vocab.addSpecials(ids)
 	}
 
+	logutil.Trace("encoded", "string", s, "ids", ids)
 	return ids, nil
 }
 

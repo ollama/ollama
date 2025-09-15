@@ -201,12 +201,11 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
-	logutil.Trace("encoded", "string", s, "ids", ids)
-
 	if addSpecial && len(ids) > 0 {
 		ids = bpe.vocab.addSpecials(ids)
 	}
 
+	logutil.Trace("encoded", "string", s, "ids", ids)
 	return ids, nil
 }
 
