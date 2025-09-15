@@ -11,27 +11,32 @@ const (
 	TypeMean
 	TypeCLS
 	TypeLast
-	TypeRank
-
-	TypeUnknown     = 0xFFFFFFFE
-	TypeUnspecified = 0xFFFFFFFF
 )
+
+func (t Type) String() string {
+	switch t {
+	case TypeMean:
+		return "Mean"
+	case TypeCLS:
+		return "CLS"
+	case TypeLast:
+		return "Last"
+	default:
+		return "Unknown"
+	}
+}
 
 func (t Type) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
 	switch t {
-	case TypeNone:
-		// this should not be possible but just in case, return the input
-		return hiddenStates
 	case TypeMean:
 		hiddenStates = hiddenStates.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx).Mean(ctx)
 		return hiddenStates.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	case TypeCLS:
 		return hiddenStates.View(ctx, 0, hiddenStates.Dim(0))
 	case TypeLast:
-		panic("not implemented")
-	case TypeRank:
-		panic("not implemented")
+		hiddenStates = hiddenStates.View(ctx, (hiddenStates.Dim(1)-1)*hiddenStates.Stride(1), hiddenStates.Dim(0))
+		return hiddenStates
 	default:
-		panic("not implemented")
+		panic("unknown pooling type")
 	}
 }
