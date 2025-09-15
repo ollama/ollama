@@ -12,7 +12,7 @@ import (
 	"github.com/ollama/ollama/convert/sentencepiece"
 )
 
-func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
+func loadSentencePieceVocab(t *testing.T) SentencePiece {
 	t.Helper()
 
 	bts, err := os.ReadFile(filepath.Join("testdata", "gemma2", "tokenizer.model"))
@@ -45,7 +45,7 @@ func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
 		}
 	}
 
-	return NewSentencePieceModel(&v)
+	return NewSentencePiece(&v)
 }
 
 func TestSentencePieceEncode(t *testing.T) {
@@ -115,7 +115,7 @@ func TestSentencePieceEncode(t *testing.T) {
 	})
 }
 
-func TestSentencePieceModelDecodeByteTokens(t *testing.T) {
+func TestSentencePieceDecodeByteTokens(t *testing.T) {
 	vocab := &Vocabulary{
 		Values: []string{
 			"normal",
@@ -134,7 +134,7 @@ func TestSentencePieceModelDecodeByteTokens(t *testing.T) {
 		Scores: []float32{0, 0, 0, 0, 0},
 	}
 
-	spm := NewSentencePieceModel(vocab)
+	spm := NewSentencePiece(vocab)
 
 	tests := []struct {
 		name     string
