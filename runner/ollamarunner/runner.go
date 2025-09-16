@@ -11,7 +11,6 @@ import (
 	"image"
 	"log"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -32,9 +31,9 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
 
@@ -406,7 +405,7 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
-	supportsAsync := s.model.Backend().Config().Uint("pooling_type", math.MaxUint32) == math.MaxUint32
+	supportsAsync := pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone
 
 	var activeBatch batchState
 	for {
@@ -468,6 +467,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Prepare the seqs and batch, but defer the input token values as we may not be ready yet
 	var batchInputs []*input.Input
+	var batchOutputs []int32
 	var batch input.Batch
 
 	resumeSeq := -1
@@ -550,9 +550,9 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
 			batch.Sequences = append(batch.Sequences, seq.cache.Id)
 
-			seq.iBatch = len(batch.Outputs)
-			if i+1 == len(seq.inputs) {
-				batch.Outputs = append(batch.Outputs, int32(len(batchInputs)-1))
+			seq.iBatch = len(batchOutputs)
+			if i+1 == len(seq.inputs) || seq.embeddingOnly {
+				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
 			}
 			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
 			seq.pendingInputs = append(seq.pendingInputs, inp)
@@ -577,6 +577,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
+	batch.Outputs = nextBatch.ctx.Input().FromIntSlice(batchOutputs, len(batchOutputs))
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -704,8 +705,8 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		}
 
 		// sample a token
-		vocabSize := len(outputs) / len(activeBatch.batch.Outputs)
-		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", len(activeBatch.batch.Outputs), "vocabSize", vocabSize, "iBatches", iBatches)
+		vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)
+		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
 		token, err := seq.sampler.Sample(outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize])
 		if err != nil {
 			s.hardErrCh <- fmt.Errorf("failed to sample token: %w", err)
@@ -780,8 +781,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
-
-	tokenParser := parser.NewTokenParser(req.ParserType, req.PrefillString)
 
 	if req.Options == nil {
 		opts := api.DefaultOptions()
@@ -873,18 +872,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				var thinking string
-				var err error
-				content, thinking, err = tokenParser.AddContent(content)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					close(seq.quit)
-					return
-				}
-
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content:  content,
-					Thinking: thinking,
+					Content: content,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
@@ -893,9 +882,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				toolCalls := tokenParser.Drain()
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					ToolCalls:          toolCalls,
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
@@ -913,7 +900,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
-	if s.model.Backend().Config().Uint("pooling_type", math.MaxUint32) == math.MaxUint32 {
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 		return
 	}
@@ -1061,12 +1048,8 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Positions[i] = int32(i)
 	}
 
-	batch.Outputs = make([]int32, s.parallel)
-	for i := range batch.Outputs {
-		batch.Outputs[i] = int32(i)
-	}
-
 	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
+	batch.Outputs = ctx.Input().Empty(ml.DTypeI32, s.parallel)
 
 	cache := s.model.Config().Cache
 	if cache != nil {

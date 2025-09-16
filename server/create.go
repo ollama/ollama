@@ -323,6 +323,8 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		RootFS: RootFS{
 			Type: "layers",
 		},
+		Renderer: r.Renderer,
+		Parser:   r.Parser,
 	}
 
 	var layers []Layer

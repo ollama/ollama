@@ -83,7 +83,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 	hiddenStates = hiddenStates.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx).Mean(ctx)
 	hiddenStates = hiddenStates.Permute(ctx, 2, 0, 1, 3).Contiguous(ctx)
-	hiddenStates = hiddenStates.Rows(ctx, ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs)))
+	hiddenStates = hiddenStates.Rows(ctx, batch.Outputs)
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
 	return m.Output.Forward(ctx, hiddenStates), nil
@@ -170,8 +170,7 @@ func (d TextLayer) Forward(ctx ml.Context, hiddenStates, perLayerInput, position
 	}
 
 	active = d.PerLayerInputGate.Forward(ctx, active)
-	active = active.GELU(ctx)
-	active = active.Mul(ctx, perLayerInput)
+	active = active.GELU(ctx, perLayerInput)
 
 	active = d.PerLayerProjection.Forward(ctx, active)
 	active = d.PostPerLayerNorm.Forward(ctx, active, opts.eps)
@@ -292,7 +291,7 @@ func (mlp TextMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, activationSpa
 		hiddenStates = hiddenStates.Sub(ctx, cutoff).RELU(ctx)
 	}
 
-	hiddenStates = hiddenStates.GELU(ctx).Mul(ctx, upStates)
+	hiddenStates = hiddenStates.GELU(ctx, upStates)
 	hiddenStates = mlp.Down.Forward(ctx, hiddenStates)
 	return hiddenStates
 }

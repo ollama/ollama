@@ -50,7 +50,7 @@ func TestContextExhaustion(t *testing.T) {
 	// Set up the test data
 	req := api.GenerateRequest{
 		Model:  smol,
-		Prompt: "Write me a story with a ton of emojis?",
+		Prompt: "Write me a story in english with a lot of emojis",
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,

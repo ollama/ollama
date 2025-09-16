@@ -5,7 +5,6 @@ import (
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
-	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -21,10 +20,15 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
 )
 
-var ErrNoVisionModel = errors.New("this model is missing data required for image input")
+var (
+	ErrNoVisionModel        = errors.New("this model is missing data required for image input")
+	ErrUnsupportedModel     = errors.New("model not supported")
+	ErrUnsupportedTokenizer = errors.New("tokenizer not supported")
+)
 
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
@@ -104,7 +108,7 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	}
 
 	arch := b.Config().Architecture()
-	if b.Config().Uint("pooling_type", math.MaxUint32) != math.MaxUint32 {
+	if pooling.Type(b.Config().Uint("pooling_type")) != pooling.TypeNone {
 		arch = arch + "_embed"
 	}
 
@@ -242,7 +246,7 @@ func setPointer(base Base, v reflect.Value, tags []Tag) {
 		vv = vv.Elem()
 	}
 
-	vv = vv.Elem()
+	vv = reflect.Indirect(vv)
 	if v.IsNil() {
 		vv = reflect.New(v.Type().Elem()).Elem()
 	}

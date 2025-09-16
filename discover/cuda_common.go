@@ -45,10 +45,18 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		}
 	}
 
+	// Check GPU compute capability FIRST
+	isOldGPU := gpuInfo.computeMajor < 7 || (gpuInfo.computeMajor == 7 && gpuInfo.computeMinor < 5)
+	if isOldGPU {
+		// GPU is Pascal or older (CC <= 7.4) - use CUDA v12 (supports CC 6.1)
+		return "v12"
+	}
+
+	// GPU is Turing or newer (CC >= 7.5) - can use newer CUDA
 	if gpuInfo.DriverMajor < 13 {
 		// The detected driver is older than 580 (Aug 2025)
 		// Warn if their CC is compatible with v13 and they should upgrade their driver to get better performance
-		if gpuInfo.computeMajor > 7 || (gpuInfo.computeMajor == 7 && gpuInfo.computeMinor >= 5) {
+		if !isOldGPU {
 			slog.Warn("old CUDA driver detected - please upgrade to a newer driver for best performance", "version", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
 		}
 		return "v12"
