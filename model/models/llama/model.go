@@ -34,23 +34,27 @@ type Model struct {
 
 func New(c fs.Config) (model.Model, error) {
 	var processor model.TextProcessor
+	vocabulary := model.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		Merges: c.Strings("tokenizer.ggml.merges"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+		EOS: append(
+			[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+			c.Ints("tokenizer.ggml.eos_token_ids")...,
+		),
+	}
 	switch c.String("tokenizer.ggml.model") {
 	case "gpt2":
 		processor = model.NewBytePairEncoding(
 			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				EOS: append(
-					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
-					c.Ints("tokenizer.ggml.eos_token_ids")...,
-				),
-			},
+			&vocabulary,
 		)
+	case "llama":
+		processor = model.NewSentencePiece(&vocabulary)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}
