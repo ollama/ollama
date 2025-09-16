@@ -1312,6 +1312,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.GET("/api/info", s.InfoHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1499,6 +1500,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
+	s.sched.loadedMu.Lock()
 	for _, v := range s.sched.loaded {
 		model := v.model
 		modelDetails := api.ModelDetails{
@@ -1531,6 +1533,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 		models = append(models, mr)
 	}
+	s.sched.loadedMu.Unlock()
 
 	slices.SortStableFunc(models, func(i, j api.ProcessModelResponse) int {
 		// longest duration remaining listed first
@@ -1538,6 +1541,69 @@ func (s *Server) PsHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+}
+
+func (s *Server) InfoHandler(c *gin.Context) {
+	sysInfo := discover.GetSystemInfo()
+	ms, _ := Manifests(true)
+	fsUsed := uint64(0)
+	layers := map[string]interface{}{}
+	for _, m := range ms {
+		for _, l := range m.Layers {
+			if _, counted := layers[l.Digest]; !counted {
+				layers[l.Digest] = struct{}{}
+				fsUsed += uint64(l.Size)
+			}
+		}
+	}
+	vramUsed := uint64(0)
+	s.sched.loadedMu.Lock()
+	runningCount := len(s.sched.loaded)
+	for _, r := range s.sched.loaded {
+		vramUsed += r.vramSize
+	}
+	s.sched.loadedMu.Unlock()
+	supportedGPUs := make([]api.GPUInfo, len(sysInfo.GPUs))
+	for i, gpu := range sysInfo.GPUs {
+		supportedGPUs[i].ID = gpu.ID
+		supportedGPUs[i].Name = gpu.Name
+		supportedGPUs[i].TotalMemory = gpu.TotalMemory
+		supportedGPUs[i].FreeMemory = gpu.FreeMemory
+		supportedGPUs[i].Compute = gpu.Compute
+		if gpu.DriverMajor > 0 {
+			supportedGPUs[i].Driver = fmt.Sprintf("%d.%d", gpu.DriverMajor, gpu.DriverMinor)
+		} else {
+			supportedGPUs[i].Driver = "upstream driver"
+		}
+		supportedGPUs[i].Runner = gpu.Library
+		if gpu.Variant != "" {
+			supportedGPUs[i].Runner += "_" + gpu.Variant
+		}
+	}
+	cores := 0
+	for _, cpu := range sysInfo.System.CPUs {
+		cores += cpu.CoreCount
+	}
+	info := api.InfoResponse{
+		Version: version.Version,
+		Models: api.SystemModelInfo{
+			Store:          envconfig.Models(),
+			Count:          len(ms),
+			FilesystemUsed: fsUsed,
+			Running:        runningCount,
+			VRAMUsed:       vramUsed,
+		},
+		ComputeInfo: api.ComputeInfo{
+			SystemCompute: api.SystemComputeInfo{
+				CPUCores:    cores,
+				TotalMemory: sysInfo.System.TotalMemory,
+				FreeMemory:  sysInfo.System.FreeMemory,
+				FreeSwap:    sysInfo.System.FreeSwap,
+			},
+			SupportedGPUs: supportedGPUs,
+		},
+	}
+	c.JSON(http.StatusOK, info)
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
