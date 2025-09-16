@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -304,6 +305,8 @@ func TestDeleteHandler(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusNotFound)
+				errPayload := `{"error":"model '%s' not found"}`
+				w.Write([]byte(fmt.Sprintf(errPayload, req.Name)))
 			}
 			return
 		}
@@ -346,7 +349,7 @@ func TestDeleteHandler(t *testing.T) {
 	}
 
 	err := DeleteHandler(cmd, []string{"test-model-not-found"})
-	if err == nil || !strings.Contains(err.Error(), "unable to stop existing running model \"test-model-not-found\"") {
+	if err == nil || !strings.Contains(err.Error(), "model 'test-model-not-found' not found") {
 		t.Fatalf("DeleteHandler failed: expected error about stopping non-existent model, got %v", err)
 	}
 }
@@ -499,7 +502,7 @@ func TestPushHandler(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
 					err := json.NewEncoder(w).Encode(map[string]string{
-						"error": "access denied",
+						"error": "403: {\"errors\":[{\"code\":\"ACCESS DENIED\", \"message\":\"access denied\"}]}",
 					})
 					if err != nil {
 						t.Fatal(err)

@@ -583,7 +583,8 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if spinner != nil {
 			spinner.Stop()
 		}
-		if strings.Contains(err.Error(), "access denied") {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "access denied") || strings.Contains(errStr, "unauthorized") {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
 		return err
@@ -709,7 +710,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		KeepAlive: &api.Duration{Duration: 0},
 	}
 	if err := loadOrUnloadModel(cmd, opts); err != nil {
-		if !strings.Contains(err.Error(), "not found") {
+		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", args[0])
 		}
 	}
