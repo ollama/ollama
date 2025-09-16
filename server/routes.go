@@ -1030,7 +1030,6 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 			if m.Config.EmbedLen > 0 {
 				resp.ModelInfo[fmt.Sprintf("%s.embedding_length", m.Config.ModelFamily)] = m.Config.EmbedLen
 			}
-
 		}
 	}
 

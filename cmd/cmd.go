@@ -852,7 +852,6 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 					rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(f, 'f', -1, 64)})
 				}
 			}
-
 		} else {
 			rows = append(rows, []string{"", "architecture", resp.Details.Family})
 			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
@@ -1404,7 +1403,6 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
-
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}

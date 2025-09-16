@@ -687,7 +687,6 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	}
 
 	fmt.Printf("resp = %#v\n", resp)
-
 }
 
 func TestCreateLicenses(t *testing.T) {
