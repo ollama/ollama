@@ -30,10 +30,10 @@ func (o Options) headDim() int {
 }
 
 type Attention struct {
-	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Query     *nn.Linear  `gguf:"attn_q"`
-	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
+	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Key       *nn.Linear  `gguf:"attn_k"`
+	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
 	Value     *nn.Linear  `gguf:"attn_v"`
 	Output    *nn.Linear  `gguf:"attn_output"`
 }
@@ -65,10 +65,10 @@ type MLP interface {
 }
 
 type sparse struct {
-	Router *nn.Linear `gguf:"ffn_gate_inp"`
-	Gate   *nn.Linear `gguf:"ffn_gate_exps"`
-	Up     *nn.Linear `gguf:"ffn_up_exps"`
-	Down   *nn.Linear `gguf:"ffn_down_exps"`
+	Router *nn.Linear      `gguf:"ffn_gate_inp"`
+	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
 func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
@@ -87,13 +87,9 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
-	upStates := mlp.Up.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates, selectedExperts).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates, selectedExperts))
 
-	hiddenStates = mlp.Gate.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
-	hiddenStates = hiddenStates.SILU(ctx)
-	hiddenStates = hiddenStates.Mul(ctx, upStates)
-
-	experts := mlp.Down.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
+	experts := mlp.Down.Forward(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)
 
 	nextStates := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
@@ -111,7 +107,8 @@ type dense struct {
 }
 
 func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *Options) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).
+		SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 

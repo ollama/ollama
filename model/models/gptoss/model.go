@@ -210,7 +210,7 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *
 		up = mlp.Up.Forward(ctx, hiddenStates, selectedExperts)
 	}
 
-	hiddenStates = gate.SwiGLU(ctx, up, 1.702, 7)
+	hiddenStates = gate.SILUAlphaLimit(ctx, up, 1.702, 7)
 
 	experts := mlp.Down.Forward(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)

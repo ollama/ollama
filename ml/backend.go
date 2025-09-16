@@ -430,12 +430,13 @@ type Tensor interface {
 	Sin(ctx Context) Tensor
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
-	GELU(ctx Context) Tensor
-	QuickGELU(ctx Context) Tensor
-	SILU(ctx Context) Tensor
-	RELU(ctx Context) Tensor
+	GELU(ctx Context, up ...Tensor) Tensor
+	SILU(ctx Context, up ...Tensor) Tensor
+	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
-	SwiGLU(ctx Context, up Tensor, alpha, limit float32) Tensor
+
+	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
+	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
