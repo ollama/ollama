@@ -294,3 +294,31 @@ func TestTopKIndicesComplex(t *testing.T) {
 	// Verify the result
 	t.Logf("Result shape: %v", result.Shape())
 }
+
+func TestFullForward(t *testing.T) {
+	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := m.Backend().NewContext()
+
+	input := "hello, how are you?"
+
+	// how does one create a batch?
+	batch := input.Batch{
+		Inputs: input,
+		Positions: []int32{0, 1, 2, 3},
+		Outputs: []int32{0, 1, 2, 3},
+	}
+
+	result, err := m.Forward(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+}

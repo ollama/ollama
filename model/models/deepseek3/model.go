@@ -25,21 +25,36 @@ import (
 
 type Transformer struct {
 	model.Base
-	// model.BytePairEncoding
+	model.BytePairEncoding
 
 	// TokenEmbedding    *nn.Embedding      `gguf:"token_embd"`
 	TransformerBlocks []TransformerBlock `gguf:"blk"`
 	// OutputNorm        *nn.RMSNorm        `gguf:"output_norm"`
 	// Output            *nn.Linear         `gguf:"output,alt:token_embd"`
 
-	Options
+	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
+	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
+	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
+
+	*Options
 }
 
 type TransformerBlock struct {
+	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
 	Attention *AttentionBlock
+
+	MLPNorm *nn.RMSNorm `gguf:"ffn_norm"`
 	MLP
 	// MoEBlock *MoEBlock
 	// the only diff is its MLP or MoE
+}
+
+func (t *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+	hiddenStates = t.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
+	hiddenStates = t.Attention.Forward(ctx, hiddenStates, positions, cache, opts)
+	hiddenStates = t.MLPNorm.Forward(ctx, hiddenStates, opts.eps)
+	hiddenStates = t.MLP.Forward(ctx, hiddenStates, opts)
+	return hiddenStates
 }
 
 type Options struct {
@@ -100,307 +115,6 @@ func (o Options) RoPEOptions() []func(*rope.Options) {
 // }
 
 // // nn.ModuleList([DeepseekV3MLP(config, intermediate_size=config.moe_intermediate_size) for _ in range(config.n_routed_experts)])
-
-// type Experts struct {
-// 	Gate *nn.Linear `gguf:"ffn_gate_exps"`
-// 	Up   *nn.Linear `gguf:"ffn_up_exps"`
-// 	Down *nn.Linear `gguf:"ffn_down_exps"`
-// }
-
-// func (e *Experts) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-// 	// hiddenDim, sequenceLength, batchSize := hiddenStates.Dim(0), hiddenStates.Dim(1), hiddenStates.Dim(2)
-// 	// hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, sequenceLength*batchSize)
-// 	// routerLogits := mlp.Router.Forward(ctx, hiddenStates)
-
-// 	// routingWeights := routerLogits.Softmax(ctx)
-// 	// selectedExperts := routingWeights.TopK(ctx, opts.numExpertsUsed)
-// 	// routingWeights = routingWeights.Reshape(ctx, 1, opts.numExperts, hiddenStates.Dim(1)).Rows(ctx, selectedExperts)
-// 	// if opts.normTopKProb {
-// 	// 	routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenStates.Dim(1))
-// 	// 	routingWeights = routingWeights.Div(ctx, routingWeights.SumRows(ctx))
-// 	// 	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenStates.Dim(1))
-// 	// }
-
-// 	// where we need to figureo ut how to implement the router
-
-// 	// --------------------------------------------------------------------------------------
-
-// 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
-
-// 	upStates := mlp.Up.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
-
-// 	hiddenStates = mlp.Gate.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
-// 	hiddenStates = hiddenStates.SILU(ctx)
-// 	hiddenStates = hiddenStates.Mul(ctx, upStates)
-
-// 	experts := mlp.Down.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
-// 	experts = experts.Mul(ctx, routingWeights)
-
-// 	nextStates := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
-// 	for i := 1; i < opts.numExpertsUsed; i++ {
-// 		nextStates = nextStates.Add(ctx, experts.View(ctx, i*experts.Stride(1), experts.Dim(0), experts.Stride(2), experts.Dim(2)))
-// 	}
-
-// 	return nextStates
-// }
-
-// pass in the topk weights
-// func (e *Experts) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-// 	// finalHiddenStates := ctx.Zeros(topkWeights.DType(), hiddenState.Shape()...)
-// 	// selectedExperts = passed in?
-
-// 	// cur = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens)
-
-// 	// eLen = nExperts
-// 	nEmbedding, nTokens := hiddenState.Dim(0), hiddenState.Dim(1)
-// 	nExperts := e.Len()
-// 	weights := prod.Reshape(ctx, 1, nExperts, nTokens).Rows(ctx, selectedExperts)
-
-// 	// do we need softmax, normalization, or scale
-
-// 	hiddenState = hiddenState.Reshape(ctx, nEmbedding, 1, nTokens)
-
-// 	// ggml_tensor * up = build_lora_mm_id(up_exps, cur, selected_experts)
-// 	upExps := e.Experts[0].Up.Weight // can we implement it with forward?
-// 	up := upExps.MulmatID(ctx, hiddenState, selectedExperts)
-// 	gateExps := e.Experts[0].Gate.Weight
-// 	gate := gateExps.MulmatID(ctx, hiddenState, selectedExperts)
-
-// 	gate = gate.SILU(ctx).Mul(ctx, up)
-
-// 	downExps := e.Experts[0].Down.Weight
-
-// 	experts := downExps.MulmatID(ctx, hiddenState, selectedExperts) // bmm
-// 	experts = experts.Mul(ctx, weights)
-
-// 	nExpertsUsed := experts.Dim(1)
-
-// 	// ordering the views before the adds
-// 	hiddenExperts := make([]ml.Tensor, nExpertsUsed)
-// 	for i := 1; i < nExpertsUsed; i++ {
-// 		hiddenExperts[i] = experts.View(ctx)
-// 	}
-
-// }
-
-// type Router struct {
-// 	Gate *nn.Linear `gguf:"ffn_gate_inp"` // nn.Parameter vs nn.Linear
-// }
-
-// note that TopK returns us the values
-
-// topKIndices implements the MoE routing logic for DeepSeek3
-// This is a simplified version for testing purposes
-// func topKIndices(ctx ml.Context, scores ml.Tensor, bias ml.Tensor, nGroups, topKGroup, topK int) ml.Tensor {
-// 	fmt.Printf("DEBUG: scores shape: %v\n", scores.Shape())
-// 	fmt.Printf("DEBUG: bias shape: %v\n", bias.Shape())
-// 	fmt.Printf("DEBUG: nGroups: %d\n", nGroups)
-// 	fmt.Printf("DEBUG: topKGroup: %d\n", topKGroup)
-// 	fmt.Printf("DEBUG: topK: %d\n", topK)
-
-// 	nExperts, nTokens := scores.Dim(0), scores.Dim(1)
-// 	expertsPerGroup := nExperts / nGroups
-// 	fmt.Printf("DEBUG: expertsPerGroup: %d\n", expertsPerGroup)
-
-// 	scoresForChoice := scores.Add(ctx, bias)
-// 	fmt.Printf("DEBUG: scoresForChoice shape: %v\n", scoresForChoice.Shape())
-// 	scoresG := scoresForChoice.Reshape(ctx, nGroups, expertsPerGroup, nTokens)
-// 	fmt.Printf("DEBUG: scoresG shape: %v\n", scoresG.Shape())
-
-// 	// ----
-
-// 	// top2_vals, _ = scores_g.topk(k=2, dim=1)
-
-// 	// To do TopK on dimension 1, we need to permute or reshape first
-
-// 	// nGroups, expertsPerGroup, nTokens --> expertsPerGroup, nGroups, nTokens
-
-// 	// nGroups, expertsPerGroup, nTokens (4, 2, 10) --> expertsPerGroup, nGroups, nTokens (2, 4, 10)
-
-// 	// bruh this whole thing is topK indices
-// 	scoresGTransposed := scoresG.Reshape(ctx, nGroups, expertsPerGroup, nTokens, 1) // in prep for permute
-// 	fmt.Printf("DEBUG: scoresGTransposed Reshape shape: %v\n", scoresGTransposed.Shape())
-// 	// 4, 2, 10, 1
-// 	scoresGTransposed = scoresGTransposed.Permute(ctx, 1, 0, 2, 3)
-// 	// 2, 4, 10, 1
-// 	fmt.Printf("DEBUG: scoresGTransposed Permute shape: %v\n", scoresGTransposed.Shape())
-
-// 	top2Indices := scoresGTransposed.TopK(ctx, 2)
-// 	fmt.Printf("DEBUG: top2Indices Ktop shape: %v\n", top2Indices.Shape())
-
-// 	top2Indices = top2Indices.Permute(ctx, 1, 0, 2, 3) // 4, 2, 10, 1
-// 	fmt.Printf("DEBUG: top2Indices unPermute shape: %v\n", top2Indices.Shape())
-// 	top2Indices = top2Indices.Contiguous(ctx)
-// 	top2Indices = top2Indices.Reshape(ctx, nGroups, expertsPerGroup, nTokens)
-// 	fmt.Printf("DEBUG: top2Indices unReshape shape: %v\n", top2Indices.Shape())
-
-// 	// topK values
-// 	fmt.Printf("DEBUG: **********************:\n")
-// 	fmt.Printf("DEBUG: top2Indices shape: %v\n", top2Indices.Shape())
-// 	fmt.Printf("DEBUG: scoresG shape: %v\n", scoresG.Shape())
-
-// 	scoresFlat := scoresG.Reshape(ctx, 1, expertsPerGroup, nGroups*nTokens)
-// 	idxFlat := top2Indices.Reshape(ctx, nGroups, topK, nTokens, 1)
-// 	idxFlat = idxFlat.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
-// 	idxFlat = idxFlat.Reshape(ctx, topK, nGroups*nTokens) // int32
-// 	fmt.Printf("DEBUG: idxFlat shape: %v\n", idxFlat.Shape())
-
-// 	valsFlat := scoresFlat.Rows(ctx, idxFlat)
-// 	fmt.Printf("DEBUG: valsFlat shape: %v\n", valsFlat.Shape())
-
-// 	top2Vals := valsFlat.Reshape(ctx, topK, nGroups, nTokens).Permute(ctx, 1, 0, 2, 3)
-// 	fmt.Printf("DEBUG: top2Vals shape: %v\n", top2Vals.Shape())
-
-// 	// we should check here to make sure everything is correct up to this point **!!**
-
-// 	// top2Vals := scoresG.Rows(ctx, top2Indices)
-// 	// fmt.Printf("DEBUG: top2Vals shape: %v\n", top2Vals.Shape())
-// 	top2Vals = top2Vals.Contiguous(ctx)
-// 	top2Vals = top2Vals.Reshape(ctx, top2Vals.Dim(0), top2Vals.Dim(1), top2Vals.Dim(2), 1)
-// 	fmt.Printf("DEBUG: top2Vals Reshape shape: %v\n", top2Vals.Shape())
-// 	top2Vals = top2Vals.Permute(ctx, 1, 0, 2, 3) // 2, 4, 10, 1
-// 	fmt.Printf("DEBUG: top2Vals Permute shape: %v\n", top2Vals.Shape())
-
-// 	groupScores := top2Vals.SumRows(ctx) // 1, 4, 10, 1
-// 	fmt.Printf("DEBUG: groupScores shape: %v\n", groupScores.Shape())
-// 	groupScores = groupScores.Reshape(ctx, 4, 10) // 4, 10
-// 	fmt.Printf("DEBUG: groupScores Reshape shape: %v\n", groupScores.Shape())
-
-// 	fmt.Printf("DEBUG: **********************:\n")
-
-// 	// fmt.Printf("DEBUG: groupScores shape: %v\n", groupScores.Shape())
-// 	groupIdx := groupScores.TopK(ctx, topKGroup)
-// 	fmt.Printf("DEBUG: groupIdx shape: %v\n", groupIdx.Shape())
-
-// 	return groupIdx
-
-// 	// group idx generates the
-
-// 	// fmt.Printf("DEBUG: groupIdx shape: %v\n", groupIdx.Shape())
-
-// 	// // baseIdx := groupIdx.Scale(ctx, float64(expertsPerGroup))
-// 	// // fmt.Printf("DEBUG: baseIdx shape: %v\n", baseIdx.Shape())
-// 	// // all this to create eLocal
-// 	// baseIdx := groupIdx.
-// 	// 	Scale(ctx, float64(expertsPerGroup)). // group_id * expertsPerGroup
-// 	// 	Reshape(ctx, 1, topKGroup, 1, nTokens)
-// 	// fmt.Printf("DEBUG: baseIdx shape: %v\n", baseIdx.Shape())
-
-// 	// // eLocal seed: [1, 1, E, 1]
-// 	// eLocal := ctx.Arange(0, float32(expertsPerGroup), 1, ml.DTypeF32).
-// 	// 	Reshape(ctx, 1, 1, expertsPerGroup, 1)
-// 	// fmt.Printf("DEBUG: eLocal shape: %v\n", eLocal.Shape())
-
-// 	// // --- Expand to a common shape [1, K, E, T] ---
-
-// 	// // baseIdx [1, K, 1, T] -> repeat along experts axis (E)
-
-// 	// baseIdx2d := baseIdx.Reshape(ctx, topKGroup, nTokens) // [K, T]
-// 	// fmt.Printf("DEBUG: baseIdx2d shape: %v\n", baseIdx2d.Shape())
-// 	// baseIdxRep := baseIdx2d.Repeat(ctx, 1, expertsPerGroup)
-// 	// fmt.Printf("DEBUG: baseIdxRep shape: %v\n", baseIdxRep.Shape())
-// 	// baseIdxExpanded := baseIdxRep.Reshape(ctx, 1, topKGroup, expertsPerGroup, nTokens)
-// 	// fmt.Printf("DEBUG: baseIdxExpanded shape: %v\n", baseIdxExpanded.Shape())
-
-// 	// // eLocal [1, 1, E, 1] -> repeat along group-K and tokens-T
-// 	// // eLocal2d := eLocal.Reshape(ctx, expertsPerGroup, 1) // [E, 1]
-// 	// // fmt.Printf("DEBUG: eLocal2d shape: %v\n", eLocal2d.Shape())
-// 	// // eLocalRep := eLocal2d.Repeat(ctx, topKGroup, nTokens) // [E*K, T]
-// 	// // fmt.Printf("DEBUG: eLocalRep shape: %v\n", eLocalRep.Shape())
-// 	// // eLocalExpanded := eLocalRep.Reshape(ctx, 1, topKGroup, expertsPerGroup, nTokens)
-// 	// // fmt.Printf("DEBUG: eLocalExpanded shape: %v\n", eLocalExpanded.Shape())
-// 	// eLocal = eLocal.Reshape(ctx, 1, 1, expertsPerGroup, 1) // [1, 1, E, 1]
-// 	// fmt.Printf("DEBUG: eLocal shape: %v\n", eLocal.Shape())
-// 	// // eLocalRep := eLocal.Repeat(ctx, 1, topKGroup)
-// 	// // fmt.Printf("DEBUG: eLocalRep shape: %v\n", eLocalRep.Shape())
-// 	// // eLocalExpanded := eLocalRep.Reshape(ctx, 1, topKGroup, expertsPerGroup, 1)
-// 	// // fmt.Printf("DEBUG: eLocalExpanded shape: %v\n", eLocalExpanded.Shape())
-
-// 	// // allowed := baseIdx.Add(ctx, eLocal)
-// 	// // allowed := eLocal.Add(ctx, baseIdx)
-// 	// allowed := eLocal.Add(ctx, baseIdxExpanded)
-
-// 	// // allowed := baseIdxExpanded.Add(ctx, eLocalExpanded)
-// 	// fmt.Printf("DEBUG: allowed shape: %v\n", allowed.Shape())
-// 	// allowedFlat := allowed.Reshape(ctx, nExperts*topKGroup, nTokens)
-// 	// fmt.Printf("DEBUG: allowedFlat shape: %v\n", allowedFlat.Shape())
-// 	// allowedScores := scoresForChoice.Rows(ctx, allowedFlat) // might need to reshape
-// 	// fmt.Printf("DEBUG: allowedScores shape: %v\n", allowedScores.Shape())
-
-// 	// fullMasked := ctx.Zeros(scoresForChoice.DType(), scoresForChoice.Shape()...)
-// 	// fmt.Printf("DEBUG: fullMasked shape: %v\n", fullMasked.Shape())
-// 	// // 2. Scatter allowed_scores into full_masked at allowed_flat positions
-// 	// allowedScoresData := allowedScores.Floats()
-// 	// allowedFlatData := allowedFlat.Floats()
-
-// 	// for i := 0; i < len(allowedFlatData); i++ {
-// 	// 	index := int(allowedFlatData[i])
-// 	// 	value := allowedScoresData[i]
-// 	// 	valueTensor := ctx.FromFloatSlice([]float32{value}, 1)
-// 	// 	fullMasked = fullMasked.Set(ctx, valueTensor, index)
-// 	// }
-
-// 	// topKIndices := fullMasked.TopK(ctx, topK)
-// 	// fmt.Printf("DEBUG: topKIndices shape: %v\n", topKIndices.Shape())
-// 	// return topKIndices // do we need to permutate
-
-// }
-
-// func (r *Router) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-// }
-
-// type Router struct {
-// 	Gate *nn.Linear `gguf:"ffn_gate_inp"`
-// }
-
-// func (r *Router) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) (ml.Tensor, ml.Tensor) {
-// 	// not sure how to do this view
-// 	// hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
-// 	// fmt.Printf("DEBUG: hiddenStates: %v\n", hiddenStates.Shape())
-// 	// so the logits are even derived the same way as in the qwen3moe model
-// 	fmt.Printf("DEBUG: hello, we're in the ROUTER!\n")
-// 	routerLogits := r.Gate.Forward(ctx, hiddenStates)
-// 	fmt.Printf("DEBUG: routerLogits: %v\n", routerLogits.Shape())
-// 	scores := routerLogits.Sigmoid(ctx)
-// 	fmt.Printf("DEBUG: scores: %v\n", scores.Shape())
-// 	topKIndices := scores.TopK(ctx, opts.numExpertsUsed)
-// 	fmt.Printf("DEBUG: topKIndices: %v\n", topKIndices.Shape())
-// 	topKWeights := scores.Reshape(ctx, 1, opts.numExperts, hiddenStates.Dim(1)).Rows(ctx, topKIndices)
-// 	fmt.Printf("DEBUG: topKWeights: %v\n", topKWeights.Shape())
-
-// 	// if self.norm_topK_prob
-// 	if opts.normTopKProb {
-// 		topKWeights = topKWeights.Reshape(ctx, opts.numExpertsUsed, hiddenStates.Dim(1))
-// 		fmt.Printf("DEBUG: topKWeights: %v\n", topKWeights.Shape())
-// 		topKWeights = topKWeights.Div(ctx, topKWeights.SumRows(ctx))
-// 		fmt.Printf("DEBUG: topKWeights: %v\n", topKWeights.Shape())
-// 		topKWeights = topKWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenStates.Dim(1))
-// 		fmt.Printf("DEBUG: topKWeights: %v\n", topKWeights.Shape())
-// 	}
-// 	return topKIndices, topKWeights
-// }
-
-// type Experts struct {
-// 	Gate *nn.Linear `gguf:"ffn_gate_exps"`
-// 	Up   *nn.Linear `gguf:"ffn_up_exps"`
-// 	Down *nn.Linear `gguf:"ffn_down_exps"`
-// }
-
-// func (e *Experts) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-// 	// hiddenDim, sequenceLength, batchSize := hiddenStates.Dim(0), hiddenStates.Dim(1), hiddenStates.Dim(2)
-// 	// hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, sequenceLength*batchSize)
-// 	// routerLogits := mlp.Router.Forward(ctx, hiddenStates)
-
-// // routingWeights := routerLogits.Softmax(ctx)
-// // selectedExperts := routingWeights.TopK(ctx, opts.numExpertsUsed)
-// // routingWeights = routingWeights.Reshape(ctx, 1, opts.numExperts, hiddenStates.Dim(1)).Rows(ctx, selectedExperts)
-// // if opts.normTopKProb {
-// // 	routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenStates.Dim(1))
-// // 	routingWeights = routingWeights.Div(ctx, routingWeights.SumRows(ctx))
-// // 	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenStates.Dim(1))
-// // }
-
-// nn.ModuleList([DeepseekV3MLP(config, intermediate_size=config.moe_intermediate_size) for _ in range(config.n_routed_experts)])
 
 type SharedExpert struct {
 	Gate *nn.Linear `gguf:"ffn_gate_shexp"`
@@ -561,6 +275,8 @@ type AttentionBlock struct {
 }
 
 func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+	hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
+
 	seqLength := hiddenStates.Dim(1)
 	residual := hiddenStates
 
@@ -629,7 +345,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 
 func New(c fs.Config) (model.Model, error) {
 	fmt.Printf("DEBUG: the total number of layers: %v", c.Uint("block_count"))
-	transformerBlocks := make([]TransformerBlock, 4)
+	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count")) // or whatever key your gguf uses
 	fmt.Printf("first dense: %v", firstDenseLayerIndex)
@@ -640,19 +356,102 @@ func New(c fs.Config) (model.Model, error) {
 			transformerBlocks[i].MLP = &MoEBlock{} // gguf tags on Router/Experts fields
 		}
 	}
+
+	qLoraRankVal := int(c.Uint("q_lora_rank"))
+
 	m := Transformer{
 		TransformerBlocks: transformerBlocks,
-		// BytePairEncoding: model.NewBytePairEncoding(
-		// 	c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-		// ),
+		BytePairEncoding: model.NewBytePairEncoding(
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			&model.Vocabulary{
+				Values: c.Strings("tokenizer.ggml.tokens"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
+				Merges: c.Strings("tokenizer.ggml.merges"),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+				EOS: append(
+					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+					c.Ints("tokenizer.ggml.eos_token_ids")...,
+				),
+			},
+		),
+		Options: &Options{
+			hiddenSize:     int(c.Uint("embedding_length")),
+			numHeads:       int(c.Uint("attention.head_count")),
+			numKVHeads:     int(c.Uint("attention.head_count_kv")),
+			keyLength:      int(c.Uint("attention.key_length")),
+			valueLength:    int(c.Uint("attention.value_length")),
+			eps:            c.Float("attention.layer_norm_rms_epsilon"),
+			ropeBase:       c.Float("rope.freq_base"),
+			ropeScale:      c.Float("rope.freq_scale", 1),
+			numExperts:     int(c.Uint("expert_count")),
+			numExpertsUsed: int(c.Uint("expert_used_count")),
+			normTopKProb:   c.Bool("norm_top_k_prob", true),
+
+			qLoraRank:          &qLoraRankVal,
+			kvLoraRank:          int(c.Uint("kv_lora_rank")),
+			qkHeadDim:           int(c.Uint("attention.key_length")),
+			vHeadDim:    		int(c.Uint("attention.value_length")),
+			qkRopeHeadDim:       int(c.Uint("rope.dimension_count")),
+			qkNopeHeadDim:       int(c.Uint("attention.key_length")) - int(c.Uint("rope.dimension_count")),
+			kqNopeHeadDim:       int(c.Uint("attention.key_length")) - int(c.Uint("rope.dimension_count")),
+
+			routedScalingFactor: c.Float("routed_scaling_factor"),
+		},
 	}
-	m.Cache = kvcache.NewCausalCache(nil)
+	m.Cache = kvcache.NewCausalCache(nil) // TODO: add correct cache
 
 	return &m, nil
 }
 
+// residual = hidden_states
+// hidden_states = self.input_layernorm(hidden_states)
+// # Self Attention
+// hidden_states, _ = self.self_attn(
+// 	hidden_states=hidden_states,
+// 	attention_mask=attention_mask,
+// 	position_ids=position_ids,
+// 	past_key_values=past_key_values,
+// 	use_cache=use_cache,
+// 	cache_position=cache_position,
+// 	position_embeddings=position_embeddings,
+// 	**kwargs,
+// )
+// hidden_states = residual + hidden_states
+
+// # Fully Connected
+// residual = hidden_states
+// hidden_states = self.post_attention_layernorm(hidden_states)
+// hidden_states = self.mlp(hidden_states)
+// hidden_states = residual + hidden_states
+// return hidden_states
+
+// func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+// 	return batch.Inputs, nil
+
+// 	hiddenStates := m.InputLayerNorm.Forward(ctx, batch.Inputs)
+
+// }
+
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	return batch.Inputs, nil
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+
+	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+
+	for i, layer := range m.TransformerBlocks {
+		// m.Cache.SetLayer(i)
+
+		var outputs ml.Tensor
+		if i == len(m.TransformerBlocks)-1 {
+			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+		}
+
+		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
+	}
+
+	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
+	return m.Output.Forward(ctx, hiddenStates), nil
 }
 
 func init() {
