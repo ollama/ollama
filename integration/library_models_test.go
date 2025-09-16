@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ func TestLibraryModelsGenerate(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	targetArch := os.Getenv("OLLAMA_TEST_ARCHITECTURE")
 
 	chatModels := libraryChatModels
 	for _, model := range chatModels {
@@ -29,6 +32,16 @@ func TestLibraryModelsGenerate(t *testing.T) {
 			}
 			if err := PullIfMissing(ctx, client, model); err != nil {
 				t.Fatalf("pull failed %s", err)
+			}
+			if targetArch != "" {
+				resp, err := client.Show(ctx, &api.ShowRequest{Name: model})
+				if err != nil {
+					t.Fatalf("unable to show model: %s", err)
+				}
+				arch := resp.ModelInfo["general.architecture"].(string)
+				if arch != targetArch {
+					t.Skip(fmt.Sprintf("Skipping %s architecture %s != %s", model, arch, targetArch))
+				}
 			}
 			req := api.GenerateRequest{
 				Model:     model,
