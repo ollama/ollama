@@ -47,8 +47,8 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 		{Name: "model", Args: "model1"},
 		{Name: "adapter", Args: "adapter1"},
 		{Name: "license", Args: "MIT"},
-		{Name: "param1", Args: "value1"},
-		{Name: "param2", Args: "value2"},
+		{Name: "parameter", Args: &Parameter{"param1", "value1"}},
+		{Name: "parameter", Args: &Parameter{"param2", "value2"}},
 		{Name: "template", Args: "{{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>"},
 	}
 
@@ -80,8 +80,8 @@ TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
 		{Name: "model", Args: "     model 1"},
 		{Name: "adapter", Args: "adapter3"},
 		{Name: "license", Args: "MIT       "},
-		{Name: "param1", Args: "value1"},
-		{Name: "param2", Args: "value2"},
+		{Name: "parameter", Args: &Parameter{"param1", "value1"}},
+		{Name: "parameter", Args: &Parameter{"param2", "value2"}},
 		{Name: "template", Args: "   {{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>   "},
 	}
 
@@ -101,7 +101,7 @@ func TestParseFileFrom(t *testing.T) {
 		},
 		{
 			"FROM \"FOO BAR\"\nPARAMETER param1 value1",
-			[]Command{{Name: "model", Args: "FOO BAR"}, {Name: "param1", Args: "value1"}},
+			[]Command{{Name: "model", Args: "FOO BAR"}, {Name: "parameter", Args: &Parameter{"param1", "value1"}}},
 			nil,
 		},
 		{
@@ -149,12 +149,12 @@ func TestParseFileFrom(t *testing.T) {
 		},
 		{
 			"PARAMETER param1 value1\nFROM foo",
-			[]Command{{Name: "param1", Args: "value1"}, {Name: "model", Args: "foo"}},
+			[]Command{{Name: "parameter", Args: &Parameter{"param1", "value1"}}, {Name: "model", Args: "foo"}},
 			nil,
 		},
 		{
 			"PARAMETER what the \nFROM lemons make lemonade ",
-			[]Command{{Name: "what", Args: "the"}, {Name: "model", Args: "lemons make lemonade"}},
+			[]Command{{Name: "parameter", Args: &Parameter{"what", "the"}}, {Name: "model", Args: "lemons make lemonade"}},
 			nil,
 		},
 	}
@@ -211,7 +211,7 @@ MESSAGE system You are a file parser. Always parse things.
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: You are a file parser. Always parse things."},
+				{Name: "message", Args: &Message{"system", "You are a file parser. Always parse things."}},
 			},
 			nil,
 		},
@@ -221,7 +221,7 @@ FROM foo
 MESSAGE system You are a file parser. Always parse things.`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: You are a file parser. Always parse things."},
+				{Name: "message", Args: &Message{"system", "You are a file parser. Always parse things."}},
 			},
 			nil,
 		},
@@ -234,9 +234,9 @@ MESSAGE assistant Hello, I want to parse all the things!
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: You are a file parser. Always parse things."},
-				{Name: "message", Args: "user: Hey there!"},
-				{Name: "message", Args: "assistant: Hello, I want to parse all the things!"},
+				{Name: "message", Args: &Message{"system", "You are a file parser. Always parse things."}},
+				{Name: "message", Args: &Message{"user", "Hey there!"}},
+				{Name: "message", Args: &Message{"assistant", "Hello, I want to parse all the things!"}},
 			},
 			nil,
 		},
@@ -244,12 +244,12 @@ MESSAGE assistant Hello, I want to parse all the things!
 			`
 FROM foo
 MESSAGE system """
-You are a multiline file parser. Always parse things.
+You are a multiline file "parser". Always parse things.
 """
 			`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: \nYou are a multiline file parser. Always parse things.\n"},
+				{Name: "message", Args: &Message{"system", "\nYou are a multiline file \"parser\". Always parse things.\n"}},
 			},
 			nil,
 		},
@@ -514,7 +514,7 @@ func TestParseFileParameters(t *testing.T) {
 
 			assert.Equal(t, []Command{
 				{Name: "model", Args: "foo"},
-				{Name: v.name, Args: v.value},
+				{Name: "parameter", Args: &Parameter{v.name, v.value}},
 			}, modelfile.Commands)
 		})
 	}
@@ -617,8 +617,8 @@ SYSTEM You are a utf16 file.
 
 	expected := []Command{
 		{Name: "model", Args: "bob"},
-		{Name: "param1", Args: "1"},
-		{Name: "param2", Args: "4096"},
+		{Name: "parameter", Args: &Parameter{"param1", "1"}},
+		{Name: "parameter", Args: &Parameter{"param2", "4096"}},
 		{Name: "system", Args: "You are a utf16 file."},
 	}
 
