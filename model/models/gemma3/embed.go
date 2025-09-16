@@ -22,7 +22,7 @@ type embedModel struct {
 
 func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TextModel.Forward(ctx, batch, m.Cache)
-	hiddenStates = pooling.Pooling(ctx, hiddenStates, m.poolingType)
+	hiddenStates = m.poolingType.Forward(ctx, hiddenStates)
 	for _, dense := range m.Dense {
 		hiddenStates = dense.Forward(ctx, hiddenStates)
 	}

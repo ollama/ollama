@@ -37,7 +37,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		hiddenStates = layer.Forward(ctx, hiddenStates, &m.Options)
 	}
 
-	hiddenStates = pooling.Pooling(ctx, hiddenStates, m.poolingType)
+	hiddenStates = m.poolingType.Forward(ctx, hiddenStates)
 	if m.normalize {
 		hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
 	}

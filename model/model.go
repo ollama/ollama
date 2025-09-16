@@ -5,7 +5,6 @@ import (
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
-	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -21,6 +20,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
 )
 
@@ -108,7 +108,7 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	}
 
 	arch := b.Config().Architecture()
-	if b.Config().Uint("pooling_type", math.MaxUint32) != math.MaxUint32 {
+	if pooling.Type(b.Config().Uint("pooling_type")) != pooling.TypeNone {
 		arch = arch + "_embed"
 	}
 

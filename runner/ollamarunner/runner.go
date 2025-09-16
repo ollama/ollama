@@ -11,7 +11,6 @@ import (
 	"image"
 	"log"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -32,6 +31,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
@@ -405,7 +405,7 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
-	supportsAsync := s.model.Backend().Config().Uint("pooling_type", math.MaxUint32) == math.MaxUint32
+	supportsAsync := pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone
 
 	var activeBatch batchState
 	for {
@@ -900,7 +900,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
-	if s.model.Backend().Config().Uint("pooling_type", math.MaxUint32) == math.MaxUint32 {
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 		return
 	}
