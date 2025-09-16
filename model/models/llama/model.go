@@ -33,6 +33,11 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
+	if c.Uint("expert_count") > 0 {
+		// TODO: support mixtures of experts
+		return nil, model.ErrUnsupportedModel
+	}
+
 	var processor model.TextProcessor
 	vocabulary := model.Vocabulary{
 		Values: c.Strings("tokenizer.ggml.tokens"),
