@@ -674,14 +674,16 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 		t.Errorf("capabilities: expected %#v, actual %#v", expectedCaps, resp.Capabilities)
 	}
 
-	ctxlen, ok := resp.ModelInfo["gptoss.context_length"]
-	if !ok || ctxlen != 131072 {
-		t.Errorf("context len: expected %d, actual %d", 131072, ctxlen)
+	v, ok := resp.ModelInfo["gptoss.context_length"]
+	ctxlen := v.(float64)
+	if !ok || int(ctxlen) != 131072 {
+		t.Errorf("context len: expected %d, actual %d", 131072, int(ctxlen))
 	}
 
-	embedlen, ok := resp.ModelInfo["gptoss.embedding_length"]
-	if !ok || embedlen != 2880 {
-		t.Errorf("embed len: expected %d, actual %d", 2880, embedlen)
+	v, ok = resp.ModelInfo["gptoss.embedding_length"]
+	embedlen := v.(float64)
+	if !ok || int(embedlen) != 2880 {
+		t.Errorf("embed len: expected %d, actual %d", 2880, int(embedlen))
 	}
 
 	fmt.Printf("resp = %#v\n", resp)
