@@ -525,6 +525,7 @@ func TestPushHandler(t *testing.T) {
 			defer mockServer.Close()
 
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
+			t.Setenv("OLLAMA_AUTH", "0")
 
 			cmd := &cobra.Command{}
 			cmd.Flags().Bool("insecure", false, "")
