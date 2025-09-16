@@ -33,8 +33,8 @@ func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions, attent
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
 	if useRope {
-		query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
-		key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+		query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+		key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 	}
 
 	if opts.useQKNorm {
@@ -196,7 +196,7 @@ func newTextModel(c fs.Config) *TextModel {
 			numExpertsUsed:             int(c.Uint("expert_used_count")),
 			ropeDim:                    int(c.Uint("rope.dimension_count")),
 			ropeBase:                   c.Float("rope.freq_base"),
-			ropeScale:                  c.Float("rope.freq_scale", 1),
+			ropeScale:                  c.Float("rope.scaling.factor", 1),
 			eps:                        c.Float("attention.layer_norm_rms_epsilon"),
 			interleaveLayerStep:        int(c.Uint("interleave_moe_layer_step", 1)),
 			noRopeInterval:             int(c.Uint("no_rope_interval", 4)),
@@ -248,5 +248,5 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(m.Layers[layer].Attention.RopeFactors)), nil
+	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, 1./m.ropeScale, rope.WithFactors(m.Layers[layer].Attention.RopeFactors)), nil
 }
