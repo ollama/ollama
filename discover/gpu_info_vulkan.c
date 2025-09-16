@@ -1,3 +1,4 @@
+#ifndef __APPLE__
 #include "gpu_info_vulkan.h"
 
 #include <string.h>
@@ -236,3 +237,5 @@ void vk_release(vk_handle_t rh) {
   UNLOAD_LIBRARY(rh.vk_handle);
   rh.vk_handle = NULL;
 }
+
+#endif  // __APPLE__
