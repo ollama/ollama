@@ -14,8 +14,6 @@
 package api
 
 import (
-	"log/slog"
-
 	"bufio"
 	"bytes"
 	"context"
@@ -113,7 +111,6 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 
 	var token string
 	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
-		slog.Info("auth request", "hostname", c.base.Hostname(), "use auth", envconfig.UseAuth())
 		now := strconv.FormatInt(time.Now().Unix(), 10)
 		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
 		token, err = getAuthorizationToken(ctx, chal)
