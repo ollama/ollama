@@ -332,7 +332,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				}
 			}
 
-			if layerIndex >= 0 && layerIndex < 1 {
+			// if layerIndex >= 0 && layerIndex < 1 {
+			if layerIndex >= 0 && layerIndex < 4 { // 0, 1, 2, 3
 				createTensor(tensor{source: t}, layers[layerIndex].bts, layerIndex)
 			} else {
 				// load all other tensors on the cpu

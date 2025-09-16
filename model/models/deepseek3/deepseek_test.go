@@ -38,6 +38,53 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// TestTopKIndicesSimple tests the MoE routing logic without requiring a model
+// func TestTopKIndicesSimple(t *testing.T) {
+// 	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	t.Logf("%+v", m.(*Transformer).TransformerBlocks[0].Attention.QA)
+// 	ctx := m.Backend().NewContext()
+
+// 	// --------------------------------------------------------------------------------------
+
+// 	nExperts := 8
+// 	nTokens := 10
+// 	nGroups := 4
+// 	topKGroup := 3
+// 	topK := 2
+
+// 	scoresFilePath := "/Users/graceguo/workspace/transformers/src/transformers/models/deepseek_v3/scores.bin"
+// 	biasFilePath := "/Users/graceguo/workspace/transformers/src/transformers/models/deepseek_v3/bias.bin"
+// 	scoresFloats, err := loadFloatsFromBinary(scoresFilePath)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	scores := ctx.Input().FromFloatSlice(scoresFloats, nExperts, nTokens)
+
+// 	biasFloats, err := loadFloatsFromBinary(biasFilePath)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	bias := ctx.Input().FromFloatSlice(biasFloats, nExperts)
+
+// 	t.Logf("Test data prepared:")
+// 	t.Logf("  nExperts: %d, nTokens: %d", nExperts, nTokens)
+// 	t.Logf("  nGroups: %d, topKGroup: %d, topK: %d", nGroups, topKGroup, topK)
+// 	t.Logf("  Scores shape: %v", scores.Shape())
+// 	t.Logf("  Bias shape: %v", bias.Shape())
+
+// 	// Call the topKIndices function
+// 	result := topKIndices(ctx, scores, bias, nGroups, topKGroup, topK)
+
+// 	// Verify the result
+// 	t.Logf("Result shape: %v", result.Shape())
+// }
+
 func blob(tb testing.TB, model string) string {
 	tb.Helper()
 
@@ -89,6 +136,8 @@ func loadFloatsFromBinary(filename string) ([]float32, error) {
 	if err := binary.Read(f, binary.LittleEndian, floats); err != nil {
 		return nil, err
 	}
+	// fmt.Printf("DEBUG: floats: %v", floats)
+	// fmt.Printf("DEBUG: len(floats): %d", len(floats))
 	return floats, nil
 }
 
@@ -188,4 +237,60 @@ func TestForward(t *testing.T) {
 	}
 
 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+}
+
+func TestTopKIndicesComplex(t *testing.T) {
+	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// --------------------------------------------------------------------------------------
+
+	// mlp := m.(*Transformer).TransformerBlocks[0].MLP
+	mlp := m.(*Transformer).TransformerBlocks[3].MLP
+
+	// moEBlock := m.(*Transformer).TransformerBlocks[0].MoEBlock
+	ctx := m.Backend().NewContext()
+
+	// Load hidden states from binary file
+	filePath := "/Users/graceguo/Downloads/hidden_states.bin"
+
+	hsFloats, err := loadFloatsFromBinary(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("hs len=%d, expected=%d", len(hsFloats), 7168*4*1)
+	// [1, 4, 7168]
+	t.Logf("DEBUG: hsFloats: %v", hsFloats[:10])
+	hiddenStates := ctx.Input().FromFloatSlice(hsFloats, 7168, 4, 1)
+	t.Logf("DEBUG: hiddenStates.shape: %v", hiddenStates.Shape())
+
+	options := &Options{
+		numExperts:          256, // 8
+		numExpertsUsed:      8,   // 2
+		normTopKProb:        true,
+		routedScalingFactor: 2.5,
+	}
+
+	result := mlp.Forward(ctx, hiddenStates, options)
+	result = result.Contiguous(ctx)
+	ctx.Forward(result).Compute(result)
+
+	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
+
+	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/post_moe.bin"
+	print("DEBUG: filePath: %v\n", filePath)
+	err = os.WriteFile(filePath, result.Bytes(), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+
+	// Verify the result
+	t.Logf("Result shape: %v", result.Shape())
 }
