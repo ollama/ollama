@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"runtime"
+	"time"
 )
 
 const LevelTrace slog.Level = -8
@@ -29,10 +31,18 @@ func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 	}))
 }
 
+type key string
+
 func Trace(msg string, args ...any) {
-	slog.Log(context.TODO(), LevelTrace, msg, args...)
+	TraceContext(context.WithValue(context.TODO(), key("skip"), 1), msg, args...)
 }
 
 func TraceContext(ctx context.Context, msg string, args ...any) {
-	slog.Log(ctx, LevelTrace, msg, args...)
+	if logger := slog.Default(); logger.Enabled(ctx, LevelTrace) {
+		skip, _ := ctx.Value(key("skip")).(int)
+		pc, _, _, _ := runtime.Caller(1 + skip)
+		record := slog.NewRecord(time.Now(), LevelTrace, msg, pc)
+		record.Add(args...)
+		logger.Handler().Handle(ctx, record)
+	}
 }
