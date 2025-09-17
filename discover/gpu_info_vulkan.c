@@ -4,9 +4,6 @@
 #include <string.h>
 
 int is_extension_supported(vk_handle_t* rh, VkPhysicalDevice device, char* extension) {
-  VkPhysicalDeviceProperties properties;
-  (*rh->vkGetPhysicalDeviceProperties)(device, &properties);
-
   uint32_t extensionCount;
   (*rh->vkEnumerateDeviceExtensionProperties)(device, NULL, &extensionCount, NULL);
 
