@@ -49,7 +49,7 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-const ConnectInstructions = "To sign-in and connect your Ollama instance, navigate to:\n    https://ollama.com/connect?key=%s\n\n"
+const ConnectInstructions = "To sign in, navigate to:\n    https://ollama.com/connect?key=%s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -293,10 +293,10 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
 		if r.RemoteModel != "" && opts.ShowConnect {
 			p.StopAndClear()
-			if strings.HasPrefix(r.RemoteURL, "https://ollama.com") {
+			if strings.HasPrefix(r.RemoteHost, "https://ollama.com") {
 				fmt.Fprintf(os.Stderr, "Connecting to '%s' on Ollama Turbo ⚡\n", r.RemoteModel)
 			} else {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", r.RemoteModel, r.RemoteURL)
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", r.RemoteModel, r.RemoteHost)
 			}
 		}
 		return nil
@@ -458,7 +458,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				// the server and the client both have the same public key
 				if pubKey == sErr.PublicKey {
 					encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-					fmt.Printf("You need to be signed-in to Ollama to run Turbo models.\n\n")
+					fmt.Printf("You need to be signed in to Ollama to run Turbo models.\n\n")
 					fmt.Printf(ConnectInstructions, encKey)
 				}
 				return nil
@@ -495,7 +495,7 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if user != nil && user.Name != "" {
-		fmt.Printf("You are already signed in to ollama.com as user '%s'\n", user.Name)
+		fmt.Printf("You are already signed in as user '%s'\n", user.Name)
 		fmt.Println()
 		return nil
 	}
@@ -822,9 +822,9 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	}
 
 	tableRender("Model", func() (rows [][]string) {
-		if resp.RemoteURL != "" {
+		if resp.RemoteHost != "" {
 			rows = append(rows, []string{"", "Remote model", resp.RemoteModel})
-			rows = append(rows, []string{"", "Remote URL", resp.RemoteURL})
+			rows = append(rows, []string{"", "Remote URL", resp.RemoteHost})
 		}
 
 		if resp.ModelInfo != nil {
@@ -1657,7 +1657,7 @@ func NewCLI() *cobra.Command {
 
 	signinCmd := &cobra.Command{
 		Use:     "signin",
-		Short:   "Sign-In to ollama.com",
+		Short:   "Sign in to ollama.com",
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
 		RunE:    SigninHandler,
@@ -1665,7 +1665,7 @@ func NewCLI() *cobra.Command {
 
 	signoutCmd := &cobra.Command{
 		Use:     "signout",
-		Short:   "Sign-Out from ollama.com",
+		Short:   "Sign out from ollama.com",
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
 		RunE:    SignoutHandler,

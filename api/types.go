@@ -336,8 +336,8 @@ type ChatResponse struct {
 	// RemoteModel is the name of the upstream model that generated the response.
 	RemoteModel string `json:"remote_model,omitempty"`
 
-	// RemoteURL is the URL of the upstream Ollama host that generated the response.
-	RemoteURL string `json:"remote_host,omitempty"`
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
 
 	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
@@ -469,8 +469,8 @@ type CreateRequest struct {
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
 
-	// RemoteURL is the URL of the upstream ollama API for the model (if any).
-	RemoteURL string `json:"remote_url,omitempty"`
+	// RemoteHost is the URL of the upstream ollama API for the model (if any).
+	RemoteHost string `json:"remote_host,omitempty"`
 
 	// Files is a map of files include when creating the model.
 	Files map[string]string `json:"files,omitempty"`
@@ -540,7 +540,7 @@ type ShowResponse struct {
 	Details       ModelDetails       `json:"details,omitempty"`
 	Messages      []Message          `json:"messages,omitempty"`
 	RemoteModel   string             `json:"remote_model,omitempty"`
-	RemoteURL     string             `json:"remote_url,omitempty"`
+	RemoteHost    string             `json:"remote_host,omitempty"`
 	ModelInfo     map[string]any     `json:"model_info,omitempty"`
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
@@ -602,7 +602,7 @@ type ListModelResponse struct {
 	Name        string       `json:"name"`
 	Model       string       `json:"model"`
 	RemoteModel string       `json:"remote_model,omitempty"`
-	RemoteURL   string       `json:"remote_url,omitempty"`
+	RemoteHost  string       `json:"remote_host,omitempty"`
 	ModifiedAt  time.Time    `json:"modified_at"`
 	Size        int64        `json:"size"`
 	Digest      string       `json:"digest"`
@@ -633,8 +633,8 @@ type GenerateResponse struct {
 	// RemoteModel is the name of the upstream model that generated the response.
 	RemoteModel string `json:"remote_model,omitempty"`
 
-	// RemoteURL is the URL of the upstream Ollama host that generated the response.
-	RemoteURL string `json:"remote_host,omitempty"`
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
 
 	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`

@@ -623,9 +623,9 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	var s Server
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test",
-		From:      "bob",
-		RemoteURL: "https://ollama.com",
+		Model:      "test",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
 		Info: map[string]any{
 			"capabilities":       []string{"completion", "tools", "thinking"},
 			"model_family":       "gptoss",

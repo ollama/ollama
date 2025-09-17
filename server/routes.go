@@ -191,17 +191,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if m.Config.RemoteURL != "" && m.Config.RemoteModel != "" {
+	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
 		origModel := req.Model
 
-		remoteURL, err := url.Parse(m.Config.RemoteURL)
+		remoteURL, err := url.Parse(m.Config.RemoteHost)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
-			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteURL, "hostname", remoteURL.Hostname())
+			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
 			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
 			return
 		}
@@ -234,7 +234,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		fn := func(resp api.GenerateResponse) error {
 			resp.Model = origModel
 			resp.RemoteModel = m.Config.RemoteModel
-			resp.RemoteURL = m.Config.RemoteURL
+			resp.RemoteHost = m.Config.RemoteHost
 
 			data, err := json.Marshal(resp)
 			if err != nil {
@@ -1011,8 +1011,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		ModifiedAt:   manifest.fi.ModTime(),
 	}
 
-	if m.Config.RemoteURL != "" {
-		resp.RemoteURL = m.Config.RemoteURL
+	if m.Config.RemoteHost != "" {
+		resp.RemoteHost = m.Config.RemoteHost
 		resp.RemoteModel = m.Config.RemoteModel
 
 		if m.Config.ModelFamily != "" {
@@ -1064,7 +1064,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp.Modelfile = sb.String()
 
 	// skip loading tensor information if this is a remote model
-	if m.Config.RemoteURL != "" && m.Config.RemoteModel != "" {
+	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
 		return resp, nil
 	}
 
@@ -1147,7 +1147,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 			Model:       n.DisplayShortest(),
 			Name:        n.DisplayShortest(),
 			RemoteModel: cf.RemoteModel,
-			RemoteURL:   cf.RemoteURL,
+			RemoteHost:  cf.RemoteHost,
 			Size:        m.Size(),
 			Digest:      m.digest,
 			ModifiedAt:  m.fi.ModTime(),
@@ -1747,17 +1747,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	if m.Config.RemoteURL != "" && m.Config.RemoteModel != "" {
+	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
 		origModel := req.Model
 
-		remoteURL, err := url.Parse(m.Config.RemoteURL)
+		remoteURL, err := url.Parse(m.Config.RemoteHost)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
-			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteURL, "hostname", remoteURL.Hostname())
+			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
 			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
 			return
 		}
@@ -1783,7 +1783,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		fn := func(resp api.ChatResponse) error {
 			resp.Model = origModel
 			resp.RemoteModel = m.Config.RemoteModel
-			resp.RemoteURL = m.Config.RemoteURL
+			resp.RemoteHost = m.Config.RemoteHost
 
 			data, err := json.Marshal(resp)
 			if err != nil {

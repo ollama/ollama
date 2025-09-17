@@ -101,15 +101,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
 				return
 			}
-			if r.RemoteURL != "" {
-				ru, err := remoteURL(r.RemoteURL)
+			if r.RemoteHost != "" {
+				ru, err := remoteURL(r.RemoteHost)
 				if err != nil {
 					ch <- gin.H{"error": "bad remote", "status": http.StatusBadRequest}
 					return
 				}
 
 				config.RemoteModel = r.From
-				config.RemoteURL = ru
+				config.RemoteHost = ru
 				remote = true
 			} else {
 				ctx, cancel := context.WithCancel(c.Request.Context())

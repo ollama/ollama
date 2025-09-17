@@ -271,7 +271,7 @@ type ConfigV2 struct {
 	Renderer      string   `json:"renderer,omitempty"`
 	Parser        string   `json:"parser,omitempty"`
 
-	RemoteURL   string `json:"remote_url,omitempty"`
+	RemoteHost  string `json:"remote_host,omitempty"`
 	RemoteModel string `json:"remote_model,omitempty"`
 
 	// used for remotes
