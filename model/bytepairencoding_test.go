@@ -59,12 +59,12 @@ func llama(t testing.TB) BytePairEncoding {
 	}
 
 	return NewBytePairEncoding(
-		`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		&Vocabulary{
 			Values: tokens,
 			Types:  types,
 			Merges: merges,
 		},
+		"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
 	)
 }
 
@@ -278,6 +278,44 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 			b.ResetTimer()
 			for range b.N {
 				slices.Collect(tokenizer.split(string(bts)))
+			}
+		})
+	}
+}
+
+func TestSplit(t *testing.T) {
+	cases := []struct {
+		name string
+		patterns,
+		want []string
+	}{
+		{
+			name: "default",
+			want: []string{"Hello", ",", " WORLD", "!!", " How", "'s", " it", " going", "?", " 123", " 一二三"},
+		},
+		{
+			name: "unicode",
+			patterns: []string{
+				"\\p{N}{1,3}",
+				`[一-龥぀-ゟ゠-ヿ]+`,
+				"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+			},
+			want: []string{"Hello", ",", " WORLD", "!!", " How", "'s", " it", " going", "?", " ", "123", " ", "一二三"},
+		},
+		{
+			name: "individual digits",
+			patterns: []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			},
+			want: []string{"Hello", ",", " WORLD", "!!", " How", "'s", " it", " going", "?", " ", "1", "2", "3", " 一二三"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenizer := NewBytePairEncoding(nil, tt.patterns...)
+			if diff := cmp.Diff(tt.want, slices.Collect(tokenizer.split("Hello, WORLD!! How's it going? 123 一二三"))); diff != "" {
+				t.Errorf("no match (-theirs +ours):\n%s", diff)
 			}
 		})
 	}
