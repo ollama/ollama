@@ -16,17 +16,17 @@ func (ti TensorInfo) Valid() bool {
 	return ti.Name != "" && ti.NumBytes() > 0
 }
 
-func (ti TensorInfo) NumValues() int64 {
-	var numItems int64 = 1
+func (ti TensorInfo) NumValues() uint64 {
+	var numItems uint64 = 1
 	for _, dim := range ti.Shape {
-		numItems *= int64(dim)
+		numItems *= dim
 	}
 	return numItems
 }
 
 // NumBytes returns the number of bytes in the tensor.
-func (ti TensorInfo) NumBytes() int64 {
-	return int64(float64(ti.NumValues()) * ti.Type.NumBytes())
+func (ti TensorInfo) NumBytes() uint64 {
+	return uint64(float64(ti.NumValues()) * ti.Type.NumBytes())
 }
 
 func (ti TensorInfo) LogValue() slog.Value {
@@ -34,8 +34,8 @@ func (ti TensorInfo) LogValue() slog.Value {
 		slog.String("name", ti.Name),
 		slog.Int64("offset", int64(ti.Offset)),
 		slog.Any("shape", ti.Shape),
-		slog.Int64("num_values", ti.NumValues()),
-		slog.Int64("num_bytes", ti.NumBytes()),
+		slog.Uint64("num_values", ti.NumValues()),
+		slog.Uint64("num_bytes", ti.NumBytes()),
 		slog.Any("type", ti.Type),
 	)
 }
@@ -97,6 +97,8 @@ const (
 	tensorTypeIQ4_NL_4_4
 	tensorTypeIQ4_NL_4_8
 	tensorTypeIQ4_NL_8_8
+
+	TensorTypeMXFP4
 )
 
 func (tt TensorType) NumBytes() float64 {
@@ -163,6 +165,8 @@ func (tt TensorType) typeSize() int64 {
 		return tt.blockSize()/8 + tt.blockSize()/16 + tt.blockSize()/32
 	case TensorTypeBF16:
 		return 2
+	case 4, TensorTypeMXFP4:
+	return 1 + tt.blockSize() / 2
 	default:
 		return 0
 	}
@@ -185,7 +189,8 @@ func (tt TensorType) blockSize() int64 {
 		TensorTypeQ5_1,
 		TensorTypeQ8_0,
 		TensorTypeQ8_1,
-		tensorTypeIQ4_NL:
+		tensorTypeIQ4_NL,
+		4, TensorTypeMXFP4:
 		return 32
 	default:
 		return 256
@@ -195,83 +200,85 @@ func (tt TensorType) blockSize() int64 {
 func (tt TensorType) String() string {
 	switch tt {
 	case TensorTypeF32:
-		return "f32"
+		return "F32"
 	case TensorTypeF16:
-		return "f16"
+		return "F16"
 	case TensorTypeQ4_0:
-		return "q4_0"
+		return "Q4_0"
 	case TensorTypeQ4_1:
-		return "q4_1"
-	case tensorTypeQ4_2:
-		return "q4_2"
+		return "Q4_1"
+	// case tensorTypeQ4_2:
+	// 	return "Q4_2"
 	case tensorTypeQ4_3:
-		return "q4_3"
+		return "Q4_3"
 	case TensorTypeQ5_0:
-		return "q5_0"
+		return "Q5_0"
 	case TensorTypeQ5_1:
-		return "q5_1"
+		return "Q5_1"
 	case TensorTypeQ8_0:
-		return "q8_0"
+		return "Q8_0"
 	case TensorTypeQ8_1:
-		return "q8_1"
+		return "Q8_1"
 	case TensorTypeQ2_K:
-		return "q2_k"
+		return "Q2_K"
 	case TensorTypeQ3_K:
-		return "q3_k"
+		return "Q3_K"
 	case TensorTypeQ4_K:
-		return "q4_k"
+		return "Q4_K"
 	case TensorTypeQ5_K:
-		return "q5_k"
+		return "Q5_K"
 	case TensorTypeQ6_K:
-		return "q6_k"
+		return "Q6_K"
 	case TensorTypeQ8_K:
-		return "q8_k"
+		return "Q8_K"
 	case tensorTypeIQ2_XXS:
-		return "iq2_xxs"
+		return "IQ2_XXS"
 	case tensorTypeIQ2_XS:
-		return "iq2_xs"
+		return "IQ2_XS"
 	case tensorTypeIQ3_XXS:
-		return "iq3_xxs"
+		return "IQ3_XXS"
 	case tensorTypeIQ1_S:
-		return "iq1_s"
+		return "IQ1_S"
 	case tensorTypeIQ4_NL:
-		return "iq4_nl"
+		return "IQ4_NL"
 	case tensorTypeIQ3_S:
-		return "iq3_s"
+		return "IQ3_S"
 	case tensorTypeIQ2_S:
-		return "iq2_s"
+		return "IQ2_S"
 	case tensorTypeIQ4_XS:
-		return "iq4_xs"
+		return "IQ4_XS"
 	case TensorTypeI8:
-		return "i8"
+		return "I8"
 	case TensorTypeI16:
-		return "i16"
+		return "I16"
 	case TensorTypeI32:
-		return "i32"
+		return "I32"
 	case TensorTypeI64:
-		return "i64"
+		return "I64"
 	case TensorTypeF64:
-		return "f64"
+		return "F64"
 	case tensorTypeIQ1_M:
-		return "iq1_m"
+		return "IQ1_M"
 	case TensorTypeBF16:
-		return "bf16"
+		return "BF16"
 	case tensorTypeQ4_0_4_4:
-		return "q4_0_4_4"
+		return "Q4_0_4_4"
 	case tensorTypeQ4_0_4_8:
-		return "q4_0_4_8"
+		return "Q4_0_4_8"
 	case tensorTypeQ4_0_8_8:
-		return "q4_0_8_8"
+		return "Q4_0_8_8"
 	case tensorTypeTQ1_0:
-		return "tq1_0"
+		return "TQ1_0"
 	case tensorTypeTQ2_0:
-		return "tq2_0"
+		return "TQ2_0"
 	case tensorTypeIQ4_NL_4_4:
-		return "iq4_nl_4_4"
+		return "IQ4_NL_4_4"
 	case tensorTypeIQ4_NL_4_8:
-		return "iq4_nl_4_8"
+		return "IQ4_NL_4_8"
 	case tensorTypeIQ4_NL_8_8:
-		return "iq4_nl_8_8"
+		return "IQ4_NL_8_8"
+	case 4, TensorTypeMXFP4:
+		return "MXFP4"
 	default:
 		return "unknown"
 	}

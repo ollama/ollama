@@ -35,9 +35,10 @@ type File struct {
 	Magic   [4]byte
 	Version uint32
 
-	keyValues *lazy[KeyValue]
-	tensors   *lazy[TensorInfo]
-	offset    int64
+	keyValues   *lazy[KeyValue]
+	tensorInfos *lazy[TensorInfo]
+	offset      int64
+	n           uint64
 
 	file   *os.File
 	reader *bufferedReader
@@ -69,12 +70,12 @@ func Open(path string) (f *File, err error) {
 		return nil, fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
 	}
 
-	f.tensors, err = newLazy(f, f.readTensor)
+	f.tensorInfos, err = newLazy(f, f.readTensor)
 	if err != nil {
 		return nil, err
 	}
 
-	f.tensors.successFunc = func() error {
+	f.tensorInfos.successFunc = func() error {
 		offset := f.reader.offset
 
 		alignment := cmp.Or(f.KeyValue("general.alignment").Int(), 32)
@@ -119,12 +120,15 @@ func (f *File) readTensor() (TensorInfo, error) {
 		return TensorInfo{}, err
 	}
 
-	return TensorInfo{
+	tensorInfo := TensorInfo{
 		Name:   name,
 		Offset: offset,
 		Shape:  shape,
 		Type:   TensorType(type_),
-	}, nil
+	}
+
+	f.n += tensorInfo.NumValues()
+	return tensorInfo, nil
 }
 
 func (f *File) readKeyValue() (KeyValue, error) {
@@ -186,20 +190,20 @@ func read[T any](f *File) (t T, err error) {
 }
 
 func readString(f *File) (string, error) {
-	n, err := read[uint64](f)
-	if err != nil {
+	bts := f.bts[:8]
+	if _, err := io.ReadFull(f.reader, bts); err != nil {
 		return "", err
 	}
 
+	n := binary.LittleEndian.Uint64(bts)
 	if int(n) > len(f.bts) {
 		f.bts = make([]byte, n)
 	}
 
-	bts := f.bts[:n]
+	bts = f.bts[:n]
 	if _, err := io.ReadFull(f.reader, bts); err != nil {
 		return "", err
 	}
-	defer clear(bts)
 
 	return string(bts), nil
 }
@@ -245,37 +249,70 @@ func readArray(f *File) (any, error) {
 	}
 }
 
-func readArrayData[T any](f *File, n uint64) (s []T, err error) {
-	s = make([]T, n)
-	for i := range n {
-		e, err := read[T](f)
-		if err != nil {
-			return nil, err
-		}
+func readArrayData[T any](f *File, n uint64) (*lazy[T], error) {
+	offset := f.reader.offset
 
-		s[i] = e
+	var t T
+	if _, err := f.reader.Discard(int(n) * binary.Size(t)); err != nil {
+		return nil, err
 	}
 
-	return s, nil
+	sr := io.NewSectionReader(f.file, offset, int64(int(n)*binary.Size(t)))
+	next, stop := iter.Pull(func(yield func(T) bool) {
+		s := make([]T, n)
+		if err := binary.Read(sr, binary.LittleEndian, &s); err != nil {
+			return
+		}
+
+		for _, e := range s {
+			if !yield(e) {
+				return
+			}
+		}
+	})
+
+	return &lazy[T]{count: n, next: next, stop: stop}, nil
 }
 
-func readArrayString(f *File, n uint64) (s []string, err error) {
-	s = make([]string, n)
-	for i := range n {
-		e, err := readString(f)
-		if err != nil {
+func readArrayString(f *File, n uint64) (*lazy[string], error) {
+	offset := f.reader.offset
+
+	var size int64
+	for range n {
+		bts := f.bts[:8]
+		if _, err := io.ReadFull(f.reader, bts); err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		n := int(binary.LittleEndian.Uint64(bts))
+		if _, err := f.reader.Discard(n); err != nil {
+			return nil, err
+		}
+
+		size += 8 + int64(n)
 	}
 
-	return s, nil
+	sr := io.NewSectionReader(f.file, offset, size)
+	next, stop := iter.Pull(func(yield func(string) bool) {
+		f := File{reader: newBufferedReader(sr, 16<<10), bts: make([]byte, 4096)}
+		for range n {
+			s, err := readString(&f)
+			if err != nil {
+				return
+			}
+
+			if !yield(s) {
+				return
+			}
+		}
+	})
+
+	return &lazy[string]{count: n, next: next, stop: stop}, nil
 }
 
 func (f *File) Close() error {
 	f.keyValues.stop()
-	f.tensors.stop()
+	f.tensorInfos.stop()
 	return f.file.Close()
 }
 
@@ -308,15 +345,15 @@ func (f *File) KeyValues() iter.Seq2[int, KeyValue] {
 }
 
 func (f *File) TensorInfo(name string) TensorInfo {
-	if index := slices.IndexFunc(f.tensors.values, func(t TensorInfo) bool {
+	if index := slices.IndexFunc(f.tensorInfos.values, func(t TensorInfo) bool {
 		return t.Name == name
 	}); index >= 0 {
-		return f.tensors.values[index]
+		return f.tensorInfos.values[index]
 	}
 
 	// fast-forward through key values if we haven't already
 	_ = f.keyValues.rest()
-	for tensor, ok := f.tensors.next(); ok; tensor, ok = f.tensors.next() {
+	for tensor, ok := f.tensorInfos.next(); ok; tensor, ok = f.tensorInfos.next() {
 		if tensor.Name == name {
 			return tensor
 		}
@@ -326,13 +363,13 @@ func (f *File) TensorInfo(name string) TensorInfo {
 }
 
 func (f *File) NumTensors() int {
-	return int(f.tensors.count)
+	return int(f.tensorInfos.count)
 }
 
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 	// fast forward through key values if we haven't already
-	f.keyValues.rest()
-	return f.tensors.All()
+	_ = f.keyValues.rest()
+	return f.tensorInfos.All()
 }
 
 func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
@@ -342,6 +379,11 @@ func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
 	}
 
 	// fast forward through tensor info if we haven't already
-	_ = f.tensors.rest()
-	return t, io.NewSectionReader(f.file, f.offset+int64(t.Offset), t.NumBytes()), nil
+	_ = f.tensorInfos.rest()
+	return t, io.NewSectionReader(f.file, f.offset+int64(t.Offset), int64(t.NumBytes())), nil
+}
+
+func (f *File) NumValues() uint64 {
+	_ = f.tensorInfos.rest()
+	return f.n
 }
