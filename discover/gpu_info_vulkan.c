@@ -4,6 +4,9 @@
 #include <string.h>
 
 int is_extension_supported(vk_handle_t* rh, VkPhysicalDevice device, char* extension) {
+  VkPhysicalDeviceProperties properties = {};
+  (*rh->vkGetPhysicalDeviceProperties)(device, &properties);
+
   uint32_t extensionCount;
   (*rh->vkEnumerateDeviceExtensionProperties)(device, NULL, &extensionCount, NULL);
 
@@ -129,7 +132,7 @@ int vk_check_flash_attention(vk_handle_t rh, int i) {
     return 0;
   }
 
-  VkPhysicalDeviceProperties properties;
+  VkPhysicalDeviceProperties properties = {};
   (*rh.vkGetPhysicalDeviceProperties)(devices[i], &properties);
 
   int supports_nv_coopmat2 = is_extension_supported(&rh, devices[i], VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME);
@@ -159,7 +162,7 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
     return;
   }
 
-  VkPhysicalDeviceProperties properties;
+  VkPhysicalDeviceProperties properties = {};
   (*rh.vkGetPhysicalDeviceProperties)(devices[i], &properties);
 
   int supports_budget = is_extension_supported(&rh, devices[i], VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
@@ -184,11 +187,11 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   device_props2.pNext = &id_props;
   (*rh.vkGetPhysicalDeviceProperties2)(devices[i], &device_props2);
 
-  VkPhysicalDeviceMemoryBudgetPropertiesEXT physical_device_memory_budget_properties;
+  VkPhysicalDeviceMemoryBudgetPropertiesEXT physical_device_memory_budget_properties = {};
   physical_device_memory_budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
   physical_device_memory_budget_properties.pNext = NULL;
 
-  VkPhysicalDeviceMemoryProperties2 device_memory_properties;
+  VkPhysicalDeviceMemoryProperties2 device_memory_properties = {};
   device_memory_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
   device_memory_properties.pNext = &physical_device_memory_budget_properties;
 
