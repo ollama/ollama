@@ -423,6 +423,19 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 	return iconFilePath, nil
 }
 
+// ShowPortErrorDialog displays a message box informing the user that the port is in use
+// and provides options to either close the application or change the port.
+func ShowPortErrorDialog(port string) int {
+	return MessageBox(0, 
+		fmt.Sprintf("Ollama could not start because port %s is already in use by another application.\n\n"+
+			"Please either:\n"+
+			"1. Close the application using port %s and restart Ollama, or\n"+
+			"2. Set the OLLAMA_HOST environment variable to use a different port.\n\n"+
+			"Example: OLLAMA_HOST=127.0.0.1:11435", port, port),
+		"Ollama - Port in Use",
+		MB_OK|MB_ICONERROR)
+}
+
 // Loads an image from file and shows it in tray.
 // Shell_NotifyIcon: https://msdn.microsoft.com/en-us/library/windows/desktop/bb762159(v=vs.85).aspx
 func (t *winTray) setIcon(src string) error {
