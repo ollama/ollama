@@ -1099,6 +1099,87 @@ func (s *Server) CopyHandler(c *gin.Context) {
 	}
 }
 
+func (s *Server) ExportHandler(c *gin.Context) {
+	var r api.ExportRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	name := model.ParseName(r.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is invalid", r.Model)})
+		return
+	}
+
+	if r.Path == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "destination path is required"})
+		return
+	}
+
+	// Verify model exists
+	name, err := getExistingName(name)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ch := make(chan any)
+	go func() {
+		defer close(ch)
+		fn := func(r api.ProgressResponse) {
+			ch <- r
+		}
+		err := ExportModel(&r, fn)
+		if err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+
+	streamResponse(c, ch)
+}
+
+func (s *Server) ImportHandler(c *gin.Context) {
+	var r api.ImportRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if r.Path == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "source path is required"})
+		return
+	}
+
+	if r.Model != "" {
+		name := model.ParseName(r.Model)
+		if !name.IsValid() {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model name %q is invalid", r.Model)})
+			return
+		}
+	}
+
+	ch := make(chan any)
+	go func() {
+		defer close(ch)
+		fn := func(r api.ProgressResponse) {
+			ch <- r
+		}
+		err := ImportModel(&r, fn)
+		if err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+
+	streamResponse(c, ch)
+}
+
 func (s *Server) HeadBlobHandler(c *gin.Context) {
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
@@ -1300,6 +1381,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
+	r.POST("/api/export", s.ExportHandler)
+	r.POST("/api/import", s.ImportHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)

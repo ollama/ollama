@@ -973,6 +973,151 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return client.Pull(cmd.Context(), &request, fn)
 }
 
+func ExportHandler(cmd *cobra.Command, args []string) error {
+	compress, err := cmd.Flags().GetString("compress")
+	if err != nil {
+		return err
+	}
+
+	compressionLevel, err := cmd.Flags().GetInt("compression-level")
+	if err != nil {
+		return err
+	}
+
+	singleThread, err := cmd.Flags().GetBool("single-thread")
+	if err != nil {
+		return err
+	}
+
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) {
+		if resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("exporting %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+	}
+
+	// Determine format based on compression type
+	format := ""
+	if compress != "" {
+		// Default to zstd if user just specifies --compress without a value
+		if compress == "gzip" {
+			format = "tar.gz"
+		} else {
+			// This covers both "zstd" and any other value (treating as zstd default)
+			format = "tar.zst"
+			compress = "zstd"
+		}
+	}
+
+	request := api.ExportRequest{
+		Model:            args[0],
+		Path:             args[1],
+		Compress:         compress,
+		CompressionLevel: compressionLevel,
+		SingleThread:     singleThread,
+		Format:           format,
+		Force:            force,
+	}
+
+	return client.Export(cmd.Context(), &request, fn)
+}
+
+func ImportHandler(cmd *cobra.Command, args []string) error {
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
+
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) {
+		if resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("importing %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+	}
+
+	request := api.ImportRequest{
+		Path:     args[0],
+		Force:    force,
+		Insecure: insecure,
+	}
+
+	if len(args) > 1 {
+		request.Model = args[1]
+	}
+
+	return client.Import(cmd.Context(), &request, fn)
+}
+
 type generateContextKey string
 
 type runOptions struct {
@@ -1574,6 +1719,34 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	exportCmd := &cobra.Command{
+		Use:     "export MODEL DESTINATION",
+		Short:   "Export a model to a file or directory",
+		Long:    `Export a model to a file or directory for sharing or backup purposes.
+
+By default, exports as an uncompressed tar file (.tar) using parallel processing
+for optimal performance. Use --compress to create a compressed file (zstd by default).`,
+		Args:    cobra.ExactArgs(2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ExportHandler,
+	}
+	exportCmd.Flags().String("compress", "", "Compression type: 'zstd' (default), 'gzip', or leave flag off for none")
+	exportCmd.Flags().Lookup("compress").NoOptDefVal = "zstd"
+	exportCmd.Flags().Int("compression-level", 3, "Compression level for zstd (1-19, default 3)")
+	exportCmd.Flags().Bool("single-thread", false, "Force single-threaded compression")
+	exportCmd.Flags().Bool("force", false, "Overwrite existing files without prompting")
+
+	importCmd := &cobra.Command{
+		Use:     "import SOURCE [MODEL_NAME]",
+		Short:   "Import a model from a file or directory",
+		Long:    `Import a model from a previously exported file or directory.`,
+		Args:    cobra.RangeArgs(1, 2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ImportHandler,
+	}
+	importCmd.Flags().Bool("force", false, "Overwrite existing model")
+	importCmd.Flags().Bool("insecure", false, "Skip checksum verification")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1642,6 +1815,8 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		exportCmd,
+		importCmd,
 		runnerCmd,
 	)
 
