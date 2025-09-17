@@ -197,6 +197,9 @@ func TestForward(t *testing.T) {
 		eps:       1e-06,
 		ropeBase:  10000,
 		ropeScale: 40,
+
+		yarn_log_multiplier:   0.1,
+		originalContextLength: 4096,
 	}
 
 	// cache := m.(*Transformer).Cache
@@ -231,7 +234,7 @@ func TestForward(t *testing.T) {
 
 	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
 
-	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/qRot_rope.bin"
+	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/hello5.bin"
 	print("DEBUG: filePath: %v\n", filePath)
 	err = os.WriteFile(filePath, result.Bytes(), 0644)
 	if err != nil {
@@ -333,9 +336,10 @@ func TestRope(t *testing.T) {
 		keyLength:          128,
 		valueLength:        128,
 		// originalContextLength: 128000,
-		eps:       1e-06,
-		ropeBase:  10000,
-		ropeScale: 40,
+		eps:                   1e-06,
+		ropeBase:              10000,
+		ropeScale:             40,
+		originalContextLength: 4096,
 	}
 
 	fmt.Printf("DEBUG: before rope\n")
@@ -374,7 +378,7 @@ func TestFullForward(t *testing.T) {
 	// build a proper batch: tokenize prompt, set positions/sequences/outputs, and tensorize inputs
 	prompt := args.prompt
 	if prompt == "" {
-		prompt = "hello, how"
+		prompt = "hello, no emojis"
 	}
 
 	tp := m.(model.TextProcessor)
@@ -382,6 +386,8 @@ func TestFullForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	print(tokens)
 
 	inputsTensor := ctx.Input().FromIntSlice(tokens, len(tokens))
 	positions := make([]int32, len(tokens))
@@ -437,3 +443,109 @@ func TestTokenization(t *testing.T) {
 
 	t.Logf("tokens: %v", tokens)
 }
+
+// func TestRopeForward(t *testing.T) {
+// 	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	ctx := m.Backend().NewContext()
+
+// 	filePath := "/Users/graceguo/Downloads/hidden_states.bin"
+
+// 	hsFloats, err := loadFloatsFromBinary(filePath)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	t.Logf("hs len=%d, expected=%d", len(hsFloats), 7168*4*1)
+// 	// [1, 4, 7168]
+// 	t.Logf("DEBUG: hsFloats: %v", hsFloats[:10])
+// 	hiddenStates := ctx.Input().FromFloatSlice(hsFloats, 7168, 4, 1)
+// 	t.Logf("DEBUG: hiddenStates.shape: %v", hiddenStates.Shape())
+
+// 	positionIndices := []int32{0, 1, 2, 3}
+// 	positions := ctx.Input().FromIntSlice(positionIndices, 4)
+
+// 	result = result.Contiguous(ctx)
+// 	ctx.Forward(result).Compute(result)
+
+// 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+// }
+
+// func TestForward(t *testing.T) {
+// 	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	t.Logf("%+v", m.(*Transformer).TransformerBlocks[0].Attention.QA)
+
+// 	attentionBlock := m.(*Transformer).TransformerBlocks[0].Attention
+// 	ctx := m.Backend().NewContext()
+
+// 	// Load hidden states from binary file
+// 	filePath := "/Users/graceguo/Downloads/hidden_states.bin"
+
+// 	hsFloats, err := loadFloatsFromBinary(filePath)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	t.Logf("hs len=%d, expected=%d", len(hsFloats), 7168*4*1)
+// 	// [1, 4, 7168]
+// 	t.Logf("DEBUG: hsFloats: %v", hsFloats[:10])
+// 	hiddenStates := ctx.Input().FromFloatSlice(hsFloats, 7168, 4, 1)
+// 	t.Logf("DEBUG: hiddenStates.shape: %v", hiddenStates.Shape())
+// 	// t.Logf("DEBUG: hsFloats: %v", hsFloats)
+// 	// t.Logf("DEBUG: hiddenStates: %v", hiddenStates)
+
+// 	// Create position indices for sequence length 4 (not frequency data!)
+// 	// RoPE expects position indices like [0, 1, 2, 3] for a sequence of length 4
+// 	positionIndices := []int32{0, 1, 2, 3}
+// 	positions := ctx.Input().FromIntSlice(positionIndices, 4)
+
+// 	qLoraRankVal := 1536
+// 	options := &Options{
+// 		kvLoraRank:         512,
+// 		qkNopeHeadDim:      128,
+// 		qkRopeHeadDim:      64,
+// 		kqNopeHeadDim:      128,      // key part dimension (256 - 128 = 128)
+// 		qkHeadDim:          128 + 64, // qk_nope_head_dim + qk_rope_head_dim
+// 		qLoraRank:          &qLoraRankVal,
+// 		attnImplementation: "sdpa",
+// 		vHeadDim:           128,
+// 		hiddenSize:         7168,
+// 		numHeads:           128,
+// 		numKVHeads:         128,
+// 		keyLength:          128,
+// 		valueLength:        128,
+// 		// originalContextLength: 128000,
+// 		eps:       1e-06,
+// 		ropeBase:  10000,
+// 		ropeScale: 40,
+// 	}
+
+// 	result := attentionBlock.Forward(ctx, hiddenStates, positions, nil, options)
+// 	// bf 16 to f32?
+// 	// result = result.Cast(ctx, ml.DTypeF32)
+// 	result = result.Contiguous(ctx)
+// 	ctx.Forward(result).Compute(result)
+
+// 	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
+
+// 	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/qRot_rope.bin"
+// 	print("DEBUG: filePath: %v\n", filePath)
+// 	err = os.WriteFile(filePath, result.Bytes(), 0644)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+// }
