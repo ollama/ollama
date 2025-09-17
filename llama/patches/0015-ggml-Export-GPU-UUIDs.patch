@@ -6,9 +6,9 @@ Subject: [PATCH] ggml: Export GPU UUIDs
 This enables matching up devices and information reported by the backend
 with tools (e.g. nvidia-smi) and system management libraries (e.g. nvml).
 ---
- ggml/include/ggml-backend.h      |  1 +
- ggml/src/ggml-cuda/ggml-cuda.cu  | 67 +++++++++++++++++++++++++++++---
- ggml/src/ggml-metal/ggml-metal.m |  1 +
+ ggml/include/ggml-backend.h        |  1 +
+ ggml/src/ggml-cuda/ggml-cuda.cu    | 67 +++++++++++++++++++++++++++---
+ ggml/src/ggml-metal/ggml-metal.cpp |  1 +
  3 files changed, 63 insertions(+), 6 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
@@ -146,15 +146,15 @@ index ad8464ea..6d3c782f 100644
  
                  char pci_bus_id[16] = {};
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
-diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index 45345863..005e25b6 100644
---- a/ggml/src/ggml-metal/ggml-metal.m
-+++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -6623,6 +6623,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
- static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index fd0e6ed6..721c0a01 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -536,6 +536,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      props->name        = ggml_backend_metal_device_get_name(dev);
      props->description = ggml_backend_metal_device_get_description(dev);
 +    props->id          = "0";
      props->type        = ggml_backend_metal_device_get_type(dev);
+ 
      ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
-     props->caps = (struct ggml_backend_dev_caps) {
