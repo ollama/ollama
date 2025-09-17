@@ -16,7 +16,7 @@ import (
 
 func Run() {
 	InitLogging()
-	slog.Info("app config", "env", envconfig.Values())
+	slog.Info("app environment configuration", "", envconfig.All())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var done chan int
