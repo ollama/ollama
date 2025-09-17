@@ -284,18 +284,8 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.MinimumMemory = cudaMinimumMemory
 				gpuInfo.DriverMajor = driverMajor
 				gpuInfo.DriverMinor = driverMinor
-				variant := cudaVariant(gpuInfo)
 
-				// Start with our bundled libraries
-				if variant != "" {
-					variantPath := filepath.Join(LibOllamaPath, "cuda_"+variant)
-					if _, err := os.Stat(variantPath); err == nil {
-						// Put the variant directory first in the search path to avoid runtime linking to the wrong library
-						gpuInfo.DependencyPath = append([]string{variantPath}, gpuInfo.DependencyPath...)
-					}
-				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-				gpuInfo.Variant = variant
 
 				if int(memInfo.major) < cudaComputeMajorMin || (int(memInfo.major) == cudaComputeMajorMin && int(memInfo.minor) < cudaComputeMinorMin) {
 					unsupportedGPUs = append(unsupportedGPUs,
@@ -332,6 +322,24 @@ func GetGPUInfo() GpuInfoList {
 
 				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
 				cudaGPUs = append(cudaGPUs, gpuInfo)
+			}
+			// Second pass on NVIDIA GPUs to set lowest common denominator variant and DependencyPaths
+			variant := cudaVariant(cudaGPUs)
+			var variantPath string
+			// Start with our bundled libraries
+			if variant != "" {
+				variantPath = filepath.Join(LibOllamaPath, "cuda_"+variant)
+				if _, err := os.Stat(variantPath); err != nil {
+					variantPath = ""
+				}
+			}
+
+			for i := range cudaGPUs {
+				cudaGPUs[i].Variant = variant
+				if variantPath != "" {
+					// Put the variant directory first in the search path to avoid runtime linking to the wrong library
+					cudaGPUs[i].DependencyPath = append([]string{variantPath}, cudaGPUs[i].DependencyPath...)
+				}
 			}
 		}
 
