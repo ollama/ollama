@@ -15,6 +15,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/model"
 	typemodel "github.com/ollama/ollama/types/model"
 )
@@ -193,8 +194,8 @@ func TestForward(t *testing.T) {
 		valueLength:        128,
 		// originalContextLength: 128000,
 		eps:       1e-06,
-		ropeBase:  1000000,
-		ropeScale: 1,
+		ropeBase:  10000,
+		ropeScale: 40,
 	}
 
 	// cache := m.(*Transformer).Cache
@@ -229,7 +230,7 @@ func TestForward(t *testing.T) {
 
 	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
 
-	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/attn_outputFinal.bin"
+	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/qRot_rope.bin"
 	print("DEBUG: filePath: %v\n", filePath)
 	err = os.WriteFile(filePath, result.Bytes(), 0644)
 	if err != nil {
@@ -295,7 +296,7 @@ func TestTopKIndicesComplex(t *testing.T) {
 	t.Logf("Result shape: %v", result.Shape())
 }
 
-func TestFullForward(t *testing.T) {
+func TestRope(t *testing.T) {
 	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
 	if err != nil {
 		t.Fatal(err)
@@ -306,19 +307,82 @@ func TestFullForward(t *testing.T) {
 
 	ctx := m.Backend().NewContext()
 
-	input := "hello, how are you?"
+	positionIndices := []int32{0, 1, 2, 3}
+	positions := ctx.Input().FromIntSlice(positionIndices, 4)
 
-	// how does one create a batch?
-	batch := input.Batch{
-		Inputs: input,
-		Positions: []int32{0, 1, 2, 3},
-		Outputs: []int32{0, 1, 2, 3},
+	inputValues := []int32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} // 4 * 3?
+	input := ctx.Input().FromIntSlice(inputValues, 1, 3, 4)
+
+	fmt.Printf("DEBUG: input.shape: %v\n", input.Shape())
+	fmt.Printf("DEBUG: positions.shape: %v\n", positions.Shape())
+
+	qLoraRankVal := 1536
+	opts := &Options{
+		kvLoraRank:         512,
+		qkNopeHeadDim:      128,
+		qkRopeHeadDim:      64,
+		kqNopeHeadDim:      128,      // key part dimension (256 - 128 = 128)
+		qkHeadDim:          128 + 64, // qk_nope_head_dim + qk_rope_head_dim
+		qLoraRank:          &qLoraRankVal,
+		attnImplementation: "sdpa",
+		vHeadDim:           128,
+		hiddenSize:         7168,
+		numHeads:           128,
+		numKVHeads:         128,
+		keyLength:          128,
+		valueLength:        128,
+		// originalContextLength: 128000,
+		eps:       1e-06,
+		ropeBase:  10000,
+		ropeScale: 40,
 	}
 
-	result, err := m.Forward(ctx, input)
+	fmt.Printf("DEBUG: before rope\n")
+	result := fast.RoPE(ctx, input, positions, 1, opts.ropeBase, opts.ropeScale) //, opts.RoPEOptions()...)
+	fmt.Printf("DEBUG: after rope\n")
+	result = result.Contiguous(ctx)
+
+	fmt.Printf("DEBUG: before dump\n")
+	// ml.Dump(ctx, result)
+	ctx.Forward(result).Compute(result)
+	fmt.Printf("DEBUG: after dump\n")
+
+	filePath := "/Users/graceguo/workspace/ollama/model/models/deepseek3/qRot_rope_sample.bin"
+	fmt.Printf("DEBUG: filePath: %v\n", filePath)
+	err = os.WriteFile(filePath, result.Bytes(), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+	t.Logf("Result shape: %v", result.Shape())
+
 }
+
+// func TestFullForward(t *testing.T) {
+// 	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	ctx := m.Backend().NewContext()
+
+// 	input := "hello, how are you?"
+
+// 	// how does one create a batch?
+// 	batch := input.Batch{
+// 		Inputs:    input,
+// 		Positions: []int32{0, 1, 2, 3},
+// 		Outputs:   []int32{0, 1, 2, 3},
+// 	}
+
+// 	result, err := m.Forward(ctx, input)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+// }
