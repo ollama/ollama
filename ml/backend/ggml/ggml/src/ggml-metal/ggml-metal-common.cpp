@@ -22,7 +22,7 @@ struct ggml_mem_ranges {
     int debug = 0;
 };
 
-struct ggml_mem_ranges * ggml_mem_ranges_init(int debug) {
+ggml_mem_ranges_t ggml_mem_ranges_init(int debug) {
     auto * res = new ggml_mem_ranges;
 
     res->ranges.reserve(256);
@@ -31,15 +31,15 @@ struct ggml_mem_ranges * ggml_mem_ranges_init(int debug) {
     return res;
 }
 
-void ggml_mem_ranges_free(ggml_mem_ranges * mrs) {
+void ggml_mem_ranges_free(ggml_mem_ranges_t mrs) {
     delete mrs;
 }
 
-void ggml_mem_ranges_reset(ggml_mem_ranges * mrs) {
+void ggml_mem_ranges_reset(ggml_mem_ranges_t mrs) {
     mrs->ranges.clear();
 }
 
-static bool ggml_mem_ranges_add(ggml_mem_ranges * mrs, ggml_mem_range mr) {
+static bool ggml_mem_ranges_add(ggml_mem_ranges_t mrs, ggml_mem_range mr) {
     mrs->ranges.push_back(mr);
 
     return true;
@@ -87,7 +87,7 @@ static ggml_mem_range ggml_mem_range_from_tensor_dst(const ggml_tensor * tensor)
     return ggml_mem_range_from_tensor(tensor, MEM_RANGE_TYPE_DST);
 }
 
-static bool ggml_mem_ranges_add_src(ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
+static bool ggml_mem_ranges_add_src(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     GGML_ASSERT(tensor);
 
     ggml_mem_range mr = ggml_mem_range_from_tensor_src(tensor);
@@ -99,7 +99,7 @@ static bool ggml_mem_ranges_add_src(ggml_mem_ranges * mrs, const ggml_tensor * t
     return ggml_mem_ranges_add(mrs, mr);
 }
 
-static bool ggml_mem_ranges_add_dst(ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
+static bool ggml_mem_ranges_add_dst(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     GGML_ASSERT(tensor);
 
     ggml_mem_range mr = ggml_mem_range_from_tensor_dst(tensor);
@@ -111,7 +111,7 @@ static bool ggml_mem_ranges_add_dst(ggml_mem_ranges * mrs, const ggml_tensor * t
     return ggml_mem_ranges_add(mrs, mr);
 }
 
-bool ggml_mem_ranges_add(ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
+bool ggml_mem_ranges_add(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     for (int i = 0; i < GGML_MAX_DIMS; i++) {
         if (tensor->src[i]) {
             ggml_mem_ranges_add_src(mrs, tensor->src[i]);
@@ -121,7 +121,7 @@ bool ggml_mem_ranges_add(ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
     return ggml_mem_ranges_add_dst(mrs, tensor);
 }
 
-static bool ggml_mem_ranges_check(const ggml_mem_ranges * mrs, ggml_mem_range mr) {
+static bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, ggml_mem_range mr) {
     for (size_t i = 0; i < mrs->ranges.size(); i++) {
         const auto & cmp = mrs->ranges[i];
 
@@ -152,7 +152,7 @@ static bool ggml_mem_ranges_check(const ggml_mem_ranges * mrs, ggml_mem_range mr
     return true;
 }
 
-static bool ggml_mem_ranges_check_src(const ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
+static bool ggml_mem_ranges_check_src(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     GGML_ASSERT(tensor);
 
     ggml_mem_range mr = ggml_mem_range_from_tensor_src(tensor);
@@ -162,7 +162,7 @@ static bool ggml_mem_ranges_check_src(const ggml_mem_ranges * mrs, const ggml_te
     return res;
 }
 
-static bool ggml_mem_ranges_check_dst(const ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
+static bool ggml_mem_ranges_check_dst(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     GGML_ASSERT(tensor);
 
     ggml_mem_range mr = ggml_mem_range_from_tensor_dst(tensor);
@@ -172,7 +172,7 @@ static bool ggml_mem_ranges_check_dst(const ggml_mem_ranges * mrs, const ggml_te
     return res;
 }
 
-bool ggml_mem_ranges_check(const ggml_mem_ranges * mrs, const ggml_tensor * tensor) {
+bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     for (int i = 0; i < GGML_MAX_DIMS; i++) {
         if (tensor->src[i]) {
             if (!ggml_mem_ranges_check_src(mrs, tensor->src[i])) {
@@ -222,7 +222,7 @@ struct node_info {
 
 static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node_info> & nodes) {
     // helper to add node src and dst ranges
-    const auto & h_add = [](ggml_mem_ranges * mrs, const node_info & node) {
+    const auto & h_add = [](ggml_mem_ranges_t mrs, const node_info & node) {
         for (int i = 0; i < GGML_MAX_SRC; i++) {
             if (node.node->src[i]) {
                 if (!ggml_mem_ranges_add_src(mrs, node.node->src[i])) {
@@ -246,7 +246,7 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
     };
 
     // helper to check if a node can run concurrently with the existing set of nodes
-    const auto & h_check = [](const ggml_mem_ranges * mrs, const node_info & node) {
+    const auto & h_check = [](ggml_mem_ranges_t mrs, const node_info & node) {
         for (int i = 0; i < GGML_MAX_SRC; i++) {
             if (node.node->src[i]) {
                 if (!ggml_mem_ranges_check_src(mrs, node.node->src[i])) {
@@ -301,10 +301,10 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
     std::vector<bool> used(n, false);
 
     // the memory ranges for the set of currently concurrent nodes
-    ggml_mem_ranges * mrs0 = ggml_mem_ranges_init(0);
+    ggml_mem_ranges_t mrs0 = ggml_mem_ranges_init(0);
 
     // the memory ranges for the set of nodes that haven't been processed yet, when looking forward for a node to reorder
-    ggml_mem_ranges * mrs1 = ggml_mem_ranges_init(0);
+    ggml_mem_ranges_t mrs1 = ggml_mem_ranges_init(0);
 
     for (int i0 = 0; i0 < n; i0++) {
         if (used[i0]) {
@@ -375,7 +375,7 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
     return res;
 }
 
-void ggml_metal_graph_optimize(ggml_cgraph * gf) {
+void ggml_graph_optimize(ggml_cgraph * gf) {
     constexpr int MAX_FUSE = 16;
 
     const int n = gf->n_nodes;

@@ -159,41 +159,41 @@
 
 #define __CUDA_ARCH__ 1300
 
-#if defined(__gfx803__) || defined(__gfx900__) || defined(__gfx906__)
-#define GCN
-#endif
-
 #if defined(__gfx900__) || defined(__gfx906__)
 #define GCN5
-#endif
+#endif // defined(__gfx900__) || defined(__gfx906__)
 
 #if defined(__gfx803__)
 #define GCN4
-#endif
+#endif // defined(__gfx803__)
 
-#if defined(__gfx908__) || defined(__gfx90a__) || defined(__gfx942__)
-#define CDNA // For the entire family
-#endif
+#if defined(GCN5) || defined(GCN4)
+#define GCN
+#endif // defined(GCN5) || defined(GCN4)
 
 #if defined(__gfx942__)
 #define CDNA3
-#endif
+#endif // defined(__gfx942__)
 
 #if defined(__gfx90a__)
 #define CDNA2
-#endif
+#endif // defined(__gfx90a__)
 
 #if defined(__gfx908__)
 #define CDNA1
-#endif
+#endif // defined(__gfx908__)
+
+#if defined(CDNA3) || defined(CDNA2) || defined(CDNA1)
+#define CDNA // For the entire family
+#endif // defined(CDNA3) || defined(CDNA2) || defined(CDNA1)
 
 #if defined(__GFX12__)
 #define RDNA4
-#endif
+#endif // defined(__GFX12__)
 
 #if defined(__GFX11__)
 #define RDNA3
-#endif
+#endif // defined(__GFX11__)
 
 #if defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
     defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__) || defined(__gfx1037__)
@@ -202,7 +202,11 @@
 
 #if defined(__gfx1010__) || defined(__gfx1012__)
 #define RDNA1
-#endif
+#endif // defined(__gfx1010__) || defined(__gfx1012__)
+
+#if defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(RDNA1)
+#define RDNA // For the entire family
+#endif // defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(RDNA1)
 
 #ifndef __has_builtin
     #define __has_builtin(x) 0

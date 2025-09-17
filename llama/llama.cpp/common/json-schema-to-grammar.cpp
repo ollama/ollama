@@ -257,12 +257,13 @@ std::unordered_map<std::string, BuiltinRule> STRING_FORMAT_RULES = {
 };
 
 static bool is_reserved_name(const std::string & name) {
-    static std::unordered_set<std::string> RESERVED_NAMES;
-    if (RESERVED_NAMES.empty()) {
-        RESERVED_NAMES.insert("root");
-        for (const auto &p : PRIMITIVE_RULES) RESERVED_NAMES.insert(p.first);
-        for (const auto &p : STRING_FORMAT_RULES) RESERVED_NAMES.insert(p.first);
-    }
+    static const std::unordered_set<std::string> RESERVED_NAMES = [] {
+        std::unordered_set<std::string> s;
+        s.insert("root");
+        for (const auto & p : PRIMITIVE_RULES) s.insert(p.first);
+        for (const auto & p : STRING_FORMAT_RULES) s.insert(p.first);
+        return s;
+    }();
     return RESERVED_NAMES.find(name) != RESERVED_NAMES.end();
 }
 

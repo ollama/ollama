@@ -39,6 +39,7 @@ extern "C" {
 // user-code should use only these functions
 //
 
+// TODO: remove in the future
 GGML_BACKEND_API ggml_backend_t ggml_backend_metal_init(void);
 
 GGML_BACKEND_API bool ggml_backend_is_metal(ggml_backend_t backend);

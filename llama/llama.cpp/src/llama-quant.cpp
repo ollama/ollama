@@ -725,7 +725,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // attention layers have a non-zero number of kv heads
         int32_t n_attn_layer = model.hparams.n_layer - std::count(n_head_kv_iter, n_head_kv_iter + model.hparams.n_layer, 0);
         if (llama_model_has_encoder(&model)) {
-            n_attn_layer *= 3;
+            // now n_attn_layer is the number of attention layers in the encoder
+            // for each decoder block, there are 2 attention layers
+            n_attn_layer += 2 * model.hparams.dec_n_layer;
         }
         GGML_ASSERT((qs.n_attention_wv == n_attn_layer - pruned_attention_w) && "n_attention_wv is unexpected");
     }

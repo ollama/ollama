@@ -8599,7 +8599,6 @@ static void ggml_compute_forward_timestep_embedding_f32(
         }
         if (dim % 2 != 0 && ith == 0) {
             embed_data[2 * half] = 0.f;
-            embed_data[dim] = 0.f;
         }
     }
 }

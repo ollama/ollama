@@ -1335,14 +1335,14 @@ ggml_tensor * llm_graph_context::build_attn_mha(
 
         if (arch == LLM_ARCH_GROK) {
             // need to do the following:
-            // multiply by attn_output_multiplyer of 0.08838834764831845
+            // multiply by attn_output_multiplier
             // and then :
             // kq = 30 * tanh(kq / 30)
             // before the softmax below
 
-            kq = ggml_tanh(ctx0, ggml_scale(ctx0, kq, 0.08838834764831845f/30.0f));
+            kq = ggml_tanh(ctx0, ggml_scale(ctx0, kq, hparams.f_attn_out_scale / hparams.f_attn_logit_softcapping));
             cb(kq, "kq_tanh", il);
-            kq = ggml_scale(ctx0, kq, 30);
+            kq = ggml_scale(ctx0, kq, hparams.f_attn_logit_softcapping);
             cb(kq, "kq_scaled", il);
         }
 
