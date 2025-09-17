@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 	typemodel "github.com/ollama/ollama/types/model"
 )
 
@@ -359,30 +360,80 @@ func TestRope(t *testing.T) {
 
 }
 
-// func TestFullForward(t *testing.T) {
-// 	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
-// 		t.Fatal(err)
-// 	}
+func TestFullForward(t *testing.T) {
+	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+		t.Fatal(err)
+	}
 
-// 	ctx := m.Backend().NewContext()
+	ctx := m.Backend().NewContext()
 
-// 	input := "hello, how are you?"
+	// build a proper batch: tokenize prompt, set positions/sequences/outputs, and tensorize inputs
+	prompt := args.prompt
+	if prompt == "" {
+		prompt = "hello, how"
+	}
 
-// 	// how does one create a batch?
-// 	batch := input.Batch{
-// 		Inputs:    input,
-// 		Positions: []int32{0, 1, 2, 3},
-// 		Outputs:   []int32{0, 1, 2, 3},
-// 	}
+	tp := m.(model.TextProcessor)
+	tokens, err := tp.Encode(prompt, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-// 	result, err := m.Forward(ctx, input)
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
+	inputsTensor := ctx.Input().FromIntSlice(tokens, len(tokens))
+	positions := make([]int32, len(tokens))
+	sequences := make([]int, len(tokens))
+	for i := range tokens {
+		positions[i] = int32(i)
+		sequences[i] = 0
+	}
+	outputs := []int32{int32(len(tokens) - 1)}
 
-// 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
-// }
+	batch := input.Batch{
+		Inputs:    inputsTensor,
+		Positions: positions,
+		Sequences: sequences,
+		Outputs:   outputs,
+	}
+
+	// init cache for this test
+	if cache := m.Config().Cache; cache != nil {
+		cache.Init(m.Backend(), ml.DTypeF16, 1, 4096, len(tokens))
+	}
+
+	result, err := model.Forward(ctx, m, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result = result.Contiguous(ctx)
+	ctx.Forward(result).Compute(result)
+
+	t.Logf("Forward pass completed, result shape: %v", result.Shape())
+}
+
+func TestTokenization(t *testing.T) {
+	m, err := model.New(blob(t, args.model), ml.BackendParams{AllocMemory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := args.prompt
+	if prompt == "" {
+		prompt = "hello"
+	}
+
+	tp := m.(model.TextProcessor)
+	tokens, err := tp.Encode(prompt, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("tokens: %v", tokens)
+}
