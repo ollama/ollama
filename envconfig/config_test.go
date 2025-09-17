@@ -3,6 +3,8 @@ package envconfig
 import (
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -321,6 +323,114 @@ func TestLogLevel(t *testing.T) {
 			t.Setenv("OLLAMA_DEBUG", k)
 			if i := LogLevel(); i != v {
 				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestConfigDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"default":  filepath.Join(home, ".ollama"),
+		"xdg_spec": filepath.Join(home, ".config", "ollama"),
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			if k == "xdg_spec" {
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			} else {
+				t.Setenv("XDG_CONFIG_HOME", "")
+			}
+
+			if dir := ConfigDir(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
+			}
+		})
+	}
+}
+
+func TestModels(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"default":  filepath.Join(home, ".ollama", "models"),
+		"xdg_spec": filepath.Join(home, ".local", "state", "ollama", "models"),
+		"manual":   "/path/for/models",
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			switch k {
+			case "manual":
+				t.Setenv("OLLAMA_MODELS", v)
+			case "xdg_spec":
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+			default:
+				t.Setenv("XDG_STATE_HOME", "")
+			}
+
+			if dir := Models(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
+			}
+		})
+	}
+}
+
+func TestKeyPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"default":  filepath.Join(home, ".ollama"),
+		"xdg_spec": filepath.Join(home, ".config", "ollama"),
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			if k == "xdg_spec" {
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			} else {
+				t.Setenv("XDG_CONFIG_HOME", "")
+			}
+
+			if dir := KeyPath(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
+			}
+		})
+	}
+}
+
+func TestHistory(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"default":  filepath.Join(home, ".ollama", "history"),
+		"xdg_spec": filepath.Join(home, ".local", "state", "ollama", "history"),
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			if k == "xdg_spec" {
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+			} else {
+				t.Setenv("XDG_STATE_HOME", "")
+			}
+
+			if dir := History(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
 			}
 		})
 	}
