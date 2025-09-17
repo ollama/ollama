@@ -95,7 +95,7 @@ type OneapiGPUInfoList []OneapiGPUInfo
 
 type VulkanGPUInfo struct {
 	GpuInfo
-	index int
+	index int //nolint:unused,nolintlint
 }
 
 type VulkanGPUInfoList []VulkanGPUInfo

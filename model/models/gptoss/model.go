@@ -41,8 +41,8 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 		}
 
 		var outputs ml.Tensor
-		if len(batch.Outputs) > 0 && i == len(m.TransformerBlocks)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+		if i == len(m.TransformerBlocks)-1 {
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, one, m.Cache, &m.Options)
@@ -210,7 +210,7 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *
 		up = mlp.Up.Forward(ctx, hiddenStates, selectedExperts)
 	}
 
-	hiddenStates = gate.SwiGLU(ctx, up, 1.702, 7)
+	hiddenStates = gate.SILUAlphaLimit(ctx, up, 1.702, 7)
 
 	experts := mlp.Down.Forward(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)

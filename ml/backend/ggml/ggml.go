@@ -1205,6 +1205,13 @@ func (t *Tensor) AddID(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) L2Norm(ctx ml.Context, eps float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_l2_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+	}
+}
+
 func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	tt := C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))
 	if w != nil {
@@ -1424,35 +1431,46 @@ func (t *Tensor) IM2Col(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	}
 }
 
-func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
+func (t *Tensor) GELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
+	if len(t2) > 0 {
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_geglu_split(ctx.(*Context).ctx, t.t, t2[0].(*Tensor).t),
+		}
+	}
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
-func (t *Tensor) QuickGELU(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t),
+func (t *Tensor) SILU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
+	if len(t2) > 0 {
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_swiglu_split(ctx.(*Context).ctx, t.t, t2[0].(*Tensor).t),
+		}
 	}
-}
-
-func (t *Tensor) SILU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_silu_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
-func (t *Tensor) RELU(ctx ml.Context) ml.Tensor {
+func (t *Tensor) RELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
+	if len(t2) > 0 {
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_reglu_split(ctx.(*Context).ctx, t.t, t2[0].(*Tensor).t),
+		}
+	}
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_relu_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
-func (t *Tensor) SwiGLU(ctx ml.Context, up ml.Tensor, alpha, limit float32) ml.Tensor {
+func (t *Tensor) SILUAlphaLimit(ctx ml.Context, up ml.Tensor, alpha, limit float32) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_swiglu_oai(ctx.(*Context).ctx, t.t, up.(*Tensor).t, C.float(alpha), C.float(limit)),

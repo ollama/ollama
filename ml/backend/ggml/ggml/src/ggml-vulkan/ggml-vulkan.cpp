@@ -10232,6 +10232,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
     ggml_vk_destroy_buffer(ctx->dev_buffer);
     delete ctx;
+    delete buffer;
 }
 
 static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
@@ -10375,6 +10376,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
 static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
     ggml_vk_host_free(vk_instance.devices[0], buffer->context);
+    delete buffer;
 }
 
 static ggml_backend_buffer_t ggml_backend_vk_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {

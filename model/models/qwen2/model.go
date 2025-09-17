@@ -59,7 +59,7 @@ type MLP struct {
 }
 
 func (mlp MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
@@ -111,7 +111,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, &m.Options)
