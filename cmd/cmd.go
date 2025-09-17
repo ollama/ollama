@@ -294,7 +294,7 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		if r.RemoteModel != "" && opts.ShowConnect {
 			p.StopAndClear()
 			if strings.HasPrefix(r.RemoteHost, "https://ollama.com") {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on Ollama Turbo ⚡\n", r.RemoteModel)
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on Ollama Cloud ⚡\n", r.RemoteModel)
 			} else {
 				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", r.RemoteModel, r.RemoteHost)
 			}
@@ -458,7 +458,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				// the server and the client both have the same public key
 				if pubKey == sErr.PublicKey {
 					encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-					fmt.Printf("You need to be signed in to Ollama to run Turbo models.\n\n")
+					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
 					fmt.Printf(ConnectInstructions, encKey)
 				}
 				return nil
