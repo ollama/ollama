@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
@@ -34,6 +36,19 @@ func (e StatusError) Error() string {
 		// this should not happen
 		return "something went wrong, please see the ollama server logs for details"
 	}
+}
+
+type AuthorizationError struct {
+	StatusCode int
+	Status     string
+	PublicKey  string `json:"public_key"`
+}
+
+func (e AuthorizationError) Error() string {
+	if e.Status != "" {
+		return e.Status
+	}
+	return "something went wrong, please see the ollama server logs for details"
 }
 
 // ImageData represents the raw binary data of an image file.
@@ -313,13 +328,28 @@ func (t *ToolFunction) String() string {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model      string     `json:"model"`
-	CreatedAt  time.Time  `json:"created_at"`
-	Message    Message    `json:"message"`
-	DoneReason string     `json:"done_reason,omitempty"`
-	DebugInfo  *DebugInfo `json:"_debug_info,omitempty"`
+	// Model is the model name that generated the response.
+	Model string `json:"model"`
 
+	// RemoteModel is the name of the upstream model that generated the response.
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
+
+	// CreatedAt is the timestamp of the response.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Message contains the message or part of a message from the model.
+	Message Message `json:"message"`
+
+	// Done specifies if the response is complete.
 	Done bool `json:"done"`
+
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason,omitempty"`
+
+	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 
 	Metrics
 }
@@ -425,20 +455,47 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model    string `json:"model"`
-	Stream   *bool  `json:"stream,omitempty"`
+	// Model is the model name to create.
+	Model string `json:"model"`
+
+	// Stream specifies whether the response is streaming; it is true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
 	Quantize string `json:"quantize,omitempty"`
 
-	From       string            `json:"from,omitempty"`
-	Files      map[string]string `json:"files,omitempty"`
-	Adapters   map[string]string `json:"adapters,omitempty"`
-	Template   string            `json:"template,omitempty"`
-	License    any               `json:"license,omitempty"`
-	System     string            `json:"system,omitempty"`
-	Parameters map[string]any    `json:"parameters,omitempty"`
-	Messages   []Message         `json:"messages,omitempty"`
-	Renderer   string            `json:"renderer,omitempty"`
-	Parser     string            `json:"parser,omitempty"`
+	// From is the name of the model or file to use as the source.
+	From string `json:"from,omitempty"`
+
+	// RemoteHost is the URL of the upstream ollama API for the model (if any).
+	RemoteHost string `json:"remote_host,omitempty"`
+
+	// Files is a map of files include when creating the model.
+	Files map[string]string `json:"files,omitempty"`
+
+	// Adapters is a map of LoRA adapters to include when creating the model.
+	Adapters map[string]string `json:"adapters,omitempty"`
+
+	// Template is the template used when constructing a request to the model.
+	Template string `json:"template,omitempty"`
+
+	// License is a string or list of strings for licenses.
+	License any `json:"license,omitempty"`
+
+	// System is the system prompt for the model.
+	System string `json:"system,omitempty"`
+
+	// Parameters is a map of hyper-parameters which are applied to the model.
+	Parameters map[string]any `json:"parameters,omitempty"`
+
+	// Messages is a list of messages added to the model before chat and generation requests.
+	Messages []Message `json:"messages,omitempty"`
+
+	Renderer string `json:"renderer,omitempty"`
+	Parser   string `json:"parser,omitempty"`
+
+	// Info is a map of additional information for the model
+	Info map[string]any `json:"info,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -480,6 +537,8 @@ type ShowResponse struct {
 	Parser        string             `json:"parser,omitempty"`
 	Details       ModelDetails       `json:"details,omitempty"`
 	Messages      []Message          `json:"messages,omitempty"`
+	RemoteModel   string             `json:"remote_model,omitempty"`
+	RemoteHost    string             `json:"remote_host,omitempty"`
 	ModelInfo     map[string]any     `json:"model_info,omitempty"`
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
@@ -538,12 +597,14 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name       string       `json:"name"`
-	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
-	Size       int64        `json:"size"`
-	Digest     string       `json:"digest"`
-	Details    ModelDetails `json:"details,omitempty"`
+	Name        string       `json:"name"`
+	Model       string       `json:"model"`
+	RemoteModel string       `json:"remote_model,omitempty"`
+	RemoteHost  string       `json:"remote_host,omitempty"`
+	ModifiedAt  time.Time    `json:"modified_at"`
+	Size        int64        `json:"size"`
+	Digest      string       `json:"digest"`
+	Details     ModelDetails `json:"details,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
@@ -566,6 +627,12 @@ type TokenResponse struct {
 type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
+
+	// RemoteModel is the name of the upstream model that generated the response.
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
 
 	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
@@ -602,6 +669,18 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+}
+
+// UserResponse provides information about a user.
+type UserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Bio       string    `json:"bio,omitempty"`
+	AvatarURL string    `json:"avatarurl,omitempty"`
+	FirstName string    `json:"firstname,omitempty"`
+	LastName  string    `json:"lastname,omitempty"`
+	Plan      string    `json:"plan,omitempty"`
 }
 
 // Tensor describes the metadata for a given tensor.

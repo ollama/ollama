@@ -19,6 +19,19 @@ import (
 const defaultPrivateKey = "id_ed25519"
 
 func keyPath() (string, error) {
+	fileExists := func(fp string) bool {
+		info, err := os.Stat(fp)
+		if err != nil {
+			return false
+		}
+		return !info.IsDir()
+	}
+
+	systemPath := filepath.Join("/usr/share/ollama/.ollama", defaultPrivateKey)
+	if fileExists(systemPath) {
+		return systemPath, nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
