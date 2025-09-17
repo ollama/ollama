@@ -1,9 +1,10 @@
 #pragma once
 
 #include "ggml.h"
-#include "ggml-cpu-traits.h"
+#include "traits.h"
 #include "ggml-cpu-impl.h"
 #include "ggml-impl.h"
+#include "simd-mappings.h"
 
 #ifdef __cplusplus
 
@@ -12,11 +13,11 @@
 // convenience functions/macros for use in template calls
 // note: these won't be required after the 'traits' lookup table is used.
 static inline ggml_fp16_t f32_to_f16(float x) {
-    return GGML_FP32_TO_FP16(x);
+    return GGML_CPU_FP32_TO_FP16(x);
 }
 
 static inline float f16_to_f32(ggml_fp16_t x) {
-    return GGML_FP16_TO_FP32(x);
+    return GGML_CPU_FP16_TO_FP32(x);
 }
 
 static inline ggml_bf16_t f32_to_bf16(float x) {

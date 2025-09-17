@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 project(Ollama C CXX)
 
 include(CheckLanguage)
+include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
 
@@ -37,7 +38,7 @@ if (CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
 endif()
 
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
-set(OLLAMA_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/ollama)
+set(OLLAMA_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/ollama/${OLLAMA_RUNNER_DIR})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
@@ -51,7 +52,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/include
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu/amx)
 
-add_compile_definitions(NDEBUG)
+add_compile_definitions(NDEBUG GGML_VERSION=0x0 GGML_COMMIT=0x0)
 
 set(GGML_CPU ON)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
@@ -80,7 +81,7 @@ if(CMAKE_CUDA_COMPILER)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
     install(TARGETS ggml-cuda
         RUNTIME_DEPENDENCIES
-            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
+            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
             PRE_INCLUDE_REGEXES cublas cublasLt cudart
             PRE_EXCLUDE_REGEXES ".*"
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CUDA

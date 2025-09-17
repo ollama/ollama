@@ -16,19 +16,6 @@ import (
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
-func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
-	ids := []string{}
-	for _, info := range gpuInfo {
-		if info.Library != "cuda" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("cudaGetVisibleDevicesEnv skipping over non-cuda device", "library", info.Library)
-			continue
-		}
-		ids = append(ids, info.ID)
-	}
-	return "CUDA_VISIBLE_DEVICES", strings.Join(ids, ",")
-}
-
 func cudaVariant(gpuInfo CudaGPUInfo) string {
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
 		if CudaTegra != "" {
@@ -56,14 +43,15 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 				}
 			}
 		}
-		return "sbsa"
 	}
 
-	// driver 12.0 has problems with the cuda v12 library, so run v11 on those older drivers
-	if gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
-		// The detected driver is older than Feb 2023
-		slog.Warn("old CUDA driver detected - please upgrade to a newer driver", "version", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
-		return "v11"
+	if gpuInfo.DriverMajor < 13 {
+		// The detected driver is older than 580 (Aug 2025)
+		// Warn if their CC is compatible with v13 and they should upgrade their driver to get better performance
+		if gpuInfo.computeMajor > 7 || (gpuInfo.computeMajor == 7 && gpuInfo.computeMinor >= 5) {
+			slog.Warn("old CUDA driver detected - please upgrade to a newer driver for best performance", "version", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
+		}
+		return "v12"
 	}
-	return "v12"
+	return "v13"
 }

@@ -18,7 +18,7 @@ type Model struct {
 	model.BytePairEncoding
 
 	*TextModel
-	*VisionModel `gguf:"v,vision"`
+	*VisionModel `gguf:"v"`
 
 	ImageProcessor
 }
@@ -89,8 +89,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 }
 
 // PostTokenize arranges Qwen-2.5-VL's inputs for the forward pass
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var result []input.Input
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
 
 	var (
 		imageToken       int32 = 151655
@@ -112,16 +112,16 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 				return nil, fmt.Errorf("failed to encode image prompt: %w", err)
 			}
 			for i := range pre {
-				result = append(result, input.Input{Token: pre[i]})
+				result = append(result, &input.Input{Token: pre[i]})
 			}
 
 			patchesPerChunk := inp.Multimodal[0].Tensor.Dim(1)
 
 			// First add the vision start token
-			result = append(result, input.Input{Token: visionStartToken})
+			result = append(result, &input.Input{Token: visionStartToken})
 
 			// Add the image token with the multimodal tensor data at the first position
-			result = append(result, input.Input{
+			result = append(result, &input.Input{
 				Token:          imageToken,
 				Multimodal:     inp.Multimodal,
 				MultimodalHash: inp.MultimodalHash,
@@ -129,9 +129,9 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			})
 
 			// Add the placeholder tokens for the remaining positions (tokensPerGrid-1)
-			result = append(result, slices.Repeat([]input.Input{{Token: imageToken}}, patchesPerChunk-1)...)
+			result = append(result, slices.Repeat([]*input.Input{{Token: imageToken}}, patchesPerChunk-1)...)
 
-			result = append(result, input.Input{Token: visionEndToken})
+			result = append(result, &input.Input{Token: visionEndToken})
 		}
 	}
 
