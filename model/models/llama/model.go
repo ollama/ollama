@@ -29,7 +29,7 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	*Options
+	Options
 }
 
 func New(c fs.Config) (model.Model, error) {
@@ -67,7 +67,7 @@ func New(c fs.Config) (model.Model, error) {
 	m := Model{
 		TextProcessor: processor,
 		Layers:        make([]Layer, c.Uint("block_count")),
-		Options: &Options{
+		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
@@ -171,7 +171,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			outputs = batch.Outputs
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, m.Options)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, &m.Options)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
