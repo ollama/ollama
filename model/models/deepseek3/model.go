@@ -53,10 +53,11 @@ type Options struct {
 	ropeScale float32
 	ropeType string
 
-    // yarn/rope tuning parameters (computed in New and used during forward)
-    mScale     float32
-    kqScale    float64
-    attnFactor float32
+	// yarn/rope tuning parameters (computed in New and used during forward)
+	mScale              float32
+	kqScale             float64
+	attnFactor          float32
+	yarn_log_multiplier float32
 }
 
 func (o Options) DebugPrint() {
@@ -89,9 +90,9 @@ func (o Options) DebugPrint() {
 	fmt.Printf("  ropeBase=%g\n", o.ropeBase)
 	fmt.Printf("  ropeScale=%g\n", o.ropeScale)
 	fmt.Printf("  ropeType=%s\n", o.ropeType)
-    fmt.Printf("  mscale=%g\n", o.mScale)
-    fmt.Printf("  kqScale=%g\n", o.kqScale)
-    fmt.Printf("  attnFactor=%g\n", o.attnFactor)
+	fmt.Printf("  mscale=%g\n", o.mScale)
+	fmt.Printf("  kqScale=%g\n", o.kqScale)
+	fmt.Printf("  attnFactor=%g\n", o.attnFactor)
 }
 
 func (o Options) headDim() int {
@@ -99,11 +100,15 @@ func (o Options) headDim() int {
 }
 
 func (o Options) RoPEOptions() []func(*rope.Options) {
+	attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
+	fmt.Printf("DEBUG: originalContextLength: %v\n", o.originalContextLength)
+	fmt.Printf("DEBUG: attnFactor: %v\n", attnFactor)
 	return []func(*rope.Options){
 		// rope.WithTypeNeoX(),
 		rope.WithOriginalContextLength(o.originalContextLength),
 		// rope.WithExtrapolationFactor(1.),
-		rope.WithAttentionFactor(o.attnFactor),
+		// rope.WithAttentionFactor(o.attnFactor),
+		rope.WithAttentionFactor(attnFactor),
 	}
 }
 
@@ -127,12 +132,23 @@ type AttentionBlock struct {
 }
 
 func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
-	hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
+
+	mScale := float32(1.0 + float64(opts.yarn_log_multiplier)*math.Log(float64(opts.ropeScale)))
+	fmt.Printf("DEBUG: ropeScale: %v\n", opts.ropeScale)
+	fmt.Printf("DEBUG: keyLength: %v\n", opts.keyLength)
+	kqScale := float64(mScale * mScale / float32(math.Sqrt(float64(opts.qkHeadDim)))) // check what n_embd_head_k -- this goes into the attention
+	fmt.Printf("DEBUG: mScale: %v\n", mScale)
+	fmt.Printf("DEBUG: kqScale: %v\n", kqScale)
+
+	// hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
+
+	// return hiddenStates
 
 	seqLength := hiddenStates.Dim(1)
 	residual := hiddenStates
 
 	var query ml.Tensor
+	fmt.Printf("DEBUG: opts.qLoraRank: %v\n", opts.qLoraRank)
 	if opts.qLoraRank == nil {
 		fmt.Printf("DEBUG: qLoraRank is nil\n")
 		query = attn.Q.Forward(ctx, hiddenStates)
@@ -143,11 +159,17 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 		query = attn.QB.Forward(ctx, query)
 	}
 
+	// return query
+
 	fmt.Printf("DEBUG: query: %v\n", query.Shape())
 
 	query = query.Reshape(ctx, query.Dim(0)/opts.numHeads, opts.numHeads, seqLength)
 
 	fmt.Printf("DEBUG: query after reshape: %v\n", query.Shape())
+	fmt.Printf("DEBUG: query dtype: %v\n", query.DType())
+
+	// query = query.Contiguous(ctx)
+	// return query
 
 	qPass := query.View(ctx, 0,
 		opts.qkNopeHeadDim, query.Stride(1),
@@ -158,6 +180,13 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 		opts.qkRopeHeadDim, query.Stride(1),
 		query.Dim(1), query.Stride(2),
 		query.Dim(2))
+
+	fmt.Printf("DEBUG: qRot shape: %v\n", qRot.Shape())
+	fmt.Printf("DEBUG: qPass shape: %v\n", qPass.Shape())
+
+	// fmt.Printf("DEBUG: qRot dtype: %v\n", qRot.Shape())
+	// qRot = qRot.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	// return qRot
 
 	compressedKV := attn.KVA.Forward(ctx, hiddenStates)
 	fmt.Printf("DEBUG: compressedKV: %v\n", compressedKV.Shape())
@@ -189,7 +218,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 		opts.vHeadDim, kPass.Stride(1),
 		kPass.Dim(1), kPass.Stride(2),
 		kPass.Dim(2)).Contiguous(ctx)
-	
+
 	fmt.Printf("DEBUG: value: %v\n", value.Shape())
 
 	slog.Info("", "hello", "world")
@@ -203,36 +232,48 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: BRUHHHHHHH: %v\n", qRot.Shape())
 
 	// qRot = qRot.Contiguous(ctx)
+	fmt.Printf("Attention factor: %v\n", opts.attnFactor)
+	fmt.Printf("DEBUG: qRot before rope: %v\n", qRot.Shape())
+	fmt.Printf("DEBUG: qRot dtype: %v\n", qRot.DType())
+	// qRot = qRot.Contiguous(ctx)
+	// return qRot
+
+	fmt.Printf("DEBUG: opts.ropeBase: %v\n", opts.ropeBase)
+	fmt.Printf("DEBUG: 1 / opts.ropeScale: %v\n", 1./opts.ropeScale)
+	fmt.Printf("DEBUG: opts.qkRopeHeadDim: %v\n", opts.qkRopeHeadDim)
+
+	// qRot = qRot.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+
+	fmt.Printf("DEBUG: qkRopeHeadDim: %v\n", opts.qkRopeHeadDim)
+
+	// qRot = qRot.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	// fmt.Printf("DEBUG: qRot after permute: %v\n", qRot.Shape())
+
+	// a couple questions:
+	// - is the input to the pytorch correct?
 
 	// this is all new
 	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+
+	// fmt.Printf("DEBUG: qRot after rope (after change): %v\n", qRot.Shape())
+
+	// return qRot
+
+	// qRot = qRot.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	// return qRot
+
 	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	// qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, opts.attnFactor, opts.RoPEOptions()...)
 	// kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, opts.attnFactor, opts.RoPEOptions()...)
-
-	// qRot = qRot.Contiguous(ctx)
-	// return qRot
 
 	kRot = kRot.Repeat(ctx, 1, qPass.Dim(1))
 
 	query = qPass.Concat(ctx, qRot, 0)
 	key := kPass.Concat(ctx, kRot, 0)
 
-	// if opts.attnImplementation == "flash_attention_2" && opts.qkHeadDim != opts.vHeadDim {
-
-	// 	print("not implemented")
-	// }
-
-	// scaling := scalingFactor(opts)
-
 	// attention := nn.Attention(ctx, query, key, value, 1, nil)
 	// attention := nn.Attention(ctx, query, key, value, scaling, nil)
 	attention := nn.Attention(ctx, query, key, value, opts.kqScale, nil)
-
-	// if opts.attnImplementation == "flash_attention_2" && opts.qkHeadDim != opts.vHeadDim {
-	// 	// attention = attention[:, :, :, : self.vHeadDim]
-	// 	print("not implemented")
-	// }
 
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
 	return attn.Output.Forward(ctx, attention).Add(ctx, residual)
@@ -371,39 +412,10 @@ type Transformer struct {
 	*Options
 }
 
-// const float mscale = attn_factor * (1.0f + hparams.rope_yarn_log_mul * logf(1.0f / freq_scale));
-// const float kq_scale = 1.0f*mscale*mscale/sqrtf(float(n_embd_head_k));
-// const float attn_factor = 1.0f / (1.0f + 0.1f * logf(1.0f / freq_scale));
-
-// self.scaling = self.qk_head_dim ** (-0.5)
-// if self.config.rope_scaling is not None:
-// 	mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
-// 	scaling_factor = self.config.rope_scaling["factor"]
-// 	if mscale_all_dim:
-// 		mscale = yarn_get_mscale(scaling_factor, mscale_all_dim)
-// 		self.scaling = self.scaling * mscale * mscale
-
-// func yarn_get_mscale(scaling_factor float64, mscale float64) float64 {
-// 	if scaling_factor <= 1.0 {
-// 		return 1.0
-// 	}
-// 	return 0.1*mscale*math.Log(scaling_factor) + 1.0 // there has to be a better way to do this
-// }
-
-// func scalingFactor(opts *Options) float64 {
-// 	scaling := 1. / math.Sqrt(float64(opts.qkHeadDim)) //math.Pow(float64(opts.qkHeadDim), -0.5)
-// 	mscaleAllDim := 1.0
-// 	if opts.ropeType == "yarn" {
-// 		mscale := yarn_get_mscale(float64(opts.ropeScale), mscaleAllDim)
-// 		scaling = scaling * mscale * mscale
-// 	}
-// 	return scaling
-// }
-
 func New(c fs.Config) (model.Model, error) {
 	fmt.Printf("DEBUG: the total number of layers: %v", c.Uint("block_count"))
-	// transformerBlocks := make([]TransformerBlock, 1)
-	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
+	transformerBlocks := make([]TransformerBlock, 1)
+	// transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count")) // or whatever key your gguf uses
 	fmt.Printf("first dense: %v", firstDenseLayerIndex)
@@ -419,16 +431,16 @@ func New(c fs.Config) (model.Model, error) {
 	fmt.Printf("DEBUG: HELLO c.Uint(\"attention.key_length\"): %d\n", c.Uint("attention.key_length"))
 
 	// qLoraRankVal := int(c.Uint("q_lora_rank"))
-	mScale := float32(1.0 + float64(c.Float("rope.scaling.yarn_log_multiplier")) * math.Log(float64(c.Float("rope.scaling.factor"))))
+	mScale := float32(1.0 + float64(c.Float("rope.scaling.yarn_log_multiplier"))*math.Log(float64(c.Float("rope.scaling.factor"))))
 	kqScale := float64(mScale * mScale / float32(math.Sqrt(float64(c.Uint("attention.key_length"))))) // check what n_embd_head_k -- this goes into the attention
-	attnFactor := float32(1.0 / (1.0 + 0.1 * math.Log(float64(c.Float("rope.scaling.factor"))))) // this goes into the rope
+	attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(c.Float("rope.scaling.factor")))))        // this goes into the rope
 
 	fmt.Printf("DEBUG: HELLO mScale: %f, kqScale: %f, attnFactor: %f\n", mScale, kqScale, attnFactor)
 
 	// fmt.Printf("DEBUG: mscale: %f, kqScale: %f, attnFactor: %f\n", mscale, kqScale, attnFactor)
 
 	// fmt.Printf("DEBUG: qLoraRankVal: %v\n", qLoraRankVal
-	
+
 	qLoraRankVal := int(c.Uint("attention.q_lora_rank"))
 
 	m := Transformer{
@@ -436,7 +448,7 @@ func New(c fs.Config) (model.Model, error) {
 		BytePairEncoding: model.NewBytePairEncoding(
 			// `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 			// `\p{N}{1,3}|[一-龥぀-ゟ゠-ヿ]+|[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+`,
-			`[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`+ "`" + `{|}~][A-Za-z]+|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			`[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`+"`"+`{|}~][A-Za-z]+|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -475,9 +487,10 @@ func New(c fs.Config) (model.Model, error) {
 			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
 			ropeType:              c.String("rope.scaling.type"),
 
-            mScale: mScale,
-            kqScale: kqScale,
-            attnFactor: attnFactor,
+			mScale:              mScale,
+			kqScale:             kqScale,
+			attnFactor:          attnFactor,
+			yarn_log_multiplier: c.Float("rope.scaling.yarn_log_multiplier"),
 		},
 	}
 
@@ -518,10 +531,10 @@ func (m Transformer) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.
 // do the rope function
 
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-    // Print all options once per forward
-    if m.Options != nil {
-        m.Options.DebugPrint()
-    }
+	// Print all options once per forward
+	if m.Options != nil {
+		m.Options.DebugPrint()
+	}
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	fmt.Printf("DEBUG: positions: %v\n", positions.Shape())
