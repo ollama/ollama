@@ -242,13 +242,8 @@ func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
 	targetFree = max(targetFree, 1)
 
 	currentFree := c.numCtx - inputLen
-	discard := targetFree - currentFree
 
-	if discard < 0 {
-		discard = 0
-	}
-
-	return discard
+	return max(targetFree-currentFree, 0)
 }
 
 type ErrReprocessInputs struct {

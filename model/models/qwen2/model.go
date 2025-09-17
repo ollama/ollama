@@ -43,8 +43,8 @@ func (attn Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor,
 	value := attn.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
-	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
+	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
 	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
@@ -124,7 +124,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
-	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, m.ropeScale, rope.WithTypeNeoX()), nil
+	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, 1./m.ropeScale, rope.WithTypeNeoX()), nil
 }
 
 func New(c fs.Config) (model.Model, error) {
@@ -160,7 +160,7 @@ func New(c fs.Config) (model.Model, error) {
 			headDim:    int(c.Uint("attention.key_length")),
 			ropeDim:    int(c.Uint("rope.dimension_count")),
 			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.freq_scale", 1),
+			ropeScale:  c.Float("rope.scaling.factor", 1),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
 		},
 	}
