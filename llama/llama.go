@@ -113,7 +113,9 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
 	if flashAttention {
-		params.flash_attn_type = 1 // LLAMA_FLASH_ATTN_TYPE_ENABLED
+		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
+	} else {
+		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_DISABLED
 	}
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
