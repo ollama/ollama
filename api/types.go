@@ -45,12 +45,10 @@ type AuthorizationError struct {
 }
 
 func (e AuthorizationError) Error() string {
-	switch {
-	case e.Status != "":
+	if e.Status != "" {
 		return e.Status
-	default:
-		return "something went wrong, please see the ollama server logs for details"
 	}
+	return "something went wrong, please see the ollama server logs for details"
 }
 
 // ImageData represents the raw binary data of an image file.

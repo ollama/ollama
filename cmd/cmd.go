@@ -15,6 +15,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -49,7 +50,7 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-const ConnectInstructions = "To sign in, navigate to:\n    https://ollama.com/connect?key=%s\n\n"
+const ConnectInstructions = "To sign in, navigate to:\n    https://ollama.com/connect?name=%s&key=%s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -457,9 +458,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				}
 				// the server and the client both have the same public key
 				if pubKey == sErr.PublicKey {
+					h, _ := os.Hostname()
 					encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
-					fmt.Printf(ConnectInstructions, encKey)
+					fmt.Printf(ConnectInstructions, url.PathEscape(h), encKey)
 				}
 				return nil
 			}
@@ -506,7 +508,9 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 	}
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 
-	fmt.Printf(ConnectInstructions, encKey)
+	h, _ := os.Hostname()
+	fmt.Printf(ConnectInstructions, url.PathEscape(h), encKey)
+
 	return nil
 }
 
