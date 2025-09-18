@@ -1,9 +1,9 @@
 package model
 
 import (
+	"errors"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -12,7 +12,6 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/model/input"
 )
 
 func TestParseTags(t *testing.T) {
@@ -148,39 +147,58 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 	}
 }
 
-func TestGetTextProcessor(t *testing.T) {
-	tp, err := getTextProcessor(fsggml.KV{})
-	if err == nil {
-		t.Error("expected error")
-	} else if !strings.Contains(err.Error(), "unsupported model architecture") {
-		t.Errorf("unexpected error: %v", err)
-	} else if tp != nil {
-		t.Error("expected nil tp")
+func TestModelForArch(t *testing.T) {
+	type fakeModel struct {
+		Model
 	}
 
-	models["dummy"] = func(fs.Config) (Model, error) {
-		return notTextProcessorModel{}, nil
+	type fakeEmbeddingModel struct {
+		Model
 	}
-	tp, err = getTextProcessor(fsggml.KV{"general.architecture": "dummy"})
-	if err == nil {
-		t.Error("expected error")
-	} else if !strings.Contains(err.Error(), "not a TextProcessor") {
-		t.Errorf("unexpected error: %v", err)
-	} else if tp != nil {
-		t.Error("expected nil tp")
+
+	models["model"] = func(c fs.Config) (Model, error) { return fakeModel{}, nil }
+	models["model_embed"] = func(c fs.Config) (Model, error) { return fakeEmbeddingModel{}, nil }
+
+	cases := []struct {
+		name   string
+		config fs.Config
+		want   any
+		err    error
+	}{
+		{
+			name: "model",
+			config: fsggml.KV{
+				"general.architecture": "model",
+			},
+			want: fakeModel{},
+		},
+		{
+			name: "embedding",
+			config: fsggml.KV{
+				"general.architecture": "model",
+				"model.pooling_type":   uint32(1),
+			},
+			want: fakeEmbeddingModel{},
+		},
+		{
+			name: "unsupported",
+			config: fsggml.KV{
+				"general.architecture": "unsupported",
+			},
+			err: ErrUnsupportedModel,
+		},
 	}
-}
 
-type notTextProcessorModel struct{}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := modelForArch(tt.config)
+			if !errors.Is(err, tt.err) {
+				t.Fatal(err)
+			}
 
-func (notTextProcessorModel) Forward(ml.Context, input.Batch) (ml.Tensor, error) {
-	panic("unimplemented")
-}
-
-func (notTextProcessorModel) Backend() ml.Backend {
-	panic("unimplemented")
-}
-
-func (notTextProcessorModel) Config() config {
-	panic("unimplemented")
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("modelForArch() returned unexpected values (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
