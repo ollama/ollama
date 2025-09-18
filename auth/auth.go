@@ -26,7 +26,7 @@ func keyPath() (string, error) {
 		}
 
 		perm := info.Mode().Perm()
-		if perm&0400 == 0 {
+		if perm&0o400 == 0 {
 			return false
 		}
 
