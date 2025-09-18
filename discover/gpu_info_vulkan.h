@@ -8,15 +8,6 @@
 VK_DEFINE_HANDLE(VkInstance)
 VK_DEFINE_HANDLE(VkPhysicalDevice)
 
-typedef uint32_t VkFlags;
-typedef uint32_t VkBool32;
-typedef uint64_t VkDeviceSize;
-typedef uint32_t VkSampleMask;
-typedef VkFlags VkSampleCountFlags;
-typedef VkFlags VkMemoryPropertyFlags;
-typedef VkFlags VkMemoryHeapFlags;
-typedef VkFlags VkInstanceCreateFlags;
-
 #define VK_MAX_EXTENSION_NAME_SIZE       256U
 #define VK_MAX_DESCRIPTION_SIZE          256U
 #define VK_LUID_SIZE                     8U
@@ -25,19 +16,32 @@ typedef VkFlags VkInstanceCreateFlags;
 #define VK_MAX_MEMORY_HEAPS              16U
 #define VK_MAX_PHYSICAL_DEVICE_NAME_SIZE  256U
 
-#define VK_MAKE_VERSION(major, minor, patch) (((major) << 22) | ((minor) << 12) | (patch))
-#define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
-#define VK_API_VERSION_1_1 VK_MAKE_VERSION(1, 1, 0)
-#define VK_API_VERSION_1_2 VK_MAKE_VERSION(1, 2, 0)
-#define VK_API_VERSION_1_3 VK_MAKE_VERSION(1, 3, 0)
-#define VK_API_VERSION_MAJOR(version) ((uint32_t)(version) >> 22)
-#define VK_API_VERSION_MINOR(version) (((uint32_t)(version) >> 12) & 0x3FF)
-#define VK_API_VERSION_PATCH(version) ((uint32_t)(version) & 0xFFF)
+#define VK_MAKE_VERSION(major, minor, patch) \
+    ((((uint32_t)(major)) << 22U) | (((uint32_t)(minor)) << 12U) | ((uint32_t)(patch)))
+
+#define VK_MAKE_API_VERSION(variant, major, minor, patch) \
+    ((((uint32_t)(variant)) << 29U) | (((uint32_t)(major)) << 22U) | (((uint32_t)(minor)) << 12U) | ((uint32_t)(patch)))
+
+#define VK_API_VERSION_1_0 VK_MAKE_API_VERSION(0, 1, 0, 0)// Patch version should always be set to 0
+#define VK_API_VERSION_1_1 VK_MAKE_API_VERSION(0, 1, 1, 0)// Patch version should always be set to 0
+#define VK_API_VERSION_1_2 VK_MAKE_API_VERSION(0, 1, 2, 0)// Patch version should always be set to 0
+#define VK_API_VERSION_1_3 VK_MAKE_API_VERSION(0, 1, 3, 0)// Patch version should always be set to 0
+#define VK_API_VERSION_MAJOR(version) (((uint32_t)(version) >> 22U) & 0x7FU)
+#define VK_API_VERSION_MINOR(version) (((uint32_t)(version) >> 12U) & 0x3FFU)
+#define VK_API_VERSION_PATCH(version) ((uint32_t)(version) & 0xFFFU)
 
 #define VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME "VK_KHR_get_physical_device_properties2"
 #define VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME "VK_NV_cooperative_matrix2"
 #define VK_EXT_MEMORY_BUDGET_EXTENSION_NAME "VK_EXT_memory_budget"
 
+typedef uint32_t VkFlags;
+typedef uint32_t VkBool32;
+typedef uint64_t VkDeviceSize;
+typedef uint32_t VkSampleMask;
+typedef VkFlags VkSampleCountFlags;
+typedef VkFlags VkMemoryPropertyFlags;
+typedef VkFlags VkMemoryHeapFlags;
+typedef VkFlags VkInstanceCreateFlags;
 
 typedef enum VkResult {
     VK_SUCCESS = 0,
@@ -122,7 +126,13 @@ typedef enum VkInternalAllocationType {
     VK_INTERNAL_ALLOCATION_TYPE_MAX_ENUM = 0x7FFFFFFF
 } VkInternalAllocationType;
 
-#define VK_MEMORY_HEAP_DEVICE_LOCAL_BIT 0x00000001
+typedef enum VkMemoryHeapFlagBits {
+    VK_MEMORY_HEAP_DEVICE_LOCAL_BIT = 0x00000001,
+    VK_MEMORY_HEAP_MULTI_INSTANCE_BIT = 0x00000002,
+    VK_MEMORY_HEAP_TILE_MEMORY_BIT_QCOM = 0x00000008,
+    VK_MEMORY_HEAP_MULTI_INSTANCE_BIT_KHR = VK_MEMORY_HEAP_MULTI_INSTANCE_BIT,
+    VK_MEMORY_HEAP_FLAG_BITS_MAX_ENUM = 0x7FFFFFFF
+} VkMemoryHeapFlagBits;
 
 typedef struct VkExtensionProperties {
     char extensionName[VK_MAX_EXTENSION_NAME_SIZE];
