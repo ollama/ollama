@@ -41,6 +41,7 @@
 #endif
 #include <locale>
 #include <windows.h>
+#include <string.h>
 #include <fcntl.h>
 #include <io.h>
 #else
@@ -557,13 +558,6 @@ std::string string_from(const struct llama_context * ctx, const std::vector<llam
 
         auto detokenized = common_token_to_piece(ctx, token);
 
-        detokenized.erase(
-            std::remove_if(
-                detokenized.begin(),
-                detokenized.end(),
-                [](const unsigned char c) { return !std::isprint(c); }),
-            detokenized.end());
-
         buf << "'" << detokenized << "'"
             << ":" << std::to_string(token);
     }
@@ -587,13 +581,6 @@ std::string string_from(const struct llama_context * ctx, const struct llama_bat
         }
 
         auto detokenized = common_token_to_piece(ctx, batch.token[i]);
-
-        detokenized.erase(
-                std::remove_if(
-                    detokenized.begin(),
-                    detokenized.end(),
-                    [](const unsigned char c) { return !std::isprint(c); }),
-                detokenized.end());
 
         buf << "\n"          << std::to_string(i)
             << ", token '"   << detokenized << "'"
@@ -914,7 +901,8 @@ struct common_init_result common_init_from_params(common_params & params) {
 
     llama_model * model = llama_model_load_from_file(params.model.path.c_str(), mparams);
     if (model == NULL) {
-        LOG_ERR("%s: failed to load model '%s'\n", __func__, params.model.path.c_str());
+        LOG_ERR("%s: failed to load model '%s', try reducing --n-gpu-layers if you're running out of VRAM\n",
+            __func__, params.model.path.c_str());
         return iparams;
     }
 
@@ -924,7 +912,8 @@ struct common_init_result common_init_from_params(common_params & params) {
 
     llama_context * lctx = llama_init_from_model(model, cparams);
     if (lctx == NULL) {
-        LOG_ERR("%s: failed to create context with model '%s'\n", __func__, params.model.path.c_str());
+        LOG_ERR("%s: failed to create context with model '%s', try reducing --n-gpu-layers if you're running out of VRAM\n",
+            __func__, params.model.path.c_str());
         llama_model_free(model);
         return iparams;
     }
@@ -1001,7 +990,12 @@ struct common_init_result common_init_from_params(common_params & params) {
             return iparams;
         }
 
+        char buf[1024];
         la.ptr = lora.get();
+        llama_adapter_meta_val_str(la.ptr, "adapter.lora.task_name", buf, sizeof(buf));
+        la.task_name = buf;
+        llama_adapter_meta_val_str(la.ptr, "adapter.lora.prompt_prefix", buf, sizeof(buf));
+        la.prompt_prefix = buf;
         iparams.lora.emplace_back(std::move(lora)); // copy to list of loaded adapters
     }
 
@@ -1165,11 +1159,10 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.yarn_orig_ctx     = params.yarn_orig_ctx;
     cparams.pooling_type      = params.pooling_type;
     cparams.attention_type    = params.attention_type;
-    cparams.defrag_thold      = params.defrag_thold;
+    cparams.flash_attn_type   = params.flash_attn_type;
     cparams.cb_eval           = params.cb_eval;
     cparams.cb_eval_user_data = params.cb_eval_user_data;
     cparams.offload_kqv       = !params.no_kv_offload;
-    cparams.flash_attn        = params.flash_attn;
     cparams.no_perf           = params.no_perf;
     cparams.op_offload        = !params.no_op_offload;
     cparams.swa_full          = params.swa_full;
@@ -1564,4 +1557,57 @@ ggml_opt_dataset_t common_opt_dataset_init(struct llama_context * ctx, const std
     }
 
     return result;
+}
+
+ggml_opt_optimizer_params common_opt_lr_pars(void * userdata) {
+    ggml_opt_optimizer_params result = ggml_opt_get_default_optimizer_params(nullptr);
+    const lr_opt &            d      = *(lr_opt *) userdata;
+    result.adamw.alpha = result.sgd.alpha = d.get_lr(d.epoch);
+    result.sgd.wd = result.adamw.wd = d.wd;
+    return result;
+}
+
+// TODO make all command line args case-insensitive
+static inline bool eq_case_insensitive(char const* a, char const* b) {
+    return !
+#if defined(_MSC_VER)
+        _stricmp
+#else
+        strcasecmp
+#endif // defined(_MSC_VER)
+        (a, b);
+}
+
+enum ggml_opt_optimizer_type common_opt_get_optimizer(const char * n) {
+    if (eq_case_insensitive("adamw", n)) {
+        return GGML_OPT_OPTIMIZER_TYPE_ADAMW;
+    }
+    if (eq_case_insensitive("sgd", n)) {
+        return GGML_OPT_OPTIMIZER_TYPE_SGD;
+    }
+    return GGML_OPT_OPTIMIZER_TYPE_COUNT;
+}
+
+// TODO simplify to use just log and exp
+static float const k_log_2 = std::log(2.f);
+
+void lr_opt::init() {
+    if (lr_min > 0 && lr_min < lr0) {
+        float nhalf = std::log(lr0 / lr_min) / k_log_2;
+        float e     = epochs;
+        if (decay_epochs > 0 && decay_epochs < e) {
+            e = decay_epochs;
+        } else {
+            decay_epochs = e;
+        }
+        scale_epoch = nhalf / e;
+    }
+}
+
+float lr_opt::get_lr(float epoch) const {
+    float r = lr_min <= 0 ? lr0 :
+        epoch >= decay_epochs ? lr_min :
+        lr0 * std::pow(0.5f, epoch * scale_epoch);
+    LOG_INF("epoch %.2g lr=%.2g\n", epoch, r);
+    return r;
 }

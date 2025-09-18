@@ -426,8 +426,29 @@ uint32_t common_sampler_get_seed(const struct common_sampler * gsmpl) {
 
 // helpers
 
-llama_token_data_array * common_sampler_get_candidates(struct common_sampler * gsmpl) {
-    return &gsmpl->cur_p;
+llama_token_data_array * common_sampler_get_candidates(struct common_sampler * gsmpl, bool do_sort) {
+    auto * res = &gsmpl->cur_p;
+
+    if (do_sort && !res->sorted) {
+        // remember the selected token before sorting
+        const llama_token id = res->data[res->selected].id;
+
+        std::sort(res->data, res->data + res->size, [](const llama_token_data & a, const llama_token_data & b) {
+            return a.p > b.p;
+        });
+
+        // restore the selected token after sorting
+        for (size_t i = 0; i < res->size; ++i) {
+            if (res->data[i].id == id) {
+                res->selected = i;
+                break;
+            }
+        }
+
+        res->sorted = true;
+    }
+
+    return res;
 }
 
 llama_token common_sampler_last(const struct common_sampler * gsmpl) {
