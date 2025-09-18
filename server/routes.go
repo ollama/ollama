@@ -259,7 +259,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
 					return
 				}
-				c.JSON(http.StatusUnauthorized, gin.H{"public_key": pk})
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":      "unauthorized",
+					"public_key": pk,
+				})
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1803,6 +1806,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Chat(c, &req, fn)
 		if err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				pk, pkErr := auth.GetPublicKey()
+				if pkErr != nil {
+					slog.Error("couldn't get public key", "error", pkErr)
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+					return
+				}
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":      "unauthorized",
+					"public_key": pk,
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
