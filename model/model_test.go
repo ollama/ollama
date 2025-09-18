@@ -23,14 +23,14 @@ func TestParseTags(t *testing.T) {
 		{
 			value: "output",
 			want: Tag{
-				Name: "output",
+				name: "output",
 			},
 		},
 		{
 			value: "output,alt:token_embd",
 			want: Tag{
-				Name: "output",
-				Alternate: []string{
+				name: "output",
+				alternatives: []string{
 					"token_embd",
 				},
 			},
@@ -39,8 +39,8 @@ func TestParseTags(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
-			got := ParseTags(tt.value)
-			if diff := cmp.Diff(tt.want, got); diff != "" {
+			got := parseTag(tt.value)
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported((Tag{}))); diff != "" {
 				t.Errorf("ParseTags() returned unexpected values (-want +got):\n%s", diff)
 			}
 		})
@@ -142,6 +142,47 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		Output: &nn.Linear{Weight: &fakeTensor{Name: "input.weight"}},
 		Nested: &nested{
 			Weight: &nn.Linear{Weight: &fakeTensor{Name: "nested.b.weight"}},
+		},
+	}, m); diff != "" {
+		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
+	}
+}
+
+func TestPopulateFieldsSuffixName(t *testing.T) {
+	type fakeBlock struct {
+		A *nn.Linear `gguf:"a"`
+		B *nn.Linear `gguf:",suf:_b"`
+	}
+
+	type fakeModel struct {
+		Blocks []fakeBlock `gguf:"blk"`
+	}
+
+	m := fakeModel{
+		Blocks: make([]fakeBlock, 2),
+	}
+	v := reflect.ValueOf(&m)
+	v.Elem().Set(populateFields(Base{b: &fakeBackend{
+		names: []string{
+			"blk.0.a.weight",
+			"blk.0.weight_b",
+			"blk.0.bias_b",
+			"blk.1.a.weight",
+			"blk.1.weight_b",
+			"blk.1.bias_b",
+		},
+	}}, v.Elem()))
+
+	if diff := cmp.Diff(fakeModel{
+		Blocks: []fakeBlock{
+			{
+				A: &nn.Linear{Weight: &fakeTensor{Name: "blk.0.a.weight"}},
+				B: &nn.Linear{Weight: &fakeTensor{Name: "blk.0.weight_b"}, Bias: &fakeTensor{Name: "blk.0.bias_b"}},
+			},
+			{
+				A: &nn.Linear{Weight: &fakeTensor{Name: "blk.1.a.weight"}},
+				B: &nn.Linear{Weight: &fakeTensor{Name: "blk.1.weight_b"}, Bias: &fakeTensor{Name: "blk.1.bias_b"}},
+			},
 		},
 	}, m); diff != "" {
 		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
