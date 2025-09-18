@@ -116,7 +116,7 @@ func (o Options) RoPEOptions() []func(*rope.Options) {
 // tested
 
 type AttentionBlock struct {
-	Norm *nn.RMSNorm `gguf:"attn_norm"`
+	// Norm *nn.RMSNorm `gguf:"attn_norm"`
 
 	Q *nn.Linear `gguf:"attn_q"`
 
@@ -140,12 +140,12 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: mScale: %v\n", mScale)
 	fmt.Printf("DEBUG: kqScale: %v\n", kqScale)
 
-	hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
+	// hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
 
 	// return hiddenStates
 
 	seqLength := hiddenStates.Dim(1)
-	residual := hiddenStates
+	// residual := hiddenStates
 
 	var query ml.Tensor
 	fmt.Printf("DEBUG: opts.qLoraRank: %v\n", opts.qLoraRank)
@@ -277,21 +277,22 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 
 	// attention := nn.Attention(ctx, query, key, value, 1, nil)
 	// attention := nn.Attention(ctx, query, key, value, scaling, nil)
-	attention := nn.Attention(ctx, query, key, value, opts.kqScale, nil)
+	// attention := nn.Attention(ctx, query, key, value, opts.kqScale, nil)
+	attention := nn.Attention(ctx, query, key, value, opts.kqScale, cache)
 
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
-	return attn.Output.Forward(ctx, attention).Add(ctx, residual)
+	return attn.Output.Forward(ctx, attention) //.Add(ctx, residual) // here i add residual
 }
 
 type SharedExpert struct {
-	Norm *nn.RMSNorm `gguf:"ffn_norm"`
+	// Norm *nn.RMSNorm `gguf:"ffn_norm"`
 	Gate *nn.Linear  `gguf:"ffn_gate_shexp"`
 	Up   *nn.Linear  `gguf:"ffn_up_shexp"`
 	Down *nn.Linear  `gguf:"ffn_down_shexp"`
 }
 
 func (se *SharedExpert) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
-	hiddenStates = se.Norm.Forward(ctx, hiddenStates, opts.eps) // this is newly added
+	// hiddenStates = se.Norm.Forward(ctx, hiddenStates, opts.eps) // this is newly added
 	hiddenStates = se.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, se.Up.Forward(ctx, hiddenStates))
 	return se.Down.Forward(ctx, hiddenStates)
 }
@@ -302,7 +303,7 @@ type MLP interface {
 }
 
 type MoEBlock struct {
-	Norm         *nn.RMSNorm `gguf:"ffn_norm"`
+	// Norm         *nn.RMSNorm `gguf:"ffn_norm"`
 	Router       *nn.Linear  `gguf:"ffn_gate_inp"`
 	Gate         *nn.Linear  `gguf:"ffn_gate_exps"`
 	Up           *nn.Linear  `gguf:"ffn_up_exps"`
@@ -312,7 +313,7 @@ type MoEBlock struct {
 }
 
 func (moe *MoEBlock) Moe(ctx ml.Context, hiddenStates ml.Tensor, topKIndices ml.Tensor, topKWeights ml.Tensor, opts *Options) ml.Tensor {
-	hiddenStates = moe.Norm.Forward(ctx, hiddenStates, opts.eps) // this is newly added
+	// hiddenStates = moe.Norm.Forward(ctx, hiddenStates, opts.eps) // this is newly added
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
 	upStates := moe.Up.Weight.MulmatID(ctx, hiddenStates, topKIndices)
@@ -370,7 +371,7 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Optio
 }
 
 type TransformerBlock struct { // Similar to the decoder layer
-	// AttentionNorm *nn.RMSNorm `gguf:"attn_norm"` // input_layernorm
+	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"` // input_layernorm
 	Attention *AttentionBlock
 
 	MLPNorm *nn.RMSNorm `gguf:"ffn_norm"` // called the post attention norm
@@ -417,8 +418,10 @@ type Transformer struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
+	// fmt.Printf("DEBUG: the total number of layers: %v", c.Uint("block_count"))
+	// transformerBlocks := make([]TransformerBlock, 1)
 	fmt.Printf("DEBUG: the total number of layers: %v", c.Uint("block_count"))
-	transformerBlocks := make([]TransformerBlock, 1)
+	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
 	// transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count")) // or whatever key your gguf uses
@@ -549,7 +552,7 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 	fmt.Printf("DEBUG: hiddenStates after token embedding: %v\n", hiddenStates.Shape())
 
 	for i, layer := range m.TransformerBlocks {
-		// m.Cache.SetLayer(i)
+		m.Cache.SetLayer(i)
 		fmt.Printf("DEBUG: layer: %v\n", i)
 
 		var outputs ml.Tensor
