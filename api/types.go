@@ -392,12 +392,13 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx         int   `json:"num_ctx,omitempty"`
+	NumBatch       int   `json:"num_batch,omitempty"`
+	NumGPU         int   `json:"num_gpu,omitempty"`
+	MainGPU        int   `json:"main_gpu,omitempty"`
+	UseMMap        *bool `json:"use_mmap,omitempty"`
+	NumThread      int   `json:"num_thread,omitempty"`
+	NumMoeOffload int   `json:"num_moe_offload,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -831,11 +832,12 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			NumCtx:         int(envconfig.ContextLength()),
+			NumBatch:       512,
+			NumGPU:         -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:      0,  // let the runtime decide
+			UseMMap:        nil,
+			NumMoeOffload: 0,
 		},
 	}
 }

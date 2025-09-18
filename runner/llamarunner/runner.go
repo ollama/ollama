@@ -820,10 +820,11 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 
 		params := llama.ModelParams{
-			NumGpuLayers: numGPU,
-			MainGpu:      req.MainGPU,
-			UseMmap:      req.UseMmap && len(req.LoraPath) == 0,
-			TensorSplit:  tensorSplit,
+			NumGpuLayers:   numGPU,
+			MainGpu:        req.MainGPU,
+			UseMmap:        req.UseMmap && len(req.LoraPath) == 0,
+			TensorSplit:    tensorSplit,
+			NumMoeOffload: req.NumMoeOffload,
 			Progress: func(progress float32) {
 				s.progress = progress
 			},
