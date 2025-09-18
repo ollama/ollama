@@ -634,7 +634,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
 		if len(tokens) > ctxLen {
 			if !truncate {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "input exceeds maximum context length"})
 				return
 			}
 
@@ -644,6 +644,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 			if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
 				ctxLen--
+			}
+
+			slog.Info("", "ctxLen", ctxLen, "tokenCount", len(tokens))
+			if ctxLen <= 0 {
+				// return error if the truncated input would be empty or just special tokens
+				c.JSON(http.StatusBadRequest, gin.H{"error": "input after truncation exceeds maximum context length"})
+				return
 			}
 
 			tokens = tokens[:ctxLen]
