@@ -43,7 +43,7 @@ func blockDiagonalMask(ctx ml.Context, seqLength int, bounds []int, numHeads int
 		}
 	}
 
-	mask := ctx.Input().FromFloatSlice(flat, seqLength, seqLength)
+	mask := ctx.Input().FromFloats(flat, seqLength, seqLength)
 
 	// Reshape to match [seqLength, seqLength, 1] for broadcasting
 	mask = mask.Reshape(ctx, seqLength, seqLength, 1)
@@ -299,7 +299,7 @@ func (m *VisionModel) WindowIndex(ctx ml.Context, grid *Grid) (ml.Tensor, []int)
 		}
 	}
 
-	t := ctx.Input().FromIntSlice(index, len(index))
+	t := ctx.Input().FromInts(index, len(index))
 
 	return t, bounds
 }
@@ -319,7 +319,7 @@ func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 			freqVals[i*freq+j] = float32(i) / float32(math.Pow(theta, float64(j*2)/float64(dim)))
 		}
 	}
-	freqs := ctx.Input().FromFloatSlice(freqVals, freq, maxGridSize)
+	freqs := ctx.Input().FromFloats(freqVals, freq, maxGridSize)
 
 	// Create position coordinates (y,x pairs) for the grid
 	// In PyTorch: Equivalent to generating position ids with torch.arange()
@@ -329,7 +329,7 @@ func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 			coords = append(coords, int32(y), int32(x))
 		}
 	}
-	pos := ctx.Input().FromIntSlice(coords, 2, grid.Width, grid.Height)
+	pos := ctx.Input().FromInts(coords, 2, grid.Width, grid.Height)
 
 	// Reshape and permute positions to match spatial merging pattern
 	pos = pos.Reshape(ctx, 2, grid.Width, merge, grid.Height/merge)
