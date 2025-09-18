@@ -6,6 +6,7 @@
 dist
 build
 .cache
+.gocache
 *.exe
 .idea
 test_data

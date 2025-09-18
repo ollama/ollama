@@ -34,7 +34,6 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
-	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/model/parsers"
@@ -288,17 +287,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	useHarmony := shouldUseHarmony(m) && !req.Raw
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStart()
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+	var builtinParser parsers.Parser
+	if shouldUseHarmony(m) && m.Config.Parser == "" {
+		m.Config.Parser = "harmony"
 	}
 
-	// Validate Think value: string values currently only allowed for gptoss models
-	if req.Think != nil && req.Think.IsString() && !useHarmony {
+	if !req.Raw && m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// no tools or last message for generate endpoint
+			builtinParser.Init(nil, nil)
+		}
+	}
+
+	// Validate Think value: string values currently only allowed for harmony/gptoss models
+	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
@@ -422,7 +425,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var thinkingState *thinking.Parser
-	if !useHarmony {
+	if builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
 		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
@@ -459,11 +462,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				},
 			}
 
-			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(cr.Content, harmonyToolParser)
+			if builtinParser != nil {
+				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
+				if err != nil {
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
 				res.Response = content
 				res.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
+				if cr.Done && len(toolCalls) > 0 {
+					res.ToolCalls = toolCalls
+				}
 			} else if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
@@ -475,26 +484,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
-				if useHarmony {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-
-						res.ToolCalls = append(res.ToolCalls, api.ToolCall{
-							Function: api.ToolCallFunction{
-								Name:      *toolName,
-								Arguments: args,
-							},
-						})
-					}
-				}
-
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -509,7 +498,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				}
 			}
 
-			if useHarmony {
+			if builtinParser != nil {
 				// only send messages with meaningful content (empty messages confuse clients)
 				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 {
 					ch <- res
@@ -1853,32 +1842,23 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	var builtinParser parsers.Parser
-	if m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
+	if shouldUseHarmony(m) && m.Config.Parser == "" {
+		m.Config.Parser = "harmony"
 	}
 
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-
-	useHarmony := shouldUseHarmony(m) || m.Config.Parser == "harmony"
-
+	var builtinParser parsers.Parser
 	processedTools := req.Tools
-	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		var lastMessage *api.Message
-		if len(msgs) > 0 {
-			lastMessage = &msgs[len(msgs)-1]
-		}
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(lastMessage)
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 
-		// make a copy of tools to pass to the chat prompt. Function names may be
-		// renamed to be valid Harmony function names.
-		processedTools = make([]api.Tool, len(req.Tools))
-		copy(processedTools, req.Tools)
-		for i, tool := range processedTools {
-			processedTools[i].Function.Name = harmonyMessageHandler.FunctionNameMap.ConvertAndAdd(tool.Function.Name)
+	if m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// Determine last message for chat prefill
+			var lastMessage *api.Message
+			if len(msgs) > 0 {
+				lastMessage = &msgs[len(msgs)-1]
+			}
+			// Initialize parser and get processed tools
+			processedTools = builtinParser.Init(req.Tools, lastMessage)
 		}
 	}
 
@@ -1902,8 +1882,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate Think value: string values currently only allowed for gptoss models
-	if req.Think != nil && req.Think.IsString() && !useHarmony {
+	// Validate Think value: string values currently only allowed for harmony/gptoss models
+	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
@@ -1922,7 +1902,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	var toolParser *tools.Parser
-	if len(req.Tools) > 0 && !useHarmony {
+	if len(req.Tools) > 0 && (builtinParser == nil || !builtinParser.HasToolSupport()) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
@@ -1954,38 +1934,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO(drifkin): fold this as much as possibleinto the generic m.Config.Parser logic
-			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(r.Content, harmonyToolParser)
-				res.Message.Content = content
-				res.Message.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
-
-				if r.Done {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						*toolName = harmonyMessageHandler.FunctionNameMap.OriginalFromConverted(*toolName)
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-						res.Message.ToolCalls = []api.ToolCall{{Function: api.ToolCallFunction{Name: *toolName, Arguments: args}}}
-					}
-				}
-
-				// only send messages with meaningful content (empty messages confuse clients)
-				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
-					ch <- res
-				}
-
-				return
-			} else if builtinParser != nil {
+			if builtinParser != nil {
 				slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
 
-				content, thinking, toolCalls, err := builtinParser.Add(r.Content, req.Tools)
+				content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
 				if err != nil {
 					ch <- gin.H{"error": err.Error()}
 					return
