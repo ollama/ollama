@@ -106,7 +106,7 @@ func (o Options) RoPEOptions() []func(*rope.Options) {
 	return []func(*rope.Options){
 		// rope.WithTypeNeoX(),
 		rope.WithOriginalContextLength(o.originalContextLength),
-		// rope.WithExtrapolationFactor(1.),
+		rope.WithExtrapolationFactor(1.),
 		// rope.WithAttentionFactor(o.attnFactor),
 		rope.WithAttentionFactor(attnFactor),
 	}
@@ -140,7 +140,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	fmt.Printf("DEBUG: mScale: %v\n", mScale)
 	fmt.Printf("DEBUG: kqScale: %v\n", kqScale)
 
-	// hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
+	hiddenStates = attn.Norm.Forward(ctx, hiddenStates, opts.eps)
 
 	// return hiddenStates
 
@@ -252,8 +252,12 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	// a couple questions:
 	// - is the input to the pytorch correct?
 
+	// so right before it, its correct
+
 	// this is all new
 	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+
+	// but right after it, its wrong
 
 	// fmt.Printf("DEBUG: qRot after rope (after change): %v\n", qRot.Shape())
 
