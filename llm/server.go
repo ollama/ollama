@@ -496,7 +496,16 @@ type LoadResponse struct {
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
 
-func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) error {
+func (s *llamaServer) 
+
+
+
+
+
+
+
+
+ctx context.Context, gpus discover.GpuInfoList, requireFull bool) error {
 	systemInfo := discover.GetSystemInfo()
 	systemTotalMemory := systemInfo.System.TotalMemory
 	systemFreeMemory := systemInfo.System.FreeMemory

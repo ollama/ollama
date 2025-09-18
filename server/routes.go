@@ -65,8 +65,16 @@ func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
 }
 
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
 var useClient2 = experimentEnabled("client2")
 
+var mode string = getEnvOrDefault("GIN_MODE", gin.DebugMode)
 // Low VRAM mode is based on the sum of total VRAM (not free) and triggers
 // reduced context length on some models
 var lowVRAMThreshold uint64 = 20 * format.GibiByte

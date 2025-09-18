@@ -237,6 +237,12 @@ var (
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
 )
 
+var (
+	// Bypass the memory check during model load. This is an expert only setting, to be used under situations where the system is guaranteedAdd commentMore actions
+	// to get the have enough memory or is able to procure this at runtime by evicting blocks from caches. e.g ZFS Arc Cache.
+	AvailableMemoryCheckOverride = Uint("OLLAMA_SKIP_MEMORY_CHECK", 0)
+)
+
 func Uint64(key string, defaultValue uint64) func() uint64 {
 	return func() uint64 {
 		if s := Var(key); s != "" {
@@ -287,6 +293,9 @@ func AsMap() map[string]EnvVar {
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
 		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
 		"NO_PROXY":    {"NO_PROXY", String("NO_PROXY")(), "No proxy"},
+
+		//Overrides
+		"OLLAMA_SKIP_MEMORY_CHECK": {"OLLAMA_SKIP_MEMORY_CHECK", AvailableMemoryCheckOverride(), "Bypass checking for available memory before loading models. (e.g. OLLAMA_SKIP_MEMORY_CHECK=1)"},
 	}
 
 	if runtime.GOOS != "windows" {

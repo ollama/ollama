@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
 	"os"
@@ -497,4 +498,56 @@ func projectorMemoryRequirements(filename string) (weights uint64) {
 	}
 
 	return weights
+}
+
+// GetZFSReclaimable returns max(0, size – c_min) from ZFS ARC stats.
+// Added to fix the arc memory cache issue on zfs
+// This will be a no-op is no zfs is involved.
+func GetZFSReclaimableMemory() (uint64, error) {
+	paths := []string{"/proc/spl/kstat/zfs/arcstats", "/proc/zfs/arcstats"}
+	var f *os.File
+	for _, path := range paths {
+		if file, err := os.Open(path); err == nil {
+			f = file
+			break
+		}
+	}
+	if f == nil {
+		return 0, fmt.Errorf("no ZFS ARC stats found")
+	}
+	defer f.Close()
+
+	var size, cmin uint64
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		cols := strings.Fields(scanner.Text())
+		if len(cols) < 3 {
+			continue
+		}
+		var err error
+		var val uint64
+
+		val, err = strconv.ParseUint(cols[2], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch cols[0] {
+		case "size":
+			size = val
+		case "c_min":
+			cmin = val
+		default:
+			continue
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	if size <= 0 || cmin <= 0 {
+		return 0, fmt.Errorf("failed to read ZFS ARC stats")
+	}
+	if size > cmin {
+		return size - cmin, nil
+	}
+	return 0, nil
 }
