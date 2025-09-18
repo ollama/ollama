@@ -25,12 +25,18 @@ func keyPath() (string, error) {
 			return false
 		}
 
-		perm := info.Mode().Perm()
-		if perm&0o400 == 0 {
+		// Check that it's a regular file, not a directory or other file type
+		if !info.Mode().IsRegular() {
 			return false
 		}
 
-		return !info.IsDir()
+		// Try to open it to check readability
+		file, err := os.Open(fp)
+		if err != nil {
+			return false
+		}
+		file.Close()
+		return true
 	}
 
 	systemPath := filepath.Join("/usr/share/ollama/.ollama", defaultPrivateKey)
