@@ -33,8 +33,8 @@ func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions, attent
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
 	if useRope {
-		query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
-		key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+		query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+		key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 	}
 
 	if opts.useQKNorm {
@@ -58,14 +58,14 @@ type TextMLP struct {
 }
 
 func (mlp *TextMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *TextOptions) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
 type TextExperts struct {
-	Gate *nn.Linear `gguf:"ffn_gate_exps"`
-	Up   *nn.Linear `gguf:"ffn_up_exps"`
-	Down *nn.Linear `gguf:"ffn_down_exps"`
+	Gate *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up   *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
 func (e *TextExperts) Forward(ctx ml.Context, hiddenStates, routerLogits ml.Tensor, opts *TextOptions) ml.Tensor {
@@ -76,9 +76,9 @@ func (e *TextExperts) Forward(ctx ml.Context, hiddenStates, routerLogits ml.Tens
 	hiddenStates = hiddenStates.Repeat(ctx, 1, opts.numExpertsUsed)
 	hiddenStates = hiddenStates.Mul(ctx, scores)
 
-	upStates := e.Up.Weight.MulmatID(ctx, hiddenStates, experts)
-	gateStates := e.Gate.Weight.MulmatID(ctx, hiddenStates, experts)
-	downStates := e.Down.Weight.MulmatID(ctx, upStates.Mul(ctx, gateStates.SILU(ctx)), experts)
+	upStates := e.Up.Forward(ctx, hiddenStates, experts)
+	gateStates := e.Gate.Forward(ctx, hiddenStates, experts)
+	downStates := e.Down.Forward(ctx, upStates.Mul(ctx, gateStates.SILU(ctx)), experts)
 
 	nextStates := downStates.View(ctx, 0, hiddenStates.Dim(0), downStates.Stride(2), hiddenStates.Dim(2))
 	for i := 1; i < opts.numExpertsUsed; i++ {
@@ -96,7 +96,7 @@ type TextSharedExpert struct {
 }
 
 func (mlp *TextSharedExpert) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *TextOptions) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
@@ -196,7 +196,7 @@ func newTextModel(c fs.Config) *TextModel {
 			numExpertsUsed:             int(c.Uint("expert_used_count")),
 			ropeDim:                    int(c.Uint("rope.dimension_count")),
 			ropeBase:                   c.Float("rope.freq_base"),
-			ropeScale:                  c.Float("rope.freq_scale", 1),
+			ropeScale:                  c.Float("rope.scaling.factor", 1),
 			eps:                        c.Float("attention.layer_norm_rms_epsilon"),
 			interleaveLayerStep:        int(c.Uint("interleave_moe_layer_step", 1)),
 			noRopeInterval:             int(c.Uint("no_rope_interval", 4)),
@@ -248,5 +248,5 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(m.Layers[layer].Attention.RopeFactors)), nil
+	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, 1./m.ropeScale, rope.WithFactors(m.Layers[layer].Attention.RopeFactors)), nil
 }

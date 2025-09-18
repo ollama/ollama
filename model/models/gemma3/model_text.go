@@ -53,7 +53,7 @@ func newTextModel(c fs.Config) *TextModel {
 			eps:            c.Float("attention.layer_norm_rms_epsilon", 1e-06),
 			ropeLocalBase:  c.Float("rope.local.freq_base", 10000.0),
 			ropeGlobalBase: c.Float("rope.global.freq_base", 1000000.0),
-			ropeScale:      c.Float("rope.freq_scale", 1.0),
+			ropeScale:      c.Float("rope.scaling.factor", 1.0),
 		},
 	}
 
@@ -84,7 +84,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
 	q = sa.QueryNorm.Forward(ctx, q, opts.eps)
-	q = fast.RoPE(ctx, q, positionIDs, opts.attnKeyLen, ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	q = fast.RoPE(ctx, q, positionIDs, opts.attnKeyLen, ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -95,7 +95,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
 	k = sa.KeyNorm.Forward(ctx, k, opts.eps)
-	k = fast.RoPE(ctx, k, positionIDs, opts.attnKeyLen, ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	k = fast.RoPE(ctx, k, positionIDs, opts.attnKeyLen, ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
@@ -123,7 +123,7 @@ type TextMLP struct {
 }
 
 func (mlp *TextMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextConfig) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
@@ -161,7 +161,6 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs,
 
 func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextConfig.hiddenSize)))
@@ -194,7 +193,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 		var lastLayerOutputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
+			lastLayerOutputs = batch.Outputs
 		}
 
 		hiddenState = layer.Forward(ctx, i, hiddenState, positions, lastLayerOutputs, cache, m.TextConfig)

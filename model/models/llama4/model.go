@@ -176,9 +176,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, batch, m.Cache), nil
 }
 
 func init() {

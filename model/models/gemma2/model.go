@@ -24,7 +24,7 @@ type Options struct {
 
 type Model struct {
 	model.Base
-	model.SentencePieceModel
+	model.SentencePiece
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -40,7 +40,7 @@ const (
 
 func New(c fs.Config) (model.Model, error) {
 	m := Model{
-		SentencePieceModel: model.NewSentencePieceModel(
+		SentencePiece: model.NewSentencePiece(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
@@ -63,7 +63,7 @@ func New(c fs.Config) (model.Model, error) {
 			attnValLen:        int(c.Uint("attention.value_length")),
 			eps:               c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:          c.Float("rope.freq_base", 10000.0),
-			ropeScale:         c.Float("rope.freq_scale", 1.0),
+			ropeScale:         c.Float("rope.scaling.factor", 1.0),
 			attnLogitSoftcap:  c.Float("attn_logit_softcapping"),
 			finalLogitSoftcap: c.Float("final_logit_softcapping"),
 		},
@@ -88,7 +88,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
-	q = fast.RoPE(ctx, q, positionIDs, opts.attnKeyLen, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	q = fast.RoPE(ctx, q, positionIDs, opts.attnKeyLen, opts.ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -98,7 +98,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
-	k = fast.RoPE(ctx, k, positionIDs, opts.attnKeyLen, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	k = fast.RoPE(ctx, k, positionIDs, opts.attnKeyLen, opts.ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
@@ -138,7 +138,7 @@ type MLP struct {
 }
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
@@ -176,7 +176,6 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.Options.hiddenSize)))
@@ -193,7 +192,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var lastLayerOutputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
+			lastLayerOutputs = batch.Outputs
 		}
 
 		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)

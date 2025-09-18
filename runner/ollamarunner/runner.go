@@ -11,14 +11,12 @@ import (
 	"image"
 	"log"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,10 +28,10 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
@@ -407,7 +405,7 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
-	supportsAsync := s.model.Backend().Config().Uint("pooling_type", math.MaxUint32) == math.MaxUint32
+	supportsAsync := pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone
 
 	var activeBatch batchState
 	for {
@@ -469,6 +467,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Prepare the seqs and batch, but defer the input token values as we may not be ready yet
 	var batchInputs []*input.Input
+	var batchOutputs []int32
 	var batch input.Batch
 
 	resumeSeq := -1
@@ -551,9 +550,9 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
 			batch.Sequences = append(batch.Sequences, seq.cache.Id)
 
-			seq.iBatch = len(batch.Outputs)
-			if i+1 == len(seq.inputs) {
-				batch.Outputs = append(batch.Outputs, int32(len(batchInputs)-1))
+			seq.iBatch = len(batchOutputs)
+			if i+1 == len(seq.inputs) || seq.embeddingOnly {
+				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
 			}
 			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
 			seq.pendingInputs = append(seq.pendingInputs, inp)
@@ -578,6 +577,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
+	batch.Outputs = nextBatch.ctx.Input().FromIntSlice(batchOutputs, len(batchOutputs))
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -705,8 +705,8 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		}
 
 		// sample a token
-		vocabSize := len(outputs) / len(activeBatch.batch.Outputs)
-		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", len(activeBatch.batch.Outputs), "vocabSize", vocabSize, "iBatches", iBatches)
+		vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)
+		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
 		token, err := seq.sampler.Sample(outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize])
 		if err != nil {
 			s.hardErrCh <- fmt.Errorf("failed to sample token: %w", err)
@@ -780,14 +780,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
-	}
-
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-	if req.UseHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(req.PrefillString)
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 	}
 
 	if req.Options == nil {
@@ -872,9 +864,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
 		return
 	}
-	var lastToken string
-	tokenRepeat := 0
-	const tokenRepeatLimit = 30
 
 	for {
 		select {
@@ -883,27 +872,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				if strings.TrimSpace(content) == lastToken {
-					tokenRepeat++
-				}
-				if tokenRepeat == tokenRepeatLimit {
-					http.Error(w, "token repeat limit reached", http.StatusInternalServerError)
-					seq.doneReason = llm.DoneReasonTokenRepeatLimit
-					close(seq.quit)
-					return
-				}
-				lastToken = strings.TrimSpace(content)
-
-				var thinking string
-				if harmonyMessageHandler != nil {
-					var toolContent string
-					content, thinking, toolContent = harmonyMessageHandler.AddContent(content, harmonyToolParser)
-					harmonyToolParser.Add(toolContent)
-				}
-
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content:  content,
-					Thinking: thinking,
+					Content: content,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
@@ -912,29 +882,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				var toolCalls []api.ToolCall
-				if harmonyMessageHandler != nil {
-					// these tools still need to be transformed to the original function name
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							http.Error(w, fmt.Sprintf("failed to unmarshal tool call function arguments: %v", err), http.StatusInternalServerError)
-							close(seq.quit)
-							return
-						}
-						toolCalls = append(toolCalls, api.ToolCall{
-							Function: api.ToolCallFunction{
-								Name:      *toolName,
-								Arguments: args,
-							},
-						})
-					}
-				}
-
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					ToolCalls:          toolCalls,
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
@@ -952,7 +900,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
-	if s.model.Backend().Config().Uint("pooling_type", math.MaxUint32) == math.MaxUint32 {
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 		return
 	}
@@ -1100,12 +1048,8 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Positions[i] = int32(i)
 	}
 
-	batch.Outputs = make([]int32, s.parallel)
-	for i := range batch.Outputs {
-		batch.Outputs[i] = int32(i)
-	}
-
 	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
+	batch.Outputs = ctx.Input().Empty(ml.DTypeI32, s.parallel)
 
 	cache := s.model.Config().Cache
 	if cache != nil {
@@ -1139,9 +1083,13 @@ func (s *Server) allocModel(
 	// Convert memory allocation panics to errors
 	defer func() {
 		if r := recover(); r != nil {
-			debug.PrintStack()
 			if err, ok := r.(error); ok {
-				panicErr = err
+				var noMem ml.ErrNoMem
+				if errors.As(err, &noMem) {
+					panicErr = noMem
+				} else {
+					panic(r)
+				}
 			} else {
 				panic(r)
 			}

@@ -25,10 +25,7 @@ func Loop(ctx context.Context, maxBackoff time.Duration) iter.Seq2[int, error] {
 
 			// n^2 backoff timer is a little smoother than the
 			// common choice of 2^n.
-			d := time.Duration(n*n) * 10 * time.Millisecond
-			if d > maxBackoff {
-				d = maxBackoff
-			}
+			d := min(time.Duration(n*n)*10*time.Millisecond, maxBackoff)
 			// Randomize the delay between 0.5-1.5 x msec, in order
 			// to prevent accidental "thundering herd" problems.
 			d = time.Duration(float64(d) * (rand.Float64() + 0.5))
