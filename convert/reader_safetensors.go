@@ -96,7 +96,7 @@ type safetensor struct {
 
 func (st safetensor) Kind() uint32 {
 	kind := st.tensorBase.Kind()
-	if st.dtype == "BF16" && kind != tensorKindFP32 {
+	if !strings.HasPrefix(st.name, "v.") && st.dtype == "BF16" && kind != tensorKindFP32 {
 		kind = tensorKindBF16
 	}
 

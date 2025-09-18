@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"slices"
@@ -28,6 +29,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -186,6 +188,84 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		origModel := req.Model
+
+		remoteURL, err := url.Parse(m.Config.RemoteHost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
+			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
+			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+			return
+		}
+
+		req.Model = m.Config.RemoteModel
+
+		if req.Template == "" && m.Template.String() != "" {
+			req.Template = m.Template.String()
+		}
+
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+
+		for k, v := range m.Options {
+			if _, ok := req.Options[k]; !ok {
+				req.Options[k] = v
+			}
+		}
+
+		// update the system prompt from the model if one isn't already specified
+		if req.System == "" && m.System != "" {
+			req.System = m.System
+		}
+
+		if len(m.Messages) > 0 {
+			slog.Warn("embedded messages in the model not supported with '/api/generate'; try '/api/chat' instead")
+		}
+
+		fn := func(resp api.GenerateResponse) error {
+			resp.Model = origModel
+			resp.RemoteModel = m.Config.RemoteModel
+			resp.RemoteHost = m.Config.RemoteHost
+
+			data, err := json.Marshal(resp)
+			if err != nil {
+				return err
+			}
+
+			if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+				return err
+			}
+			c.Writer.Flush()
+			return nil
+		}
+
+		client := api.NewClient(remoteURL, http.DefaultClient)
+		err = client.Generate(c, &req, fn)
+		if err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				pk, pkErr := auth.GetPublicKey()
+				if pkErr != nil {
+					slog.Error("couldn't get public key", "error", pkErr)
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+					return
+				}
+				c.JSON(http.StatusUnauthorized, gin.H{"public_key": pk})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		return
 	}
 
@@ -348,6 +428,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			thinkingState = &thinking.Parser{
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
+			}
+			if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
+				thinkingState.AddContent(openingTag)
 			}
 		}
 	}
@@ -931,6 +1014,28 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		ModifiedAt:   manifest.fi.ModTime(),
 	}
 
+	if m.Config.RemoteHost != "" {
+		resp.RemoteHost = m.Config.RemoteHost
+		resp.RemoteModel = m.Config.RemoteModel
+
+		if m.Config.ModelFamily != "" {
+			resp.ModelInfo = make(map[string]any)
+			resp.ModelInfo["general.architecture"] = m.Config.ModelFamily
+
+			if m.Config.BaseName != "" {
+				resp.ModelInfo["general.basename"] = m.Config.BaseName
+			}
+
+			if m.Config.ContextLen > 0 {
+				resp.ModelInfo[fmt.Sprintf("%s.context_length", m.Config.ModelFamily)] = m.Config.ContextLen
+			}
+
+			if m.Config.EmbedLen > 0 {
+				resp.ModelInfo[fmt.Sprintf("%s.embedding_length", m.Config.ModelFamily)] = m.Config.EmbedLen
+			}
+		}
+	}
+
 	var params []string
 	cs := 30
 	for k, v := range m.Options {
@@ -960,6 +1065,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprintf(&sb, "# FROM %s\n\n", m.ShortName)
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
+
+	// skip loading tensor information if this is a remote model
+	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		return resp, nil
+	}
 
 	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
 	if err != nil {
@@ -1037,11 +1147,13 @@ func (s *Server) ListHandler(c *gin.Context) {
 
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
-			Model:      n.DisplayShortest(),
-			Name:       n.DisplayShortest(),
-			Size:       m.Size(),
-			Digest:     m.digest,
-			ModifiedAt: m.fi.ModTime(),
+			Model:       n.DisplayShortest(),
+			Name:        n.DisplayShortest(),
+			RemoteModel: cf.RemoteModel,
+			RemoteHost:  cf.RemoteHost,
+			Size:        m.Size(),
+			Digest:      m.digest,
+			ModifiedAt:  m.fi.ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1301,6 +1413,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
 
+	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
+	r.POST("/api/me", s.WhoamiHandler)
+
 	// Create
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
@@ -1497,6 +1612,49 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
+func (s *Server) WhoamiHandler(c *gin.Context) {
+	// todo allow other hosts
+	u, err := url.Parse("https://ollama.com")
+	if err != nil {
+		slog.Error(err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
+		return
+	}
+
+	client := api.NewClient(u, http.DefaultClient)
+	user, err := client.Whoami(c)
+	if err != nil {
+		slog.Error(err.Error())
+	}
+	c.JSON(http.StatusOK, user)
+}
+
+func (s *Server) SignoutHandler(c *gin.Context) {
+	encodedKey := c.Param("encodedKey")
+
+	// todo allow other hosts
+	u, err := url.Parse("https://ollama.com")
+	if err != nil {
+		slog.Error(err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
+		return
+	}
+
+	client := api.NewClient(u, http.DefaultClient)
+	err = client.Signout(c, encodedKey)
+	if err != nil {
+		slog.Error(err.Error())
+		if strings.Contains(err.Error(), "page not found") || strings.Contains(err.Error(), "invalid credentials") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "you are not currently signed in"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
+}
+
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
@@ -1553,21 +1711,34 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// expire the runner
-	if len(req.Messages) == 0 && req.KeepAlive != nil && req.KeepAlive.Duration == 0 {
-		model, err := GetModel(req.Model)
-		if err != nil {
-			switch {
-			case os.IsNotExist(err):
-				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-			case err.Error() == errtypes.InvalidModelNameErrMsg:
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			}
-			return
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	name, err := getExistingName(name)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	m, err := GetModel(req.Model)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case err.Error() == errtypes.InvalidModelNameErrMsg:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		s.sched.expireRunner(model)
+		return
+	}
+
+	// expire the runner
+	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		s.sched.expireRunner(m)
 
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:      req.Model,
@@ -1579,23 +1750,72 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		origModel := req.Model
+
+		remoteURL, err := url.Parse(m.Config.RemoteHost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
+			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
+			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+			return
+		}
+
+		req.Model = m.Config.RemoteModel
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+
+		msgs := append(m.Messages, req.Messages...)
+		if req.Messages[0].Role != "system" && m.System != "" {
+			msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+		}
+		msgs = filterThinkTags(msgs, m)
+		req.Messages = msgs
+
+		for k, v := range m.Options {
+			if _, ok := req.Options[k]; !ok {
+				req.Options[k] = v
+			}
+		}
+
+		fn := func(resp api.ChatResponse) error {
+			resp.Model = origModel
+			resp.RemoteModel = m.Config.RemoteModel
+			resp.RemoteHost = m.Config.RemoteHost
+
+			data, err := json.Marshal(resp)
+			if err != nil {
+				return err
+			}
+
+			if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+				return err
+			}
+			c.Writer.Flush()
+			return nil
+		}
+
+		client := api.NewClient(remoteURL, http.DefaultClient)
+		err = client.Chat(c, &req, fn)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		return
+	}
+
 	caps := []model.Capability{model.CapabilityCompletion}
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
 	if req.Think != nil && req.Think.Bool() {
 		caps = append(caps, model.CapabilityThinking)
-	}
-
-	name := model.ParseName(req.Model)
-	if !name.IsValid() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	}
-	name, err := getExistingName(name)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)

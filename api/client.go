@@ -222,7 +222,17 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		if response.StatusCode >= http.StatusBadRequest {
+		if response.StatusCode == http.StatusUnauthorized {
+			pubKey, pkErr := auth.GetPublicKey()
+			if pkErr != nil {
+				return pkErr
+			}
+			return AuthorizationError{
+				StatusCode: response.StatusCode,
+				Status:     response.Status,
+				PublicKey:  pubKey,
+			}
+		} else if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
@@ -427,4 +437,17 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+// Signout will disconnect an ollama instance from ollama.com
+func (c *Client) Signout(ctx context.Context, encodedKey string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
+}
+
+func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
+	var resp UserResponse
+	if err := c.do(ctx, http.MethodPost, "/api/me", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
