@@ -2715,7 +2715,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
     GGML_UNUSED(backend);
 }
 
-#ifdef USE_CUDA_GRAPH
+//#ifdef USE_CUDA_GRAPH
 static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
     bool use_cuda_graph) {
 
@@ -2922,7 +2922,7 @@ static void update_cuda_graph_executable(ggml_backend_cuda_context * cuda_ctx) {
         GGML_ASSERT(stat == cudaSuccess);
     }
 }
-#endif
+//#endif
 
 static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, std::initializer_list<enum ggml_op> ops, std::initializer_list<enum ggml_unary_op> unary_ops) {
 #ifndef NDEBUG
@@ -3042,7 +3042,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
             }
         }
 
-#ifdef USE_CUDA_GRAPH
+//#ifdef USE_CUDA_GRAPH
         if (use_cuda_graph && cuda_graph_update_required) { // End CUDA graph capture
             if (cuda_ctx->cuda_graph->graph != nullptr) {
                 CUDA_CHECK(cudaGraphDestroy(cuda_ctx->cuda_graph->graph));
@@ -3072,9 +3072,9 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
         if (launch) {
             CUDA_CHECK(cudaGraphLaunch(cuda_ctx->cuda_graph->instance, cuda_ctx->stream()));
         }
-#else
+/*#else
         graph_evaluated_or_captured = true;
-#endif  // USE_CUDA_GRAPH
+#endif  // USE_CUDA_GRAPH*/
     }
 }
 
@@ -3166,7 +3166,7 @@ static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, 
     static const bool disable_cuda_graphs_due_to_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
 
     if (!disable_cuda_graphs_due_to_env) {
-        #ifdef USE_CUDA_GRAPH
+        //#ifdef USE_CUDA_GRAPH
         ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
 
         try {
@@ -3210,7 +3210,7 @@ static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, 
             alloc_graph = true;
             return GGML_STATUS_FAILED;
         }
-        #endif
+        //#endif
     }
 
     if (alloc) {

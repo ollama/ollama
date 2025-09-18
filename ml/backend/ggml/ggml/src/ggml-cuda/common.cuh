@@ -855,7 +855,7 @@ struct ggml_graph_node_properties {
 };
 
 struct ggml_cuda_graph {
-#ifdef USE_CUDA_GRAPH
+//#ifdef USE_CUDA_GRAPH
     ~ggml_cuda_graph() {
         if (instance != nullptr) {
             CUDA_CHECK(cudaGraphExecDestroy(instance));
@@ -881,7 +881,7 @@ struct ggml_cuda_graph {
     // Index to allow each cpy kernel to be aware of it's position within the graph
     // relative to other cpy nodes.
     int graph_cpynode_index = -1;
-#endif
+//#endif
 };
 
 struct ggml_backend_cuda_context {
