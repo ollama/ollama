@@ -2,12 +2,14 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 )
@@ -649,3 +651,55 @@ var (
 		},
 	}
 )
+
+func TestQuantizer(t *testing.T) {
+	from := fsggml.Tensor{
+		Name:  "fp32",
+		Shape: []uint64{256},
+		Kind:  uint32(fsggml.TensorTypeF32),
+	}
+
+	temp, err := os.CreateTemp(t.TempDir(), "*.bin")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	f32s := make([]float32, 256)
+	for i := range f32s {
+		f32s[i] = float32(i)
+	}
+
+	if err := binary.Write(temp, binary.LittleEndian, f32s); err != nil {
+		t.Fatalf("failed to write to temp file: %v", err)
+	}
+
+	for type_, want := range quantBytes {
+		t.Run(type_.String(), func(t *testing.T) {
+			f, err := os.Open(temp.Name())
+			if err != nil {
+				t.Fatalf("failed to open temp file: %v", err)
+			}
+			defer f.Close()
+
+			q := quantizer{
+				File: f,
+				from: &from,
+				to: &fsggml.Tensor{
+					Name:  type_.String(),
+					Shape: from.Shape,
+					Kind:  uint32(type_),
+				},
+				progressFn: func(uint64) {},
+			}
+
+			var b bytes.Buffer
+			if _, err := q.WriteTo(&b); err != nil {
+				t.Fatalf("WriteTo failed: %v", err)
+			}
+
+			if diff := cmp.Diff(b.Bytes(), want); diff != "" {
+				t.Errorf("quantized data mismatch for %s (-got +want):\n%s", type_, diff)
+			}
+		})
+	}
+}
