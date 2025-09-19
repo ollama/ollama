@@ -316,7 +316,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						continue
 					}
 					params := args[3:]
-					fp, err := api.FormatParams(map[string][]string{args[2]: params})
+					fp, err := api.FormatParameters(map[string][]string{args[2]: params})
 					if err != nil {
 						fmt.Printf("Couldn't set parameter: %q\n", err)
 						continue

@@ -62,8 +62,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
 
-	for v := range r.Files {
-		if !fs.ValidPath(v) {
+	for _, v := range r.Files {
+		if !fs.ValidPath(v.Name) {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
 			return
 		}
@@ -276,7 +276,7 @@ func remoteURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertModelFromFiles(files api.Files, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	switch detectModelTypeFromFiles(files) {
 	case "safetensors":
 		layers, err := convertFromSafetensors(files, baseLayers, isAdapter, fn)
@@ -295,7 +295,7 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 		var digest string
 		var allLayers []*layerGGML
 		for _, v := range files {
-			digest = v
+			digest = v.Digest
 			layers, err := ggufLayers(digest, fn)
 			if err != nil {
 				return nil, err
@@ -308,15 +308,15 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 	}
 }
 
-func detectModelTypeFromFiles(files map[string]string) string {
-	for fn := range files {
-		if strings.HasSuffix(fn, ".safetensors") {
+func detectModelTypeFromFiles(files api.Files) string {
+	for _, fn := range files {
+		if strings.HasSuffix(fn.Name, ".safetensors") {
 			return "safetensors"
-		} else if strings.HasSuffix(fn, ".gguf") {
+		} else if strings.HasSuffix(fn.Name, ".gguf") {
 			return "gguf"
 		} else {
 			// try to see if we can find a gguf file even without the file extension
-			blobPath, err := GetBlobsPath(files[fn])
+			blobPath, err := GetBlobsPath(fn.Digest)
 			if err != nil {
 				slog.Error("error getting blobs path", "file", fn)
 				return ""
@@ -346,7 +346,7 @@ func detectModelTypeFromFiles(files map[string]string) string {
 	return ""
 }
 
-func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertFromSafetensors(files api.Files, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	tmpDir, err := os.MkdirTemp(envconfig.Models(), "ollama-safetensors")
 	if err != nil {
 		return nil, err
@@ -359,20 +359,20 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer root.Close()
 
-	for fp, digest := range files {
-		if !fs.ValidPath(fp) {
-			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
+	for _, fn := range files {
+		if !fs.ValidPath(fn.Name) {
+			return nil, fmt.Errorf("%w: %s", errFilePath, fn)
 		}
-		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if _, err := root.Stat(fn.Name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			// Path is likely outside the root
-			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fn)
 		}
 
-		blobPath, err := GetBlobsPath(digest)
+		blobPath, err := GetBlobsPath(fn.Digest)
 		if err != nil {
 			return nil, err
 		}
-		if err := createLink(blobPath, filepath.Join(tmpDir, fp)); err != nil {
+		if err := createLink(blobPath, filepath.Join(tmpDir, fn.Name)); err != nil {
 			return nil, err
 		}
 	}
