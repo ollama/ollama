@@ -496,7 +496,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceInfo, error) {
 	var moreDevices []ml.DeviceInfo
 	port := runner.GetPort()
-	tick := time.Tick(500 * time.Millisecond)
+	tick := time.Tick(10 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
@@ -530,7 +530,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceIn
 			}
 			if resp.StatusCode != 200 {
 				logutil.Trace("runner failed to discover free VRAM", "status", resp.StatusCode, "response", body)
-				continue
+				return nil, fmt.Errorf("runner error: %s", string(body))
 			}
 
 			if err := json.Unmarshal(body, &moreDevices); err != nil {

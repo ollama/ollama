@@ -1247,6 +1247,8 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	m := s.model
 
 	if m == nil {
+		startLoad := time.Now()
+
 		// Dummy load to get the backend wired up
 		f, err := os.CreateTemp("", "*.bin")
 		if err != nil {
@@ -1268,9 +1270,12 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
 			return
 		}
+		slog.Debug("dummy model load took", "duration", time.Since(startLoad))
 	}
 
+	startDevices := time.Now()
 	infos := m.Backend().BackendDevices()
+	slog.Debug("gathering device infos took", "duration", time.Since(startDevices))
 	if err := json.NewEncoder(w).Encode(&infos); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
