@@ -3,8 +3,8 @@ package kvcache
 import (
 	"fmt"
 
-	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/model/input"
+	"github.com/zhuangjie1125/ollama/ml"
+	"github.com/zhuangjie1125/ollama/model/input"
 )
 
 // Encoder cache stores K and V tensors that are position independent

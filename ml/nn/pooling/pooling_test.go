@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/ollama/ollama/discover"
-	fsggml "github.com/ollama/ollama/fs/ggml"
-	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/ml/backend/ggml"
-	"github.com/ollama/ollama/ml/nn/pooling"
+	"github.com/zhuangjie1125/ollama/discover"
+	fsggml "github.com/zhuangjie1125/ollama/fs/ggml"
+	"github.com/zhuangjie1125/ollama/ml"
+	"github.com/zhuangjie1125/ollama/ml/backend/ggml"
+	"github.com/zhuangjie1125/ollama/ml/nn/pooling"
 )
 
 func setup(tb testing.TB, n int) ml.Backend {

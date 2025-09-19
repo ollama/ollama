@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
-	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/zhuangjie1125/ollama/api"
+	"github.com/zhuangjie1125/ollama/discover"
+	"github.com/zhuangjie1125/ollama/envconfig"
+	"github.com/zhuangjie1125/ollama/format"
+	"github.com/zhuangjie1125/ollama/fs/ggml"
 )
 
 // pickBestFullFitByLibrary will try to find the optimal placement of the model in the available GPUs where the model fully fits

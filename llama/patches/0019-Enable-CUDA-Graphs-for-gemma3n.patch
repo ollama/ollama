@@ -19,11 +19,11 @@ index 57eae461..c7f9dc3a 100644
 @@ -2671,12 +2671,24 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
      cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
- 
+
 +    // This fix was added in llama.cpp and Ollama in parallel, but with
 +    // different tensor names.
 +    // llama.cpp: https://github.com/ggml-org/llama.cpp/pull/14741
-+    // ollama: https://github.com/ollama/ollama/pull/11525
++    // ollama: https://github.com/zhuangjie1125/ollama/pull/11525
 +
 +    const std::string gemma3n_per_layer_proj_src1_name_ollama = " (reshaped)";
 +    const std::string gemma3n_node_name_ollama                = "node_";
@@ -36,13 +36,13 @@ index 57eae461..c7f9dc3a 100644
      const std::string ffn_moe_gate_bias_prefix = "ffn_moe_gate_biased";
      const std::string ffn_moe_up_bias_prefix = "ffn_moe_up_biased";
      const std::string ffn_moe_down_bias_prefix = "ffn_moe_down_biased";
- 
+
 +
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
- 
+
 @@ -2700,6 +2712,12 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
- 
+
          if (node->op == GGML_OP_ADD &&
              node->src[1] && node->src[1]->ne[1] > 1 &&
 +            // ollama

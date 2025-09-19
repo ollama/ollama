@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/ollama/ollama/format"
+	"github.com/zhuangjie1125/ollama/format"
 )
 
 type memInfo struct {

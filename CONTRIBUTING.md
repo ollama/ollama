@@ -8,9 +8,9 @@ See the [development documentation](./docs/development.md) for instructions on h
 
 ### Ideal issues
 
-* [Bugs](https://github.com/ollama/ollama/issues?q=is%3Aissue+is%3Aopen+label%3Abug): issues where Ollama stops working or where it results in an unexpected error.
-* [Performance](https://github.com/ollama/ollama/issues?q=is%3Aissue+is%3Aopen+label%3Aperformance): issues to make Ollama faster at model inference, downloading or uploading.
-* [Security](https://github.com/ollama/ollama/blob/main/SECURITY.md): issues that could lead to a security vulnerability. As mentioned in [SECURITY.md](https://github.com/ollama/ollama/blob/main/SECURITY.md), please do not disclose security vulnerabilities publicly.
+* [Bugs](https://github.com/zhuangjie1125/ollama/issues?q=is%3Aissue+is%3Aopen+label%3Abug): issues where Ollama stops working or where it results in an unexpected error.
+* [Performance](https://github.com/zhuangjie1125/ollama/issues?q=is%3Aissue+is%3Aopen+label%3Aperformance): issues to make Ollama faster at model inference, downloading or uploading.
+* [Security](https://github.com/zhuangjie1125/ollama/blob/main/SECURITY.md): issues that could lead to a security vulnerability. As mentioned in [SECURITY.md](https://github.com/zhuangjie1125/ollama/blob/main/SECURITY.md), please do not disclose security vulnerabilities publicly.
 
 ### Issues that are harder to review
 

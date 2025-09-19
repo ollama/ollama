@@ -6,8 +6,8 @@ import (
 	"math/rand/v2"
 	"slices"
 
-	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/model"
+	"github.com/zhuangjie1125/ollama/llama"
+	"github.com/zhuangjie1125/ollama/model"
 )
 
 // token represents information about a single token during sampling
@@ -126,7 +126,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	return tokens[idx], nil
 }
 
-// TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
+// TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/zhuangjie1125/ollama/issues/9278
 func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {

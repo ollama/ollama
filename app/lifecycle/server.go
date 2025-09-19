@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ollama/ollama/api"
+	"github.com/zhuangjie1125/ollama/api"
 )
 
 func getCLIFullPath(command string) string {

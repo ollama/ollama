@@ -3,7 +3,7 @@ package convert
 import (
 	"cmp"
 
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/zhuangjie1125/ollama/fs/ggml"
 )
 
 type commandrModel struct {

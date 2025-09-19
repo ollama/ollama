@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/format"
+	"github.com/zhuangjie1125/ollama/api"
+	"github.com/zhuangjie1125/ollama/envconfig"
+	"github.com/zhuangjie1125/ollama/format"
 )
 
 // Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected

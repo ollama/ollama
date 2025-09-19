@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ollama/ollama/api"
+	"github.com/zhuangjie1125/ollama/api"
 )
 
 // tool creates a test tool with the given name and properties

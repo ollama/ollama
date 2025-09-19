@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/ollama/ollama/fs/ggml"
 	"github.com/pdevine/tensor"
+	"github.com/zhuangjie1125/ollama/fs/ggml"
 )
 
 type fakeTensor struct {

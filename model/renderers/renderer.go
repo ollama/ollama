@@ -3,7 +3,7 @@ package renderers
 import (
 	"fmt"
 
-	"github.com/ollama/ollama/api"
+	"github.com/zhuangjie1125/ollama/api"
 )
 
 type rendererFunc func([]api.Message, []api.Tool, *api.ThinkValue) (string, error)

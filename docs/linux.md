@@ -152,7 +152,7 @@ sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 
 ## Installing specific versions
 
-Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases).
+Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/zhuangjie1125/ollama/releases).
 
 For example:
 

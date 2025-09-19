@@ -1,5 +1,5 @@
 package backend
 
 import (
-	_ "github.com/ollama/ollama/ml/backend/ggml"
+	_ "github.com/zhuangjie1125/ollama/ml/backend/ggml"
 )

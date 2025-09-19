@@ -9,7 +9,7 @@ usage() {
 }
 
 export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
+export GOFLAGS="'-ldflags=-w -s \"-X=github.com/zhuangjie1125/ollama/version.Version=${VERSION#v}\" \"-X=github.com/zhuangjie1125/ollama/server.mode=release\"'"
 export CGO_CPPFLAGS='-mmacosx-version-min=11.3'
 
 ARCHS="arm64 amd64"

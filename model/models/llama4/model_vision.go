@@ -3,9 +3,9 @@ package llama4
 import (
 	"math"
 
-	"github.com/ollama/ollama/fs"
-	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/ml/nn"
+	"github.com/zhuangjie1125/ollama/fs"
+	"github.com/zhuangjie1125/ollama/ml"
+	"github.com/zhuangjie1125/ollama/ml/nn"
 )
 
 type VisionAttention struct {

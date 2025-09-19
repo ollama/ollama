@@ -8,4 +8,4 @@ package cpu
 // #cgo darwin,arm64 CPPFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 LDFLAGS: -framework Accelerate
 import "C"
-import _ "github.com/ollama/ollama/ml/backend/ggml/ggml/src/ggml-cpu/llamafile"
+import _ "github.com/zhuangjie1125/ollama/ml/backend/ggml/ggml/src/ggml-cpu/llamafile"

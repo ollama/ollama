@@ -1,7 +1,7 @@
 package parsers
 
 import (
-	"github.com/ollama/ollama/api"
+	"github.com/zhuangjie1125/ollama/api"
 )
 
 type Parser interface {

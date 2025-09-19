@@ -42,7 +42,7 @@ Download Ollama
 
 ### Ollama’s Python library
 
-- Download Ollama's [Python library](https://github.com/ollama/ollama-python)
+- Download Ollama's [Python library](https://github.com/zhuangjie1125/ollama-python)
 - [Sign up](https://ollama.com/signup) for an Ollama account
 - Create an API key by visiting https://ollama.com/settings/keys
 
@@ -67,7 +67,7 @@ for part in client.chat('gpt-oss:120b', messages=messages, stream=True):
 
 ### Ollama’s JavaScript library
 
-- Download Ollama's [JavaScript library](https://github.com/ollama/ollama-js)
+- Download Ollama's [JavaScript library](https://github.com/zhuangjie1125/ollama-js)
 - [Sign up](https://ollama.com/signup) for an Ollama account
 - Create an API key by visiting https://ollama.com/settings/keys
 

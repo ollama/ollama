@@ -2679,7 +2679,7 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
     // This fix was added in llama.cpp and Ollama in parallel, but with
     // different tensor names.
     // llama.cpp: https://github.com/ggml-org/llama.cpp/pull/14741
-    // ollama: https://github.com/ollama/ollama/pull/11525
+    // ollama: https://github.com/zhuangjie1125/ollama/pull/11525
 
     const std::string gemma3n_per_layer_proj_src1_name_ollama = " (reshaped)";
     const std::string gemma3n_node_name_ollama                = "node_";

@@ -101,7 +101,7 @@ AMD is working on enhancing ROCm v6 to broaden support for families of GPUs in a
 future release which should increase support for more GPUs.
 
 Reach out on [Discord](https://discord.gg/ollama) or file an
-[issue](https://github.com/ollama/ollama/issues) for additional help.
+[issue](https://github.com/zhuangjie1125/ollama/issues) for additional help.
 
 ### GPU Selection
 

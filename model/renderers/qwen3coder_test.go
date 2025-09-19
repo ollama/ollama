@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/ollama/ollama/api"
+	"github.com/zhuangjie1125/ollama/api"
 )
 
 func TestQwen3CoderRenderer(t *testing.T) {
@@ -59,7 +59,7 @@ Hello, how are you?<|im_end|>
 							"unit": {Type: api.PropertyType{"string"}, Enum: []any{"celsius", "fahrenheit"}, Description: "The unit of temperature"},
 							// TODO(drifkin): add multiple params back once we have predictable
 							// order via some sort of ordered map type (see
-							// <https://github.com/ollama/ollama/issues/12244>)
+							// <https://github.com/zhuangjie1125/ollama/issues/12244>)
 							/*
 								"location": {Type: api.PropertyType{"string"}, Description: "The city and state, e.g. San Francisco, CA"},
 							*/

@@ -3,8 +3,8 @@ package kvcache
 import (
 	"math"
 
-	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/model/input"
+	"github.com/zhuangjie1125/ollama/ml"
+	"github.com/zhuangjie1125/ollama/model/input"
 )
 
 // Wrapper cache is a container for multiple types of caches,

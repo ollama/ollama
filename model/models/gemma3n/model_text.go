@@ -4,13 +4,13 @@ import (
 	"cmp"
 	"math"
 
-	"github.com/ollama/ollama/fs"
-	"github.com/ollama/ollama/kvcache"
-	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
-	"github.com/ollama/ollama/ml/nn/rope"
-	"github.com/ollama/ollama/model/input"
+	"github.com/zhuangjie1125/ollama/fs"
+	"github.com/zhuangjie1125/ollama/kvcache"
+	"github.com/zhuangjie1125/ollama/ml"
+	"github.com/zhuangjie1125/ollama/ml/nn"
+	"github.com/zhuangjie1125/ollama/ml/nn/fast"
+	"github.com/zhuangjie1125/ollama/ml/nn/rope"
+	"github.com/zhuangjie1125/ollama/model/input"
 )
 
 type TextModel struct {

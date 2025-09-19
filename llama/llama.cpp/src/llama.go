@@ -5,4 +5,4 @@ package llama
 // #cgo CPPFLAGS: -I${SRCDIR}/../../../ml/backend/ggml/ggml/include
 // #cgo windows CPPFLAGS: -D_WIN32_WINNT=0x0602
 import "C"
-import _ "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+import _ "github.com/zhuangjie1125/ollama/ml/backend/ggml/ggml/src"
