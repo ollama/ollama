@@ -1,31 +1,55 @@
 #!/bin/sh
+#
+# Mac ARM users, rosetta can be flaky, so to use a remote x86 builder
+#
+# docker context create amd64 --docker host=ssh://mybuildhost
+# docker buildx create --name mybuilder amd64 --platform linux/amd64
+# docker buildx create --name mybuilder --append desktop-linux --platform linux/arm64
+# docker buildx use mybuilder
+
 
 set -eu
 
-export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
+. $(dirname $0)/env.sh
 
-BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
-export AMDGPU_TARGETS=${AMDGPU_TARGETS:=""}
 mkdir -p dist
 
-for TARGETARCH in ${BUILD_ARCH}; do
-    docker build \
-        --platform=linux/$TARGETARCH \
-        --build-arg=GOFLAGS \
-        --build-arg=CGO_CFLAGS \
-        --build-arg=OLLAMA_CUSTOM_CPU_DEFS \
-        --build-arg=AMDGPU_TARGETS \
-        --target build-$TARGETARCH \
+docker buildx build \
+        --output type=local,dest=./dist/ \
+        --platform=${PLATFORM} \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        --target archive \
         -f Dockerfile \
-        -t builder:$TARGETARCH \
         .
-    docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
-    docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/ollama ./dist/ollama-linux-$TARGETARCH
 
-    if [ "$TARGETARCH" = "amd64" ]; then
-        docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/deps/ ./dist/
+if echo $PLATFORM | grep "amd64" > /dev/null; then
+    outDir="./dist"
+    if echo $PLATFORM | grep "," > /dev/null ; then
+       outDir="./dist/linux_amd64"
     fi
+    docker buildx build \
+        --output type=local,dest=${outDir} \
+        --platform=linux/amd64 \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        --build-arg FLAVOR=rocm \
+        --target archive \
+        -f Dockerfile \
+        .
+fi
 
-    docker rm builder-$TARGETARCH
-done
+# buildx behavior changes for single vs. multiplatform
+echo "Compressing linux tar bundles..."
+if echo $PLATFORM | grep "," > /dev/null ; then
+        tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | pigz -9vc >./dist/ollama-linux-arm64.tgz
+        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
+        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
+        tar c -C ./dist/linux_amd64 --exclude rocm . | pigz -9vc >./dist/ollama-linux-amd64.tgz
+        tar c -C ./dist/linux_amd64 ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
+elif echo $PLATFORM | grep "arm64" > /dev/null ; then
+        tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | pigz -9vc >./dist/ollama-linux-arm64.tgz
+        tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
+        tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
+elif echo $PLATFORM | grep "amd64" > /dev/null ; then
+        tar c -C ./dist/ --exclude rocm bin lib | pigz -9vc >./dist/ollama-linux-amd64.tgz
+        tar c -C ./dist/ ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
+fi

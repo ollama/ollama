@@ -12,19 +12,21 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
-	"golang.org/x/sync/errgroup"
 )
 
 var blobUploadManager sync.Map
 
 type blobUpload struct {
-	*Layer
+	Layer
 
 	Total     int64
 	Completed atomic.Int64
@@ -43,7 +45,7 @@ type blobUpload struct {
 }
 
 const (
-	numUploadParts          = 64
+	numUploadParts          = 16
 	minUploadPartSize int64 = 100 * format.MegaByte
 	maxUploadPartSize int64 = 1000 * format.MegaByte
 )
@@ -106,7 +108,9 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 		offset += size
 	}
 
-	slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	if len(b.Parts) > 0 {
+		slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	}
 
 	requestURL, err = url.Parse(location)
 	if err != nil {
@@ -212,7 +216,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *registryOptions) error {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
-	headers.Set("Content-Length", fmt.Sprintf("%d", part.Size))
+	headers.Set("Content-Length", strconv.FormatInt(part.Size, 10))
 
 	if method == http.MethodPatch {
 		headers.Set("X-Redirect-Uploads", "1")
@@ -254,7 +258,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 
 		// retry uploading to the redirect URL
 		for try := range maxRetries {
-			err = b.uploadPart(ctx, http.MethodPut, redirectURL, part, nil)
+			err = b.uploadPart(ctx, http.MethodPut, redirectURL, part, &registryOptions{})
 			switch {
 			case errors.Is(err, context.Canceled):
 				return err
@@ -360,7 +364,7 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlob(ctx context.Context, mp ModelPath, layer Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 

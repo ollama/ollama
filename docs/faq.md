@@ -20,11 +20,17 @@ Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 2048 tokens.
+By default, Ollama uses a context window size of 4096 tokens for most models. The `gpt-oss` model has a default context window size of 8192 tokens.
+
+This can be overridden in Settings in the Windows and macOS App, or with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use:
+
+```shell
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
 
 To change this when using `ollama run`, use `/set parameter`:
 
-```
+```shell
 /set parameter num_ctx 4096
 ```
 
@@ -32,7 +38,7 @@ When using the API, specify the `num_ctx` parameter:
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?",
   "options": {
     "num_ctx": 4096
@@ -40,15 +46,22 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+Setting the context length higher may cause the model to not be able to fit onto the GPU which make the model run more slowly.
+
 ## How can I tell if my model was loaded onto the GPU?
 
 Use the `ollama ps` command to see what models are currently loaded into memory.
 
 ```shell
 ollama ps
-NAME      	ID          	SIZE 	PROCESSOR	UNTIL
-llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
 ```
+
+> **Output**:
+>
+> ```
+> NAME           ID              SIZE     PROCESSOR    CONTEXT    UNTIL
+> gpt-oss:20b    05afbac4bad6    16 GB    100% GPU     8192       4 minutes from now
+> ```
 
 The `Processor` column will show which memory the model was loaded in to:
 * `100% GPU` means the model was loaded entirely into the GPU
@@ -66,7 +79,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 1. For each environment variable, call `launchctl setenv`.
 
     ```bash
-    launchctl setenv OLLAMA_HOST "0.0.0.0"
+    launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
     ```
 
 2. Restart Ollama application.
@@ -81,14 +94,14 @@ If Ollama is run as a systemd service, environment variables should be set using
 
     ```ini
     [Service]
-    Environment="OLLAMA_HOST=0.0.0.0"
+    Environment="OLLAMA_HOST=0.0.0.0:11434"
     ```
 
 3. Save and exit.
 
 4. Reload `systemd` and restart Ollama:
 
-   ```bash
+   ```shell
    systemctl daemon-reload
    systemctl restart ollama
    ```
@@ -111,7 +124,10 @@ On Windows, Ollama inherits your user and system environment variables.
 
 ## How do I use Ollama behind a proxy?
 
-Ollama is compatible with proxy servers if `HTTP_PROXY` or `HTTPS_PROXY` are configured. When using either variables, ensure it is set where `ollama serve` can access the values. When using `HTTPS_PROXY`, ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
+Ollama pulls models from the Internet and may require a proxy server to access the models. Use `HTTPS_PROXY` to redirect outbound requests through the proxy. Ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
+
+> [!NOTE]
+> Avoid setting `HTTP_PROXY`. Ollama does not use HTTP for model pulls, only HTTPS. Setting `HTTP_PROXY` may interrupt client connections to the server.
 
 ### How do I use Ollama behind a proxy in Docker?
 
@@ -134,9 +150,11 @@ docker build -t ollama-with-ca .
 docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-with-ca
 ```
 
-## Does Ollama send my prompts and answers back to ollama.com?
+## Does Ollama send my prompts and responses back to ollama.com?
 
-No. Ollama runs locally, and conversation data does not leave your machine.
+If you're running a model locally, your prompts and responses will always stay on your machine. Ollama Turbo in the App allows you to run your queries on Ollama's servers if you don't have a powerful enough GPU. Web search lets a model query the web, giving you more accurate and up-to-date information. Both Turbo and web search require sending your prompts and responses to Ollama.com. This data is neither logged nor stored.
+
+If you don't want to see the Turbo and web search options in the app, you can disable them in Settings by turning on Airplane mode. In Airplane mode, all models will run locally, and your prompts and responses will stay on your machine.
 
 ## How can I expose Ollama on my network?
 
@@ -148,7 +166,7 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers (if not exposing Ollama on the network). For example, with Nginx:
 
-```
+```nginx
 server {
     listen 80;
     server_name example.com;  # Replace with your domain or IP
@@ -179,6 +197,13 @@ cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11
 
 Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
 
+For browser extensions, you'll need to explicitly allow the extension's origin pattern. Set `OLLAMA_ORIGINS` to include `chrome-extension://*`, `moz-extension://*`, and `safari-web-extension://*` if you wish to allow all browser extensions access, or specific extensions as needed:
+
+```
+# Allow all Chrome, Firefox, and Safari extensions
+OLLAMA_ORIGINS=chrome-extension://*,moz-extension://*,safari-web-extension://* ollama serve
+```
+
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## Where are models stored?
@@ -190,6 +215,8 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 ### How do I set them to a different location?
 
 If a different directory needs to be used, set the environment variable `OLLAMA_MODELS` to the chosen directory.
+
+> Note: on Linux using the standard installer, the `ollama` user needs read and write access to the specified directory. To assign the directory to the `ollama` user run `sudo chown -R ollama:ollama <directory>`.
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
@@ -216,43 +243,52 @@ properties.
 If you are using the API you can preload a model by sending the Ollama server an empty request. This works with both the `/api/generate` and `/api/chat` API endpoints.
 
 To preload the mistral model using the generate endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "mistral"}'
 ```
 
 To use the chat completions endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 ```
 
 To preload a model using the CLI, use the command:
+
 ```shell
-ollama run llama3 ""
+ollama run llama3.2 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
 
-By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you are making numerous requests to the LLM. You may, however, want to free up the memory before the 5 minutes have elapsed or keep the model loaded indefinitely. Use the `keep_alive` parameter with either the `/api/generate` and `/api/chat` API endpoints to control how long the model is left in memory.
+By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you're making numerous requests to the LLM. If you want to immediately unload a model from memory, use the `ollama stop` command:
 
-The `keep_alive` parameter can be set to:
+```shell
+ollama stop llama3.2
+```
+
+If you're using the API, use the `keep_alive` parameter with the `/api/generate` and `/api/chat` endpoints to set the amount of time that a model stays in memory. The `keep_alive` parameter can be set to:
 * a duration string (such as "10m" or "24h")
 * a number in seconds (such as 3600)
 * any negative number which will keep the model loaded in memory (e.g. -1 or "-1m")
 * '0' which will unload the model immediately after generating a response
 
 For example, to preload a model and leave it in memory use:
+
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3", "keep_alive": -1}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
+
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3", "keep_alive": 0}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": 0}'
 ```
 
-Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
+Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to the section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
 
-If you wish to override the `OLLAMA_KEEP_ALIVE` setting, use the `keep_alive` API parameter with the `/api/generate` or `/api/chat` API endpoints.
+The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
@@ -260,14 +296,57 @@ If too many requests are sent to the server, it will respond with a 503 error in
 
 ## How does Ollama handle concurrent requests?
 
-Ollama supports two levels of concurrent processing.  If your system has sufficient available memory (system memory when using CPU inference, or VRAM for GPU inference) then multiple models can be loaded at the same time.  For a given model, if there is sufficient available memory when the model is loaded, it is configured to allow parallel request processing.
+Ollama supports two levels of concurrent processing.  If your system has sufficient available memory (system memory when using CPU inference, or VRAM for GPU inference) then multiple models can be loaded at the same time.  For a given model, if there is sufficient available memory when the model is loaded, it can be configured to allow parallel request processing.
 
 If there is insufficient available memory to load a new model request while one or more models are already loaded, all new requests will be queued until the new model can be loaded.  As prior models become idle, one or more will be unloaded to make room for the new model.  Queued requests will be processed in order.  When using GPU inference new models must be able to completely fit in VRAM to allow concurrent model loads.
 
 Parallel request processing for a given model results in increasing the context size by the number of parallel requests.  For example, a 2K context with 4 parallel requests will result in an 8K context and additional memory allocation.
 
-The following server settings may be used to adjust how Ollama handles concurrent requests:
+The following server settings may be used to adjust how Ollama handles concurrent requests on most platforms:
 
 - `OLLAMA_MAX_LOADED_MODELS` - The maximum number of models that can be loaded concurrently provided they fit in available memory.  The default is 3 * the number of GPUs or 3 for CPU inference.
-- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time.  The default will auto-select either 4 or 1 based on available memory.
+- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time.  The default is 1, and will handle 1 request per model at a time.
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
+
+Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting.  Once ROCm v6.2 is available, Windows Radeon will follow the defaults above.  You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPUs VRAM.
+
+## How does Ollama load models on multiple GPUs?
+
+When loading a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transferring across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.
+
+## How can I enable Flash Attention?
+
+Flash Attention is a feature of most modern models that can significantly reduce memory usage as the context size grows.  To enable Flash Attention, set the `OLLAMA_FLASH_ATTENTION` environment variable to `1` when starting the Ollama server.
+
+## How can I set the quantization type for the K/V cache?
+
+The K/V context cache can be quantized to significantly reduce memory usage when Flash Attention is enabled.
+
+To use quantized K/V cache with Ollama you can set the following environment variable:
+
+- `OLLAMA_KV_CACHE_TYPE` - The quantization type for the K/V cache.  Default is `f16`.
+
+> Note: Currently this is a global option - meaning all models will run with the specified quantization type.
+
+The currently available K/V cache quantization types are:
+
+- `f16` - high precision and memory usage (default).
+- `q8_0` - 8-bit quantization, uses approximately 1/2 the memory of `f16` with a very small loss in precision, this usually has no noticeable impact on the model's quality (recommended if not using f16).
+- `q4_0` - 4-bit quantization, uses approximately 1/4 the memory of `f16` with a small-medium loss in precision that may be more noticeable at higher context sizes.
+
+How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
+
+You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## How can I stop Ollama from starting when I login to my computer
+
+Ollama for Windows and macOS register as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
+
+**Windows**
+- Remove `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Ollama.lnk`
+
+**MacOS Monterey (v12)**
+- Open `Settings` -> `Users & Groups` -> `Login Items` and find the `Ollama` entry, then click the `-` (minus) to remove
+
+**MacOS Ventura (v13) and later**
+- Open `Settings` and search for "Login Items", find the `Ollama` entry under "Allow in the Background`, then click the slider to disable.

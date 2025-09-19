@@ -5,476 +5,401 @@ on:
     tags:
       - 'v*'
 
+env:
+  CGO_CFLAGS: '-O3'
+  CGO_CXXFLAGS: '-O3'
+
 jobs:
-  # Full build of the Mac assets
-  build-darwin:
-    runs-on: macos-12
+  setup-environment:
+    runs-on: ubuntu-latest
     environment: release
+    outputs:
+      GOFLAGS: ${{ steps.goflags.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
+      - name: Set environment
+        id: goflags
         run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          echo "RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)" >> $GITHUB_ENV
-      - name: key
+          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
+
+  darwin-build:
+    runs-on: macos-13-xlarge
+    environment: release
+    needs: setup-environment
+    strategy:
+      matrix:
+        os: [darwin]
+        arch: [amd64, arm64]
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: |
+          go build -o dist/ .
         env:
-          MACOS_SIGNING_KEY: ${{ secrets.MACOS_SIGNING_KEY }}
-          MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+          CGO_CPPFLAGS: '-mmacosx-version-min=11.3'
+      - if: matrix.arch == 'amd64'
         run: |
-          echo $MACOS_SIGNING_KEY | base64 --decode > certificate.p12
-          security create-keychain -p password build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p password build.keychain
-          security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
-          security set-keychain-settings -lut 3600 build.keychain
-      - uses: actions/setup-go@v5
+          cmake --preset CPU -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64
+          cmake --build --parallel --preset CPU
+          cmake --install build --component CPU --strip --parallel 8
+      - uses: actions/upload-artifact@v4
         with:
-          go-version-file: go.mod
-          cache: true
-      - name: Build Darwin
+          name: build-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+
+  windows-depends:
+    strategy:
+      matrix:
+        os: [windows]
+        arch: [amd64]
+        preset: ['CPU']
+        include:
+          - os: windows
+            arch: amd64
+            preset: 'CUDA 12'
+            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
+            cuda-version: '12.8'
+            flags: ''
+            runner_dir: 'cuda_v12'
+          - os: windows
+            arch: amd64
+            preset: 'CUDA 13'
+            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.0'
+            flags: ''
+            runner_dir: 'cuda_v13'
+          - os: windows
+            arch: amd64
+            preset: 'ROCm 6'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+            rocm-version: '6.2'
+            flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+            runner_dir: ''
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+    environment: release
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+    steps:
+      - name: Install system dependencies
+        run: |
+          choco install -y --no-progress ccache ninja
+          ccache -o cache_dir=${{ github.workspace }}\.ccache
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ')
+        id: cache-install
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+            C:\Program Files\AMD\ROCm
+          key: ${{ matrix.install }}
+      - if: startsWith(matrix.preset, 'CUDA ')
+        name: Install CUDA ${{ matrix.cuda-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
+            Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+          }
+
+          $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
+          echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - if: startsWith(matrix.preset, 'ROCm')
+        name: Install ROCm ${{ matrix.rocm-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+          }
+
+          $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
+          echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: matrix.preset == 'CPU'
+        run: |
+          echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+            C:\Program Files\AMD\ROCm
+          key: ${{ matrix.install }}
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
+      - name: Build target "${{ matrix.preset }}"
+        run: |
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} -DOLLAMA_RUNNER_DIR="${{ matrix.runner_dir }}"
+          cmake --build --parallel --preset "${{ matrix.preset }}"
+          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
         env:
-          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ vars.APPLE_ID }}
-          SDKROOT: /Applications/Xcode_13.4.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-          DEVELOPER_DIR: /Applications/Xcode_13.4.1.app/Contents/Developer
-        run: |
-          ./scripts/build_darwin.sh
-
+          CMAKE_GENERATOR: Ninja
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-darwin
-          path: |
-            dist/*arwin*
-            !dist/*-cov
+          name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
+          path: dist\*
 
-  # Windows builds take a long time to both install the dependencies and build, so parallelize
-  # CPU generation step
-  generate-windows-cpu:
+  windows-build:
+    strategy:
+      matrix:
+        os: [windows]
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    runs-on: windows
+    needs: [setup-environment]
     env:
-      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
+      - name: Install AMD64 system dependencies
+        if: matrix.arch == 'amd64'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install ARM64 system dependencies
+        if: matrix.arch == 'arm64'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          choco install -y --no-progress git gzip
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
+          echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - uses: 'google-github-actions/auth@v2'
-        with:
-          project_id: 'ollama'
-          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
-      - run: echo "${{ vars.OLLAMA_CERT }}" > ollama_inc.crt
-      - name: install Windows SDK 8.1 to get signtool
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading SDK"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
-          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-          write-host "Win SDK 8.1 installed"
-          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
-      - name: install signing plugin
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading plugin"
-          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
-          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
-          write-host "Installing plugin"
-          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
-          write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
-      - run: go get ./...
       - run: |
-          $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
-          go generate -x ./...
-        name: go generate
+          go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
       - uses: actions/upload-artifact@v4
         with:
-          name: generate-windows-cpu
+          name: build-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            llm/build/**/bin/*
-            llm/build/**/*.a
-            dist/windows-amd64/**
+            dist\${{ matrix.os }}-${{ matrix.arch }}\*.exe
 
-  # ROCm generation step
-  generate-windows-rocm:
+  linux-build:
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            target: archive
+          - os: linux
+            arch: amd64
+            target: rocm
+          - os: linux
+            arch: arm64
+            target: archive
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    runs-on: windows
+    needs: setup-environment
     env:
-      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - uses: 'google-github-actions/auth@v2'
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
-          project_id: 'ollama'
-          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
-      - run: echo "${{ vars.OLLAMA_CERT }}" > ollama_inc.crt
-      - name: install Windows SDK 8.1 to get signtool
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading SDK"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
-          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-          write-host "Win SDK 8.1 installed"
-          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
-      - name: install signing plugin
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading plugin"
-          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
-          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
-          write-host "Installing plugin"
-          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
-          write-host "plugin installed"
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: 'Install ROCm'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading AMD HIP Installer"
-          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q4-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
-          write-host "Installing AMD HIP"
-          Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
-          write-host "Completed AMD HIP"
-      - name: 'Verify ROCm'
-        run: |
-          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
-      - run: go get ./...
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          build-args: |
+            GOFLAGS=${{ env.GOFLAGS }}
+            CGO_CFLAGS=${{ env.CGO_CFLAGS }}
+            CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-to: type=inline
       - run: |
-          $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
-      - name: 'gather rocm dependencies'
-        run: |
-          $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          md "dist\deps\bin\rocblas\library"
-          cp "${HIP_PATH}\bin\hipblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas\library\*" "dist\deps\bin\rocblas\library\"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: generate-windows-rocm
-          path: |
-            llm/build/**/bin/*
-            dist/windows-amd64/**
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-rocm-deps
-          path: dist/deps/*
-
-  # CUDA generation step
-  generate-windows-cuda:
-    environment: release
-    runs-on: windows
-    env:
-      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - uses: 'google-github-actions/auth@v2'
-        with:
-          project_id: 'ollama'
-          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
-      - run: echo "${{ vars.OLLAMA_CERT }}" > ollama_inc.crt
-      - name: install Windows SDK 8.1 to get signtool
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading SDK"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
-          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-          write-host "Win SDK 8.1 installed"
-          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
-      - name: install signing plugin
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading plugin"
-          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
-          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
-          write-host "Installing plugin"
-          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
-          write-host "plugin installed"
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: 'Install CUDA'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading CUDA Installer"
-          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
-          write-host "Installing CUDA"
-          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
-          write-host "Completed CUDA"
-          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
-          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
-          echo "$cudaPath\bin" >> $env:GITHUB_PATH
-          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
-      - name: 'Verify CUDA'
-        run: nvcc -V
-      - run: go get ./...
-      - name: go generate
-        run: |
-          $gopath=(get-command go).source | split-path -parent
-          $cudabin=(get-command nvcc).source | split-path
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$cudabin;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
-      - name: 'gather cuda dependencies'
-        run: |
-          $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
-          md "dist\deps"
-          cp "${NVIDIA_DIR}\cudart64_*.dll" "dist\deps\"
-          cp "${NVIDIA_DIR}\cublas64_*.dll" "dist\deps\"
-          cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\deps\"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: generate-windows-cuda
-          path: |
-            llm/build/**/bin/*
-            dist/windows-amd64/**
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-cuda-deps
-          path: dist/deps/*
-
-  # Import the prior generation steps and build the final windows assets
-  build-windows:
-    environment: release
-    runs-on: windows
-    needs:
-      - generate-windows-cuda
-      - generate-windows-rocm
-      - generate-windows-cpu
-    env:
-      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - uses: 'google-github-actions/auth@v2'
-        with:
-          project_id: 'ollama'
-          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
-      - run: echo "${{ vars.OLLAMA_CERT }}" > ollama_inc.crt
-      - name: install Windows SDK 8.1 to get signtool
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading SDK"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
-          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-          write-host "Win SDK 8.1 installed"
-          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
-      - name: install signing plugin
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading plugin"
-          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
-          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
-          write-host "Installing plugin"
-          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
-          write-host "plugin installed"
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get
-      - uses: actions/download-artifact@v4
-        with:
-          name: generate-windows-cpu
-      - uses: actions/download-artifact@v4
-        with:
-          name: generate-windows-cuda
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-cuda-deps
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-rocm-deps
-      - uses: actions/download-artifact@v4
-        with:
-          name: generate-windows-rocm
-      - run: dir llm/build
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama)                echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
+          done
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
       - run: |
-          $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
-          $env:OLLAMA_SKIP_GENERATE="1"
-          & .\scripts\build_windows.ps1
+          echo "Manifests"
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
+            echo $ARCHIVE
+            cat $ARCHIVE
+          done
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz);
+          done
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-windows
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
-            dist/OllamaSetup.exe
-            dist/ollama-windows-*.zip
+            *.tgz
 
-  # Linux x86 assets built using the container based build
-  build-linux-amd64:
+  # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  docker-build-push:
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: arm64
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+          - os: linux
+            arch: amd64
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+          - os: linux
+            arch: amd64
+            suffix: '-rocm'
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+              FLAVOR=rocm
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    runs-on: linux
+    needs: setup-environment
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: '1'
-      BUILD_ARCH: amd64
-      PUSH: '1'
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: ${{ matrix.build-args }}
+          outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-to: type=inline
       - run: |
-          ./scripts/build_linux.sh
-          ./scripts/build_docker.sh
-          mv dist/deps/* dist/
+          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
+          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+        working-directory: ${{ runner.temp }}
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-linux-amd64
+          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
           path: |
-            dist/*linux*
-            !dist/*-cov
+            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
 
-  # Linux ARM assets built using the container based build
-  # (at present, docker isn't pre-installed on arm ubunutu images)
-  build-linux-arm64:
+  # Merge Docker images for the same flavor into a single multi-arch manifest
+  docker-merge-push:
+    strategy:
+      matrix:
+        suffix: ['', '-rocm']
+    runs-on: linux
     environment: release
-    runs-on: linux-arm64
-    env:
-      OLLAMA_SKIP_MANIFEST_CREATE: '1'
-      BUILD_ARCH: arm64
-      PUSH: '1'
+    needs: [docker-build-push]
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - name: 'Install Docker'
-        run: |
-          # Add Docker's official GPG key:
-          env
-          uname -a
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-          sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-          # Add the repository to Apt sources:
-          echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-          sudo usermod -aG docker $USER
-          sudo apt-get install acl
-          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - run: |
-          ./scripts/build_linux.sh
-          ./scripts/build_docker.sh
-      - uses: actions/upload-artifact@v4
+      - id: metadata
+        uses: docker/metadata-action@v4
         with:
-          name: dist-linux-arm64
-          path: |
-            dist/*linux*
-            !dist/*-cov
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }}
+          images: |
+            ${{ vars.DOCKER_REPO }}
+          tags: |
+            type=ref,enable=true,priority=600,prefix=pr-,event=pr
+            type=semver,pattern={{version}}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - run: |
+          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf '${{ vars.DOCKER_REPO }}@%s ')
+          docker buildx imagetools inspect ${{ vars.DOCKER_REPO }}:${{ steps.metadata.outputs.version }}
+        working-directory: ${{ runner.temp }}
 
-  # Aggregate all the assets and ship a release
-  release:
-    needs:
-      - build-darwin
-      - build-windows
-      - build-linux-amd64
-      - build-linux-arm64
-    runs-on: linux
+  # Trigger downstream release process
+  trigger:
+    runs-on: ubuntu-latest
     environment: release
+    needs: [darwin-build, windows-build, windows-depends, linux-build]
     permissions:
       contents: write
     env:
-      OLLAMA_SKIP_IMAGE_BUILD: '1'
-      PUSH: '1'
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
+      - name: Create or update Release for tag
         run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          echo "RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)" >> $GITHUB_ENV
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - run: ./scripts/build_docker.sh
-      - name: Retrieve built artifact
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: dist-*
-          merge-multiple: true
-      - run: |
-          ls -lh dist/
-          (cd dist; sha256sum * > sha256sum.txt)
-          cat dist/sha256sum.txt
-      - name: Create or update Release
-        run: |
-          echo "Looking for existing release for ${{ env.RELEASE_VERSION }}"
-          OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${{ env.RELEASE_VERSION }}\") | .tagName")
+          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          echo "Looking for existing release for ${RELEASE_VERSION}"
+          OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
           if [ -n "$OLD_TAG" ]; then
-            echo "Updating release ${{ env.RELEASE_VERSION }} to point to new tag ${GITHUB_REF_NAME}"
+            echo "Updating release ${RELEASE_VERSION} to point to new tag ${GITHUB_REF_NAME}"
             gh release edit ${OLD_TAG} --tag ${GITHUB_REF_NAME}
           else
-            echo "Creating new release ${{ env.RELEASE_VERSION }} pointing to tag ${GITHUB_REF_NAME}"
+            echo "Creating new release ${RELEASE_VERSION} pointing to tag ${GITHUB_REF_NAME}"
             gh release create ${GITHUB_REF_NAME} \
-              --title ${{ env.RELEASE_VERSION }} \
+              --title ${RELEASE_VERSION} \
               --draft \
               --generate-notes \
               --prerelease
           fi
-          echo "Uploading artifacts for tag ${GITHUB_REF_NAME}"
-          gh release upload ${GITHUB_REF_NAME} dist/* --clobber
+      - name: Trigger downstream release process
+        run: |
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/ollama/${{ vars.RELEASE_REPO }}/dispatches \
+            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\", \"origin\": \"${GITHUB_REPOSITORY}\", \"publish\": \"1\"}}"

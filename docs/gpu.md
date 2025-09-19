@@ -1,16 +1,18 @@
 # GPU
 ## Nvidia
-Ollama supports Nvidia GPUs with compute capability 5.0+.
+Ollama supports Nvidia GPUs with compute capability 5.0+ and driver version 531 and newer.
 
 Check your compute compatibility to see if your card is supported:
 [https://developer.nvidia.com/cuda-gpus](https://developer.nvidia.com/cuda-gpus)
 
 | Compute Capability | Family              | Cards                                                                                                       |
 | ------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 9.0                | NVIDIA              | `H100`                                                                                                      |
+| 12.0               | GeForce RTX 50xx    | `RTX 5060` `RTX 5060 Ti` `RTX 5070` `RTX 5070 Ti` `RTX 5080` `RTX 5090`                                     |
+|                    | NVIDIA Professioal  | `RTX PRO 4000 Blackwell` `RTX PRO 4500 Blackwell` `RTX PRO 5000 Blackwell` `RTX PRO 6000 Blackwell`         |
+| 9.0                | NVIDIA              | `H200` `H100`                                                                                               |
 | 8.9                | GeForce RTX 40xx    | `RTX 4090` `RTX 4080 SUPER` `RTX 4080` `RTX 4070 Ti SUPER` `RTX 4070 Ti` `RTX 4070 SUPER` `RTX 4070` `RTX 4060 Ti` `RTX 4060`  |
 |                    | NVIDIA Professional | `L4` `L40` `RTX 6000`                                                                                       |
-| 8.6                | GeForce RTX 30xx    | `RTX 3090 Ti` `RTX 3090` `RTX 3080 Ti` `RTX 3080` `RTX 3070 Ti` `RTX 3070` `RTX 3060 Ti` `RTX 3060`         |
+| 8.6                | GeForce RTX 30xx    | `RTX 3090 Ti` `RTX 3090` `RTX 3080 Ti` `RTX 3080` `RTX 3070 Ti` `RTX 3070` `RTX 3060 Ti` `RTX 3060` `RTX 3050 Ti` `RTX 3050`   |
 |                    | NVIDIA Professional | `A40` `RTX A6000` `RTX A5000` `RTX A4000` `RTX A3000` `RTX A2000` `A10` `A16` `A2`                          |
 | 8.0                | NVIDIA              | `A100` `A30`                                                                                                |
 | 7.5                | GeForce GTX/RTX     | `GTX 1650 Ti` `TITAN RTX` `RTX 2080 Ti` `RTX 2080` `RTX 2070` `RTX 2060`                                    |
@@ -28,6 +30,7 @@ Check your compute compatibility to see if your card is supported:
 | 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810`                                                                            |
 |                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`  |
 
+For building locally to support older GPUs, see [developer.md](./development.md#linux-cuda-nvidia)
 
 ### GPU Selection
 
@@ -37,7 +40,7 @@ Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
 You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
-### Laptop Suspend Resume
+### Linux Suspend Resume
 
 On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
 your NVIDIA GPU, and fallback to running on the CPU.  You can workaround this
@@ -46,13 +49,24 @@ sudo modprobe nvidia_uvm`
 
 ## AMD Radeon
 Ollama supports the following AMD GPUs:
+
+### Linux Support
 | Family         | Cards and accelerators                                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64` `Vega 56`    |
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `VII` `SSG` |
 | AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60` `MI50`                                                               |
 
-### Overrides
+### Windows Support
+With ROCm v6.1, the following GPUs are supported on Windows.
+
+| Family         | Cards and accelerators                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`    |
+| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` |
+
+
+### Overrides on Linux
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
 some cases you can force the system to try to use a similar LLVM target that is
 close.  For example The Radeon RX 5400 is `gfx1034` (also known as 10.3.4)
@@ -63,7 +77,11 @@ would set `HSA_OVERRIDE_GFX_VERSION="10.3.0"` as an environment variable for the
 server.  If you have an unsupported AMD GPU you can experiment using the list of
 supported types below.
 
-At this time, the known supported GPU types are the following LLVM Targets.
+If you have multiple GPUs with different GFX versions, append the numeric device
+number to the environment variable to set them individually.  For example,
+`HSA_OVERRIDE_GFX_VERSION_0=10.3.0` and  `HSA_OVERRIDE_GFX_VERSION_1=11.0.0`
+
+At this time, the known supported GPU types on linux are the following LLVM Targets.
 This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |
 |-----------------|---------------------|
@@ -88,9 +106,10 @@ Reach out on [Discord](https://discord.gg/ollama) or file an
 ### GPU Selection
 
 If you have multiple AMD GPUs in your system and want to limit Ollama to use a
-subset, you can set `HIP_VISIBLE_DEVICES` to a comma separated list of GPUs.
+subset, you can set `ROCR_VISIBLE_DEVICES` to a comma separated list of GPUs.
 You can see the list of devices with `rocminfo`.  If you want to ignore the GPUs
-and force CPU usage, use an invalid GPU ID (e.g., "-1")
+and force CPU usage, use an invalid GPU ID (e.g., "-1").  When available, use the
+`Uuid` to uniquely identify the device instead of numeric value.
 
 ### Container Permission
 

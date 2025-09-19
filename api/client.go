@@ -10,7 +10,7 @@
 // repository].
 //
 // [the API documentation]: https://github.com/ollama/ollama/blob/main/docs/api.md
-// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/examples
+// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/api/examples
 package api
 
 import (
@@ -18,13 +18,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
+	"time"
 
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
@@ -55,7 +58,7 @@ func checkError(resp *http.Response, body []byte) error {
 
 // ClientFromEnvironment creates a new [Client] using configuration from the
 // environment variable OLLAMA_HOST, which points to the network host and
-// port on which the ollama service is listenting. The format of this variable
+// port on which the ollama service is listening. The format of this variable
 // is:
 //
 //	<scheme>://<host>:<port>
@@ -63,13 +66,8 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
-	ollamaHost := envconfig.Host
-
 	return &Client{
-		base: &url.URL{
-			Scheme: ollamaHost.Scheme,
-			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
-		},
+		base: envconfig.Host(),
 		http: http.DefaultClient,
 	}, nil
 }
@@ -79,6 +77,14 @@ func NewClient(base *url.URL, http *http.Client) *Client {
 		base: base,
 		http: http,
 	}
+}
+
+func getAuthorizationToken(ctx context.Context, challenge string) (string, error) {
+	token, err := auth.Sign(ctx, []byte(challenge))
+	if err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
@@ -102,6 +108,21 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	}
 
 	requestURL := c.base.JoinPath(path)
+
+	var token string
+	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
+		now := strconv.FormatInt(time.Now().Unix(), 10)
+		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
+		token, err = getAuthorizationToken(ctx, chal)
+		if err != nil {
+			return err
+		}
+
+		q := requestURL.Query()
+		q.Set("ts", now)
+		requestURL.RawQuery = q.Encode()
+	}
+
 	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), reqBody)
 	if err != nil {
 		return err
@@ -110,6 +131,10 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	if token != "" {
+		request.Header.Set("Authorization", token)
+	}
 
 	respObj, err := c.http.Do(request)
 	if err != nil {
@@ -137,7 +162,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 const maxBufferSize = 512 * format.KiloByte
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
-	var buf *bytes.Buffer
+	var buf io.Reader
 	if data != nil {
 		bts, err := json.Marshal(data)
 		if err != nil {
@@ -148,6 +173,22 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	}
 
 	requestURL := c.base.JoinPath(path)
+
+	var token string
+	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
+		var err error
+		now := strconv.FormatInt(time.Now().Unix(), 10)
+		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
+		token, err = getAuthorizationToken(ctx, chal)
+		if err != nil {
+			return err
+		}
+
+		q := requestURL.Query()
+		q.Set("ts", now)
+		requestURL.RawQuery = q.Encode()
+	}
+
 	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
 	if err != nil {
 		return err
@@ -156,6 +197,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/x-ndjson")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	if token != "" {
+		request.Header.Set("Authorization", token)
+	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -177,16 +222,26 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		if errorResponse.Error != "" {
-			return fmt.Errorf(errorResponse.Error)
-		}
-
-		if response.StatusCode >= http.StatusBadRequest {
+		if response.StatusCode == http.StatusUnauthorized {
+			pubKey, pkErr := auth.GetPublicKey()
+			if pkErr != nil {
+				return pkErr
+			}
+			return AuthorizationError{
+				StatusCode: response.StatusCode,
+				Status:     response.Status,
+				PublicKey:  pubKey,
+			}
+		} else if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
 				ErrorMessage: errorResponse.Error,
 			}
+		}
+
+		if errorResponse.Error != "" {
+			return errors.New(errorResponse.Error)
 		}
 
 		if err := fn(bts); err != nil {
@@ -303,7 +358,7 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
-// List running models.
+// ListRunning lists running models.
 func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	var lr ProcessResponse
 	if err := c.do(ctx, http.MethodGet, "/api/ps", nil, &lr); err != nil {
@@ -338,7 +393,7 @@ func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, err
 	return &resp, nil
 }
 
-// Hearbeat checks if the server has started and is responsive; if yes, it
+// Heartbeat checks if the server has started and is responsive; if yes, it
 // returns nil, otherwise an error.
 func (c *Client) Heartbeat(ctx context.Context) error {
 	if err := c.do(ctx, http.MethodHead, "/", nil, nil); err != nil {
@@ -347,7 +402,16 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	return nil
 }
 
-// Embeddings generates embeddings from a model.
+// Embed generates embeddings from a model.
+func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
+	var resp EmbedResponse
+	if err := c.do(ctx, http.MethodPost, "/api/embed", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Embeddings generates an embedding from a model.
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {
@@ -373,4 +437,17 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+// Signout will disconnect an ollama instance from ollama.com
+func (c *Client) Signout(ctx context.Context, encodedKey string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
+}
+
+func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
+	var resp UserResponse
+	if err := c.do(ctx, http.MethodPost, "/api/me", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

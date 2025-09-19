@@ -1,0 +1,16 @@
+{{- $system := "" }}
+{{- range .Messages }}
+{{- if eq .Role "system" }}
+{{- if not $system }}{{ $system = .Content }}
+{{- else }}{{ $system = printf "%s\n\n%s" $system .Content }}
+{{- end }}
+{{- continue }}
+{{- else if eq .Role "user" }}<start_of_turn>user
+{{- if $system }}
+{{ $system }}
+{{- $system = "" }}
+{{- end }}
+{{- else if eq .Role "assistant" }}<start_of_turn>model
+{{- end }}
+{{ .Content }}<end_of_turn>
+{{ end }}<start_of_turn>model

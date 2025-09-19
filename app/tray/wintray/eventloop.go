@@ -11,9 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	quitOnce sync.Once
-)
+var quitOnce sync.Once
 
 func (t *winTray) Run() {
 	nativeLoop()
@@ -100,7 +98,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		}
 		err = t.wcex.unregister()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to uregister windo %s", err))
+			slog.Error(fmt.Sprintf("failed to unregister window %s", err))
 		}
 	case WM_DESTROY:
 		// same as WM_ENDSESSION, but throws 0 exit code after all

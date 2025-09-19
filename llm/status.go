@@ -25,7 +25,9 @@ var errorPrefixes = []string{
 	"CUDA error",
 	"cudaMalloc failed",
 	"\"ERR\"",
-	"architecture",
+	"error loading model",
+	"GGML_ASSERT",
+	"Deepseek2 does not support K-shift",
 }
 
 func (w *StatusWriter) Write(b []byte) (int, error) {

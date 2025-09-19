@@ -4,7 +4,10 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math"
+	"math/rand"
 	"os"
 	"strconv"
 	"sync"
@@ -12,242 +15,173 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 )
 
-func TestMultiModelConcurrency(t *testing.T) {
-	var (
-		req = [2]api.GenerateRequest{
-			{
-				Model:     "orca-mini",
-				Prompt:    "why is the ocean blue?",
-				Stream:    &stream,
-				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
-					"seed":        42,
-					"temperature": 0.0,
-				},
-			}, {
-				Model:     "tinydolphin",
-				Prompt:    "what is the origin of the us thanksgiving holiday?",
-				Stream:    &stream,
-				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
-					"seed":        42,
-					"temperature": 0.0,
-				},
-			},
-		}
-		resp = [2][]string{
-			[]string{"sunlight"},
-			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
-		}
-	)
-	var wg sync.WaitGroup
-	wg.Add(len(req))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*240)
-	defer cancel()
-
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-
-	for i := 0; i < len(req); i++ {
-		require.NoError(t, PullIfMissing(ctx, client, req[i].Model))
-	}
-
-	for i := 0; i < len(req); i++ {
-		go func(i int) {
-			defer wg.Done()
-			DoGenerate(ctx, t, client, req[i], resp[i], 60*time.Second, 10*time.Second)
-		}(i)
-	}
-	wg.Wait()
-}
-
-func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
+// Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected
+func TestConcurrentGenerate(t *testing.T) {
+	// Assumes all requests have the same model
 	req, resp := GenerateRequests()
-	reqLimit := len(req)
-	iterLimit := 5
+	numParallel := int(envconfig.NumParallel() + 1)
+	iterLimit := 3
 
-	vram := os.Getenv("OLLAMA_MAX_VRAM")
-	if vram != "" {
-		max, err := strconv.ParseUint(vram, 10, 64)
-		require.NoError(t, err)
-		// Don't hammer on small VRAM cards...
-		if max < 4*1024*1024*1024 {
-			reqLimit = min(reqLimit, 2)
-			iterLimit = 2
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 9*time.Minute)
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
 	// Get the server running (if applicable) warm the model up with a single initial request
-	DoGenerate(ctx, t, client, req[0], resp[0], 60*time.Second, 10*time.Second)
+	slog.Info("loading", "model", req[0].Model)
+	err := client.Generate(ctx,
+		&api.GenerateRequest{Model: req[0].Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
+		func(response api.GenerateResponse) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("failed to load model %s: %s", req[0].Model, err)
+	}
 
 	var wg sync.WaitGroup
-	wg.Add(reqLimit)
-	for i := 0; i < reqLimit; i++ {
+	r := rand.New(rand.NewSource(0))
+	wg.Add(numParallel)
+	for i := range numParallel {
 		go func(i int) {
 			defer wg.Done()
 			for j := 0; j < iterLimit; j++ {
-				slog.Info("Starting", "req", i, "iter", j)
+				if time.Now().Sub(started) > softTimeout {
+					slog.Info("exceeded soft timeout, winding down test")
+					return
+				}
+				k := r.Int() % len(req)
+				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
-				DoGenerate(ctx, t, client, req[i], resp[i], 120*time.Second, 20*time.Second)
+				DoGenerate(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
 			}
 		}(i)
 	}
 	wg.Wait()
 }
 
-// Stress the system if we know how much VRAM it has, and attempt to load more models than will fit
+// Stress the scheduler and attempt to load more models than will fit to cause thrashing
+// This test will always load at least 2 models even on CPU based systems
 func TestMultiModelStress(t *testing.T) {
-	vram := os.Getenv("OLLAMA_MAX_VRAM")
-	if vram == "" {
-		t.Skip("OLLAMA_MAX_VRAM not specified, can't pick the right models for the stress test")
-	}
-	max, err := strconv.ParseUint(vram, 10, 64)
-	require.NoError(t, err)
-	const MB = uint64(1024 * 1024)
-	type model struct {
-		name string
-		size uint64 // Approximate amount of VRAM they typically use when fully loaded in VRAM
+	s := os.Getenv("OLLAMA_MAX_VRAM")
+	if s == "" {
+		s = "0"
 	}
 
-	smallModels := []model{
-		{
-			name: "orca-mini",
-			size: 2992 * MB,
-		},
-		{
-			name: "phi",
-			size: 2616 * MB,
-		},
-		{
-			name: "gemma:2b",
-			size: 2364 * MB,
-		},
-		{
-			name: "stable-code:3b",
-			size: 2608 * MB,
-		},
-		{
-			name: "starcoder2:3b",
-			size: 2166 * MB,
-		},
-	}
-	mediumModels := []model{
-		{
-			name: "llama2",
-			size: 5118 * MB,
-		},
-		{
-			name: "mistral",
-			size: 4620 * MB,
-		},
-		{
-			name: "orca-mini:7b",
-			size: 5118 * MB,
-		},
-		{
-			name: "dolphin-mistral",
-			size: 4620 * MB,
-		},
-		{
-			name: "gemma:7b",
-			size: 5000 * MB,
-		},
-		// TODO - uncomment this once #3565 is merged and this is rebased on it
-		// {
-		// 	name: "codellama:7b",
-		// 	size: 5118 * MB,
-		// },
+	maxVram, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// These seem to be too slow to be useful...
-	// largeModels := []model{
-	// 	{
-	// 		name: "llama2:13b",
-	// 		size: 7400 * MB,
-	// 	},
-	// 	{
-	// 		name: "codellama:13b",
-	// 		size: 7400 * MB,
-	// 	},
-	// 	{
-	// 		name: "orca-mini:13b",
-	// 		size: 7400 * MB,
-	// 	},
-	// 	{
-	// 		name: "gemma:7b",
-	// 		size: 5000 * MB,
-	// 	},
-	// 	{
-	// 		name: "starcoder2:15b",
-	// 		size: 9100 * MB,
-	// 	},
-	// }
+	// All models compatible with ollama-engine
+	smallModels := []string{
+		"llama3.2:1b",
+		"qwen3:0.6b",
+		"gemma2:2b",
+		"deepseek-r1:1.5b", // qwen2 arch
+		"gemma3:270m",
+	}
+	mediumModels := []string{
+		"llama3.2:3b",    // ~3.4G
+		"qwen3:8b",       // ~6.6G
+		"gpt-oss:20b",    // ~15G
+		"deepseek-r1:7b", // ~5.6G
+		"gemma3:4b",      // ~5.8G
+		"gemma2:9b",      // ~8.1G
+	}
 
-	var chosenModels []model
+	var chosenModels []string
 	switch {
-	case max < 10000*MB:
+	case maxVram < 10000*format.MebiByte:
 		slog.Info("selecting small models")
 		chosenModels = smallModels
-	// case max < 30000*MB:
 	default:
 		slog.Info("selecting medium models")
 		chosenModels = mediumModels
-		// default:
-		// 	slog.Info("selecting large models")
-		// 	chosenModels = largModels
 	}
 
-	req, resp := GenerateRequests()
-
-	for i := range req {
-		if i > len(chosenModels) {
-			break
-		}
-		req[i].Model = chosenModels[i].name
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute) // TODO baseline -- 10m too short
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
 	// Make sure all the models are pulled before we get started
-	for _, r := range req {
-		require.NoError(t, PullIfMissing(ctx, client, r.Model))
+	for _, model := range chosenModels {
+		if err := PullIfMissing(ctx, client, model); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	var wg sync.WaitGroup
-	consumed := uint64(256 * MB) // Assume some baseline usage
-	for i := 0; i < len(req); i++ {
-		// Always get at least 2 models, but dont' overshoot VRAM too much or we'll take too long
-		if i > 1 && consumed > max {
-			slog.Info("achieved target vram exhaustion", "count", i, "vramMB", max/1024/1024, "modelsMB", consumed/1024/1024)
-			break
+	// Determine how many models we can load in parallel before we exceed VRAM
+	// The intent is to go 1 over what can fit so we force the scheduler to thrash
+	targetLoadCount := 0
+	slog.Info("Loading models to find how many can fit in VRAM before overflowing")
+chooseModels:
+	for i, model := range chosenModels {
+		req := &api.GenerateRequest{Model: model}
+		slog.Info("loading", "model", model)
+		err = client.Generate(ctx, req, func(response api.GenerateResponse) error { return nil })
+		if err != nil {
+			t.Fatalf("failed to load model %s: %s", model, err)
 		}
-		consumed += chosenModels[i].size
-		slog.Info("target vram", "count", i, "vramMB", max/1024/1024, "modelsMB", consumed/1024/1024)
+		targetLoadCount++
+		if i > 0 {
+			models, err := client.ListRunning(ctx)
+			if err != nil {
+				t.Fatalf("failed to list running models: %s", err)
+			}
+			if len(models.Models) < targetLoadCount {
+				loaded := []string{}
+				for _, m := range models.Models {
+					loaded = append(loaded, m.Name)
+				}
+				slog.Info("found model load capacity", "target", targetLoadCount, "current", loaded, "chosen", chosenModels[:targetLoadCount])
+				break
+			}
+			// Effectively limit model count to 2 on CPU only systems to avoid thrashing and timeouts
+			for _, m := range models.Models {
+				if m.SizeVRAM == 0 {
+					slog.Info("model running on CPU", "name", m.Name, "target", targetLoadCount, "chosen", chosenModels[:targetLoadCount])
+					break chooseModels
+				}
+			}
+		}
+	}
+	if targetLoadCount == len(chosenModels) {
+		// TODO consider retrying the medium models
+		slog.Warn("all models being used without exceeding VRAM, set OLLAMA_MAX_VRAM so test can pick larger models")
+	}
 
+	r := rand.New(rand.NewSource(0))
+	var wg sync.WaitGroup
+	for i := range targetLoadCount {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			reqs, resps := GenerateRequests()
 			for j := 0; j < 3; j++ {
-				slog.Info("Starting", "req", i, "iter", j, "model", req[i].Model)
-				DoGenerate(ctx, t, client, req[i], resp[i], 120*time.Second, 5*time.Second)
+				if time.Now().Sub(started) > softTimeout {
+					slog.Info("exceeded soft timeout, winding down test")
+					return
+				}
+				k := r.Int() % len(reqs)
+				reqs[k].Model = chosenModels[i]
+				slog.Info("Starting", "model", reqs[k].Model, "iteration", j, "request", reqs[k].Prompt)
+				DoGenerate(ctx, t, client, reqs[k], resps[k],
+					120*time.Second, // Be extra patient for the model to load initially
+					10*time.Second,  // Once results start streaming, fail if they stall
+				)
 			}
 		}(i)
 	}
 	go func() {
 		for {
-			time.Sleep(2 * time.Second)
+			time.Sleep(10 * time.Second)
 			select {
 			case <-ctx.Done():
 				return
@@ -258,7 +192,21 @@ func TestMultiModelStress(t *testing.T) {
 					continue
 				}
 				for _, m := range models.Models {
-					slog.Info("loaded model snapshot", "model", m)
+					var procStr string
+					switch {
+					case m.SizeVRAM == 0:
+						procStr = "100% CPU"
+					case m.SizeVRAM == m.Size:
+						procStr = "100% GPU"
+					case m.SizeVRAM > m.Size || m.Size == 0:
+						procStr = "Unknown"
+					default:
+						sizeCPU := m.Size - m.SizeVRAM
+						cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
+						procStr = fmt.Sprintf("%d%%/%d%%", int(cpuPercent), int(100-cpuPercent))
+					}
+
+					slog.Info("loaded model snapshot", "model", m.Name, "CPU/GPU", procStr, "expires", format.HumanTime(m.ExpiresAt, "Never"))
 				}
 			}
 		}

@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -15,31 +14,25 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMaxQueue(t *testing.T) {
+	t.Skip("this test needs to be re-evaluated to use a proper embedding model")
+
 	if os.Getenv("OLLAMA_TEST_EXISTING") != "" {
-		t.Skip("Max Queue test requires spawing a local server so we can adjust the queue size")
+		t.Skip("Max Queue test requires spawning a local server so we can adjust the queue size")
 		return
 	}
 
 	// Note: This test can be quite slow when running in CPU mode, so keep the threadCount low unless your on GPU
 	// Also note that by default Darwin can't sustain > ~128 connections without adjusting limits
-	threadCount := 32
-	mq := os.Getenv("OLLAMA_MAX_QUEUE")
-	if mq != "" {
-		var err error
-		threadCount, err = strconv.Atoi(mq)
-		require.NoError(t, err)
-	} else {
-		os.Setenv("OLLAMA_MAX_QUEUE", fmt.Sprintf("%d", threadCount))
-	}
+	threadCount := 16
+	t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
 
 	req := api.GenerateRequest{
-		Model:  "orca-mini",
+		Model:  smol,
 		Prompt: "write a long historical fiction story about christopher columbus.  use at least 10 facts from his actual journey",
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"seed":        42,
 			"temperature": 0.0,
 		},
@@ -52,15 +45,17 @@ func TestMaxQueue(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatal(err)
+	}
 
 	// Context for the worker threads so we can shut them down
 	// embedCtx, embedCancel := context.WithCancel(ctx)
 	embedCtx := ctx
 
 	var genwg sync.WaitGroup
+	genwg.Add(1)
 	go func() {
-		genwg.Add(1)
 		defer genwg.Done()
 		slog.Info("Starting generate request")
 		DoGenerate(ctx, t, client, req, resp, 45*time.Second, 5*time.Second)
@@ -68,18 +63,18 @@ func TestMaxQueue(t *testing.T) {
 	}()
 
 	// Give the generate a chance to get started before we start hammering on embed requests
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	threadCount += 10 // Add a few extra to ensure we push the queue past its limit
 	busyCount := 0
 	resetByPeerCount := 0
 	canceledCount := 0
-	succesCount := 0
+	successCount := 0
 	counterMu := sync.Mutex{}
 	var embedwg sync.WaitGroup
 	for i := 0; i < threadCount; i++ {
+		embedwg.Add(1)
 		go func(i int) {
-			embedwg.Add(1)
 			defer embedwg.Done()
 			slog.Info("embed started", "id", i)
 			embedReq := api.EmbeddingRequest{
@@ -95,8 +90,10 @@ func TestMaxQueue(t *testing.T) {
 			defer counterMu.Unlock()
 			switch {
 			case genErr == nil:
-				succesCount++
-				require.Greater(t, len(resp.Embedding), 5) // somewhat arbitrary, but sufficient to be reasonable
+				successCount++
+				if len(resp.Embedding) < 5 { // somewhat arbitrary, but sufficient to be reasonable
+					t.Fatalf("embeddings shorter than expected: %d", len(resp.Embedding))
+				}
 			case errors.Is(genErr, context.Canceled):
 				canceledCount++
 			case strings.Contains(genErr.Error(), "busy"):
@@ -104,7 +101,9 @@ func TestMaxQueue(t *testing.T) {
 			case strings.Contains(genErr.Error(), "connection reset by peer"):
 				resetByPeerCount++
 			default:
-				require.NoError(t, genErr, "%d request failed", i)
+				if genErr != nil {
+					t.Fatalf("%d request failed", i)
+				}
 			}
 
 			slog.Info("embed finished", "id", i)
@@ -114,9 +113,14 @@ func TestMaxQueue(t *testing.T) {
 	slog.Info("generate done, waiting for embeds")
 	embedwg.Wait()
 
-	slog.Info("embeds completed", "success", succesCount, "busy", busyCount, "reset", resetByPeerCount, "canceled", canceledCount)
-	require.Equal(t, resetByPeerCount, 0, "Connections reset by peer, have you updated your fd and socket limits?")
-	require.True(t, busyCount > 0, "no requests hit busy error but some should have")
-	require.True(t, canceledCount == 0, "no requests should have been canceled due to timeout")
-
+	slog.Info("embeds completed", "success", successCount, "busy", busyCount, "reset", resetByPeerCount, "canceled", canceledCount)
+	if resetByPeerCount != 0 {
+		t.Fatalf("Connections reset by peer, have you updated your fd and socket limits? %d", resetByPeerCount)
+	}
+	if busyCount == 0 {
+		t.Fatalf("no requests hit busy error but some should have")
+	}
+	if canceledCount > 0 {
+		t.Fatalf("no requests should have been canceled due to timeout %d", canceledCount)
+	}
 }
