@@ -259,7 +259,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
 					return
 				}
-				c.JSON(http.StatusUnauthorized, gin.H{"public_key": pk})
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":      "unauthorized",
+					"public_key": pk,
+				})
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -634,7 +637,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
 		if len(tokens) > ctxLen {
 			if !truncate {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "input exceeds maximum context length"})
 				return
 			}
 
@@ -644,6 +647,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 			if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
 				ctxLen--
+			}
+
+			slog.Info("", "ctxLen", ctxLen, "tokenCount", len(tokens))
+			if ctxLen <= 0 {
+				// return error if the truncated input would be empty or just special tokens
+				c.JSON(http.StatusBadRequest, gin.H{"error": "input after truncation exceeds maximum context length"})
+				return
 			}
 
 			tokens = tokens[:ctxLen]
@@ -1803,6 +1813,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Chat(c, &req, fn)
 		if err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				pk, pkErr := auth.GetPublicKey()
+				if pkErr != nil {
+					slog.Error("couldn't get public key", "error", pkErr)
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+					return
+				}
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":      "unauthorized",
+					"public_key": pk,
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
