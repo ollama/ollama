@@ -56,7 +56,7 @@ func newTextModel(c fs.Config) *TextModel {
 			ropeScale:      1,
 			// NOTE: the rope.scaling.factor is set incorrectly in the official QAT weights
 			//       (8 instead of 1)
-			//ropeScale:      c.Float("rope.scaling.factor", 1.0),
+			// ropeScale:      c.Float("rope.scaling.factor", 1.0),
 		},
 	}
 
