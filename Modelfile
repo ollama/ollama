@@ -1,0 +1,6 @@
+FROM deepseek-v3:671b-q4_K_M
+PARAMETER num_gpu 0
+PARAMETER num_ctx 256
+PARAMETER use_mmap true
+PARAMETER num_predict 1
+PARAMETER num_thread 1
