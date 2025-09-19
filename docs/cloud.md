@@ -1,107 +1,40 @@
-# Turbo
+# Cloud
 
-> ⚠️ Turbo is preview
+| Ollama's cloud is currently in preview. For full documentation, see [Ollama's documentation](https://docs.ollama.com/cloud).
 
-Ollama’s [Turbo](https://ollama.com/turbo) is a new way to run open-source models with acceleration from datacenter-grade hardware.
+## Cloud Models
 
-Currently, the following models are available in Turbo:
+[Cloud models](https://ollama.com/cloud) are a new kind of model in Ollama that can run without a powerful GPU. Instead, cloud models are automatically offloaded to Ollama's cloud while offering the same capabilities as local models, making it possible to keep using your local tools while running larger models that wouldn’t fit on a personal computer.
 
-- `gpt-oss:20b`
-- `gpt-oss:120b`
+Ollama currently supports the following cloud models, with more coming soon:
 
-## Get started
+- `gpt-oss:20b-cloud`
+- `gpt-oss:120b-cloud`
+- `deepseek-v3.1:671b-cloud`
+- `qwen3-coder:480b-cloud`
 
-### Ollama for macOS & Windows
+### Get started
 
-Download Ollama
+To run a cloud model, open the terminal and run:
 
-- Select a model such as `gpt-oss:20b` or `gpt-oss:120b`
-- Click on **Turbo**. You’ll be prompted to create an account or sign in
-
-### Ollama’s CLI
-
-- [Sign up](https://ollama.com/signup) for an Ollama account
-- Add your Ollama key [to ollama.com](https://ollama.com/settings/keys).
-
-  On macOS and Linux:
-
-  ```shell
-  cat ~/.ollama/id_ed25519.pub
-  ```
-
-  On Windows:
-
-  ```
-  type "%USERPROFILE%\.ollama\id_ed25519.pub"
-  ```
-
-- Then run a model setting `OLLAMA_HOST` to `ollama.com`:
-  ```shell
-  OLLAMA_HOST=ollama.com ollama run gpt-oss:120b
-  ```
-
-### Ollama’s Python library
-
-- Download Ollama's [Python library](https://github.com/ollama/ollama-python)
-- [Sign up](https://ollama.com/signup) for an Ollama account
-- Create an API key by visiting https://ollama.com/settings/keys
-
-```python
-from ollama import Client
-
-client = Client(
-    host="https://ollama.com",
-    headers={'Authorization': '<api key>'}
-)
-
-messages = [
-  {
-    'role': 'user',
-    'content': 'Why is the sky blue?',
-  },
-]
-
-for part in client.chat('gpt-oss:120b', messages=messages, stream=True):
-  print(part['message']['content'], end='', flush=True)
+```
+ollama run gpt-oss:120b-cloud
 ```
 
-### Ollama’s JavaScript library
+To run cloud models with integrations that work with Ollama, first download the cloud model:
 
-- Download Ollama's [JavaScript library](https://github.com/ollama/ollama-js)
-- [Sign up](https://ollama.com/signup) for an Ollama account
-- Create an API key by visiting https://ollama.com/settings/keys
-
-```typescript
-import { Ollama } from 'ollama';
-
-const ollama = new Ollama({
-  host: 'https://ollama.com',
-  headers: {
-	  Authorization: "Bearer <api key>"
-  }
-});
-
-const response = await ollama.chat({
-  model: 'gpt-oss:120b',
-  messages: [{ role: 'user', content: 'Explain quantum computing' }],
-  stream: true
-});
-
-for await (const part of response) {
-    process.stdout.write(part.message.content)
-}
+```
+ollama pull qwen3-coder:480b-cloud
 ```
 
-### Community integrations
+Then sign in to Ollama:
 
-Turbo mode is also compatible with several community integrations.
+```
+ollama signin
+```
 
-#### Open WebUI
+Finally, access the model using the model name `qwen3-coder:480b-cloud` via Ollama's local API or tooling.
 
-- Go to **settings** → **Admin settings** → **Connections**
-- Under **Ollama API,** click **+**
-- For the **URL** put `https://ollama.com`
-- For the **API key,** create an API key on https://ollama.com/settings/keys and add it.
-- Click **Save**
+## Cloud API access
 
-Now, if you navigate to the model selector, Turbo models should be available under **External**.
+Cloud models can also be accessed directly on ollama.com's API. For more information, see the [docs](https://docs.ollama.com/cloud).
