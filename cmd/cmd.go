@@ -1581,11 +1581,12 @@ func NewCLI() *cobra.Command {
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 
 	createCmd := &cobra.Command{
-		Use:     "create MODEL",
-		Short:   "Create a model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    CreateHandler,
+		Use:               "create MODEL",
+		Short:             "Create a model",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              CreateHandler,
+		ValidArgsFunction: cobra.NoFileCompletions,
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
@@ -1597,6 +1598,9 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ShowHandler,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return multiModelSuggestions(1, cmd, args, toComplete)
+		},
 	}
 
 	showCmd.Flags().Bool("license", false, "Show license of a model")
@@ -1612,6 +1616,9 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    RunHandler,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return multiModelSuggestions(-1, cmd, args, toComplete)
+		},
 	}
 
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
@@ -1624,27 +1631,30 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
 	stopCmd := &cobra.Command{
-		Use:     "stop MODEL",
-		Short:   "Stop a running model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    StopHandler,
+		Use:               "stop MODEL",
+		Short:             "Stop a running model",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              StopHandler,
+		ValidArgsFunction: runningModelSuggestions,
 	}
 
 	serveCmd := &cobra.Command{
-		Use:     "serve",
-		Aliases: []string{"start"},
-		Short:   "Start ollama",
-		Args:    cobra.ExactArgs(0),
-		RunE:    RunServer,
+		Use:               "serve",
+		Aliases:           []string{"start"},
+		Short:             "Start ollama",
+		Args:              cobra.ExactArgs(0),
+		RunE:              RunServer,
+		ValidArgsFunction: cobra.NoFileCompletions,
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    PullHandler,
+		Use:               "pull MODEL",
+		Short:             "Pull a model from a registry",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              PullHandler,
+		ValidArgsFunction: cobra.NoFileCompletions,
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
@@ -1655,6 +1665,9 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PushHandler,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return multiModelSuggestions(1, cmd, args, toComplete)
+		},
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
@@ -1676,18 +1689,20 @@ func NewCLI() *cobra.Command {
 	}
 
 	listCmd := &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
-		Short:   "List models",
-		PreRunE: checkServerHeartbeat,
-		RunE:    ListHandler,
+		Use:               "list",
+		Aliases:           []string{"ls"},
+		Short:             "List models",
+		PreRunE:           checkServerHeartbeat,
+		RunE:              ListHandler,
+		ValidArgsFunction: cobra.NoFileCompletions,
 	}
 
 	psCmd := &cobra.Command{
-		Use:     "ps",
-		Short:   "List running models",
-		PreRunE: checkServerHeartbeat,
-		RunE:    ListRunningHandler,
+		Use:               "ps",
+		Short:             "List running models",
+		PreRunE:           checkServerHeartbeat,
+		RunE:              ListRunningHandler,
+		ValidArgsFunction: cobra.NoFileCompletions,
 	}
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
@@ -1695,6 +1710,9 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(2),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CopyHandler,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return multiModelSuggestions(2, cmd, args, toComplete)
+		},
 	}
 
 	deleteCmd := &cobra.Command{
@@ -1703,6 +1721,9 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return multiModelSuggestions(-1, cmd, args, toComplete)
+		},
 	}
 
 	runnerCmd := &cobra.Command{
@@ -1716,6 +1737,8 @@ func NewCLI() *cobra.Command {
 	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		_ = runner.Execute(args[1:])
 	})
+
+	completionCmd := generateCompletionCommand(os.Stdout)
 
 	envVars := envconfig.AsMap()
 
@@ -1733,6 +1756,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		completionCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -1776,6 +1800,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		completionCmd,
 	)
 
 	return rootCmd
