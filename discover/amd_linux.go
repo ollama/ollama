@@ -31,8 +31,8 @@ const (
 
 	// Direct Rendering Manager sysfs location
 	DRMDeviceDirGlob   = "/sys/class/drm/card*/device"
-	DRMTotalMemoryFile = "mem_info_vram_total"
-	DRMUsedMemoryFile  = "mem_info_vram_used"
+	DRMTotalMemoryFile = "mem_info_gtt_total"
+	DRMUsedMemoryFile  = "mem_info_gtt_used"
 
 	// In hex; properties file is in decimal
 	DRMUniqueIDFile = "unique_id"
