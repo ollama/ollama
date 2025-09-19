@@ -31,6 +31,7 @@ const (
 type Qwen3CoderParser struct {
 	state qwenParserState
 	acc   strings.Builder
+	tools []api.Tool
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -41,7 +42,12 @@ func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
 }
 
-func (p *Qwen3CoderParser) Add(s string, tools []api.Tool) (content string, thinking string, calls []api.ToolCall, err error) {
+func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+	p.tools = tools
+	return tools // Qwen doesn't modify tools
+}
+
+func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.acc.WriteString(s)
 
 	events := p.parseEvents()
@@ -51,7 +57,7 @@ func (p *Qwen3CoderParser) Add(s string, tools []api.Tool) (content string, thin
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
-			toolCall, err := parseToolCall(event, tools)
+			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
@@ -359,7 +365,7 @@ func parseValue(raw string, paramType api.PropertyType) any {
 
 	// Try array
 	if typeSet["array"] {
-		var arr []interface{}
+		var arr []any
 		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
 			return arr
 		}
@@ -371,7 +377,7 @@ func parseValue(raw string, paramType api.PropertyType) any {
 
 	// Try object
 	if typeSet["object"] {
-		var obj map[string]interface{}
+		var obj map[string]any
 		if err := json.Unmarshal([]byte(raw), &obj); err == nil {
 			return obj
 		}
