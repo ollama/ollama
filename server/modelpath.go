@@ -103,7 +103,9 @@ func (mp ModelPath) GetManifestPath() (string, error) {
 	if !name.IsValid() {
 		return "", fs.ErrNotExist
 	}
-	return filepath.Join(envconfig.Models(), "manifests", name.Filepath()), nil
+	
+	// Use the new multi-path search function
+	return FindManifestPath(name)
 }
 
 func (mp ModelPath) BaseURL() *url.URL {
@@ -120,6 +122,19 @@ func GetManifestPath() (string, error) {
 	}
 
 	return path, nil
+}
+
+// GetManifestPaths returns all manifest directories from all model paths
+func GetManifestPaths() ([]string, error) {
+	modelPaths := envconfig.ModelPaths()
+	manifestPaths := make([]string, 0, len(modelPaths))
+	
+	for _, modelPath := range modelPaths {
+		path := filepath.Join(modelPath, "manifests")
+		manifestPaths = append(manifestPaths, path)
+	}
+	
+	return manifestPaths, nil
 }
 
 func GetBlobsPath(digest string) (string, error) {
@@ -143,4 +158,81 @@ func GetBlobsPath(digest string) (string, error) {
 	}
 
 	return path, nil
+}
+
+// GetBlobsPaths returns all blob directories from all model paths
+func GetBlobsPaths() ([]string, error) {
+	modelPaths := envconfig.ModelPaths()
+	blobsPaths := make([]string, 0, len(modelPaths))
+	
+	for _, modelPath := range modelPaths {
+		path := filepath.Join(modelPath, "blobs")
+		blobsPaths = append(blobsPaths, path)
+	}
+	
+	return blobsPaths, nil
+}
+
+// FindBlobPath searches for a blob file across all model paths and returns the first found path
+func FindBlobPath(digest string) (string, error) {
+	// only accept actual sha256 digests
+	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
+	re := regexp.MustCompile(pattern)
+
+	if digest != "" && !re.MatchString(digest) {
+		return "", ErrInvalidDigestFormat
+	}
+
+	digest = strings.ReplaceAll(digest, ":", "-")
+	modelPaths := envconfig.ModelPaths()
+	
+	// Search through all model paths
+	for _, modelPath := range modelPaths {
+		path := filepath.Join(modelPath, "blobs", digest)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	
+	// If not found, return the path in the first (primary) model directory
+	if len(modelPaths) > 0 {
+		path := filepath.Join(modelPaths[0], "blobs", digest)
+		dirPath := filepath.Dir(path)
+		if digest == "" {
+			dirPath = path
+		}
+
+		if err := os.MkdirAll(dirPath, 0o755); err != nil {
+			return "", fmt.Errorf("%w: ensure path elements are traversable", err)
+		}
+		return path, nil
+	}
+	
+	return "", fmt.Errorf("no model paths configured")
+}
+
+// FindManifestPath searches for a manifest file across all model paths and returns the first found path
+func FindManifestPath(name model.Name) (string, error) {
+	if !name.IsValid() {
+		return "", fs.ErrNotExist
+	}
+	
+	modelPaths := envconfig.ModelPaths()
+	filePath := name.Filepath()
+	
+	// Search through all model paths
+	for _, modelPath := range modelPaths {
+		path := filepath.Join(modelPath, "manifests", filePath)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	
+	// If not found, return the path in the first (primary) model directory
+	if len(modelPaths) > 0 {
+		path := filepath.Join(modelPaths[0], "manifests", filePath)
+		return path, nil
+	}
+	
+	return "", fmt.Errorf("no model paths configured")
 }
