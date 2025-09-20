@@ -70,7 +70,7 @@ jobs:
             $sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates software-properties-common
             wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | $sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
             # Use signed-by to bind the repo to the installed keyring to avoid NO_PUBKEY
-            echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] https://packages.lunarg.com/vulkan jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-jammy.list > /dev/null
+            echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg]  https://packages.lunarg.com/vulkan/1.4.313 jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313-jammy.list > /dev/null
             $sudo apt-get update
           fi
           $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
