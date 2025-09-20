@@ -39,26 +39,26 @@ jobs:
           echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*') | tee -a $GITHUB_OUTPUT
 
   linux:
-    #needs: [changes]
-    #if: needs.changes.outputs.changed == 'True'
+    needs: [changes]
+    if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
         include:
           - preset: CPU
-          #- preset: CUDA
-          #  container: nvidia/cuda:13.0.0-devel-ubuntu22.04
-          #  flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
-          #- preset: ROCm
-          #  container: rocm/dev-ubuntu-22.04:6.1.2
-          #  extra-packages: rocm-libs
-          #  flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: CUDA
+            container: nvidia/cuda:13.0.0-devel-ubuntu22.04
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+          - preset: ROCm
+            container: rocm/dev-ubuntu-22.04:6.1.2
+            extra-packages: rocm-libs
+            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: Vulkan
             container: ubuntu:22.04
             extra-packages: >
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
               vulkan-sdk cmake ccache g++ make
-    runs-on: ubuntu-latest
+    runs-on: linux
     container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
