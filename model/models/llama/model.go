@@ -54,10 +54,30 @@ func New(c fs.Config) (model.Model, error) {
 	}
 	switch c.String("tokenizer.ggml.model") {
 	case "gpt2":
-		processor = model.NewBytePairEncoding(
-			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
-			&vocabulary,
-		)
+		var pretokenizers []string
+		switch c.String("tokenizer.ggml.pre") {
+		case "default":
+			// no-op use the default bpe pretokenizer
+		case "qwen2":
+			pretokenizers = []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		case "refact":
+			pretokenizers = []string{
+				`\p{N}`,
+				`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`,
+			}
+		case "tekken":
+			pretokenizers = []string{
+				"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		default:
+			// use a llama-style pretokenizer
+			pretokenizers = []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		}
+		processor = model.NewBytePairEncoding(&vocabulary, pretokenizers...)
 	case "llama":
 		processor = model.NewSentencePiece(&vocabulary)
 	default:
