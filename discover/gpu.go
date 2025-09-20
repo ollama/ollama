@@ -214,6 +214,30 @@ func GetCPUInfo() GpuInfoList {
 	return GpuInfoList{cpus[0].GpuInfo}
 }
 
+// gpuIDExistsInOtherBackends returns true if the given ID exists in CUDA, ROCm, or OneAPI lists.
+// Note: It intentionally does not check Vulkan to avoid self-comparison during Vulkan discovery.
+func gpuInfoExistsInOtherBackends(gpu VulkanGPUInfo) string {
+	for _, g := range cudaGPUs {
+		if g.ID == gpu.ID {
+			return "cuda"
+		}
+	}
+
+	// ID is not always filled, so use the gpu Name for duplicate detection
+	for _, g := range rocmGPUs {
+		if g.ID == gpu.ID || g.Name == gpu.Name {
+			return "rocm"
+		}
+	}
+
+	for _, g := range oneapiGPUs {
+		if g.ID == gpu.ID {
+			return "oneapi"
+		}
+	}
+	return ""
+}
+
 func GetGPUInfo() GpuInfoList {
 	// TODO - consider exploring lspci (and equivalent on windows) to check for
 	// GPUs so we can report warnings if we see Nvidia/AMD but fail to load the libraries
@@ -413,6 +437,17 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 
+		//rocmGPUs, err = AMDGetGPUInfo()
+
+		// The ID field is used in context of the filtered set of GPUS
+		// so we have to replace any of these numeric IDs with their
+		// placement in this set of GPUs
+		//for i := range rocmGPUs {
+		//	if _, err := strconv.Atoi(rocmGPUs[i].ID); err == nil {
+		//		rocmGPUs[i].ID = strconv.Itoa(i)
+		//	}
+		//}
+
 		// Vulkan
 		vHandles = initVulkanHandles()
 		for i := range vHandles.deviceCount {
@@ -442,20 +477,19 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.DriverMinor = int(memInfo.minor)
 
 				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
-				vulkanGPUs = append(vulkanGPUs, gpuInfo)
+				var backend = gpuInfoExistsInOtherBackends(gpuInfo)
+				if backend != "" {
+					unsupportedGPUs = append(unsupportedGPUs,
+						UnsupportedGPUInfo{
+							GpuInfo: gpuInfo.GpuInfo,
+						})
+					slog.Info(fmt.Sprintf("[%-s] Vulkan GPU is supported by [%-s]", gpuInfo.ID, backend))
+				} else {
+					vulkanGPUs = append(vulkanGPUs, gpuInfo)
+				}
 			}
 		}
 
-		rocmGPUs, err = AMDGetGPUInfo()
-
-		// The ID field is used in context of the filtered set of GPUS
-		// so we have to replace any of these numeric IDs with their
-		// placement in this set of GPUs
-		for i := range rocmGPUs {
-			if _, err := strconv.Atoi(rocmGPUs[i].ID); err == nil {
-				rocmGPUs[i].ID = strconv.Itoa(i)
-			}
-		}
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
