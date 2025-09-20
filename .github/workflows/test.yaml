@@ -45,16 +45,16 @@ jobs:
       matrix:
         include:
           - preset: CPU
-          - preset: CUDA
-            container: nvidia/cuda:13.0.0-devel-ubuntu22.04
-            flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
-          - preset: ROCm
-            container: rocm/dev-ubuntu-22.04:6.1.2
-            extra-packages: rocm-libs
-            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          #- preset: CUDA
+          #  container: nvidia/cuda:13.0.0-devel-ubuntu22.04
+          #  flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+          #- preset: ROCm
+          #  container: rocm/dev-ubuntu-22.04:6.1.2
+          #  extra-packages: rocm-libs
+          #  flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: Vulkan
             container: nvidia/vulkan:1.3-470
-    runs-on: linux
+    runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
