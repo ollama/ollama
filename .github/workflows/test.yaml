@@ -39,8 +39,8 @@ jobs:
           echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*') | tee -a $GITHUB_OUTPUT
 
   linux:
-    needs: [changes]
-    if: needs.changes.outputs.changed == 'True'
+    #needs: [changes]
+    #if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
         include:
@@ -52,6 +52,8 @@ jobs:
             container: rocm/dev-ubuntu-22.04:6.1.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: Vulkan
+            container: nvidia/vulkan:1.3-470
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
