@@ -57,7 +57,7 @@ jobs:
             extra-packages: >
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
-              vulkan-sdk
+              vulkan-sdk cmake ccache g++ make
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
