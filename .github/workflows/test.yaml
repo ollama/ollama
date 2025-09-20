@@ -57,7 +57,7 @@ jobs:
             extra-packages: >
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
-              vulkan-sdk=1.4.313.0
+              lunarg-vulkan-sdk
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
