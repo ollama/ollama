@@ -29,7 +29,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -251,18 +250,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Generate(c, &req, fn)
 		if err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pk, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					slog.Error("couldn't get public key", "error", pkErr)
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
-					return
-				}
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":      "unauthorized",
-					"public_key": pk,
-				})
+			var authError api.AuthorizationError
+			if errors.As(err, &authError) {
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "public_key": authError.PublicKey})
+				return
+			}
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1813,18 +1808,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Chat(c, &req, fn)
 		if err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pk, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					slog.Error("couldn't get public key", "error", pkErr)
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
-					return
-				}
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":      "unauthorized",
-					"public_key": pk,
-				})
+			var authError api.AuthorizationError
+			if errors.As(err, &authError) {
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "public_key": authError.PublicKey})
+				return
+			}
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
