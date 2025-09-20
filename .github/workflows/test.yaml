@@ -53,7 +53,11 @@ jobs:
           #  extra-packages: rocm-libs
           #  flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: Vulkan
-            container: nvidia/vulkan:1.3-470
+            container: ubuntu:22.04
+            extra-packages: >
+              mesa-vulkan-drivers vulkan-tools
+              libvulkan1 libvulkan-dev
+              lunarg-vulkan-sdk
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
@@ -61,7 +65,18 @@ jobs:
       - run: |
           [ -n "${{ matrix.container }}" ] || sudo=sudo
           $sudo apt-get update
+          # Add LunarG Vulkan SDK apt repo for Ubuntu 22.04
+          if [ "${{ matrix.preset }}" = "Vulkan" ]; then
+            $sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates software-properties-common
+            wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | $sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] https://packages.lunarg.com/vulkan/1.4.313.2/ubuntu jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313.2-jammy.list
+            $sudo apt-get update
+          fi
           $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
+          # Export VULKAN_SDK if provided by LunarG package (defensive)
+          if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
+            echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+          fi
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/cache@v4
