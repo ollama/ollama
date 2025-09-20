@@ -57,7 +57,7 @@ jobs:
             extra-packages: >
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
-              lunarg-vulkan-sdk
+              lunarg-vulkan-sdk=1.4.313.2
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
@@ -67,9 +67,9 @@ jobs:
           $sudo apt-get update
           # Add LunarG Vulkan SDK apt repo for Ubuntu 22.04
           if [ "${{ matrix.preset }}" = "Vulkan" ]; then
-            $sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates software-properties-common
+            $sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates software-properties-common            
             wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | $sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
-            echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] https://packages.lunarg.com/vulkan/1.4.313/dists jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313-jammy.list
+            wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list            
             $sudo apt-get update
           fi
           $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
