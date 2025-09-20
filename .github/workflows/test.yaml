@@ -71,8 +71,8 @@ jobs:
           cmake --build --preset ${{ matrix.preset }} --parallel
 
   windows:
-    needs: [changes]
-    if: needs.changes.outputs.changed == 'True'
+    # needs: [changes]
+    # if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
         include:
