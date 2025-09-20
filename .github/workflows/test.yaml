@@ -142,7 +142,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-            Start-Process -FilePath .\install.exe /S
+            Start-Process -FilePath .\install.exe -ArgumentList '/S'
           }
           
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
