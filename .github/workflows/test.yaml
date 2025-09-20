@@ -76,7 +76,7 @@ jobs:
     strategy:
       matrix:
         include:
-          #- preset: CPU
+          - preset: CPU
           #- preset: CUDA
           #  install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
           #  flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
