@@ -312,6 +312,41 @@ true
 				},
 			},
 		},
+		// regression test for <https://github.com/ollama/ollama/issues/12357>
+		{
+			name:  "ampersands in parameter values",
+			tools: []api.Tool{},
+			rawToolCall: `<function=exec>
+<parameter=command>
+ls && echo "done"
+</parameter>
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "exec",
+					Arguments: map[string]any{
+						"command": "ls && echo \"done\"",
+					},
+				},
+			},
+		},
+		{
+			name:  "angle brackets in parameter values",
+			tools: []api.Tool{},
+			rawToolCall: `<function=exec>
+<parameter=command>
+ls && echo "a > b and a < b"
+</parameter>
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "exec",
+					Arguments: map[string]any{
+						"command": "ls && echo \"a > b and a < b\"",
+					},
+				},
+			},
+		},
 	}
 
 	for i, step := range steps {
@@ -797,6 +832,19 @@ San Francisco
 celsius
 </parameter>
 </function>`,
+		},
+		{
+			desc: "ampersands in parameter values",
+			raw: `<function=get_current_temperature>
+		<parameter=location>
+		San Francisco & San Jose
+		</parameter>
+		</function>`,
+			want: `<function name="get_current_temperature">
+		<parameter name="location">
+		San Francisco &amp; San Jose
+		</parameter>
+		</function>`,
 		},
 	}
 

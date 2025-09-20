@@ -393,18 +393,55 @@ func parseValue(raw string, paramType api.PropertyType) any {
 	return raw
 }
 
-var qwenTagRegex = regexp.MustCompile(`<(\w+)=([^>]+)>`)
+var (
+	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
+	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
+)
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
 // xml so that it can be parsed by any xml parser
 func transformToXML(raw string) string {
 	// take the form `<tag=abc>` and transform it to `<tag name="abc">`, taking
 	// care to properly escape the string that becomes the attribute value
-	return qwenTagRegex.ReplaceAllStringFunc(raw, func(match string) string {
+	transformed := qwenTagRegex.ReplaceAllStringFunc(raw, func(match string) string {
 		groups := qwenTagRegex.FindStringSubmatch(match)
 		tag := groups[1]
 		var escapedValue strings.Builder
 		xml.EscapeText(&escapedValue, []byte(groups[2]))
 		return fmt.Sprintf(`<%s name="%s">`, tag, escapedValue.String())
 	})
+
+	// Walk the resulting string, escaping any character data that sits between the
+	// xml tags we just emitted
+	var out strings.Builder
+	lastIdx := 0
+	for _, loc := range qwenXMLTagRegex.FindAllStringIndex(transformed, -1) {
+		if loc[0] > lastIdx {
+			escapeTextNode(&out, transformed[lastIdx:loc[0]])
+		}
+		out.WriteString(transformed[loc[0]:loc[1]])
+		lastIdx = loc[1]
+	}
+	if lastIdx < len(transformed) {
+		escapeTextNode(&out, transformed[lastIdx:])
+	}
+
+	return out.String()
+}
+
+// escapeTextNode escapes XML character data without altering other characters
+// like newlines or tabs (which is why we don't use xml.EscapeText for this)
+func escapeTextNode(sb *strings.Builder, s string) {
+	for _, r := range s {
+		switch r {
+		case '&':
+			sb.WriteString("&amp;")
+		case '<':
+			sb.WriteString("&lt;")
+		case '>':
+			sb.WriteString("&gt;")
+		default:
+			sb.WriteRune(r)
+		}
+	}
 }
