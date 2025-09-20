@@ -195,20 +195,35 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				fmt.Println("Usage:\n  /load <modelname>")
 				continue
 			}
+			prevModel := opts.Model
+			prevMessages := slices.Clone(opts.Messages)
+			prevThink := opts.Think
+			restoreOpts := func() {
+				opts.Model = prevModel
+				opts.Messages = prevMessages
+				opts.Think = prevThink
+			}
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
 			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
 			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					fmt.Printf("error: %v\n", err)
+					restoreOpts()
+					continue
+				}
 				return err
 			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("error: %v\n", err)
+					restoreOpts()
 					continue
 				}
 				if strings.Contains(err.Error(), "does not support thinking") {
 					fmt.Printf("error: %v\n", err)
+					restoreOpts()
 					continue
 				}
 				return err
