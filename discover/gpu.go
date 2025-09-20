@@ -437,16 +437,16 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 
-		//rocmGPUs, err = AMDGetGPUInfo()
+		rocmGPUs, err = AMDGetGPUInfo()
 
 		// The ID field is used in context of the filtered set of GPUS
 		// so we have to replace any of these numeric IDs with their
 		// placement in this set of GPUs
-		//for i := range rocmGPUs {
-		//	if _, err := strconv.Atoi(rocmGPUs[i].ID); err == nil {
-		//		rocmGPUs[i].ID = strconv.Itoa(i)
-		//	}
-		//}
+		for i := range rocmGPUs {
+			if _, err := strconv.Atoi(rocmGPUs[i].ID); err == nil {
+				rocmGPUs[i].ID = strconv.Itoa(i)
+			}
+		}
 
 		// Vulkan
 		vHandles = initVulkanHandles()
