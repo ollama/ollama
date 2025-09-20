@@ -14,3 +14,9 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
+
+# Local dev
+bin/
+*.log
+*.pid
+
