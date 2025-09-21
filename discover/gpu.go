@@ -73,6 +73,9 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 		}
 		resp = append(resp, info)
 	}
+	for _, gpu := range vulkanGPUs {
+		resp = append(resp, gpu.GpuInfo)
+	}
 	if len(resp) == 0 {
 		mem, err := GetCPUMem()
 		if err != nil {

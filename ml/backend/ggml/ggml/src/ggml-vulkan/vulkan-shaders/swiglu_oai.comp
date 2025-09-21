@@ -1,0 +1,14 @@
+#version 450
+
+#include "glu_head.comp"
+
+float op(float a, float b) {
+    float xi = min(a, p.limit);
+    float gi = max(min(b, p.limit), -p.limit);
+
+    float out_glu = xi / (1.0f + exp(-xi * p.alpha));
+    out_glu = out_glu * (1.0f + gi);
+    return out_glu;
+}
+
+#include "glu_main.comp"

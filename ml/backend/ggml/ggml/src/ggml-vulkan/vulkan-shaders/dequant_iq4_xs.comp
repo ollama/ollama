@@ -1,0 +1,34 @@
+#version 450
+
+#include "dequant_head.comp"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_iq4_xs data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    // Each thread handles 1 subblock (1 scale and 32 quantized values)
+    const uint ib = gl_WorkGroupID.x * 32 + gl_LocalInvocationID.x / 8;
+
+    init_iq_shmem(gl_WorkGroupSize);
+
+    if (ib >= p.nel / 256) {
+        return;
+    }
+
+    const uint ib32 = gl_LocalInvocationID.x % 8;
+
+    const float d = float(data_a[ib].d);
+    // Scales are 6 bits
+    const uint scale = ((data_a[ib].scales_l[ib32/2] >> (4 * (ib32 & 1))) & 0xF)
+                     | (((data_a[ib].scales_h >> (2 * ib32)) & 3) << 4);
+    const float dl = d * (int(scale) - 32);
+
+    const uint b_idx = 256 * ib + 32 * ib32;
+    const uint q_idx = 16 * ib32;
+    [[unroll]] for (uint l = 0; l < 16; ++l) {
+        data_b[b_idx + l +  0] = D_TYPE(dl * kvalues_iq4nl[data_a[ib].qs[q_idx + l] & 0xF]);
+        data_b[b_idx + l + 16] = D_TYPE(dl * kvalues_iq4nl[data_a[ib].qs[q_idx + l] >>  4]);
+    }
+}

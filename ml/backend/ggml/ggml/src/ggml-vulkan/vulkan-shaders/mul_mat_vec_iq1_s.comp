@@ -1,0 +1,79 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+
+#include "mul_mat_vec_base.comp"
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+
+void calc_superblock(const uint a_offset, const uint b_offset, const uint ib32, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+    const uint y_idx = i * QUANT_K + 32 * ib32;
+
+    uint ibi = a_offset / QUANT_K + first_row * num_blocks_per_row + i;
+    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+        const float d = float(data_a[ibi].d);
+        const uint qh = data_a[ibi].qh[ib32];
+        const float dl = d * float(2 * bitfieldExtract(qh, 12, 3) + 1);
+        const float delta = ((qh & 0x8000) != 0) ? -IQ1S_DELTA : IQ1S_DELTA;
+
+        [[unroll]] for (uint l = 0; l < 4; ++l) {
+            const uint qs = data_a[ibi].qs[4 * ib32 + l];
+            const uint idxhi = bitfieldExtract(qh, 3 * int(l), 3);
+            const int16_t grid = int16_t(iq1s_grid[qs | (idxhi << 8)]);
+
+            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+                vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+
+                FLOAT_TYPE sum = FLOAT_TYPE(0.0);
+                [[unroll]] for (int k = 0; k < 4; ++k) {
+                    sum = fma(FLOAT_TYPE(b0[k]), bitfieldExtract(grid, 2 * k, 2) + delta,
+                          fma(FLOAT_TYPE(b4[k]), bitfieldExtract(grid, 8 + 2 * k, 2) + delta, sum));
+                }
+                temp[j][n] = fma(dl, sum, temp[j][n]);
+            }
+        }
+        ibi += num_blocks_per_row;
+    }
+}
+
+void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+    uint a_offset, b_offset, d_offset;
+    get_offsets(a_offset, b_offset, d_offset);
+
+    const uint num_blocks_per_row = p.ncols / QUANT_K;
+
+    // 8 threads are used to process each block
+    const uint blocks_per_wg = gl_WorkGroupSize.x/8;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint itid = tid % 8;  // 0...7
+    const uint ix = tid / 8;
+
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint i = 0; i < NUM_ROWS; ++i) {
+            temp[j][i] = FLOAT_TYPE(0);
+        }
+    }
+
+    [[unroll]] for (uint i = ix; i < num_blocks_per_row; i += blocks_per_wg)
+        calc_superblock(a_offset, b_offset, itid, i, num_blocks_per_row, first_row, num_rows);
+
+    reduce_result(temp, d_offset, first_row, num_rows, tid);
+}
+
+void main() {
+    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+    init_iq_shmem(gl_WorkGroupSize);
+
+    // do NUM_ROWS at a time, unless there aren't enough remaining rows
+    if (first_row + NUM_ROWS <= p.stride_d) {
+        compute_outputs(first_row, NUM_ROWS);
+    } else {
+        if (first_row >= p.stride_d) {
+            return;
+        }
+        compute_outputs(first_row, p.stride_d - first_row);
+    }
+}

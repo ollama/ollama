@@ -1,0 +1,20 @@
+#version 450
+
+#include "dequant_head.comp"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {float data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x * 16;
+
+    if (i >= p.nel) {
+        return;
+    }
+
+    [[unroll]] for (uint l = 0; l < 16; l++) {
+        data_b[i + l] = D_TYPE(data_a[i + l]);
+    }
+}

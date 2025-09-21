@@ -1,0 +1,35 @@
+#version 450
+
+#include "dequant_head.comp"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_iq1_s data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    // Each thread handles 1 subblock (32 values with 2 scales)
+    const uint ib = gl_WorkGroupID.x * 32 + gl_LocalInvocationID.x / 8;
+
+    init_iq_shmem(gl_WorkGroupSize);
+
+    if (ib >= p.nel / 256) {
+        return;
+    }
+
+    const uint ib32 = gl_LocalInvocationID.x % 8;
+    const uint b_idx = 256 * ib + 32 * ib32;
+
+    uint qh = data_a[ib].qh[ib32];
+    const float d = float(data_a[ib].d);
+    const float dl = d * float(2 * bitfieldExtract(qh, 12, 3) + 1);
+    const float delta = ((qh & 0x8000) != 0) ? -IQ1S_DELTA : IQ1S_DELTA;
+    [[unroll]] for (uint l = 0; l < 4; ++l) {
+        const uint qs = data_a[ib].qs[4 * ib32 + l];
+        const uint hi = bitfieldExtract(qh, 3 * int(l), 3);
+        const int16_t grid = int16_t(iq1s_grid[qs | (hi << 8)]);
+        [[unroll]] for (int j = 0; j < 8; ++j) {
+            data_b[b_idx + 8 * l + j] = D_TYPE(dl * (bitfieldExtract(grid, 2*j, 2) + delta));
+        }
+    }
+}

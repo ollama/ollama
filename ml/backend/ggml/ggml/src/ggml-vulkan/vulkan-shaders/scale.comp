@@ -1,0 +1,24 @@
+#version 450
+
+#include "types.comp"
+#include "generic_unary_head.comp"
+
+const uint num_threads = 128;
+
+layout(local_size_x = num_threads, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint idx = get_idx();
+
+    // num_threads * num_iter must equal 512, to match the wg_denoms and get_idx calculation
+    const uint num_iter = 4;
+
+    [[unroll]] for (uint i = 0; i < num_iter; ++i) {
+        if (idx >= p.ne) {
+            continue;
+        }
+
+        data_d[get_doffset() + idx] = D_TYPE(FLOAT_TYPE(data_a[get_aoffset() + idx]) * FLOAT_TYPE(p.param1) + FLOAT_TYPE(p.param2));
+        idx += num_threads;
+    }
+}

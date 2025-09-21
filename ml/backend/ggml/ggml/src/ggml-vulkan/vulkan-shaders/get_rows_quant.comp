@@ -1,0 +1,41 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : enable
+
+#include "types.comp"
+#include "generic_binary_head.comp"
+#include "dequant_funcs.comp"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    const uint i00 = (gl_GlobalInvocationID.x)*2;
+    const uint i10 = gl_GlobalInvocationID.y;
+    const uint i11 = (gl_GlobalInvocationID.z)/p.ne12;
+    const uint i12 = (gl_GlobalInvocationID.z)%p.ne12;
+
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
+#endif
+
+    if (i00 >= p.ne00) {
+        return;
+    }
+
+    const uint i01 = data_b[i10*p.nb10 + i11*p.nb11 + i12*p.nb12];
+
+    const uint a_offset = i01*p.nb01 + i11*p.nb02 + i12*p.nb03;
+    const uint d_offset = i10*p.nb21 + i11*p.nb22 + i12*p.nb23;
+
+    const uint ib = a_offset + i00/QUANT_K; // block index
+    const uint iqs = (i00%QUANT_K)/QUANT_R; // quant index
+    const uint iybs = i00 - i00%QUANT_K; // dst block start index
+    const uint y_offset = QUANT_R == 1 ? 1 : QUANT_K/2;
+
+    vec2 v = dequantize(ib, iqs, 0);
+    const vec2 dm = get_dm(ib, 0);
+    v = v * dm.x + dm.y;
+
+    data_d[d_offset + iybs + iqs           ] = D_TYPE(v.x);
+    data_d[d_offset + iybs + iqs + y_offset] = D_TYPE(v.y);
+}
