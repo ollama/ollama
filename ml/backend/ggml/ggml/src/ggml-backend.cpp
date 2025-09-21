@@ -478,10 +478,10 @@ void ggml_backend_event_wait(ggml_backend_t backend, ggml_backend_event_t event)
     backend->iface.event_wait(backend, event);
 }
 
-static void ggml_backend_optimize_graph(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+static void ggml_backend_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     GGML_ASSERT(backend);
-    if (backend->iface.optimize_graph != NULL) {
-        backend->iface.optimize_graph(backend, cgraph);
+    if (backend->iface.graph_optimize != NULL) {
+        backend->iface.graph_optimize(backend, cgraph);
     }
 }
 
@@ -1331,7 +1331,7 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
         // Optimize this split of the graph. This needs to happen before we make graph_copy,
         // so they are in sync.
-        ggml_backend_optimize_graph(sched->backends[split->backend_id], &split->graph);
+        ggml_backend_graph_optimize(sched->backends[split->backend_id], &split->graph);
 
         // add inputs to the graph copy so that they are allocated by ggml-alloc at the start of the split
         for (int j = 0; j < split->n_inputs; j++) {

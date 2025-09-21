@@ -652,6 +652,14 @@ static __device__ __forceinline__ uint32_t fastmodulo(uint32_t n, const uint3 fa
     return n - fastdiv(n, fastdiv_values) * fastdiv_values.z;
 }
 
+// Calculate both division and modulo at once, returns <n/divisor, n%divisor>
+static __device__ __forceinline__ uint2 fast_div_modulo(uint32_t n, const uint3 fastdiv_values) {
+    // expects  fastdiv_values to contain <mp, L, divisor> in <x, y, z> (see init_fastdiv_values)
+    const uint32_t div_val = fastdiv(n, fastdiv_values);
+    const uint32_t mod_val = n - div_val * fastdiv_values.z;
+    return make_uint2(div_val, mod_val);
+}
+
 typedef void (*dequantize_kernel_t)(const void * vx, const int64_t ib, const int iqs, float2 & v);
 
 static __device__ __forceinline__ float get_alibi_slope(

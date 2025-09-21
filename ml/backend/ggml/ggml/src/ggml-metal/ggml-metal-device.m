@@ -51,6 +51,10 @@ void ggml_metal_cv_free(ggml_metal_cv_t cv) {
     free(cv);
 }
 
+void ggml_metal_cv_set_int16(ggml_metal_cv_t cv, int16_t value, int32_t idx) {
+    [cv->obj setConstantValue:&value type:MTLDataTypeShort atIndex:idx];
+}
+
 void ggml_metal_cv_set_int32(ggml_metal_cv_t cv, int32_t value, int32_t idx) {
     [cv->obj setConstantValue:&value type:MTLDataTypeInt atIndex:idx];
 }
@@ -327,12 +331,19 @@ ggml_metal_pipeline_t ggml_metal_library_compile_pipeline(ggml_metal_library_t l
 
         GGML_LOG_DEBUG("%s: compiling pipeline: base = '%s', name = '%s'\n", __func__, base, name);
 
-        id<MTLFunction> mtl_function = [lib->obj newFunctionWithName:base_func constantValues:(cv ? cv->obj : nil) error:&error];
+        id<MTLFunction> mtl_function;
+        if (!cv) {
+            mtl_function = [lib->obj newFunctionWithName:base_func];
+        } else {
+            mtl_function = [lib->obj newFunctionWithName:base_func constantValues:cv->obj error:&error];
+        }
         if (!mtl_function) {
             ggml_critical_section_end();
 
             GGML_LOG_ERROR("%s: error: failed to compile pipeline: base = '%s', name = '%s'\n", __func__, base, name);
-            GGML_LOG_ERROR("%s: error: %s\n", __func__, [[error description] UTF8String]);
+            if (error) {
+                GGML_LOG_ERROR("%s: error: %s\n", __func__, [[error description] UTF8String]);
+            }
 
             return nil;
         }
@@ -817,6 +828,7 @@ struct ggml_metal_buffer {
 
     // if false, the Metal buffer data is allocated in private GPU memory and is not shared with the host
     bool is_shared;
+    bool owned;
 
     // multiple buffers are used only to avoid the maximum buffer size limitation when using mmap
     int n_buffers;
@@ -949,6 +961,7 @@ ggml_metal_buffer_t ggml_metal_buffer_init(ggml_metal_device_t dev, size_t size,
     if (shared) {
         res->all_data = ggml_metal_host_malloc(size_aligned);
         res->is_shared = true;
+        res->owned = true;
     } else {
         // dummy, non-NULL value - we'll populate this after creating the Metal buffer below
         res->all_data = (void *) 0x000000400ULL;
@@ -1007,6 +1020,7 @@ ggml_metal_buffer_t ggml_metal_buffer_map(ggml_metal_device_t dev, void * ptr, s
     res->all_size = size;
 
     res->is_shared = true;
+    res->owned = false;
 
     res->n_buffers = 0;
 
@@ -1100,7 +1114,7 @@ void ggml_metal_buffer_free(ggml_metal_buffer_t buf) {
 
     ggml_metal_buffer_rset_free(buf);
 
-    if (buf->is_shared) {
+    if (buf->is_shared && buf->owned) {
 #if TARGET_OS_OSX
         vm_deallocate((vm_map_t)mach_task_self(), (vm_address_t)buf->all_data, buf->all_size);
 #else

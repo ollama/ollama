@@ -7,7 +7,7 @@
 #include "ggml-cpu.h"
 #include "traits.h"
 
-#if defined(__gnu_linux__)
+#if defined(__linux__)
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
@@ -186,7 +186,7 @@ static size_t ggml_backend_amx_buffer_type_get_alloc_size(ggml_backend_buffer_ty
 #define XFEATURE_XTILEDATA      18
 
 static bool ggml_amx_init() {
-#if defined(__gnu_linux__)
+#if defined(__linux__)
     if (syscall(SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA)) {
         fprintf(stderr, "AMX is not ready to be used!\n");
         return false;
@@ -194,6 +194,8 @@ static bool ggml_amx_init() {
     return true;
 #elif defined(_WIN32)
     return true;
+#else
+    return false;
 #endif
 }
 

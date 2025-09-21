@@ -1444,7 +1444,7 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
                 GGML_ABORT("unsupported ne11");
         };
 
-        ggml_metal_pipeline_t pipeline = ggml_metal_library_get_pipeline_mul_mv_ext(lib, op->src[0]->type, op->src[1]->type, r1ptg);
+        ggml_metal_pipeline_t pipeline = ggml_metal_library_get_pipeline_mul_mv_ext(lib, op->src[0]->type, op->src[1]->type, nsg, nxpsg, r1ptg);
 
         ggml_metal_kargs_mul_mv_ext args = {
             /*.ne00  =*/ ne00,
@@ -1465,9 +1465,6 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
             /*.ne1   =*/ ne1,
             /*.r2    =*/ r2,
             /*.r3    =*/ r3,
-            /*.nsg   =*/ nsg,
-            /*.nxpsg =*/ nxpsg,
-            /*.r1ptg =*/ r1ptg,
         };
 
         ggml_metal_encoder_set_pipeline(enc, pipeline);
@@ -1564,7 +1561,10 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
         ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
 
-        if (op->src[0]->type == GGML_TYPE_Q8_0) {
+        if (op->src[0]->type == GGML_TYPE_F32 ||
+            op->src[0]->type == GGML_TYPE_F16 ||
+            op->src[0]->type == GGML_TYPE_BF16 ||
+            op->src[0]->type == GGML_TYPE_Q8_0) {
             ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + nr0 - 1)/(nr0)), ((ne11 + nr1 - 1)/nr1), ne12*ne13, 32, nsg, 1);
         } else {
             ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + nr0*nsg - 1)/(nr0*nsg)), ((ne11 + nr1 - 1)/nr1), ne12*ne13, 32, nsg, 1);
@@ -1772,7 +1772,10 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
 
         ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
 
-        if (op->src[0]->type == GGML_TYPE_Q8_0) {
+        if (op->src[0]->type == GGML_TYPE_F32 ||
+            op->src[0]->type == GGML_TYPE_F16 ||
+            op->src[0]->type == GGML_TYPE_BF16 ||
+            op->src[0]->type == GGML_TYPE_Q8_0) {
             ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + nr0 - 1)/(nr0), (_ne1 + nr1 - 1)/nr1, ne123, 32, nsg, 1);
         } else {
             ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + nr0*nsg - 1)/(nr0*nsg), (_ne1 + nr1 - 1)/nr1, ne123, 32, nsg, 1);

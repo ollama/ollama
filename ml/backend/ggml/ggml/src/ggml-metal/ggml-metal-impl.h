@@ -8,6 +8,9 @@
 //
 // TODO: for optimal performance, become function of the device and work size
 
+#define N_R0_F 2
+#define N_SG_F 4
+
 #define N_R0_Q4_0 4
 #define N_SG_Q4_0 2
 
@@ -32,13 +35,13 @@
 #define N_R0_Q3_K 2
 #define N_SG_Q3_K 2
 
-#define N_R0_Q4_K 4
+#define N_R0_Q4_K 2
 #define N_SG_Q4_K 2
 
 #define N_R0_Q5_K 2
 #define N_SG_Q5_K 2
 
-#define N_R0_Q6_K 1
+#define N_R0_Q6_K 2
 #define N_SG_Q6_K 2
 
 #define N_R0_IQ1_S 4
@@ -72,6 +75,7 @@
 #define FC_FLASH_ATTN_EXT              100
 #define FC_FLASH_ATTN_EXT_VEC          200
 #define FC_FLASH_ATTN_EXT_VEC_REDUCE   300
+#define FC_MUL_MV                      400
 
 // kernel argument structs
 //
@@ -370,9 +374,6 @@ typedef struct {
     int32_t  ne1;
     int16_t  r2;
     int16_t  r3;
-    int16_t  nsg;
-    int16_t  nxpsg;
-    int16_t  r1ptg;
 } ggml_metal_kargs_mul_mv_ext;
 
 typedef struct {

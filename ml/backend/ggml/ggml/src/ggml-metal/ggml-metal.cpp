@@ -447,7 +447,7 @@ static ggml_backend_i ggml_backend_metal_i = {
     // https://developer.apple.com/documentation/metal/mtlcommandbuffer#Synchronizing-Passes-with-Events
     /* .event_record            = */ NULL,
     /* .event_wait              = */ NULL,
-    /* .optimize_graph          = */ ggml_backend_metal_graph_optimize,
+    /* .graph_optimize          = */ ggml_backend_metal_graph_optimize,
 };
 
 static ggml_guid_t ggml_backend_metal_guid(void) {

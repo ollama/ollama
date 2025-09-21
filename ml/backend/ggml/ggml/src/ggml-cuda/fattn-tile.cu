@@ -35,7 +35,6 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         switch (D) {
             case 64:
             case 128:
-                return 128;
             case 256:
                 return ncols <= 16 ? 128 : 64;
             default:
@@ -86,7 +85,6 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
     switch (D) {
         case 64:
         case 128:
-            return 128;
         case 256:
             return ncols <= 16 ? 128 : 64;
         default:

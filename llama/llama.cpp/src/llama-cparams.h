@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-#define LLAMA_MAX_SEQ 64
+#define LLAMA_MAX_SEQ 256
 
 struct llama_cparams {
     uint32_t n_ctx;           // context size used during inference

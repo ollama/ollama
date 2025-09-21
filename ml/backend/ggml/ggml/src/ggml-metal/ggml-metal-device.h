@@ -22,6 +22,7 @@ typedef struct ggml_metal_cv * ggml_metal_cv_t;
 ggml_metal_cv_t ggml_metal_cv_init(void);
 void ggml_metal_cv_free(ggml_metal_cv_t cv);
 
+void ggml_metal_cv_set_int16(ggml_metal_cv_t cv, int16_t value, int32_t idx);
 void ggml_metal_cv_set_int32(ggml_metal_cv_t cv, int32_t value, int32_t idx);
 void ggml_metal_cv_set_bool (ggml_metal_cv_t cv, bool    value, int32_t idx);
 
@@ -113,7 +114,7 @@ ggml_metal_pipeline_t ggml_metal_library_get_pipeline_soft_max          (ggml_me
 ggml_metal_pipeline_t ggml_metal_library_get_pipeline_ssm_conv          (ggml_metal_library_t lib, const struct ggml_tensor * op);
 ggml_metal_pipeline_t ggml_metal_library_get_pipeline_ssm_scan          (ggml_metal_library_t lib, const struct ggml_tensor * op);
 ggml_metal_pipeline_t ggml_metal_library_get_pipeline_rwkv              (ggml_metal_library_t lib, const struct ggml_tensor * op);
-ggml_metal_pipeline_t ggml_metal_library_get_pipeline_mul_mv_ext        (ggml_metal_library_t lib, enum ggml_type tsrc0, enum ggml_type tsrc1, int r1ptg);
+ggml_metal_pipeline_t ggml_metal_library_get_pipeline_mul_mv_ext        (ggml_metal_library_t lib, enum ggml_type tsrc0, enum ggml_type tsrc1, int nsg, int nxpsg, int r1ptg);
 ggml_metal_pipeline_t ggml_metal_library_get_pipeline_mul_mm            (ggml_metal_library_t lib, enum ggml_type tsrc0, enum ggml_type tsrc1);
 ggml_metal_pipeline_t ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
 ggml_metal_pipeline_t ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
