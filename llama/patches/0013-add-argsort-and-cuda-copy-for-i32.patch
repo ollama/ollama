@@ -11,10 +11,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  4 files changed, 192 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index c4824d14..b8009f1e 100644
+index 763ab099..7a332839 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -8662,6 +8662,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -7885,6 +7885,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -60,7 +60,7 @@ index c4824d14..b8009f1e 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -8673,6 +8712,10 @@ void ggml_compute_forward_argsort(
+@@ -7896,6 +7935,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -210,7 +210,7 @@ index e621cb98..597c0c8b 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index 8567c3d5..e090c624 100644
+index 1b763a62..6acf873c 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
 @@ -277,6 +277,47 @@ static void ggml_cpy_f32_iq4_nl_cuda(

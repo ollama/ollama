@@ -24,7 +24,7 @@ index 632f621d..328056a7 100644
          size_t memory_total;
          // device type
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ad8464ea..6d3c782f 100644
+index 5474b3b8..a2ad929b 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -182,6 +182,51 @@ static int ggml_cuda_parse_id(char devName[]) {
@@ -147,7 +147,7 @@ index ad8464ea..6d3c782f 100644
                  char pci_bus_id[16] = {};
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index fd0e6ed6..721c0a01 100644
+index e11555a7..d0e09582 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -536,6 +536,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen

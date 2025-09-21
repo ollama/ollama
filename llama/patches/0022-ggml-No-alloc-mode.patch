@@ -28,7 +28,7 @@ index 328056a7..585dc7c6 100644
      GGML_API size_t                ggml_backend_buft_get_alignment (ggml_backend_buffer_type_t buft);
      GGML_API size_t                ggml_backend_buft_get_max_size  (ggml_backend_buffer_type_t buft);
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index 89d80db6..993c3ba1 100644
+index 07784d6f..68eb80b2 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -32,6 +32,7 @@ extern "C" {
@@ -48,7 +48,7 @@ index 89d80db6..993c3ba1 100644
  
      GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 5dd9d138..76543fc0 100644
+index fdf36125..b63e7b92 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -35,6 +35,10 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
