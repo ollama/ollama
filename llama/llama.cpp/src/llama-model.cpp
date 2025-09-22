@@ -12826,15 +12826,6 @@ struct llm_build_deepseek2 : public llm_graph_context {
                         ggml_row_size(kv_cmpr_pe->type, kv_lora_rank + n_embd_head_qk_rope),
                         ggml_row_size(kv_cmpr_pe->type, kv_lora_rank));
                 cb(k_pe, "k_pe", il);
-                
-                printf("DEBUG: n_rot: %d\n", n_rot);
-                printf("DEBUG: rope_type: %d\n", rope_type);    
-                printf("DEBUG: freq_base: %f\n", freq_base);
-                printf("DEBUG: freq_scale: %f\n", freq_scale);
-                printf("DEBUG: ext_factor: %f\n", ext_factor);
-                printf("DEBUG: attn_factor: %f\n", attn_factor);
-                printf("DEBUG: beta_fast: %f\n", beta_fast);
-                printf("DEBUG: beta_slow: %f\n", beta_slow);
 
                 q_pe = ggml_rope_ext(ctx0, q_pe, inp_pos, nullptr,
                         n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,

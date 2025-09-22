@@ -1080,7 +1080,7 @@ func (s *Server) allocModel(
 	kvSize int,
 	multiUserCache bool,
 ) (panicErr error) {
-	fmt.Printf("DEBUG: allocModel starting with mpath: %s, parallel: %d, kvCacheType: %s, kvSize: %d, multiUserCache: %t\n", mpath, parallel, kvCacheType, kvSize, multiUserCache)
+    
 	
 	// Convert memory allocation panics to errors
 	defer func() {
@@ -1099,49 +1099,32 @@ func (s *Server) allocModel(
 		}
 	}()
 
-	fmt.Printf("DEBUG: creating new model with params: %+v\n", params)
 	var err error
 	s.model, err = model.New(mpath, params)
-	fmt.Printf("DEBUG: model created: %v\n", s.model)
 	if err != nil {
-		fmt.Printf("DEBUG: model creation failed: %v\n", err)
 		return err
 	}
 
 	// TODO(jessegross): LoRA loading
-	if len(loraPath) > 0 {
-		fmt.Printf("DEBUG: LoRA paths provided: %v\n", loraPath)
+    if len(loraPath) > 0 {
 		return errors.New("loras are not yet implemented")
 	}
 
-	fmt.Printf("DEBUG: creating input cache with kvCacheType: %s, kvSize: %d, parallel: %d, batchSize: %d\n", kvCacheType, kvSize, parallel, s.batchSize)
 	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
 	if err != nil {
-		fmt.Printf("DEBUG: input cache creation failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("DEBUG: input cache created, enabled: %t\n", s.cache.enabled)
 
 	if !s.cache.enabled && parallel > 1 {
-		fmt.Printf("DEBUG: cache not enabled, reducing parallel from %d to 1\n", parallel)
 		parallel = 1
 		slog.Warn("model does not support caching, disabling parallel processing")
 	}
 
 	s.parallel = parallel
-	fmt.Printf("DEBUG: setting parallel to %d\n", s.parallel)
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
-	fmt.Printf("DEBUG: created sequences array of length %d\n", len(s.seqs))
 
-	fmt.Printf("DEBUG: calling reserveWorstCaseGraph\n")
-	err = s.reserveWorstCaseGraph()
-	if err != nil {
-		fmt.Printf("DEBUG: reserveWorstCaseGraph failed: %v\n", err)
-	} else {
-		fmt.Printf("DEBUG: reserveWorstCaseGraph completed successfully\n")
-	}
-	return err
+	return s.reserveWorstCaseGraph()
 }
 
 // closeModel frees all memory associated with a model
