@@ -88,10 +88,10 @@ func TestConvertFromSafetensors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create the minimum required file map for convertFromSafetensors
-			files := map[string]string{
-				tt.filePath:      model,
-				"config.json":    config,
-				"tokenizer.json": tokenizer,
+			files := []api.File{
+				{Name: tt.filePath, Digest: model},
+				{Name: "config.json", Digest: config},
+				{Name: "tokenizer.json", Digest: tokenizer},
 			}
 
 			_, err := convertFromSafetensors(files, nil, false, func(resp api.ProgressResponse) {})

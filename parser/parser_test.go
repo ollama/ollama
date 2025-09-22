@@ -2,27 +2,18 @@ package parser
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/user"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/unicode"
-
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -699,217 +690,6 @@ func TestParseMultiByte(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, expect, actual.Commands)
-		})
-	}
-}
-
-func TestCreateRequest(t *testing.T) {
-	cases := []struct {
-		input    string
-		expected *api.CreateRequest
-	}{
-		{
-			`FROM test`,
-			&api.CreateRequest{From: "test"},
-		},
-		{
-			`FROM test
-TEMPLATE some template
-`,
-			&api.CreateRequest{
-				From:     "test",
-				Template: "some template",
-			},
-		},
-		{
-			`FROM test
-LICENSE single license
-PARAMETER temperature 0.5
-MESSAGE user Hello
-`,
-			&api.CreateRequest{
-				From:       "test",
-				License:    []string{"single license"},
-				Parameters: map[string]any{"temperature": float32(0.5)},
-				Messages: []api.Message{
-					{Role: "user", Content: "Hello"},
-				},
-			},
-		},
-		{
-			`FROM test
-PARAMETER temperature 0.5
-PARAMETER top_k 1
-SYSTEM You are a bot.
-LICENSE license1
-LICENSE license2
-MESSAGE user Hello there!
-MESSAGE assistant Hi! How are you?
-`,
-			&api.CreateRequest{
-				From:       "test",
-				License:    []string{"license1", "license2"},
-				System:     "You are a bot.",
-				Parameters: map[string]any{"temperature": float32(0.5), "top_k": int64(1)},
-				Messages: []api.Message{
-					{Role: "user", Content: "Hello there!"},
-					{Role: "assistant", Content: "Hi! How are you?"},
-				},
-			},
-		},
-	}
-
-	for _, c := range cases {
-		s, err := unicode.UTF8.NewEncoder().String(c.input)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		p, err := ParseFile(strings.NewReader(s))
-		if err != nil {
-			t.Error(err)
-		}
-
-		actual, err := p.CreateRequest("")
-		if err != nil {
-			t.Error(err)
-		}
-
-		if diff := cmp.Diff(actual, c.expected); diff != "" {
-			t.Errorf("mismatch (-got +want):\n%s", diff)
-		}
-	}
-}
-
-func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
-	t.Helper()
-
-	h := sha256.New()
-	n, err := io.Copy(h, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
-}
-
-func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
-	t.Helper()
-
-	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	if err := ggml.WriteGGUF(f, kv, ti); err != nil {
-		t.Fatal(err)
-	}
-	// Calculate sha256 of file
-	if _, err := f.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	digest, _ := getSHA256Digest(t, f)
-
-	return f.Name(), digest
-}
-
-func TestCreateRequestFiles(t *testing.T) {
-	n1, d1 := createBinFile(t, nil, nil)
-	n2, d2 := createBinFile(t, map[string]any{"foo": "bar"}, nil)
-
-	cases := []struct {
-		input    string
-		expected *api.CreateRequest
-	}{
-		{
-			fmt.Sprintf("FROM %s", n1),
-			&api.CreateRequest{Files: map[string]string{n1: d1}},
-		},
-		{
-			fmt.Sprintf("FROM %s\nFROM %s", n1, n2),
-			&api.CreateRequest{Files: map[string]string{n1: d1, n2: d2}},
-		},
-	}
-
-	for _, c := range cases {
-		s, err := unicode.UTF8.NewEncoder().String(c.input)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		p, err := ParseFile(strings.NewReader(s))
-		if err != nil {
-			t.Error(err)
-		}
-
-		actual, err := p.CreateRequest("")
-		if err != nil {
-			t.Error(err)
-		}
-
-		if diff := cmp.Diff(actual, c.expected); diff != "" {
-			t.Errorf("mismatch (-got +want):\n%s", diff)
-		}
-	}
-}
-
-func TestExpandPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	u, err := user.Current()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	volume := ""
-	if runtime.GOOS == "windows" {
-		volume = "D:"
-	}
-
-	cases := []struct {
-		input,
-		dir,
-		want string
-		err error
-	}{
-		{"~", "", home, nil},
-		{"~/path/to/file", "", filepath.Join(home, filepath.ToSlash("path/to/file")), nil},
-		{"~" + u.Username + "/path/to/file", "", filepath.Join(u.HomeDir, filepath.ToSlash("path/to/file")), nil},
-		{"~nonexistentuser/path/to/file", "", "", user.UnknownUserError("nonexistentuser")},
-		{"relative/path/to/file", "", filepath.Join(cwd, filepath.ToSlash("relative/path/to/file")), nil},
-		{volume + "/absolute/path/to/file", "", filepath.ToSlash(volume + "/absolute/path/to/file"), nil},
-		{volume + "/absolute/path/to/file", filepath.ToSlash("another/path"), filepath.ToSlash(volume + "/absolute/path/to/file"), nil},
-		{".", cwd, cwd, nil},
-		{".", "", cwd, nil},
-		{"", cwd, cwd, nil},
-		{"", "", cwd, nil},
-		{"file", "path/to", filepath.Join(cwd, filepath.ToSlash("path/to/file")), nil},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.input, func(t *testing.T) {
-			got, err := expandPath(tt.input, tt.dir)
-			// On Windows, user.Lookup does not map syscall errors to user.UnknownUserError
-			// so we special case the test to just check for an error.
-			// See https://cs.opensource.google/go/go/+/refs/tags/go1.25.1:src/os/user/lookup_windows.go;l=455
-			if runtime.GOOS != "windows" && !errors.Is(err, tt.err) {
-				t.Fatalf("expandPath(%q) error = %v, wantErr %v", tt.input, err, tt.err)
-			} else if tt.err != nil && err == nil {
-				t.Fatal("test case expected to fail on windows")
-			}
-
-			if got != tt.want {
-				t.Errorf("expandPath(%q) = %v, want %v", tt.input, got, tt.want)
-			}
 		})
 	}
 }

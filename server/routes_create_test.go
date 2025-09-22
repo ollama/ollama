@@ -119,7 +119,7 @@ func TestCreateFromBin(t *testing.T) {
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test",
-		Files:  map[string]string{"test.gguf": digest},
+		Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 		Stream: &stream,
 	})
 
@@ -149,7 +149,7 @@ func TestCreateFromModel(t *testing.T) {
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test",
-		Files:  map[string]string{"test.gguf": digest},
+		Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 		Stream: &stream,
 	})
 
@@ -192,7 +192,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:     "test",
-		Files:    map[string]string{"test.gguf": digest},
+		Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 		Template: "{{ .Prompt }}",
 		Stream:   &stream,
 	})
@@ -213,7 +213,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:     "test",
-		Files:    map[string]string{"test.gguf": digest},
+		Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 		Template: "{{ .System }} {{ .Prompt }}",
 		Stream:   &stream,
 	})
@@ -243,7 +243,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test",
-		Files:  map[string]string{"test.gguf": digest},
+		Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 		System: "Say hi!",
 		Stream: &stream,
 	})
@@ -264,7 +264,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test",
-		Files:  map[string]string{"test.gguf": digest},
+		Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 		System: "",
 		Stream: &stream,
 	})
@@ -293,7 +293,7 @@ func TestCreateMergeParameters(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "test",
-		Files: map[string]string{"test.gguf": digest},
+		Files: []api.File{{Name: "test.gguf", Digest: digest}},
 		Parameters: map[string]any{
 			"temperature": 1,
 			"top_k":       10,
@@ -428,7 +428,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "test",
-		Files: map[string]string{"test.gguf": digest},
+		Files: []api.File{{Name: "test.gguf", Digest: digest}},
 		Messages: []api.Message{
 			{
 				Role:    "assistant",
@@ -535,7 +535,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:     "test",
-		Files:    map[string]string{"test.gguf": digest},
+		Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 		Template: "{{ .System }} {{ .Prompt }}",
 		System:   "Say bye!",
 		Stream:   &stream,
@@ -578,7 +578,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:     "test",
-			Files:    map[string]string{"test.gguf": digest},
+			Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 			Template: "{{ .Prompt",
 			Stream:   &stream,
 		})
@@ -592,7 +592,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:     "test",
-			Files:    map[string]string{"test.gguf": digest},
+			Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 			Template: "{{ if .Prompt }}",
 			Stream:   &stream,
 		})
@@ -606,7 +606,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:     "test",
-			Files:    map[string]string{"test.gguf": digest},
+			Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 			Template: "{{ Prompt }}",
 			Stream:   &stream,
 		})
@@ -699,7 +699,7 @@ func TestCreateLicenses(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:    "test",
-		Files:   map[string]string{"test.gguf": digest},
+		Files:   []api.File{{Name: "test.gguf", Digest: digest}},
 		License: []string{"MIT", "Apache-2.0"},
 		Stream:  &stream,
 	})
@@ -751,7 +751,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 		}, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:   "test",
-			Files:  map[string]string{"test.gguf": digest},
+			Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 			Stream: &stream,
 		})
 
@@ -771,7 +771,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:   "test",
-			Files:  map[string]string{"test.gguf": digest},
+			Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 			Stream: &stream,
 		})
 
@@ -789,9 +789,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 func TestDetectModelTypeFromFiles(t *testing.T) {
 	t.Run("gguf file", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
-		files := map[string]string{
-			"model.gguf": digest,
-		}
+		files := []api.File{{Name: "model.gguf", Digest: digest}}
 
 		modelType := detectModelTypeFromFiles(files)
 		if modelType != "gguf" {
@@ -801,8 +799,8 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 
 	t.Run("gguf file w/o extension", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
-		files := map[string]string{
-			fmt.Sprintf("%x", digest): digest,
+		files := []api.File{
+			{Name: fmt.Sprintf("%x", digest), Digest: digest},
 		}
 
 		modelType := detectModelTypeFromFiles(files)
@@ -812,8 +810,8 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 	})
 
 	t.Run("safetensors file", func(t *testing.T) {
-		files := map[string]string{
-			"model.safetensors": "sha256:abc123",
+		files := []api.File{
+			{Name: "model.safetensors", Digest: "sha256:abc123"},
 		}
 
 		modelType := detectModelTypeFromFiles(files)
@@ -842,8 +840,8 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		files := map[string]string{
-			"model.bin": digest,
+		files := []api.File{
+			{Name: "model.bin", Digest: digest},
 		}
 
 		modelType := detectModelTypeFromFiles(files)
@@ -872,8 +870,8 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		files := map[string]string{
-			"noext": digest,
+		files := []api.File{
+			{Name: "noext", Digest: digest},
 		}
 
 		modelType := detectModelTypeFromFiles(files)

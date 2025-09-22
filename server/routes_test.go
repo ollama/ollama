@@ -111,7 +111,7 @@ func TestRoutes(t *testing.T) {
 
 		r := api.CreateRequest{
 			Name:  name,
-			Files: map[string]string{"test.gguf": digest},
+			Files: []api.File{{Name: "test.gguf", Digest: digest}},
 			Parameters: map[string]any{
 				"seed":  42,
 				"top_p": 0.9,
@@ -343,7 +343,7 @@ func TestRoutes(t *testing.T) {
 				stream := false
 				createReq := api.CreateRequest{
 					Name:   "t-bone",
-					Files:  map[string]string{"test.gguf": digest},
+					Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 					Stream: &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
@@ -645,7 +645,7 @@ func TestManifestCaseSensitivity(t *testing.T) {
 		// Start with the stable name, and later use a case-shuffled
 		// version.
 		Name:   wantStableName,
-		Files:  map[string]string{"test.gguf": digest},
+		Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 		Stream: &stream,
 	}))
 	checkManifestList()
@@ -653,7 +653,7 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	t.Logf("creating (again)")
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   name(),
-		Files:  map[string]string{"test.gguf": digest},
+		Files:  []api.File{{Name: "test.gguf", Digest: digest}},
 		Stream: &stream,
 	}))
 	checkManifestList()
@@ -696,7 +696,7 @@ func TestShow(t *testing.T) {
 
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "show-model",
-		Files: map[string]string{"model.gguf": digest1, "projector.gguf": digest2},
+		Files: []api.File{{Name: "model.gguf", Digest: digest1}, {Name: "projector.gguf", Digest: digest2}},
 	})
 
 	w := createRequest(t, s.ShowHandler, api.ShowRequest{

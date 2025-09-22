@@ -34,7 +34,7 @@ func TestList(t *testing.T) {
 
 		createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:  n,
-			Files: map[string]string{"test.gguf": digest},
+			Files: []api.File{{Name: "test.gguf", Digest: digest}},
 		})
 	}
 

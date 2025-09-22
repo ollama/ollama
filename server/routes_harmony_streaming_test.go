@@ -294,7 +294,7 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 			streamFalse := false
 			w := createRequest(t, s.CreateHandler, api.CreateRequest{
 				Model:    "harmony-test-streaming",
-				Files:    map[string]string{"test.gguf": digest},
+				Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 				Template: `<|start|><|end|>{{ with .Tools }}{{ end }}{{ .Prompt }}`,
 				Stream:   &streamFalse,
 			})
@@ -444,7 +444,7 @@ func TestChatHarmonyParserStreamingSimple(t *testing.T) {
 	streamFalse := false
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:    "gpt-oss",
-		Files:    map[string]string{"test.gguf": digest},
+		Files:    []api.File{{Name: "test.gguf", Digest: digest}},
 		Template: `<|start|><|end|>{{ .Tools }}{{ .Prompt }}`,
 		Stream:   &streamFalse,
 	})
@@ -628,7 +628,7 @@ func TestChatHarmonyParserStreaming(t *testing.T) {
 			stream := false
 			w := createRequest(t, s.CreateHandler, api.CreateRequest{
 				Model:    "harmony-test",
-				Files:    map[string]string{"file.gguf": digest},
+				Files:    []api.File{{Name: "file.gguf", Digest: digest}},
 				Template: `<|start|><|end|>{{ with .Tools }}{{ end }}{{ .Prompt }}`,
 				Stream:   &stream,
 			})

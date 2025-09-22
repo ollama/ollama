@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -200,14 +201,23 @@ func createRequest(modelfile *parser.Modelfile, dir string) (*api.CreateRequest,
 				return nil, err
 			}
 
-			if stat, err := os.Stat(path); err != nil {
+			fsys := os.DirFS(path)
+			seq := filesSeq(fsys)
+			if fi, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+				m["from"] = cmd.Args
+				break
+			} else if err != nil {
 				return nil, err
-			} else if !stat.IsDir() {
-				return nil, nil
+			} else if !fi.IsDir() {
+				base := filepath.Base(path)
+				path = filepath.Dir(path)
+				seq = func(yield func(string) bool) {
+					yield(base)
+				}
 			}
 
 			var mu sync.Mutex
-			for file := range filesSeq(os.DirFS(path)) {
+			for file := range seq {
 				g.Go(func() error {
 					f, err := os.Open(filepath.Join(path, file))
 					if err != nil {
@@ -281,15 +291,16 @@ func createRequest(modelfile *parser.Modelfile, dir string) (*api.CreateRequest,
 	}
 
 	return &api.CreateRequest{
+		From:       get[string](m, "from"),
 		Files:      files,
 		Adapters:   adapters,
-		Parameters: parameters,
-		Template:   get[string](m, "template"),
-		System:     get[string](m, "system"),
 		License:    get[[]string](m, "license"),
 		Messages:   get[[]api.Message](m, "message"),
-		Renderer:   get[string](m, "renderer"),
+		Parameters: parameters,
 		Parser:     get[string](m, "parser"),
+		Renderer:   get[string](m, "renderer"),
+		System:     get[string](m, "system"),
+		Template:   get[string](m, "template"),
 	}, nil
 }
 
