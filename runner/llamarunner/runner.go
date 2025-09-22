@@ -180,9 +180,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 			return nil, err
 		}
 
-		slog.Debug("", "prompt", prompt)
-		slog.Debug("tokens", "tokens", tokens)
-
 		for _, t := range tokens {
 			inputs = append(inputs, input{token: t})
 		}

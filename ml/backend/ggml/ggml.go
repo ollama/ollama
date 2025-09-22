@@ -1478,18 +1478,6 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 		option(&opts)
 	}
 
-	fmt.Printf("DEBUG: HELLO **************** \n")
-
-	fmt.Printf("ROPE opts: type=%d OCtxLen=%d Extra=%g Attn=%g BetaFast=%g BetaSlow=%g factorsNil=%t\n",
-		opts.Type,
-		opts.OriginalContextLength,
-		opts.ExtrapolationFactor,
-		opts.AttentionFactor,
-		opts.BetaFast,
-		opts.BetaSlow,
-		opts.Factors == nil,
-	)
-
 	dequant := t.t
 	if C.ggml_is_quantized(t.t._type) {
 		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
