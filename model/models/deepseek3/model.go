@@ -206,18 +206,30 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	kPass = attn.KVB.Forward(ctx, kPass)
 	fmt.Printf("DEBUG: kPass after linear KVB: %v\n", kPass.Shape())
 
-	kPass = kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
+	// kPass = kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
+	kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
+
 
 	fmt.Printf("DEBUG: kPass after reshape: %v\n", kPass.Shape())
 
-	kPass = kPass.View(ctx, 0, opts.kqNopeHeadDim, kPass.Stride(1), kPass.Dim(1), kPass.Stride(2), kPass.Dim(2))
+	// kPass = kPass.View(ctx, 0, opts.kqNopeHeadDim, kPass.Stride(1), kPass.Dim(1), kPass.Stride(2), kPass.Dim(2))
+	// kPass = kv.View(ctx, 0, opts.kqNopeHeadDim, kPass.Stride(1), kPass.Dim(1), kPass.Stride(2), kPass.Dim(2))
+
+	kPass = kv.View(ctx, 0, opts.kqNopeHeadDim, kv.Stride(1), kv.Dim(1), kv.Stride(2), kv.Dim(2))
 
 	fmt.Printf("DEBUG: kPass after view: %v\n", kPass.Shape())
 
-	value := kPass.View(ctx, opts.kqNopeHeadDim*kPass.Stride(0),
-		opts.vHeadDim, kPass.Stride(1),
-		kPass.Dim(1), kPass.Stride(2),
-		kPass.Dim(2)).Contiguous(ctx)
+	// value := kPass.View(ctx, opts.kqNopeHeadDim*kPass.Stride(0),
+	// 	opts.vHeadDim, kPass.Stride(1),
+	// 	kPass.Dim(1), kPass.Stride(2),
+	// 	kPass.Dim(2)).Contiguous(ctx)
+
+	value := kv.View(ctx, opts.kqNopeHeadDim*kv.Stride(0),
+		opts.vHeadDim, kv.Stride(1),
+		kv.Dim(1), kv.Stride(2),
+		kv.Dim(2)).Contiguous(ctx)
+
+	ml.SetName(value, "value_before_rope (never does rope)")
 
 	fmt.Printf("DEBUG: value: %v\n", value.Shape())
 
@@ -255,8 +267,14 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	// so right before it, its correct
 
 	// this is all new
+	ml.SetName(qRot, "qRot_before_rope")
+
+	fmt.Printf("DEBUG: qRot before rope shape: %v\n", qRot.Shape())
+	fmt.Printf("DEBUG: positions: %v\n", positions.Shape())
+
 	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 
+	ml.SetName(qRot, "qRot_after_rope")
 	// but right after it, its wrong
 
 	// fmt.Printf("DEBUG: qRot after rope (after change): %v\n", qRot.Shape())
@@ -266,21 +284,44 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	// qRot = qRot.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	// return qRot
 
+	ml.SetName(kRot, "kRot_before_rope")
+
+
+
 	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+
+	fmt.Printf("DEBUG: kRot after rope shape: %v\n", kRot.Shape())
+
+	ml.SetName(kRot, "kRot_after_rope")
 	// qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, opts.attnFactor, opts.RoPEOptions()...)
 	// kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, opts.attnFactor, opts.RoPEOptions()...)
 
 	kRot = kRot.Repeat(ctx, 1, qPass.Dim(1))
 
+	fmt.Printf("DEBUG: kRot repeat: %v\n", kRot.Shape())
+
 	query = qPass.Concat(ctx, qRot, 0)
+	ml.SetName(query, "query_concat")
 	key := kPass.Concat(ctx, kRot, 0)
+	ml.SetName(key, "key_concat")
+
+	// so in llamacpp, they do
+	// ggml_tensor * Qcur = ggml_concat(ctx0, q_pe, q_nope, 0);
+	// cb(Qcur, "Qcur", il);
+
+	// ggml_tensor * Kcur = ggml_concat(ctx0, ggml_repeat(ctx0, k_pe, q_pe), k_nope, 0);
+	// cb(Kcur, "Kcur", il);
+
 
 	// attention := nn.Attention(ctx, query, key, value, 1, nil)
 	// attention := nn.Attention(ctx, query, key, value, scaling, nil)
 	// attention := nn.Attention(ctx, query, key, value, opts.kqScale, nil)
 	attention := nn.Attention(ctx, query, key, value, opts.kqScale, cache)
+	ml.SetName(attention, "attention")
 
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
+	ml.SetName(attention, "attention_reshape")
+
 	return attn.Output.Forward(ctx, attention) //.Add(ctx, residual) // here i add residual
 }
 
@@ -387,7 +428,7 @@ func (t *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outp
 
 	residual := hiddenStates
 	fmt.Printf("DEBUG: residuals: %v\n", residual.Shape())
-	// hiddenStates = t.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
+	hiddenStates = t.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
 	hiddenStates = t.Attention.Forward(ctx, hiddenStates, positions, cache, opts)
 	fmt.Printf("DEBUG: hiddenStates after attention: %v\n", hiddenStates.Shape())
 
@@ -401,7 +442,13 @@ func (t *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outp
 
 	hiddenStates = t.MLPNorm.Forward(ctx, hiddenStates, opts.eps)
 	hiddenStates = t.MLP.Forward(ctx, hiddenStates, opts)
-	return hiddenStates.Add(ctx, residual)
+	hiddenStates = hiddenStates.Add(ctx, residual)
+	// ml.SetName("l_out", "hiddenStates")
+
+	// temp := hiddenStates.Duplicate(ctx)
+	// ml.SetName(temp, "l_out")
+
+	return hiddenStates// hiddenStates.Add(ctx, residual)
 }
 
 type Transformer struct {
@@ -419,7 +466,7 @@ type Transformer struct {
 
 func New(c fs.Config) (model.Model, error) {
 	// fmt.Printf("DEBUG: the total number of layers: %v", c.Uint("block_count"))
-	// transformerBlocks := make([]TransformerBlock, 1)
+	// transformerBlocks := make([]TransformerBlock, 3)
 	fmt.Printf("DEBUG: the total number of layers: %v", c.Uint("block_count"))
 	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
 	// transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
