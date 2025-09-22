@@ -2,7 +2,6 @@ package openai
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -183,10 +182,7 @@ func TestChatMiddleware(t *testing.T) {
 					{
 						Role: "user",
 						Images: []api.ImageData{
-							func() []byte {
-								img, _ := base64.StdEncoding.DecodeString(image)
-								return img
-							}(),
+							api.ImageData(image),
 						},
 					},
 				},

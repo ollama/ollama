@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -66,7 +67,7 @@ func TestChatPrompt(t *testing.T) {
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
-				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("something")}},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("something")))}},
 			},
 			expect: expect{
 				prompt: "[img-0]A test. And a thumping good one at that, I'd wager. ",
@@ -80,9 +81,9 @@ func TestChatPrompt(t *testing.T) {
 			model: visionModel,
 			limit: 64,
 			msgs: []api.Message{
-				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{"something"}},
 				{Role: "assistant", Content: "I-I'm a what?"},
-				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("somethingelse")))}},
 			},
 			expect: expect{
 				prompt: "[img-0]A test. And a thumping good one at that, I'd wager. ",
@@ -96,9 +97,9 @@ func TestChatPrompt(t *testing.T) {
 			model: visionModel,
 			limit: 2048,
 			msgs: []api.Message{
-				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("something")))}},
 				{Role: "assistant", Content: "I-I'm a what?"},
-				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("somethingelse")))}},
 			},
 			expect: expect{
 				prompt: "[img-0]You're a test, Harry! I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
@@ -113,9 +114,9 @@ func TestChatPrompt(t *testing.T) {
 			model: visionModel,
 			limit: 2048,
 			msgs: []api.Message{
-				{Role: "user", Content: "You're a test, Harry! [img]", Images: []api.ImageData{[]byte("something")}},
+				{Role: "user", Content: "You're a test, Harry! [img]", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("something")))}},
 				{Role: "assistant", Content: "I-I'm a what?"},
-				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("somethingelse")))}},
 			},
 			expect: expect{
 				prompt: "You're a test, Harry! [img-0] I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
@@ -131,8 +132,8 @@ func TestChatPrompt(t *testing.T) {
 			limit: 2048,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
-				{Role: "user", Images: []api.ImageData{[]byte("something")}},
-				{Role: "user", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "user", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("something")))}},
+				{Role: "user", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("somethingelse")))}},
 				{Role: "assistant", Content: "I-I'm a what?"},
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
@@ -150,8 +151,8 @@ func TestChatPrompt(t *testing.T) {
 			limit: 1024,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
-				{Role: "user", Images: []api.ImageData{[]byte("something")}},
-				{Role: "user", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "user", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("something")))}},
+				{Role: "user", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("somethingelse")))}},
 				{Role: "assistant", Content: "I-I'm a what?"},
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
@@ -195,7 +196,7 @@ func TestChatPrompt(t *testing.T) {
 			model: visionModel,
 			limit: 2048,
 			msgs: []api.Message{
-				{Role: "user", Content: "Compare these two pictures of hotdogs", Images: []api.ImageData{[]byte("one hotdog"), []byte("two hotdogs")}},
+				{Role: "user", Content: "Compare these two pictures of hotdogs", Images: []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("one hotdog"))), api.ImageData(base64.StdEncoding.EncodeToString([]byte("two hotdogs")))}},
 			},
 			expect: expect{
 				prompt: "[img-0][img-1]Compare these two pictures of hotdogs ",

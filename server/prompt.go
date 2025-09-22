@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -78,9 +79,13 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
+			dataBs, err := base64.StdEncoding.DecodeString(string(i))
+			if err != nil {
+				return "", nil, err
+			}
 			imgData := llm.ImageData{
 				ID:   len(images),
-				Data: i,
+				Data: dataBs,
 			}
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)

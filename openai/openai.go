@@ -3,7 +3,6 @@ package openai
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -462,12 +461,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						return nil, errors.New("invalid image input")
 					}
 
-					img, err := base64.StdEncoding.DecodeString(url)
-					if err != nil {
-						return nil, errors.New("invalid message format")
-					}
-
-					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{api.ImageData(url)}})
 				default:
 					return nil, errors.New("invalid message format")
 				}

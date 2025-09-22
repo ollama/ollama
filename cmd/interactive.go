@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"cmp"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -583,7 +584,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, data)
+		imgs = append(imgs, api.ImageData(base64.StdEncoding.EncodeToString(data)))
 	}
 	return strings.TrimSpace(input), imgs, nil
 }

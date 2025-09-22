@@ -51,8 +51,8 @@ func (e AuthorizationError) Error() string {
 	return "something went wrong, please see the ollama server logs for details"
 }
 
-// ImageData represents the raw binary data of an image file.
-type ImageData []byte
+// ImageData represents the base64 for raw binary data.
+type ImageData string
 
 // GenerateRequest describes a request sent by [Client.Generate]. While you
 // have to specify the Model and Prompt fields, all the other fields have

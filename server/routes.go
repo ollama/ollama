@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -347,7 +348,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+		dataBs, err := base64.StdEncoding.DecodeString(string(req.Images[i]))
+		if err != nil {
+			return
+		}
+		images[i] = llm.ImageData{ID: i, Data: dataBs}
 	}
 
 	prompt := req.Prompt

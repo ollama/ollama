@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -142,7 +143,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 			request: api.GenerateRequest{
 				Model:           "test-model",
 				Prompt:          "Describe this image",
-				Images:          []api.ImageData{[]byte("fake-image-data")},
+				Images:          []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("fake-image-data")))},
 				DebugRenderOnly: true,
 			},
 			expectDebug:     true,
@@ -335,7 +336,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 					{
 						Role:    "user",
 						Content: "What's in this image?",
-						Images:  []api.ImageData{[]byte("fake-image-data")},
+						Images:  []api.ImageData{api.ImageData(base64.StdEncoding.EncodeToString([]byte("fake-image-data")))},
 					},
 				},
 				DebugRenderOnly: true,
