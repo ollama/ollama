@@ -300,9 +300,11 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 
 	fmt.Printf("DEBUG: kRot repeat: %v\n", kRot.Shape())
 
-	query = qPass.Concat(ctx, qRot, 0)
+	// query = qPass.Concat(ctx, qRot, 0)
+	query = qRot.Concat(ctx, qPass, 0)
 	ml.SetName(query, "query_concat")
-	key := kPass.Concat(ctx, kRot, 0)
+	// key := kPass.Concat(ctx, kRot, 0)
+	key := kRot.Concat(ctx, kPass, 0)
 	ml.SetName(key, "key_concat")
 
 	// so in llamacpp, they do
