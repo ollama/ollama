@@ -68,14 +68,13 @@ func TestModelsGenerate(t *testing.T) {
 			// TODO - fiddle with context size
 			req := api.GenerateRequest{
 				Model:  model,
-				Prompt: "why is the sky blue?",
+				Prompt: blueSkyPrompt,
 				Options: map[string]interface{}{
 					"temperature": 0,
 					"seed":        123,
 				},
 			}
-			anyResp := []string{"rayleigh", "scattering", "atmosphere", "nitrogen", "oxygen"}
-			DoGenerate(ctx, t, client, req, anyResp, 120*time.Second, 30*time.Second)
+			DoGenerate(ctx, t, client, req, blueSkyExpected, 120*time.Second, 30*time.Second)
 		})
 	}
 }
