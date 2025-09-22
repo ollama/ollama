@@ -203,7 +203,7 @@ func TestUseMmapFormatParams(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			resp, err := FormatParams(test.req)
+			resp, err := FormatParameters(test.req)
 			require.Equal(t, test.err, err)
 			respVal, ok := resp["use_mmap"]
 			if test.exp != nil {

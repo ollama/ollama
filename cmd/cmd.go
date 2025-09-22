@@ -33,20 +33,17 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 )
 
@@ -87,179 +84,6 @@ func getModelfileName(cmd *cobra.Command) (string, error) {
 	}
 
 	return absName, nil
-}
-
-func CreateHandler(cmd *cobra.Command, args []string) error {
-	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
-
-	var reader io.Reader
-
-	filename, err := getModelfileName(cmd)
-	if os.IsNotExist(err) {
-		if filename == "" {
-			reader = strings.NewReader("FROM .\n")
-		} else {
-			return errModelfileNotFound
-		}
-	} else if err != nil {
-		return err
-	} else {
-		f, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
-
-		reader = f
-		defer f.Close()
-	}
-
-	modelfile, err := parser.ParseFile(reader)
-	if err != nil {
-		return err
-	}
-
-	status := "gathering model components"
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
-
-	req, err := modelfile.CreateRequest(filepath.Dir(filename))
-	if err != nil {
-		return err
-	}
-	spinner.Stop()
-
-	req.Model = args[0]
-	quantize, _ := cmd.Flags().GetString("quantize")
-	if quantize != "" {
-		req.Quantize = quantize
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	var g errgroup.Group
-	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
-
-	files := syncmap.NewSyncMap[string, string]()
-	for f, digest := range req.Files {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
-				return err
-			}
-
-			// TODO: this is incorrect since the file might be in a subdirectory
-			//       instead this should take the path relative to the model directory
-			//       but the current implementation does not allow this
-			files.Store(filepath.Base(f), digest)
-			return nil
-		})
-	}
-
-	adapters := syncmap.NewSyncMap[string, string]()
-	for f, digest := range req.Adapters {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
-				return err
-			}
-
-			// TODO: same here
-			adapters.Store(filepath.Base(f), digest)
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		return err
-	}
-
-	req.Files = files.Items()
-	req.Adapters = adapters.Items()
-
-	bars := make(map[string]*progress.Bar)
-	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != "" {
-			bar, ok := bars[resp.Digest]
-			if !ok {
-				msg := resp.Status
-				if msg == "" {
-					msg = fmt.Sprintf("pulling %s...", resp.Digest[7:19])
-				}
-				bar = progress.NewBar(msg, resp.Total, resp.Completed)
-				bars[resp.Digest] = bar
-				p.Add(resp.Digest, bar)
-			}
-
-			bar.Set(resp.Completed)
-		} else if status != resp.Status {
-			spinner.Stop()
-
-			status = resp.Status
-			spinner = progress.NewSpinner(status)
-			p.Add(status, spinner)
-		}
-
-		return nil
-	}
-
-	if err := client.Create(cmd.Context(), req, fn); err != nil {
-		if strings.Contains(err.Error(), "path or Modelfile are required") {
-			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
-		}
-		return err
-	}
-
-	return nil
-}
-
-func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
-	realPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
-	}
-
-	bin, err := os.Open(realPath)
-	if err != nil {
-		return "", err
-	}
-	defer bin.Close()
-
-	// Get file info to retrieve the size
-	fileInfo, err := bin.Stat()
-	if err != nil {
-		return "", err
-	}
-	fileSize := fileInfo.Size()
-
-	var pw progressWriter
-	status := fmt.Sprintf("copying file %s 0%%", digest)
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
-	defer spinner.Stop()
-
-	done := make(chan struct{})
-	defer close(done)
-
-	go func() {
-		ticker := time.NewTicker(60 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
-			case <-done:
-				spinner.SetMessage(fmt.Sprintf("copying file %s 100%%", digest))
-				return
-			}
-		}
-	}()
-
-	if err := client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
-		return "", err
-	}
-	return digest, nil
 }
 
 type progressWriter struct {

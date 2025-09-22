@@ -80,7 +80,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:    "test-model",
-		Files:    map[string]string{"file.gguf": digest},
+		Files:    []api.File{{Name: "file.gguf", Digest: digest}},
 		Template: "{{ .Prompt }}",
 		Stream:   &stream,
 	})
@@ -273,7 +273,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:    "test-model",
-		Files:    map[string]string{"file.gguf": digest},
+		Files:    []api.File{{Name: "file.gguf", Digest: digest}},
 		Template: "{{ if .Tools }}{{ .Tools }}{{ end }}{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}",
 		Stream:   &stream,
 	})
