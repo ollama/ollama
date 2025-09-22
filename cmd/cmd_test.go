@@ -525,6 +525,8 @@ func TestPushHandler(t *testing.T) {
 			defer mockServer.Close()
 
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
+			tmpDir := t.TempDir()
+			t.Setenv("OLLAMA_BASEDIR", tmpDir)
 			initializeKeypair()
 
 			cmd := &cobra.Command{}
