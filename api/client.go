@@ -214,7 +214,8 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
-			Error string `json:"error,omitempty"`
+			Error     string `json:"error,omitempty"`
+			SigninURL string `json:"signin_url,omitempty"`
 		}
 
 		bts := scanner.Bytes()
@@ -223,14 +224,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 
 		if response.StatusCode == http.StatusUnauthorized {
-			pubKey, pkErr := auth.GetPublicKey()
-			if pkErr != nil {
-				return pkErr
-			}
 			return AuthorizationError{
 				StatusCode: response.StatusCode,
 				Status:     response.Status,
-				PublicKey:  pubKey,
+				SigninURL:  errorResponse.SigninURL,
 			}
 		} else if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{

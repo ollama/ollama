@@ -94,28 +94,6 @@ func Models() string {
 	return filepath.Join(home, ".ollama", "models")
 }
 
-func defaultBaseDir() string {
-	if runtime.GOOS == "linux" {
-		return "/usr/share/ollama/.ollama"
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
-
-	return filepath.Join(home, ".ollama", "models")
-}
-
-// BaseDir returns the path of the path of the base ollama directory. Default is $HOME/.ollama in macOS/Windows, /usr/share/ollama/.ollama
-// on linux
-func BaseDir() string {
-	if s := Var("OLLAMA_BASEDIR"); s != "" {
-		return s
-	}
-	return defaultBaseDir()
-}
-
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
 // Negative values are treated as infinite. Zero is treated as no keep alive.
 // Default is 5 minutes.
@@ -283,10 +261,8 @@ type EnvVar struct {
 }
 
 func AsMap() map[string]EnvVar {
-	baseDir := fmt.Sprintf("The base directory for Ollama (default \"%s\")", defaultBaseDir())
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_BASEDIR":           {"OLLAMA_BASEDIR", BaseDir(), baseDir},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},

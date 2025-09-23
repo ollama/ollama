@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -46,6 +48,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+const signinURL = "https://ollama.com/connect?name=%s&key=%s"
 
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
@@ -147,6 +151,26 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	}
 
 	return runner.llama, model, &opts, nil
+}
+
+type signinDetails struct {
+	PublicKey string
+	SigninURL string
+}
+
+func newSigninDetails() (*signinDetails, error) {
+	pubKey, err := auth.GetPublicKey()
+	if err != nil {
+		return nil, err
+	}
+
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
+	h, _ := os.Hostname()
+	signinURL := fmt.Sprintf(signinURL, url.PathEscape(h), encKey)
+	return &signinDetails{
+		PublicKey: encKey,
+		SigninURL: signinURL,
+	}, nil
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
@@ -251,7 +275,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "public_key": authError.PublicKey})
+				sd, aerr := newSigninDetails()
+				if aerr != nil {
+					slog.Error(aerr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+					return
+				}
+
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sd.SigninURL})
 				return
 			}
 			var apiError api.StatusError
@@ -1620,6 +1651,23 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	if err != nil {
 		slog.Error(err.Error())
 	}
+
+	sd, err := newSigninDetails()
+	if err != nil {
+		slog.Error(err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting key pair for server"})
+		return
+	}
+
+	if sd.PublicKey != "" {
+		user.PublicKey = sd.PublicKey
+	}
+
+	// user isn't signed in
+	if user != nil && user.Name == "" {
+		user.SigninURL = sd.SigninURL
+	}
+
 	c.JSON(http.StatusOK, user)
 }
 
@@ -1799,7 +1847,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "public_key": authError.PublicKey})
+				sd, aerr := newSigninDetails()
+				if aerr != nil {
+					slog.Error(aerr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+					return
+				}
+
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sd.SigninURL})
 				return
 			}
 			var apiError api.StatusError
