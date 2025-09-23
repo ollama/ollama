@@ -3,8 +3,6 @@ package deepseek3
 import (
 	"cmp"
 	"math"
-	// "fmt"
-
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -258,7 +256,6 @@ type Transformer struct {
 
 func New(c fs.Config) (model.Model, error) {
 	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
-	// transformerBlocks := make([]TransformerBlock, 2)
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
 	for i := range transformerBlocks {
@@ -275,16 +272,9 @@ func New(c fs.Config) (model.Model, error) {
 
 	qLoraRankVal := int(c.Uint("attention.q_lora_rank"))
 
-	// tokenizer := []string{
-	// 	"\\p{N}{1,3}",
-	// 	`[一-龥぀-ゟ゠-ヿ]+`,
-	// 	"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
-	// }
-
 	m := Transformer{
 		TransformerBlocks: transformerBlocks,
 		BytePairEncoding: model.NewBytePairEncoding(
-			// `[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_` + "`" + `{|}~][A-Za-z]+|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -297,7 +287,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
-			// insert here
+			// Split regex into multiple parts (according to DeepSeek3's regex)
 			"\\p{N}{1,3}",
 			`[一-龥぀-ゟ゠-ヿ]+`,
 			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",

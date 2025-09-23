@@ -15,13 +15,10 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
-	// "github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 	typemodel "github.com/ollama/ollama/types/model"
 )
-
-// import
 
 var args struct {
 	model,
@@ -91,8 +88,6 @@ func loadFloatsFromBinary(filename string) ([]float32, error) {
 	if err := binary.Read(f, binary.LittleEndian, floats); err != nil {
 		return nil, err
 	}
-	// fmt.Printf("DEBUG: floats: %v", floats)
-	// fmt.Printf("DEBUG: len(floats): %d", len(floats))
 	return floats, nil
 }
 
@@ -110,8 +105,6 @@ func TestForward(t *testing.T) {
 
 	attentionBlock := m.(*Transformer).TransformerBlocks[0].Attention
 	ctx := m.Backend().NewContext()
-
-	// Load hidden states from binary file
 	filePath := "/Users/graceguo/Downloads/hidden_states.bin"
 
 	hsFloats, err := loadFloatsFromBinary(filePath)
@@ -119,15 +112,9 @@ func TestForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("hs len=%d, expected=%d", len(hsFloats), 7168*4*1)
-	// [1, 4, 7168]
 	t.Logf("DEBUG: hsFloats: %v", hsFloats[:10])
 	hiddenStates := ctx.Input().FromFloatSlice(hsFloats, 7168, 4, 1)
 	t.Logf("DEBUG: hiddenStates.shape: %v", hiddenStates.Shape())
-	// t.Logf("DEBUG: hsFloats: %v", hsFloats)
-	// t.Logf("DEBUG: hiddenStates: %v", hiddenStates)
-
-	// Create position indices for sequence length 4 (not frequency data!)
-	// RoPE expects position indices like [0, 1, 2, 3] for a sequence of length 4
 	positionIndices := []int32{0, 1, 2, 3}
 	positions := ctx.Input().FromIntSlice(positionIndices, 4)
 
@@ -154,34 +141,7 @@ func TestForward(t *testing.T) {
 		yarn_log_multiplier:   0.1,
 		originalContextLength: 4096,
 	}
-
-	// cache := m.(*Transformer).Cache
-	// cache := m.(*Transformer).Cache
-
-	// cache.Init(m.Backend(), ml.DTypeF16, 1, 4096, 512)
-	// print("DEBUG: completed init\n")
-
-	// N := 128
-	// positionIndices2 := make([]int32, N)
-	// for i := 0; i < N; i++ {
-	// 	positionIndices2[i] = int32(i)
-	// }
-	// // positions2 := ctx.Input().FromIntSlice(positionIndices2, 128)
-
-	// sequences := make([]int, len(positionIndices2)) // []int{0,0,0,0}
-	// batch := input.Batch{
-	// 	Positions: positionIndices2, // []int32{0,1,2,3}
-	// 	Sequences: sequences,
-	// }
-	// if err := cache.StartForward(ctx, batch, false); err != nil {
-	// 	t.Fatal(err)
-	// }
-
-	// print("DEBUG: completed start forward\n")
-	// result := attentionBlock.Forward(ctx, hiddenStates, positions, cache, options)
 	result := attentionBlock.Forward(ctx, hiddenStates, positions, nil, options)
-	// bf 16 to f32?
-	// result = result.Cast(ctx, ml.DTypeF32)
 	result = result.Contiguous(ctx)
 	ctx.Forward(result).Compute(result)
 
@@ -205,16 +165,9 @@ func TestTopKIndicesComplex(t *testing.T) {
 	if err := m.Backend().Load(t.Context(), func(float32) {}); err != nil {
 		t.Fatal(err)
 	}
-
-	// --------------------------------------------------------------------------------------
-
-	// mlp := m.(*Transformer).TransformerBlocks[0].MLP
 	mlp := m.(*Transformer).TransformerBlocks[3].MLP
-
-	// moEBlock := m.(*Transformer).TransformerBlocks[0].MoEBlock
 	ctx := m.Backend().NewContext()
 
-	// Load hidden states from binary file
 	filePath := "/Users/graceguo/Downloads/hidden_states.bin"
 
 	hsFloats, err := loadFloatsFromBinary(filePath)
@@ -222,14 +175,13 @@ func TestTopKIndicesComplex(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("hs len=%d, expected=%d", len(hsFloats), 7168*4*1)
-	// [1, 4, 7168]
 	t.Logf("DEBUG: hsFloats: %v", hsFloats[:10])
 	hiddenStates := ctx.Input().FromFloatSlice(hsFloats, 7168, 4, 1)
 	t.Logf("DEBUG: hiddenStates.shape: %v", hiddenStates.Shape())
 
 	options := &Options{
-		numExperts:          256, // 8
-		numExpertsUsed:      8,   // 2
+		numExperts:          256,
+		numExpertsUsed:      8,
 		normTopKProb:        true,
 		routedScalingFactor: 2.5,
 	}
@@ -248,8 +200,6 @@ func TestTopKIndicesComplex(t *testing.T) {
 	}
 
 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
-
-	// Verify the result
 	t.Logf("Result shape: %v", result.Shape())
 }
 
@@ -296,8 +246,6 @@ func TestFullForward(t *testing.T) {
 		Sequences: sequences,
 		Outputs:   outputs,
 	}
-
-	// init cache for this test
 	if cache := m.Config().Cache; cache != nil {
 		cache.Init(m.Backend(), ml.DTypeF16, 1, 4096, len(tokens))
 	}
