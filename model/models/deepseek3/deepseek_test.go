@@ -37,36 +37,36 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func blob(tb testing.TB, model string) string {
-	tb.Helper()
+// func blob(tb testing.TB, model string) string {
+// 	tb.Helper()
 
-	models := envconfig.Models()
-	manifest, err := os.Open(filepath.Join(models, "manifests", typemodel.ParseName(model).Filepath()))
-	if err != nil {
-		tb.Fatal(err)
-	}
-	defer manifest.Close()
+// 	models := envconfig.Models()
+// 	manifest, err := os.Open(filepath.Join(models, "manifests", typemodel.ParseName(model).Filepath()))
+// 	if err != nil {
+// 		tb.Fatal(err)
+// 	}
+// 	defer manifest.Close()
 
-	var m struct {
-		Layers []struct {
-			MediaType string `json:"mediaType"`
-			Digest    string `json:"digest"`
-		} `json:"layers"`
-	}
+// 	var m struct {
+// 		Layers []struct {
+// 			MediaType string `json:"mediaType"`
+// 			Digest    string `json:"digest"`
+// 		} `json:"layers"`
+// 	}
 
-	if err := json.NewDecoder(manifest).Decode(&m); err != nil {
-		tb.Fatal(err)
-	}
+// 	if err := json.NewDecoder(manifest).Decode(&m); err != nil {
+// 		tb.Fatal(err)
+// 	}
 
-	for _, layer := range m.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.model" {
-			tb.Log("using model blob", layer.Digest)
-			return filepath.Join(models, "blobs", strings.ReplaceAll(layer.Digest, ":", "-"))
-		}
-	}
+// 	for _, layer := range m.Layers {
+// 		if layer.MediaType == "application/vnd.ollama.image.model" {
+// 			tb.Log("using model blob", layer.Digest)
+// 			return filepath.Join(models, "blobs", strings.ReplaceAll(layer.Digest, ":", "-"))
+// 		}
+// 	}
 
-	return ""
-}
+// 	return ""
+// }
 
 func loadFloatsFromBinary(filename string) ([]float32, error) {
 	f, err := os.Open(filename)
@@ -133,7 +133,6 @@ func TestForward(t *testing.T) {
 		numKVHeads:         128,
 		keyLength:          128,
 		valueLength:        128,
-		// originalContextLength: 128000,
 		eps:       1e-06,
 		ropeBase:  10000,
 		ropeScale: 40,
@@ -147,12 +146,12 @@ func TestForward(t *testing.T) {
 
 	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
 
-	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/hello5.bin"
-	print("DEBUG: filePath: %v\n", filePath)
-	err = os.WriteFile(filePath, result.Bytes(), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/hello5.bin"
+	// print("DEBUG: filePath: %v\n", filePath)
+	// err = os.WriteFile(filePath, result.Bytes(), 0644)
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
 
 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
 }
@@ -192,12 +191,12 @@ func TestTopKIndicesComplex(t *testing.T) {
 
 	t.Logf("shape=%v dtype=%v", result.Shape(), result.DType())
 
-	filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/post_moe.bin"
-	print("DEBUG: filePath: %v\n", filePath)
-	err = os.WriteFile(filePath, result.Bytes(), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// filePath = "/Users/graceguo/workspace/ollama/model/models/deepseek3/post_moe.bin"
+	// print("DEBUG: filePath: %v\n", filePath)
+	// err = os.WriteFile(filePath, result.Bytes(), 0644)
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
 
 	t.Logf("Forward pass completed, result shape: %v", result.Shape())
 	t.Logf("Result shape: %v", result.Shape())
