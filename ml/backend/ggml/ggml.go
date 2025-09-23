@@ -507,15 +507,12 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
-				target, ok := b.tensorLoadTargets[t.Name] // [i]
-				if !ok {
-					return nil
-				}
-				if target[i] == "" {
-					target[i] = t.Name
+				target := b.tensorLoadTargets[t.Name][i]
+				if target == "" {
+					target = t.Name
 				}
 
-				tt, ok := b.tensors[target[i]]
+				tt, ok := b.tensors[target]
 				if !ok {
 					return fmt.Errorf("unassigned tensor: %s", t.Name)
 				}
@@ -974,12 +971,6 @@ type Tensor struct {
 	b    *Backend
 	t    *C.struct_ggml_tensor
 	sync func()
-}
-
-func (t *Tensor) SetName(name string) {
-	cname := C.CString(name)
-	defer C.free(unsafe.Pointer(cname))
-	C.ggml_set_name(t.t, cname)
 }
 
 func (t *Tensor) LogValue() slog.Value {

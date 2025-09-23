@@ -1,8 +1,10 @@
-package deepseek3
+package deepseek2
+
+// uses deepseek 2 architecture but written based on deepseek 3 model
 
 import (
-	"cmp"
 	"math"
+
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -24,9 +26,9 @@ type Options struct {
 	qkRopeHeadDim,
 	kqNopeHeadDim,
 	qkHeadDim int
-	qLoraRank          *int
-	attnImplementation string
-	vHeadDim           int
+	// qLoraRank *int
+	qLoraRank int
+	vHeadDim int
 
 	hiddenSize,
 	numHeads,
@@ -38,16 +40,8 @@ type Options struct {
 	eps,
 	ropeBase,
 	ropeScale float32
-	ropeType string
 
-	mScale              float32
 	kqScale             float64
-	attnFactor          float32
-	yarn_log_multiplier float32
-}
-
-func (o Options) headDim() int {
-	return cmp.Or(o.keyLength, o.valueLength, o.hiddenSize/o.numHeads)
 }
 
 func (o Options) RoPEOptions() []func(*rope.Options) {
@@ -77,7 +71,7 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	seqLength := hiddenStates.Dim(1)
 
 	var query ml.Tensor
-	if opts.qLoraRank == nil {
+	if opts.qLoraRank == 0 { // nil {
 		query = attn.Q.Forward(ctx, hiddenStates)
 	} else {
 		query = attn.QA.Forward(ctx, hiddenStates)
@@ -100,27 +94,22 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	compressedKV := attn.KVA.Forward(ctx, hiddenStates)
 
 	kPass := compressedKV.View(ctx, 0, opts.kvLoraRank, compressedKV.Stride(1), compressedKV.Dim(1))
-
 	kRot := compressedKV.View(ctx, opts.kvLoraRank*compressedKV.Stride(0),
 		opts.qkRopeHeadDim, compressedKV.Stride(1),
 		1, compressedKV.Stride(1),
 		compressedKV.Dim(1))
 
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
-
 	kPass = attn.KVB.Forward(ctx, kPass)
 
 	kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
-
 	kPass = kv.View(ctx, 0, opts.kqNopeHeadDim, kv.Stride(1), kv.Dim(1), kv.Stride(2), kv.Dim(2))
-
 	value := kv.View(ctx, opts.kqNopeHeadDim*kv.Stride(0),
 		opts.vHeadDim, kv.Stride(1),
 		kv.Dim(1), kv.Stride(2),
 		kv.Dim(2)).Contiguous(ctx)
 
 	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-
 	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 
 	kRot = kRot.Repeat(ctx, 1, qPass.Dim(1))
@@ -129,16 +118,14 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	key := kRot.Concat(ctx, kPass, 0)
 
 	attention := nn.Attention(ctx, query, key, value, opts.kqScale, cache)
-
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
-
 	return attn.Output.Forward(ctx, attention)
 }
 
 type SharedExpert struct {
-	Gate *nn.Linear  `gguf:"ffn_gate_shexp"`
-	Up   *nn.Linear  `gguf:"ffn_up_shexp"`
-	Down *nn.Linear  `gguf:"ffn_down_shexp"`
+	Gate *nn.Linear `gguf:"ffn_gate_shexp"`
+	Up   *nn.Linear `gguf:"ffn_up_shexp"`
+	Down *nn.Linear `gguf:"ffn_down_shexp"`
 }
 
 func (se *SharedExpert) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
@@ -151,21 +138,21 @@ type MLP interface {
 }
 
 type MoEBlock struct {
-	Router       *nn.Linear  `gguf:"ffn_gate_inp"`
-	Gate         *nn.Linear  `gguf:"ffn_gate_exps"`
-	Up           *nn.Linear  `gguf:"ffn_up_exps"`
-	Down         *nn.Linear  `gguf:"ffn_down_exps"`
+	Router       *nn.Linear `gguf:"ffn_gate_inp"`
+	Gate         *nn.Linear `gguf:"ffn_gate_exps"`
+	Up           *nn.Linear `gguf:"ffn_up_exps"`
+	Down         *nn.Linear `gguf:"ffn_down_exps"`
 	SharedExpert *SharedExpert
 	ExpProbsBias ml.Tensor `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
 }
 
-func (moe *MoEBlock) Moe(ctx ml.Context, hiddenStates ml.Tensor, topKIndices ml.Tensor, topKWeights ml.Tensor, opts *Options) ml.Tensor {
+func (moe *MoEBlock) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml.Tensor, opts *Options) ml.Tensor {
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
 	upStates := moe.Up.Weight.MulmatID(ctx, hiddenStates, topKIndices)
 	hiddenStates = moe.Gate.Weight.MulmatID(ctx, hiddenStates, topKIndices)
-	hiddenStates = hiddenStates.SILU(ctx)
-	hiddenStates = hiddenStates.Mul(ctx, upStates)
+	hiddenStates = hiddenStates.SILU(ctx, upStates)
+
 	experts := moe.Down.Weight.MulmatID(ctx, hiddenStates, topKIndices)
 	experts = experts.Mul(ctx, topKWeights)
 	nextStates := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
@@ -210,7 +197,7 @@ type MLPBlock struct {
 }
 
 func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
@@ -267,10 +254,9 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	mScale := float32(1.0 + float64(c.Float("rope.scaling.yarn_log_multiplier"))*math.Log(float64(c.Float("rope.scaling.factor"))))
-    kqScale := float64(mScale)*float64(mScale) / math.Sqrt(float64(c.Uint("attention.key_length")))
-	attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(c.Float("rope.scaling.factor")))))
+	kqScale := float64(mScale) * float64(mScale) / math.Sqrt(float64(c.Uint("attention.key_length")))
 
-	qLoraRankVal := int(c.Uint("attention.q_lora_rank"))
+	// qLoraRankVal := int(c.Uint("attention.q_lora_rank"))
 
 	m := Transformer{
 		TransformerBlocks: transformerBlocks,
@@ -305,7 +291,7 @@ func New(c fs.Config) (model.Model, error) {
 			numExpertsUsed: int(c.Uint("expert_used_count")),
 			normTopKProb:   c.Bool("expert_weights_norm", true),
 
-			qLoraRank:     &qLoraRankVal,
+			qLoraRank:     int(c.Uint("attention.q_lora_rank")), //&qLoraRankVal,
 			kvLoraRank:    int(c.Uint("attention.kv_lora_rank")),
 			qkHeadDim:     int(c.Uint("attention.key_length")),
 			vHeadDim:      int(c.Uint("attention.value_length")),
@@ -315,12 +301,8 @@ func New(c fs.Config) (model.Model, error) {
 
 			routedScalingFactor:   c.Float("expert_weights_scale"),
 			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
-			ropeType:              c.String("rope.scaling.type"),
 
-			mScale:              mScale,
 			kqScale:             kqScale,
-			attnFactor:          attnFactor,
-			yarn_log_multiplier: c.Float("rope.scaling.yarn_log_multiplier"),
 		},
 	}
 
@@ -342,7 +324,7 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 		m.Cache.SetLayer(i)
 
 		var outputs ml.Tensor
-		if i == len(m.TransformerBlocks)-1 && batch.Outputs != nil && batch.Outputs.Dim(0) > 0 {
+		if i == len(m.TransformerBlocks)-1 {
 			outputs = batch.Outputs
 		}
 
