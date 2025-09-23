@@ -60,12 +60,6 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
 	}
 
-	rotateLogs(ServerLogFile)
-	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create server log: %w", err)
-	}
-
 	logDir := filepath.Dir(ServerLogFile)
 	_, err = os.Stat(logDir)
 	if err != nil {
@@ -76,6 +70,12 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 		if err := os.MkdirAll(logDir, 0o755); err != nil {
 			return nil, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
 		}
+	}
+
+	rotateLogs(ServerLogFile)
+	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}
 
 	go func() {
