@@ -853,19 +853,19 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
-			Weights: make([]ml.Memory, s.totalLayers),
-			Cache:   make([]ml.Memory, s.totalLayers),
+			Weights: make([]uint64, s.totalLayers),
+			Cache:   make([]uint64, s.totalLayers),
 		}}
 	}
 
 	layers := make([]uint64, len(memory.CPU.Weights))
 	for i := range layers {
 		for j := range memory.GPUs {
-			layers[i] += memory.GPUs[j].Weights[i].Size
-			layers[i] += memory.GPUs[j].Cache[i].Size
+			layers[i] += memory.GPUs[j].Weights[i]
+			layers[i] += memory.GPUs[j].Cache[i]
 		}
-		layers[i] += memory.CPU.Weights[i].Size
-		layers[i] += memory.CPU.Cache[i].Size
+		layers[i] += memory.CPU.Weights[i]
+		layers[i] += memory.CPU.Cache[i]
 		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
@@ -880,11 +880,11 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 			found := false
 			for j := range memory.GPUs {
 				if gl[i].ID == memory.GPUs[j].ID {
-					if memory.GPUs[j].Graph.Size != 0 {
+					if memory.GPUs[j].Graph != 0 {
 						lastUsedGPU = i
 					}
 
-					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory + envconfig.GpuOverhead() + memory.GPUs[j].Graph.Size
+					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory + envconfig.GpuOverhead() + memory.GPUs[j].Graph
 					if gl[i].FreeMemory > reserved {
 						gl[i].FreeMemory -= reserved
 					} else {
@@ -895,7 +895,7 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 						"available layer vram", format.HumanBytes2(gl[i].FreeMemory),
 						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(gl[i].MinimumMemory),
 						"overhead", format.HumanBytes2(envconfig.GpuOverhead()),
-						"graph", format.HumanBytes2(memory.GPUs[j].Graph.Size))
+						"graph", format.HumanBytes2(memory.GPUs[j].Graph))
 
 					found = true
 					break
@@ -914,12 +914,12 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 	}
 
 	// These sizes will only increase as we go through additional iterations and get additional information.
-	cpuSize := memory.InputWeights.Size + memory.CPU.Graph.Size
+	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
 	for _, gl := range gpuLayers {
 		for _, gpu := range memory.GPUs {
 			if gl.ID == gpu.ID {
-				vramSize += gpu.Graph.Size
+				vramSize += gpu.Graph
 				break
 			}
 		}
@@ -1723,21 +1723,21 @@ func (s *ollamaServer) VRAMSize() uint64 {
 	var mem uint64
 
 	for _, g := range s.mem.GPUs {
-		mem += g.Allocated()
+		mem += g.Size()
 	}
 
 	// Some elements are always on CPU. However, if we have allocated all layers
 	// on the GPU then include the CPU components as well, to represent complete offloading.
 	noCPULayers := true
 	for i := range s.mem.CPU.Weights {
-		if s.mem.CPU.Weights[i].Size != 0 || s.mem.CPU.Cache[i].Size != 0 {
+		if s.mem.CPU.Weights[i] != 0 || s.mem.CPU.Cache[i] != 0 {
 			noCPULayers = false
 			break
 		}
 	}
 	if noCPULayers {
-		mem += s.mem.InputWeights.Size
-		mem += s.mem.CPU.Graph.Size
+		mem += s.mem.InputWeights
+		mem += s.mem.CPU.Graph
 	}
 
 	return mem
@@ -1748,10 +1748,10 @@ func (s *ollamaServer) TotalSize() uint64 {
 		return 0
 	}
 
-	mem := s.mem.InputWeights.Size
-	mem += s.mem.CPU.Allocated()
+	mem := s.mem.InputWeights
+	mem += s.mem.CPU.Size()
 	for _, g := range s.mem.GPUs {
-		mem += g.Allocated()
+		mem += g.Size()
 	}
 
 	return mem
@@ -1764,7 +1764,7 @@ func (s *ollamaServer) VRAMByGPU(gpuID string) uint64 {
 
 	for _, g := range s.mem.GPUs {
 		if g.ID == gpuID {
-			return g.Allocated()
+			return g.Size()
 		}
 	}
 
