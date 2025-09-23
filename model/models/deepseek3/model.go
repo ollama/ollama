@@ -3,6 +3,7 @@ package deepseek3
 import (
 	"cmp"
 	"math"
+	"fmt"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -328,7 +329,9 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m Transformer) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.headDim(), m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
+	// return fast.RoPE(ctx, key, shift, m.headDim(), m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
+	return fast.RoPE(ctx, key, shift, m.qkRopeHeadDim, m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
+	// m.qkRopeHeadDim
 }
 
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
@@ -337,10 +340,11 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	for i, layer := range m.TransformerBlocks {
+		fmt.Printf("DEBUG: layer %d:\n", i)
 		m.Cache.SetLayer(i)
 
 		var outputs ml.Tensor
-		if i == len(m.TransformerBlocks)-1 {
+		if i == len(m.TransformerBlocks)-1 && len(batch.Outputs) > 0 {
 			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 		}
 

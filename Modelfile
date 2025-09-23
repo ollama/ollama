@@ -1,6 +1,12 @@
 FROM deepseek-v3:671b-q4_K_M
-PARAMETER num_gpu 0
-PARAMETER num_ctx 512
-PARAMETER use_mmap true
-PARAMETER num_predict 1
-PARAMETER num_thread 1
+PARAMETER temperature 0
+PARAMETER top_k 0
+PARAMETER top_p 1
+PARAMETER min_p 0
+PARAMETER mirostat 0
+PARAMETER repeat_penalty 1
+PARAMETER repeat_last_n 0
+PARAMETER presence_penalty 0
+PARAMETER frequency_penalty 0
+PARAMETER seed 42
+
