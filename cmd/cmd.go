@@ -484,6 +484,16 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 
 	user, err := client.Whoami(cmd.Context())
 	if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Println("You need to be signed in to Ollama to run Cloud models.")
+			fmt.Println()
+
+			if aErr.SigninURL != "" {
+				fmt.Printf(ConnectInstructions, aErr.SigninURL)
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -491,10 +501,6 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 		fmt.Printf("You are already signed in as user '%s'\n", user.Name)
 		fmt.Println()
 		return nil
-	}
-
-	if user.SigninURL != "" {
-		fmt.Printf(ConnectInstructions, user.SigninURL)
 	}
 
 	return nil
@@ -506,25 +512,21 @@ func SignoutHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	user, err := client.Whoami(cmd.Context())
+	err = client.Signout(cmd.Context())
 	if err != nil {
-		return err
-	}
-
-	if user != nil && user.Name != "" {
-		err = client.Signout(cmd.Context(), user.PublicKey)
-		if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Println("You are not signed in to ollama.com")
+			fmt.Println()
+			return nil
+		} else {
 			return err
 		}
-
-		fmt.Println("You have signed out of ollama.com")
-		fmt.Println()
-		return nil
-	} else {
-		fmt.Println("You are not signed in to ollama.com")
-		fmt.Println()
-		return nil
 	}
+
+	fmt.Println("You have signed out of ollama.com")
+	fmt.Println()
+	return nil
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {

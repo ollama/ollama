@@ -681,8 +681,6 @@ type UserResponse struct {
 	FirstName string    `json:"firstname,omitempty"`
 	LastName  string    `json:"lastname,omitempty"`
 	Plan      string    `json:"plan,omitempty"`
-	PublicKey string    `json:"public_key,omitempty"`
-	SigninURL string    `json:"signin_url,omitempty"`
 }
 
 // Tensor describes the metadata for a given tensor.

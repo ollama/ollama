@@ -49,7 +49,7 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-const signinURL = "https://ollama.com/connect?name=%s&key=%s"
+const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
@@ -158,19 +158,15 @@ type signinDetails struct {
 	SigninURL string
 }
 
-func newSigninDetails() (*signinDetails, error) {
+func getSigninURL() (string, error) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 	h, _ := os.Hostname()
-	signinURL := fmt.Sprintf(signinURL, url.PathEscape(h), encKey)
-	return &signinDetails{
-		PublicKey: encKey,
-		SigninURL: signinURL,
-	}, nil
+	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
@@ -275,14 +271,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
-				sd, aerr := newSigninDetails()
-				if aerr != nil {
-					slog.Error(aerr.Error())
+				signinURL, sErr := getSigninURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
 
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sd.SigninURL})
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": signinURL})
 				return
 			}
 			var apiError api.StatusError
@@ -1438,8 +1434,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
 
-	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
 	r.POST("/api/me", s.WhoamiHandler)
+
+	r.POST("/api/signout", s.SignoutHandler)
+	// deprecated
+	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)
@@ -1652,27 +1651,31 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 		slog.Error(err.Error())
 	}
 
-	sd, err := newSigninDetails()
-	if err != nil {
-		slog.Error(err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting key pair for server"})
-		return
-	}
-
-	if sd.PublicKey != "" {
-		user.PublicKey = sd.PublicKey
-	}
-
 	// user isn't signed in
 	if user != nil && user.Name == "" {
-		user.SigninURL = sd.SigninURL
+		signinURL, sErr := getSigninURL()
+		if sErr != nil {
+			slog.Error(sErr.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+			return
+		}
+
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": signinURL})
+		return
 	}
 
 	c.JSON(http.StatusOK, user)
 }
 
 func (s *Server) SignoutHandler(c *gin.Context) {
-	encodedKey := c.Param("encodedKey")
+	pubKey, err := auth.GetPublicKey()
+	if err != nil {
+		slog.Error("couldn't get public key", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
+		return
+	}
+
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 
 	// todo allow other hosts
 	u, err := url.Parse("https://ollama.com")
@@ -1683,11 +1686,11 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 	}
 
 	client := api.NewClient(u, http.DefaultClient)
-	err = client.Signout(c, encodedKey)
+	err = client.Disconnect(c, encKey)
 	if err != nil {
-		slog.Error(err.Error())
-		if strings.Contains(err.Error(), "page not found") || strings.Contains(err.Error(), "invalid credentials") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "you are not currently signed in"})
+		var authError api.AuthorizationError
+		if errors.As(err, &authError) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "you are not currently signed in"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
@@ -1847,14 +1850,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
-				sd, aerr := newSigninDetails()
-				if aerr != nil {
-					slog.Error(aerr.Error())
+				signinURL, sErr := getSigninURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
 
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sd.SigninURL})
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": signinURL})
 				return
 			}
 			var apiError api.StatusError
