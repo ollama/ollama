@@ -18,46 +18,13 @@ import (
 
 const defaultPrivateKey = "id_ed25519"
 
-func keyPath() (string, error) {
-	fileIsReadable := func(fp string) bool {
-		info, err := os.Stat(fp)
-		if err != nil {
-			return false
-		}
-
-		// Check that it's a regular file, not a directory or other file type
-		if !info.Mode().IsRegular() {
-			return false
-		}
-
-		// Try to open it to check readability
-		file, err := os.Open(fp)
-		if err != nil {
-			return false
-		}
-		file.Close()
-		return true
-	}
-
-	systemPath := filepath.Join("/usr/share/ollama/.ollama", defaultPrivateKey)
-	if fileIsReadable(systemPath) {
-		return systemPath, nil
-	}
-
+func GetPublicKey() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
-}
-
-func GetPublicKey() (string, error) {
-	keyPath, err := keyPath()
-	if err != nil {
-		return "", err
-	}
-
+	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
@@ -84,11 +51,12 @@ func NewNonce(r io.Reader, length int) (string, error) {
 }
 
 func Sign(ctx context.Context, bts []byte) (string, error) {
-	keyPath, err := keyPath()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
+	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +48,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
@@ -150,6 +153,17 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
+func signinURL() (string, error) {
+	pubKey, err := auth.GetPublicKey()
+	if err != nil {
+		return "", err
+	}
+
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
+	h, _ := os.Hostname()
+	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -250,18 +264,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Generate(c, &req, fn)
 		if err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pk, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					slog.Error("couldn't get public key", "error", pkErr)
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+			var authError api.AuthorizationError
+			if errors.As(err, &authError) {
+				sURL, sErr := signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":      "unauthorized",
-					"public_key": pk,
-				})
+
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+				return
+			}
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1412,8 +1429,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
 
-	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
 	r.POST("/api/me", s.WhoamiHandler)
+
+	r.POST("/api/signout", s.SignoutHandler)
+	// deprecated
+	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)
@@ -1625,11 +1645,32 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	if err != nil {
 		slog.Error(err.Error())
 	}
+
+	// user isn't signed in
+	if user != nil && user.Name == "" {
+		sURL, sErr := signinURL()
+		if sErr != nil {
+			slog.Error(sErr.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+			return
+		}
+
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
+		return
+	}
+
 	c.JSON(http.StatusOK, user)
 }
 
 func (s *Server) SignoutHandler(c *gin.Context) {
-	encodedKey := c.Param("encodedKey")
+	pubKey, err := auth.GetPublicKey()
+	if err != nil {
+		slog.Error("couldn't get public key", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
+		return
+	}
+
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 
 	// todo allow other hosts
 	u, err := url.Parse("https://ollama.com")
@@ -1640,11 +1681,11 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 	}
 
 	client := api.NewClient(u, http.DefaultClient)
-	err = client.Signout(c, encodedKey)
+	err = client.Disconnect(c, encKey)
 	if err != nil {
-		slog.Error(err.Error())
-		if strings.Contains(err.Error(), "page not found") || strings.Contains(err.Error(), "invalid credentials") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "you are not currently signed in"})
+		var authError api.AuthorizationError
+		if errors.As(err, &authError) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "you are not currently signed in"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
@@ -1802,18 +1843,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Chat(c, &req, fn)
 		if err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pk, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					slog.Error("couldn't get public key", "error", pkErr)
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+			var authError api.AuthorizationError
+			if errors.As(err, &authError) {
+				sURL, sErr := signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":      "unauthorized",
-					"public_key": pk,
-				})
+
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+				return
+			}
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
