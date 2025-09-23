@@ -153,11 +153,6 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
-type signinDetails struct {
-	PublicKey string
-	SigninURL string
-}
-
 func getSigninURL() (string, error) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
