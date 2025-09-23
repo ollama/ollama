@@ -1080,12 +1080,9 @@ func (s *Server) allocModel(
 	kvSize int,
 	multiUserCache bool,
 ) (panicErr error) {
-    
-	
 	// Convert memory allocation panics to errors
 	defer func() {
 		if r := recover(); r != nil {
-			// debug.PrintStack()
 			if err, ok := r.(error); ok {
 				var noMem ml.ErrNoMem
 				if errors.As(err, &noMem) {
@@ -1106,7 +1103,7 @@ func (s *Server) allocModel(
 	}
 
 	// TODO(jessegross): LoRA loading
-    if len(loraPath) > 0 {
+	if len(loraPath) > 0 {
 		return errors.New("loras are not yet implemented")
 	}
 

@@ -338,13 +338,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				// load all other tensors on the cpu
 				createTensor(tensor{source: t}, input.bts, -1)
 			}
-
-			// if layerIndex >= 0 && layerIndex < 3 { // 0, 1, 2, 3
-			// 	createTensor(tensor{source: t}, layers[layerIndex].bts, layerIndex)
-			// } else {
-			// 	// load all other tensors on the cpu
-			// 	// createTensor(tensor{source: t}, input.bts, -1)
-			// }
 		}
 	}
 
@@ -1364,69 +1357,6 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 }
 
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
-    // Bounds check to avoid ggml_view_* asserts when offset/strides exceed source bytes
-    // Compute required byte span for the requested view and ensure it's within parent tensor
-    // shape encodings:
-    //  - len==1: [ne0]
-    //  - len==3: [ne0, nb1, ne1]
-    //  - len==5: [ne0, nb1, ne1, nb2, ne2]
-    //  - len==7: [ne0, nb1, ne1, nb2, ne2, nb3, ne3]
-    if offset < 0 {
-        panic("ggml.View: negative offset")
-    }
-    // parent total bytes
-    parentBytes := int(C.ggml_nbytes(t.t))
-    // size of one element
-    elemSize := int(C.ggml_type_size(t.t._type))
-    // helper to clamp dims/strides to non-negative
-    atLeastZero := func(v int) int { if v < 0 { return 0 }; return v }
-
-    // Compute nb0..nb3 and ne0..ne3 for the view
-    ne0, ne1, ne2, ne3 := 1, 1, 1, 1
-    nb0, nb1, nb2, nb3 := elemSize, 0, 0, 0
-    switch len(shape) {
-    case 1:
-        ne0 = atLeastZero(shape[0])
-    case 3:
-        ne0 = atLeastZero(shape[0])
-        nb1 = atLeastZero(shape[1])
-        ne1 = atLeastZero(shape[2])
-    case 5:
-        ne0 = atLeastZero(shape[0])
-        nb1 = atLeastZero(shape[1])
-        ne1 = atLeastZero(shape[2])
-        nb2 = atLeastZero(shape[3])
-        ne2 = atLeastZero(shape[4])
-    case 7:
-        ne0 = atLeastZero(shape[0])
-        nb1 = atLeastZero(shape[1])
-        ne1 = atLeastZero(shape[2])
-        nb2 = atLeastZero(shape[3])
-        ne2 = atLeastZero(shape[4])
-        nb3 = atLeastZero(shape[5])
-        ne3 = atLeastZero(shape[6])
-    default:
-        // handled by the panic below
-    }
-
-    // dataSize formula: (ne0-1)*nb0 + (ne1-1)*nb1 + (ne2-1)*nb2 + (ne3-1)*nb3 + nb0
-    // Use 64-bit to avoid overflow, then cast
-    var dataSize64 int64 = 0
-    if ne0 > 0 { dataSize64 += int64(ne0-1) * int64(nb0) }
-    if ne1 > 0 { dataSize64 += int64(ne1-1) * int64(nb1) }
-    if ne2 > 0 { dataSize64 += int64(ne2-1) * int64(nb2) }
-    if ne3 > 0 { dataSize64 += int64(ne3-1) * int64(nb3) }
-    dataSize64 += int64(nb0)
-    if dataSize64 < 0 { dataSize64 = 0 }
-    required := int(dataSize64)
-
-    if required < 0 {
-        panic("ggml.View: required size overflow")
-    }
-    if offset+required > parentBytes {
-        panic(fmt.Errorf("ggml.View: out-of-bounds view (offset=%d + size=%d > parent=%d)", offset, required, parentBytes))
-    }
-
 	switch len(shape) {
 	case 1:
 		return &Tensor{

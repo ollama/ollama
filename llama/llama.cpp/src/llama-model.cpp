@@ -12764,7 +12764,6 @@ struct llm_build_deepseek2 : public llm_graph_context {
 
         ggml_tensor * inp_out_ids = build_inp_out_ids();
 
-        // for (int il = 0; il < n_layer; ++il) {
         for (int il = 0; il < n_layer; ++il) {
             ggml_tensor * inpSA = inpL;
 
@@ -12877,7 +12876,6 @@ struct llm_build_deepseek2 : public llm_graph_context {
                     cur = build_attn(inp_attn,
                             model.layers[il].wo, NULL,
                             Qcur, Kcur, Vcur, nullptr, model.layers[il].wv_b, kq_scale, il);
-                    // cb(cur, "after_attention", il);
                 } else {
                     ggml_tensor * kv = ggml_mul_mat(ctx0, model.layers[il].wkv_b, kv_cmpr);
                     cb(kv, "kv", il);
@@ -12912,18 +12910,12 @@ struct llm_build_deepseek2 : public llm_graph_context {
                     cur = build_attn(inp_attn,
                             model.layers[il].wo, NULL,
                             Qcur, Kcur, Vcur, nullptr, nullptr, kq_scale, il);
-
-                    cb(cur, "after_attention_else", il);
                 }
             }
 
-            // We are here:
-
             if (il == n_layer - 1 && inp_out_ids) {
                 cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
-                cb(cur, "hiddenStates.Rows", il);
                 inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
-                cb(inpSA, "residual.Rows", il);
             }
 
             ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
