@@ -932,7 +932,7 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
     return ggml_backend_buffer_get_size(galloc->buffers[buffer_id]);
 }
 
-struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
+size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
     GGML_ASSERT(buffer_id >= 0 && buffer_id < galloc->n_buffers);
 
     for (int i = 0; i < buffer_id; i++) {
@@ -941,13 +941,11 @@ struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gal
             // (See above.) However, we need a different check because multiple buffers might be NULL in our
             // case and we still want to know the attempted size.
 
-            struct ggml_allocr_buffer_status status = {0, true};
-            return status;
+            return 0;
         }
     }
 
-    struct ggml_allocr_buffer_status status = {galloc->buffer_sizes[buffer_id], galloc->buffers[buffer_id] != NULL};
-    return status;
+    return galloc->buffer_sizes[buffer_id];
 }
 
 // utils
