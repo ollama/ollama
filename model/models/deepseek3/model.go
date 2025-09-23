@@ -3,7 +3,7 @@ package deepseek3
 import (
 	"cmp"
 	"math"
-	"fmt"
+	// "fmt"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -258,6 +258,7 @@ type Transformer struct {
 
 func New(c fs.Config) (model.Model, error) {
 	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
+	// transformerBlocks := make([]TransformerBlock, 2)
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
 	for i := range transformerBlocks {
@@ -274,10 +275,16 @@ func New(c fs.Config) (model.Model, error) {
 
 	qLoraRankVal := int(c.Uint("attention.q_lora_rank"))
 
+	// tokenizer := []string{
+	// 	"\\p{N}{1,3}",
+	// 	`[一-龥぀-ゟ゠-ヿ]+`,
+	// 	"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+	// }
+
 	m := Transformer{
 		TransformerBlocks: transformerBlocks,
 		BytePairEncoding: model.NewBytePairEncoding(
-			`[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_` + "`" + `{|}~][A-Za-z]+|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			// `[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_` + "`" + `{|}~][A-Za-z]+|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -290,6 +297,10 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			// insert here
+			"\\p{N}{1,3}",
+			`[一-龥぀-ゟ゠-ヿ]+`,
+			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
 		),
 		Options: &Options{
 			hiddenSize:     int(c.Uint("embedding_length")),
@@ -302,7 +313,7 @@ func New(c fs.Config) (model.Model, error) {
 			ropeScale:      c.Float("rope.scaling.factor", 1),
 			numExperts:     int(c.Uint("expert_count")),
 			numExpertsUsed: int(c.Uint("expert_used_count")),
-			normTopKProb:   c.Bool("norm_top_k_prob", true),
+			normTopKProb:   c.Bool("expert_weights_norm", true),
 
 			qLoraRank:     &qLoraRankVal,
 			kvLoraRank:    int(c.Uint("attention.kv_lora_rank")),
@@ -329,9 +340,7 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m Transformer) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	// return fast.RoPE(ctx, key, shift, m.headDim(), m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
 	return fast.RoPE(ctx, key, shift, m.qkRopeHeadDim, m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
-	// m.qkRopeHeadDim
 }
 
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
@@ -340,7 +349,6 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	for i, layer := range m.TransformerBlocks {
-		fmt.Printf("DEBUG: layer %d:\n", i)
 		m.Cache.SetLayer(i)
 
 		var outputs ml.Tensor

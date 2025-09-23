@@ -1,5 +1,6 @@
 FROM deepseek-v3:671b-q4_K_M
 PARAMETER temperature 0
+PARAMETER num_predict 1
 PARAMETER top_k 0
 PARAMETER top_p 1
 PARAMETER min_p 0
