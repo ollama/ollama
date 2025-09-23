@@ -1085,7 +1085,7 @@ func (s *Server) allocModel(
 	// Convert memory allocation panics to errors
 	defer func() {
 		if r := recover(); r != nil {
-			debug.PrintStack()
+			// debug.PrintStack()
 			if err, ok := r.(error); ok {
 				var noMem ml.ErrNoMem
 				if errors.As(err, &noMem) {

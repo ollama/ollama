@@ -344,8 +344,8 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 		m.Cache.SetLayer(i)
 
 		var outputs ml.Tensor
-		if i == len(m.TransformerBlocks)-1 && len(batch.Outputs) > 0 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+		if i == len(m.TransformerBlocks)-1 && batch.Outputs != nil && batch.Outputs.Dim(0) > 0 {
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
