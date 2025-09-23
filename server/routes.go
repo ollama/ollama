@@ -153,7 +153,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
-func getSigninURL() (string, error) {
+func signinURL() (string, error) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
 		return "", err
@@ -266,14 +266,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
-				signinURL, sErr := getSigninURL()
+				sURL, sErr := signinURL()
 				if sErr != nil {
 					slog.Error(sErr.Error())
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
 
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": signinURL})
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
 				return
 			}
 			var apiError api.StatusError
@@ -1648,14 +1648,14 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 
 	// user isn't signed in
 	if user != nil && user.Name == "" {
-		signinURL, sErr := getSigninURL()
+		sURL, sErr := signinURL()
 		if sErr != nil {
 			slog.Error(sErr.Error())
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 			return
 		}
 
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": signinURL})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
 		return
 	}
 
@@ -1845,14 +1845,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
-				signinURL, sErr := getSigninURL()
+				sURL, sErr := signinURL()
 				if sErr != nil {
 					slog.Error(sErr.Error())
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
 
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": signinURL})
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
 				return
 			}
 			var apiError api.StatusError
