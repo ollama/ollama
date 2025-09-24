@@ -10828,6 +10828,7 @@ struct ggml_backend_vk_device_context {
     std::string description;
     std::string id;
     std::string uuid;
+    std::string dev_idx;
     int major;
     int minor;
     int driver_major;
@@ -10952,7 +10953,7 @@ static enum ggml_backend_dev_type ggml_backend_vk_device_get_type(ggml_backend_d
 static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
     props->name        = ggml_backend_vk_device_get_name(dev);
     props->description = ggml_backend_vk_device_get_description(dev);
-    props->id          = ggml_backend_vk_device_get_id(dev);
+    // props->id          = ggml_backend_vk_device_get_id(dev);
     props->type        = ggml_backend_vk_device_get_type(dev);
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = {
@@ -10963,7 +10964,8 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     };
 
     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
-    props->id = ctx->id.c_str();
+    // Use the unfiltered ID so round-trip through env var works
+    props->id = ctx->dev_idx.c_str();
     props->compute_major = ctx->major;
     props->compute_minor = ctx->minor;
     props->driver_major = ctx->driver_major;
@@ -11394,6 +11396,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
 
                 // Gather additional information about the device
                 int dev_idx = vk_instance.device_indices[i];
+                ctx->dev_idx = std::to_string(dev_idx);
                 vk::PhysicalDeviceProperties props1;
                 vk_devices[dev_idx].getProperties(&props1);
                 vk::PhysicalDeviceProperties2 props2;
