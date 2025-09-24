@@ -3,7 +3,6 @@ package deepseek2
 // uses deepseek 2 architecture but written based on deepseek 3 model
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
