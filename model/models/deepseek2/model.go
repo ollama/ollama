@@ -3,8 +3,8 @@ package deepseek2
 // uses deepseek 2 architecture but written based on deepseek 3 model
 
 import (
-	"math"
 	"fmt"
+	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -28,7 +28,7 @@ type Options struct {
 	kqNopeHeadDim,
 	qkHeadDim int
 	qLoraRank int
-	vHeadDim int
+	vHeadDim  int
 
 	hiddenSize,
 	numHeads,
@@ -41,7 +41,7 @@ type Options struct {
 	ropeBase,
 	ropeScale float32
 
-	kqScale             float64
+	kqScale float64
 }
 
 func (o Options) RoPEOptions() []func(*rope.Options) {
@@ -131,8 +131,8 @@ type MoEBlock struct {
 	Gate         *nn.Linear `gguf:"ffn_gate_exps"`
 	Up           *nn.Linear `gguf:"ffn_up_exps"`
 	Down         *nn.Linear `gguf:"ffn_down_exps"`
-	SharedExpert *MLPBlock `gguf:",suf:_shexp"`
-	ExpProbsBias ml.Tensor `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
+	SharedExpert *MLPBlock  `gguf:",suf:_shexp"`
+	ExpProbsBias ml.Tensor  `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
 }
 
 func (moe *MoEBlock) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml.Tensor, opts *Options) ml.Tensor {
@@ -290,7 +290,7 @@ func New(c fs.Config) (model.Model, error) {
 			routedScalingFactor:   c.Float("expert_weights_scale"),
 			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
 
-			kqScale:             kqScale,
+			kqScale: kqScale,
 		},
 	}
 
