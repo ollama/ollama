@@ -599,7 +599,6 @@ func TestPushHandler(t *testing.T) {
 						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
 					}
 				}
-
 			} else {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
 					t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
