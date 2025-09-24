@@ -39,9 +39,8 @@ type Options struct {
 
 	eps,
 	ropeBase,
-	ropeScale float32
-
-	kqScale float64
+	ropeScale 	float32
+	kqScale 	float64
 }
 
 func (o Options) RoPEOptions() []func(*rope.Options) {
@@ -53,21 +52,21 @@ func (o Options) RoPEOptions() []func(*rope.Options) {
 	}
 }
 
-type AttentionBlock struct {
-	Q *nn.Linear `gguf:"attn_q"`
+type Attention struct {
+	Q 	   	*nn.Linear 	`gguf:"attn_q"`
 
-	QA     *nn.Linear  `gguf:"attn_q_a"`
-	QANorm *nn.RMSNorm `gguf:"attn_q_a_norm"`
-	QB     *nn.Linear  `gguf:"attn_q_b"`
+	QA     	*nn.Linear  `gguf:"attn_q_a"`
+	QANorm 	*nn.RMSNorm `gguf:"attn_q_a_norm"`
+	QB     	*nn.Linear  `gguf:"attn_q_b"`
 
 	KVA     *nn.Linear  `gguf:"attn_kv_a_mqa"`
 	KVANorm *nn.RMSNorm `gguf:"attn_kv_a_norm"`
 	KVB     *nn.Linear  `gguf:"attn_kv_b"`
 
-	Output *nn.Linear `gguf:"attn_out,alt:attn_output"`
+	Output 	*nn.Linear 	`gguf:"attn_out,alt:attn_output"`
 }
 
-func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	seqLength := hiddenStates.Dim(1)
 
 	var query ml.Tensor
@@ -126,16 +125,16 @@ type MLP interface {
 	Forward(ml.Context, ml.Tensor, *Options) ml.Tensor
 }
 
-type MoEBlock struct {
+type sparse struct {
 	Router       *nn.Linear `gguf:"ffn_gate_inp"`
 	Gate         *nn.Linear `gguf:"ffn_gate_exps"`
 	Up           *nn.Linear `gguf:"ffn_up_exps"`
 	Down         *nn.Linear `gguf:"ffn_down_exps"`
-	SharedExpert *MLPBlock  `gguf:",suf:_shexp"`
+	SharedExpert *dense     `gguf:",suf:_shexp"`
 	ExpProbsBias ml.Tensor  `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
 }
 
-func (moe *MoEBlock) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml.Tensor, opts *Options) ml.Tensor {
+func (moe *sparse) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml.Tensor, opts *Options) ml.Tensor {
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
 	upStates := moe.Up.Weight.MulmatID(ctx, hiddenStates, topKIndices)
@@ -151,18 +150,18 @@ func (moe *MoEBlock) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights 
 	return nextStates
 }
 
-func (moe *MoEBlock) getTopKIndices(ctx ml.Context, scores ml.Tensor, opts *Options) ml.Tensor {
+func (moe *sparse) topKIndices(ctx ml.Context, scores ml.Tensor, opts *Options) ml.Tensor {
 	scores = scores.Add(ctx, moe.ExpProbsBias)
 	topKIndices := scores.TopK(ctx, opts.numExpertsUsed)
 	return topKIndices
 }
 
-func (moe *MoEBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
+func (moe *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
 	residuals := hiddenStates
 
 	routerLogits := moe.Router.Forward(ctx, hiddenStates)
 	scores := routerLogits.Sigmoid(ctx)
-	topKIndices := moe.getTopKIndices(ctx, scores, opts)
+	topKIndices := moe.topKIndices(ctx, scores, opts)
 	topKWeights := scores.Reshape(ctx, 1, opts.numExperts, hiddenStates.Dim(1)).Rows(ctx, topKIndices)
 
 	if opts.normTopKProb {
@@ -179,26 +178,26 @@ func (moe *MoEBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Optio
 	return hiddenStates
 }
 
-type MLPBlock struct {
+type dense struct {
 	Gate *nn.Linear `gguf:"ffn_gate"`
 	Up   *nn.Linear `gguf:"ffn_up"`
 	Down *nn.Linear `gguf:"ffn_down"`
 }
 
-func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
 	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
-type TransformerBlock struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	Attention     *AttentionBlock
+type Layer struct {
+	AttentionNorm *nn.RMSNorm	`gguf:"attn_norm"`
+	Attention     *Attention
 
-	MLPNorm *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP     MLP
+	MLPNorm 	  *nn.RMSNorm `gguf:"ffn_norm"`
+	MLP    		  MLP
 }
 
-func (t *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenStates
 	hiddenStates = t.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
 	hiddenStates = t.Attention.Forward(ctx, hiddenStates, positions, cache, opts)
@@ -217,37 +216,35 @@ func (t *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outp
 	return hiddenStates
 }
 
-type Transformer struct {
+type Model struct {
 	model.Base
 	model.BytePairEncoding
 
-	TokenEmbedding    *nn.Embedding      `gguf:"token_embd"`
-	TransformerBlocks []TransformerBlock `gguf:"blk"`
+	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
+	Layers         []Layer       `gguf:"blk"`
 
-	OutputNorm *nn.RMSNorm `gguf:"output_norm"`
-	Output     *nn.Linear  `gguf:"output,alt:token_embd"`
+	OutputNorm 	   *nn.RMSNorm 	 `gguf:"output_norm"`
+	Output     	   *nn.Linear  	 `gguf:"output,alt:token_embd"`
 
 	*Options
 }
 
 func New(c fs.Config) (model.Model, error) {
-	transformerBlocks := make([]TransformerBlock, c.Uint("block_count"))
+	layers := make([]Layer, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
-	fmt.Println("firstDenseLayerIndex", firstDenseLayerIndex)
-	for i := range transformerBlocks {
+	for i := range layers {
 		if i < firstDenseLayerIndex {
-			transformerBlocks[i].MLP = &MLPBlock{}
+			layers[i].MLP = &dense{}
 		} else {
-			transformerBlocks[i].MLP = &MoEBlock{}
+			layers[i].MLP = &sparse{}
 		}
 	}
 
 	mScale := float32(1.0 + float64(c.Float("rope.scaling.yarn_log_multiplier"))*math.Log(float64(c.Float("rope.scaling.factor"))))
 	kqScale := float64(mScale) * float64(mScale) / math.Sqrt(float64(c.Uint("attention.key_length")))
 
-	m := Transformer{
-		TransformerBlocks: transformerBlocks,
+	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
@@ -266,6 +263,7 @@ func New(c fs.Config) (model.Model, error) {
 			`[一-龥぀-ゟ゠-ヿ]+`,
 			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
 		),
+		Layers: layers,
 		Options: &Options{
 			hiddenSize:     int(c.Uint("embedding_length")),
 			numHeads:       int(c.Uint("attention.head_count")),
@@ -295,25 +293,24 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m.Cache = kvcache.NewCausalCache(m.Shift)
-
 	return &m, nil
 }
 
-func (m Transformer) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	return fast.RoPE(ctx, key, shift, m.qkRopeHeadDim, m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
 }
 
-func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
-	for i, layer := range m.TransformerBlocks {
+	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
 		fmt.Println("layer", i)
 
 		var outputs ml.Tensor
-		if i == len(m.TransformerBlocks)-1 {
+		if i == len(m.Layers)-1 {
 			outputs = batch.Outputs
 		}
 
