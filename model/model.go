@@ -187,15 +187,17 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 								names = append(names, prefix+n+suffix)
 							}
 						}
-
-						if childNames := fn(tags[1:], tags[0].prefix, tags[0].suffix); len(childNames) == 0 {
-							// no child names, append current names
-							fullNames = append(fullNames, names)
-						} else if len(names) == 0 {
-							// no current names, append child names
+						childNames := fn(tags[1:], tags[0].prefix, tags[0].suffix)
+						if len(names) == 0 {
+							// current tag has no name, use child names only
 							fullNames = append(fullNames, childNames...)
+						} else if len(childNames) == 0 {
+							// current tag has names but no children, create branches for each name
+							for _, name := range names {
+								fullNames = append(fullNames, []string{name})
+							}
 						} else {
-							// combine current and child names
+							// merge each name with each child
 							for _, name := range names {
 								for _, childName := range childNames {
 									fullNames = append(fullNames, append([]string{name}, childName...))
