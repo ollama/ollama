@@ -125,6 +125,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		Input  *nn.Embedding `gguf:"input"`
 		Output *nn.Linear    `gguf:"output,alt:input"`
 		Nested *nested       `gguf:"nested"`
+		Tensor ml.Tensor     `gguf:"leaf,alt:tensor"`
 	}
 
 	var m fakeModel
@@ -133,6 +134,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		names: []string{
 			"input.weight",
 			"nested.b.weight",
+			"leaf",
 		},
 	}}, v.Elem()))
 
@@ -142,6 +144,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		Nested: &nested{
 			Weight: &nn.Linear{Weight: &fakeTensor{Name: "nested.b.weight"}},
 		},
+		Tensor: &fakeTensor{Name: "leaf"},
 	}, m); diff != "" {
 		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
 	}
