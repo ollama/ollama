@@ -39,8 +39,8 @@ type Options struct {
 
 	eps,
 	ropeBase,
-	ropeScale 	float32
-	kqScale 	float64
+	ropeScale float32
+	kqScale float64
 }
 
 func (o Options) RoPEOptions() []func(*rope.Options) {
@@ -53,17 +53,17 @@ func (o Options) RoPEOptions() []func(*rope.Options) {
 }
 
 type Attention struct {
-	Q 	   	*nn.Linear 	`gguf:"attn_q"`
+	Q *nn.Linear `gguf:"attn_q"`
 
-	QA     	*nn.Linear  `gguf:"attn_q_a"`
-	QANorm 	*nn.RMSNorm `gguf:"attn_q_a_norm"`
-	QB     	*nn.Linear  `gguf:"attn_q_b"`
+	QA     *nn.Linear  `gguf:"attn_q_a"`
+	QANorm *nn.RMSNorm `gguf:"attn_q_a_norm"`
+	QB     *nn.Linear  `gguf:"attn_q_b"`
 
 	KVA     *nn.Linear  `gguf:"attn_kv_a_mqa"`
 	KVANorm *nn.RMSNorm `gguf:"attn_kv_a_norm"`
 	KVB     *nn.Linear  `gguf:"attn_kv_b"`
 
-	Output 	*nn.Linear 	`gguf:"attn_out,alt:attn_output"`
+	Output *nn.Linear `gguf:"attn_out,alt:attn_output"`
 }
 
 func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -190,11 +190,11 @@ func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options)
 }
 
 type Layer struct {
-	AttentionNorm *nn.RMSNorm	`gguf:"attn_norm"`
+	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
 	Attention     *Attention
 
-	MLPNorm 	  *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP    		  MLP
+	MLPNorm *nn.RMSNorm `gguf:"ffn_norm"`
+	MLP     MLP
 }
 
 func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -223,8 +223,8 @@ type Model struct {
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
 
-	OutputNorm 	   *nn.RMSNorm 	 `gguf:"output_norm"`
-	Output     	   *nn.Linear  	 `gguf:"output,alt:token_embd"`
+	OutputNorm *nn.RMSNorm `gguf:"output_norm"`
+	Output     *nn.Linear  `gguf:"output,alt:token_embd"`
 
 	*Options
 }
