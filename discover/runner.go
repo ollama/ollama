@@ -78,13 +78,6 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			libDirs[""] = struct{}{}
 		}
 
-		// Typically bootstrapping takes < 1s, but on some systems, with devices
-		// in low power/idle mode, initialization can take multiple seconds.  We
-		// set a long timeout just for bootstrap discovery to reduce the chance
-		// of giving up too quickly
-		ctx1stPass, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
 		slog.Info("discovering available GPUs...")
 
 		// For our initial discovery pass, we gather all the known GPUs through
@@ -100,6 +93,13 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			} else {
 				dirs = []string{LibOllamaPath, dir}
 			}
+			// Typically bootstrapping takes < 1s, but on some systems, with devices
+			// in low power/idle mode, initialization can take multiple seconds.  We
+			// set a long timeout just for bootstrap discovery to reduce the chance
+			// of giving up too quickly
+			ctx1stPass, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+
 			// For this pass, we retain duplicates in case any are incompatible with some libraries
 			devices = append(devices, bootstrapDevices(ctx1stPass, dirs, nil)...)
 		}
