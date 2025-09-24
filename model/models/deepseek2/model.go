@@ -307,7 +307,6 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
-		fmt.Println("layer", i)
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
