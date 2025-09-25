@@ -440,6 +440,24 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 			t.Fatal(err)
 		}
 	}
+	// Make sure server is online and healthy before returning
+	listCtx, cancel := context.WithDeadlineCause(
+		ctx,
+		time.Now().Add(120*time.Second),
+		fmt.Errorf("list models took too long"),
+	)
+	defer cancel()
+	models, err := client.ListRunning(listCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models.Models) > 0 {
+		names := make([]string, len(models.Models))
+		for i, m := range models.Models {
+			names[i] = m.Name
+		}
+		slog.Info("currently loaded", "models", names)
+	}
 
 	return client, testEndpoint, func() {
 		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
