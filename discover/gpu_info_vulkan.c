@@ -2,6 +2,85 @@
 #include "gpu_info_vulkan.h"
 
 #include <string.h>
+#include <errno.h>
+#include <ctype.h>
+
+#define INITIAL_ARRAY_SIZE 10
+
+// Function to parse an environment variable into a list of int values.
+// Returns a pointer to the allocated array, and stores the count in out_count.
+// Returns NULL in case of any error.
+int* parse_envvar_to_int_list(const char* envvar_name, size_t *out_count) {
+  char *env_str = getenv(envvar_name);
+  if (env_str == NULL) {
+    *out_count = 0;
+    return NULL;
+  }
+
+  // Duplicate the string since strtok modifies it.
+  char *tmp = strdup(env_str);
+  if (!tmp) {
+    *out_count = 0;
+    return NULL;
+  }
+
+  size_t capacity = INITIAL_ARRAY_SIZE;
+  size_t count = 0;
+  int *list = malloc(capacity * sizeof(uint32_t));
+  if (!list) {
+    free(tmp);
+    *out_count = 0;
+    return NULL;
+  }
+
+  char *token = strtok(tmp, ",");
+  while (token != NULL) {
+    char *endptr = NULL;
+    errno = 0;
+    unsigned long val = strtoul(token, &endptr, 10);
+    if (errno != 0 || endptr == token) {
+      free(list);
+      free(tmp);
+      *out_count = 0;
+      return NULL;
+    }
+    // Optional: Check trailing characters.
+    while (*endptr != '\0') {
+      if (!isspace((unsigned char)*endptr)) {
+        free(list);
+        free(tmp);
+        *out_count = 0;
+        return NULL;
+      }
+      endptr++;
+    }
+    if (val > UINT32_MAX) {
+      free(list);
+      free(tmp);
+      *out_count = 0;
+      return NULL;
+    }
+
+    // Save the value, reallocating if necessary.
+    if (count == capacity) {
+      capacity *= 2;
+      int *temp = realloc(list, capacity * sizeof(uint32_t));
+      if (!temp) {
+        free(list);
+        free(tmp);
+        *out_count = 0;
+        return NULL;
+      }
+      list = temp;
+    }
+    list[count++] = (int)val;
+    token = strtok(NULL, ",");
+  }
+
+  free(tmp);
+  *out_count = count;
+  return list;
+}
 
 int is_extension_supported(vk_handle_t* rh, VkPhysicalDevice device, char* extension) {
   VkPhysicalDeviceProperties properties = {};
@@ -112,10 +191,21 @@ void vk_init(char* vk_lib_path, vk_init_resp_t *resp) {
     return;
   }
 
+  size_t visDevIdCount;
+  int* visDevIds = parse_envvar_to_int_list("GGML_VK_VISIBLE_DEVICES", &visDevIdCount);
+
   resp->err = NULL;
   resp->ch.vk = instance;
   resp->ch.num_devices = deviceCount;
   resp->num_devices = deviceCount;
+
+  if (visDevIds && visDevIdCount > 0) {
+      resp->ch.num_visible_devices = visDevIdCount;
+      resp->ch.visible_devices = visDevIds;
+  } else {
+      resp->ch.num_visible_devices = -1;
+      resp->ch.visible_devices = NULL;
+  }
 }
 
 int vk_device_is_supported(vk_handle_t rh, int i) {
@@ -192,6 +282,24 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   device_props2.pNext = &id_props;
   (*rh.vkGetPhysicalDeviceProperties2)(devices[i], &device_props2);
 
+  if (rh.num_visible_devices > 0) {
+    LOG(rh.verbose, "Checking if device %d is visible\n", i);
+    int is_visible = 0;
+    for (uint32_t visDevId = 0; visDevId < rh.num_visible_devices; visDevId++) {
+      if (i == rh.visible_devices[visDevId]) {
+        LOG(rh.verbose, "Device %d is visible!\n", i);
+        is_visible = 1;
+        break;
+      }
+    }
+    if (!is_visible) {
+      LOG(rh.verbose, "Device %d is NOT visible!\n", i);
+      free(devices);
+      resp->err = strdup("device is hidden with GGML_VK_VISIBLE_DEVICES");
+      return;
+    }
+  }
+
   VkPhysicalDeviceMemoryBudgetPropertiesEXT physical_device_memory_budget_properties = {};
   physical_device_memory_budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
   physical_device_memory_budget_properties.pNext = NULL;
@@ -241,6 +349,10 @@ void vk_release(vk_handle_t rh) {
   (*rh.vkDestroyInstance)(rh.vk, NULL);
   UNLOAD_LIBRARY(rh.vk_handle);
   rh.vk_handle = NULL;
+
+  if (rh.visible_devices) {
+    free(rh.visible_devices);
+  }
 }
 
 #endif  // __APPLE__

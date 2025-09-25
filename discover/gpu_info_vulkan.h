@@ -434,6 +434,9 @@ typedef struct {
   VkInstance vk;
   int num_devices;
 
+  int num_visible_devices;
+  int* visible_devices;
+
   void (*vkGetPhysicalDeviceProperties)(
     VkPhysicalDevice                            physicalDevice,
     VkPhysicalDeviceProperties*                 pProperties);
