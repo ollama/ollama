@@ -491,8 +491,34 @@ func TestPushHandler(t *testing.T) {
 						w.(http.Flusher).Flush()
 					}
 				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+				},
 			},
 			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
+		},
+		{
+			name:      "not signed in push",
+			modelName: "notsignedin-model",
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error":      "unauthorized",
+						"signin_url": "https://somethingsomething",
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+				},
+			},
+			expectedOutput: "You need to be signed in to push",
 		},
 		{
 			name:      "unauthorized push",
@@ -506,6 +532,11 @@ func TestPushHandler(t *testing.T) {
 					})
 					if err != nil {
 						t.Fatal(err)
+					}
+				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
 					}
 				},
 			},
@@ -564,7 +595,7 @@ func TestPushHandler(t *testing.T) {
 					t.Errorf("expected no error, got %v", err)
 				}
 				if tt.expectedOutput != "" {
-					if got := string(stdout); got != tt.expectedOutput {
+					if got := string(stdout); !strings.Contains(got, tt.expectedOutput) {
 						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
 					}
 				}

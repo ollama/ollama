@@ -540,6 +540,25 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	n := model.ParseName(args[0])
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
+		_, err := client.Whoami(cmd.Context())
+		if err != nil {
+			var aErr api.AuthorizationError
+			if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+				fmt.Println("You need to be signed in to push models to ollama.com.")
+				fmt.Println()
+
+				if aErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, aErr.SigninURL)
+				}
+				return nil
+			}
+
+			return err
+		}
+	}
+
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -576,7 +595,6 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 
-	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
