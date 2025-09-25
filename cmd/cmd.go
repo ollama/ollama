@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -15,7 +14,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -37,7 +35,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -50,7 +47,7 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-const ConnectInstructions = "To sign in, navigate to:\n    https://ollama.com/connect?name=%s&key=%s\n\n"
+const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -452,16 +449,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
 			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pubKey, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					return pkErr
-				}
-				// the server and the client both have the same public key
-				if pubKey == sErr.PublicKey {
-					h, _ := os.Hostname()
-					encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
-					fmt.Printf(ConnectInstructions, url.PathEscape(h), encKey)
+				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+
+				if sErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, sErr.SigninURL)
 				}
 				return nil
 			}
@@ -493,6 +484,16 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 
 	user, err := client.Whoami(cmd.Context())
 	if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Println("You need to be signed in to Ollama to run Cloud models.")
+			fmt.Println()
+
+			if aErr.SigninURL != "" {
+				fmt.Printf(ConnectInstructions, aErr.SigninURL)
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -502,34 +503,27 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	pubKey, pkErr := auth.GetPublicKey()
-	if pkErr != nil {
-		return pkErr
-	}
-	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-
-	h, _ := os.Hostname()
-	fmt.Printf(ConnectInstructions, url.PathEscape(h), encKey)
-
 	return nil
 }
 
 func SignoutHandler(cmd *cobra.Command, args []string) error {
-	pubKey, pkErr := auth.GetPublicKey()
-	if pkErr != nil {
-		return pkErr
-	}
-	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	err = client.Signout(cmd.Context(), encKey)
+	err = client.Signout(cmd.Context())
 	if err != nil {
-		return err
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Println("You are not signed in to ollama.com")
+			fmt.Println()
+			return nil
+		} else {
+			return err
+		}
 	}
+
 	fmt.Println("You have signed out of ollama.com")
 	fmt.Println()
 	return nil

@@ -88,22 +88,10 @@ func (e *TextExperts) Forward(ctx ml.Context, hiddenStates, routerLogits ml.Tens
 	return nextStates
 }
 
-// TextSharedExpert is TextMLP with different tensor names
-type TextSharedExpert struct {
-	Gate *nn.Linear `gguf:"ffn_gate_shexp"`
-	Up   *nn.Linear `gguf:"ffn_up_shexp"`
-	Down *nn.Linear `gguf:"ffn_down_shexp"`
-}
-
-func (mlp *TextSharedExpert) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *TextOptions) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
-	return mlp.Down.Forward(ctx, hiddenStates)
-}
-
 type TextMOE struct {
 	Router       *nn.Linear `gguf:"ffn_gate_inp"`
 	Experts      *TextExperts
-	SharedExpert *TextSharedExpert
+	SharedExpert *TextMLP `gguf:",suf:_shexp"`
 }
 
 func (moe *TextMOE) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *TextOptions) ml.Tensor {

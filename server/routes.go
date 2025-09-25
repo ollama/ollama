@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,7 +35,6 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
-	"github.com/ollama/ollama/harmony"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/model/parsers"
@@ -48,6 +48,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
@@ -151,6 +153,17 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
+func signinURL() (string, error) {
+	pubKey, err := auth.GetPublicKey()
+	if err != nil {
+		return "", err
+	}
+
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
+	h, _ := os.Hostname()
+	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -251,18 +264,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Generate(c, &req, fn)
 		if err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pk, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					slog.Error("couldn't get public key", "error", pkErr)
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+			var authError api.AuthorizationError
+			if errors.As(err, &authError) {
+				sURL, sErr := signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":      "unauthorized",
-					"public_key": pk,
-				})
+
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+				return
+			}
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -291,17 +307,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	useHarmony := shouldUseHarmony(m) && !req.Raw
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		harmonyMessageHandler.HarmonyParser.AddImplicitStart()
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
+	var builtinParser parsers.Parser
+	if shouldUseHarmony(m) && m.Config.Parser == "" {
+		m.Config.Parser = "harmony"
 	}
 
-	// Validate Think value: string values currently only allowed for gptoss models
-	if req.Think != nil && req.Think.IsString() && !useHarmony {
+	if !req.Raw && m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// no tools or last message for generate endpoint
+			builtinParser.Init(nil, nil)
+		}
+	}
+
+	// Validate Think value: string values currently only allowed for harmony/gptoss models
+	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
@@ -425,7 +445,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var thinkingState *thinking.Parser
-	if !useHarmony {
+	if builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
 		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
@@ -462,11 +482,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				},
 			}
 
-			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(cr.Content, harmonyToolParser)
+			if builtinParser != nil {
+				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
+				if err != nil {
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
 				res.Response = content
 				res.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
+				if cr.Done && len(toolCalls) > 0 {
+					res.ToolCalls = toolCalls
+				}
 			} else if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
@@ -478,26 +504,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
-				if useHarmony {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-
-						res.ToolCalls = append(res.ToolCalls, api.ToolCall{
-							Function: api.ToolCallFunction{
-								Name:      *toolName,
-								Arguments: args,
-							},
-						})
-					}
-				}
-
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -512,7 +518,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				}
 			}
 
-			if useHarmony {
+			if builtinParser != nil {
 				// only send messages with meaningful content (empty messages confuse clients)
 				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 {
 					ch <- res
@@ -1423,8 +1429,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
 
-	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
 	r.POST("/api/me", s.WhoamiHandler)
+
+	r.POST("/api/signout", s.SignoutHandler)
+	// deprecated
+	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)
@@ -1636,11 +1645,32 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	if err != nil {
 		slog.Error(err.Error())
 	}
+
+	// user isn't signed in
+	if user != nil && user.Name == "" {
+		sURL, sErr := signinURL()
+		if sErr != nil {
+			slog.Error(sErr.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+			return
+		}
+
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
+		return
+	}
+
 	c.JSON(http.StatusOK, user)
 }
 
 func (s *Server) SignoutHandler(c *gin.Context) {
-	encodedKey := c.Param("encodedKey")
+	pubKey, err := auth.GetPublicKey()
+	if err != nil {
+		slog.Error("couldn't get public key", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
+		return
+	}
+
+	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 
 	// todo allow other hosts
 	u, err := url.Parse("https://ollama.com")
@@ -1651,11 +1681,11 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 	}
 
 	client := api.NewClient(u, http.DefaultClient)
-	err = client.Signout(c, encodedKey)
+	err = client.Disconnect(c, encKey)
 	if err != nil {
-		slog.Error(err.Error())
-		if strings.Contains(err.Error(), "page not found") || strings.Contains(err.Error(), "invalid credentials") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "you are not currently signed in"})
+		var authError api.AuthorizationError
+		if errors.As(err, &authError) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "you are not currently signed in"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "there was an error signing out"})
@@ -1813,18 +1843,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Chat(c, &req, fn)
 		if err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				pk, pkErr := auth.GetPublicKey()
-				if pkErr != nil {
-					slog.Error("couldn't get public key", "error", pkErr)
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "error getting public key"})
+			var authError api.AuthorizationError
+			if errors.As(err, &authError) {
+				sURL, sErr := signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":      "unauthorized",
-					"public_key": pk,
-				})
+
+				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+				return
+			}
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1870,32 +1903,23 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	var builtinParser parsers.Parser
-	if m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
+	if shouldUseHarmony(m) && m.Config.Parser == "" {
+		m.Config.Parser = "harmony"
 	}
 
-	var harmonyMessageHandler *harmony.HarmonyMessageHandler
-	var harmonyToolParser *harmony.HarmonyToolCallAccumulator
-
-	useHarmony := shouldUseHarmony(m) || m.Config.Parser == "harmony"
-
+	var builtinParser parsers.Parser
 	processedTools := req.Tools
-	if useHarmony {
-		harmonyMessageHandler = harmony.NewHarmonyMessageHandler()
-		var lastMessage *api.Message
-		if len(msgs) > 0 {
-			lastMessage = &msgs[len(msgs)-1]
-		}
-		harmonyMessageHandler.HarmonyParser.AddImplicitStartOrPrefill(lastMessage)
-		harmonyToolParser = harmonyMessageHandler.CreateToolParser()
 
-		// make a copy of tools to pass to the chat prompt. Function names may be
-		// renamed to be valid Harmony function names.
-		processedTools = make([]api.Tool, len(req.Tools))
-		copy(processedTools, req.Tools)
-		for i, tool := range processedTools {
-			processedTools[i].Function.Name = harmonyMessageHandler.FunctionNameMap.ConvertAndAdd(tool.Function.Name)
+	if m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// Determine last message for chat prefill
+			var lastMessage *api.Message
+			if len(msgs) > 0 {
+				lastMessage = &msgs[len(msgs)-1]
+			}
+			// Initialize parser and get processed tools
+			processedTools = builtinParser.Init(req.Tools, lastMessage)
 		}
 	}
 
@@ -1919,8 +1943,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate Think value: string values currently only allowed for gptoss models
-	if req.Think != nil && req.Think.IsString() && !useHarmony {
+	// Validate Think value: string values currently only allowed for harmony/gptoss models
+	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
@@ -1939,7 +1963,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	var toolParser *tools.Parser
-	if len(req.Tools) > 0 && !useHarmony {
+	if len(req.Tools) > 0 && (builtinParser == nil || !builtinParser.HasToolSupport()) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
@@ -1971,38 +1995,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO(drifkin): fold this as much as possibleinto the generic m.Config.Parser logic
-			if useHarmony {
-				content, thinking, toolContent := harmonyMessageHandler.AddContent(r.Content, harmonyToolParser)
-				res.Message.Content = content
-				res.Message.Thinking = thinking
-				harmonyToolParser.Add(toolContent)
-
-				if r.Done {
-					toolName, toolContent := harmonyToolParser.Drain()
-					if toolName != nil {
-						*toolName = strings.TrimPrefix(*toolName, "functions.")
-						*toolName = harmonyMessageHandler.FunctionNameMap.OriginalFromConverted(*toolName)
-						var args api.ToolCallFunctionArguments
-						if err := json.Unmarshal([]byte(toolContent), &args); err != nil {
-							errStr := fmt.Sprintf("error parsing tool call: raw='%s', err=%s", toolContent, err.Error())
-							ch <- gin.H{"error": errStr}
-							return
-						}
-						res.Message.ToolCalls = []api.ToolCall{{Function: api.ToolCallFunction{Name: *toolName, Arguments: args}}}
-					}
-				}
-
-				// only send messages with meaningful content (empty messages confuse clients)
-				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || res.Done {
-					ch <- res
-				}
-
-				return
-			} else if builtinParser != nil {
+			if builtinParser != nil {
 				slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
 
-				content, thinking, toolCalls, err := builtinParser.Add(r.Content, req.Tools)
+				content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
 				if err != nil {
 					ch <- gin.H{"error": err.Error()}
 					return
