@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -204,12 +205,21 @@ func overlap(s, delim string) int {
 }
 
 func trailingWhitespaceLen(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if !unicode.IsSpace(rune(s[i])) {
-			return len(s) - i - 1
+	remaining := s
+	total := 0
+	for len(remaining) > 0 {
+		r, size := utf8.DecodeLastRuneInString(remaining)
+		// if it's an invalid utf8 rune, assume it isn't whitespace
+		if r == utf8.RuneError && size == 1 {
+			break
 		}
+		if !unicode.IsSpace(r) {
+			break
+		}
+		total += size
+		remaining = remaining[:len(remaining)-size]
 	}
-	return len(s)
+	return total
 }
 
 type XMLFunctionCall struct {
