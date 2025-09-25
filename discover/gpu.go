@@ -459,19 +459,19 @@ func GetGPUInfo() GpuInfoList {
 					index: i,
 				}
 
-				C.vk_check_vram(*vHandles.vulkan, C.int(i), &memInfo)
-				if memInfo.err != nil {
-					slog.Info("error looking up vulkan GPU memory", "error", C.GoString(memInfo.err))
-					C.free(unsafe.Pointer(memInfo.err))
-					continue
-				}
-
 				if C.vk_device_is_supported(*vHandles.vulkan, C.int(i)) == 0 {
 					unsupportedGPUs = append(unsupportedGPUs,
 						UnsupportedGPUInfo{
 							GpuInfo: gpuInfo.GpuInfo,
 						})
 					slog.Info(fmt.Sprintf("[%d] Vulkan GPU does not support required Vulkan features. (StorageBuffer16BitAccess)", i))
+					continue
+				}
+
+				C.vk_check_vram(*vHandles.vulkan, C.int(i), &memInfo)
+				if memInfo.err != nil {
+					slog.Info("error looking up vulkan GPU memory", "error", C.GoString(memInfo.err))
+					C.free(unsafe.Pointer(memInfo.err))
 					continue
 				}
 
