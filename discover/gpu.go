@@ -466,6 +466,15 @@ func GetGPUInfo() GpuInfoList {
 					continue
 				}
 
+				if C.vk_device_is_supported(*vHandles.vulkan, C.int(i)) == 0 {
+					unsupportedGPUs = append(unsupportedGPUs,
+						UnsupportedGPUInfo{
+							GpuInfo: gpuInfo.GpuInfo,
+						})
+					slog.Info(fmt.Sprintf("[%d] Vulkan GPU does not support required Vulkan features. (StorageBuffer16BitAccess)", i))
+					continue
+				}
+
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])

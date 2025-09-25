@@ -48,6 +48,7 @@ void vk_init(char* vk_lib_path, vk_init_resp_t *resp) {
       {"vkEnumeratePhysicalDevices", (void *)&resp->ch.vkEnumeratePhysicalDevices},
       {"vkGetPhysicalDeviceMemoryProperties2", (void *)&resp->ch.vkGetPhysicalDeviceMemoryProperties2},
       {"vkDestroyInstance", (void *)&resp->ch.vkDestroyInstance},
+      {"vkGetPhysicalDeviceFeatures2", (void *)&resp->ch.vkGetPhysicalDeviceFeatures2},
       {NULL, NULL},
   };
 
@@ -115,6 +116,38 @@ void vk_init(char* vk_lib_path, vk_init_resp_t *resp) {
   resp->ch.vk = instance;
   resp->ch.num_devices = deviceCount;
   resp->num_devices = deviceCount;
+}
+
+int vk_device_is_supported(vk_handle_t rh, int i) {
+    VkInstance instance = rh.vk;
+    uint32_t deviceCount = rh.num_devices;
+
+    VkPhysicalDevice* devices = malloc(deviceCount * sizeof(VkPhysicalDevice));
+    if (devices == NULL) {
+        return 0;
+    }
+
+    VkResult result = (*rh.vkEnumeratePhysicalDevices)(instance, &deviceCount, devices);
+    if (result != VK_SUCCESS) {
+        free(devices);
+        return 0;
+    }
+
+    VkPhysicalDeviceVulkan11Features vk11_features = {};
+    vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    vk11_features.pNext = NULL;
+
+    VkPhysicalDeviceFeatures2 device_features2 = {};
+    device_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    device_features2.pNext = &vk11_features;
+
+    // make sure you have the right function pointer from your loader
+    (*rh.vkGetPhysicalDeviceFeatures2)(devices[i], &device_features2);
+
+    int supported = vk11_features.storageBuffer16BitAccess ? 1 : 0;
+
+    free(devices);
+    return supported;
 }
 
 int vk_check_flash_attention(vk_handle_t rh, int i) {
