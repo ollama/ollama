@@ -273,8 +273,20 @@ func findArguments(buffer []byte) (map[string]any, int) {
 						if args, ok := obj["arguments"].(map[string]any); ok {
 							return args, true
 						}
+						if argsStr, ok := obj["arguments"].(string); ok {
+							var argsData map[string]interface{}
+							if err := json.Unmarshal([]byte(argsStr), &argsData); err == nil {
+								return argsData, ok
+							}
+						}
 						if args, ok := obj["parameters"].(map[string]any); ok {
 							return args, true
+						}
+						if argsStr, ok := obj["parameters"].(string); ok {
+							var argsData map[string]interface{}
+							if err := json.Unmarshal([]byte(argsStr), &argsData); err == nil {
+								return argsData, ok
+							}
 						}
 						return nil, true
 					}
