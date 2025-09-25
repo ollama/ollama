@@ -150,34 +150,6 @@ int vk_device_is_supported(vk_handle_t rh, int i) {
     return supported;
 }
 
-int vk_check_flash_attention(vk_handle_t rh, int i) {
-  VkInstance instance = rh.vk;
-  uint32_t deviceCount = rh.num_devices;
-
-  VkPhysicalDevice* devices = malloc(deviceCount * sizeof(VkPhysicalDevice));
-  if (devices == NULL) {
-    return 0;
-  }
-
-  VkResult result = (*rh.vkEnumeratePhysicalDevices)(instance, &deviceCount, devices);
-  if (result != VK_SUCCESS) {
-    free(devices);
-    return 0;
-  }
-
-  VkPhysicalDeviceProperties properties = {};
-  (*rh.vkGetPhysicalDeviceProperties)(devices[i], &properties);
-
-  int supports_nv_coopmat2 = is_extension_supported(&rh, devices[i], VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME);
-  if (!supports_nv_coopmat2) {
-    free(devices);
-    return 1;
-  }
-
-  free(devices);
-  return 0;
-}
-
 void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   VkInstance instance = rh.vk;
   uint32_t deviceCount = rh.num_devices;

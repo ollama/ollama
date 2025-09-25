@@ -473,7 +473,6 @@ typedef struct vk_init_resp
 
 void vk_init(char* vk_lib_path, vk_init_resp_t *resp);
 void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp);
-int vk_check_flash_attention(vk_handle_t rh, int i);
 int vk_device_is_supported(vk_handle_t rh, int i);
 void vk_release(vk_handle_t rh);
 
