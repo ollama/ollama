@@ -99,27 +99,22 @@ func (pkg *winPackage) IsMember(target *GROUP_AFFINITY) bool {
 }
 
 func getLogicalProcessorInformationEx() ([]byte, error) {
-	buf := make([]byte, 1)
+	buf := make([]byte, 1024)
 	bufSize := len(buf)
-	ret, _, err := GetLogicalProcessorInformationEx.Call(
-		uintptr(RelationAll),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&bufSize)),
-	)
-	if ret != 0 {
-		return nil, fmt.Errorf("failed to determine size info ret:%d %w", ret, err)
+	var err error
+	for range 3 {
+		var ret uintptr
+		ret, _, err = GetLogicalProcessorInformationEx.Call(
+			uintptr(RelationAll),
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(unsafe.Pointer(&bufSize)),
+		)
+		if ret == 1 && bufSize <= len(buf) {
+			return buf, nil
+		}
+		buf = make([]byte, bufSize)
 	}
-
-	buf = make([]byte, bufSize)
-	ret, _, err = GetLogicalProcessorInformationEx.Call(
-		uintptr(RelationAll),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&bufSize)),
-	)
-	if ret == 0 {
-		return nil, fmt.Errorf("failed to gather processor information ret:%d buflen:%d %w", ret, bufSize, err)
-	}
-	return buf, nil
+	return nil, fmt.Errorf("unable to determine CPU details: %w", err)
 }
 
 func processSystemLogicalProcessorInforationList(buf []byte) []*winPackage {
