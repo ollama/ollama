@@ -7,11 +7,11 @@ static __global__ void timestep_embedding_f32(const float * timesteps, float * d
     int j = threadIdx.x + blockIdx.x * blockDim.x;
     float * embed_data = (float *)((char *)dst +  i*nb1);
 
-    if (dim % 2 != 0 && j == ((dim + 1) / 2)) {
-        embed_data[dim] = 0.f;
+    int half = dim / 2;
+    if (dim % 2 != 0 && j == half) {
+        embed_data[2 * half] = 0.f;
     }
 
-    int half = dim / 2;
     if (j >= half) {
         return;
     }
