@@ -251,7 +251,7 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 		bts := bts[:n]
 		b.Run("encode"+strconv.Itoa(n), func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				_, err := tokenizer.Encode(string(bts), true)
 				if err != nil {
 					b.Fatal(err)
@@ -266,7 +266,7 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 			}
 
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				_, err := tokenizer.Decode(ids)
 				if err != nil {
 					b.Fatal(err)
@@ -276,7 +276,7 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 
 		b.Run("split"+strconv.Itoa(n), func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				slices.Collect(tokenizer.split(string(bts)))
 			}
 		})
