@@ -486,7 +486,7 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.DriverMinor = int(memInfo.minor)
 
 				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
-				var backend = gpuInfoExistsInOtherBackends(gpuInfo)
+				backend := gpuInfoExistsInOtherBackends(gpuInfo)
 				if backend != "" {
 					unsupportedGPUs = append(unsupportedGPUs,
 						UnsupportedGPUInfo{
