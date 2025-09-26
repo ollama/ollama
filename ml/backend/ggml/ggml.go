@@ -172,6 +172,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
 	requiredMemory.CPU.ID = C.GoString(props.id)
+	requiredMemory.CPU.Library = C.GoString(props.library)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -191,6 +192,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
+		requiredMemory.GPUs[i].Library = C.GoString(props.library)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
@@ -203,7 +205,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			for _, l := range p.Layers {
 				if l == layer {
 					for i := range requiredMemory.GPUs {
-						if requiredMemory.GPUs[i].ID == p.ID {
+						if requiredMemory.GPUs[i].ID == p.ID && requiredMemory.GPUs[i].Library == p.Library {
 							return gpuDeviceBufferTypes[i]
 						}
 					}
@@ -750,6 +752,7 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		info.Name = C.GoString(props.name)
 		info.Description = C.GoString(props.description)
 		info.ID = C.GoString(props.id)
+		info.Library = C.GoString(props.library)
 		info.ComputeMajor = (int)(props.compute_major)
 		info.ComputeMinor = (int)(props.compute_minor)
 		info.DriverMajor = (int)(props.driver_major)

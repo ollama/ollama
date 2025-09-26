@@ -18,8 +18,8 @@ type memInfo struct {
 
 // Beginning of an `ollama info` command
 type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
+	ml.DeviceID
 	memInfo
-	Library string `json:"library,omitempty"`
 
 	// Optional variant to select (e.g. versions, cpu feature flags)
 	Variant string `json:"variant"`
@@ -36,7 +36,6 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	UnreliableFreeMemory bool
 
 	// GPU information
-	ID       string `json:"gpu_id"` // string to use for selection of this specific GPU
 	filterID string // AMD Workaround: The numeric ID of the device used to filter out other devices
 	Name     string `json:"name"`    // user friendly name if available
 	Compute  string `json:"compute"` // Compute Capability or gfx
@@ -174,7 +173,7 @@ func (l GpuInfoList) FlashAttentionSupported() bool {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "METAL" ||
 			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "HIP"
+			gpu.Library == "ROCm"
 
 		if !supportsFA {
 			return false

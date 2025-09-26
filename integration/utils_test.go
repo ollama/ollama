@@ -271,7 +271,7 @@ var (
 		"Can they form if there are no clouds?  Be breif in your reply",
 		"Do they happen on other planets? Be brief in your reply",
 	}
-	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refracted", "reflect", "color", "spectrum", "frequency", "end", "gold", "fortune", "blessing", "prosperity"}
+	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "color", "spectrum", "raindrop", "atmosphere", "frequency", "end", "gold", "fortune", "blessing", "prosperity", "magic"}
 )
 
 func init() {
@@ -595,7 +595,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
 				Model:     smol,
-				Prompt:    "how do rainbows form? Be brief but factual in your reply",
+				Prompt:    rainbowPrompt,
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
@@ -613,7 +613,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		[][]string{
 			{"sunlight", "scatter", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorb", "wavelength", "water", "molecule"},
 			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigment", "particle", "iron oxide", "rust", "air", "water", "wet", "mixture", "mixing", "mineral", "element", "decomposed", "matter", "wavelength"},
-			{"water", "droplet", "refract", "reflect", "color", "spectrum", "raindrop"},
+			rainbowExpected,
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide", "water", "vapor", "fluid", "particles", "gas"},
 		}

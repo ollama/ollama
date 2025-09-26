@@ -77,7 +77,7 @@ FROM base AS rocm-6
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 6' \
+    cmake --preset 'ROCm 6' -DOLLAMA_RUNNER_DIR="rocm" \
         && cmake --build --parallel ${PARALLEL} --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel ${PARALLEL}
 
@@ -89,7 +89,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 5' \
+    cmake --preset 'JetPack 5' -DOLLAMA_RUNNER_DIR="cuda_jetpack5" \
         && cmake --build --parallel ${PARALLEL} --preset 'JetPack 5' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
@@ -101,7 +101,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 6' \
+    cmake --preset 'JetPack 6' -DOLLAMA_RUNNER_DIR="cuda_jetpack6" \
         && cmake --build --parallel ${PARALLEL} --preset 'JetPack 6' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
@@ -128,8 +128,8 @@ FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
-COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/cuda_jetpack5
-COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
+COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
+COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama

@@ -25,8 +25,10 @@ func GetCPUInfo() GpuInfo {
 
 	return GpuInfo{
 		memInfo: mem,
-		Library: "cpu",
-		ID:      "0",
+		DeviceID: ml.DeviceID{
+			Library: "cpu",
+			ID:      "0",
+		},
 	}
 }
 
@@ -47,23 +49,25 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 
 	for _, dev := range devs {
 		info := GpuInfo{
-			ID:       dev.ID,
+			DeviceID: ml.DeviceID{
+				ID:      dev.ID,
+				Library: dev.Library,
+			},
 			filterID: dev.FilteredID,
 			Name:     dev.Description,
 			memInfo: memInfo{
 				TotalMemory: dev.TotalMemory,
 				FreeMemory:  dev.FreeMemory,
 			},
-			Library: dev.Library,
 			// TODO can we avoid variant
 			DependencyPath: dev.LibraryPath,
 			DriverMajor:    dev.DriverMajor,
 			DriverMinor:    dev.DriverMinor,
 		}
-		if dev.Library == "CUDA" || dev.Library == "HIP" {
+		if dev.Library == "CUDA" || dev.Library == "ROCm" {
 			info.MinimumMemory = 457 * format.MebiByte
 		}
-		if dev.Library == "HIP" {
+		if dev.Library == "ROCm" {
 			info.Compute = fmt.Sprintf("gfx%x%02x", dev.ComputeMajor, dev.ComputeMinor)
 			if rocmDir != "" {
 				info.DependencyPath = append(info.DependencyPath, rocmDir)
@@ -81,8 +85,10 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 
 		resp = append(resp, GpuInfo{
 			memInfo: mem,
-			Library: "cpu",
-			ID:      "0",
+			DeviceID: ml.DeviceID{
+				Library: "cpu",
+				ID:      "0",
+			},
 		})
 	}
 	return resp
@@ -91,12 +97,7 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variable
 //
-// # If different libraries are detected, the first one is what we use
-//
-// TODO once we're purely running on the new runner, this level of device
-// filtering will no longer be necessary.  Instead the runner can be told which
-// of the set of GPUs to utilize and handle filtering itself, instead of relying
-// on the env var to hide devices from the underlying GPU libraries
+// If different libraries are detected, the first one is what we use
 func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 	if len(l) == 0 {
 		return nil
@@ -107,7 +108,7 @@ func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
-		if info.Library != "HIP" {
+		if info.Library != "ROCm" {
 			continue
 		}
 		// If the devices requires a numeric ID, for filtering purposes, we use the unfiltered ID number

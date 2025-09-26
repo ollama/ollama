@@ -3315,11 +3315,7 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
     props->pci_bus_id = ctx->pci_bus_id;
     props->pci_device_id = ctx->pci_device_id;
     props->pci_domain_id = ctx->pci_domain_id;
-#if defined(GGML_USE_HIP)
-    props->library = GGML_HIP_NAME;
-#else
     props->library = GGML_CUDA_NAME;
-#endif
 
     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
 #ifdef GGML_CUDA_NO_PEER_COPY

@@ -62,7 +62,7 @@ func TestLoad(t *testing.T) {
 	err := <-req.errCh
 	require.Contains(t, err.Error(), "this model may be incompatible")
 
-	server := &mockLlm{vramSize: 10, vramByGPU: map[string]uint64{}}
+	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
 	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		server.modelPath = model
 		return server, nil
@@ -110,7 +110,7 @@ func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, f 
 	return scenario.srv, nil
 }
 
-func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vramSize uint64, duration *api.Duration) *reqBundle {
+func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vramSize uint64, duration *api.Duration, vramByGPU map[ml.DeviceID]uint64) *reqBundle {
 	b := &reqBundle{}
 	b.ctx, b.ctxDone = context.WithCancel(ctx)
 	t.Helper()
@@ -147,19 +147,19 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vra
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 	}
-	b.srv = &mockLlm{vramSize: vramSize, vramByGPU: map[string]uint64{"": vramSize}}
+	b.srv = &mockLlm{vramSize: vramSize, vramByGPU: vramByGPU}
 	return b
 }
 
 func getGpuFn(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList {
-	g := discover.GpuInfo{Library: "metal"}
+	g := discover.GpuInfo{DeviceID: ml.DeviceID{Library: "metal"}}
 	g.TotalMemory = 24 * format.GigaByte
 	g.FreeMemory = 12 * format.GigaByte
 	return []discover.GpuInfo{g}
 }
 
 func getCpuFn() discover.GpuInfo {
-	g := discover.GpuInfo{Library: "cpu"}
+	g := discover.GpuInfo{DeviceID: ml.DeviceID{Library: "cpu"}}
 	g.TotalMemory = 32 * format.GigaByte
 	g.FreeMemory = 26 * format.GigaByte
 	return g
@@ -171,8 +171,8 @@ func TestRequestsSameModelSameRequest(t *testing.T) {
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
 	s.getCpuFn = getCpuFn
-	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
-	b := newScenarioRequest(t, ctx, "ollama-model-1", 11, &api.Duration{Duration: 0})
+	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
+	b := newScenarioRequest(t, ctx, "ollama-model-1", 11, &api.Duration{Duration: 0}, nil)
 	b.req.model = a.req.model
 	b.f = a.f
 
@@ -214,8 +214,8 @@ func TestRequestsSimpleReloadSameModel(t *testing.T) {
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
 	s.getCpuFn = getCpuFn
-	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
-	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond})
+	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
+	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	tmpModel := *a.req.model
 	b.req.model = &tmpModel
 	b.f = a.f
@@ -260,15 +260,15 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
-	s.getGpuFn = getGpuFn
-	s.getCpuFn = getCpuFn
+	s.getGpuFn = getGpuFn // 1 metal GPU
+	s.getCpuFn = getCpuFn // 1 CPU
 
 	// Multiple loaded models
-	a := newScenarioRequest(t, ctx, "ollama-model-3a", 1*format.GigaByte, nil)
-	b := newScenarioRequest(t, ctx, "ollama-model-3b", 10*format.GigaByte, nil)
-	c := newScenarioRequest(t, ctx, "ollama-model-4a", 10*format.GigaByte, nil)
-	c.req.opts.NumGPU = 0                                                       // CPU load, will be allowed
-	d := newScenarioRequest(t, ctx, "ollama-model-3c", 10*format.GigaByte, nil) // Needs prior unloaded
+	a := newScenarioRequest(t, ctx, "model-a-1g-gpu", 1*format.GigaByte, nil, map[ml.DeviceID]uint64{ml.DeviceID{Library: "metal"}: 1 * format.GigaByte})
+	b := newScenarioRequest(t, ctx, "model-b-10g-gpu", 10*format.GigaByte, nil, map[ml.DeviceID]uint64{ml.DeviceID{Library: "metal"}: 10 * format.GigaByte})
+	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
+	c.req.opts.NumGPU = 0                                                                                                                                    // CPU load, will be allowed
+	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{ml.DeviceID{Library: "metal"}: 13 * format.GigaByte}) // Needs prior unloaded
 
 	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
 	s.newServerFn = a.newServer
@@ -340,6 +340,8 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 2)
 	s.loadedMu.Unlock()
 	b.ctxDone()
+	// Since getGpuFn always returns 12g free, the scheduler will also try to unload "c"
+	c.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
@@ -349,7 +351,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 		t.Fatal("timeout")
 	}
 	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
+	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
 }
 
@@ -357,9 +359,9 @@ func TestGetRunner(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 3*time.Second)
 	defer done()
 
-	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})
-	b := newScenarioRequest(t, ctx, "ollama-model-1b", 10, &api.Duration{Duration: 2 * time.Millisecond})
-	c := newScenarioRequest(t, ctx, "ollama-model-1c", 10, &api.Duration{Duration: 2 * time.Millisecond})
+	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
+	b := newScenarioRequest(t, ctx, "ollama-model-1b", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
+	c := newScenarioRequest(t, ctx, "ollama-model-1c", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
 	t.Setenv("OLLAMA_MAX_QUEUE", "1")
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
@@ -421,7 +423,7 @@ func TestExpireRunner(t *testing.T) {
 
 	var f *ggml.GGML
 	gpus := discover.GpuInfoList{}
-	server := &mockLlm{vramSize: 10, vramByGPU: map[string]uint64{}}
+	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
 	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		server.modelPath = model
 		return server, nil
@@ -459,10 +461,10 @@ func TestPrematureExpired(t *testing.T) {
 	defer done()
 
 	// Same model, same request
-	scenario1a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, nil)
+	scenario1a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, nil, nil)
 	s := InitScheduler(ctx)
 	s.getGpuFn = func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList {
-		g := discover.GpuInfo{Library: "metal"}
+		g := discover.GpuInfo{DeviceID: ml.DeviceID{Library: "metal"}}
 		g.TotalMemory = 24 * format.GigaByte
 		g.FreeMemory = 12 * format.GigaByte
 		return []discover.GpuInfo{g}
@@ -510,7 +512,7 @@ func TestUseLoadedRunner(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2},
 	}
 	finished := make(chan *LlmRequest)
-	llm1 := &mockLlm{vramByGPU: map[string]uint64{}}
+	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, sessionDuration: 1, numParallel: 1}
 	req.useLoadedRunner(r1, finished)
 	require.Equal(t, uint(1), r1.refCount)
@@ -533,22 +535,32 @@ func TestUpdateFreeSpace(t *testing.T) {
 	defer done()
 	gpus := discover.GpuInfoList{
 		{
-			Library: "a",
-			ID:      "1",
+			DeviceID: ml.DeviceID{
+				ID: "1",
+			},
 		},
 		{
-			Library: "a",
-			ID:      "2",
+			DeviceID: ml.DeviceID{
+				ID: "2",
+			},
 		},
 	}
 	gpus[0].TotalMemory = 1000
 	gpus[0].FreeMemory = 900
 	gpus[1].TotalMemory = 2000
 	gpus[1].FreeMemory = 1900
-	llm1 := &mockLlm{vramByGPU: map[string]uint64{"1": 50, "2": 50}}
-	llm2 := &mockLlm{vramByGPU: map[string]uint64{"1": 125, "2": 75}}
-	r1 := &runnerRef{llama: llm1, gpus: gpus, numParallel: 1}
-	r2 := &runnerRef{llama: llm2, gpus: gpus, numParallel: 1}
+	gpuIDs := []ml.DeviceID{
+		{
+			ID: "1",
+		},
+		{
+			ID: "2",
+		},
+	}
+	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{{ID: "1"}: 50, {ID: "2"}: 50}}
+	llm2 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{{ID: "1"}: 125, {ID: "2"}: 75}}
+	r1 := &runnerRef{llama: llm1, gpus: gpuIDs, numParallel: 1}
+	r2 := &runnerRef{llama: llm2, gpus: gpuIDs, numParallel: 1}
 
 	s := InitScheduler(ctx)
 	s.loadedMu.Lock()
@@ -585,7 +597,7 @@ func TestNeedsReload(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 
-	llm := &mockLlm{vramByGPU: map[string]uint64{}}
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	do := api.DefaultOptions()
 	runner := &runnerRef{
 		model: &Model{
@@ -632,8 +644,8 @@ func TestUnloadAllRunners(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
 
-	llm1 := &mockLlm{vramByGPU: map[string]uint64{}}
-	llm2 := &mockLlm{vramByGPU: map[string]uint64{}}
+	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	llm2 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	s := InitScheduler(ctx)
 	s.unloadAllRunners()
 
@@ -651,7 +663,7 @@ func TestUnloadAllRunners(t *testing.T) {
 }
 
 func TestUnload(t *testing.T) {
-	llm1 := &mockLlm{vramByGPU: map[string]uint64{}}
+	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, numParallel: 1}
 	r2 := &runnerRef{model: &Model{AdapterPaths: []string{"A"}}, numParallel: 1}
 	r1.unload()
@@ -665,7 +677,7 @@ func TestAlreadyCanceled(t *testing.T) {
 	defer done()
 	dctx, done2 := context.WithCancel(ctx)
 	done2()
-	scenario1a := newScenarioRequest(t, dctx, "ollama-model-1", 10, &api.Duration{Duration: 0})
+	scenario1a := newScenarioRequest(t, dctx, "ollama-model-1", 10, &api.Duration{Duration: 0}, nil)
 	s := InitScheduler(ctx)
 	slog.Info("scenario1a")
 	s.pendingReqCh <- scenario1a.req
@@ -692,24 +704,28 @@ type mockLlm struct {
 	closeCalled       bool
 	vramSize          uint64
 	totalSize         uint64
-	vramByGPU         map[string]uint64
+	vramByGPU         map[ml.DeviceID]uint64
 }
 
 func (s *mockLlm) ModelPath() string {
 	return s.modelPath
 }
 
-func (s *mockLlm) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) error {
+func (s *mockLlm) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) ([]ml.DeviceID, error) {
 	if requireFull {
 		for _, g := range gpus {
 			if g.FreeMemory >= s.vramSize {
-				return nil
+				return []ml.DeviceID{g.DeviceID}, nil
 			}
 		}
 
-		return llm.ErrLoadRequiredFull
+		return nil, llm.ErrLoadRequiredFull
 	}
-	return nil
+	gpuIDs := make([]ml.DeviceID, len(gpus))
+	for i := range gpus {
+		gpuIDs[i] = gpus[i].DeviceID
+	}
+	return gpuIDs, nil
 }
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
 func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitResp }
@@ -735,7 +751,7 @@ func (s *mockLlm) Close() error {
 }
 func (s *mockLlm) VRAMSize() uint64                                   { return s.vramSize }
 func (s *mockLlm) TotalSize() uint64                                  { return s.totalSize }
-func (s *mockLlm) VRAMByGPU(gpuid string) uint64                      { return s.vramByGPU[gpuid] }
+func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s.vramByGPU[id] }
 func (s *mockLlm) Pid() int                                           { return -1 }
 func (s *mockLlm) GetPort() int                                       { return -1 }
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }

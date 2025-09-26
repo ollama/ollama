@@ -3,7 +3,6 @@ package discover
 // Runner based GPU discovery
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -78,13 +77,6 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			libDirs[""] = struct{}{}
 		}
 
-		// Typically bootstrapping takes < 1s, but on some systems, with devices
-		// in low power/idle mode, initialization can take multiple seconds.  We
-		// set a long timeout just for bootstrap discovery to reduce the chance
-		// of giving up too quickly
-		ctx1stPass, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
 		slog.Info("discovering available GPUs...")
 
 		// For our initial discovery pass, we gather all the known GPUs through
@@ -99,6 +91,13 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			} else {
 				dirs = []string{LibOllamaPath, dir}
 			}
+			// Typically bootstrapping takes < 1s, but on some systems, with devices
+			// in low power/idle mode, initialization can take multiple seconds.  We
+			// set a long timeout just for bootstrap discovery to reduce the chance
+			// of giving up too quickly
+			ctx1stPass, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+
 			// For this pass, we retain duplicates in case any are incompatible with some libraries
 			devices = append(devices, bootstrapDevices(ctx1stPass, dirs, nil)...)
 		}
@@ -122,7 +121,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			go func(i int) {
 				defer wg.Done()
 				var envVar string
-				if devices[i].Library == "HIP" {
+				if devices[i].Library == "ROCm" {
 					if runtime.GOOS != "linux" {
 						envVar = "HIP_VISIBLE_DEVICES"
 					} else {
@@ -165,7 +164,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				devices = append(devices[:i], devices[i+1:]...)
 				needsDelete = append(needsDelete[:i], needsDelete[i+1:]...)
 				i--
-			} else if devices[i].Library == "HIP" {
+			} else if devices[i].Library == "ROCm" {
 				if _, err := strconv.Atoi(devices[i].ID); err == nil {
 					// Replace the numeric ID with the post-filtered IDs
 					devices[i].FilteredID = devices[i].ID
@@ -175,7 +174,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}
 		}
 
-		// Now filter out any overlap with different libraries (favor CUDA/HIP over others)
+		// Now filter out any overlap with different libraries (favor CUDA/ROCm over others)
 		for i := 0; i < len(devices); i++ {
 			for j := i + 1; j < len(devices); j++ {
 				// For this pass, we only drop exact duplicates
@@ -188,7 +187,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				case ml.DuplicateDevice:
 					// Different library, choose based on priority
 					var droppedDevice ml.DeviceInfo
-					if devices[i].Library == "CUDA" || devices[i].Library == "HIP" {
+					if devices[i].Library == "CUDA" || devices[i].Library == "ROCm" {
 						droppedDevice = devices[j]
 					} else {
 						droppedDevice = devices[i]
@@ -435,12 +434,9 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 
 	cmd := exec.Command(exe, params...)
 	cmd.Env = os.Environ()
-	cmd.Stdout = os.Stdout
-	errBuf := &bytes.Buffer{}
-	if envconfig.LogLevel() == slog.Level(-8) {
+	if envconfig.LogLevel() == logutil.LevelTrace {
+		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = errBuf
 	}
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
 	cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
@@ -473,7 +469,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 			cmd.Env = append(cmd.Env, extraEnvs[i])
 		}
 	}
-	slog.Log(context.TODO(), logutil.LevelTrace, "starting runner for device discovery", "env", cmd.Env, "cmd", cmd)
+	logutil.Trace("starting runner for device discovery", "env", cmd.Env, "cmd", cmd)
 	if err := cmd.Start(); err != nil {
 		slog.Warn("unable to start discovery subprocess", "cmd", cmd, "error", err)
 		return nil
@@ -487,7 +483,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	if err != nil {
 		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			// Expected during bootstrapping while we filter out unsupported AMD GPUs
-			slog.Log(context.TODO(), logutil.LevelTrace, "runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", cmd.ProcessState.ExitCode())
+			logutil.Trace("runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", cmd.ProcessState.ExitCode())
 		} else {
 			slog.Info("failure during GPU discovery", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", err)
 		}
