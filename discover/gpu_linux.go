@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -115,6 +116,20 @@ func GetCPUDetails() ([]CPU, error) {
 	return linuxCPUDetails(file)
 }
 
+func detectCgroupCpuset() string {
+	v2Path := "/sys/fs/cgroup/cpuset.cpus"
+	if _, err := os.Stat(v2Path); err == nil {
+		return v2Path
+	}
+
+	v1Path := "/sys/fs/cgroup/cpuset/cpuset.cpus"
+	if _, err := os.Stat(v1Path); err == nil {
+		return v1Path
+	}
+
+	return ""
+}
+
 func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 	reColumns := regexp.MustCompile("\t+: ")
 	scanner := bufio.NewScanner(file)
@@ -140,6 +155,39 @@ func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 	}
 	if cpu.ID != "" {
 		cpuInfos = append(cpuInfos, *cpu)
+	}
+
+	// Read the CPU set restricted by cgroup
+	allowedCPUs := map[string]struct{}{}
+	CgroupCpusetPath := detectCgroupCpuset()
+	if _, err := os.Stat(CgroupCpusetPath); err == nil {
+		data, err := os.ReadFile(CgroupCpusetPath)
+		if err == nil {
+			ranges := strings.Split(strings.TrimSpace(string(data)), ",")
+			for _, r := range ranges {
+				if strings.Contains(r, "-") {
+					bounds := strings.Split(r, "-")
+					start, _ := strconv.Atoi(bounds[0])
+					end, _ := strconv.Atoi(bounds[1])
+					for i := start; i <= end; i++ {
+						allowedCPUs[strconv.Itoa(i)] = struct{}{}
+					}
+				} else {
+					allowedCPUs[r] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Filter the CPUs that are not in allowedCPUs
+	if len(allowedCPUs) > 0 {
+		filtered := []linuxCpuInfo{}
+		for _, c := range cpuInfos {
+			if _, ok := allowedCPUs[c.ID]; ok {
+				filtered = append(filtered, c)
+			}
+		}
+		cpuInfos = filtered
 	}
 
 	// Process the sockets/cores/threads
