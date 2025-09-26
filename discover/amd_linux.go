@@ -42,7 +42,7 @@ const (
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs          = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
+	ROCmLibGlobs          = []string{"libhipblas.so.3*", "rocblas"} // TODO - probably include more coverage of files here...
 	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
 )
 
@@ -438,7 +438,7 @@ func AMDValidateLibDir() (string, error) {
 	}
 
 	// Well known ollama installer path
-	installedRocmDir := "/usr/share/ollama/lib/rocm"
+	installedRocmDir := "/usr/lib/ollama/rocm"
 	if rocmLibUsable(installedRocmDir) {
 		return installedRocmDir, nil
 	}
