@@ -438,7 +438,7 @@ func AMDValidateLibDir() (string, error) {
 	}
 
 	// Well known ollama installer path
-	installedRocmDir := "/usr/share/ollama/lib/rocm"
+	installedRocmDir := "/usr/lib/ollama/rocm"
 	if rocmLibUsable(installedRocmDir) {
 		return installedRocmDir, nil
 	}
