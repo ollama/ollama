@@ -208,12 +208,13 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 }
 
 type ModelParams struct {
-	NumGpuLayers int
-	MainGpu      int
-	UseMmap      bool
-	TensorSplit  []float32
-	Progress     func(float32)
-	VocabOnly    bool
+	NumGpuLayers   int
+	MainGpu        int
+	UseMmap        bool
+	TensorSplit    []float32
+	Progress       func(float32)
+	VocabOnly      bool
+	NumMoeOffload int
 }
 
 //export llamaProgressCallback
@@ -239,6 +240,40 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 		defer tensorSplitPin.Unpin()
 
 		cparams.tensor_split = (*C.float)(unsafe.Pointer(tensorSplitData))
+	}
+
+	if params.NumMoeOffload != 0 {
+		var patterns []string
+		if params.NumMoeOffload == -1 {
+			patterns = append(patterns, "\\.ffn_gate_exps\\.weight$")
+			patterns = append(patterns, "\\.ffn_down_exps\\.weight$")
+			patterns = append(patterns, "\\.ffn_up_exps\\.weight$")
+		} else {
+			for i := 0; i < params.NumMoeOffload; i++ {
+				patterns = append(patterns, fmt.Sprintf("blk\\.%d\\.ffn_gate_exps\\.weight$", i))
+				patterns = append(patterns, fmt.Sprintf("blk\\.%d\\.ffn_down_exps\\.weight$", i))
+				patterns = append(patterns, fmt.Sprintf("blk\\.%d\\.ffn_up_exps\\.weight$", i))
+			}
+		}
+
+		overrides := make([]C.struct_llama_model_tensor_buft_override, len(patterns))
+		cPatternStrings := make([]*C.char, len(patterns))
+		for i, pattern := range patterns {
+			cPatternStrings[i] = C.CString(pattern)
+			overrides[i].pattern = cPatternStrings[i]
+			overrides[i].buft = C.ggml_backend_cpu_buffer_type()
+		}
+		defer func() {
+			for _, s := range cPatternStrings {
+				C.free(unsafe.Pointer(s))
+			}
+		}()
+
+		var overridesPin runtime.Pinner
+		overridesPin.Pin(&overrides[0])
+		defer overridesPin.Unpin()
+
+		cparams.tensor_buft_overrides = (*C.struct_llama_model_tensor_buft_override)(unsafe.Pointer(&overrides[0]))
 	}
 
 	if params.Progress != nil {
