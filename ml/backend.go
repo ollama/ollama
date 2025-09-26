@@ -158,40 +158,6 @@ func (e ErrNoMem) Error() string {
 	return fmt.Sprintf("insufficient memory - required allocations: %+v", e.BackendMemory)
 }
 
-type AllocationStatus int
-
-const (
-	// Unallocated memory - have not yet attempted to allocate
-	Unallocated AllocationStatus = iota
-
-	// Failed memory - tried to allocate the memory and did not succeed
-	Failed
-
-	// Allocated memory = tried and succeeded to allocate memory
-	Allocated
-)
-
-// Memory is the size of an allocation and whether it was successful.
-type Memory struct {
-	Size   uint64
-	Status AllocationStatus
-}
-
-func (m Memory) String() string {
-	s := fmt.Sprint(m.Size)
-
-	switch m.Status {
-	case Unallocated:
-		s += "U"
-	case Failed:
-		s += "F"
-	case Allocated:
-		s += "A"
-	}
-
-	return s
-}
-
 // DeviceMemory provides a breakdown of the memory needed
 // per device, such as a CPU or GPU.
 type DeviceMemory struct {
@@ -204,39 +170,32 @@ type DeviceMemory struct {
 	ID string
 
 	// Weights is the per-layer memory needed for the model weights.
-	Weights []Memory
+	Weights []uint64
 
 	// Cache is the per-layer memory needed for the KV cache.
-	Cache []Memory
+	Cache []uint64
 
 	// Graph is the size of the compute graph. It is not per-layer.
-	Graph Memory
+	Graph uint64
 }
 
-// Allocated returns the total size of the memory that has been successfully
-// allocated on this device
-func (m DeviceMemory) Allocated() uint64 {
-	var mem uint64
+func sumMemory(mem []uint64) uint64 {
+	var sum uint64
 
-	for _, w := range m.Weights {
-		if w.Status == Allocated {
-			mem += w.Size
-		}
-	}
-	for _, c := range m.Cache {
-		if c.Status == Allocated {
-			mem += c.Size
-		}
-	}
-	if m.Graph.Status == Allocated {
-		mem += m.Graph.Size
+	for _, m := range mem {
+		sum += m
 	}
 
-	return mem
+	return sum
 }
 
-func memoryPresent(mem []Memory) bool {
-	return slices.ContainsFunc(mem, func(m Memory) bool { return m.Size != 0 })
+// Size returns the total size of the memory required by this device
+func (m DeviceMemory) Size() uint64 {
+	return sumMemory(m.Weights) + sumMemory(m.Cache) + m.Graph
+}
+
+func memoryPresent(mem []uint64) bool {
+	return slices.ContainsFunc(mem, func(m uint64) bool { return m != 0 })
 }
 
 func (m DeviceMemory) LogValue() slog.Value {
@@ -249,7 +208,7 @@ func (m DeviceMemory) LogValue() slog.Value {
 		attrs = append(attrs, slog.Any("Cache", m.Cache))
 	}
 
-	if m.Graph.Size != 0 {
+	if m.Graph != 0 {
 		attrs = append(attrs, slog.Any("Graph", m.Graph))
 	}
 
@@ -267,7 +226,7 @@ func (m DeviceMemory) LogValue() slog.Value {
 // accommodate that to make forward progress.
 type BackendMemory struct {
 	// InputWeights are always located on the CPU and cannot be moved
-	InputWeights Memory
+	InputWeights uint64
 
 	// CPU model components are located in system memory. This does not
 	// include unified memory allocated through the GPU.
@@ -279,7 +238,7 @@ type BackendMemory struct {
 
 func (m BackendMemory) LogValue() slog.Value {
 	var attrs []slog.Attr
-	if m.InputWeights.Size != 0 {
+	if m.InputWeights != 0 {
 		attrs = append(attrs, slog.Any("InputWeights", m.InputWeights))
 	}
 
@@ -291,17 +250,7 @@ func (m BackendMemory) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func sumMemory(mem []Memory) uint64 {
-	var sum uint64
-
-	for _, m := range mem {
-		sum += m.Size
-	}
-
-	return sum
-}
-
-// Log prints a high level summary of the memory (allocated or not)
+// Log prints a high level summary of the memory
 func (m BackendMemory) Log(level slog.Level) {
 	var total uint64
 
@@ -311,7 +260,7 @@ func (m BackendMemory) Log(level slog.Level) {
 			total += sum
 		}
 	}
-	if sum := m.InputWeights.Size + sumMemory(m.CPU.Weights); sum > 0 {
+	if sum := m.InputWeights + sumMemory(m.CPU.Weights); sum > 0 {
 		slog.Log(context.TODO(), level, "model weights", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
 		total += sum
 	}
@@ -328,12 +277,12 @@ func (m BackendMemory) Log(level slog.Level) {
 	}
 
 	for _, gpu := range m.GPUs {
-		if sum := gpu.Graph.Size; sum > 0 {
+		if sum := gpu.Graph; sum > 0 {
 			slog.Log(context.TODO(), level, "compute graph", "device", gpu.Name, "size", format.HumanBytes2(sum))
 			total += sum
 		}
 	}
-	if sum := m.CPU.Graph.Size; sum > 0 {
+	if sum := m.CPU.Graph; sum > 0 {
 		slog.Log(context.TODO(), level, "compute graph", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
 		total += sum
 	}
