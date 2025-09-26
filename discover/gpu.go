@@ -37,6 +37,11 @@ type oneapiHandles struct {
 	deviceCount int
 }
 
+type vulkanHandles struct {
+	vulkan      *C.vk_handle_t
+	deviceCount int
+}
+
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
@@ -51,9 +56,11 @@ var (
 	nvcudaLibPath string
 	cudartLibPath string
 	oneapiLibPath string
+	vulkanLibPath string
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
+	vulkanGPUs    []VulkanGPUInfo
 
 	// If any discovered GPUs are incompatible, report why
 	unsupportedGPUs []UnsupportedGPUInfo
@@ -174,6 +181,28 @@ func initOneAPIHandles() *oneapiHandles {
 	return oHandles
 }
 
+// Note: gpuMutex must already be held
+func initVulkanHandles() *vulkanHandles {
+	vHandles := &vulkanHandles{}
+
+	// Short Circuit if we already know which library to use
+	if vulkanLibPath != "" {
+		vHandles.deviceCount, vHandles.vulkan, _ = LoadVulkanMgmt([]string{vulkanLibPath})
+		return vHandles
+	}
+
+	vulkanPaths := FindGPULibs(VulkanMgmtName, VulkanGlobs)
+
+	if len(vulkanPaths) > 0 {
+		slog.Info("vulkan: load libvulkan ok")
+		vHandles.deviceCount, vHandles.vulkan, vulkanLibPath = LoadVulkanMgmt(vulkanPaths)
+	} else {
+		slog.Info("vulkan: failed to load libvulkan")
+	}
+
+	return vHandles
+}
+
 func GetCPUInfo() GpuInfoList {
 	gpuMutex.Lock()
 	if !bootstrapped {
@@ -185,6 +214,30 @@ func GetCPUInfo() GpuInfoList {
 	return GpuInfoList{cpus[0].GpuInfo}
 }
 
+// gpuIDExistsInOtherBackends returns true if the given ID exists in CUDA, ROCm, or OneAPI lists.
+// Note: It intentionally does not check Vulkan to avoid self-comparison during Vulkan discovery.
+func gpuInfoExistsInOtherBackends(gpu VulkanGPUInfo) string {
+	for _, g := range cudaGPUs {
+		if g.ID == gpu.ID {
+			return "cuda"
+		}
+	}
+
+	// ID is not always filled, so use the gpu Name for duplicate detection
+	for _, g := range rocmGPUs {
+		if g.ID == gpu.ID || g.Name == gpu.Name {
+			return "rocm"
+		}
+	}
+
+	for _, g := range oneapiGPUs {
+		if g.ID == gpu.ID {
+			return "oneapi"
+		}
+	}
+	return ""
+}
+
 func GetGPUInfo() GpuInfoList {
 	// TODO - consider exploring lspci (and equivalent on windows) to check for
 	// GPUs so we can report warnings if we see Nvidia/AMD but fail to load the libraries
@@ -193,6 +246,7 @@ func GetGPUInfo() GpuInfoList {
 	needRefresh := true
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
+	var vHandles *vulkanHandles
 	defer func() {
 		if cHandles != nil {
 			if cHandles.cudart != nil {
@@ -209,6 +263,11 @@ func GetGPUInfo() GpuInfoList {
 			if oHandles.oneapi != nil {
 				// TODO - is this needed?
 				C.oneapi_release(*oHandles.oneapi)
+			}
+		}
+		if vHandles != nil {
+			if vHandles.vulkan != nil {
+				C.vk_release(*vHandles.vulkan)
 			}
 		}
 	}()
@@ -388,11 +447,63 @@ func GetGPUInfo() GpuInfoList {
 				rocmGPUs[i].ID = strconv.Itoa(i)
 			}
 		}
+
+		// Vulkan
+		vHandles = initVulkanHandles()
+		for i := range vHandles.deviceCount {
+			if vHandles.vulkan != nil {
+				gpuInfo := VulkanGPUInfo{
+					GpuInfo: GpuInfo{
+						Library: "vulkan",
+					},
+					index: i,
+				}
+
+				if C.vk_device_is_supported(*vHandles.vulkan, C.int(i)) == 0 {
+					unsupportedGPUs = append(unsupportedGPUs,
+						UnsupportedGPUInfo{
+							GpuInfo: gpuInfo.GpuInfo,
+						})
+					slog.Info(fmt.Sprintf("[%d] Vulkan GPU does not support required Vulkan features. (StorageBuffer16BitAccess)", i))
+					continue
+				}
+
+				C.vk_check_vram(*vHandles.vulkan, C.int(i), &memInfo)
+				if memInfo.err != nil {
+					slog.Info("error looking up vulkan GPU memory", "error", C.GoString(memInfo.err))
+					C.free(unsafe.Pointer(memInfo.err))
+					continue
+				}
+
+				gpuInfo.TotalMemory = uint64(memInfo.total)
+				gpuInfo.FreeMemory = uint64(memInfo.free)
+				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+				gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
+				gpuInfo.MinimumMemory = 0
+				gpuInfo.DependencyPath = []string{LibOllamaPath}
+				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+				gpuInfo.DriverMajor = int(memInfo.major)
+				gpuInfo.DriverMinor = int(memInfo.minor)
+
+				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+				backend := gpuInfoExistsInOtherBackends(gpuInfo)
+				if backend != "" {
+					unsupportedGPUs = append(unsupportedGPUs,
+						UnsupportedGPUInfo{
+							GpuInfo: gpuInfo.GpuInfo,
+						})
+					slog.Info(fmt.Sprintf("[%-s] Vulkan GPU is supported by [%-s]", gpuInfo.ID, backend))
+				} else {
+					vulkanGPUs = append(vulkanGPUs, gpuInfo)
+				}
+			}
+		}
+
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
 		bootstrapped = true
-		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
+		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(vulkanGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
 		}
 
@@ -492,6 +603,22 @@ func GetGPUInfo() GpuInfoList {
 			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
+		if vHandles == nil && len(vulkanGPUs) > 0 {
+			vHandles = initVulkanHandles()
+		}
+		for i, gpu := range vulkanGPUs {
+			if vHandles.vulkan == nil {
+				// shouldn't happen
+				slog.Warn("nil vulkan handle with device count", "count", oHandles.deviceCount)
+				continue
+			}
+			C.vk_check_vram(*vHandles.vulkan, C.int(gpu.index), &memInfo)
+			// TODO - convert this to MinimumMemory based on testing...
+			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+			memInfo.free = C.uint64_t(totalFreeMem)
+			vulkanGPUs[i].FreeMemory = uint64(memInfo.free)
+		}
+
 		err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
 		if err != nil {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
@@ -506,6 +633,9 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	for _, gpu := range oneapiGPUs {
+		resp = append(resp, gpu.GpuInfo)
+	}
+	for _, gpu := range vulkanGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	if len(resp) == 0 {
@@ -686,6 +816,29 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 		}
 	}
 	return 0, nil, "", err
+}
+
+func LoadVulkanMgmt(vulkanLibPaths []string) (int, *C.vk_handle_t, string) {
+	var resp C.vk_init_resp_t
+	resp.ch.verbose = getVerboseState()
+	for _, vkLibPath := range vulkanLibPaths {
+		vkLib := C.CString(vkLibPath)
+		defer C.free(unsafe.Pointer(vkLib))
+
+		C.vk_init(vkLib, &resp)
+		if resp.err != nil {
+			slog.Error(
+				"Unable to load vulkan",
+				"vulkan_library", vkLibPath,
+				"error", C.GoString(resp.err),
+			)
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			return int(resp.num_devices), &resp.ch, vkLibPath
+		}
+	}
+
+	return 0, nil, ""
 }
 
 func getVerboseState() C.uint16_t {
