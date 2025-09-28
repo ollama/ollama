@@ -1,0 +1,38 @@
+(error "line 8 column 39: logic does not support uninterpreted functions")
+(error "line 9 column 39: logic does not support uninterpreted functions")
+(error "line 10 column 42: logic does not support uninterpreted functions")
+(error "line 14 column 29: unknown constant mla_compression (Int) ")
+(error "line 19 column 30: unknown constant original_kv_size (Int) ")
+(error "line 23 column 33: unknown constant compression_savings (Int) ")
+(error "line 29 column 33: unknown constant mla_compression (Int) ")
+(error "line 32 column 42: logic does not support uninterpreted functions")
+(error "line 35 column 35: unknown constant compression_ratio (Int) ")
+(error "line 41 column 41: unknown constant compression_ratio (Int) ")
+(error "line 56 column 34: unknown constant mla_compression (Int) ")
+(error "line 57 column 35: unknown constant mla_compression (Int) ")
+(error "line 58 column 36: unknown constant mla_compression (Int) ")
+(error "line 59 column 36: unknown constant mla_compression (Int) ")
+(error "line 62 column 47: logic does not support uninterpreted functions")
+(error "line 65 column 40: unknown constant compression_efficiency (Int) ")
+(error "line 71 column 41: unknown constant compression_efficiency (Int) ")
+(error "line 76 column 30: unknown constant mla_compression (Int) ")
+(error "line 81 column 39: unknown constant mla_compression (Int) ")
+sat
+(
+  (define-fun kv_28 () Int
+    28)
+  (define-fun kv_280 () Int
+    280)
+  (define-fun kv_1500 () Int
+    1500)
+  (define-fun kv_2800 () Int
+    2800)
+)
+MLA compression for 28 units:
+(error "line 90 column 28: unknown constant mla_compression (Int) ")
+MLA compression for 1500 units:
+(error "line 92 column 30: unknown constant mla_compression (Int) ")
+Compression efficiency for 1500 units:
+(error "line 94 column 37: unknown constant compression_efficiency (Int) ")
+Compression ratio for 2800 units:
+(error "line 96 column 32: unknown constant compression_ratio (Int) ")

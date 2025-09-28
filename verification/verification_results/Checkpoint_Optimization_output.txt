@@ -1,0 +1,37 @@
+(error "line 8 column 41: logic does not support uninterpreted functions")
+(error "line 9 column 38: logic does not support uninterpreted functions")
+(error "line 10 column 34: logic does not support uninterpreted functions")
+(error "line 14 column 30: unknown constant checkpoint_memory (Int) ")
+(error "line 19 column 28: unknown constant standard_memory (Int) ")
+(error "line 24 column 32: unknown constant sqrt_approx (Int) ")
+(error "line 30 column 34: unknown constant checkpoint_memory (Int) ")
+(error "line 35 column 40: unknown constant checkpoint_memory (Int) ")
+(error "line 50 column 39: unknown constant checkpoint_memory (Int) ")
+(error "line 51 column 40: unknown constant checkpoint_memory (Int) ")
+(error "line 52 column 40: unknown constant checkpoint_memory (Int) ")
+(error "line 53 column 41: unknown constant checkpoint_memory (Int) ")
+(error "line 56 column 38: logic does not support uninterpreted functions")
+(error "line 58 column 27: unknown constant memory_savings (Int) ")
+(error "line 64 column 31: unknown constant memory_savings (Int) ")
+(error "line 67 column 41: logic does not support uninterpreted functions")
+(error "line 70 column 33: unknown constant efficiency_ratio (Int) ")
+(error "line 76 column 34: unknown constant efficiency_ratio (Int) ")
+sat
+(
+  (define-fun layers_4 () Int
+    4)
+  (define-fun layers_16 () Int
+    16)
+  (define-fun layers_64 () Int
+    64)
+  (define-fun layers_100 () Int
+    100)
+)
+Checkpoint memory for 4 layers:
+(error "line 84 column 33: unknown constant checkpoint_memory (Int) ")
+Standard memory for 4 layers:
+(error "line 86 column 31: unknown constant standard_memory (Int) ")
+Memory savings for 64 layers:
+(error "line 88 column 31: unknown constant memory_savings (Int) ")
+Efficiency ratio for 64 layers:
+(error "line 90 column 33: unknown constant efficiency_ratio (Int) ")

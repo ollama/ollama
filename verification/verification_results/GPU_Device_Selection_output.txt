@@ -1,0 +1,74 @@
+(error "line 9 column 37: logic does not support uninterpreted functions")
+(error "line 10 column 39: logic does not support uninterpreted functions")
+(error "line 11 column 45: logic does not support uninterpreted functions")
+(error "line 12 column 35: logic does not support uninterpreted functions")
+(error "line 16 column 22: unknown constant device_score (GPU) ")
+(error "line 22 column 56: logic does not support uninterpreted functions")
+(error "line 24 column 53: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 28 column 43: logic does not support uninterpreted functions")
+(error "line 30 column 50: unknown constant is_best_device (GPU Int) ")
+(error "line 35 column 55: unknown constant is_best_device (GPU Int) ")
+(error "line 45 column 36: unknown constant memory_size_gb (GPU) ")
+(error "line 46 column 37: unknown constant peak_tflops_fp32 (GPU) ")
+(error "line 47 column 42: unknown constant supports_tensor_cores (GPU) ")
+(error "line 50 column 36: unknown constant memory_size_gb (GPU) ")
+(error "line 51 column 37: unknown constant peak_tflops_fp32 (GPU) ")
+(error "line 52 column 42: unknown constant supports_tensor_cores (GPU) ")
+(error "line 55 column 37: unknown constant memory_size_gb (GPU) ")
+(error "line 56 column 38: unknown constant peak_tflops_fp32 (GPU) ")
+(error "line 57 column 43: unknown constant supports_tensor_cores (GPU) ")
+(error "line 60 column 34: unknown constant device_score (GPU) ")
+(error "line 61 column 34: unknown constant device_score (GPU) ")
+(error "line 62 column 35: unknown constant device_score (GPU) ")
+(error "line 76 column 61: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 77 column 60: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 78 column 61: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 79 column 47: unknown constant is_best_device (GPU Int) ")
+(error "line 82 column 61: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 83 column 60: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 84 column 61: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 85 column 47: unknown constant is_best_device (GPU Int) ")
+(error "line 88 column 67: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 89 column 61: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 90 column 62: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 91 column 48: unknown constant is_best_device (GPU Int) ")
+(error "line 94 column 67: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 95 column 66: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 96 column 67: unknown constant satisfies_memory_constraint (GPU Int) ")
+(error "line 99 column 34: unknown constant device_score (GPU) ")
+(error "line 100 column 33: unknown constant device_score (GPU) ")
+(error "line 103 column 41: logic does not support uninterpreted functions")
+(error "line 105 column 27: unknown constant tensor_core_bonus (GPU) ")
+(error "line 108 column 38: unknown constant tensor_core_bonus (GPU) ")
+(error "line 109 column 38: unknown constant tensor_core_bonus (GPU) ")
+(error "line 110 column 39: unknown constant tensor_core_bonus (GPU) ")
+(error "line 113 column 48: logic does not support uninterpreted functions")
+(error "line 115 column 30: unknown constant peak_tflops_fp32 (GPU) ")
+(error "line 120 column 46: unknown constant memory_to_compute_ratio (GPU) ")
+sat
+(
+  (define-fun memory_req_4gb () Int
+    4)
+  (define-fun memory_req_8gb () Int
+    8)
+  (define-fun memory_req_10gb () Int
+    10)
+  (define-fun memory_req_15gb () Int
+    15)
+  (define-fun rx_6700xt () GPU
+    GPU!val!0)
+  (define-fun arc_b580 () GPU
+    GPU!val!0)
+  (define-fun rtx_3070 () GPU
+    GPU!val!0)
+)
+RTX 3070 score:
+(error "line 128 column 28: unknown constant device_score (GPU) ")
+Arc B580 score:
+(error "line 130 column 28: unknown constant device_score (GPU) ")
+RX 6700 XT score:
+(error "line 132 column 29: unknown constant device_score (GPU) ")
+Arc B580 satisfies 10GB requirement:
+(error "line 134 column 59: unknown constant satisfies_memory_constraint (GPU Int) ")
+RTX 3070 satisfies 10GB requirement:
+(error "line 136 column 59: unknown constant satisfies_memory_constraint (GPU Int) ")
