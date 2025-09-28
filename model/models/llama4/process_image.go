@@ -124,7 +124,7 @@ func (p ImageProcessor) maxResolution(imageRes, targetRes image.Point) image.Poi
 	if scaleW < scaleH {
 		newRes = image.Point{
 			targetRes.X,
-			int(math.Floor(float64(imageRes.Y)*scaleW), float64(targetRes.Y))),
+			int(min(math.Floor(float64(imageRes.Y)*scaleW), float64(targetRes.Y))),
 		}
 	} else {
 		newRes = image.Point{
