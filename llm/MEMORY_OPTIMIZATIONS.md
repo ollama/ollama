@@ -8,10 +8,12 @@ The optimizations implemented here are based on research in computational pebbli
 
 ### Gradient Checkpointing (Pebbling)
 - **sqrt(n) checkpointing strategy**: Based on optimal pebbling algorithms that achieve O(sqrt(n)) space complexity
+- **Advanced sqrt(T log T) algorithms**: Latest breakthrough results for time-space tradeoffs
 - **Key papers**:
   - Griewank, A. and Walther, A. (2000). "Algorithm 799: revolve: an implementation of checkpointing for the reverse or adjoint mode of computational differentiation"
   - Chen, T. et al. (2016). "Training Deep Nets with Sublinear Memory Cost"
   - Kumar, M. et al. (2019). "Checkmate: Breaking the Memory Wall with Optimal Tensor Rematerialization"
+  - Williams, R. R. (2024). "Simulating Time With Square-Root Space" - Breakthrough pebbling algorithms achieving optimal time-space tradeoffs
 
 ### Multi-Head Latent Attention (MLA) Compression
 - **28:1 compression ratio**: Efficient KV cache compression for attention mechanisms
@@ -29,9 +31,10 @@ The optimizations implemented here are based on research in computational pebbli
 
 ### Key Algorithms
 
-1. **Checkpoint Memory Estimation**: `sqrt(layers) + 1` checkpoints
-2. **MLA Compression**: Fixed 28:1 ratio for KV cache
-3. **GPU Device Scoring**: Memory-weighted performance estimation
+1. **Checkpoint Memory Estimation**: `sqrt(layers) + 1` checkpoints (classic strategy)
+2. **Williams Advanced Pebbling**: `sqrt(T log T)` time-space optimal algorithms
+3. **MLA Compression**: Fixed 28:1 ratio for KV cache
+4. **GPU Device Scoring**: Memory-weighted performance estimation
 
 ## Usage
 
