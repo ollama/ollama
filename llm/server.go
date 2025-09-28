@@ -111,15 +111,17 @@ type llmServer struct {
 type llamaServer struct {
 	llmServer
 
-	ggml     *ggml.GGML
-	gpus     discover.GpuInfoList // The set of GPUs covered by the memory estimate
-	estimate MemoryEstimate
+	ggml        *ggml.GGML
+	gpus        discover.GpuInfoList // The set of GPUs covered by the memory estimate
+	estimate    MemoryEstimate
+	moeOptimizer *MoEOptimizer       // MoE memory optimization
 }
 
 type ollamaServer struct {
 	llmServer
 
-	mem *ml.BackendMemory
+	mem          *ml.BackendMemory
+	moeOptimizer *MoEOptimizer     // MoE memory optimization
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
@@ -432,10 +434,46 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			}
 		}()
 
+		// Initialize MoE optimizer for the model context
+		var moeOptimizer *MoEOptimizer
+		if f != nil {
+			config := DefaultMoEOptimizerConfig()
+			// Enable MoE optimizations by default if options are not explicitly set
+			if opts.MoEDynamicLoading != nil {
+				config.EnableDynamicLoading = *opts.MoEDynamicLoading
+			}
+			if opts.MoEOffloading != nil {
+				config.EnableOffloading = *opts.MoEOffloading
+			}
+			if opts.MoESparseCompute != nil {
+				config.EnableSparseCompute = *opts.MoESparseCompute
+			}
+			if opts.MoEMaxActive > 0 {
+				config.MaxActiveExperts = opts.MoEMaxActive
+			}
+			if opts.MoEMaxVRAM > 0 {
+				config.MaxVRAMExperts = opts.MoEMaxVRAM
+			}
+			if opts.MoEVRAMBudget != nil {
+				config.VRAMBudget = *opts.MoEVRAMBudget
+			}
+			if opts.MoECPUBudget != nil {
+				config.CPUBudget = *opts.MoECPUBudget
+			}
+
+			moeOptimizer = NewMoEOptimizer(f, config)
+			if moeOptimizer != nil {
+				SetGlobalMoEOptimizer(moeOptimizer)
+
+				// Set the optimizer in llama package to enable C++ bridging
+				llama.SetGlobalMoEOptimizer(moeOptimizer)
+			}
+		}
+
 		if textProcessor != nil {
-			return &ollamaServer{llmServer: s}, nil
+			return &ollamaServer{llmServer: s, moeOptimizer: moeOptimizer}, nil
 		} else {
-			return &llamaServer{llmServer: s, ggml: f}, nil
+			return &llamaServer{llmServer: s, ggml: f, moeOptimizer: moeOptimizer}, nil
 		}
 	}
 }

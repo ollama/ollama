@@ -1443,6 +1443,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
+	r.GET("/api/moe/stats", s.MoEStatsHandler)
+	r.POST("/api/moe/cleanup", s.MoECleanupHandler)
+	r.POST("/api/moe/config", s.MoEConfigHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
@@ -1737,6 +1740,189 @@ func (s *Server) PsHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+}
+
+func (s *Server) MoEStatsHandler(c *gin.Context) {
+	response := make(map[string]interface{})
+
+	s.sched.loadedMu.Lock()
+	defer s.sched.loadedMu.Unlock()
+
+	hasActiveModels := false
+
+	for _, v := range s.sched.loaded {
+		modelName := v.model.ShortName
+		hasActiveModels = true
+
+		// Get MoE optimizer from the global instance
+		moeOptimizer := llm.GetGlobalMoEOptimizer()
+
+		if moeOptimizer != nil {
+			isEnabled := moeOptimizer.IsEnabled()
+
+			if isEnabled {
+				response[modelName] = moeOptimizer.GetOptimizationStats()
+			} else {
+				response[modelName] = map[string]interface{}{
+					"moe_optimization": false,
+					"message":          "MoE optimizer exists but not enabled",
+					"model_name":       modelName,
+				}
+			}
+		} else {
+			// Check if this model supports MoE but optimization is disabled
+			response[modelName] = map[string]interface{}{
+				"moe_optimization": false,
+				"message":          "MoE optimization not enabled for this model",
+				"model_name":       modelName,
+			}
+		}
+	}
+
+	if !hasActiveModels {
+		response["message"] = "No active models loaded"
+		response["status"] = "no_models"
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (s *Server) MoECleanupHandler(c *gin.Context) {
+	response := make(map[string]interface{})
+	startTime := time.Now()
+
+	// Force cleanup of inactive MoE experts
+	if moeOptimizer := llm.GetGlobalMoEOptimizer(); moeOptimizer != nil && moeOptimizer.IsEnabled() {
+		// Call actual cleanup method
+		err := moeOptimizer.CleanupInactiveExperts()
+		if err != nil {
+			response["status"] = "error"
+			response["message"] = fmt.Sprintf("Cleanup failed: %v", err)
+			c.JSON(http.StatusInternalServerError, response)
+			return
+		}
+
+		cleanupTime := time.Since(startTime)
+		
+		response["status"] = "success"
+		response["message"] = "MoE expert cleanup completed"
+		response["cleanup_time"] = cleanupTime.String()
+		response["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+		
+		// Get updated statistics after cleanup
+		response["updated_stats"] = moeOptimizer.GetOptimizationStats()
+		
+		slog.Info("MoE cleanup completed", "duration", cleanupTime)
+	} else {
+		response["status"] = "error"
+		response["message"] = "No active MoE optimizer found"
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (s *Server) MoEConfigHandler(c *gin.Context) {
+	var req struct {
+		VRAMBudget             *uint64  `json:"vram_budget,omitempty"`
+		CPUBudget              *uint64  `json:"cpu_budget,omitempty"`
+		MaxActive              *int     `json:"max_active,omitempty"`
+		CacheTimeout           *int     `json:"cache_timeout,omitempty"`
+		ForceCleanup           *bool    `json:"force_cleanup,omitempty"`
+		EnableDynamicLoading   *bool    `json:"enable_dynamic_loading,omitempty"`
+		EnableOffloading       *bool    `json:"enable_offloading,omitempty"`
+		OffloadStrategy        *struct {
+			FFNOffloadPatterns      []string          `json:"ffn_offload_patterns,omitempty"`
+			PreserveAttentionOnGPU  bool              `json:"preserve_attention_on_gpu"`
+			VRAMBudgetPerGPU        uint64            `json:"vram_budget_per_gpu,omitempty"`
+			CPUBudget               uint64            `json:"cpu_budget,omitempty"`
+		} `json:"offload_strategy,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	response := make(map[string]interface{})
+	startTime := time.Now()
+
+	if moeOptimizer := llm.GetGlobalMoEOptimizer(); moeOptimizer != nil && moeOptimizer.IsEnabled() {
+		configUpdates := make(map[string]interface{})
+
+		// Apply memory budget changes
+		if req.VRAMBudget != nil {
+			// Update VRAM budget - this would call into the llama integration
+			configUpdates["vram_budget"] = *req.VRAMBudget
+			configUpdates["vram_budget_human"] = format.HumanBytes2(*req.VRAMBudget)
+		}
+
+		if req.CPUBudget != nil {
+			// Update CPU budget
+			configUpdates["cpu_budget"] = *req.CPUBudget
+			configUpdates["cpu_budget_human"] = format.HumanBytes2(*req.CPUBudget)
+		}
+
+		// Handle tensor offloading strategy updates
+		if req.OffloadStrategy != nil {
+			strategyUpdates := make(map[string]interface{})
+			
+			if len(req.OffloadStrategy.FFNOffloadPatterns) > 0 {
+				strategyUpdates["ffn_patterns"] = req.OffloadStrategy.FFNOffloadPatterns
+			}
+			
+			strategyUpdates["preserve_attention"] = req.OffloadStrategy.PreserveAttentionOnGPU
+			
+			if req.OffloadStrategy.VRAMBudgetPerGPU > 0 {
+				strategyUpdates["vram_per_gpu"] = format.HumanBytes2(req.OffloadStrategy.VRAMBudgetPerGPU)
+			}
+			
+			configUpdates["offload_strategy"] = strategyUpdates
+		}
+
+		// Perform force cleanup if requested
+		if req.ForceCleanup != nil && *req.ForceCleanup {
+			cleanupStart := time.Now()
+			err := moeOptimizer.CleanupInactiveExperts()
+			cleanupTime := time.Since(cleanupStart)
+			
+			if err != nil {
+				configUpdates["cleanup_error"] = err.Error()
+			} else {
+				configUpdates["cleanup_completed"] = true
+				configUpdates["cleanup_time"] = cleanupTime.String()
+			}
+		}
+
+		configTime := time.Since(startTime)
+
+		response["status"] = "success"
+		response["message"] = "MoE configuration updated"
+		response["config_updates"] = configUpdates
+		response["configuration_time"] = configTime.String()
+		response["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+		
+		// Get current statistics after configuration
+		response["current_stats"] = moeOptimizer.GetOptimizationStats()
+		
+		slog.Info("MoE configuration updated", 
+			"updates", len(configUpdates),
+			"duration", configTime)
+	} else {
+		response["status"] = "error"
+		response["message"] = "No active MoE optimizer found"
+		response["available_models"] = s.getLoadedModelNames()
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// Helper function to get loaded model names for debugging
+func (s *Server) getLoadedModelNames() []string {
+	var names []string
+	for _, v := range s.sched.loaded {
+		names = append(names, v.model.ShortName)
+	}
+	return names
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {

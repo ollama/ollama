@@ -6,6 +6,7 @@
 #include "llama-model-loader.h"
 #include "llama-model-saver.h"
 #include "llama-model.h"
+#include "llama-moe-dynamic.h"
 
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -126,6 +127,19 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         if (!model.load_tensors(ml)) {
             return -2;
         }
+
+        // Initialize dynamic MoE loading if this is a MoE model
+        if (model.hparams.n_expert > 0) {
+            
+            // Initialize MoE dynamic loading with safe defaults
+            bool init_result = llama_moe_dynamic_init_c(nullptr, nullptr);
+            
+            if (init_result) {
+                llama_moe_dynamic_set_enabled_c(true);
+            } else {
+            }
+        }
+
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
         return -1;

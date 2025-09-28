@@ -398,6 +398,17 @@ type Runner struct {
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
+
+	// MoE (Mixture of Experts) optimization options
+	MoEDynamicLoading *bool   `json:"moe_dynamic_loading,omitempty"` // Enable dynamic expert loading
+	MoEOffloading     *bool   `json:"moe_offloading,omitempty"`     // Enable expert offloading to CPU/disk
+	MoESparseCompute  *bool   `json:"moe_sparse_compute,omitempty"` // Enable sparse computation optimizations
+	MoEMaxActive      int     `json:"moe_max_active,omitempty"`     // Maximum experts to keep active (0 = auto)
+	MoEMaxVRAM        int     `json:"moe_max_vram,omitempty"`       // Maximum experts in VRAM (0 = auto)
+	MoEVRAMBudget     *uint64 `json:"moe_vram_budget,omitempty"`    // VRAM budget for experts in bytes (0 = auto)
+	MoECPUBudget      *uint64 `json:"moe_cpu_budget,omitempty"`     // CPU memory budget for experts in bytes (0 = auto)
+	MoECacheTimeout   *int    `json:"moe_cache_timeout,omitempty"`  // Expert cache timeout in minutes (default: 5)
+	MoEEvictionPolicy *string `json:"moe_eviction_policy,omitempty"` // Expert eviction policy: "lru", "lfu", "random" (default: "lru")
 }
 
 // EmbedRequest is the request passed to [Client.Embed].

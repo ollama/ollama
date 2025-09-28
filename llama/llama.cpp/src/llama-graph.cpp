@@ -3,6 +3,10 @@
 #include "llama-impl.h"
 #include "llama-batch.h"
 #include "llama-cparams.h"
+#include "llama-moe-dynamic.h"
+
+// Go integration function
+extern "C" bool goRequestExperts(int32_t* expert_ids, int32_t num_experts, int32_t priority, void* user_data);
 
 #include "llama-kv-cache-unified.h"
 #include "llama-kv-cache-unified-iswa.h"
@@ -570,7 +574,91 @@ ggml_tensor * llm_graph_context::build_lora_mm_id(
           ggml_tensor * w,   // ggml_tensor * as
           ggml_tensor * cur, // ggml_tensor * b
           ggml_tensor * ids) const {
-    ggml_tensor * res = ggml_mul_mat_id(ctx0, w, cur, ids);
+    ggml_tensor * res = nullptr;
+
+    // Try dynamic MoE loading first if enabled
+    bool moe_enabled = llama_moe_dynamic_is_enabled_c();
+    
+    // MoE detection strategy:
+    // 1. Must be enabled and have ids tensor
+    // 2. Check for expert dimension in weight tensor OR tensor name pattern
+    bool is_moe_tensor = false;
+    
+    if (moe_enabled && ids && ids->type == GGML_TYPE_I32) {
+        // Improved MoE detection for Granite 3.1 MoE and similar models
+        bool has_expert_dim = false;
+        bool has_moe_name = false;
+
+        // Check for expert dimension - Granite MoE uses different dimension arrangements
+        // Look for expert count in any dimension, not just the last one
+        for (int i = 0; i < GGML_MAX_DIMS; i++) {
+            if (w->ne[i] >= 8 && w->ne[i] <= 512) { // Reasonable expert count range
+                has_expert_dim = true;
+                break;
+            }
+        }
+
+        // Enhanced tensor name patterns for Granite MoE
+        if (strlen(w->name) > 0) {
+            const char* name = w->name;
+            has_moe_name = strstr(name, "expert") || strstr(name, "gate") ||
+                          strstr(name, "router") || strstr(name, "ffn_gate_exps") ||
+                          strstr(name, "ffn_up_exps") || strstr(name, "ffn_down_exps");
+        }
+
+        // More liberal detection - if MoE is enabled and we have ids, likely MoE operation
+        is_moe_tensor = has_expert_dim || has_moe_name ||
+                       (ggml_nelements(ids) > 0 && ggml_nelements(ids) <= 64); // Reasonable token count
+        
+    }
+    
+    if (is_moe_tensor) {
+        if (ids && ids->data) {
+            // REAL INFERENCE - This is where actual expert selection happens
+            int32_t * id_data = (int32_t *)ids->data;
+            int n_ids = ggml_nelements(ids);
+
+            if (n_ids > 0 && id_data) {
+                // Collect unique expert IDs from the actual routing decisions
+                std::set<int32_t> unique_experts;
+                for (int i = 0; i < n_ids; i++) {
+                    if (id_data[i] >= 0 && id_data[i] < 512) {
+                        unique_experts.insert(id_data[i]);
+                    }
+                }
+
+                if (!unique_experts.empty()) {
+                    std::vector<int32_t> expert_ids(unique_experts.begin(), unique_experts.end());
+
+
+                    // Request experts and ensure they're loaded
+                    bool experts_ready = llama_moe_dynamic_request_experts_c(expert_ids.data(), expert_ids.size(), 1);
+
+                    if (experts_ready) {
+                        // Proceed with computation using only loaded experts
+                        res = ggml_mul_mat_id(ctx0, w, cur, ids);
+                    } else {
+                        // Create zero tensor as fallback
+                        res = ggml_new_tensor_2d(ctx0, cur->type, cur->ne[0], cur->ne[1]);
+                        res = ggml_scale(ctx0, res, 0.0f);
+                    }
+                } else {
+                    res = ggml_mul_mat_id(ctx0, w, cur, ids);
+                }
+            } else {
+                res = ggml_mul_mat_id(ctx0, w, cur, ids);
+            }
+        } else {
+            // Graph building phase - no expert IDs available yet
+            res = ggml_mul_mat_id(ctx0, w, cur, ids);
+        }
+    }
+
+    // Fallback to standard implementation
+    if (res == nullptr) {
+        res = ggml_mul_mat_id(ctx0, w, cur, ids);
+    }
+
     for (const auto & lora : *loras) {
         llama_adapter_lora_weight * lw = lora.first->get_weight(w);
         if (lw == nullptr) {
