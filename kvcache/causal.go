@@ -378,9 +378,7 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 	maskTensor := ctx.Input().FromFloatSlice(mask, length, batchSize)
 
 	if c.config.MaskDType != ml.DTypeF32 {
-		out := ctx.Input().Empty(c.config.MaskDType, maskTensor.Shape()...)
-		ctx.Forward(maskTensor.Copy(ctx, out))
-		maskTensor = out
+		maskTensor = maskTensor.Cast(ctx, c.config.MaskDType)
 	}
 
 	return maskTensor

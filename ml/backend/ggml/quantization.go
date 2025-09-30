@@ -15,7 +15,7 @@ import (
 	fsggml "github.com/ollama/ollama/fs/ggml"
 )
 
-// convertToF32 converts (dequantizes) the raw data to F32 so we can then quantize it
+// ConvertToF32 converts (dequantizes) the raw data to F32 so we can then quantize it
 func ConvertToF32(data []byte, dtype uint32, nelements uint64) []float32 {
 	f32s := make([]float32, nelements)
 	elems := C.int64_t(nelements)

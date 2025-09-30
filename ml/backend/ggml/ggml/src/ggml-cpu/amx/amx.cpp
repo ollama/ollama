@@ -5,7 +5,7 @@
 #include "ggml-backend.h"
 #include "ggml-impl.h"
 #include "ggml-cpu.h"
-#include "ggml-cpu-traits.h"
+#include "traits.h"
 
 #if defined(__gnu_linux__)
 #include <sys/syscall.h>

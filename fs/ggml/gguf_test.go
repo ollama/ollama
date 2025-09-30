@@ -11,24 +11,24 @@ import (
 )
 
 func TestWriteGGUF(t *testing.T) {
-	r := rand.New(rand.NewPCG(0, 0))
+	b := bytes.NewBuffer(make([]byte, 2*3))
 	for range 8 {
 		t.Run("shuffle", func(t *testing.T) {
 			t.Parallel()
 
 			ts := []*Tensor{
-				{Name: "token_embd.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "blk.0.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "blk.1.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "blk.2.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "blk.3.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "blk.4.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "blk.5.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(make([]byte, 2*3))},
-				{Name: "output_norm.weight", Shape: []uint64{3, 2}, WriterTo: bytes.NewBuffer(make([]byte, 3*2))},
-				{Name: "output.weight", Shape: []uint64{3, 2}, WriterTo: bytes.NewBuffer(make([]byte, 3*2))},
+				{Name: "token_embd.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "blk.0.ffn_norm.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "blk.0.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "blk.1.ffn_up.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "blk.2.ffn_norm.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "blk.1.ffn_down.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "blk.0.attn_k.weight", Shape: []uint64{2, 3}, WriterTo: b},
+				{Name: "output_norm.weight", Shape: []uint64{3, 2}, WriterTo: b},
+				{Name: "output.weight", Shape: []uint64{3, 2}, WriterTo: b},
 			}
 
-			r.Shuffle(len(ts), func(i, j int) {
+			rand.Shuffle(len(ts), func(i, j int) {
 				ts[i], ts[j] = ts[j], ts[i]
 			})
 
@@ -63,14 +63,14 @@ func TestWriteGGUF(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(Tensors{
-				Offset: 608,
+				Offset: 592,
 				items: []*Tensor{
-					{Name: "blk.0.attn_norm.weight", Offset: 0, Shape: []uint64{2, 3}},
-					{Name: "blk.1.attn_norm.weight", Offset: 32, Shape: []uint64{2, 3}},
-					{Name: "blk.2.attn_norm.weight", Offset: 64, Shape: []uint64{2, 3}},
-					{Name: "blk.3.attn_norm.weight", Offset: 96, Shape: []uint64{2, 3}},
-					{Name: "blk.4.attn_norm.weight", Offset: 128, Shape: []uint64{2, 3}},
-					{Name: "blk.5.attn_norm.weight", Offset: 160, Shape: []uint64{2, 3}},
+					{Name: "blk.0.attn_k.weight", Offset: 0, Shape: []uint64{2, 3}},
+					{Name: "blk.0.attn_norm.weight", Offset: 32, Shape: []uint64{2, 3}},
+					{Name: "blk.0.ffn_norm.weight", Offset: 64, Shape: []uint64{2, 3}},
+					{Name: "blk.1.ffn_down.weight", Offset: 96, Shape: []uint64{2, 3}},
+					{Name: "blk.1.ffn_up.weight", Offset: 128, Shape: []uint64{2, 3}},
+					{Name: "blk.2.ffn_norm.weight", Offset: 160, Shape: []uint64{2, 3}},
 					{Name: "output.weight", Offset: 192, Shape: []uint64{3, 2}},
 					{Name: "output_norm.weight", Offset: 224, Shape: []uint64{3, 2}},
 					{Name: "token_embd.weight", Offset: 256, Shape: []uint64{2, 3}},

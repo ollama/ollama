@@ -128,6 +128,8 @@ extern "C" {
     // set gradients to zero, initilize loss, and optionally reset the optimizer
     GGML_API void ggml_opt_reset(ggml_opt_context_t opt_ctx, bool optimizer);
 
+    GGML_API bool ggml_opt_static_graphs(ggml_opt_context_t opt_ctx); // whether the graphs are allocated_statically
+
     // get underlying tensors that store data
     // if not using static graphs these pointers become invalid with the next call to ggml_opt_alloc
     GGML_API struct ggml_tensor * ggml_opt_inputs(  ggml_opt_context_t opt_ctx); // forward graph input tensor

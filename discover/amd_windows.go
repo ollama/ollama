@@ -111,6 +111,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				UnreliableFreeMemory: true,
 
 				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
+				filterID:       i,
 				DependencyPath: []string{libDir},
 				MinimumMemory:  rocmMinimumMemory,
 				Name:           name,
@@ -200,19 +201,26 @@ func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
 	return nil
 }
 
-func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
+func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
 		if info.Library != "rocm" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
 			continue
 		}
-		ids = append(ids, info.ID)
+		// If the devices requires a numeric ID, for filtering purposes, we use the unfiltered ID number
+		if _, err := strconv.Atoi(info.ID); err == nil {
+			ids = append(ids, fmt.Sprintf("%d", info.filterID))
+		} else {
+			ids = append(ids, info.ID)
+		}
 	}
+	if len(ids) == 0 {
+		return ""
+	}
+
 	// There are 3 potential env vars to use to select GPUs.
 	// ROCR_VISIBLE_DEVICES supports UUID or numeric but does not work on Windows
 	// HIP_VISIBLE_DEVICES supports numeric IDs only
 	// GPU_DEVICE_ORDINAL supports numeric IDs only
-	return "HIP_VISIBLE_DEVICES", strings.Join(ids, ",")
+	return "HIP_VISIBLE_DEVICES=" + strings.Join(ids, ",")
 }

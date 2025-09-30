@@ -97,6 +97,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		return a < b
 	})
 	gpuCount := 0
+	gpuOrdinalID := 0
 	for _, match := range matches {
 		slog.Debug("evaluating amdgpu node " + match)
 		fp, err := os.Open(match)
@@ -187,10 +188,6 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			continue
 		}
 
-		// Keep track of numeric IDs based on valid GPUs
-		gpuID := gpuCount
-		gpuCount += 1
-
 		// Look up the memory for the current node
 		totalMemory := uint64(0)
 		usedMemory := uint64(0)
@@ -269,7 +266,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		if uniqueID != 0 {
 			ID = fmt.Sprintf("GPU-%016x", uniqueID)
 		} else {
-			ID = strconv.Itoa(gpuID)
+			ID = strconv.Itoa(gpuOrdinalID)
 		}
 
 		gpuInfo := RocmGPUInfo{
@@ -280,6 +277,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 					FreeMemory:  (totalMemory - usedMemory),
 				},
 				ID:            ID,
+				filterID:      gpuOrdinalID,
 				Name:          name,
 				Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
 				MinimumMemory: rocmMinimumMemory,
@@ -287,13 +285,40 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				DriverMinor:   driverMinor,
 			},
 			usedFilepath: usedFile,
-			index:        gpuID,
+			index:        gpuCount,
 		}
+
+		// Keep track of numeric IDs based on valid GPUs
+		gpuCount += 1
+
+		// If the user wants to filter to a subset of devices, filter out if we aren't a match
+		if len(visibleDevices) > 0 {
+			include := false
+			for _, visible := range visibleDevices {
+				if (uniqueID != 0 && visible == gpuInfo.ID) || visible == strconv.Itoa(gpuInfo.index) {
+					include = true
+					break
+				}
+			}
+			if !include {
+				reason := "filtering out device per user request"
+				slog.Info(reason, "id", gpuInfo.ID, "index", gpuInfo.index, "visible_devices", visibleDevices)
+				unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
+					GpuInfo: gpuInfo.GpuInfo,
+					Reason:  reason,
+				})
+
+				continue
+			}
+		}
+
+		// Ordinal IDs are based on the visible GPUs
+		gpuOrdinalID += 1
 
 		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
 		if totalMemory < IGPUMemLimit {
 			reason := "unsupported Radeon iGPU detected skipping"
-			slog.Info(reason, "id", gpuID, "total", format.HumanBytes2(totalMemory))
+			slog.Info(reason, "id", gpuInfo.ID, "total", format.HumanBytes2(totalMemory))
 			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
 				GpuInfo: gpuInfo.GpuInfo,
 				Reason:  reason,
@@ -306,7 +331,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		}
 		if int(major) < minVer {
 			reason := fmt.Sprintf("amdgpu too old gfx%d%x%x", major, minor, patch)
-			slog.Warn(reason, "gpu", gpuID)
+			slog.Warn(reason, "gpu", gpuInfo.ID)
 			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
 				GpuInfo: gpuInfo.GpuInfo,
 				Reason:  reason,
@@ -315,29 +340,8 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			continue
 		}
 
-		slog.Debug("amdgpu memory", "gpu", gpuID, "total", format.HumanBytes2(totalMemory))
-		slog.Debug("amdgpu memory", "gpu", gpuID, "available", format.HumanBytes2(totalMemory-usedMemory))
-
-		// If the user wants to filter to a subset of devices, filter out if we aren't a match
-		if len(visibleDevices) > 0 {
-			include := false
-			for _, visible := range visibleDevices {
-				if visible == gpuInfo.ID || visible == strconv.Itoa(gpuInfo.index) {
-					include = true
-					break
-				}
-			}
-			if !include {
-				reason := "filtering out device per user request"
-				slog.Info(reason, "id", gpuInfo.ID, "visible_devices", visibleDevices)
-				unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-					GpuInfo: gpuInfo.GpuInfo,
-					Reason:  reason,
-				})
-
-				continue
-			}
-		}
+		slog.Debug("amdgpu memory", "gpu", gpuInfo.ID, "total", format.HumanBytes2(totalMemory))
+		slog.Debug("amdgpu memory", "gpu", gpuInfo.ID, "available", format.HumanBytes2(totalMemory-usedMemory))
 
 		// Final validation is gfx compatibility - load the library if we haven't already loaded it
 		// even if the user overrides, we still need to validate the library
@@ -391,7 +395,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 
 		// Check for env var workarounds
 		if name == "1002:687f" { // Vega RX 56
-			gpuInfo.EnvWorkarounds = append(gpuInfo.EnvWorkarounds, [2]string{"HSA_ENABLE_SDMA", "0"})
+			gpuInfo.EnvWorkarounds = append(gpuInfo.EnvWorkarounds, "HSA_ENABLE_SDMA=0")
 		}
 
 		// The GPU has passed all the verification steps and is supported
@@ -520,19 +524,26 @@ func verifyKFDDriverAccess() error {
 	return nil
 }
 
-func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
+func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
 		if info.Library != "rocm" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
 			continue
 		}
-		ids = append(ids, info.ID)
+		// If the devices requires a numeric ID, for filtering purposes, we use the unfiltered ID number
+		if _, err := strconv.Atoi(info.ID); err == nil {
+			ids = append(ids, fmt.Sprintf("%d", info.filterID))
+		} else {
+			ids = append(ids, info.ID)
+		}
 	}
+	if len(ids) == 0 {
+		return ""
+	}
+
 	// There are 3 potential env vars to use to select GPUs.
 	// ROCR_VISIBLE_DEVICES supports UUID or numeric so is our preferred on linux
 	// GPU_DEVICE_ORDINAL supports numeric IDs only
 	// HIP_VISIBLE_DEVICES supports numeric IDs only
-	return "ROCR_VISIBLE_DEVICES", strings.Join(ids, ",")
+	return "ROCR_VISIBLE_DEVICES=" + strings.Join(ids, ",")
 }

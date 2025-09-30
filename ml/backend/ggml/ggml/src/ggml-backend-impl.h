@@ -178,6 +178,10 @@ extern "C" {
         ggml_backend_event_t (*event_new)         (ggml_backend_dev_t dev);
         void                 (*event_free)        (ggml_backend_dev_t dev, ggml_backend_event_t event);
         void                 (*event_synchronize) (ggml_backend_dev_t dev, ggml_backend_event_t event);
+
+        // (optional) reset device, clearing existing allocations and context
+        // the caller must ensure that there are no outstanding buffers, as these will become invalid
+        void (*reset)(ggml_backend_dev_t dev);
     };
 
     struct ggml_backend_device {

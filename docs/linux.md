@@ -11,12 +11,13 @@ curl -fsSL https://ollama.com/install.sh | sh
 ## Manual install
 
 > [!NOTE]
-> If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
+> If you are upgrading from a prior version, you **MUST** remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
 
 Download and extract the package:
 
 ```shell
 curl -LO https://ollama.com/download/ollama-linux-amd64.tgz
+sudo rm -rf /usr/lib/ollama
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 
@@ -34,7 +35,11 @@ ollama -v
 
 ### AMD GPU install
 
-If you have an AMD GPU, also download and extract the additional ROCm package:
+If you have an AMD GPU, **also** download and extract the additional ROCm package:
+
+> [!IMPORTANT]
+> The ROCm tgz contains only AMD dependent libraries.  You must extract **both** `ollama-linux-amd64.tgz` and `ollama-linux-amd64-rocm.tgz` into the same location.
+
 
 ```shell
 curl -L https://ollama.com/download/ollama-linux-amd64-rocm.tgz -o ollama-linux-amd64-rocm.tgz
