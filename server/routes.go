@@ -1246,7 +1246,6 @@ func (s *Server) WebSearchHandler(c *gin.Context) {
 		req.MaxResults = 5
 	}
 
-
 	results, err := s.callWebSearchAPI(req.Query, req.MaxResults)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1269,14 +1268,14 @@ func (s *Server) callWebSearchAPI(query string, maxResults int) ([]api.SearchRes
 		Query:      query,
 		MaxResults: maxResults,
 	}
-	
+
 	client := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
-	
+
 	searchResp, err := client.WebSearch(context.Background(), &searchReq)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return searchResp.Results, nil
 }
 
@@ -1317,16 +1316,16 @@ func (s *Server) callWebFetchAPI(targetURL string) (string, string, error) {
 	fetchReq := api.FetchRequest{
 		URL: targetURL,
 	}
-	
+
 	// Create client to call ollama.com
 	client := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
-	
+
 	// Call the web fetch API
 	fetchResp, err := client.Fetch(context.Background(), &fetchReq)
 	if err != nil {
 		return "", "", err
 	}
-	
+
 	return fetchResp.Content, fetchResp.Title, nil
 }
 
