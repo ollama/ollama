@@ -379,6 +379,15 @@ func (c *Client) WebSearch(ctx context.Context, req *SearchRequest) (*SearchResp
 	return &sr, nil
 }
 
+// Fetch retrieves content from a URL using the ollama service.
+func (c *Client) Fetch(ctx context.Context, req *FetchRequest) (*FetchResponse, error) {
+	var fr FetchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/web_fetch", req, &fr); err != nil {
+		return nil, err
+	}
+	return &fr, nil
+}
+
 // Copy copies a model - creating a model with another name from an existing
 // model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {

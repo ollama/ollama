@@ -1074,3 +1074,14 @@ type SearchResult struct {
 type SearchResponse struct {
 	Results []SearchResult `json:"results"`
 }
+
+// Web fetch types
+type FetchRequest struct {
+	URL string `json:"url"`
+}
+
+type FetchResponse struct {
+	Content string `json:"content"`
+	Title   string `json:"title,omitempty"`
+	URL     string `json:"url"`
+}
