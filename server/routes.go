@@ -1227,6 +1227,59 @@ func (s *Server) CopyHandler(c *gin.Context) {
 	}
 }
 
+func (s *Server) WebSearchHandler(c *gin.Context) {
+	var req api.SearchRequest
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
+		return
+	}
+
+	if req.MaxResults <= 0 {
+		req.MaxResults = 5
+	}
+
+
+	results, err := s.callWebSearchAPI(req.Query, req.MaxResults)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(results) > req.MaxResults {
+		results = results[:req.MaxResults]
+	}
+
+	resp := api.SearchResponse{
+		Results: results,
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (s *Server) callWebSearchAPI(query string, maxResults int) ([]api.SearchResult, error) {
+	searchReq := api.SearchRequest{
+		Query:      query,
+		MaxResults: maxResults,
+	}
+	
+	client := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
+	
+	searchResp, err := client.WebSearch(context.Background(), &searchReq)
+	if err != nil {
+		return nil, err
+	}
+	
+	return searchResp.Results, nil
+}
+
 func (s *Server) HeadBlobHandler(c *gin.Context) {
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
@@ -1447,6 +1500,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/web_search", s.WebSearchHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)

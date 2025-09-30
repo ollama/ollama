@@ -1058,3 +1058,19 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 
 	return out, nil
 }
+
+// Web search types
+type SearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+type SearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+type SearchResponse struct {
+	Results []SearchResult `json:"results"`
+}
