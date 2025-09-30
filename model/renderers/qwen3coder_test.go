@@ -336,3 +336,35 @@ func TestFormatToolCallArgument(t *testing.T) {
 		})
 	}
 }
+
+func TestQwen3ToolDefinitionTypes(t *testing.T) {
+	tests := []struct {
+		name         string
+		propertyType api.PropertyType
+		expected     string
+	}{
+		{
+			name:         "simple",
+			propertyType: api.PropertyType{"string"},
+			expected:     "string",
+		},
+		{
+			name:         "multiple",
+			propertyType: api.PropertyType{"string", "number"},
+			expected:     "[\"string\",\"number\"]",
+		},
+		{
+			name:         "empty",
+			propertyType: api.PropertyType{},
+			expected:     "[]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatToolDefinitionType(tt.propertyType)
+			if got != tt.expected {
+				t.Errorf("formatToolDefinitionType() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
