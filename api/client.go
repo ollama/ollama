@@ -414,6 +414,24 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 	return &resp, nil
 }
 
+// WebSearch performs a web search via the Ollama server.
+func (c *Client) WebSearch(ctx context.Context, req *WebSearchRequest) (*WebSearchResponse, error) {
+	var resp WebSearchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/web_search", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// WebFetch fetches the contents of a web page via the Ollama server.
+func (c *Client) WebFetch(ctx context.Context, req *WebFetchRequest) (*WebFetchResponse, error) {
+	var resp WebFetchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/web_fetch", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // Embeddings generates an embedding from a model.
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse
