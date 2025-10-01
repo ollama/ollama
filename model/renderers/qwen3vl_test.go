@@ -14,11 +14,14 @@ var IMAGE2_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADMElEQVR4nOz
 
 // TODO:
 // - [ ] test videos?
+// - [ ] set descriptions to omitempty?
+// - [] images add the auto tag
 
 func TestQwen3VLRenderer(t *testing.T) {
 	tests := []struct {
 		name     string
 		msgs     []api.Message
+		images   []api.ImageData
 		tools    []api.Tool
 		expected string
 	}{
@@ -94,11 +97,12 @@ Speak poetry after the first sentence.
 
 <|im_end|>
 <|im_start|>assistant
-<think>`,
+<think>
+`,
 		},
 		{
 			name: "Image",
-			msgs: []api.Message{
+			msgs: []api.Message{ // i think this is because it does not go through the renderer?
 				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData(IMAGE2_BASE64)}}, // does this work?
 			}, // this is actually a local test, remote model may need to be different
 			expected: `<|im_start|>user
@@ -107,6 +111,17 @@ Speak poetry after the first sentence.
 <think>
 `,
 		}, // there's no way to do videos?
+		{
+			name: "Multiple images",
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe these images.", Images: []api.ImageData{api.ImageData(IMAGE1_BASE64), api.ImageData(IMAGE2_BASE64)}},
+			},
+			expected: `<|im_start|>user
+[img-0][img-1]Describe these images.<|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
 		{
 			name: "with tools and response",
 			msgs: []api.Message{
@@ -362,101 +377,3 @@ func TestFormatToolCallArgumentVL(t *testing.T) {
 		})
 	}
 }
-
-// func TestQwen3VL_AssistantToolCall_NoContent(t *testing.T) {
-//     msgs := []api.Message{
-//         {Role: "user", Content: "What is the weather like in New York?"},
-//         {Role: "assistant", Content: "", ToolCalls: []api.ToolCall{
-//             {Function: api.ToolCallFunction{Name: "get_weather", Arguments: map[string]any{"location": "New York", "unit": "F"}}},
-//         }},
-//     }
-
-//     got, err := Qwen3VLRenderer(msgs, nil, nil)
-//     if err != nil { t.Fatal(err) }
-
-//     // Expect assistant block with a single tool_call (no leading blank line), then prefill
-//     wantContains := []string{
-//         "<|im_start|>user\nWhat is the weather like in New York?<|im_end|>\n",
-//         "<|im_start|>assistant\n<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"location\": \"New York\", \"unit\": \"F\"}}\n</tool_call><|im_end|>\n",
-//         "<|im_start|>assistant\n<think>\n",
-//     }
-//     for _, sub := range wantContains {
-//         if !strings.Contains(got, sub) {
-//             t.Fatalf("missing substring: %q\nGot:\n%s", sub, got)
-//         }
-//     }
-// }
-
-// func TestQwen3VL_ToolResponses_Grouped(t *testing.T) {
-//     msgs := []api.Message{
-//         {Role: "user", Content: "Call two tools."},
-//         {Role: "assistant", Content: "", ToolCalls: []api.ToolCall{
-//             {Function: api.ToolCallFunction{Name: "tool_a", Arguments: map[string]any{"x": 1}}},
-//         }},
-//         {Role: "tool", Content: "result_a", ToolName: "tool_a"},
-//         {Role: "tool", Content: "result_b", ToolName: "tool_b"},
-//     }
-
-//     got, err := Qwen3VLRenderer(msgs, nil, nil)
-//     if err != nil { t.Fatal(err) }
-
-//     // Expect a single user block containing two <tool_response> entries
-//     want := "<|im_start|>user\n<tool_response>\nresult_a\n</tool_response>\n<tool_response>\nresult_b\n</tool_response><|im_end|>\n"
-//     if !strings.Contains(got, want) {
-//         t.Fatalf("grouped tool responses not found\nWant contains:\n%s\nGot:\n%s", want, got)
-//     }
-// }
-
-// func TestQwen3VL_ToolsHeader_JSONFormatting(t *testing.T) {
-//     tools := []api.Tool{ {
-//         Function: api.ToolFunction{
-//             Name:        "get_weather",
-//             Description: "Get current weather",
-//             Parameters: api.ToolFunctionParameters{
-//                 Type:     "object",
-//                 Required: []string{"location"},
-//                 Properties: map[string]api.ToolProperty{
-//                     "location": {Type: api.PropertyType{"string"}, Description: "city, state"},
-//                 },
-//             },
-//         },
-//         Type: "function",
-//     } }
-
-//     msgs := []api.Message{
-//         {Role: "system", Content: "You are a helpful assistant."},
-//         {Role: "user", Content: "Hello"},
-//     }
-
-//     got, err := Qwen3VLRenderer(msgs, tools, nil)
-//     if err != nil { t.Fatal(err) }
-
-//     // Must include a <tools> block and JSON with spaces after ':' and ',' (marshalWithSpaces)
-//     if !strings.Contains(got, "<tools>") || !strings.Contains(got, "</tools>") {
-//         t.Fatalf("missing <tools> block in output:\n%s", got)
-//     }
-//     // Heuristic: JSON pretty spacing inside
-//     if !strings.Contains(got, ": ") || !strings.Contains(got, ", ") {
-//         t.Fatalf("tool JSON appears not to contain spaced separators\nGot:\n%s", got)
-//     }
-// }
-
-// func TestQwen3VL_ThinkExtraction_FromContent(t *testing.T) {
-//     msgs := []api.Message{
-//         {Role: "user", Content: "Tell me a story."},
-//         {Role: "assistant", Content: "<think>Reasoning</think>Answer"},
-//     }
-
-//     got, err := Qwen3VLRenderer(msgs, nil, nil)
-//     if err != nil { t.Fatal(err) }
-
-//     // Expect reasoning moved into <think> block and remaining content after it
-//     wantContains := []string{
-//         "<|im_start|>assistant\n<think>\nReasoning\n</think>\n\nAnswer",
-//     }
-//     for _, sub := range wantContains {
-//         if !strings.Contains(got, sub) {
-//             t.Fatalf("missing substring: %q\nGot:\n%s", sub, got)
-//         }
-//     }
-// }
