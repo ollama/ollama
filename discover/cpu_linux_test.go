@@ -2062,10 +2062,7 @@ power management:
 	for k, v := range testCases {
 		t.Run(k, func(t *testing.T) {
 			buf := bytes.NewBufferString(v.input)
-			cpus, err := linuxCPUDetails(buf)
-			if err != nil {
-				t.Fatal(err)
-			}
+			cpus := linuxCPUDetails(buf)
 
 			slog.Info("example", "scenario", k, "cpus", cpus)
 			si := SystemInfo{

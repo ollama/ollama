@@ -279,6 +279,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
     for (int id = 0; id < info.device_count; ++id) {
         int device_vmm = 0;
 
+#if defined(GGML_USE_HIP)
+        if (std::getenv("GGML_CUDA_INIT") != NULL) {
+            GGML_LOG_INFO("%s: initializing rocBLAS on device %d\n", __func__, id);
+            CUDA_CHECK(cudaSetDevice(id));
+            // rocblas_initialize will SIGABRT if the GPU isn't supported
+            rocblas_initialize();
+            GGML_LOG_INFO("%s: rocBLAS initialized on device %d\n", __func__, id);
+        }
+#endif
+
 #if defined(GGML_USE_VMM)
         CUdevice device;
         CU_CHECK(cuDeviceGet(&device, id));
@@ -332,9 +342,15 @@ static ggml_cuda_device_info ggml_cuda_init() {
 #else
         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
         info.devices[id].cc = 100*prop.major + 10*prop.minor;
+#ifdef __CUDA_ARCH_LIST__
+        if (std::getenv("GGML_CUDA_INIT") != NULL) {
+            GGML_ASSERT(ggml_cuda_has_arch(info.devices[id].cc) && "ggml was not compiled with support for this arch");
+        }
+#endif // defined(__CUDA_ARCH_LIST__)
         GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
                         id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
                         ggml_cuda_parse_uuid(prop, id).c_str());
+
 #endif // defined(GGML_USE_HIP)
     }
 
@@ -3352,6 +3368,14 @@ struct ggml_backend_cuda_device_context {
     std::string name;
     std::string description;
     std::string id;
+    int major;
+    int minor;
+    int driver_major;
+    int driver_minor;
+    int integrated;
+    int pci_bus_id;
+    int pci_device_id;
+    int pci_domain_id;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -3372,6 +3396,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
 static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
     ggml_cuda_set_device(ctx->device);
+
+#if defined(GGML_USE_HIP)
+    if (ggml_hip_mgmt_init() == 0) {
+        int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
+        if (status == 0) {
+            GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            ggml_hip_mgmt_release();
+            return;
+        }
+        ggml_hip_mgmt_release();
+    }
+#else
+    if (ggml_nvml_init() == 0) {
+        int status = ggml_nvml_get_device_memory(ctx->id.c_str(), free, total);
+        if (status == 0) {
+            GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            ggml_nvml_release();
+            return;
+        }
+        ggml_nvml_release();
+    }
+#endif
     CUDA_CHECK(cudaMemGetInfo(free, total));
 }
 
@@ -3380,6 +3426,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
     return GGML_BACKEND_DEVICE_TYPE_GPU;
 }
 
+#define GGML_HIP_NAME "HIP"
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name        = ggml_backend_cuda_device_get_name(dev);
     props->description = ggml_backend_cuda_device_get_description(dev);
@@ -3389,6 +3436,23 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
     // Memory reporting is disabled to avoid allocation of a CUDA primary context (~300 MB per device).
     // If you need the memory data, call ggml_backend_dev_memory() explicitly.
     props->memory_total = props->memory_free = 0;
+
+    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+#if defined(GGML_USE_HIP)
+    int cc = ggml_cuda_info().devices[ctx->device].cc - GGML_CUDA_CC_OFFSET_AMD;
+    props->compute_major = cc / 0x100;
+    props->compute_minor = cc - (props->compute_major * 0x100);
+#else
+    props->compute_major = ctx->major;
+    props->compute_minor = ctx->minor;
+#endif
+    props->driver_major = ctx->driver_major;
+    props->driver_minor = ctx->driver_minor;
+    props->integrated = ctx->integrated;
+    props->pci_bus_id = ctx->pci_bus_id;
+    props->pci_device_id = ctx->pci_device_id;
+    props->pci_domain_id = ctx->pci_domain_id;
+    props->library = GGML_CUDA_NAME;
 
     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
 #ifdef GGML_CUDA_NO_PEER_COPY
@@ -3980,6 +4044,8 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
         std::lock_guard<std::mutex> lock(mutex);
         if (!initialized) {
             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
+            int driverVersion = 0;
+            CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
 
             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
@@ -3990,7 +4056,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
                 dev_ctx->description = prop.name;
                 dev_ctx->id = ggml_cuda_parse_uuid(prop, i);
-
+                dev_ctx->major = prop.major;
+                dev_ctx->minor = prop.minor;
+                dev_ctx->driver_major = driverVersion / 1000;
+                dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
+                dev_ctx->integrated = prop.integrated;
+                dev_ctx->pci_bus_id = prop.pciBusID;
+                dev_ctx->pci_device_id = prop.pciDeviceID;
+                dev_ctx->pci_domain_id = prop.pciDomainID;
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,
                     /* .reg     = */ &reg,
