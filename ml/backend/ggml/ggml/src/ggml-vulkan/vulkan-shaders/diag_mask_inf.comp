@@ -1,0 +1,34 @@
+#version 450
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_control_flow_attributes : enable
+
+layout (push_constant) uniform parameter
+{
+    uint ncols;
+    uint rows_per_channel;
+    uint n_past;
+} p;
+
+#include "types.comp"
+
+layout(local_size_x = 1, local_size_y = 512, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint col = gl_GlobalInvocationID.y;
+    const uint row = gl_GlobalInvocationID.x;
+
+    if (col >= p.ncols) {
+        return;
+    }
+
+    const uint i = row*p.ncols + col;
+    if (col > p.n_past + row % p.rows_per_channel) {
+        data_d[i] = D_TYPE(uintBitsToFloat(0xFF800000));
+    } else {
+        data_d[i] = D_TYPE(data_a[i]);
+    }
+}

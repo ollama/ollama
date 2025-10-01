@@ -183,6 +183,18 @@ function buildROCm() {
     }
 }
 
+function buildVulkan(){
+    if ($env:VULKAN_SDK) {
+        write-host "Building Vulkan backend libraries"
+        & cmake --fresh --preset Vulkan --install-prefix $script:DIST_DIR
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build --preset Vulkan  --config Release --parallel $script:JOBS
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build --component Vulkan --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
+}
+
 function buildOllama() {
     mkdir -Force -path "${script:DIST_DIR}\"
     write-host "Building ollama CLI"
@@ -296,6 +308,7 @@ try {
         buildCUDA12
         buildCUDA13
         buildROCm
+        buildVulkan
         buildOllama
         buildApp
         gatherDependencies

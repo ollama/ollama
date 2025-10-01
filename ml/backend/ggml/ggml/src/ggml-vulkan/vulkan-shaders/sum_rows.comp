@@ -1,0 +1,37 @@
+#version 450
+
+#include "generic_head.comp"
+#include "types.comp"
+
+#extension GL_EXT_control_flow_attributes : enable
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+layout (constant_id = 0) const uint BLOCK_SIZE = 32;
+
+shared FLOAT_TYPE tmp[BLOCK_SIZE];
+
+void main() {
+    const uint row = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
+    const uint col = gl_LocalInvocationID.x;
+
+    tmp[col] = FLOAT_TYPE(0.0f);
+
+    for (uint i = col; i < p.KX; i += BLOCK_SIZE) {
+        tmp[col] += FLOAT_TYPE(data_a[row*p.KX + i]);
+    }
+
+    barrier();
+    [[unroll]] for (int s = int(BLOCK_SIZE) / 2; s > 0; s >>= 1) {
+        if (col < s) {
+            tmp[col] += tmp[col + s];
+        }
+        barrier();
+    }
+
+    if (col == 0) {
+        data_d[row] = D_TYPE(tmp[0]);
+    }
+}
