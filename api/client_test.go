@@ -262,3 +262,135 @@ func TestClientDo(t *testing.T) {
 		})
 	}
 }
+
+func TestClientWebSearch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/api/web_search") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req WebSearchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+
+		if req.Query != "what is ollama" {
+			t.Fatalf("unexpected query: %s", req.Query)
+		}
+
+		if req.MaxResults != 3 {
+			t.Fatalf("unexpected max_results: %d", req.MaxResults)
+		}
+
+		resp := WebSearchResponse{
+			Results: []WebSearchResult{{
+				Title:   "Ollama",
+				URL:     "https://ollama.com",
+				Content: "Cloud models are now available...",
+			}},
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("failed to encode response: %v", err)
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+
+	client := NewClient(u, ts.Client())
+
+	resp, err := client.WebSearch(t.Context(), &WebSearchRequest{Query: "what is ollama", MaxResults: 3})
+	if err != nil {
+		t.Fatalf("WebSearch returned error: %v", err)
+	}
+
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+
+	if resp.Results[0].Title != "Ollama" {
+		t.Fatalf("unexpected title: %s", resp.Results[0].Title)
+	}
+}
+
+func TestClientWebSearchUnauthorized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"signin_url": "https://ollama.com/connect",
+		})
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+
+	client := NewClient(u, ts.Client())
+
+	_, err = client.WebSearch(t.Context(), &WebSearchRequest{Query: "what is ollama"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if _, ok := err.(AuthorizationError); !ok {
+		t.Fatalf("expected AuthorizationError, got %T", err)
+	}
+}
+
+func TestClientWebFetch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/api/web_fetch") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req WebFetchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+
+		if req.URL != "https://ollama.com" {
+			t.Fatalf("unexpected url: %s", req.URL)
+		}
+
+		resp := WebFetchResponse{
+			Title:   "Ollama",
+			Content: "Cloud models are now available...",
+			Links:   []string{"https://ollama.com/models"},
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("failed to encode response: %v", err)
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+
+	client := NewClient(u, ts.Client())
+
+	resp, err := client.WebFetch(t.Context(), &WebFetchRequest{URL: "https://ollama.com"})
+	if err != nil {
+		t.Fatalf("WebFetch returned error: %v", err)
+	}
+
+	if resp.Title != "Ollama" {
+		t.Fatalf("unexpected title: %s", resp.Title)
+	}
+
+	if len(resp.Links) != 1 || resp.Links[0] != "https://ollama.com/models" {
+		t.Fatalf("unexpected links: %v", resp.Links)
+	}
+}
