@@ -195,7 +195,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	useFlashAttention := (envconfig.FlashAttention() || f.FlashAttention()) &&
+	useFlashAttention := envconfig.FlashAttention(f.FlashAttention()) &&
 		(discover.GpuInfoList)(gpus).FlashAttentionSupported() &&
 		f.SupportsFlashAttention()
 
