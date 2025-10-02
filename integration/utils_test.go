@@ -256,13 +256,28 @@ var (
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
 	}
+
+	blueSkyPrompt   = "why is the sky blue? Be brief but factual in your reply"
+	blueSkyExpected = []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength", "interact"}
+
+	rainbowPrompt    = "how do rainbows form? Be brief but factual in your reply"
+	rainbowFollowups = []string{
+		"Explain the physics involved in them.  Be breif in your reply",
+		"Explain the chemistry involved in them.  Be breif in your reply",
+		"What are common myths related to them? Be brief in your reply",
+		"What are common fairytales related to them? Be brief in your reply",
+		"Can they form if there is no rain?  Be breif in your reply",
+		"Can they form if there are no clouds?  Be breif in your reply",
+		"Do they happen on other planets? Be brief in your reply",
+	}
+	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "end", "gold", "fortune", "blessing", "prosperity", "magic", "shower", "sky", "shimmer", "light", "storm", "sunny"}
 )
 
 func init() {
 	lifecycle.InitLogging()
-	custom := os.Getenv("OLLAMA_TEST_SMOL_MODEL")
+	custom := os.Getenv("OLLAMA_TEST_DEFAULT_MODEL")
 	if custom != "" {
-		slog.Info("setting smol test model to " + custom)
+		slog.Info("setting default test model to " + custom)
 		smol = custom
 	}
 }
@@ -440,6 +455,24 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 			t.Fatal(err)
 		}
 	}
+	// Make sure server is online and healthy before returning
+	listCtx, cancel := context.WithDeadlineCause(
+		ctx,
+		time.Now().Add(120*time.Second),
+		fmt.Errorf("list models took too long"),
+	)
+	defer cancel()
+	models, err := client.ListRunning(listCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models.Models) > 0 {
+		names := make([]string, len(models.Models))
+		for i, m := range models.Models {
+			names[i] = m.Name
+		}
+		slog.Info("currently loaded", "models", names)
+	}
 
 	return client, testEndpoint, func() {
 		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
@@ -561,7 +594,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
 				Model:     smol,
-				Prompt:    "how do rainbows form? Be brief but factual in your reply",
+				Prompt:    rainbowPrompt,
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}, {
@@ -577,11 +610,11 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			},
 		},
 		[][]string{
-			{"sunlight", "scattering", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorbs", "wavelength"},
-			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigments", "particles", "iron oxide", "rust", "air", "water", "mixture", "mixing"},
-			{"water", "droplet", "refracted", "reflect", "color", "spectrum"},
+			{"sunlight", "scatter", "interact", "color", "surface", "depth", "red", "orange", "yellow", "absorb", "wavelength", "water", "molecule"},
+			{"soil", "organic", "earth", "black", "tan", "chemical", "processes", "pigment", "particle", "iron oxide", "rust", "air", "water", "wet", "mixture", "mixing", "mineral", "element", "decomposed", "matter", "wavelength"},
+			rainbowExpected,
 			{"fourth", "july", "declaration", "independence"},
-			{"nitrogen", "oxygen", "carbon", "dioxide", "water", "vapor"},
+			{"nitrogen", "oxygen", "carbon", "dioxide", "water", "vapor", "fluid", "particles", "gas"},
 		}
 }
 

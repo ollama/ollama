@@ -151,14 +151,25 @@ type Model struct {
 	*Options
 }
 
-// Forward implements model.Model.
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	hiddenStates, err := m.forward(ctx, batch)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.Output.Forward(ctx, hiddenStates), nil
+}
+
+// Forward implements model.Model.
+func (m *Model) forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	for i, layer := range m.Layers {
-		m.Cache.SetLayer(i)
+		if m.Cache != nil {
+			m.Cache.SetLayer(i)
+		}
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
@@ -168,8 +179,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
 	}
 
-	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
-	return m.Output.Forward(ctx, hiddenStates), nil
+	return m.OutputNorm.Forward(ctx, hiddenStates, m.eps), nil
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
@@ -190,7 +200,6 @@ func New(c fs.Config) (model.Model, error) {
 
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
-			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -203,6 +212,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		Layers: layers,
 		Options: &Options{
@@ -227,4 +237,5 @@ func New(c fs.Config) (model.Model, error) {
 func init() {
 	model.Register("qwen3", New)
 	model.Register("qwen3moe", New)
+	model.Register("qwen3_embed", newEmbed)
 }

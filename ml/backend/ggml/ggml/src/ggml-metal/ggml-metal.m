@@ -6523,12 +6523,14 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
     GGML_UNUSED(dev);
 }
 
+#define GGML_METAL_NAME "Metal"
 static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
     props->name        = ggml_backend_metal_device_get_name(dev);
     props->description = ggml_backend_metal_device_get_description(dev);
     props->id          = "0";
     props->type        = ggml_backend_metal_device_get_type(dev);
     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+    props->library = GGML_METAL_NAME;
     props->caps = (struct ggml_backend_dev_caps) {
         /* .async                 = */ false,
         /* .host_buffer           = */ false,

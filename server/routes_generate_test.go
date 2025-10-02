@@ -74,8 +74,8 @@ func TestGenerateChat(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
@@ -618,8 +618,8 @@ func TestGenerate(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
@@ -994,8 +994,8 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				unloadedCh:    make(chan any, 1),
 				loaded:        make(map[string]*runnerRef),
 				newServerFn:   newMockServer(mock),
-				getGpuFn:      discover.GetGPUInfo,
-				getCpuFn:      discover.GetCPUInfo,
+				getGpuFn:      getGpuFn,
+				getCpuFn:      getCpuFn,
 				reschedDelay:  250 * time.Millisecond,
 				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 					time.Sleep(time.Millisecond)

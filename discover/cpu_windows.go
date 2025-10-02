@@ -26,29 +26,6 @@ var (
 	GetLogicalProcessorInformationEx = k32.NewProc("GetLogicalProcessorInformationEx")
 )
 
-var CudartGlobs = []string{
-	"c:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin\\cudart64_*.dll",
-}
-
-var NvmlGlobs = []string{
-	"c:\\Windows\\System32\\nvml.dll",
-}
-
-var NvcudaGlobs = []string{
-	"c:\\windows\\system*\\nvcuda.dll",
-}
-
-var OneapiGlobs = []string{
-	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
-}
-
-var (
-	CudartMgmtName = "cudart64_*.dll"
-	NvcudaMgmtName = "nvcuda.dll"
-	NvmlMgmtName   = "nvml.dll"
-	OneapiMgmtName = "ze_intel_gpu64.dll"
-)
-
 func GetCPUMem() (memInfo, error) {
 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}
 	r1, _, err := globalMemoryStatusExProc.Call(uintptr(unsafe.Pointer(&memStatus)))
@@ -122,27 +99,22 @@ func (pkg *winPackage) IsMember(target *GROUP_AFFINITY) bool {
 }
 
 func getLogicalProcessorInformationEx() ([]byte, error) {
-	buf := make([]byte, 1)
+	buf := make([]byte, 1024)
 	bufSize := len(buf)
-	ret, _, err := GetLogicalProcessorInformationEx.Call(
-		uintptr(RelationAll),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&bufSize)),
-	)
-	if ret != 0 {
-		return nil, fmt.Errorf("failed to determine size info ret:%d %w", ret, err)
+	var err error
+	for range 3 {
+		var ret uintptr
+		ret, _, err = GetLogicalProcessorInformationEx.Call(
+			uintptr(RelationAll),
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(unsafe.Pointer(&bufSize)),
+		)
+		if ret == 1 && bufSize <= len(buf) {
+			return buf, nil
+		}
+		buf = make([]byte, bufSize)
 	}
-
-	buf = make([]byte, bufSize)
-	ret, _, err = GetLogicalProcessorInformationEx.Call(
-		uintptr(RelationAll),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&bufSize)),
-	)
-	if ret == 0 {
-		return nil, fmt.Errorf("failed to gather processor information ret:%d buflen:%d %w", ret, bufSize, err)
-	}
-	return buf, nil
+	return nil, fmt.Errorf("unable to determine CPU details: %w", err)
 }
 
 func processSystemLogicalProcessorInforationList(buf []byte) []*winPackage {
@@ -217,10 +189,11 @@ func processSystemLogicalProcessorInforationList(buf []byte) []*winPackage {
 	return packages
 }
 
-func GetCPUDetails() ([]CPU, error) {
+func GetCPUDetails() []CPU {
 	buf, err := getLogicalProcessorInformationEx()
 	if err != nil {
-		return nil, err
+		slog.Warn("failed to get CPU details", "error", err)
+		return nil
 	}
 	packages := processSystemLogicalProcessorInforationList(buf)
 	cpus := make([]CPU, len(packages))
@@ -230,5 +203,10 @@ func GetCPUDetails() ([]CPU, error) {
 		cpus[i].EfficiencyCoreCount = pkg.efficiencyCoreCount
 		cpus[i].ThreadCount = pkg.threadCount
 	}
-	return cpus, nil
+	return cpus
+}
+
+func IsNUMA() bool {
+	// numa support in ggml is linux only
+	return false
 }
