@@ -899,6 +899,8 @@ func (f GGML) SupportsFlashAttention() bool {
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"gptoss", "gpt-oss",
+		"qwen3",
+		"qwen3moe",
 	}, f.KV().String("general.architecture"))
 }
 
