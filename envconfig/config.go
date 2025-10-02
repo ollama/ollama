@@ -134,6 +134,17 @@ func LoadTimeout() (loadTimeout time.Duration) {
 	return loadTimeout
 }
 
+func Remotes() []string {
+	var r []string
+	raw := strings.TrimSpace(Var("OLLAMA_REMOTES"))
+	if raw == "" {
+		r = []string{"ollama.com"}
+	} else {
+		r = strings.Split(raw, ",")
+	}
+	return r
+}
+
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
@@ -219,7 +230,7 @@ func Uint(key string, defaultValue uint) func() uint {
 
 var (
 	// NumParallel sets the number of parallel model requests. NumParallel can be configured via the OLLAMA_NUM_PARALLEL environment variable.
-	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 0)
+	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 1)
 	// MaxRunners sets the maximum number of loaded models. MaxRunners can be configured via the OLLAMA_MAX_LOADED_MODELS environment variable.
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
@@ -270,6 +281,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},

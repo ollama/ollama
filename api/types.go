@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
@@ -34,6 +36,19 @@ func (e StatusError) Error() string {
 		// this should not happen
 		return "something went wrong, please see the ollama server logs for details"
 	}
+}
+
+type AuthorizationError struct {
+	StatusCode int
+	Status     string
+	SigninURL  string `json:"signin_url"`
+}
+
+func (e AuthorizationError) Error() string {
+	if e.Status != "" {
+		return e.Status
+	}
+	return "something went wrong, please see the ollama server logs for details"
 }
 
 // ImageData represents the raw binary data of an image file.
@@ -85,10 +100,15 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Needs to be a pointer so we can distinguish between false
+	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
+	// for supported models. Needs to be a pointer so we can distinguish between false
 	// (request that thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
-	Think *bool `json:"think,omitempty"`
+	Think *ThinkValue `json:"think,omitempty"`
+
+	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
+	// template instead of calling the model.
+	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -116,8 +136,13 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding
-	Think *bool `json:"think,omitempty"`
+	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
+	// for supported models.
+	Think *ThinkValue `json:"think,omitempty"`
+
+	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
+	// template instead of calling the model.
+	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 }
 
 type Tools []Tool
@@ -143,6 +168,7 @@ type Message struct {
 	Thinking  string      `json:"thinking,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName  string      `json:"tool_name,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -222,21 +248,76 @@ func (pt PropertyType) String() string {
 	return fmt.Sprintf("%v", []string(pt))
 }
 
+type ToolProperty struct {
+	AnyOf       []ToolProperty `json:"anyOf,omitempty"`
+	Type        PropertyType   `json:"type"`
+	Items       any            `json:"items,omitempty"`
+	Description string         `json:"description"`
+	Enum        []any          `json:"enum,omitempty"`
+}
+
+// ToTypeScriptType converts a ToolProperty to a TypeScript type string
+func (tp ToolProperty) ToTypeScriptType() string {
+	if len(tp.AnyOf) > 0 {
+		var types []string
+		for _, anyOf := range tp.AnyOf {
+			types = append(types, anyOf.ToTypeScriptType())
+		}
+		return strings.Join(types, " | ")
+	}
+
+	if len(tp.Type) == 0 {
+		return "any"
+	}
+
+	if len(tp.Type) == 1 {
+		return mapToTypeScriptType(tp.Type[0])
+	}
+
+	var types []string
+	for _, t := range tp.Type {
+		types = append(types, mapToTypeScriptType(t))
+	}
+	return strings.Join(types, " | ")
+}
+
+// mapToTypeScriptType maps JSON Schema types to TypeScript types
+func mapToTypeScriptType(jsonType string) string {
+	switch jsonType {
+	case "string":
+		return "string"
+	case "number", "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "array":
+		return "any[]"
+	case "object":
+		return "Record<string, any>"
+	case "null":
+		return "null"
+	default:
+		return "any"
+	}
+}
+
+type ToolFunctionParameters struct {
+	Type       string                  `json:"type"`
+	Defs       any                     `json:"$defs,omitempty"`
+	Items      any                     `json:"items,omitempty"`
+	Required   []string                `json:"required"`
+	Properties map[string]ToolProperty `json:"properties"`
+}
+
+func (t *ToolFunctionParameters) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 type ToolFunction struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Parameters  struct {
-		Type       string   `json:"type"`
-		Defs       any      `json:"$defs,omitempty"`
-		Items      any      `json:"items,omitempty"`
-		Required   []string `json:"required"`
-		Properties map[string]struct {
-			Type        PropertyType `json:"type"`
-			Items       any          `json:"items,omitempty"`
-			Description string       `json:"description"`
-			Enum        []any        `json:"enum,omitempty"`
-		} `json:"properties"`
-	} `json:"parameters"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 
 func (t *ToolFunction) String() string {
@@ -247,14 +328,36 @@ func (t *ToolFunction) String() string {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
-	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason,omitempty"`
+	// Model is the model name that generated the response.
+	Model string `json:"model"`
 
+	// RemoteModel is the name of the upstream model that generated the response.
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
+
+	// CreatedAt is the timestamp of the response.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Message contains the message or part of a message from the model.
+	Message Message `json:"message"`
+
+	// Done specifies if the response is complete.
 	Done bool `json:"done"`
 
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason,omitempty"`
+
+	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
+
 	Metrics
+}
+
+// DebugInfo contains debug information for template rendering
+type DebugInfo struct {
+	RenderedTemplate string `json:"rendered_template"`
+	ImageCount       int    `json:"image_count,omitempty"`
 }
 
 type Metrics struct {
@@ -309,7 +412,11 @@ type EmbedRequest struct {
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Truncate truncates the input to fit the model's max sequence length.
 	Truncate *bool `json:"truncate,omitempty"`
+
+	// Dimensions truncates the output embedding to the specified dimension.
+	Dimensions int `json:"dimensions,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
@@ -348,18 +455,47 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model    string `json:"model"`
-	Stream   *bool  `json:"stream,omitempty"`
+	// Model is the model name to create.
+	Model string `json:"model"`
+
+	// Stream specifies whether the response is streaming; it is true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
 	Quantize string `json:"quantize,omitempty"`
 
-	From       string            `json:"from,omitempty"`
-	Files      map[string]string `json:"files,omitempty"`
-	Adapters   map[string]string `json:"adapters,omitempty"`
-	Template   string            `json:"template,omitempty"`
-	License    any               `json:"license,omitempty"`
-	System     string            `json:"system,omitempty"`
-	Parameters map[string]any    `json:"parameters,omitempty"`
-	Messages   []Message         `json:"messages,omitempty"`
+	// From is the name of the model or file to use as the source.
+	From string `json:"from,omitempty"`
+
+	// RemoteHost is the URL of the upstream ollama API for the model (if any).
+	RemoteHost string `json:"remote_host,omitempty"`
+
+	// Files is a map of files include when creating the model.
+	Files map[string]string `json:"files,omitempty"`
+
+	// Adapters is a map of LoRA adapters to include when creating the model.
+	Adapters map[string]string `json:"adapters,omitempty"`
+
+	// Template is the template used when constructing a request to the model.
+	Template string `json:"template,omitempty"`
+
+	// License is a string or list of strings for licenses.
+	License any `json:"license,omitempty"`
+
+	// System is the system prompt for the model.
+	System string `json:"system,omitempty"`
+
+	// Parameters is a map of hyper-parameters which are applied to the model.
+	Parameters map[string]any `json:"parameters,omitempty"`
+
+	// Messages is a list of messages added to the model before chat and generation requests.
+	Messages []Message `json:"messages,omitempty"`
+
+	Renderer string `json:"renderer,omitempty"`
+	Parser   string `json:"parser,omitempty"`
+
+	// Info is a map of additional information for the model
+	Info map[string]any `json:"info,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -397,8 +533,12 @@ type ShowResponse struct {
 	Parameters    string             `json:"parameters,omitempty"`
 	Template      string             `json:"template,omitempty"`
 	System        string             `json:"system,omitempty"`
+	Renderer      string             `json:"renderer,omitempty"`
+	Parser        string             `json:"parser,omitempty"`
 	Details       ModelDetails       `json:"details,omitempty"`
 	Messages      []Message          `json:"messages,omitempty"`
+	RemoteModel   string             `json:"remote_model,omitempty"`
+	RemoteHost    string             `json:"remote_host,omitempty"`
 	ModelInfo     map[string]any     `json:"model_info,omitempty"`
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
@@ -457,23 +597,26 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name       string       `json:"name"`
-	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
-	Size       int64        `json:"size"`
-	Digest     string       `json:"digest"`
-	Details    ModelDetails `json:"details,omitempty"`
+	Name        string       `json:"name"`
+	Model       string       `json:"model"`
+	RemoteModel string       `json:"remote_model,omitempty"`
+	RemoteHost  string       `json:"remote_host,omitempty"`
+	ModifiedAt  time.Time    `json:"modified_at"`
+	Size        int64        `json:"size"`
+	Digest      string       `json:"digest"`
+	Details     ModelDetails `json:"details,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
 type ProcessModelResponse struct {
-	Name      string       `json:"name"`
-	Model     string       `json:"model"`
-	Size      int64        `json:"size"`
-	Digest    string       `json:"digest"`
-	Details   ModelDetails `json:"details,omitempty"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	SizeVRAM  int64        `json:"size_vram"`
+	Name          string       `json:"name"`
+	Model         string       `json:"model"`
+	Size          int64        `json:"size"`
+	Digest        string       `json:"digest"`
+	Details       ModelDetails `json:"details,omitempty"`
+	ExpiresAt     time.Time    `json:"expires_at"`
+	SizeVRAM      int64        `json:"size_vram"`
+	ContextLength int          `json:"context_length"`
 }
 
 type TokenResponse struct {
@@ -484,6 +627,12 @@ type TokenResponse struct {
 type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
+
+	// RemoteModel is the name of the upstream model that generated the response.
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
 
 	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
@@ -506,6 +655,10 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 }
 
 // ModelDetails provides details about a model.
@@ -516,6 +669,18 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+}
+
+// UserResponse provides information about a user.
+type UserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Bio       string    `json:"bio,omitempty"`
+	AvatarURL string    `json:"avatarurl,omitempty"`
+	FirstName string    `json:"firstname,omitempty"`
+	LastName  string    `json:"lastname,omitempty"`
+	Plan      string    `json:"plan,omitempty"`
 }
 
 // Tensor describes the metadata for a given tensor.
@@ -675,6 +840,113 @@ func DefaultOptions() Options {
 	}
 }
 
+// ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low")
+type ThinkValue struct {
+	// Value can be a bool or string
+	Value interface{}
+}
+
+// IsValid checks if the ThinkValue is valid
+func (t *ThinkValue) IsValid() bool {
+	if t == nil || t.Value == nil {
+		return true // nil is valid (means not set)
+	}
+
+	switch v := t.Value.(type) {
+	case bool:
+		return true
+	case string:
+		return v == "high" || v == "medium" || v == "low"
+	default:
+		return false
+	}
+}
+
+// IsBool returns true if the value is a boolean
+func (t *ThinkValue) IsBool() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+	_, ok := t.Value.(bool)
+	return ok
+}
+
+// IsString returns true if the value is a string
+func (t *ThinkValue) IsString() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+	_, ok := t.Value.(string)
+	return ok
+}
+
+// Bool returns the value as a bool (true if enabled in any way)
+func (t *ThinkValue) Bool() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+
+	switch v := t.Value.(type) {
+	case bool:
+		return v
+	case string:
+		// Any string value ("high", "medium", "low") means thinking is enabled
+		return v == "high" || v == "medium" || v == "low"
+	default:
+		return false
+	}
+}
+
+// String returns the value as a string
+func (t *ThinkValue) String() string {
+	if t == nil || t.Value == nil {
+		return ""
+	}
+
+	switch v := t.Value.(type) {
+	case string:
+		return v
+	case bool:
+		if v {
+			return "medium" // Default level when just true
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (t *ThinkValue) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as bool first
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		t.Value = b
+		return nil
+	}
+
+	// Try to unmarshal as string
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		// Validate string values
+		if s != "high" && s != "medium" && s != "low" {
+			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", true, or false)", s)
+		}
+		t.Value = s
+		return nil
+	}
+
+	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\")")
+}
+
+// MarshalJSON implements json.Marshaler
+func (t *ThinkValue) MarshalJSON() ([]byte, error) {
+	if t == nil || t.Value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(t.Value)
+}
+
 type Duration struct {
 	time.Duration
 }
@@ -699,7 +971,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if t < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		} else {
-			d.Duration = time.Duration(int(t) * int(time.Second))
+			d.Duration = time.Duration(t * float64(time.Second))
 		}
 	case string:
 		d.Duration, err = time.ParseDuration(t)

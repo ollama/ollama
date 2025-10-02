@@ -34,9 +34,12 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role      string     `json:"role"`
-	Content   any        `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Role       string     `json:"role"`
+	Content    any        `json:"content"`
+	Reasoning  string     `json:"reasoning,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 type Choice struct {
@@ -73,12 +76,17 @@ type JsonSchema struct {
 }
 
 type EmbedRequest struct {
-	Input any    `json:"input"`
-	Model string `json:"model"`
+	Input      any    `json:"input"`
+	Model      string `json:"model"`
+	Dimensions int    `json:"dimensions,omitempty"`
 }
 
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
+}
+
+type Reasoning struct {
+	Effort *string `json:"effort,omitempty"`
 }
 
 type ChatCompletionRequest struct {
@@ -95,16 +103,20 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
+	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
+	DebugRenderOnly  bool            `json:"_debug_render_only"`
 }
 
 type ChatCompletion struct {
-	Id                string   `json:"id"`
-	Object            string   `json:"object"`
-	Created           int64    `json:"created"`
-	Model             string   `json:"model"`
-	SystemFingerprint string   `json:"system_fingerprint"`
-	Choices           []Choice `json:"choices"`
-	Usage             Usage    `json:"usage,omitempty"`
+	Id                string         `json:"id"`
+	Object            string         `json:"object"`
+	Created           int64          `json:"created"`
+	Model             string         `json:"model"`
+	SystemFingerprint string         `json:"system_fingerprint"`
+	Choices           []Choice       `json:"choices"`
+	Usage             Usage          `json:"usage,omitempty"`
+	DebugInfo         *api.DebugInfo `json:"_debug_info,omitempty"`
 }
 
 type ChatCompletionChunk struct {
@@ -131,6 +143,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	DebugRenderOnly  bool           `json:"_debug_render_only"`
 }
 
 type Completion struct {
@@ -253,7 +266,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		SystemFingerprint: "fp_ollama",
 		Choices: []Choice{{
 			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
 				if len(toolCalls) > 0 {
 					reason = "tool_calls"
@@ -263,8 +276,8 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				}
 				return nil
 			}(r.DoneReason),
-		}},
-		Usage: toUsage(r),
+		}}, Usage: toUsage(r),
+		DebugInfo: r.DebugInfo,
 	}
 }
 
@@ -278,10 +291,10 @@ func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
-					if toolCallSent {
+					if toolCallSent || len(toolCalls) > 0 {
 						return &finishReasonToolCalls
 					}
 					return &reason
@@ -395,9 +408,20 @@ func toModel(r api.ShowResponse, m string) Model {
 func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
+		toolName := ""
+		if strings.ToLower(msg.Role) == "tool" {
+			toolName = msg.Name
+			if toolName == "" && msg.ToolCallID != "" {
+				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
+			}
+		}
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -423,7 +447,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png"}
+					types := []string{"jpeg", "jpg", "png", "webp"}
 					valid := false
 					for _, t := range types {
 						prefix := "data:image/" + t + ";base64,"
@@ -448,7 +472,21 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, errors.New("invalid message format")
 				}
 			}
+			// since we might have added multiple messages above, if we have tools
+			// calls we'll add them to the last message
+			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
+				toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
+				if err != nil {
+					return nil, err
+				}
+				messages[len(messages)-1].ToolCalls = toolCalls
+				if toolName != "" {
+					messages[len(messages)-1].ToolName = toolName
+				}
+				messages[len(messages)-1].Thinking = msg.Reasoning
+			}
 		default:
+			// content is only optional if tool calls are present
 			if msg.ToolCalls == nil {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
@@ -461,7 +499,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, errors.New("invalid tool call arguments")
 				}
 			}
-			messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls})
 		}
 	}
 
@@ -521,14 +559,54 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	var think *api.ThinkValue
+	if r.Reasoning != nil {
+		think = &api.ThinkValue{
+			Value: *r.Reasoning.Effort,
+		}
+	} else if r.ReasoningEffort != nil {
+		think = &api.ThinkValue{
+			Value: *r.ReasoningEffort,
+		}
+	}
+
 	return &api.ChatRequest{
-		Model:    r.Model,
-		Messages: messages,
-		Format:   format,
-		Options:  options,
-		Stream:   &r.Stream,
-		Tools:    r.Tools,
+		Model:           r.Model,
+		Messages:        messages,
+		Format:          format,
+		Options:         options,
+		Stream:          &r.Stream,
+		Tools:           r.Tools,
+		Think:           think,
+		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
+}
+
+func nameFromToolCallID(messages []Message, toolCallID string) string {
+	// iterate backwards to be more resilient to duplicate tool call IDs (this
+	// follows "last one wins")
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == toolCallID {
+				return tc.Function.Name
+			}
+		}
+	}
+	return ""
+}
+
+func fromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
+	apiToolCalls := make([]api.ToolCall, len(toolCalls))
+	for i, tc := range toolCalls {
+		apiToolCalls[i].Function.Name = tc.Function.Name
+		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
+		if err != nil {
+			return nil, errors.New("invalid tool call arguments")
+		}
+	}
+
+	return apiToolCalls, nil
 }
 
 func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
@@ -574,11 +652,12 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}
 
 	return api.GenerateRequest{
-		Model:   r.Model,
-		Prompt:  r.Prompt,
-		Options: options,
-		Stream:  &r.Stream,
-		Suffix:  r.Suffix,
+		Model:           r.Model,
+		Prompt:          r.Prompt,
+		Options:         options,
+		Stream:          &r.Stream,
+		Suffix:          r.Suffix,
+		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }
 
@@ -932,7 +1011,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input}); err != nil {
+		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input, Dimensions: req.Dimensions}); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}

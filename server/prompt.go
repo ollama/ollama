@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/template"
 )
 
@@ -19,7 +20,7 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *bool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (prompt string, images []llm.ImageData, _ error) {
 	var system []api.Message
 
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
@@ -41,16 +42,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			}
 		}
 
-		thinkVal := false
-		if think != nil {
-			thinkVal = *think
-		}
-		var b bytes.Buffer
-		if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[i:]...), Tools: tools, Think: thinkVal, IsThinkSet: think != nil}); err != nil {
+		p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+		if err != nil {
 			return "", nil, err
 		}
 
-		s, err := tokenize(ctx, b.String())
+		s, err := tokenize(ctx, p)
 		if err != nil {
 			return "", nil, err
 		}
@@ -99,14 +96,32 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	// truncate any messages that do not fit into the context window
-	var b bytes.Buffer
-	thinkVal := false
-	if think != nil {
-		thinkVal = *think
-	}
-	if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[currMsgIdx:]...), Tools: tools, Think: thinkVal, IsThinkSet: think != nil}); err != nil {
+	p, err := renderPrompt(m, append(system, msgs[currMsgIdx:]...), tools, think)
+	if err != nil {
 		return "", nil, err
 	}
 
-	return b.String(), images, nil
+	return p, images, nil
+}
+
+func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	if m.Config.Renderer != "" {
+		rendered, err := renderers.RenderWithRenderer(m.Config.Renderer, msgs, tools, think)
+		if err != nil {
+			return "", err
+		}
+		return rendered, nil
+	}
+
+	var b bytes.Buffer
+	thinkVal := false
+	thinkLevel := ""
+	if think != nil {
+		thinkVal = think.Bool()
+		thinkLevel = think.String()
+	}
+	if err := m.Template.Execute(&b, template.Values{Messages: msgs, Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }

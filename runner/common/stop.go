@@ -26,7 +26,7 @@ func ContainsStopSuffix(sequence string, stops []string) bool {
 	return false
 }
 
-// truncateStop removes the provided stop string from pieces,
+// TruncateStop removes the provided stop string from pieces,
 // returning the partial pieces with stop removed, including truncating
 // the last piece if required (and signalling if this was the case)
 func TruncateStop(pieces []string, stop string) ([]string, bool) {

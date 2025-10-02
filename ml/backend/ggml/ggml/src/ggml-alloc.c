@@ -22,21 +22,6 @@ static bool ggml_is_view(const struct ggml_tensor * t) {
     return t->view_src != NULL;
 }
 
-static bool ggml_are_same_layout(const struct ggml_tensor * a, const struct ggml_tensor * b) {
-    if (a->type != b->type) {
-        return false;
-    }
-    for (int i = 0; i < GGML_MAX_DIMS; i++) {
-        if (a->ne[i] != b->ne[i]) {
-            return false;
-        }
-        if (a->nb[i] != b->nb[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
 // ops that return true for this function must not use restrict pointers for their backend implementations
 static bool ggml_op_can_inplace(enum ggml_op op) {
     switch (op) {
@@ -44,6 +29,7 @@ static bool ggml_op_can_inplace(enum ggml_op op) {
         case GGML_OP_DIAG_MASK_ZERO:
         case GGML_OP_DIAG_MASK_INF:
         case GGML_OP_ADD:
+        case GGML_OP_ADD_ID:
         case GGML_OP_ADD1:
         case GGML_OP_SUB:
         case GGML_OP_MUL:
@@ -946,7 +932,7 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
     return ggml_backend_buffer_get_size(galloc->buffers[buffer_id]);
 }
 
-struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
+size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
     GGML_ASSERT(buffer_id >= 0 && buffer_id < galloc->n_buffers);
 
     for (int i = 0; i < buffer_id; i++) {
@@ -955,13 +941,11 @@ struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gal
             // (See above.) However, we need a different check because multiple buffers might be NULL in our
             // case and we still want to know the attempted size.
 
-            struct ggml_allocr_buffer_status status = {0, true};
-            return status;
+            return 0;
         }
     }
 
-    struct ggml_allocr_buffer_status status = {galloc->buffer_sizes[buffer_id], galloc->buffers[buffer_id] != NULL};
-    return status;
+    return galloc->buffer_sizes[buffer_id];
 }
 
 // utils

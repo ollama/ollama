@@ -2,7 +2,9 @@ package qwen2
 
 import (
 	"cmp"
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -41,8 +43,8 @@ func (attn Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor,
 	value := attn.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
-	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
+	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
 	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
@@ -57,7 +59,7 @@ type MLP struct {
 }
 
 func (mlp MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
@@ -109,7 +111,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, &m.Options)
@@ -122,14 +124,21 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
-	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, m.ropeScale, rope.WithTypeNeoX()), nil
+	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, 1./m.ropeScale, rope.WithTypeNeoX()), nil
 }
 
 func New(c fs.Config) (model.Model, error) {
+	// This model currently only supports the gpt2 tokenizer
+	if c.String("tokenizer.ggml.model") == "llama" {
+		return nil, fmt.Errorf("unsupported tokenizer: llama")
+	}
+	// detect library/qwen model(s) which are incompatible
+	if strings.HasPrefix(c.String("general.name"), "Qwen2-beta") {
+		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
+	}
 	m := Model{
 		Layers: make([]DecoderLayer, c.Uint("block_count")),
 		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -142,6 +151,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
@@ -150,7 +160,7 @@ func New(c fs.Config) (model.Model, error) {
 			headDim:    int(c.Uint("attention.key_length")),
 			ropeDim:    int(c.Uint("rope.dimension_count")),
 			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.freq_scale", 1),
+			ropeScale:  c.Float("rope.scaling.factor", 1),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
 		},
 	}

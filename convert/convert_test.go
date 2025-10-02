@@ -11,13 +11,12 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-
-	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/fs/ggml"
 )
@@ -137,9 +136,7 @@ func TestConvertModel(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			keys := maps.Keys(expect)
-			slices.Sort(keys)
-			for _, k := range keys {
+			for _, k := range slices.Sorted(maps.Keys(expect)) {
 				if v, ok := actual[k]; !ok {
 					t.Errorf("missing %s", k)
 				} else if v != expect[k] {
@@ -343,9 +340,7 @@ func TestConvertAdapter(t *testing.T) {
 
 			actual := generateResultsJSON(t, r, m.KV(), m.Tensors())
 
-			keys := maps.Keys(c.Expected)
-			slices.Sort(keys)
-			for _, k := range keys {
+			for _, k := range slices.Sorted(maps.Keys(c.Expected)) {
 				if v, ok := actual[k]; !ok {
 					t.Errorf("missing %s", k)
 				} else if v != c.Expected[k] {
