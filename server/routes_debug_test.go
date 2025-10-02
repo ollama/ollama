@@ -36,8 +36,8 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
@@ -180,7 +180,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 						t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
 					}
 
-					var response api.DebugTemplateResponse
+					var response api.GenerateResponse
 					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatalf("failed to unmarshal response: %v", err)
 					}
@@ -229,8 +229,8 @@ func TestChatDebugRenderOnly(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
@@ -385,7 +385,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 						t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
 					}
 
-					var response api.DebugTemplateResponse
+					var response api.ChatResponse
 					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatalf("failed to unmarshal response: %v", err)
 					}

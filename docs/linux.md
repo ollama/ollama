@@ -11,12 +11,13 @@ curl -fsSL https://ollama.com/install.sh | sh
 ## Manual install
 
 > [!NOTE]
-> If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
+> If you are upgrading from a prior version, you **MUST** remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
 
 Download and extract the package:
 
 ```shell
 curl -LO https://ollama.com/download/ollama-linux-amd64.tgz
+sudo rm -rf /usr/lib/ollama
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 

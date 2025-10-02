@@ -33,7 +33,6 @@ var _ model.TextProcessor = (*Model)(nil)
 func New(c fs.Config) (model.Model, error) {
 	m := &Model{
 		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -46,6 +45,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		TextModel:           newTextModel(c),
 		VisionModel:         newVisionModel(c),
@@ -159,9 +159,8 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, batch, m.Cache), nil
 }
 
 func init() {

@@ -19,14 +19,14 @@ func TestBlueSky(t *testing.T) {
 	// Set up the test data
 	req := api.GenerateRequest{
 		Model:  smol,
-		Prompt: "why is the sky blue?",
+		Prompt: blueSkyPrompt,
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"rayleigh", "scattering"})
+	GenerateTestHelper(ctx, t, req, blueSkyExpected)
 }
 
 func TestUnicode(t *testing.T) {
@@ -110,12 +110,12 @@ func TestUnicodeModelDir(t *testing.T) {
 
 	req := api.GenerateRequest{
 		Model:  smol,
-		Prompt: "why is the sky blue?",
+		Prompt: blueSkyPrompt,
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"rayleigh", "scattering"})
+	GenerateTestHelper(ctx, t, req, blueSkyExpected)
 }

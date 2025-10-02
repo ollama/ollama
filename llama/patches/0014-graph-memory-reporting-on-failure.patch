@@ -4,48 +4,38 @@ Date: Fri, 18 Apr 2025 15:58:19 -0700
 Subject: [PATCH] graph memory reporting on failure
 
 ---
- ggml/include/ggml-alloc.h   |  6 ++++++
- ggml/include/ggml-backend.h |  6 ++++++
- ggml/src/ggml-alloc.c       | 38 +++++++++++++++++++++++++++++++++----
- ggml/src/ggml-backend.cpp   | 10 ++++++++++
- 4 files changed, 56 insertions(+), 4 deletions(-)
+ ggml/include/ggml-alloc.h   |  1 +
+ ggml/include/ggml-backend.h |  1 +
+ ggml/src/ggml-alloc.c       | 36 ++++++++++++++++++++++++++++++++----
+ ggml/src/ggml-backend.cpp   |  7 +++++++
+ 4 files changed, 41 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/include/ggml-alloc.h b/ggml/include/ggml-alloc.h
-index 2cb150fd..781b1e10 100644
+index 2cb150fd2..7ab3f0192 100644
 --- a/ggml/include/ggml-alloc.h
 +++ b/ggml/include/ggml-alloc.h
-@@ -66,6 +66,12 @@ GGML_API bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph
+@@ -65,6 +65,7 @@ GGML_API bool ggml_gallocr_reserve_n(
+ GGML_API bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph);
  
  GGML_API size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id);
++GGML_API size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id);
  
-+struct ggml_allocr_buffer_status {
-+    size_t size;
-+    bool allocated;
-+};
-+GGML_API struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id);
-+
  // Utils
  // Create a buffer and allocate all the tensors in a ggml_context
- GGML_API struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index a2977ea2..8a91b381 100644
+index a2977ea2e..e8cf30841 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
-@@ -304,6 +304,12 @@ extern "C" {
+@@ -303,6 +303,7 @@ extern "C" {
+     GGML_API int                  ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched);
  
      GGML_API size_t               ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
++    GGML_API size_t               ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
  
-+    struct ggml_backend_buffer_status {
-+        size_t size;
-+        bool allocated;
-+    };
-+    GGML_API struct ggml_backend_buffer_status ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
-+
      GGML_API void                 ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend);
      GGML_API ggml_backend_t       ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node);
- 
 diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
-index 8b6e6028..41c8c4a2 100644
+index 8b6e60283..b58bd671d 100644
 --- a/ggml/src/ggml-alloc.c
 +++ b/ggml/src/ggml-alloc.c
 @@ -350,6 +350,7 @@ struct node_alloc {
@@ -108,11 +98,11 @@ index 8b6e6028..41c8c4a2 100644
  }
  
  bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
-@@ -920,6 +932,24 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
+@@ -920,6 +932,22 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
      return ggml_backend_buffer_get_size(galloc->buffers[buffer_id]);
  }
  
-+struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
++size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
 +    GGML_ASSERT(buffer_id >= 0 && buffer_id < galloc->n_buffers);
 +
 +    for (int i = 0; i < buffer_id; i++) {
@@ -121,34 +111,29 @@ index 8b6e6028..41c8c4a2 100644
 +            // (See above.) However, we need a different check because multiple buffers might be NULL in our
 +            // case and we still want to know the attempted size.
 +
-+            struct ggml_allocr_buffer_status status = {0, true};
-+            return status;
++            return 0;
 +        }
 +    }
 +
-+    struct ggml_allocr_buffer_status status = {galloc->buffer_sizes[buffer_id], galloc->buffers[buffer_id] != NULL};
-+    return status;
++    return galloc->buffer_sizes[buffer_id];
 +}
 +
  // utils
  
  static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buffers) {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 97f47abd..eded0291 100644
+index 97f47abd2..d02a40e60 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -1631,6 +1631,16 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
+@@ -1631,6 +1631,13 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
      return ggml_gallocr_get_buffer_size(sched->galloc, backend_index);
  }
  
-+struct ggml_backend_buffer_status ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend) {
++size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend) {
 +    int backend_index = ggml_backend_sched_backend_id(sched, backend);
 +    GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
 +
-+    struct ggml_allocr_buffer_status allocr_status = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
-+    struct ggml_backend_buffer_status status = {allocr_status.size, allocr_status.allocated};
-+
-+    return status;
++    return ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
 +}
 +
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {

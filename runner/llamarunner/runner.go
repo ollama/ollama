@@ -812,7 +812,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		numGPU := 0
 		for i := range gpuIDs {
 			for _, layers := range req.GPULayers {
-				if gpuIDs[i] == layers.ID {
+				if gpuIDs[i] == layers.DeviceID {
 					tensorSplit[i] = float32(len(layers.Layers))
 					numGPU += len(layers.Layers)
 				}

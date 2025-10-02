@@ -33,7 +33,6 @@ const (
 func New(c fs.Config) (model.Model, error) {
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -46,6 +45,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
@@ -107,10 +107,9 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	}
 
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 
 	// TODO: attention mask, cross attention mask
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil
 }
 
 func init() {

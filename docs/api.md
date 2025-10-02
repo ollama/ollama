@@ -1708,6 +1708,7 @@ Advanced parameters:
 - `truncate`: truncates the end of each input to fit within context length. Returns error if `false` and context length is exceeded. Defaults to `true`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `dimensions`: number of dimensions for the embedding
 
 ### Examples
 
