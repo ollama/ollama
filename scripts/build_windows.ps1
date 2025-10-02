@@ -179,6 +179,7 @@ function buildROCm() {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            rm -f $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906*
         }
     }
 }

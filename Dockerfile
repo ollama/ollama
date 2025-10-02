@@ -80,6 +80,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 6' -DOLLAMA_RUNNER_DIR="rocm" \
         && cmake --build --parallel ${PARALLEL} --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel ${PARALLEL}
+RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
