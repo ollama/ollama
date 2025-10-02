@@ -456,7 +456,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 				extra := strings.SplitN(extraEnvs[j], "=", 2)
 				if cmp[0] == extra[0] {
 					cmd.Env[i] = extraEnvs[j]
-					extraDone[i] = true
+					extraDone[j] = true
 				}
 			}
 		}
