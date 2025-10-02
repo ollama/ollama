@@ -392,7 +392,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
 // (if any). Returns whether the scheduler needs to evict a model to make this one fit.
 func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool {
-	numParallel := max(int(req.opts.NumParallel), 1)
+	numParallel := max(req.opts.NumParallel, 1)
 
 	// Embedding models should always be loaded with parallel=1
 	if req.model.CheckCapabilities(model.CapabilityCompletion) != nil {
