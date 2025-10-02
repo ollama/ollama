@@ -8,10 +8,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
@@ -235,7 +239,90 @@ var (
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
+
+	NumParallelForModel = func() *numParallelForModel {
+		n := &numParallelForModel{}
+		// OLLAMA_NUM_PARALLEL_RULES defines a list of rules (regex → request count) for individual models.
+		// Rules are evaluated in the order they appear; the first matching rule is used.
+		// If no rule matches, the global OLLAMA_NUM_PARALLEL value is returned.
+		n.Set(Var("OLLAMA_NUM_PARALLEL_RULES"))
+		return n
+	}()
 )
+
+// parallelRule defines a rule with a compiled regular expression.
+type parallelRule struct {
+	Pattern  string `yaml:"pattern"`
+	Count    uint   `yaml:"count"`
+	compiled *regexp.Regexp
+}
+
+type numParallelForModel struct {
+	mu    sync.RWMutex
+	raw   string
+	rules []parallelRule
+}
+
+// Get returns the parallel limit for the given model name.
+// It matches the model against each rule (as a regular expression) in order.
+// If no rule matches, the global NumParallel() value is returned.
+func (n *numParallelForModel) Get(model string) uint {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	for _, r := range n.rules {
+		if r.compiled != nil && r.compiled.MatchString(model) {
+			return r.Count
+		}
+	}
+	return NumParallel()
+}
+
+// Get raw yaml string used to configure per-model parallel rules.
+func (n *numParallelForModel) Raw() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.raw
+}
+
+// Set parses a YAML string defining per-model parallel rules.
+// On parsing errors the rule list is cleared and a warning is logged.
+func (n *numParallelForModel) Set(raw string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Store raw yaml for later retrieval via AsMap
+	n.raw = raw
+
+	if strings.TrimSpace(raw) == "" {
+		n.rules = nil
+		return
+	}
+	var parsed []parallelRule
+	if err := yaml.Unmarshal([]byte(raw), &parsed); err != nil {
+		slog.Warn("invalid yaml", "error", err)
+		n.rules = nil
+		n.raw = "[]"
+		return
+	}
+
+	// Compile regexes; if any regex is invalid, treat the whole YAML as invalid
+	n.rules = make([]parallelRule, len(parsed))
+	for i, p := range parsed {
+		re, err := regexp.Compile(p.Pattern)
+		if err != nil {
+			slog.Warn("invalid regex pattern", "pattern", p.Pattern, "error", err)
+			// Invalidate the entire configuration similar to yaml.Unmarshal error handling
+			n.rules = nil
+			n.raw = "[]"
+			return
+		}
+		n.rules[i] = parallelRule{
+			Pattern:  p.Pattern,
+			Count:    p.Count,
+			compiled: re,
+		}
+	}
+}
 
 func Uint64(key string, defaultValue uint64) func() uint64 {
 	return func() uint64 {
@@ -262,26 +349,27 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
-		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
-		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
-		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
-		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
-		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
-		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
-		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_DEBUG":              {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_FLASH_ATTENTION":    {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_KV_CACHE_TYPE":      {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
+		"OLLAMA_GPU_OVERHEAD":       {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_HOST":               {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_KEEP_ALIVE":         {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_LLM_LIBRARY":        {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
+		"OLLAMA_LOAD_TIMEOUT":       {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
+		"OLLAMA_MAX_LOADED_MODELS":  {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
+		"OLLAMA_MAX_QUEUE":          {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
+		"OLLAMA_MODELS":             {"OLLAMA_MODELS", Models(), "The path to the models directory"},
+		"OLLAMA_NOHISTORY":          {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":            {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
+		"OLLAMA_NUM_PARALLEL":       {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
+		"OLLAMA_NUM_PARALLEL_RULES": {"OLLAMA_NUM_PARALLEL_RULES", func() string { return NumParallelForModel.Raw() }, "Per-model rules for maximum number of parallel requests"},
+		"OLLAMA_ORIGINS":            {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
+		"OLLAMA_SCHED_SPREAD":       {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
+		"OLLAMA_MULTIUSER_CACHE":    {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
+		"OLLAMA_CONTEXT_LENGTH":     {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
+		"OLLAMA_NEW_ENGINE":         {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_REMOTES":            {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
