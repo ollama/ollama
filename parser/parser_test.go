@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -849,5 +852,64 @@ func TestCreateRequestFiles(t *testing.T) {
 		if diff := cmp.Diff(actual, c.expected); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
+	}
+}
+
+func TestExpandPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	volume := ""
+	if runtime.GOOS == "windows" {
+		volume = "D:"
+	}
+
+	cases := []struct {
+		input,
+		dir,
+		want string
+		err error
+	}{
+		{"~", "", home, nil},
+		{"~/path/to/file", "", filepath.Join(home, filepath.ToSlash("path/to/file")), nil},
+		{"~" + u.Username + "/path/to/file", "", filepath.Join(u.HomeDir, filepath.ToSlash("path/to/file")), nil},
+		{"~nonexistentuser/path/to/file", "", "", user.UnknownUserError("nonexistentuser")},
+		{"relative/path/to/file", "", filepath.Join(cwd, filepath.ToSlash("relative/path/to/file")), nil},
+		{volume + "/absolute/path/to/file", "", filepath.ToSlash(volume + "/absolute/path/to/file"), nil},
+		{volume + "/absolute/path/to/file", filepath.ToSlash("another/path"), filepath.ToSlash(volume + "/absolute/path/to/file"), nil},
+		{".", cwd, cwd, nil},
+		{".", "", cwd, nil},
+		{"", cwd, cwd, nil},
+		{"", "", cwd, nil},
+		{"file", "path/to", filepath.Join(cwd, filepath.ToSlash("path/to/file")), nil},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := expandPath(tt.input, tt.dir)
+			// On Windows, user.Lookup does not map syscall errors to user.UnknownUserError
+			// so we special case the test to just check for an error.
+			// See https://cs.opensource.google/go/go/+/refs/tags/go1.25.1:src/os/user/lookup_windows.go;l=455
+			if runtime.GOOS != "windows" && !errors.Is(err, tt.err) {
+				t.Fatalf("expandPath(%q) error = %v, wantErr %v", tt.input, err, tt.err)
+			} else if tt.err != nil && err == nil {
+				t.Fatal("test case expected to fail on windows")
+			}
+
+			if got != tt.want {
+				t.Errorf("expandPath(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
