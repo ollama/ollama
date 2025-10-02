@@ -266,9 +266,9 @@ func (pt PropertyType) String() string {
 
 type ToolProperty struct {
 	AnyOf       []ToolProperty `json:"anyOf,omitempty"`
-	Type        PropertyType   `json:"type"`
+	Type        PropertyType   `json:"type,omitempty"`
 	Items       any            `json:"items,omitempty"`
-	Description string         `json:"description"`
+	Description string         `json:"description,omitempty"`
 	Enum        []any          `json:"enum,omitempty"`
 }
 
@@ -330,9 +330,10 @@ func (t *ToolFunctionParameters) String() string {
 	return string(bts)
 }
 
+// check what works with toolfunction
 type ToolFunction struct {
 	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
+	Description string                 `json:"description,omitempty"`
 	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 
