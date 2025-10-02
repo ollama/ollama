@@ -42,6 +42,7 @@ import (
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
 	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
+	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
@@ -62,8 +63,8 @@ func BackendInit() {
 	C.llama_backend_init()
 }
 
-func EnumerateGPUs() []string {
-	var ids []string
+func EnumerateGPUs() []ml.DeviceID {
+	var ids []ml.DeviceID
 
 	for i := range C.ggml_backend_dev_count() {
 		device := C.ggml_backend_dev_get(i)
@@ -71,7 +72,10 @@ func EnumerateGPUs() []string {
 		if C.ggml_backend_dev_type(device) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
 			var props C.struct_ggml_backend_dev_props
 			C.ggml_backend_dev_get_props(device, &props)
-			ids = append(ids, C.GoString(props.id))
+			ids = append(ids, ml.DeviceID{
+				ID:      C.GoString(props.id),
+				Library: C.GoString(props.library),
+			})
 		}
 	}
 
@@ -515,33 +519,34 @@ func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	}
 	nChunks := C.mtmd_input_chunks_size(ic)
 	numEmbed := llamaContext.Model().NEmbd()
-	lastChunkSize := 0
+	embed := make([][]float32, 0)
 	for i := range int(nChunks) {
 		chunk := C.mtmd_input_chunks_get(ic, C.size_t(i))
 		numTokens := int(C.mtmd_input_chunk_get_n_tokens(chunk))
-		lastChunkSize = numTokens
+		slog.Debug("chunk tokens", "index", i, "numTokens", numTokens)
 
 		// Encode the chunk
 		if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
 			return nil, errors.New("unable to encode mtmd image chunk")
 		}
-	}
 
-	// Get the embeddings
-	embed := make([][]float32, lastChunkSize)
-	embd := C.mtmd_get_output_embd(c.c)
-	if nil == embd {
-		return nil, errors.New("failed to get image embedding")
-	}
+		// Get the embeddings for this chunk
+		chunkEmbed := make([][]float32, numTokens)
+		chunkEmbd := C.mtmd_get_output_embd(c.c)
+		if nil == chunkEmbd {
+			continue
+		}
 
-	// Extend the embedding array for each token
-	s := unsafe.Slice((*float32)(embd), numEmbed*lastChunkSize)
-	rows := make([]float32, len(s))
-	copy(rows, s)
-	for i := range lastChunkSize {
-		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+		// Extend the embedding array for each token
+		s := unsafe.Slice((*float32)(chunkEmbd), numTokens*numEmbed)
+		rows := make([]float32, len(s))
+		copy(rows, s)
+		for i := range numTokens {
+			chunkEmbed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+		}
+		embed = append(embed, chunkEmbed...)
 	}
-
+	slog.Debug("image embeddings", "totalEmbeddings", len(embed))
 	return embed, nil
 }
 
