@@ -26,35 +26,162 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 		steps []step
 		only  bool
 	}{
+		// all of this is just thinking tests
 		{
-			desc: "with thinking",
+			desc: "simple thinking",
+			steps: []step{
+				{input: "<thinking>abc</thinking>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+			},
+		},
+		{
+			desc: "thinking with split tags",
+			steps: []step{
+				{input: "<thinking>abc", wantEvents: []qwenEvent{}},
+				{input: "</thinking>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+			},
 		},
 		{
 			desc: "thinking and tool call",
+			steps: []step{
+				{
+					input: "<thinking>I'm thinking</thinking><tool_call>I'm tool calling</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking"},
+						qwenEventRawToolCall{raw: "I'm tool calling"},
+					},
+				},
+			},
 		},
 		{
 			desc: "thinking and content",
+			steps: []step{
+				{
+					input: "<thinking>I'm thinking</thinking>I'm content",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking"},
+						qwenEventContent{content: "I'm content"},
+					},
+				},
+			},
 		},
 		{
 			desc: "thinking and tool call and content",
 		},
 		{
 			desc: "nested thinking (outside thinking, inside thinking)",
+			steps: []step{
+				{
+					input: "<thinking>I'm thinking<thinking>I'm nested thinking</thinking></thinking>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking<thinking>I'm nested thinking"},
+						qwenEventContent{content: "</thinking>"},
+					},
+				},
+			},
 		},
 		{
 			desc: "interleaved thinking",
+			steps: []step{
+				{
+					input: "<thinking>I'm thinking<thinking></thinking>I'm actually content</thinking>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking<thinking>"},
+						qwenEventContent{content: "I'm actually content</thinking>"},
+					},
+				},
+			},
 		},
 		{
 			desc: "nested thinking and tool call (outside thinking, inside tool call)",
+			steps: []step{
+				{
+					input:      "<thinking>I'm thinking<tool_call>I'm nested tool call</tool_call></thinking>",
+					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm nested tool call</tool_call>"}},
+				},
+			},
 		},
 		{
-			desc: "nested thinking and tool call (inside tool call, outside thinking)",
+			desc: "nested thinking and tool call (outside tool call, inside thinking)",
+			steps: []step{
+				{
+					input:      "<tool_call>I'm nested tool call<thinking>I'm thinking</thinking></tool_call>",
+					wantEvents: []qwenEvent{qwenEventRawToolCall{raw: "I'm nested tool call<thinking>I'm thinking</thinking>"}},
+				},
+			},
 		},
 		{
 			desc: "interleaved thinking and tool call",
+			steps: []step{
+				{
+					input: "<thinking>I'm thinking<tool_call>I'm NOT a nested tool call</thinking></tool_call><tool_call>I'm nested tool call 2<thinking></tool_call></thinking>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm NOT a nested tool call"},
+						qwenEventContent{content: "</tool_call>"},
+						qwenEventRawToolCall{raw: "I'm nested tool call 2<thinking>"},
+						qwenEventContent{content: "</thinking>"},
+					},
+				},
+			},
+		},
+		{
+			desc: "partial thinking tag fakeout",
+			steps: []step{
+				{
+					input: "abc<thinking",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "abc"},
+					},
+				},
+				{
+					input: " fakeout",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "<thinking fakeout"},
+					},
+				},
+			},
+		},
+		{
+			desc: "partial thinking incomplete",
+			steps: []step{
+				{
+					input: "abc<thinking>unfinished</thinking", // when something is ambiguious, we dont emit anything
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "abc"},
+					},
+				},
+			},
 		},
 	}
+	anyOnlies := false
+	for _, tc := range cases {
+		if tc.only {
+			anyOnlies = true
+		}
+	}
 
+	for _, tc := range cases {
+		if anyOnlies && !tc.only {
+			continue
+		}
+
+		t.Run(tc.desc, func(t *testing.T) {
+			parser := Qwen3VLParser{}
+
+			for i, step := range tc.steps {
+				parser.buffer.WriteString(step.input)
+				gotEvents := parser.parseEvents()
+
+				if len(gotEvents) == 0 && len(step.wantEvents) == 0 {
+					// avoid deep equal on empty vs. nil slices
+					continue
+				}
+
+				if !reflect.DeepEqual(gotEvents, step.wantEvents) {
+					t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
+				}
+			}
+		})
+	}
 }
 
 // TODO: devin was saying something about json cant figure out types?
