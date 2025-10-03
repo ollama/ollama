@@ -51,17 +51,6 @@ import (
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
-var (
-	webServiceBase = func() *url.URL {
-		u, err := url.Parse("https://ollama.com")
-		if err != nil {
-			panic(err)
-		}
-		return u
-	}()
-	webServiceClient = api.NewClient(webServiceBase, http.DefaultClient)
-)
-
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		// heuristic to check whether the template expects to be parsed via harmony:
@@ -799,6 +788,7 @@ func (s *Server) WebSearchHandler(c *gin.Context) {
 		return
 	}
 
+	webServiceClient := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
 	resp, err := webServiceClient.WebSearch(c.Request.Context(), &req)
 	if err != nil {
 		var authError api.AuthorizationError
@@ -845,6 +835,7 @@ func (s *Server) WebFetchHandler(c *gin.Context) {
 		return
 	}
 
+	webServiceClient := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
 	resp, err := webServiceClient.WebFetch(c.Request.Context(), &req)
 	if err != nil {
 		var authError api.AuthorizationError
