@@ -13,7 +13,7 @@
 
     It is intended as fusion of softmax->top-k->get_rows pipeline for MoE models
 */
-template <size_t n_experts, bool with_norm>
+template <int n_experts, bool with_norm>
 __launch_bounds__(4 * WARP_SIZE, 1) __global__ void topk_moe_cuda(const float * logits,
                                                                   float *       weights,
                                                                   int32_t *     ids,
@@ -203,8 +203,6 @@ void ggml_cuda_op_topk_moe(ggml_backend_cuda_context & ctx,
     int32_t *     ids_d     = (int32_t *) ids->data;
 
     GGML_ASSERT(ids->nb[1] / ggml_type_size(ids->type) == (size_t) n_experts);
-
-    cudaStream_t stream = ctx.stream();
 
     const int n_expert_used = weights->ne[1];
 
