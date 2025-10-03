@@ -68,7 +68,7 @@ func TestContextExhaustion(t *testing.T) {
 
 // Send multiple generate requests with prior context and ensure the response is coherant and expected
 func TestParallelGenerateWithHistory(t *testing.T) {
-	modelOverride := ollamaEngineChatModels[0] // Most recent ollama engine model
+	modelOverride := "gpt-oss:20b"
 	req, resp := GenerateRequests()
 	numParallel := 2
 	iterLimit := 2
@@ -155,7 +155,7 @@ func TestGenerateWithHistory(t *testing.T) {
 
 // Send multiple chat requests with prior context and ensure the response is coherant and expected
 func TestParallelChatWithHistory(t *testing.T) {
-	modelOverride := ollamaEngineChatModels[0] // Most recent ollama engine model
+	modelOverride := "gpt-oss:20b"
 	req, resp := ChatRequests()
 	numParallel := 2
 	iterLimit := 2
