@@ -163,7 +163,7 @@ jobs:
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} -DOLLAMA_RUNNER_DIR="${{ matrix.runner_dir }}"
           cmake --build --parallel --preset "${{ matrix.preset }}"
           cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
-          rm -f dist\lib\ollama\rocm\rocblas\library\*gfx906*
+          rm -force dist\lib\ollama\rocm\rocblas\library\*gfx906*
         env:
           CMAKE_GENERATOR: Ninja
       - uses: actions/upload-artifact@v4
