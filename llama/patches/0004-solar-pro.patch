@@ -5,13 +5,14 @@ Subject: [PATCH] solar-pro
 
 adds support for the Solar Pro architecture
 ---
- src/llama-arch.cpp    |  21 +++++
- src/llama-arch.h      |   3 +
- src/llama-hparams.cpp |   8 ++
- src/llama-hparams.h   |   5 +
- src/llama-model.cpp   | 207 ++++++++++++++++++++++++++++++++++++++++++
- src/llama-model.h     |   3 +
- 6 files changed, 247 insertions(+)
+ src/llama-arch.cpp         |  21 ++++
+ src/llama-arch.h           |   3 +
+ src/llama-hparams.cpp      |   8 ++
+ src/llama-hparams.h        |   5 +
+ src/llama-model-loader.cpp |   2 +-
+ src/llama-model.cpp        | 207 +++++++++++++++++++++++++++++++++++++
+ src/llama-model.h          |   3 +
+ 7 files changed, 248 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
 index 4fd083aa..741c3794 100644
@@ -136,6 +137,19 @@ index f29b23ee..458e448c 100644
      bool is_swa(uint32_t il) const;
  
      bool has_kv(uint32_t il) const;
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index aa3a65f8..ee303bd5 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -466,7 +466,7 @@ namespace GGUFMeta {
+     template bool llama_model_loader::get_key_or_arr<std::array<int, 4>>(enum llm_kv kid, std::array<int, 4> & result, uint32_t n, bool required);
+     template bool llama_model_loader::get_key_or_arr<std::array<uint32_t, 512>>(enum llm_kv kid, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+     template bool llama_model_loader::get_key_or_arr<std::array<float, 512>>(enum llm_kv kid, std::array<float, 512> & result, uint32_t n, bool required);
+-
++    template bool llama_model_loader::get_key_or_arr<uint32_t>(const std::string & key, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+ 
+ llama_model_loader::llama_model_loader(
+         const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 index 19643d60..68d980b0 100644
 --- a/src/llama-model.cpp
