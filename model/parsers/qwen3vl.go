@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode"
 
 	"encoding/json"
 
@@ -12,14 +13,10 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
-// type parserState int
-
 const (
 	CollectingContent         qwenParserState = iota
 	CollectingThinkingContent                 // this is because qwen3vl starts with <thinking>
-	// parserState_CompletedThinkingContent
 	CollectingToolContent
-	// parserState_CompletedToolContent
 )
 
 const (
@@ -43,22 +40,9 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
-	return tools // Qwen doesn't modify tools
-	// does qwenvl modify tools?
+	return tools
+	// does qwenvl modify tools? what does this mean?
 }
-
-// Add processes a chunk of string output from the model, accumulating it in the parser's buffer,
-// and then parses any complete events (such as tool calls or content) that can be extracted from the buffer.
-// It returns the parsed content (as a string), an empty string for "thinking" (since this parser does not support it),
-// a slice of parsed tool calls, and an error if any occurred during parsing.
-//
-// Specifically, it works as follows:
-//   1. Appends the new string chunk 's' to the internal accumulator.
-//   2. Calls parseEvents() to extract any complete events (tool calls or content) from the buffer.
-//   3. Iterates over the events:
-//        - For tool call events, attempts to parse them into api.ToolCall objects and collects them.
-//        - For content events, appends their content to a string builder.
-//   4. Returns the accumulated content, an empty string for thinking, the collected tool calls, and any error encountered.
 
 type qwenEventThinkingContent struct {
 	content string
@@ -67,15 +51,8 @@ type qwenEventThinkingContent struct {
 func (qwenEventThinkingContent) isQwenEvent() {}
 
 func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
-	// is s the complete content (aka the for sure unambiguous content)
 	p.buffer.WriteString(s)
-	// why do we write the entire string?
-
 	events := p.parseEvents()
-	// parse events:
-	// - parses the entire content
-	// parses an entire tool call
-	// parses an entire thinking content
 
 	var toolCalls []api.ToolCall
 	var sb strings.Builder
@@ -89,8 +66,7 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 			}
 			toolCalls = append(toolCalls, toolCall)
 		case qwenEventThinkingContent: // maybe we only need one?
-			print("unimplemented")
-			// how exactly does thinking work?
+			sb.WriteString(event.content)
 		case qwenEventContent:
 			// TODO(drifkin): if the same turn contains multiple interleaved content
 			// events, we naively append them together here. See the note below about
@@ -121,19 +97,11 @@ func (p *Qwen3VLParser) parseEvents() []qwenEvent {
 	return all
 }
 
-// type qwenEventRawToolCall struct {
-// 	raw string
-// }
-
-// type qwenEventContent struct {
-// 	content string
-// }
-
 // think if a better name
 func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qwenEvent {
-	split := strings.SplitN(p.buffer.String(), tag, 2) // what is his 2 for?
-	before := split[0]                                 // before the tag
-	// before = strings.TrimRightFunc(before, unicode.IsSpace) // trim all the space after the bfire
+	split := strings.SplitN(p.buffer.String(), tag, 2)      // what is his 2 for?
+	before := split[0]                                      // before the tag
+	before = strings.TrimRightFunc(before, unicode.IsSpace) // trim all the space after the bfire
 	if len(before) > 0 {
 		events = append(events, qwenEventContent{content: before})
 	}
@@ -142,8 +110,6 @@ func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qw
 	p.buffer.WriteString(after)
 	return events
 }
-
-// overlap = ambiguous
 
 // findFirstTag returns the tag that appears first in the buffer among the provided tags.
 // If no tag is found, it returns an empty string.
@@ -193,7 +159,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			// found a partial think tag, emit the unambiguous before the partial tool call
 			// hello </think -> hello, so ambiguous start includes all the whitespace before the tag
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
-			ambiguousStart := len(beforePartialTag)
+			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
 			// HAVENT ADDED TRAILING WHITESPACE YET...
 			unambiguous := p.buffer.String()[:ambiguousStart]
 			ambiguous := p.buffer.String()[ambiguousStart:]
@@ -203,7 +170,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			return events, false
 		} else if overlapLen := overlap(p.buffer.String(), toolOpenTag); overlapLen > 0 { // found a partial tool call tag
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
-			ambiguousStart := len(beforePartialTag)
+			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
 
 			unambiguous := p.buffer.String()[:ambiguousStart]
 			ambiguous := p.buffer.String()[ambiguousStart:]
@@ -212,8 +180,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			events = append(events, qwenEventContent{content: unambiguous})
 			return events, false
 		} else { // no partial or full thinking or tool call tag found
-			// whitespaceLen := trailingWhitespaceLen(p.buffer.String()) <- all the trailing space we consider ambiguous
-			ambiguousStart := len(p.buffer.String()) // - whitespaceLen
+			whitespaceLen := trailingWhitespaceLen(p.buffer.String()) // <- all the trailing space we consider ambiguous
+			ambiguousStart := len(p.buffer.String()) - whitespaceLen  // - whitespaceLen
 			unambiguous := p.buffer.String()[:ambiguousStart]
 			ambiguous := p.buffer.String()[ambiguousStart:]
 			p.buffer.Reset()
@@ -230,7 +198,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
-			after := split[1]                                          // no whit space yet
+			// after := split[1]
+			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)   // no whit space yet
 			events = append(events, qwenEventRawToolCall{raw: before}) // do these need to be "seperated"?
 			p.buffer.Reset()
 			p.buffer.WriteString(after)
@@ -248,7 +217,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
-			after := split[1] // no whit space yet
+			// after := split[1] // no whit space yet
+			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
 			events = append(events, qwenEventThinkingContent{content: before})
 			p.buffer.Reset()
 			p.buffer.WriteString(after)
