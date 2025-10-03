@@ -253,7 +253,7 @@ func TestParseError(t *testing.T) {
 		},
 		{
 			"Template",
-			"{{define \"x\"}}{{template \"x\"}}{{end}}{{template \"x\"}}",
+			`{{define "x"}}{{template "x"}}{{end}}{{template "x"}}`,
 			"undefined template specified",
 		},
 	}
