@@ -92,10 +92,6 @@ func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 func TestRoutes(t *testing.T) {
 	// Disable authentication for tests to avoid issues with missing private keys
 	t.Setenv("OLLAMA_AUTH", "false")
@@ -620,41 +616,9 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("parse remote server URL: %v", err)
 	}
 
-	origTransport := http.DefaultTransport
-	remoteClient := remoteSrv.Client()
-	remoteTransport := remoteClient.Transport
-	if remoteTransport == nil {
-		t.Fatalf("remote client transport is nil")
+	s := &Server{
+		cloudBaseURL: remoteURL,
 	}
-
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL == nil {
-			panic("unexpected nil request URL")
-		}
-		if req.URL.Host != "ollama.com" {
-			panic(fmt.Sprintf("unexpected outbound request to %s", req.URL))
-		}
-
-		clone := req.Clone(req.Context())
-		cloneURL := remoteURL.ResolveReference(&url.URL{
-			Path:     req.URL.Path,
-			RawPath:  req.URL.RawPath,
-			RawQuery: req.URL.RawQuery,
-		})
-		clone.URL = cloneURL
-		clone.Host = cloneURL.Host
-
-		return remoteTransport.RoundTrip(clone)
-	})
-
-	t.Cleanup(func() {
-		if closer, ok := remoteTransport.(interface{ CloseIdleConnections() }); ok {
-			closer.CloseIdleConnections()
-		}
-		http.DefaultTransport = origTransport
-	})
-
-	s := &Server{}
 	router, err := s.GenerateRoutes(rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)

@@ -76,9 +76,20 @@ var lowVRAMThreshold uint64 = 20 * format.GibiByte
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr    net.Addr
-	sched   *Scheduler
-	lowVRAM bool
+	addr         net.Addr
+	sched        *Scheduler
+	lowVRAM      bool
+	cloudBaseURL *url.URL
+}
+
+func (s *Server) webServiceBase() *url.URL {
+	defaultWebServiceURL := url.URL{Scheme: "https", Host: "ollama.com"}
+	if s != nil && s.cloudBaseURL != nil {
+		u := *s.cloudBaseURL
+		return &u
+	}
+	u := defaultWebServiceURL
+	return &u
 }
 
 func init() {
@@ -788,7 +799,7 @@ func (s *Server) WebSearchHandler(c *gin.Context) {
 		return
 	}
 
-	webServiceClient := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
+	webServiceClient := api.NewClient(s.webServiceBase(), http.DefaultClient)
 	resp, err := webServiceClient.WebSearch(c.Request.Context(), &req)
 	if err != nil {
 		var authError api.AuthorizationError
@@ -835,7 +846,7 @@ func (s *Server) WebFetchHandler(c *gin.Context) {
 		return
 	}
 
-	webServiceClient := api.NewClient(&url.URL{Scheme: "https", Host: "ollama.com"}, http.DefaultClient)
+	webServiceClient := api.NewClient(s.webServiceBase(), http.DefaultClient)
 	resp, err := webServiceClient.WebFetch(c.Request.Context(), &req)
 	if err != nil {
 		var authError api.AuthorizationError
