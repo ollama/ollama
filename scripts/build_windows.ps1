@@ -169,7 +169,8 @@ function buildROCm() {
                 -DCMAKE_C_COMPILER=clang `
                 -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
-                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"
+                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+                --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
