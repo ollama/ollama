@@ -441,8 +441,6 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	if envconfig.LogLevel() == logutil.LevelTrace {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = errBuf
 	}
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
 	cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
