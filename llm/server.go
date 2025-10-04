@@ -235,29 +235,35 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	}
 
 	var gpuLibs []string
-	newLibs := func(libDirs []string) (ret []string) {
-		for _, d := range libDirs {
-			found := false
-			for _, t := range gpuLibs {
-				if d == t {
-					found = true
-					break
-				}
-			}
-			if !found {
-				ret = append(ret, d)
-			}
-		}
-		return
-	}
 	for _, gpu := range gpus {
-		gpuLibs = append(gpuLibs, newLibs(gpu.DependencyPath)...)
+		gpuLibs = append(gpuLibs, gpu.RunnerName())
 	}
 
 	requested := envconfig.LLMLibrary()
 	if availableLibs[requested] != "" {
 		slog.Info("using requested gpu library", "requested", requested)
-		gpuLibs = []string{availableLibs[requested]}
+		gpuLibs = []string{requested}
+	}
+
+	var compatible []string
+	for _, gpuLib := range gpuLibs {
+		var matchingLibs []string
+		for k := range availableLibs {
+			// exact match first
+			if k == gpuLib {
+				matchingLibs = append([]string{k}, matchingLibs...)
+				continue
+			}
+
+			// then match the family (e.g. 'cuda')
+			if strings.Split(k, "_")[0] == strings.Split(gpuLib, "_")[0] {
+				matchingLibs = append(matchingLibs, k)
+			}
+		}
+
+		if len(matchingLibs) > 0 {
+			compatible = append(compatible, matchingLibs[0])
+		}
 	}
 
 	exe, err := os.Executable()
@@ -269,36 +275,40 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		exe = eval
 	}
 
-	port := 0
-	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-		var l *net.TCPListener
-		if l, err = net.ListenTCP("tcp", a); err == nil {
-			port = l.Addr().(*net.TCPAddr).Port
-			l.Close()
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
+	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
+	// without any LD_LIBRARY_PATH flags
+	for {
+		port := 0
+		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+			var l *net.TCPListener
+			if l, err = net.ListenTCP("tcp", a); err == nil {
+				port = l.Addr().(*net.TCPAddr).Port
+				l.Close()
+			}
 		}
-	}
-	if port == 0 {
-		slog.Debug("ResolveTCPAddr failed, using random port")
-		port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-	}
-	params := []string{"runner"}
-	if textProcessor != nil {
-		// New engine
-		// TODO - if we have failure to load scenarios, add logic to retry with the old runner
-		params = append(params, "--ollama-engine")
-	}
-	params = append(params, "--model", modelPath)
-	params = append(params, "--port", strconv.Itoa(port))
+		if port == 0 {
+			slog.Debug("ResolveTCPAddr failed, using random port")
+			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+		}
+		params := []string{"runner"}
+		if textProcessor != nil {
+			// New engine
+			// TODO - if we have failure to load scenarios, add logic to retry with the old runner
+			params = append(params, "--ollama-engine")
+		}
+		params = append(params, "--model", modelPath)
+		params = append(params, "--port", strconv.Itoa(port))
 
-	var pathEnv string
-	switch runtime.GOOS {
-	case "windows":
-		pathEnv = "PATH"
-	case "darwin":
-		pathEnv = "DYLD_LIBRARY_PATH"
-	default:
-		pathEnv = "LD_LIBRARY_PATH"
-	}
+		var pathEnv string
+		switch runtime.GOOS {
+		case "windows":
+			pathEnv = "PATH"
+		case "darwin":
+			pathEnv = "DYLD_LIBRARY_PATH"
+		default:
+			pathEnv = "LD_LIBRARY_PATH"
+		}
 
 		// Note: we always put our dependency paths first
 		// since these are the exact version we compiled/linked against
@@ -344,80 +354,86 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			done:           make(chan error, 1),
 		}
 
-	s.cmd.Env = os.Environ()
-	s.cmd.Stdout = os.Stdout
-	s.cmd.Stderr = s.status
-	s.cmd.SysProcAttr = LlamaServerSysProcAttr
+		s.cmd.Env = os.Environ()
+		s.cmd.Stdout = os.Stdout
+		s.cmd.Stderr = s.status
+		s.cmd.SysProcAttr = LlamaServerSysProcAttr
 
-	s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(gpuLibs, string(filepath.ListSeparator)))
+		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 
 		// Always filter down the set of GPUs in case there are any unsupported devices that might crash
 		envWorkarounds := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
-	// Update or add the path variable with our adjusted version
-	pathNeeded := true
-	envWorkaroundDone := make([]bool, len(envWorkarounds))
-	for i := range s.cmd.Env {
-		cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
-		if strings.EqualFold(cmp[0], pathEnv) {
-			s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
-			pathNeeded = false
-		} else if len(envWorkarounds) != 0 {
-			for j, kv := range envWorkarounds {
-				tmp := strings.SplitN(kv, "=", 2)
-				if strings.EqualFold(cmp[0], tmp[0]) {
-					s.cmd.Env[i] = kv
-					envWorkaroundDone[j] = true
+		// Update or add the path variable with our adjusted version
+		pathNeeded := true
+		envWorkaroundDone := make([]bool, len(envWorkarounds))
+		for i := range s.cmd.Env {
+			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+			if strings.EqualFold(cmp[0], pathEnv) {
+				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
+				pathNeeded = false
+			} else if len(envWorkarounds) != 0 {
+				for j, kv := range envWorkarounds {
+					tmp := strings.SplitN(kv, "=", 2)
+					if strings.EqualFold(cmp[0], tmp[0]) {
+						s.cmd.Env[i] = kv
+						envWorkaroundDone[j] = true
+					}
 				}
 			}
 		}
-	}
-	if pathNeeded {
-		s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
-	}
-	for i, done := range envWorkaroundDone {
-		if !done {
-			s.cmd.Env = append(s.cmd.Env, envWorkarounds[i])
+		if pathNeeded {
+			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
 		}
-	}
-
-	slog.Info("starting runner", "cmd", s.cmd)
-	slog.Debug("subprocess", "", filteredEnv(s.cmd.Env))
-
-	if err = s.cmd.Start(); err != nil {
-		var msg string
-		if s.status != nil && s.status.LastErrMsg != "" {
-			msg = s.status.LastErrMsg
-		}
-		err := fmt.Errorf("error starting runner: %v %s", err, msg)
-		if llamaModel != nil {
-			llama.FreeModel(llamaModel)
-		}
-		return nil, err
-	}
-
-	// reap subprocess when it exits
-	go func() {
-		err := s.cmd.Wait()
-		// Favor a more detailed message over the process exit status
-		if err != nil && s.status != nil && s.status.LastErrMsg != "" {
-			slog.Error("llama runner terminated", "error", err)
-			if strings.Contains(s.status.LastErrMsg, "unknown model") {
-				s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+		for i, done := range envWorkaroundDone {
+			if !done {
+				s.cmd.Env = append(s.cmd.Env, envWorkarounds[i])
 			}
-			s.done <- errors.New(s.status.LastErrMsg)
-		} else {
-			s.done <- err
 		}
-	}()
 
-	if textProcessor != nil {
-		return &ollamaServer{llmServer: s}, nil
-	} else {
-		return &llamaServer{llmServer: s, ggml: f}, nil
+		slog.Info("starting runner", "cmd", s.cmd)
+		slog.Debug("subprocess", "", filteredEnv(s.cmd.Env))
+
+		if err = s.cmd.Start(); err != nil {
+			var msg string
+			if s.status != nil && s.status.LastErrMsg != "" {
+				msg = s.status.LastErrMsg
+			}
+			err := fmt.Errorf("error starting runner: %v %s", err, msg)
+			if len(compatible) == 0 {
+				if llamaModel != nil {
+					llama.FreeModel(llamaModel)
+				}
+				return nil, err
+			}
+
+			slog.Warn("unable to start runner with compatible gpu", "error", err, "compatible", compatible)
+			compatible = compatible[1:]
+			continue
+		}
+
+		// reap subprocess when it exits
+		go func() {
+			err := s.cmd.Wait()
+			// Favor a more detailed message over the process exit status
+			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+				slog.Error("llama runner terminated", "error", err)
+				if strings.Contains(s.status.LastErrMsg, "unknown model") {
+					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+				}
+				s.done <- errors.New(s.status.LastErrMsg)
+			} else {
+				s.done <- err
+			}
+		}()
+
+		if textProcessor != nil {
+			return &ollamaServer{llmServer: s}, nil
+		} else {
+			return &llamaServer{llmServer: s, ggml: f}, nil
+		}
 	}
-
 }
 
 func (s *llmServer) ModelPath() string {
@@ -545,9 +561,8 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		// For CPU loads we want the memory to be allocated, not FS cache
 		if (runtime.GOOS == "windows" && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
 			(runtime.GOOS == "linux" && systemInfo.System.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
-			(gpus[0].Library == "vulkan" && s.options.UseMMap == nil) ||
 			(gpus[0].Library == "cpu" && s.options.UseMMap == nil) ||
-			(gpus[0].Library == "VULKAN" && s.options.UseMMap == nil) ||
+			(gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
 			(s.options.UseMMap != nil && !*s.options.UseMMap) {
 			s.loadRequest.UseMmap = false
 		}
@@ -1311,6 +1326,17 @@ func (s *llmServer) Pid() int {
 		return s.cmd.Process.Pid
 	}
 	return -1
+}
+
+func (s *llmServer) GetPort() int {
+	return s.port
+}
+
+func (s *llmServer) HasExited() bool {
+	if s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0 {
+		return true
+	}
+	return false
 }
 
 var grammarJSON = `
