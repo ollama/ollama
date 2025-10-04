@@ -214,11 +214,15 @@ jobs:
           go-version-file: go.mod
       - name: Verify gcc is actually clang
         run: |
-          gcc -v 
-          if (((& gcc -v 2>&1) -join "`n") -notmatch 'clang') {
+          $ErrorActionPreference='Continue'
+          $version=& gcc -v 2>&1
+          $version=$version -join "`n"
+          echo "gcc is $version"
+          if ($version -notmatch 'clang') {
             echo "ERROR: GCC must be clang for proper utf16 handling"
             exit 1
           }
+          $ErrorActionPreference='Stop'
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
       - uses: actions/upload-artifact@v4
