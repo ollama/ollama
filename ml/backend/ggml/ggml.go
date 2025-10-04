@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"

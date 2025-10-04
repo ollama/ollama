@@ -3,7 +3,6 @@ package discover
 // Runner based GPU discovery
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
