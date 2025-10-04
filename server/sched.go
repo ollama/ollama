@@ -623,7 +623,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 // a before and after GPU memory allocation.  The returned channel
 // will be notified when we're done waiting, or have timed out and should
 // proceed anyway
-func (runner *runnerRef) waitForVRAMRecovery() chan any {
+func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []discover.FilteredRunnerDiscovery) chan any {
 	finished := make(chan any, 1)
 
 	// CPU or Metal don't need checking, so no waiting required
@@ -638,7 +638,7 @@ func (runner *runnerRef) waitForVRAMRecovery() chan any {
 	start := time.Now()
 
 	// Establish a baseline before we unload
-	gpusBefore := discover.GetGPUInfo()
+	gpusBefore := s.getGpuFn(context.Background(), runners)
 	var totalMemoryBefore, freeMemoryBefore uint64
 	for _, gpu := range gpusBefore {
 		totalMemoryBefore += gpu.TotalMemory
@@ -656,7 +656,7 @@ func (runner *runnerRef) waitForVRAMRecovery() chan any {
 			}
 
 			// Query GPUs, look for free to go back up
-			gpusNow := discover.GetGPUInfo()
+			gpusNow := s.getGpuFn(context.Background(), runners)
 			var totalMemoryNow, freeMemoryNow uint64
 			for _, gpu := range gpusNow {
 				totalMemoryNow += gpu.TotalMemory
@@ -697,6 +697,32 @@ func (runner *runnerRef) LogValue() slog.Value {
 		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
 	}
 	return slog.GroupValue(attrs...)
+}
+
+// Implements discover.RunnerDiscovery
+func (runner *runnerRef) GetPort() int {
+	if runner.llama != nil {
+		return runner.llama.GetPort()
+	}
+	return -1
+}
+
+func (runner *runnerRef) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
+	if runner.llama != nil {
+		return runner.llama.GetDeviceInfos(ctx)
+	}
+	return nil
+}
+
+func (runner *runnerRef) GetActiveDeviceIDs() []ml.DeviceID {
+	return runner.gpus
+}
+
+func (runner *runnerRef) HasExited() bool {
+	if runner.llama != nil {
+		return runner.llama.HasExited()
+	}
+	return true
 }
 
 type ByDurationAndName []*runnerRef
