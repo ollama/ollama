@@ -1967,88 +1967,153 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	structuredOutputsStarted := false
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		defer cancel()
 
-		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
-		}, func(r llm.CompletionResponse) {
-			res := api.ChatResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Message:   api.Message{Role: "assistant", Content: r.Content},
-				Done:      r.Done,
-				Metrics: api.Metrics{
-					PromptEvalCount:    r.PromptEvalCount,
-					PromptEvalDuration: r.PromptEvalDuration,
-					EvalCount:          r.EvalCount,
-					EvalDuration:       r.EvalDuration,
-				},
-			}
-			if r.Done {
-				res.DoneReason = r.DoneReason.String()
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+		applyStructuredOutputs := false
+
+		for {
+			var tb strings.Builder
+
+			currentFormat := req.Format
+			if req.Format != nil && !structuredOutputsStarted {
+				currentFormat = nil
 			}
 
-			if builtinParser != nil {
-				slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
-
-				content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
-				if err != nil {
-					ch <- gin.H{"error": err.Error()}
-					return
+			// sets up new context given parent context
+			requestCtx, requestCancel := context.WithCancel(ctx)
+			err := r.Completion(requestCtx, llm.CompletionRequest{
+				Prompt:  prompt,
+				Images:  images,
+				Format:  currentFormat,
+				Options: opts,
+			}, func(r llm.CompletionResponse) {
+				res := api.ChatResponse{
+					Model:     req.Model,
+					CreatedAt: time.Now().UTC(),
+					Message:   api.Message{Role: "assistant", Content: r.Content},
+					Done:      r.Done,
+					Metrics: api.Metrics{
+						PromptEvalCount:    r.PromptEvalCount,
+						PromptEvalDuration: r.PromptEvalDuration,
+						EvalCount:          r.EvalCount,
+						EvalDuration:       r.EvalDuration,
+					},
+				}
+				if r.Done {
+					res.DoneReason = r.DoneReason.String()
+					res.TotalDuration = time.Since(checkpointStart)
+					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 				}
 
-				res.Message.Content = content
-				res.Message.Thinking = thinking
-				res.Message.ToolCalls = toolCalls
+				if builtinParser != nil {
+					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
 
-				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done {
-					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
-					ch <- res
-				} else {
-					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
-				}
+					content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
+					if err != nil {
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
 
-				return
-			}
-
-			if thinkingState != nil {
-				thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
-				if thinkingContent == "" && remainingContent == "" && !r.Done {
-					// need to accumulate more to decide what to send
-					return
-				}
-				res.Message.Content = remainingContent
-				res.Message.Thinking = thinkingContent
-			}
-
-			if len(req.Tools) > 0 {
-				toolCalls, content := toolParser.Add(res.Message.Content)
-				if len(content) > 0 {
 					res.Message.Content = content
-				} else if len(toolCalls) > 0 {
+					res.Message.Thinking = thinking
 					res.Message.ToolCalls = toolCalls
-					res.Message.Content = ""
-				} else if res.Message.Thinking != "" {
-					// don't return
-				} else {
-					if r.Done {
-						res.Message.Content = toolParser.Content()
+
+					tb.WriteString(thinking)
+					if !structuredOutputsStarted && req.Format != nil && tb.String() != "" && res.Message.Content != "" {
+						slog.Debug("applying structured outputs", "parser", m.Config.Parser)
+						applyStructuredOutputs = true
+						requestCancel()
+						return
+					}
+
+					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done {
+						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
+					} else {
+						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
 					}
 					return
 				}
+
+				if thinkingState != nil {
+					thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
+					if thinkingContent == "" && remainingContent == "" && !r.Done {
+						// need to accumulate more to decide what to send
+						return
+					}
+					slog.Debug("thinking state", "thinking", thinkingContent, "remaining", remainingContent)
+					res.Message.Thinking = thinkingContent
+					tb.WriteString(thinkingContent)
+
+					if !structuredOutputsStarted && req.Format != nil && tb.String() != "" && remainingContent != "" {
+						applyStructuredOutputs = true
+						res.Message.Content = ""
+						ch <- res // flush anything remaining in thinking to user. case where there is both thinking and content with no boundary. e.g. token </think> content
+						requestCancel()
+						return
+					}
+					res.Message.Content = remainingContent
+				}
+
+				if len(req.Tools) > 0 {
+					toolCalls, content := toolParser.Add(res.Message.Content)
+					if len(content) > 0 {
+						res.Message.Content = content
+					} else if len(toolCalls) > 0 {
+						res.Message.ToolCalls = toolCalls
+						res.Message.Content = ""
+					} else if res.Message.Thinking != "" {
+						// don't return
+					} else {
+						if r.Done {
+							res.Message.Content = toolParser.Content()
+							ch <- res
+						}
+						return
+					}
+				}
+
+				ch <- res
+			})
+			if err != nil {
+				if applyStructuredOutputs && !structuredOutputsStarted && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled")) && ctx.Err() == nil {
+					// only ignores error if it's a context cancellation due to setting structured outputs
+				} else {
+					slog.Error("chat completion error", "error", err.Error())
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
 			}
 
-			ch <- res
-		}); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			// ignored structured outputs cancellation falls through to here, start a new request with the structured outputs and updated prompt. use the
+			if applyStructuredOutputs && !structuredOutputsStarted {
+				structuredOutputsStarted = true
+				applyStructuredOutputs = false
+				msg := api.Message{
+					Role:     "assistant",
+					Thinking: tb.String(),
+				}
+
+				msgs = append(msgs, msg)
+				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
+				if err != nil {
+					slog.Error("chat prompt error applying structured outputs", "error", err)
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
+				// force constraining by terminating thinking header, the parser is already at this state
+				if shouldUseHarmony(m) {
+					prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+				}
+				continue
+			}
+
+			break
 		}
 	}()
 
