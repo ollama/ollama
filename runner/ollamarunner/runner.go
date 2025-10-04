@@ -1236,8 +1236,8 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// load is the handler called by the Ollama server to process different
-// load operations
+// info is the handler called by the Ollama server to report information
+// about the GPU devices in use by this runner
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	s.loadMu.Lock()
 	defer s.loadMu.Unlock()
@@ -1256,6 +1256,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer f.Close()
+		defer os.Remove(f.Name())
 
 		if err := ggml.WriteGGUF(f, ggml.KV{
 			"general.architecture": "llama",
@@ -1265,7 +1266,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		m, err = model.New(f.Name(), ml.BackendParams{AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
 			return

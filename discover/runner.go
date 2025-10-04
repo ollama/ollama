@@ -115,18 +115,19 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		supported := make(map[string]map[string]map[string]int) // [Library][libDir][ID] = pre-deletion devices index
 		for i := range devices {
 			libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
+			if devices[i].Library == "Metal" {
+				continue
+			}
 			slog.Debug("verifying GPU is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
 				var envVar string
-				if devices[i].Library == "HIP" {
 					if runtime.GOOS != "linux" {
 						envVar = "HIP_VISIBLE_DEVICES"
 					} else {
 						envVar = "ROCR_VISIBLE_DEVICES"
 					}
-				} else if devices[i].Library == "CUDA" {
 					envVar = "CUDA_VISIBLE_DEVICES"
 				} else if devices[i].Library == "VULKAN" {
 					envVar = "GGML_VK_VISIBLE_DEVICES"
@@ -165,7 +166,6 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				devices = append(devices[:i], devices[i+1:]...)
 				needsDelete = append(needsDelete[:i], needsDelete[i+1:]...)
 				i--
-			} else if devices[i].Library == "HIP" {
 				if _, err := strconv.Atoi(devices[i].ID); err == nil {
 					// Replace the numeric ID with the post-filtered IDs
 					devices[i].FilteredID = devices[i].ID
@@ -175,7 +175,6 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}
 		}
 
-		// Now filter out any overlap with different libraries (favor CUDA/HIP over others)
 		for i := 0; i < len(devices); i++ {
 			for j := i + 1; j < len(devices); j++ {
 				// For this pass, we only drop exact duplicates
@@ -188,7 +187,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				case ml.DuplicateDevice:
 					// Different library, choose based on priority
 					var droppedDevice ml.DeviceInfo
-					if devices[i].Library == "CUDA" || devices[i].Library == "HIP" {
+					if devices[i].Library == "CUDA" || devices[i].Library == "ROCm" {
 						droppedDevice = devices[j]
 					} else {
 						droppedDevice = devices[i]
@@ -268,7 +267,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		devCheck:
 			for _, dev := range deviceIDs {
 				for i := range devices {
-					if dev.ID == devices[i].ID && dev.Library == devices[i].Library {
+					if dev == devices[i].DeviceID {
 						if !updated[i] {
 							skip = false
 							break devCheck
@@ -289,7 +288,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			slog.Debug("existing runner discovery took", "duration", time.Since(start))
 			for _, u := range updatedDevices {
 				for i := range devices {
-					if u.Library == devices[i].Library && u.ID == devices[i].ID {
+					if u.DeviceID == devices[i].DeviceID {
 						updated[i] = true
 						devices[i].FreeMemory = u.FreeMemory
 						break
@@ -313,7 +312,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, nil)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.Library == devices[i].Library && u.ID == devices[i].ID {
+						if u.DeviceID == devices[i].DeviceID {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
@@ -330,6 +329,9 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}
 		}
 	}
+
+	// Apply any iGPU workarounds
+	iGPUWorkarounds(devices)
 
 	return devices
 }
@@ -435,9 +437,8 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 
 	cmd := exec.Command(exe, params...)
 	cmd.Env = os.Environ()
-	cmd.Stdout = os.Stdout
-	errBuf := &bytes.Buffer{}
-	if envconfig.LogLevel() == slog.Level(-8) {
+	if envconfig.LogLevel() == logutil.LevelTrace {
+		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	} else {
 		cmd.Stderr = errBuf
@@ -473,7 +474,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 			cmd.Env = append(cmd.Env, extraEnvs[i])
 		}
 	}
-	slog.Log(context.TODO(), logutil.LevelTrace, "starting runner for device discovery", "env", cmd.Env, "cmd", cmd)
+	logutil.Trace("starting runner for device discovery", "env", cmd.Env, "cmd", cmd)
 	if err := cmd.Start(); err != nil {
 		slog.Warn("unable to start discovery subprocess", "cmd", cmd, "error", err)
 		return nil
@@ -487,7 +488,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	if err != nil {
 		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			// Expected during bootstrapping while we filter out unsupported AMD GPUs
-			slog.Log(context.TODO(), logutil.LevelTrace, "runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", cmd.ProcessState.ExitCode())
+			logutil.Trace("runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", cmd.ProcessState.ExitCode())
 		} else {
 			slog.Info("failure during GPU discovery", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", err)
 		}
@@ -541,6 +542,35 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceIn
 				continue
 			}
 			return moreDevices, nil
+		}
+	}
+}
+
+func iGPUWorkarounds(devices []ml.DeviceInfo) {
+	// short circuit if we have no iGPUs
+	anyiGPU := false
+	for i := range devices {
+		if devices[i].Integrated {
+			anyiGPU = true
+			break
+		}
+	}
+	if !anyiGPU {
+		return
+	}
+
+	memInfo, err := GetCPUMem()
+	if err != nil {
+		slog.Debug("failed to fetch system memory information for iGPU", "error", err)
+		return
+	}
+	for i := range devices {
+		if !devices[i].Integrated {
+			continue
+		}
+		// NVIDIA iGPUs return useless free VRAM data which ignores system buff/cache
+		if devices[i].Library == "CUDA" {
+			devices[i].FreeMemory = memInfo.FreeMemory
 		}
 	}
 }

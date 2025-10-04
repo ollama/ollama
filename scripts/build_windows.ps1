@@ -165,7 +165,7 @@ function buildROCm() {
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-            & cmake --fresh --preset "ROCm 6" -G Ninja --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="rocm" `
+            & cmake --fresh --preset "ROCm 6" -G Ninja -DOLLAMA_RUNNER_DIR="rocm" `
                 -DCMAKE_C_COMPILER=clang `
                 -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
@@ -178,6 +178,7 @@ function buildROCm() {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            rm -f $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906*
         }
     }
 }

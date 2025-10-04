@@ -195,7 +195,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	useFlashAttention := (envconfig.FlashAttention() || f.FlashAttention()) &&
+	useFlashAttention := envconfig.FlashAttention(f.FlashAttention()) &&
 		(discover.GpuInfoList)(gpus).FlashAttentionSupported() &&
 		f.SupportsFlashAttention()
 
@@ -231,7 +231,7 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// on metal there's no partial offload overhead
-	if gpus[0].Library == "metal" {
+	if gpus[0].Library == "Metal" {
 		graphPartialOffload = graphFullOffload
 	} else if len(gpus) > 1 {
 		// multigpu should always use the partial graph size

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -18,8 +19,8 @@ type memInfo struct {
 
 // Beginning of an `ollama info` command
 type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
+	ml.DeviceID
 	memInfo
-	Library string `json:"library,omitempty"`
 
 	// Optional variant to select (e.g. versions, cpu feature flags)
 	Variant string `json:"variant"`
@@ -36,11 +37,9 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	UnreliableFreeMemory bool
 
 	// GPU information
-	ID             string `json:"gpu_id"` // string to use for selection of this specific GPU
-	filterID       string // AMD Workaround: The numeric ID of the device used to filter out other devices
-	Name           string `json:"name"`            // user friendly name if available
-	Compute        string `json:"compute"`         // Compute Capability or gfx
-	FlashAttention bool   `json:"flash_attention"` // is flash attention supported
+	filterID string // AMD Workaround: The numeric ID of the device used to filter out other devices
+	Name     string `json:"name"`    // user friendly name if available
+	Compute  string `json:"compute"` // Compute Capability or gfx
 
 	// Driver Information - TODO no need to put this on each GPU
 	DriverMajor int `json:"driver_major,omitempty"`
@@ -126,7 +125,6 @@ func LogDetails(devices []ml.DeviceInfo) {
 	// CPU inference
 	if len(devices) == 0 {
 		dev, _ := GetCPUMem()
-		// TODO more details about CPU
 		slog.Info("inference compute",
 			"id", "cpu",
 			"library", "cpu",
@@ -158,7 +156,8 @@ type SystemInfo struct {
 // Return the optimal number of threads to use for inference
 func (si SystemInfo) GetOptimalThreadCount() int {
 	if len(si.System.CPUs) == 0 {
-		return 0
+		// Fall back to Go's num CPU
+		return runtime.NumCPU()
 	}
 
 	coreCount := 0
@@ -173,10 +172,10 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 func (l GpuInfoList) FlashAttentionSupported() bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
-			gpu.Name == "Metal" ||
+			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "HIP" ||
-			gpu.Library == "VULKAN"
+			gpu.Library == "ROCm"
+			gpu.Library == "Vulkan"
 
 		if !supportsFA {
 			return false

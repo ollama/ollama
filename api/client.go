@@ -45,6 +45,12 @@ func checkError(resp *http.Response, body []byte) error {
 		return nil
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		authError := AuthorizationError{StatusCode: resp.StatusCode}
+		json.Unmarshal(body, &authError)
+		return authError
+	}
+
 	apiError := StatusError{StatusCode: resp.StatusCode}
 
 	err := json.Unmarshal(body, &apiError)
@@ -214,7 +220,8 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
-			Error string `json:"error,omitempty"`
+			Error     string `json:"error,omitempty"`
+			SigninURL string `json:"signin_url,omitempty"`
 		}
 
 		bts := scanner.Bytes()
@@ -223,14 +230,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 
 		if response.StatusCode == http.StatusUnauthorized {
-			pubKey, pkErr := auth.GetPublicKey()
-			if pkErr != nil {
-				return pkErr
-			}
 			return AuthorizationError{
 				StatusCode: response.StatusCode,
 				Status:     response.Status,
-				PublicKey:  pubKey,
+				SigninURL:  errorResponse.SigninURL,
 			}
 		} else if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
@@ -439,8 +442,13 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return version.Version, nil
 }
 
-// Signout will disconnect an ollama instance from ollama.com
-func (c *Client) Signout(ctx context.Context, encodedKey string) error {
+// Signout will signout a client for a local ollama server.
+func (c *Client) Signout(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)
+}
+
+// Disconnect will disconnect an ollama instance from ollama.com.
+func (c *Client) Disconnect(ctx context.Context, encodedKey string) error {
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
 }
 

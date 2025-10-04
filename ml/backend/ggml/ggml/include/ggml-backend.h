@@ -35,7 +35,6 @@ extern "C" {
     //
 
     GGML_API const char *          ggml_backend_buft_name          (ggml_backend_buffer_type_t buft);
-    GGML_API void                  ggml_backend_buft_set_alloc     (ggml_backend_buffer_type_t buft, bool alloc);
     GGML_API ggml_backend_buffer_t ggml_backend_buft_alloc_buffer  (ggml_backend_buffer_type_t buft, size_t size);
     GGML_API size_t                ggml_backend_buft_get_alignment (ggml_backend_buffer_type_t buft);
     GGML_API size_t                ggml_backend_buft_get_max_size  (ggml_backend_buffer_type_t buft);
@@ -133,6 +132,8 @@ extern "C" {
         GGML_BACKEND_DEVICE_TYPE_CPU,
         // GPU device using dedicated memory
         GGML_BACKEND_DEVICE_TYPE_GPU,
+        // integrated GPU device using host memory
+        GGML_BACKEND_DEVICE_TYPE_IGPU,
         // accelerator devices intended to be used together with the CPU backend (e.g. BLAS or AMX)
         GGML_BACKEND_DEVICE_TYPE_ACCEL
     };
@@ -151,12 +152,22 @@ extern "C" {
 
     // all the device properties
     struct ggml_backend_dev_props {
+        // device name
         const char * name;
+        // device description
         const char * description;
-        const char * id;
+        // device free memory in bytes
         size_t memory_free;
+        const char * id;
+        // device total memory in bytes
         size_t memory_total;
+        // device type
         enum ggml_backend_dev_type type;
+        // device id
+        //   for PCI devices, this should be the PCI bus id formatted as "domain:bus:device.function" (e.g. "0000:01:00.0")
+        //   if the id is unknown, this should be NULL
+        const char * device_id;
+        // device capabilities
         struct ggml_backend_dev_caps caps;
         int driver_major;
         int driver_minor;
@@ -302,6 +313,7 @@ extern "C" {
 
     // Initialize a backend scheduler, backends with low index are given priority over backends with high index
     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
+    GGML_API ggml_backend_sched_t ggml_backend_sched_new_ext(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload, bool alloc_buffers);
     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
 
     // Initialize backend buffers from a measure graph
@@ -314,16 +326,15 @@ extern "C" {
     GGML_API int                  ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched);
     GGML_API int                  ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched);
 
-    GGML_API size_t               ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
-
-    struct ggml_backend_buffer_status {
-        size_t size;
-        bool allocated;
-    };
-    GGML_API struct ggml_backend_buffer_status ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
+    GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);
+    GGML_API size_t                     ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
+    GGML_API size_t                     ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
 
     GGML_API void                 ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend);
     GGML_API ggml_backend_t       ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node);
+
+    // Split graph without allocating it
+    GGML_API void                 ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph);
 
     // Allocate and compute graph on the backend scheduler
     GGML_API bool                 ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph); // returns success

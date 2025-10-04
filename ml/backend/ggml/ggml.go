@@ -162,7 +162,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
 			bt := C.ggml_backend_dev_buffer_type(d)
 			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, bt)
-			C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))
 
 			btDeviceMemory[C.ggml_backend_dev_buffer_type(d)] = &requiredMemory.CPU
 		}
@@ -172,8 +171,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
 	requiredMemory.CPU.ID = C.GoString(props.id)
-	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
-	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
+	requiredMemory.CPU.Library = C.GoString(props.library)
+	requiredMemory.CPU.Weights = make([]uint64, blocks+1)
+	requiredMemory.CPU.Cache = make([]uint64, blocks+1)
 
 	// create list of buffer types for each gpu
 	var gpuDeviceBufferTypes []deviceBufferType
@@ -184,15 +184,15 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			d:   d,
 			bts: append([]C.ggml_backend_buffer_type_t{bt}, cpuDeviceBufferType.bts...),
 		})
-		C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))
 
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
-		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
-		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
+		requiredMemory.GPUs[i].Library = C.GoString(props.library)
+		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
+		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
 
 	// inputs always use cpu
@@ -203,7 +203,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			for _, l := range p.Layers {
 				if l == layer {
 					for i := range requiredMemory.GPUs {
-						if requiredMemory.GPUs[i].ID == p.ID {
+						if requiredMemory.GPUs[i].DeviceID == p.DeviceID {
 							return gpuDeviceBufferTypes[i]
 						}
 					}
@@ -278,13 +278,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 			size := pad(C.ggml_backend_buft_get_alloc_size(bt, tt), C.ggml_backend_buft_get_alignment(bt))
 			if layer == -1 {
-				// Assume that InputWeights can be allocated - they're always in system memory and can't be moved in any case
-				if params.AllocMemory {
-					requiredMemory.InputWeights.Status = ml.Allocated
-				}
-				requiredMemory.InputWeights.Size += uint64(size)
+				requiredMemory.InputWeights += uint64(size)
 			} else {
-				btDeviceMemory[bt].Weights[layer].Size += uint64(size)
+				btDeviceMemory[bt].Weights[layer] += uint64(size)
 			}
 
 			//nolint:staticcheck // TODO: check if buffer type supports this tensor
@@ -344,47 +340,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	// allocate buffers for each context
-	bbs := make(map[*C.struct_ggml_context]C.ggml_backend_buffer_t, len(ctxs))
-	for bt, c := range ctxs {
-		if C.ggml_get_first_tensor(c) == nil {
-			continue
-		}
-
-		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
-		if params.AllocMemory {
-			for i := range btDeviceMemory[bt].Weights {
-				if btDeviceMemory[bt].Weights[i].Size != 0 {
-					if b != nil {
-						btDeviceMemory[bt].Weights[i].Status = ml.Allocated
-					} else {
-						btDeviceMemory[bt].Weights[i].Status = ml.Failed
-					}
-				}
-			}
-		}
-
-		if b == nil {
-			for _, b := range bbs {
-				C.ggml_backend_buffer_free(b)
-			}
-
-			for _, ctx := range ctxs {
-				C.ggml_free(ctx)
-			}
-
-			panic(ml.ErrNoMem{BackendMemory: requiredMemory})
-		}
-
-		C.ggml_backend_buffer_set_usage(b, C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS)
-		bbs[c] = b
-	}
-
-	for bs := range maps.Values(bbs) {
-		logutil.Trace("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
-			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
-	}
-
 	// map tensor names to tensors for easy lookup later
 	tensors := make(map[string]*C.struct_ggml_tensor)
 	for _, c := range ctxs {
@@ -422,6 +377,46 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
+
+	sched := C.ggml_backend_sched_new_ext(
+		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
+		(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
+		C.int(len(schedBackends)),
+		C.size_t(maxGraphNodes),
+		C._Bool(false),
+		C._Bool(false),
+		C._Bool(params.AllocMemory),
+	)
+
+	// allocate buffers for each context
+	bbs := make(map[*C.struct_ggml_context]C.ggml_backend_buffer_t, len(ctxs))
+	for bt, c := range ctxs {
+		if C.ggml_get_first_tensor(c) == nil {
+			continue
+		}
+
+		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
+		if b == nil {
+			for _, b := range bbs {
+				C.ggml_backend_buffer_free(b)
+			}
+
+			for _, ctx := range ctxs {
+				C.ggml_free(ctx)
+			}
+
+			panic(ml.ErrNoMem{BackendMemory: requiredMemory})
+		}
+
+		C.ggml_backend_buffer_set_usage(b, C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS)
+		bbs[c] = b
+	}
+
+	for bs := range maps.Values(bbs) {
+		logutil.Trace("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
+			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
+	}
+
 	return &Backend{
 		modelPath:         modelPath,
 		allocMemory:       params.AllocMemory,
@@ -429,18 +424,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		meta:              meta,
 		tensorLoadTargets: targets,
 		tensors:           tensors,
-		sched: C.ggml_backend_sched_new(
-			(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
-			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
-			C.int(len(schedBackends)),
-			C.size_t(maxGraphNodes),
-			C._Bool(false),
-			C._Bool(false),
-		),
-		schedBackends: schedBackends,
-		schedBufts:    schedBufts,
-		input:         deviceBufferTypes[input.d],
-		output:        output.d,
+		sched:             sched,
+		schedBackends:     schedBackends,
+		schedBufts:        schedBufts,
+		input:             deviceBufferTypes[input.d],
+		output:            output.d,
 		layers: func() map[int]layerDevice {
 			m := make(map[int]layerDevice)
 			for i, layer := range layers {
@@ -700,33 +688,7 @@ func (b *Backend) CacheConfig() ml.CacheConfig {
 }
 
 func (b *Backend) BackendDevices() []ml.DeviceInfo {
-	// TODO DRY out with ./ggml/src/ggml.go
-	exe, err := os.Executable()
-	if err != nil {
-		slog.Warn("failed to get executable path", "error", err)
-		exe = "."
-	}
-
-	var value string
-	switch runtime.GOOS {
-	case "darwin":
-		value = filepath.Dir(exe)
-	case "windows":
-		value = filepath.Join(filepath.Dir(exe), "lib", "ollama")
-	default:
-		value = filepath.Join(filepath.Dir(exe), "..", "lib", "ollama")
-	}
-
-	paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH")
-	if !ok {
-		slog.Debug("OLLAMA_LIBRARY_PATH not set, falling back to default", "search", value)
-		paths = value
-	}
-
-	split := filepath.SplitList(paths)
-
 	deviceInfos := []ml.DeviceInfo{}
-
 	for _, dev := range gpus {
 		// If we have a model loaded, and it's only loaded on a subset of the devices
 		// skip idle/unused devices to avoid initializing them and causing VRAM allocations
@@ -750,6 +712,7 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		info.Name = C.GoString(props.name)
 		info.Description = C.GoString(props.description)
 		info.ID = C.GoString(props.id)
+		info.Library = C.GoString(props.library)
 		info.ComputeMajor = (int)(props.compute_major)
 		info.ComputeMinor = (int)(props.compute_minor)
 		info.DriverMajor = (int)(props.driver_major)
@@ -759,7 +722,7 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 			info.Library = C.GoString(props.library)
 		}
 		info.PCIID = fmt.Sprintf("%02x:%02x.%x", props.pci_bus_id, props.pci_device_id, props.pci_domain_id)
-		info.LibraryPath = split
+		info.LibraryPath = ggml.LibPaths()
 
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
 		info.TotalMemory = (uint64)(props.memory_total)
@@ -869,24 +832,15 @@ func (c *Context) Reserve() {
 
 	// Reserve may get called multiple times for different graphs - we just want the last run, which will contain the max allocations
 	for _, bt := range c.b.schedBufts {
-		c.b.btDeviceMemory[bt].Graph = ml.Memory{}
+		c.b.btDeviceMemory[bt].Graph = 0
 	}
 
 	for i := range c.b.schedBackends {
-		bufferStatus := C.ggml_backend_sched_get_attempted_buffer_size(c.b.sched, c.b.schedBackends[i])
-
-		graph := &c.b.btDeviceMemory[c.b.schedBufts[i]].Graph
-		graph.Size += uint64(bufferStatus.size)
-		if c.b.allocMemory {
-			if bufferStatus.allocated && graph.Status != ml.Failed {
-				graph.Status = ml.Allocated
-			} else {
-				graph.Status = ml.Failed
-			}
-		}
+		bufferSize := C.ggml_backend_sched_get_attempted_buffer_size(c.b.sched, c.b.schedBackends[i])
+		c.b.btDeviceMemory[c.b.schedBufts[i]].Graph += uint64(bufferSize)
 
 		logutil.Trace("compute graph", "backend", C.GoString(C.ggml_backend_name(c.b.schedBackends[i])),
-			"buffer_type", C.GoString(C.ggml_backend_buft_name(c.b.schedBufts[i])), "size", format.HumanBytes2(uint64(bufferStatus.size)))
+			"buffer_type", C.GoString(C.ggml_backend_buft_name(c.b.schedBufts[i])), "size", format.HumanBytes2(uint64(bufferSize)))
 	}
 
 	if !reserved {
@@ -936,16 +890,7 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 
 	b := C.ggml_backend_buft_alloc_buffer(c.buft, size)
 	if c.layer >= 0 {
-		cache := &c.b.btDeviceMemory[c.buft].Cache[c.layer]
-
-		cache.Size += uint64(size)
-		if c.b.allocMemory {
-			if b != nil {
-				cache.Status = ml.Allocated
-			} else {
-				cache.Status = ml.Failed
-			}
-		}
+		c.b.btDeviceMemory[c.buft].Cache[c.layer] += uint64(size)
 	}
 
 	if b == nil {

@@ -91,6 +91,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 6' -DOLLAMA_RUNNER_DIR="rocm" \
         && cmake --build --parallel ${PARALLEL} --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel ${PARALLEL}
+RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
@@ -146,9 +147,9 @@ COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
 FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
-COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
-COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/
-COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/
+COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
+COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
+COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama

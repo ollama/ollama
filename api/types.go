@@ -41,7 +41,7 @@ func (e StatusError) Error() string {
 type AuthorizationError struct {
 	StatusCode int
 	Status     string
-	PublicKey  string `json:"public_key"`
+	SigninURL  string `json:"signin_url"`
 }
 
 func (e AuthorizationError) Error() string {

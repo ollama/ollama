@@ -22,13 +22,12 @@ func TestAPIGenerate(t *testing.T) {
 	// Set up the test data
 	req := api.GenerateRequest{
 		Model:  smol,
-		Prompt: "why is the sky blue? be brief",
+		Prompt: blueSkyPrompt,
 		Options: map[string]interface{}{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
-	anyResp := []string{"rayleigh", "scattering"}
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -120,14 +119,14 @@ func TestAPIGenerate(t *testing.T) {
 				// Verify the response contains the expected data
 				response := buf.String()
 				atLeastOne := false
-				for _, resp := range anyResp {
+				for _, resp := range blueSkyExpected {
 					if strings.Contains(strings.ToLower(response), resp) {
 						atLeastOne = true
 						break
 					}
 				}
 				if !atLeastOne {
-					t.Errorf("none of %v found in %s", anyResp, response)
+					t.Errorf("none of %v found in %s", blueSkyExpected, response)
 				}
 			case <-ctx.Done():
 				t.Error("outer test context done while waiting for generate")
@@ -181,7 +180,7 @@ func TestAPIChat(t *testing.T) {
 		Messages: []api.Message{
 			{
 				Role:    "user",
-				Content: "why is the sky blue?  be brief",
+				Content: blueSkyPrompt,
 			},
 		},
 		Options: map[string]interface{}{
@@ -189,7 +188,6 @@ func TestAPIChat(t *testing.T) {
 			"seed":        123,
 		},
 	}
-	anyResp := []string{"rayleigh", "scattering"}
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -279,14 +277,14 @@ func TestAPIChat(t *testing.T) {
 				// Verify the response contains the expected data
 				response := buf.String()
 				atLeastOne := false
-				for _, resp := range anyResp {
+				for _, resp := range blueSkyExpected {
 					if strings.Contains(strings.ToLower(response), resp) {
 						atLeastOne = true
 						break
 					}
 				}
 				if !atLeastOne {
-					t.Errorf("none of %v found in %s", anyResp, response)
+					t.Errorf("none of %v found in %s", blueSkyExpected, response)
 				}
 			case <-ctx.Done():
 				t.Error("outer test context done while waiting for chat")

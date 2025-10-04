@@ -25,8 +25,10 @@ func GetCPUInfo() GpuInfo {
 
 	return GpuInfo{
 		memInfo: mem,
-		Library: "cpu",
-		ID:      "0",
+		DeviceID: ml.DeviceID{
+			Library: "cpu",
+			ID:      "0",
+		},
 	}
 }
 
@@ -47,23 +49,22 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 
 	for _, dev := range devs {
 		info := GpuInfo{
-			ID:       dev.ID,
+			DeviceID: dev.DeviceID,
 			filterID: dev.FilteredID,
 			Name:     dev.Description,
 			memInfo: memInfo{
 				TotalMemory: dev.TotalMemory,
 				FreeMemory:  dev.FreeMemory,
 			},
-			Library: dev.Library,
 			// TODO can we avoid variant
 			DependencyPath: dev.LibraryPath,
 			DriverMajor:    dev.DriverMajor,
 			DriverMinor:    dev.DriverMinor,
 		}
-		if dev.Library == "CUDA" || dev.Library == "HIP" {
+		if dev.Library == "CUDA" || dev.Library == "ROCm" {
 			info.MinimumMemory = 457 * format.MebiByte
 		}
-		if dev.Library == "HIP" {
+		if dev.Library == "ROCm" {
 			info.Compute = fmt.Sprintf("gfx%x%02x", dev.ComputeMajor, dev.ComputeMinor)
 			if rocmDir != "" {
 				info.DependencyPath = append(info.DependencyPath, rocmDir)
@@ -71,7 +72,7 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 		} else {
 			info.Compute = fmt.Sprintf("%d.%d", dev.ComputeMajor, dev.ComputeMinor)
 		}
-		// TODO any special processing of Vulkan devices?
+        // TODO any special processing of Vulkan devices?
 		resp = append(resp, info)
 	}
 	if len(resp) == 0 {
@@ -82,8 +83,10 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 
 		resp = append(resp, GpuInfo{
 			memInfo: mem,
-			Library: "cpu",
-			ID:      "0",
+			DeviceID: ml.DeviceID{
+				Library: "cpu",
+				ID:      "0",
+			},
 		})
 	}
 	return resp
@@ -91,6 +94,8 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variable
+//
+// If different libraries are detected, the first one is what we use
 func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 	if len(l) == 0 {
 		return nil

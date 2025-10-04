@@ -1274,6 +1274,22 @@ func TestFindArguments(t *testing.T) {
 				"items": []any{"{", "}", map[string]any{"key": "value"}},
 			},
 		},
+		{
+			name:   "stringified arguments",
+			buffer: []byte(`{"name": "get_temperature", "arguments": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "stringified parameters",
+			buffer: []byte(`{"name": "get_temperature", "parameters": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
 	}
 
 	for _, tt := range tests {

@@ -353,7 +353,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				for _, r := range s.loaded {
 					runnersSnapshot = append(runnersSnapshot, r)
 				}
-				finished := runner.waitForVRAMRecovery(runnersSnapshot)
+				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
 				runner.unload()
 				delete(s.loaded, runner.modelPath)
 				s.loadedMu.Unlock()
@@ -439,7 +439,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 
 	s.loadedMu.Unlock()
 
-	err := llama.Load(req.ctx, gpus, requireFull)
+	gpuIDs, err := llama.Load(req.ctx, gpus, requireFull)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
 			return true
@@ -458,7 +458,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		llama:           llama,
 		Options:         &req.opts,
 		sessionDuration: sessionDuration,
-		gpus:            gpus,
+		gpus:            gpuIDs,
 		vramSize:        llama.VRAMSize(),
 		totalSize:       llama.TotalSize(),
 		loading:         true,
@@ -507,11 +507,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
-	type predKey struct {
-		Library string
-		ID      string
-	}
-	predMap := map[predKey]uint64{} // Sum up the total predicted usage per GPU for all runners
+	predMap := map[ml.DeviceID]uint64{} // Sum up the total predicted usage per GPU for all runners
 	s.loadedMu.Lock()
 	runners := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {
@@ -522,7 +518,7 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 		r.refMu.Lock()
 		if r.llama != nil {
 			for _, gpu := range allGpus {
-				predMap[predKey{gpu.Library, gpu.ID}] += r.llama.VRAMByGPU(gpu.ID)
+				predMap[gpu.DeviceID] += r.llama.VRAMByGPU(gpu.DeviceID)
 			}
 		} else {
 			slog.Warn("unexpected nil runner reference, memory prediction may be incorrect")
@@ -532,7 +528,7 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 
 	// Now that we've summed up all the GPU usage predictions across all the loaded runners, update the gpu list
 	for i := range allGpus {
-		if p, ok := predMap[predKey{allGpus[i].Library, allGpus[i].ID}]; ok {
+		if p, ok := predMap[allGpus[i].DeviceID]; ok {
 			slog.Debug("gpu reported", "gpu", allGpus[i].ID, "library", allGpus[i].Library, "available", format.HumanBytes2(allGpus[i].FreeMemory))
 			if p > allGpus[i].TotalMemory {
 				// Shouldn't happen
@@ -556,8 +552,8 @@ type runnerRef struct {
 
 	llama     llm.LlamaServer
 	pid       int
-	loading   bool                 // True only during initial load, then false forever
-	gpus      discover.GpuInfoList // Recorded at time of provisioning
+	loading   bool          // True only during initial load, then false forever
+	gpus      []ml.DeviceID // Recorded at time of provisioning
 	vramSize  uint64
 	totalSize uint64
 
@@ -627,14 +623,14 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 // a before and after GPU memory allocation.  The returned channel
 // will be notified when we're done waiting, or have timed out and should
 // proceed anyway
-func (runner *runnerRef) waitForVRAMRecovery(runners []discover.FilteredRunnerDiscovery) chan any {
+func (runner *runnerRef) waitForVRAMRecovery() chan any {
 	finished := make(chan any, 1)
 
 	// CPU or Metal don't need checking, so no waiting required
 	// windows can page VRAM, only cuda currently can report accurate used vram usage
 	if len(runner.gpus) == 0 ||
-		(len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) ||
-		(runtime.GOOS == "windows" && runner.gpus[0].Library != "cuda") {
+		(len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "Metal")) ||
+		(runtime.GOOS == "windows" && runner.gpus[0].Library != "CUDA") {
 		finished <- struct{}{}
 		slog.Debug("no need to wait for VRAM recovery", "runner", runner)
 		return finished
@@ -642,7 +638,7 @@ func (runner *runnerRef) waitForVRAMRecovery(runners []discover.FilteredRunnerDi
 	start := time.Now()
 
 	// Establish a baseline before we unload
-	gpusBefore := discover.GetGPUInfo(context.Background(), runners)
+	gpusBefore := discover.GetGPUInfo()
 	var totalMemoryBefore, freeMemoryBefore uint64
 	for _, gpu := range gpusBefore {
 		totalMemoryBefore += gpu.TotalMemory
@@ -660,7 +656,7 @@ func (runner *runnerRef) waitForVRAMRecovery(runners []discover.FilteredRunnerDi
 			}
 
 			// Query GPUs, look for free to go back up
-			gpusNow := discover.GetGPUInfo(context.Background(), runners)
+			gpusNow := discover.GetGPUInfo()
 			var totalMemoryNow, freeMemoryNow uint64
 			for _, gpu := range gpusNow {
 				totalMemoryNow += gpu.TotalMemory
@@ -687,8 +683,7 @@ func (runner *runnerRef) LogValue() slog.Value {
 	}
 	if len(runner.gpus) > 0 {
 		attrs = append(attrs,
-			slog.String("inference", runner.gpus[0].Library),
-			slog.Int("devices", len(runner.gpus)),
+			slog.Any("inference", runner.gpus),
 		)
 	}
 	attrs = append(attrs,
@@ -702,37 +697,6 @@ func (runner *runnerRef) LogValue() slog.Value {
 		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
 	}
 	return slog.GroupValue(attrs...)
-}
-
-// Implements discover.RunnerDiscovery
-func (runner *runnerRef) GetPort() int {
-	if runner.llama != nil {
-		return runner.llama.Pid()
-	}
-	return -1
-}
-
-func (runner *runnerRef) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
-	if runner.llama != nil {
-		return runner.llama.GetDeviceInfos(ctx)
-	}
-	return nil
-}
-
-func (runner *runnerRef) GetActiveDeviceIDs() []ml.DeviceID {
-	devIDs := make([]ml.DeviceID, len(runner.gpus))
-	for i := range devIDs {
-		devIDs[i].ID = runner.gpus[i].ID
-		devIDs[i].Library = runner.gpus[i].Library
-	}
-	return devIDs
-}
-
-func (runner *runnerRef) HasExited() bool {
-	if runner.llama != nil {
-		return runner.llama.HasExited()
-	}
-	return true
 }
 
 type ByDurationAndName []*runnerRef
