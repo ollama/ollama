@@ -167,6 +167,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				devices = append(devices[:i], devices[i+1:]...)
 				needsDelete = append(needsDelete[:i], needsDelete[i+1:]...)
 				i--
+            } else if devices[i].Library == "ROCm" {
 				if _, err := strconv.Atoi(devices[i].ID); err == nil {
 					// Replace the numeric ID with the post-filtered IDs
 					devices[i].FilteredID = devices[i].ID
@@ -176,6 +177,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}
 		}
 
+        // Now filter out any overlap with different libraries (favor CUDA/HIP over others)
 		for i := 0; i < len(devices); i++ {
 			for j := i + 1; j < len(devices); j++ {
 				// For this pass, we only drop exact duplicates
@@ -268,7 +270,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		devCheck:
 			for _, dev := range deviceIDs {
 				for i := range devices {
-					if dev == devices[i].DeviceID {
+					if dev.ID == devices[i].ID && dev.Library == devices[i].Library {
 						if !updated[i] {
 							skip = false
 							break devCheck
@@ -289,7 +291,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			slog.Debug("existing runner discovery took", "duration", time.Since(start))
 			for _, u := range updatedDevices {
 				for i := range devices {
-					if u.DeviceID == devices[i].DeviceID {
+					if u.Library == devices[i].Library && u.ID == devices[i].ID {
 						updated[i] = true
 						devices[i].FreeMemory = u.FreeMemory
 						break
@@ -313,7 +315,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, nil)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.DeviceID == devices[i].DeviceID {
+						if u.Library == devices[i].Library && u.ID == devices[i].ID {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
