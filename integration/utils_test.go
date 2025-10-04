@@ -38,6 +38,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"qwen3-coder:30b",
 		"gpt-oss:20b",
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
@@ -46,6 +47,7 @@ var (
 		"qwen2.5-coder:latest",
 		"qwen2.5vl:3b",
 		"qwen3:0.6b", // dense
+		"qwen3:1.7b", // dense
 		"qwen3:30b",  // MOE
 		"gemma3:1b",
 		"llama3.1:latest",
@@ -270,7 +272,7 @@ var (
 		"Can they form if there are no clouds?  Be breif in your reply",
 		"Do they happen on other planets? Be brief in your reply",
 	}
-	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "end", "gold", "fortune", "blessing", "prosperity", "magic", "shower", "sky", "shimmer", "light", "storm", "sunny"}
+	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "particles", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "end", "gold", "fortune", "blessing", "prosperity", "hope", "bridge", "magic", "shower", "sky", "shimmer", "light", "storm", "sunny", "beauty", "sunburst", "phenomenon", "mars", "venus", "jupiter"}
 )
 
 func init() {
