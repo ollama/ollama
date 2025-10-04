@@ -73,7 +73,7 @@ func (p ImageProcessor) bestResolution(img image.Point, possibleResolutions []im
 	for i, res := range possibleResolutions {
 		scaleW := float64(res.X) / float64(w)
 		scaleH := float64(res.Y) / float64(h)
-		scale := math.Min(scaleW, scaleH)
+		scale := min(scaleW, scaleH)
 
 		scales[i] = scale
 	}
@@ -124,11 +124,11 @@ func (p ImageProcessor) maxResolution(imageRes, targetRes image.Point) image.Poi
 	if scaleW < scaleH {
 		newRes = image.Point{
 			targetRes.X,
-			int(math.Min(math.Floor(float64(imageRes.Y)*scaleW), float64(targetRes.Y))),
+			int(min(math.Floor(float64(imageRes.Y)*scaleW), float64(targetRes.Y))),
 		}
 	} else {
 		newRes = image.Point{
-			int(math.Min(math.Floor(float64(imageRes.X)*scaleH), float64(targetRes.X))),
+			int(min(math.Floor(float64(imageRes.X)*scaleH), float64(targetRes.X))),
 			targetRes.Y,
 		}
 	}
