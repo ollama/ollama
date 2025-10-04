@@ -72,7 +72,7 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 		} else {
 			info.Compute = fmt.Sprintf("%d.%d", dev.ComputeMajor, dev.ComputeMinor)
 		}
-        // TODO any special processing of Vulkan devices?
+		// TODO any special processing of Vulkan devices?
 		resp = append(resp, info)
 	}
 	if len(resp) == 0 {
