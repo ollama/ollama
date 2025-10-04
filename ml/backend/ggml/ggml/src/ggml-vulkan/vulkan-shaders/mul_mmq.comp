@@ -28,7 +28,7 @@ layout (binding = 0) readonly buffer A {A_TYPE_PACKED16 data_a[];};
 #if defined(A_TYPE_PACKED32)
 layout (binding = 0) readonly buffer A_PACKED32 {A_TYPE_PACKED32 data_a_packed32[];};
 #endif
-layout (binding = 1) readonly buffer B {block_q8_1_packed32 data_b[];};
+layout (binding = 1) readonly buffer B {block_q8_1_x4_packed128 data_b[];};
 layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
 
 #ifdef MUL_MAT_ID
@@ -98,7 +98,7 @@ shared FLOAT_TYPE_VEC2 buf_b_ds[BN];
 #endif
 
 #define LOAD_VEC_A (4 * QUANT_R)
-#define LOAD_VEC_B 4
+#define LOAD_VEC_B 16
 
 #ifdef MUL_MAT_ID
 shared u16vec2 row_ids[4096];
@@ -270,15 +270,22 @@ void main() {
             const uint iqs = idx & 0x7;
 #else
             const uint ib = pos_b_ib + (loadc_b + l) * p.stride_b / BK;
+            const uint ib_outer = ib / 4;
+            const uint ib_inner = ib % 4;
+
             const uint iqs = loadr_b;
 #endif
 
             const uint buf_ib = loadc_b + l;
 
             if (iqs == 0) {
-                buf_b_ds[buf_ib] = FLOAT_TYPE_VEC2(data_b[ib].ds);
+                buf_b_ds[buf_ib] = FLOAT_TYPE_VEC2(data_b[ib_outer].ds[ib_inner]);
             }
-            buf_b_qs[buf_ib * SHMEM_STRIDE + iqs] = data_b[ib].qs[iqs];
+            const ivec4 values = data_b[ib_outer].qs[ib_inner * 2 + iqs];
+            buf_b_qs[buf_ib * SHMEM_STRIDE + iqs * 4    ] = values.x;
+            buf_b_qs[buf_ib * SHMEM_STRIDE + iqs * 4 + 1] = values.y;
+            buf_b_qs[buf_ib * SHMEM_STRIDE + iqs * 4 + 2] = values.z;
+            buf_b_qs[buf_ib * SHMEM_STRIDE + iqs * 4 + 3] = values.w;
         }
 
         barrier();
@@ -349,7 +356,7 @@ void main() {
                                                      cache_b_qs[cc * (BK / 4) + idx_k]);
                         }
 
-                        sums[sums_idx] += mul_q8_1(q_sum, cache_a_dm[cache_a_idx], cache_b_ds[cc]);
+                        sums[sums_idx] += mul_q8_1(q_sum, cache_a_dm[cache_a_idx], cache_b_ds[cc], 1);
                     }
                 }
             }

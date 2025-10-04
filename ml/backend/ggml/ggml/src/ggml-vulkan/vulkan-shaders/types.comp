@@ -11,12 +11,12 @@
 #define QUANT_K 1
 #define QUANT_R 1
 
-#if !defined(LOAD_VEC_A) || LOAD_VEC_A == 1
-#define A_TYPE float
-#elif LOAD_VEC_A == 4
+#if LOAD_VEC_A == 4
 #define A_TYPE vec4
 #elif LOAD_VEC_A == 8
 #define A_TYPE mat2x4
+#else
+#define A_TYPE float
 #endif
 #endif
 
@@ -24,12 +24,12 @@
 #define QUANT_K 1
 #define QUANT_R 1
 
-#if !defined(LOAD_VEC_A) || LOAD_VEC_A == 1
-#define A_TYPE float16_t
-#elif LOAD_VEC_A == 4
+#if LOAD_VEC_A == 4
 #define A_TYPE f16vec4
 #elif LOAD_VEC_A == 8
 #define A_TYPE f16mat2x4
+#else
+#define A_TYPE float16_t
 #endif
 #endif
 
@@ -37,12 +37,12 @@
 #define QUANT_K 1
 #define QUANT_R 1
 
-#if !defined(LOAD_VEC_A) || LOAD_VEC_A == 1
-#define A_TYPE uint16_t
-#elif LOAD_VEC_A == 4
+#if LOAD_VEC_A == 4
 #define A_TYPE u16vec4
 #elif LOAD_VEC_A == 8
 #error unsupported
+#else
+#define A_TYPE uint16_t
 #endif
 #endif
 
@@ -207,6 +207,18 @@ struct block_q8_1_packed32
     int32_t qs[8];
 };
 
+// 4 blocks in one to allow 16-byte/128-bit alignment and loads
+struct block_q8_1_x4
+{
+    f16vec2 ds[4];
+    int32_t qs[32];
+};
+struct block_q8_1_x4_packed128
+{
+    f16vec2 ds[4];
+    ivec4 qs[8];
+};
+
 // K-quants
 #define QUANT_K_Q2_K 256
 
@@ -233,6 +245,7 @@ struct block_q2_K_packed32
 
 #if defined(DATA_A_Q2_K)
 #define QUANT_K QUANT_K_Q2_K
+#define QUANT_R 1
 #define A_TYPE block_q2_K
 #define A_TYPE_PACKED16 block_q2_K_packed16
 #define A_TYPE_PACKED32 block_q2_K_packed32
@@ -258,6 +271,7 @@ struct block_q3_K_packed16
 
 #if defined(DATA_A_Q3_K)
 #define QUANT_K QUANT_K_Q3_K
+#define QUANT_R 1
 #define A_TYPE block_q3_K
 #define A_TYPE_PACKED16 block_q3_K_packed16
 #endif
@@ -292,6 +306,7 @@ struct block_q4_K_packed128
 
 #if defined(DATA_A_Q4_K)
 #define QUANT_K QUANT_K_Q4_K
+#define QUANT_R 1
 #define A_TYPE block_q4_K
 #define A_TYPE_PACKED16 block_q4_K_packed16
 #define A_TYPE_PACKED32 block_q4_K_packed32
@@ -322,6 +337,7 @@ struct block_q5_K_packed128
 
 #if defined(DATA_A_Q5_K)
 #define QUANT_K QUANT_K_Q5_K
+#define QUANT_R 1
 #define A_TYPE block_q5_K
 #define A_TYPE_PACKED16 block_q5_K_packed16
 #endif
@@ -346,6 +362,7 @@ struct block_q6_K_packed16
 
 #if defined(DATA_A_Q6_K)
 #define QUANT_K QUANT_K_Q6_K
+#define QUANT_R 1
 #define A_TYPE block_q6_K
 #define A_TYPE_PACKED16 block_q6_K_packed16
 #endif
@@ -1412,6 +1429,11 @@ float bf16_to_fp32(uint32_t u)
     return uintBitsToFloat(u << 16);
 }
 
+vec4 bf16_to_fp32(uvec4 u)
+{
+    return vec4(bf16_to_fp32(u.x), bf16_to_fp32(u.y), bf16_to_fp32(u.z), bf16_to_fp32(u.w));
+}
+
 float e8m0_to_fp32(uint8_t x) {
     uint32_t bits;
 
@@ -1424,5 +1446,20 @@ float e8m0_to_fp32(uint8_t x) {
 
     return uintBitsToFloat(bits);
 }
+
+#if BDA
+
+#extension GL_EXT_buffer_reference : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+
+#define BDA_STORAGE_T uint64_t
+#define BDA_OFFSET_T uint64_t
+
+#else
+
+#define BDA_STORAGE_T uvec2
+#define BDA_OFFSET_T uint
+
+#endif
 
 #endif // !defined(GGML_TYPES_COMP)

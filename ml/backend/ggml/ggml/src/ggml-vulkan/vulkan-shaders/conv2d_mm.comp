@@ -16,7 +16,7 @@
 // shape notation: [dim(N), ..., dim(0)] -- stride(dim(j)) >= stride(dim(i)) if i > j
 layout(binding = 0) readonly buffer A {
     A_TYPE knl_data[];
-};  // src0 - kernel:   [KW, KH, Cin, Cout]
+};  // src0 - kernel:   [KW, KH, Cin, Cout] for conv_2d, [KW, KH, Cout, Cin] for conv_transposed_2d
 
 layout(binding = 1) readonly buffer B {
     B_TYPE src_data[];
@@ -66,6 +66,10 @@ layout(push_constant) uniform parameter {
     uint32_t KWKHmp; uint32_t KWKHL;
     uint32_t OWmp;   uint32_t OWL;
     uint32_t OWOHmp; uint32_t OWOHL;
+#ifdef TRANSPOSE
+    uint32_t s0mp; uint32_t s0L;
+    uint32_t s1mp; uint32_t s1L;
+#endif
 }
 
 p;
@@ -225,7 +229,11 @@ void main() {
             uint32_t B_ly    = r_offset + Ar;
             uint32_t B_lx    = Ac;
             uint32_t K_idx   = B_idx_K * BS_K + B_ly; /* Global K_idx (row index of A)*/
+#ifdef TRANSPOSE
+            uint32_t knl_idx = min(KW_idx_a + KH_idx_a * p.nb01 + K_idx * p.nb02 + Cin_idx_a * p.nb03, K * CRS - 1);
+#else
             uint32_t knl_idx = min(KW_idx_a + KH_idx_a * p.nb01 + Cin_idx_a * p.nb02 + K_idx * p.nb03, K * CRS - 1);
+#endif
             float    val     = knl_data[knl_idx];
             if (K_idx >= K || CRS_idx_a >= CRS) {
                 val = 0.0;
@@ -267,12 +275,24 @@ void main() {
             KW_idx_b               = CRS_remainder - KH_idx_b * p.KW;
 #endif
 
+#ifdef TRANSPOSE
+            uint32_t H_idx_x_s1 = OH_idx - KH_idx_b * p.d1 + p.p1;
+            uint32_t W_idx_x_s0 = OW_idx - KW_idx_b * p.d0 + p.p0;
+            uint32_t H_idx = fastdiv(H_idx_x_s1, p.s1mp, p.s1L);
+            uint32_t W_idx = fastdiv(W_idx_x_s0, p.s0mp, p.s0L);
+#else
             uint32_t H_idx = OH_idx * p.s1 + KH_idx_b * p.d1 - p.p1;
             uint32_t W_idx = OW_idx * p.s0 + KW_idx_b * p.d0 - p.p0;
+#endif
             uint32_t src_idx =
                 min(max(W_idx + H_idx * p.nb11 + Cin_idx_b * p.nb12 + N_idx * p.nb13, 0), p.Cin * p.N * p.W * p.H - 1);
             float val = src_data[src_idx];
-            if (CRS_idx_b >= CRS || NPQ_idx >= NPQ || H_idx < 0 || H_idx >= p.H || W_idx < 0 || W_idx >= p.W) {
+            if (CRS_idx_b >= CRS || NPQ_idx >= NPQ
+                || H_idx >= p.H || W_idx >= p.W // Lower bound checks aren't necessary. (idx >= 0x80000000 for such case)
+#ifdef TRANSPOSE
+                || (H_idx_x_s1 - H_idx * p.s1 != 0) || (W_idx_x_s0 - W_idx * p.s0 != 0)
+#endif
+                ) {
                 val = 0.0;
             }
             Bsh[B_ly * Bsh_stride + B_lx] = SHMEM_TYPE(val);

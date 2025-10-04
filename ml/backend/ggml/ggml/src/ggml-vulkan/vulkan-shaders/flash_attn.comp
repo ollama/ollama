@@ -117,6 +117,9 @@ void main() {
 
 
         [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
+            if (KV_bounds_check && j * Bc + c * cols_per_iter + col_tid >= KV) {
+                continue;
+            }
             [[unroll]] for (uint32_t d = 0; d < HSK_per_thread / 4; ++d) {
 #if BLOCK_SIZE > 1
                 uint coord = (j * Bc + c * cols_per_iter + col_tid) * k_stride * BLOCK_SIZE + 4 * (d * D_split + d_tid);
@@ -155,7 +158,11 @@ void main() {
                 uint32_t c = (idx + tid) % Bc;
                 uint32_t r = (idx + tid) / Bc;
                 if (idx + tid < Bc * Br) {
-                    masksh[c][r] = float(data_m[m_offset + (i * Br + r) * m_stride + (j * Bc + c)]);
+                    if (!KV_bounds_check || j * Bc + c < KV) {
+                        masksh[c][r] = float(data_m[m_offset + (i * Br + r) * m_stride + (j * Bc + c)]);
+                    } else {
+                        masksh[c][r] = float(0);
+                    }
                 }
             }
             barrier();
@@ -172,8 +179,11 @@ void main() {
 
         float rowmaxf[Br], Pf[Br][cols_per_thread], rowsumf[Br], eMf[Br], Moldf[Br];
         [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
-            rowmaxf[r] = Sf[r][0];
+            rowmaxf[r] = NEG_FLT_MAX_OVER_2;
             [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
+                if (KV_bounds_check && j * Bc + c * cols_per_iter + col_tid >= KV) {
+                    continue;
+                }
                 rowmaxf[r] = max(rowmaxf[r], Sf[r][c]);
             }
             Moldf[r] = Mf[r];
@@ -190,6 +200,9 @@ void main() {
             // Compute sum across row of P
             rowsumf[r] = 0.0;
             [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
+                if (KV_bounds_check && j * Bc + c * cols_per_iter + col_tid >= KV) {
+                    continue;
+                }
                 rowsumf[r] += Pf[r][c];
             }
 
@@ -203,6 +216,9 @@ void main() {
         }
 
         [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
+            if (KV_bounds_check && j * Bc + c * cols_per_iter + col_tid >= KV) {
+                continue;
+            }
             [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
 #if BLOCK_SIZE > 1
                 uint coord = (j * Bc + c * cols_per_iter + col_tid) * v_stride * BLOCK_SIZE + 4 * (d * D_split + d_tid);
@@ -334,6 +350,9 @@ void main() {
     [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
         [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
             Of[r][d] *= Lfrcp[r];
+#if defined(ACC_TYPE_MAX)
+            Of[r][d] = clamp(Of[r][d], -vec4(ACC_TYPE_MAX), vec4(ACC_TYPE_MAX));
+#endif
         }
     }
 

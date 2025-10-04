@@ -24,11 +24,12 @@ void main() {
     const uint j = gl_GlobalInvocationID.x;
     const uint d_offset = i * p.nb1;
 
-    if (p.dim % 2 != 0 && j == ((p.dim + 1) / 2)) {
-        data_d[d_offset + p.dim] = 0.f;
+    const uint half_dim = p.dim / 2;
+
+    if (p.dim % 2 != 0 && j == half_dim) {
+        data_d[d_offset + 2 * half_dim] = 0.f;
     }
 
-    const uint half_dim = p.dim / 2;
     if (j >= half_dim) {
         return;
     }

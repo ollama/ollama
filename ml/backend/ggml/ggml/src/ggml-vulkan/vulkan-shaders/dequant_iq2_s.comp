@@ -29,7 +29,7 @@ void main() {
         uint qs = data_a[ib].qs[4 * ib32 + l];
         const uint8_t sign = data_a[ib].qs[QUANT_K / 8 + 4 * ib32 + l];
         qs |= (qh << (8 - 2 * l)) & 0x300;
-        const uvec2 grid = iq2s_grid[qs & 511];
+        const uvec2 grid = iq2s_grid[qs];
         const u8vec4 grid0 = unpack8(grid.x);
         const u8vec4 grid1 = unpack8(grid.y);
         data_b[b_idx + 8 * l + 0] = D_TYPE(db[l/2] * grid0.x * ((sign & 1) != 0 ? -1.0 : 1.0));

@@ -2,6 +2,7 @@
 #extension GL_EXT_control_flow_attributes : require
 
 #include "rte.comp"
+#include "utils.comp"
 
 layout (push_constant) uniform parameter
 {
@@ -28,25 +29,9 @@ uint get_aoffset() { return p.misalign_offsets >> 16; }
 uint get_boffset() { return (p.misalign_offsets >> 8) & 0xFF; }
 uint get_doffset() { return p.misalign_offsets & 0xFF; }
 
-// mod and div are expensive and coordinates/dimensions are often power of 2 or equal to 1
-uint fastmod(uint a, uint b) {
-    if ((b & (b-1)) == 0) {
-        return a & (b-1);
-    }
-    return a % b;
-}
-
-uint fastdiv(uint a, uint b) {
-    return (a < b) ? 0 : (a / b);
-}
 
 void get_indices(uint idx, out uint i00, out uint i01, out uint i02, out uint i03) {
-    i03 = fastdiv(idx, (p.ne02*p.ne01*p.ne00));
-    const uint i03_offset = i03 * p.ne02*p.ne01*p.ne00;
-    i02 = fastdiv((idx - i03_offset), (p.ne01*p.ne00));
-    const uint i02_offset = i02*p.ne01*p.ne00;
-    i01 = (idx - i03_offset - i02_offset) / p.ne00;
-    i00 = idx - i03_offset - i02_offset - i01*p.ne00;
+    get_indices(idx, i00, i01, i02, i03, p.ne00, p.ne01, p.ne02, p.ne03);
 }
 
 uint src0_idx(uint i00, uint i01, uint i02, uint i03) {

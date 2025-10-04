@@ -15,8 +15,15 @@ layout (binding = 0) readonly buffer S {float data_s[];};
 
 #if defined(SET_ROWS)
 #include "generic_binary_head.comp"
-layout (binding = 1) readonly buffer C {uvec2 data_i[];};
+layout (binding = 1) readonly buffer C {B_TYPE data_i[];};
 layout (binding = 2) writeonly buffer Q {A_TYPE data_q[];};
+
+#if B_SIZE == 64
+#define DATA_I_SWIZZLE .x
+#else
+#define DATA_I_SWIZZLE
+#endif
+
 #else
 #include "generic_unary_head.comp"
 layout (binding = 1) writeonly buffer Q {A_TYPE data_q[];};
@@ -259,7 +266,7 @@ void main() {
     uint i11 = fastmod(i02, p.ne11);
     uint i10 = i01;
 
-    uint i1 = data_i[src1_idx(i10, i11, i12, 0) + get_boffset()].x;
+    uint i1 = data_i[src1_idx(i10, i11, i12, 0) + get_boffset()] DATA_I_SWIZZLE;
 
     uint src0_idx = src0_idx(i00, i01, i02, i03) + get_aoffset();
     uint dst_idx = dst_idx(i00 / QUANT_K, i1, i02, i03) + get_doffset();

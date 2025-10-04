@@ -22,15 +22,16 @@ void main() {
     const uint b_idx = 256 * ib + 32 * is;
 
     const float d = float(data_a[ib].d);
-    const float db = d * (1 + 2 * ((data_a[ib].scales[is] >> (4 * (is % 2))) & 0xf));
+    const float db = d * (1 + 2 * ((data_a[ib].scales[is / 2] >> (4 * (is % 2))) & 0xf));
 
     // We must produce 32 values using 4 sign bytes, 1 qh byte, 8 qs bytes.
     uint qh = data_a[ib].qh[is];
     [[unroll]] for (uint l = 0; l < 8; ++l) {
-        uint qs = data_a[ib].qs[8 * is + l];
-        uint gidx = qs | ((qh << (8 - l)) & 256);
-        uint8_t signs = data_a[ib].signs[8 * is + l / 2] >> (4 * (l & 1));
-        u8vec4 grid = unpack8(iq3s_grid[gidx]);
+        const uint iqs = 8 * is + l;
+        const uint qs = data_a[ib].qs[iqs];
+        const uint gidx = qs | ((qh << (8 - l)) & 256);
+        const uint8_t signs = data_a[ib].signs[iqs / 2] >> (4 * (l & 1));
+        const u8vec4 grid = unpack8(iq3s_grid[gidx]);
         data_b[b_idx + 4 * l + 0] = D_TYPE(db * grid.x * ((signs & 1) != 0 ? -1.0 : 1.0));
         data_b[b_idx + 4 * l + 1] = D_TYPE(db * grid.y * ((signs & 2) != 0 ? -1.0 : 1.0));
         data_b[b_idx + 4 * l + 2] = D_TYPE(db * grid.z * ((signs & 4) != 0 ? -1.0 : 1.0));

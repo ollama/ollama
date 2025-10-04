@@ -111,6 +111,10 @@ void main() {
             }
         }
         O *= L;
+
+        const float FLT_MAX = uintBitsToFloat(0x7F7FFFFF);
+        O = clamp(O, -FLT_MAX, FLT_MAX);
+
         data_d[iq3 * D * N + D * n + d] = O;
     }
 }
