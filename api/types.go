@@ -453,6 +453,40 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+// WebSearchRequest is the request passed to [Client.WebSearch].
+type WebSearchRequest struct {
+	// Query is the search query string.
+	Query string `json:"query"`
+
+	// MaxResults is the optional maximum number of results to return (default 5, max 10).
+	MaxResults int `json:"max_results,omitempty"`
+}
+
+// WebSearchResult represents a single web search result.
+type WebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// WebSearchResponse is the response from [Client.WebSearch].
+type WebSearchResponse struct {
+	Results []WebSearchResult `json:"results"`
+}
+
+// WebFetchRequest is the request passed to [Client.WebFetch].
+type WebFetchRequest struct {
+	// URL is the address of the page to fetch.
+	URL string `json:"url"`
+}
+
+// WebFetchResponse is the response from [Client.WebFetch].
+type WebFetchResponse struct {
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Links   []string `json:"links"`
+}
+
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	// Model is the model name to create.
