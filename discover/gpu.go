@@ -146,7 +146,6 @@ func vkGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 			continue
 		}
 		ids = append(ids, info.ID)
-
 	}
 	if len(ids) == 0 {
 		return ""
