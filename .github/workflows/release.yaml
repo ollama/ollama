@@ -176,20 +176,19 @@ jobs:
       matrix:
         os: [windows]
         arch: [amd64, arm64]
+        include:
+        - os: windows
+          arch: amd64
+          llvmarch: x86_64
+        - os: windows
+          arch: arm64
+          llvmarch: aarch64
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: [setup-environment]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - name: Install AMD64 system dependencies
-        if: matrix.arch == 'amd64'
-        run: |
-          $ErrorActionPreference = "Stop"
-          # TODO mingw-w64-clang-x86_64-clang v21 is currently broken for cgo build, but v20 + gcc-compat isn't available
-          # Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
-          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install ARM64 system dependencies
         if: matrix.arch == 'arm64'
         run: |
@@ -201,17 +200,26 @@ jobs:
 
           choco install -y --no-progress git gzip
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
-          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
-          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
-          echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install clang and gcc-compat
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-${{ matrix.llvmarch }}.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt*").path
+          echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify gcc is actually clang
+        run: |
+          gcc -v 
+          if (((& gcc -v 2>&1) -join "`n") -notmatch 'clang') {
+            echo "ERROR: GCC must be clang for proper utf16 handling"
+            exit 1
+          }
       - run: |
-          go clean -cache
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
       - uses: actions/upload-artifact@v4
         with:
