@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
@@ -1413,6 +1414,10 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
+		gzip.Gzip(
+			gzip.DefaultCompression,
+			gzip.WithDecompressFn(gzip.DefaultDecompressHandle),
+		),
 	)
 
 	// General
