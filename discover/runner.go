@@ -167,7 +167,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				devices = append(devices[:i], devices[i+1:]...)
 				needsDelete = append(needsDelete[:i], needsDelete[i+1:]...)
 				i--
-            } else if devices[i].Library == "ROCm" {
+			} else if devices[i].Library == "ROCm" {
 				if _, err := strconv.Atoi(devices[i].ID); err == nil {
 					// Replace the numeric ID with the post-filtered IDs
 					devices[i].FilteredID = devices[i].ID
@@ -177,7 +177,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}
 		}
 
-        // Now filter out any overlap with different libraries (favor CUDA/HIP over others)
+		// Now filter out any overlap with different libraries (favor CUDA/HIP over others)
 		for i := 0; i < len(devices); i++ {
 			for j := i + 1; j < len(devices); j++ {
 				// For this pass, we only drop exact duplicates
