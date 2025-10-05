@@ -70,8 +70,8 @@ func EnumerateGPUs() []ml.DeviceID {
 		device := C.ggml_backend_dev_get(i)
 
 		switch C.ggml_backend_dev_type(device) {
-		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
-		case C.GGML_BACKEND_DEVICE_TYPE_IGPU:
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			var props C.struct_ggml_backend_dev_props
 			C.ggml_backend_dev_get_props(device, &props)
 			ids = append(ids, ml.DeviceID{
