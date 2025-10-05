@@ -37,8 +37,8 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
-	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -1449,11 +1449,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
 	// Inference (OpenAI compatibility)
-	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
-	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
-	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
-	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
-	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
+	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)
+	r.POST("/v1/completions", middleware.CompletionsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/embeddings", middleware.EmbeddingsMiddleware(), s.EmbedHandler)
+	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
+	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 
 	if rc != nil {
 		// wrap old with new
