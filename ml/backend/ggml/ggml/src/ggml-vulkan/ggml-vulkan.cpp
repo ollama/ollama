@@ -12556,6 +12556,7 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->description = ggml_backend_vk_device_get_description(dev);
     props->id          = ggml_backend_vk_device_get_id(dev);
     props->library     = GGML_VK_NAME;
+    props->integrated  = ctx->is_integrated_gpu;
     props->type        = ggml_backend_vk_device_get_type(dev);
     props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
