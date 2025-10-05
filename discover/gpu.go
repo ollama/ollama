@@ -142,7 +142,7 @@ func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 func vkGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
-		if info.Library != "VULKAN" {
+		if info.Library != "Vulkan" {
 			continue
 		}
 		ids = append(ids, info.ID)
