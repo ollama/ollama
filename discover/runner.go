@@ -132,6 +132,8 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 					envVar = "CUDA_VISIBLE_DEVICES"
 				} else if devices[i].Library == "Vulkan" {
 					envVar = "GGML_VK_VISIBLE_DEVICES"
+				} else {
+					slog.Error("Unknown Library:" + devices[i].Library)
 				}
 
 				extraEnvs := []string{
@@ -444,6 +446,9 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
 	cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
 	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
