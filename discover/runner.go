@@ -446,8 +446,6 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
 
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
 	cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
