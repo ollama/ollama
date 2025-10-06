@@ -1,8 +1,7 @@
-commit 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-Author: Daniel Hiltgen <daniel@ollama.com>
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
 Date:   Fri Sep 5 08:25:03 2025 -0700
 Subject: [PATCH] Vulkan PCI and Memory
-
 
 ---
  ggml/src/ggml-vulkan/ggml-vulkan.cpp | 176 ++++++++++++++++++++++-----
@@ -15,7 +14,7 @@ index adea7783..fb7204ce 100644
 @@ -12423,31 +12423,99 @@ std::string ggml_backend_vk_get_device_id(int device) {
      return ggml_vk_get_device_id(dev_idx);
  }
-
+ 
 -void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
 -    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
 -    GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
@@ -44,7 +43,7 @@ index adea7783..fb7204ce 100644
 +    GGML_ASSERT(ctx->device < (int) vk_instance.device_supports_membudget.size());
 +
 +    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[ctx->device]];
-
+ 
 -    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
 -    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
 -    vk::PhysicalDeviceMemoryProperties2 memprops = {};
@@ -52,7 +51,7 @@ index adea7783..fb7204ce 100644
 +    vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
 +    vk::PhysicalDeviceProperties2 props2;
 +    vkdev.getProperties2(&props2);
-
+ 
 -    if (membudget_supported) {
 -        memprops.pNext = &budgetprops;
 +    if (!ctx->is_integrated_gpu)
@@ -85,7 +84,7 @@ index adea7783..fb7204ce 100644
      }
 -    vkdev.getMemoryProperties2(&memprops);
 +    // else fallback to memory budget if supported
-
+ 
 -    for (uint32_t i = 0; i < memprops.memoryProperties.memoryHeapCount; ++i) {
 -        const vk::MemoryHeap & heap = memprops.memoryProperties.memoryHeaps[i];
 +    *total = 0;
@@ -115,7 +114,7 @@ index adea7783..fb7204ce 100644
 +        *free = *total;
 +        return;
 +    }
-
+ 
 +    // else just report the physical memory
 +    for (const vk::MemoryHeap& heap : memprops2.memoryProperties.memoryHeaps) {
          if (heap.flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
@@ -133,7 +132,7 @@ index adea7783..fb7204ce 100644
 @@ -12502,16 +12570,17 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
      return std::string(pci_bus_id);
  }
-
+ 
 -//////////////////////////
 -
 -struct ggml_backend_vk_device_context {
@@ -155,17 +154,17 @@ index adea7783..fb7204ce 100644
 +    if (device) *device = (int) dev;
 +    return true;
 +}
-
+ 
  static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
 @@ -12530,7 +12599,7 @@ static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
-
+ 
  static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
 -    ggml_backend_vk_get_device_memory(ctx->device, free, total);
 +    ggml_backend_vk_get_device_memory(ctx, free, total);
  }
-
+ 
  static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
 @@ -12556,7 +12625,7 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
      props->description = ggml_backend_vk_device_get_description(dev);
@@ -191,7 +190,7 @@ index adea7783..fb7204ce 100644
 +    props->pci_domain_id = ctx->pci_domain_id;
 +    props->library = GGML_VK_NAME;
  }
-
+ 
  static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
 @@ -12992,6 +13071,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
          static std::mutex mutex;
@@ -250,5 +249,5 @@ index adea7783..fb7204ce 100644
              }
              initialized = true;
          }
---
+-- 
 2.51.0
