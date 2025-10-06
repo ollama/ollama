@@ -498,9 +498,13 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		}
 	}
 	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
-	// Enumerate returned devices starting at 0 and assign the index as FilteredID
+
+	// Enumerate returned devices starting at 0 per library and assign the per-library index as FilteredID
+	libCounts := make(map[string]int)
 	for i := range devices {
-		devices[i].FilteredID = strconv.Itoa(i)
+		lib := devices[i].Library
+		devices[i].FilteredID = strconv.Itoa(libCounts[lib])
+		libCounts[lib]++
 	}
 	return devices
 }
