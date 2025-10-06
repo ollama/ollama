@@ -1,0 +1,221 @@
+commit 0000000000000000000000000000000000000000
+Author: Daniel Hiltgen <daniel@ollama.com>
+Date:   Fri Sep 5 08:25:03 2025 -0700
+
+    WIP - wire up Vulkan with the new engine based discovery
+    
+    Not a complete implementation - free VRAM is better, but not accurate on
+    windows
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index d73cdf17..3b0a0891 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -4123,7 +4123,6 @@ static void ggml_vk_instance_init() {
+         }
+     } else {
+         std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
+-
+         // If no vulkan devices are found, return early
+         if (devices.empty()) {
+             GGML_LOG_INFO("ggml_vulkan: No devices found.\n");
+@@ -10821,14 +10820,90 @@ std::string ggml_backend_vk_get_device_id(int device) {
+     return ggml_vk_get_device_id(dev_idx);
+ }
+ 
+-void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
+-    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
++//////////////////////////
++
++struct ggml_backend_vk_device_context {
++    size_t device;
++    std::string name;
++    std::string description;
++    std::string id;
++    std::string uuid;
++    int major;
++    int minor;
++    int driver_major;
++    int driver_minor;
++    int integrated;
++    int pci_bus_id;
++    int pci_device_id;
++    int pci_domain_id;
++};
++
++void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
++    GGML_ASSERT(ctx->device < (int) vk_instance.device_indices.size());
+ 
+-    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
++    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[ctx->device]];
+ 
+     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
++    vk::PhysicalDeviceProperties2 props2;
++    vkdev.getProperties2(&props2);
+ 
+-    for (const vk::MemoryHeap& heap : memprops.memoryHeaps) {
++    // Use vendor specific management libraries for best VRAM reporting if available
++    switch (props2.properties.vendorID) {
++    case VK_VENDOR_ID_AMD:
++        if (ggml_hip_mgmt_init() == 0) {
++            int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
++            if (status == 0) {
++                GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                ggml_hip_mgmt_release();
++                return;
++            }
++            ggml_hip_mgmt_release();
++        }
++        break;
++    case VK_VENDOR_ID_NVIDIA:
++        if (ggml_nvml_init() == 0) {
++            int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
++            if (status == 0) {
++                GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                ggml_nvml_release();
++                return;
++            }
++            ggml_nvml_release();
++        }
++        break;
++    }
++    // else fallback to memory budget if supported
++
++    *total = 0;
++    *free = 0;
++    vk::PhysicalDeviceMemoryBudgetPropertiesEXT mem_budget_props;
++    vk::PhysicalDeviceMemoryProperties2 memprops2;
++    memprops2.pNext = &mem_budget_props;
++    vkdev.getMemoryProperties2(&memprops2);
++    for (int i = 0; i < memprops2.memoryProperties.memoryHeapCount; i++) {
++        if (memprops2.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
++            *total += memprops2.memoryProperties.memoryHeaps[i].size;
++        } else if (ctx->integrated) {
++            // Include shared memory on iGPUs
++            *total += memprops2.memoryProperties.memoryHeaps[i].size;
++        }
++    }
++    for (int i = 0; i < memprops2.memoryProperties.memoryHeapCount; i++) {
++        if (memprops2.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
++            *free += mem_budget_props.heapBudget[i];
++        } else if (ctx->integrated) {
++            *free += mem_budget_props.heapBudget[i];
++        }
++    }
++    if (*total > 0 && *free > 0) {
++        return;
++    } else if (*total > 0) {
++        *free = *total;
++        return;
++    }
++
++    // else just report the physical memory
++    for (const vk::MemoryHeap& heap : memprops2.memoryProperties.memoryHeaps) {
+         if (heap.flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+             *total = heap.size;
+             *free = heap.size;
+@@ -10837,14 +10912,6 @@ void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total
+     }
+ }
+ 
+-//////////////////////////
+-
+-struct ggml_backend_vk_device_context {
+-    size_t device;
+-    std::string name;
+-    std::string description;
+-    std::string id;
+-};
+ 
+ static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
+@@ -10863,7 +10930,7 @@ static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
+ 
+ static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
+-    ggml_backend_vk_get_device_memory(ctx->device, free, total);
++    ggml_backend_vk_get_device_memory(ctx, free, total);
+ }
+ 
+ static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
+@@ -10881,6 +10948,7 @@ static enum ggml_backend_dev_type ggml_backend_vk_device_get_type(ggml_backend_d
+     return GGML_BACKEND_DEVICE_TYPE_GPU;
+ }
+ 
++#define GGML_VULKAN_NAME "VULKAN"
+ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_vk_device_get_name(dev);
+     props->description = ggml_backend_vk_device_get_description(dev);
+@@ -10893,6 +10961,18 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+         /* .buffer_from_host_ptr  = */ false,
+         /* .events                = */ false,
+     };
++
++    ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
++    props->id = ctx->id.c_str();
++    props->compute_major = ctx->major;
++    props->compute_minor = ctx->minor;
++    props->driver_major = ctx->driver_major;
++    props->driver_minor = ctx->driver_minor;
++    props->integrated = ctx->integrated;
++    props->pci_bus_id = ctx->pci_bus_id;
++    props->pci_device_id = ctx->pci_device_id;
++    props->pci_domain_id = ctx->pci_domain_id;
++    props->library = GGML_VULKAN_NAME;
+ }
+ 
+ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
+@@ -11296,6 +11376,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+         static std::mutex mutex;
+         std::lock_guard<std::mutex> lock(mutex);
+         if (!initialized) {
++            std::vector<vk::PhysicalDevice> vk_devices = vk_instance.instance.enumeratePhysicalDevices();
++
+             for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
+                 ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
+                 char desc[256];
+@@ -11309,6 +11391,44 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+                     /* .reg     = */ reg,
+                     /* .context = */ ctx,
+                 });
++
++                // Gather additional information about the device
++                int dev_idx = vk_instance.device_indices[i];
++                vk::PhysicalDeviceProperties props1;
++                vk_devices[dev_idx].getProperties(&props1);
++                vk::PhysicalDeviceProperties2 props2;
++                vk::PhysicalDeviceIDProperties device_id_props;
++                vk::PhysicalDevicePCIBusInfoPropertiesEXT  pci_bus_props;
++                vk::PhysicalDeviceDriverProperties driver_props;
++                props2.pNext = &device_id_props;
++                device_id_props.pNext = &pci_bus_props;
++                pci_bus_props.pNext = &driver_props;
++                vk_devices[dev_idx].getProperties2(&props2);
++                std::ostringstream oss;
++                oss << std::hex << std::setfill('0');
++                oss << "GPU-";
++                int byteIdx = 0;
++                for (int i = 0; i < 16; ++i, ++byteIdx) {
++                    oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);
++                    if (byteIdx == 3 || byteIdx == 5 || byteIdx == 7 || byteIdx == 9) {
++                        oss << '-';
++                    }
++                }
++                ctx->uuid = oss.str();
++                ctx->pci_bus_id = pci_bus_props.pciBus;
++                ctx->pci_device_id = pci_bus_props.pciDevice;
++                ctx->pci_domain_id = pci_bus_props.pciDomain;
++                ctx->id = std::to_string(i);
++                if (props1.deviceType == vk::PhysicalDeviceType::eIntegratedGpu) {
++                    ctx->integrated = 1;
++                } else {
++                    ctx->integrated = 0;
++                }
++                ctx->major = 0;
++                ctx->minor = 0;
++                // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
++                ctx->driver_major = 0;
++                ctx->driver_minor = 0;
+             }
+             initialized = true;
+         }
