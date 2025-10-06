@@ -85,6 +85,17 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 			case "scales":
 				mxfp4s[name].scales = t
 			}
+		} else if strings.HasSuffix(t.Name(), "gate_up_exps.bias") {
+			out = append(out, slices.Collect(splitDim(t, 1,
+				split{
+					Replacer: strings.NewReplacer("gate_up_exps", "gate_exps"),
+					slices: []tensor.Slice{nil, tensor.S(0, int(t.Shape()[1]), 2)},
+				},
+				split{
+					Replacer: strings.NewReplacer("gate_up_exps", "up_exps"),
+					slices: []tensor.Slice{nil, tensor.S(1, int(t.Shape()[1]), 2)},
+				},
+			))...)
 		} else {
 			out = append(out, &ggml.Tensor{
 				Name:     t.Name(),
