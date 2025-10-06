@@ -61,36 +61,56 @@ func marshalWithSpaces(v any) ([]byte, error) {
 	return out, nil
 }
 
-func renderContent(content any, doVisionCount bool) string {
-	print(content)
-	switch content.(type) {
-	case string:
-		return content.(string)
-	default:
-		var subSb strings.Builder
-		for _, item := range content.([]any) {
-			if strings.Contains(item.(string), "image") || strings.Contains(item.(string), "image_url") || item.(map[string]any)["type"] == "image" {
-				if doVisionCount {
-					imageCount++
-				}
-				// if addVisionID {
-				// 	sb.WriteString("Picture " + strconv.Itoa(imageCount) + ": ") // do we need the itoa thing?
-				// }
-				subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
-			} else if strings.Contains(item.(string), "video") || item.(map[string]any)["type"] == "video" {
-				if doVisionCount {
-					videoCount++
-				}
-				// if addVisionID {
-				// 	sb.WriteString("Video " + strconv.Itoa(videoCount) + ": ") // do we need the itoa thing?
-				// }
-				subSb.WriteString("<|vision_start|><|video_pad|><|vision_end|>")
-			} else if strings.Contains(item.(string), "text") {
-				subSb.WriteString(item.(map[string]any)["text"].(string))
-			}
+// func renderContent(content any, doVisionCount bool) string {
+// 	print(content)
+// 	switch content.(type) {
+// 	case string:
+// 		return content.(string)
+// 	default:
+// 		var subSb strings.Builder
+// 		for _, item := range content.([]any) {
+// 			if strings.Contains(item.(string), "image") || strings.Contains(item.(string), "image_url") || item.(map[string]any)["type"] == "image" {
+// 				if doVisionCount {
+// 					imageCount++
+// 				}
+// 				// if addVisionID {
+// 				// 	sb.WriteString("Picture " + strconv.Itoa(imageCount) + ": ") // do we need the itoa thing?
+// 				// }
+// 				subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
+// 			} else if strings.Contains(item.(string), "video") || item.(map[string]any)["type"] == "video" {
+// 				if doVisionCount {
+// 					videoCount++
+// 				}
+// 				// if addVisionID {
+// 				// 	sb.WriteString("Video " + strconv.Itoa(videoCount) + ": ") // do we need the itoa thing?
+// 				// }
+// 				subSb.WriteString("<|vision_start|><|video_pad|><|vision_end|>")
+// 			} else if strings.Contains(item.(string), "text") {
+// 				subSb.WriteString(item.(map[string]any)["text"].(string))
+// 			}
+// 		}
+// 		return subSb.String()
+// 	}
+// }
+
+func renderContent(content api.Message, doVisionCount bool) string {
+	// print(content)
+
+	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
+	var subSb strings.Builder
+	for _ = range content.Images {
+		if doVisionCount {
+			imageCount++
 		}
-		return subSb.String()
+		subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
 	}
+	// we dont support videos yet so idk what to do exactly
+
+	// subSb.WriteString("<|vision_start|><|video_pad|><|vision_end|>")
+
+	subSb.WriteString(content.Content)
+
+	return subSb.String()
 }
 
 func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
@@ -129,7 +149,11 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 	}
 
 	for i, message := range messages {
-		content := renderContent(message.Content, true)
+		// fmt.Println("This is the content that we are rendering: ", message.Content)
+
+		// content := renderContent(message.Content, true)
+
+		content := renderContent(message, true) // we want to render the entire message, because it may have images in them
 
 		if message.Role == "user" || message.Role == "system" && i != 0 {
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")

@@ -13,6 +13,8 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
+// parsers shouldn't need to do images
+
 const (
 	CollectingContent         qwenParserState = iota
 	CollectingThinkingContent                 // this is because qwen3vl starts with <thinking>
@@ -235,11 +237,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 }
 
 func parseJSONToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
-	// Expected JSON shape: {"name": "...", "arguments": { ... }}
-	// var in struct {
-	// 	Name      string          `json:"name"`
-	// 	Arguments json.RawMessage `json:"arguments"`
-	// }
 	fmt.Printf("[qwen3vl parseJSONToolCall] raw.raw %s\n", raw.raw)
 
 	var toolCallFunction api.ToolCallFunction
@@ -253,5 +250,3 @@ func parseJSONToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall
 	fmt.Printf("[qwen3vl parser] toolCall %#v\n", toolCall)
 	return toolCall, nil
 }
-
-// do we need to parse values
