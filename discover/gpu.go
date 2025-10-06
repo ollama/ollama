@@ -115,7 +115,7 @@ func (l GpuInfoList) GetVisibleDevicesEnv() []string {
 func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 	ids := []string{}
 	for _, info := range gpuInfo {
-		if info.Library != "HIP" {
+		if info.Library != "ROCm" {
 			continue
 		}
 		// If the devices requires a numeric ID, for filtering purposes, we use the unfiltered ID number
