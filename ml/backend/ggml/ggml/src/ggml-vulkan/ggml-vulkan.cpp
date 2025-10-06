@@ -12521,14 +12521,17 @@ struct ggml_backend_vk_device_context {
     std::string name;
     std::string description;
     bool is_integrated_gpu;
-    // PCI information (if available via VK_EXT_pci_bus_info)
-    // Numeric components for convenience/interop with higher layers
-    int pciBusID = 0;
-    int pciDeviceID = 0;
-    int pciDomainID = 0;
     // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
-    std::string pci_bus_id;
+    std::string pci_id;
     std::string id;
+    std::string uuid;
+    int major;
+    int minor;
+    int driver_major;
+    int driver_minor;
+    int pci_bus_id;
+    int pci_device_id;
+    int pci_domain_id;
 };
 
 static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
@@ -12573,13 +12576,8 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->name        = ggml_backend_vk_device_get_name(dev);
     props->description = ggml_backend_vk_device_get_description(dev);
     props->id          = ggml_backend_vk_device_get_id(dev);
-    props->library     = GGML_VK_NAME;
-    props->integrated  = ctx->is_integrated_gpu;
     props->type        = ggml_backend_vk_device_get_type(dev);
-    props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
-    props->pci_bus_id    = ctx->pciBusID;
-    props->pci_device_id = ctx->pciDeviceID;
-    props->pci_domain_id = ctx->pciDomainID;
+    props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = {
         /* .async                 = */ false,
@@ -12587,6 +12585,16 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
         /* .buffer_from_host_ptr  = */ false,
         /* .events                = */ false,
     };
+
+    props->compute_major = ctx->major;
+    props->compute_minor = ctx->minor;
+    props->driver_major = ctx->driver_major;
+    props->driver_minor = ctx->driver_minor;
+    props->integrated = ctx->is_integrated_gpu;
+    props->pci_bus_id = ctx->pci_bus_id;
+    props->pci_device_id = ctx->pci_device_id;
+    props->pci_domain_id = ctx->pci_domain_id;
+    props->library = GGML_VK_NAME;
 }
 
 static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
@@ -13015,6 +13023,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
         static std::mutex mutex;
         std::lock_guard<std::mutex> lock(mutex);
         if (!initialized) {
+            std::vector<vk::PhysicalDevice> vk_devices = vk_instance.instance.enumeratePhysicalDevices();
+
             for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
                 ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
                 char desc[256];
@@ -13023,24 +13033,46 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->name = GGML_VK_NAME + std::to_string(i);
                 ctx->description = desc;
                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
-                ctx->pci_bus_id = ggml_backend_vk_get_device_pci_id(i);
-                // Parse numeric PCI components if available
-                int d = 0, b = 0, devn = 0;
-                if (ggml_backend_vk_parse_pci_bus_id(ctx->pci_bus_id, &d, &b, &devn)) {
-                    ctx->pciDomainID = d;
-                    ctx->pciBusID = b;
-                    ctx->pciDeviceID = devn;
-                } else {
-                    ctx->pciDomainID = 0;
-                    ctx->pciBusID = 0;
-                    ctx->pciDeviceID = 0;
-                }
+                ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->id = ggml_backend_vk_get_device_id(i);
                 devices.push_back(new ggml_backend_device {
                     /* .iface   = */ ggml_backend_vk_device_i,
                     /* .reg     = */ reg,
                     /* .context = */ ctx,
                 });
+
+                // Gather additional information about the device
+                int dev_idx = vk_instance.device_indices[i];
+                vk::PhysicalDeviceProperties props1;
+                vk_devices[dev_idx].getProperties(&props1);
+                vk::PhysicalDeviceProperties2 props2;
+                vk::PhysicalDeviceIDProperties device_id_props;
+                vk::PhysicalDevicePCIBusInfoPropertiesEXT  pci_bus_props;
+                vk::PhysicalDeviceDriverProperties driver_props;
+                props2.pNext = &device_id_props;
+                device_id_props.pNext = &pci_bus_props;
+                pci_bus_props.pNext = &driver_props;
+                vk_devices[dev_idx].getProperties2(&props2);
+                std::ostringstream oss;
+                oss << std::hex << std::setfill('0');
+                oss << "GPU-";
+                int byteIdx = 0;
+                for (int i = 0; i < 16; ++i, ++byteIdx) {
+                    oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);
+                    if (byteIdx == 3 || byteIdx == 5 || byteIdx == 7 || byteIdx == 9) {
+                        oss << '-';
+                    }
+                }
+                ctx->uuid = oss.str();
+                ctx->pci_bus_id = pci_bus_props.pciBus;
+                ctx->pci_device_id = pci_bus_props.pciDevice;
+                ctx->pci_domain_id = pci_bus_props.pciDomain;
+                ctx->id = std::to_string(i);
+                ctx->major = 0;
+                ctx->minor = 0;
+                // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
+                ctx->driver_major = 0;
+                ctx->driver_minor = 0;
             }
             initialized = true;
         }
