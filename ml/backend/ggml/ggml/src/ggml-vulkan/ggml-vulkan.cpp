@@ -12453,30 +12453,33 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
 
-    // Use vendor specific management libraries for best VRAM reporting if available
-    switch (props2.properties.vendorID) {
-    case VK_VENDOR_ID_AMD:
-        if (ggml_hip_mgmt_init() == 0) {
-            int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
-            if (status == 0) {
-                GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+    if (!ctx->is_integrated_gpu)
+    {
+        // Use vendor specific management libraries for best VRAM reporting if available
+        switch (props2.properties.vendorID) {
+        case VK_VENDOR_ID_AMD:
+            if (ggml_hip_mgmt_init() == 0) {
+                int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
+                if (status == 0) {
+                    GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                    ggml_hip_mgmt_release();
+                    return;
+                }
                 ggml_hip_mgmt_release();
-                return;
             }
-            ggml_hip_mgmt_release();
-        }
-        break;
-    case VK_VENDOR_ID_NVIDIA:
-        if (ggml_nvml_init() == 0) {
-            int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
-            if (status == 0) {
-                GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            break;
+        case VK_VENDOR_ID_NVIDIA:
+            if (ggml_nvml_init() == 0) {
+                int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
+                if (status == 0) {
+                    GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                    ggml_nvml_release();
+                    return;
+                }
                 ggml_nvml_release();
-                return;
             }
-            ggml_nvml_release();
+            break;
         }
-        break;
     }
     // else fallback to memory budget if supported
 
