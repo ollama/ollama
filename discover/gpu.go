@@ -145,7 +145,11 @@ func vkGetVisibleDevicesEnv(gpuInfo []GpuInfo) string {
 		if info.Library != "Vulkan" {
 			continue
 		}
-		ids = append(ids, info.ID)
+		if info.filterID != "" {
+			ids = append(ids, info.filterID)
+		} else {
+			ids = append(ids, info.ID)
+		}
 	}
 	if len(ids) == 0 {
 		return ""

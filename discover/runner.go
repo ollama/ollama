@@ -112,9 +112,6 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		needsDelete := make([]bool, len(devices))
 		supportedMu := sync.Mutex{}
 		supported := make(map[string]map[string]map[string]int) // [Library][libDir][ID] = pre-deletion devices index
-		rocmPosition := 0
-		cudaPosition := 0
-		vulkanPosition := 0
 		for i := range devices {
 			libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
 			if devices[i].Library == "Metal" {
@@ -125,30 +122,23 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			go func(i int) {
 				defer wg.Done()
 				var envVar string
-				libraryPosition := 0
 				if devices[i].Library == "ROCm" {
-					libraryPosition = rocmPosition
-					rocmPosition++
 					if runtime.GOOS != "linux" {
 						envVar = "HIP_VISIBLE_DEVICES"
 					} else {
 						envVar = "ROCR_VISIBLE_DEVICES"
 					}
 				} else if devices[i].Library == "CUDA" {
-					libraryPosition = cudaPosition
-					cudaPosition++
 					envVar = "CUDA_VISIBLE_DEVICES"
 				} else if devices[i].Library == "Vulkan" {
-					libraryPosition = vulkanPosition
-					vulkanPosition++
 					envVar = "GGML_VK_VISIBLE_DEVICES"
 				} else {
 					slog.Error("Unknown Library:" + devices[i].Library)
 				}
 
 				extraEnvs := []string{
-					"GGML_CUDA_INIT=1",                           // force deep initialization to trigger crash on unsupported GPUs
-					envVar + "=" + strconv.Itoa(libraryPosition), // Filter to just this one GPU
+					"GGML_CUDA_INIT=1",                   // force deep initialization to trigger crash on unsupported GPUs
+					envVar + "=" + devices[i].FilteredID, // Filter to just this one GPU
 				}
 				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
 					needsDelete[i] = true
@@ -508,6 +498,10 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		}
 	}
 	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
+	// Enumerate returned devices starting at 0 and assign the index as FilteredID
+	for i := range devices {
+		devices[i].FilteredID = strconv.Itoa(i)
+	}
 	return devices
 }
 
