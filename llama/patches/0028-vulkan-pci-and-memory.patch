@@ -1,11 +1,14 @@
-commit 0000000000000000000000000000000000000000
+commit 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 Author: Daniel Hiltgen <daniel@ollama.com>
 Date:   Fri Sep 5 08:25:03 2025 -0700
+Subject: [PATCH] vulkan PCI and Memory
 
-    WIP - wire up Vulkan with the new engine based discovery
-    
-    Not a complete implementation - free VRAM is better, but not accurate on
-    windows
+WIP - wire up Vulkan with the new engine based discovery
+Not a complete implementation - free VRAM is better, but not accurate on
+windows
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 37 ++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 index d73cdf17..3b0a0891 100644
