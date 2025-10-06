@@ -59,7 +59,9 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
-			toolCall, err := parseToolCall(event, p.tools)
+			fmt.Print("[qwen3vl parser] qwenEventRawToolCall ", event.raw)
+			fmt.Print("[qwen3vl parser] p.tools ", p.tools)
+			toolCall, err := parseJSONToolCall(event, p.tools)
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
@@ -238,23 +240,17 @@ func parseJSONToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall
 	// 	Name      string          `json:"name"`
 	// 	Arguments json.RawMessage `json:"arguments"`
 	// }
-	fmt.Println(raw.raw)
+	fmt.Printf("[qwen3vl parseJSONToolCall] raw.raw %s\n", raw.raw)
 
-	var toolCall api.ToolCall
-	if err := json.Unmarshal([]byte(raw.raw), &toolCall); err != nil {
+	var toolCallFunction api.ToolCallFunction
+	if err := json.Unmarshal([]byte(raw.raw), &toolCallFunction); err != nil {
 		return api.ToolCall{}, err
 	}
 
-	// args := make(api.ToolCallFunctionArguments)
-	// 	if len(in.Arguments) > 0 && string(in.Arguments) != "null" {
-	// 	var obj map[string]any
-	// 	if err := json.Unmarshal(in.Arguments, &obj); err == nil {
-	// 		for k, v := range obj {
-	// 			args[k] = v
-	// 		}
-	// 	}
-	// }
-	fmt.Println(toolCall)
+	toolCall := api.ToolCall{}
+	toolCall.Function = toolCallFunction
+
+	fmt.Printf("[qwen3vl parser] toolCall %#v\n", toolCall)
 	return toolCall, nil
 }
 

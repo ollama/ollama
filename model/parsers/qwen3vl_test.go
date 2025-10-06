@@ -184,6 +184,39 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 	}
 }
 
+func TestQwen3VLComplex(t *testing.T) {
+	type step struct {
+		input      string
+		wantEvents []qwenEvent
+	}
+
+	cases := []struct {
+		desc  string
+		steps []step
+		only  bool
+	}{
+		{
+			desc: "simple tool call",
+			steps: []step{
+				{
+					input:      "Here are 30 distinct and popular emojis for you! 😊\n\n1. 😂  \n2. ❤️  \n3. 🌟  \n4. 🐶  \n5. 🍕  \n6. ✨  \n7. 🌈  \n8. 🎉  \n9. 🌎  \n10. 🦁  \n11. 💯  \n12. 🥰  \n13. 🌸  \n14. 🚀  \n15. 🌊  \n16. 🍦  \n17. 🌙  \n18. 🌞  \n19. 🌻  \n20. 🦋  \n21. 🍃  \n22. 🏆  \n23. 🌮  \n24. 🧸  \n25. 🎮  \n26. 📚  \n27. ✈️  \n28. 🌟 (sparkles)  \n29. 🌈 (rainbow)  \n30. 🥳  \n\n*Bonus fun fact:* The 😂 (Face with Tears of Joy) was Oxford Dictionaries' Word of the Year in 2015! 🎉  \nLet me know if you'd like themed emojis (e.g., animals, food, or emotions)! 🐱🍕📚",
+					wantEvents: []qwenEvent{qwenEventContent{content: "bruh"}},
+				},
+			},
+		},
+	}
+	for _, tc := range cases {
+		for i, step := range tc.steps {
+			parser := Qwen3VLParser{}
+			parser.buffer.WriteString(step.input)
+			gotEvents := parser.parseEvents()
+			if !reflect.DeepEqual(gotEvents, step.wantEvents) {
+				t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
+			}
+		}
+	}
+}
+
 // TODO: devin was saying something about json cant figure out types?
 // do we need to test for
 func TestQwen3VLToolParser(t *testing.T) {

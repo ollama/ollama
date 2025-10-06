@@ -187,7 +187,8 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 
 	}
 
-	sb.WriteString("<|im_start|>assistant\n<think>\n")
+	// sb.WriteString("<|im_start|>assistant\n<think>\n")
+	sb.WriteString("<|im_start|>assistant\n")
 	return sb.String(), nil
 
 }
