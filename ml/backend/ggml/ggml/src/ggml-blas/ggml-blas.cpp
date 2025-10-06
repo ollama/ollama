@@ -270,6 +270,7 @@ static struct ggml_backend_i blas_backend_i = {
     /* .graph_compute           = */ ggml_backend_blas_graph_compute,
     /* .event_record            = */ NULL,
     /* .event_wait              = */ NULL,
+    /* .graph_optimize          = */ NULL,
 };
 
 static ggml_guid_t ggml_backend_blas_guid(void) {

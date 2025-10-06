@@ -2,16 +2,30 @@
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_8bit_storage : require
 
+#if USE_SUBGROUP_ADD || USE_SUBGROUP_ADD_NO_SHMEM
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#endif
+
 #ifdef MUL_MAT_ID
 #define EXPERT_COUNT 8
 #endif
 
 #include "types.comp"
 
+#ifndef MMQ
 layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+#else
+layout (binding = 0) readonly buffer A {A_TYPE_PACKED16 data_a[];};
+#endif
+
 layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
+#ifdef B_TYPE_VEC2
 layout (binding = 1) readonly buffer BV2 {B_TYPE_VEC2 data_b_v2[];};
+#endif
+#ifdef B_TYPE_VEC4
 layout (binding = 1) readonly buffer BV4 {B_TYPE_VEC4 data_b_v4[];};
+#endif
 
 layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
 #ifdef MUL_MAT_ID
@@ -88,9 +102,57 @@ layout (constant_id = 0) const uint BLOCK_SIZE = 32;
 layout (constant_id = 1) const uint NUM_ROWS = 1;
 layout (constant_id = 2) const uint NUM_COLS = 1;
 
+#ifdef USE_SUBGROUP_ADD_NO_SHMEM
+void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offset, const in uint32_t first_row, const in uint32_t num_rows, const in uint32_t tid) {
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            temp[j][n] = subgroupAdd(temp[j][n]);
+        }
+    }
+
+    if (tid == 0) {
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
+            }
+        }
+    }
+}
+#else
 shared FLOAT_TYPE tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE];
 
-void reduce_result(const in FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offset, const in uint32_t first_row, const in uint32_t num_rows, const in uint32_t tid) {
+void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offset, const in uint32_t first_row, const in uint32_t num_rows, const in uint32_t tid) {
+    // subgroupAdd is probably faster on devices that support it,
+    // particularly when the workgroup has more than one subgroup
+#if USE_SUBGROUP_ADD
+    // sum up partial sums within a subgroup
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            temp[j][n] = subgroupAdd(temp[j][n]);
+        }
+    }
+
+    // Go through shared memory to sum partials across subgroups
+    if (gl_SubgroupInvocationID == 0) {
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                tmpsh[j][n][gl_SubgroupID] = temp[j][n];
+            }
+        }
+    }
+    barrier();
+    if (tid == 0) {
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                temp[j][n] = FLOAT_TYPE(0);
+                [[unroll]] for (uint s = 0; s < gl_NumSubgroups; ++s) {
+                    temp[j][n] += tmpsh[j][n][s];
+                }
+                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
+            }
+        }
+    }
+#else
     // sum up partial sums and write back result
     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
         [[unroll]] for (uint n = 0; n < num_rows; ++n) {
@@ -115,4 +177,6 @@ void reduce_result(const in FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32
             }
         }
     }
+#endif
 }
+#endif

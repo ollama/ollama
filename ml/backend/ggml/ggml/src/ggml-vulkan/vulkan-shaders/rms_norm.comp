@@ -10,9 +10,9 @@ layout (constant_id = 1) const bool do_multiply = false;
 
 layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
 
-shared FLOAT_TYPE sum[BLOCK_SIZE];
+shared FLOAT_TYPE sumsh[BLOCK_SIZE];
 
-void main() {
+void rms_norm(uint num_iters) {
     const uint ncols     = p.ne00;
     const uint nrows     = gl_NumWorkGroups.x;
     const uint nchannels = gl_NumWorkGroups.y;
@@ -30,38 +30,76 @@ void main() {
     uint32_t b_offset = src1_idx(0, row, channel, samp) + get_boffset();
     uint32_t d_offset = ((samp*nchannels + channel)*nrows + row)*ncols + get_doffset();
 
-    sum[tid] = FLOAT_TYPE(0.0f); // partial sum for thread in warp
+    FLOAT_TYPE sum = FLOAT_TYPE(0.0f); // partial sum for thread in warp
 
-    [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
-        const FLOAT_TYPE xi = FLOAT_TYPE(data_a[a_offset + col]);
-        sum[tid] += xi * xi;
+    [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+        FLOAT_TYPE xi = FLOAT_TYPE(0);
+        if (col < ncols) {
+            xi = FLOAT_TYPE(data_a[a_offset + col]);
+        }
+        sum += xi * xi;
     }
 
+    sumsh[tid] = sum;
     // sum up partial sums and write back result
     barrier();
     [[unroll]] for (int s = BLOCK_SIZE / 2; s > 0; s >>= 1) {
         if (tid < s) {
-            sum[tid] += sum[tid + s];
+            sum += sumsh[tid + s];
+            sumsh[tid] = sum;
         }
         barrier();
     }
+    sum = sumsh[0];
 
-    const FLOAT_TYPE mean = sum[0] / FLOAT_TYPE(ncols);
+    const FLOAT_TYPE mean = sum / FLOAT_TYPE(ncols);
     const FLOAT_TYPE scale = inversesqrt(mean + FLOAT_TYPE(p.param1));
 
     if (do_multiply) {
         if (ncols > p.ne10) {
-            [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+            [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+                if (col >= ncols) {
+                    continue;
+                }
                 data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + fastmod(col, p.ne10)]));
             }
         } else {
-            [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+            [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+                if (col >= ncols) {
+                    continue;
+                }
                 data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + col]));
             }
         }
     } else {
-        [[unroll]] for (uint col = tid; col < ncols; col += BLOCK_SIZE) {
+        [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+            if (col >= ncols) {
+                continue;
+            }
             data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
         }
+    }
+}
+
+void main() {
+    // instantiate the rms_norm function for several different
+    // dimensions, to allow loop unrolling
+    uint num_blocks = (p.ne00 + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    if (num_blocks > 32) {
+        rms_norm(num_blocks);
+    } else if (num_blocks > 16) {
+        rms_norm(32);
+    } else if (num_blocks > 8) {
+        rms_norm(16);
+    } else if (num_blocks > 4) {
+        rms_norm(8);
+    } else if (num_blocks == 4) {
+        rms_norm(4);
+    } else if (num_blocks == 3) {
+        rms_norm(3);
+    } else if (num_blocks == 2) {
+        rms_norm(2);
+    } else if (num_blocks == 1) {
+        rms_norm(1);
     }
 }

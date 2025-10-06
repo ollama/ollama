@@ -33,7 +33,8 @@ void main() {
     [[unroll]] for (uint l = 0; l < 4; ++l) {
         const uint sign7 = bitfieldExtract(signscale, 7 * int(l), 7);
         const uint sign8 = sign7 | (bitCount(sign7) << 7); // parity bit
-        const uvec2 grid = iq2xxs_grid[data_a[ib].qs[8 * is + l]];
+        const uint qs = data_a[ib].qs[8 * is + l];
+        const uvec2 grid = iq2xxs_grid[qs];
         const u8vec4 grid0 = unpack8(grid.x);
         const u8vec4 grid1 = unpack8(grid.y);
         data_b[b_idx + 8 * l + 0] = D_TYPE(db * grid0.x * ((sign8 & 1) != 0 ? -1.0 : 1.0));

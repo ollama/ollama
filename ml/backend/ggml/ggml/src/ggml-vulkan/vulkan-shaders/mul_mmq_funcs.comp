@@ -16,8 +16,8 @@ i32vec2 repack(uint ib, uint iqs) {
                    (vui >> 4) & 0x0F0F0F0F);
 }
 
-ACC_TYPE mul_q8_1(int32_t q_sum, float da, vec2 dsb) {
-    return ACC_TYPE(da * (float(q_sum) * dsb.x - 8.0f * dsb.y));
+ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
+    return ACC_TYPE(da * (float(q_sum) * dsb.x - (8 / sum_divisor) * dsb.y));
 }
 #endif
 
@@ -29,8 +29,8 @@ i32vec2 repack(uint ib, uint iqs) {
                    (vui >> 4) & 0x0F0F0F0F);
 }
 
-ACC_TYPE mul_q8_1(int32_t q_sum, vec2 dma, vec2 dsb) {
-    return ACC_TYPE(float(q_sum) * dma.x * dsb.x + dma.y * dsb.y);
+ACC_TYPE mul_q8_1(const int32_t q_sum, const vec2 dma, const vec2 dsb, const int32_t sum_divisor) {
+    return ACC_TYPE(float(q_sum) * dma.x * dsb.x + dma.y * dsb.y / sum_divisor);
 }
 #endif
 
@@ -50,8 +50,8 @@ i32vec2 repack(uint ib, uint iqs) {
     return i32vec2(v0, v1);
 }
 
-ACC_TYPE mul_q8_1(int32_t q_sum, float da, vec2 dsb) {
-    return ACC_TYPE(da * (float(q_sum) * dsb.x - 16.0f * dsb.y));
+ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
+    return ACC_TYPE(da * (float(q_sum) * dsb.x - (16 / sum_divisor) * dsb.y));
 }
 #endif
 
@@ -69,8 +69,8 @@ i32vec2 repack(uint ib, uint iqs) {
     return i32vec2(v0, v1);
 }
 
-ACC_TYPE mul_q8_1(int32_t q_sum, vec2 dma, vec2 dsb) {
-    return ACC_TYPE(float(q_sum) * dma.x * dsb.x + dma.y * dsb.y);
+ACC_TYPE mul_q8_1(const int32_t q_sum, const vec2 dma, const vec2 dsb, const int32_t sum_divisor) {
+    return ACC_TYPE(float(q_sum) * dma.x * dsb.x + dma.y * dsb.y / sum_divisor);
 }
 #endif
 
@@ -81,7 +81,7 @@ int32_t repack(uint ib, uint iqs) {
                           data_a[ib].qs[iqs * 2 + 1]));
 }
 
-ACC_TYPE mul_q8_1(int32_t q_sum, float da, vec2 dsb) {
+ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
     return ACC_TYPE(float(q_sum) * da * dsb.x);
 }
 #endif

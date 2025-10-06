@@ -42,6 +42,7 @@ import (
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
 	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
+	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
@@ -62,16 +63,21 @@ func BackendInit() {
 	C.llama_backend_init()
 }
 
-func EnumerateGPUs() []string {
-	var ids []string
+func EnumerateGPUs() []ml.DeviceID {
+	var ids []ml.DeviceID
 
 	for i := range C.ggml_backend_dev_count() {
 		device := C.ggml_backend_dev_get(i)
 
-		if C.ggml_backend_dev_type(device) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
+		switch C.ggml_backend_dev_type(device) {
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			var props C.struct_ggml_backend_dev_props
 			C.ggml_backend_dev_get_props(device, &props)
-			ids = append(ids, C.GoString(props.id))
+			ids = append(ids, ml.DeviceID{
+				ID:      C.GoString(props.id),
+				Library: C.GoString(props.library),
+			})
 		}
 	}
 
@@ -112,7 +118,11 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
-	params.flash_attn = C.bool(flashAttention)
+	if flashAttention {
+		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
+	} else {
+		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_DISABLED
+	}
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 

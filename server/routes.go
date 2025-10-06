@@ -1557,8 +1557,8 @@ func Serve(ln net.Listener) error {
 
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
-	gpus := discover.GetGPUInfo()
-	gpus.LogDetails()
+	gpus := discover.GPUDevices(ctx, nil)
+	discover.LogDetails(gpus)
 
 	var totalVRAM uint64
 	for _, gpu := range gpus {
@@ -1777,7 +1777,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	// expire the runner
-	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+	if len(req.Messages) == 0 && req.KeepAlive != nil && req.KeepAlive.Duration == 0 {
 		s.sched.expireRunner(m)
 
 		c.JSON(http.StatusOK, api.ChatResponse{

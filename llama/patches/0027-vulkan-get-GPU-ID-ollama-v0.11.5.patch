@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xiaodong Ye <xiaodong.ye@mthreads.com>
+Date: Mon, 18 Aug 2025 12:48:07 +0800
+Subject: [PATCH] vulkan: get GPU ID (ollama v0.11.5)
+
+Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 71 ++++++++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 061cd0788..3f7d5342a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -11588,6 +11588,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
+     snprintf(description, description_size, "%s", props.deviceName.data());
+ }
+ 
++static std::string ggml_vk_get_device_id(int device) {
++    ggml_vk_instance_init();
++
++    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
++
++    vk::PhysicalDeviceProperties2 props;
++    vk::PhysicalDeviceIDProperties deviceIDProps;
++    props.pNext = &deviceIDProps;
++    devices[device].getProperties2(&props);
++
++    const auto& uuid = deviceIDProps.deviceUUID;
++    char id[64];
++    snprintf(id, sizeof(id),
++        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++        uuid[0], uuid[1], uuid[2], uuid[3],
++        uuid[4], uuid[5],
++        uuid[6], uuid[7],
++        uuid[8], uuid[9],
++        uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
++    );
++    return std::string(id);
++}
++
+ // backend interface
+ 
+ #define UNUSED GGML_UNUSED
+@@ -12394,6 +12417,12 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+     ggml_vk_get_device_description(dev_idx, description, description_size);
+ }
+ 
++std::string ggml_backend_vk_get_device_id(int device) {
++    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
++    int dev_idx = vk_instance.device_indices[device];
++    return ggml_vk_get_device_id(dev_idx);
++}
++
+ void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
+     GGML_ASSERT(device < (int) vk_instance.device_indices.size());
+     GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
+@@ -12473,6 +12502,18 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+     return std::string(pci_bus_id);
+ }
+ 
++static bool ggml_backend_vk_parse_pci_bus_id(const std::string & id, int *domain, int *bus, int *device) {
++    if (id.empty()) return false;
++    unsigned int d = 0, b = 0, dev = 0, func = 0;
++    // Expected format: dddd:bb:dd.f (all hex)
++    int n = sscanf(id.c_str(), "%4x:%2x:%2x.%1x", &d, &b, &dev, &func);
++    if (n < 4) return false;
++    if (domain) *domain = (int) d;
++    if (bus) *bus = (int) b;
++    if (device) *device = (int) dev;
++    return true;
++}
++
+ //////////////////////////
+ 
+ struct ggml_backend_vk_device_context {
+@@ -12480,7 +12521,14 @@ struct ggml_backend_vk_device_context {
+     std::string name;
+     std::string description;
+     bool is_integrated_gpu;
++    // PCI information (if available via VK_EXT_pci_bus_info)
++    // Numeric components for convenience/interop with higher layers
++    int pciBusID = 0;
++    int pciDeviceID = 0;
++    int pciDomainID = 0;
++    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
+     std::string pci_bus_id;
++    std::string id;
+ };
+ 
+ static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
+@@ -12493,6 +12541,11 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+     return ctx->description.c_str();
+ }
+ 
++static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
++    ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
++    return ctx->id.c_str();
++}
++
+ static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
+     ggml_backend_vk_get_device_memory(ctx->device, free, total);
+@@ -12519,8 +12572,14 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+ 
+     props->name        = ggml_backend_vk_device_get_name(dev);
+     props->description = ggml_backend_vk_device_get_description(dev);
++    props->id          = ggml_backend_vk_device_get_id(dev);
++    props->library     = GGML_VK_NAME;
++    props->integrated  = ctx->is_integrated_gpu;
+     props->type        = ggml_backend_vk_device_get_type(dev);
+     props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
++    props->pci_bus_id    = ctx->pciBusID;
++    props->pci_device_id = ctx->pciDeviceID;
++    props->pci_domain_id = ctx->pciDomainID;
+     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
+     props->caps = {
+         /* .async                 = */ false,
+@@ -12965,6 +13024,18 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+                 ctx->description = desc;
+                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
+                 ctx->pci_bus_id = ggml_backend_vk_get_device_pci_id(i);
++                // Parse numeric PCI components if available
++                int d = 0, b = 0, devn = 0;
++                if (ggml_backend_vk_parse_pci_bus_id(ctx->pci_bus_id, &d, &b, &devn)) {
++                    ctx->pciDomainID = d;
++                    ctx->pciBusID = b;
++                    ctx->pciDeviceID = devn;
++                } else {
++                    ctx->pciDomainID = 0;
++                    ctx->pciBusID = 0;
++                    ctx->pciDeviceID = 0;
++                }
++                ctx->id = ggml_backend_vk_get_device_id(i);
+                 devices.push_back(new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_vk_device_i,
+                     /* .reg     = */ reg,
+-- 
+2.51.0

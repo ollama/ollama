@@ -17,6 +17,9 @@
 #ifdef COOPMAT
 #extension GL_KHR_cooperative_matrix : enable
 #extension GL_KHR_memory_scope_semantics : enable
+#endif
+
+#if defined(COOPMAT) || defined(MUL_MAT_ID_USE_SUBGROUPS)
 #extension GL_KHR_shader_subgroup_basic : enable
 #extension GL_KHR_shader_subgroup_ballot : enable
 #endif
@@ -32,6 +35,18 @@
 #endif
 #ifndef LOAD_VEC_B
 #define LOAD_VEC_B 1
+#endif
+
+// Load 2 values at once without affecting index calculations through LOAD_VEC
+#if (defined(DATA_A_F32) || defined(DATA_A_F16) || defined(DATA_A_BF16)) && !defined(ALIGNED)
+#define LOAD_VEC_BATCH_A 2
+#else
+#define LOAD_VEC_BATCH_A 1
+#endif
+#if !defined(ALIGNED)
+#define LOAD_VEC_BATCH_B 2
+#else
+#define LOAD_VEC_BATCH_B 1
 #endif
 
 #if !defined(TO_FLOAT_TYPE)
@@ -95,27 +110,92 @@ layout (constant_id = 9) const uint TK = 1;  // Only needed for coopmat
 layout (constant_id = 10) const uint WARP = 32;
 
 #ifdef COOPMAT
-#define SHMEM_STRIDE (BK + 8)
+#define SHMEM_STRIDE (BK / 2 + 4)
 #else
-#define SHMEM_STRIDE (BK + 1)
+#define SHMEM_STRIDE (BK / 2 + 1)
 #endif
 
-shared FLOAT_TYPE buf_a[BM * SHMEM_STRIDE];
-shared FLOAT_TYPE buf_b[BN * SHMEM_STRIDE];
-
-#ifdef MUL_MAT_ID
-shared u16vec2 row_ids[4096];
-uint _ne1;
-#ifdef COOPMAT
-shared uint _ne1_sh;
-#endif
-#endif // MUL_MAT_ID
+shared FLOAT_TYPE_VEC2 buf_a[BM * SHMEM_STRIDE];
+shared FLOAT_TYPE_VEC2 buf_b[BN * SHMEM_STRIDE];
 
 #define NUM_WARPS (BLOCK_SIZE / WARP)
+
+#ifdef MUL_MAT_ID
+shared u16vec2 row_ids[BN];
+uint _ne1;
+
+#ifdef MUL_MAT_ID_USE_SUBGROUPS
+shared uvec4 ballots_sh[NUM_WARPS];
+
+void load_row_ids(uint expert_idx, bool nei0_is_pow2, uint ic) {
+    _ne1 = 0;
+    uint num_elements = p.nei1 * p.nei0;
+    uint nei0shift = findLSB(p.nei0);
+
+    uint ids[16];
+    uint iter = 0;
+
+    for (uint j = 0; j < num_elements; j += BLOCK_SIZE) {
+        // prefetch up to 16 elements
+        if (iter == 0) {
+            [[unroll]] for (uint k = 0; k < 16; ++k) {
+                uint i = j + gl_LocalInvocationIndex + k*BLOCK_SIZE;
+                bool in_range = i < num_elements;
+                uint ii1;
+                if (nei0_is_pow2) {
+                    ii1 = i >> nei0shift;
+                } else {
+                    ii1 = i / p.nei0;
+                }
+                uint ii0 = i - ii1 * p.nei0;
+                ids[k] = in_range ? data_ids[ii1*p.nbi1 + ii0] : 0;
+            }
+        }
+        uint i = j + gl_LocalInvocationIndex;
+        bool in_range = i < num_elements;
+        uint ii1;
+        if (nei0_is_pow2) {
+            ii1 = i >> nei0shift;
+        } else {
+            ii1 = i / p.nei0;
+        }
+        uint ii0 = i - ii1 * p.nei0;
+        uint id = ids[iter++];
+        uvec4 ballot = subgroupBallot(in_range && id == expert_idx);
+
+        ballots_sh[gl_SubgroupID] = ballot;
+        barrier();
+
+        uint subgroup_base = 0;
+        uint total = 0;
+        for (uint k = 0; k < gl_NumSubgroups; ++k) {
+            if (k == gl_SubgroupID) {
+                subgroup_base = total;
+            }
+            total += subgroupBallotBitCount(ballots_sh[k]);
+        }
+        barrier();
+
+        uint idx = subgroup_base + subgroupBallotExclusiveBitCount(ballot);
+        if (in_range && id == expert_idx && _ne1 + idx >= ic * BN && _ne1 + idx < (ic + 1) * BN) {
+            row_ids[_ne1 + idx - ic * BN] = u16vec2(ii0, ii1);
+        }
+        _ne1 += total;
+        iter &= 15;
+        if (_ne1 >= (ic + 1) * BN) {
+            break;
+        }
+    }
+    barrier();
+}
+#endif // MUL_MAT_ID_USE_SUBGROUPS
+#endif // MUL_MAT_ID
 
 #ifdef COOPMAT
 shared ACC_TYPE coopmat_stage[TM * TN * NUM_WARPS];
 #endif
+
+#include "mul_mm_funcs.comp"
 
 void main() {
 #ifdef NEEDS_INIT_IQ_SHMEM
@@ -168,60 +248,29 @@ void main() {
     const uint warp_r = warp_i % (BM / WM);
     const uint warp_c = warp_i / (BM / WM);
 
-    const uint loadr_a = gl_LocalInvocationID.x % (BK / LOAD_VEC_A);
-    const uint loadc_a = gl_LocalInvocationID.x / (BK / LOAD_VEC_A);
-    const uint loadr_b = gl_LocalInvocationID.x % (BK / LOAD_VEC_B);
-    const uint loadc_b = gl_LocalInvocationID.x / (BK / LOAD_VEC_B);
+    const uint loadr_a = gl_LocalInvocationID.x % (BK / LOAD_VEC_A / LOAD_VEC_BATCH_A);
+    const uint loadc_a = gl_LocalInvocationID.x / (BK / LOAD_VEC_A / LOAD_VEC_BATCH_A);
+    const uint loadr_b = gl_LocalInvocationID.x % (BK / LOAD_VEC_B / LOAD_VEC_BATCH_B);
+    const uint loadc_b = gl_LocalInvocationID.x / (BK / LOAD_VEC_B / LOAD_VEC_BATCH_B);
 
-    const uint loadstride_a = gl_WorkGroupSize.x * LOAD_VEC_A / BK;
-    const uint loadstride_b = gl_WorkGroupSize.x * LOAD_VEC_B / BK;
+    const uint loadstride_a = gl_WorkGroupSize.x * LOAD_VEC_A * LOAD_VEC_BATCH_A / BK;
+    const uint loadstride_b = gl_WorkGroupSize.x * LOAD_VEC_B * LOAD_VEC_BATCH_B / BK;
 
 #ifdef MUL_MAT_ID
-#ifdef COOPMAT
-    // Spread the search across all elements in the first subgroup
-    if (gl_SubgroupID == 0) {
-        _ne1 = 0;
-        uint num_elements = p.nei1 * p.nei0;
-
-        uint ids[16];
-        uint iter = 0;
-
-        for (uint j = 0; j < num_elements; j += gl_SubgroupSize) {
-            // prefetch up to 16 elements
-            if (iter == 0) {
-                [[unroll]] for (uint k = 0; k < 16; ++k) {
-                    uint i = j + gl_SubgroupInvocationID + k*gl_SubgroupSize;
-                    bool in_range = i < num_elements;
-                    uint ii1 = i / p.nei0;
-                    uint ii0 = i % p.nei0;
-                    ids[k] = in_range ? data_ids[ii1*p.nbi1 + ii0] : 0;
-                }
-            }
-            uint i = j + gl_SubgroupInvocationID;
-            bool in_range = i < num_elements;
-            uint ii1 = i / p.nei0;
-            uint ii0 = i % p.nei0;
-            uint id = ids[iter++];
-            uvec4 ballot = subgroupBallot(in_range && id == expert_idx);
-            uint idx = subgroupBallotExclusiveBitCount(ballot);
-            if (in_range && id == expert_idx) {
-                row_ids[_ne1 + idx] = u16vec2(ii0, ii1);
-            }
-            _ne1 += subgroupBallotBitCount(ballot);
-            iter &= 15;
-        }
-        _ne1_sh = _ne1;
+#ifdef MUL_MAT_ID_USE_SUBGROUPS
+    if (bitCount(p.nei0) == 1) {
+        load_row_ids(expert_idx, true, ic);
+    } else {
+        load_row_ids(expert_idx, false, ic);
     }
-
-    barrier();
-
-    _ne1 = _ne1_sh;
 #else
     _ne1 = 0;
-    for (uint ii1 = 0; ii1 < p.nei1; ii1++) {
-        for (uint ii0 = 0; ii0 < p.nei0; ii0++) {
+    for (uint ii1 = 0; ii1 < p.nei1 && _ne1 < (ic + 1) * BN; ii1++) {
+        for (uint ii0 = 0; ii0 < p.nei0 && _ne1 < (ic + 1) * BN; ii0++) {
             if (data_ids[ii1*p.nbi1 + ii0] == expert_idx) {
-                row_ids[_ne1] = u16vec2(ii0, ii1);
+                if (_ne1 >= ic * BN) {
+                    row_ids[_ne1 - ic * BN] = u16vec2(ii0, ii1);
+                }
                 _ne1++;
             }
         }
@@ -265,8 +314,8 @@ void main() {
     }
 #else
     ACC_TYPE sums[WMITER * TM * WNITER * TN];
-    FLOAT_TYPE cache_a[WMITER * TM];
-    FLOAT_TYPE cache_b[TN];
+    FLOAT_TYPE_VEC2 cache_a[WMITER * TM];
+    FLOAT_TYPE_VEC2 cache_b[TN];
 
     [[unroll]] for (uint i = 0; i < WMITER*TM*WNITER*TN; i++) {
         sums[i] = ACC_TYPE(0.0f);
@@ -275,538 +324,13 @@ void main() {
 
     for (uint block = start_k; block < end_k; block += BK) {
         [[unroll]] for (uint l = 0; l < BM; l += loadstride_a) {
-
-#if defined(DATA_A_F32) || defined(DATA_A_F16)
-#if LOAD_VEC_A == 8
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-            buf_a[buf_idx    ] = FLOAT_TYPE(data_a[idx][0].x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE(data_a[idx][0].y);
-            buf_a[buf_idx + 2] = FLOAT_TYPE(data_a[idx][0].z);
-            buf_a[buf_idx + 3] = FLOAT_TYPE(data_a[idx][0].w);
-            buf_a[buf_idx + 4] = FLOAT_TYPE(data_a[idx][1].x);
-            buf_a[buf_idx + 5] = FLOAT_TYPE(data_a[idx][1].y);
-            buf_a[buf_idx + 6] = FLOAT_TYPE(data_a[idx][1].z);
-            buf_a[buf_idx + 7] = FLOAT_TYPE(data_a[idx][1].w);
-#elif LOAD_VEC_A == 4
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-            buf_a[buf_idx    ] = FLOAT_TYPE(data_a[idx].x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE(data_a[idx].y);
-            buf_a[buf_idx + 2] = FLOAT_TYPE(data_a[idx].z);
-            buf_a[buf_idx + 3] = FLOAT_TYPE(data_a[idx].w);
-#else
-            if (ir * BM + loadc_a + l < p.M && block + loadr_a < end_k) {
-                buf_a[(loadc_a + l) * SHMEM_STRIDE + loadr_a] = FLOAT_TYPE(data_a[pos_a + (loadc_a + l) * p.stride_a + loadr_a]);
-            } else {
-                buf_a[(loadc_a + l) * SHMEM_STRIDE + loadr_a] = FLOAT_TYPE(0.0f);
-            }
-#endif
-#elif defined(DATA_A_BF16)
-#if LOAD_VEC_A == 4
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-            buf_a[buf_idx    ] = TO_FLOAT_TYPE(data_a[idx].x);
-            buf_a[buf_idx + 1] = TO_FLOAT_TYPE(data_a[idx].y);
-            buf_a[buf_idx + 2] = TO_FLOAT_TYPE(data_a[idx].z);
-            buf_a[buf_idx + 3] = TO_FLOAT_TYPE(data_a[idx].w);
-#else
-            if (ir * BM + loadc_a + l < p.M && block + loadr_a < end_k) {
-                buf_a[(loadc_a + l) * SHMEM_STRIDE + loadr_a] = TO_FLOAT_TYPE(data_a[pos_a + (loadc_a + l) * p.stride_a + loadr_a]);
-            } else {
-                buf_a[(loadc_a + l) * SHMEM_STRIDE + loadr_a] = TO_FLOAT_TYPE(uint16_t(0));
-            }
-#endif
-#elif defined(DATA_A_Q4_0)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + 4 * loadr_a;
-
-            const uint ib = idx / 4;
-            const uint iqs = idx & 0x03;
-
-            const float d = float(data_a_packed16[ib].d);
-            const uint vui = uint(data_a_packed16[ib].qs[2*iqs]) | (uint(data_a_packed16[ib].qs[2*iqs + 1]) << 16);
-            const vec4 v0 = (vec4(unpack8(vui & 0x0F0F0F0F)) - 8.0f) * d;
-            const vec4 v1 = (vec4(unpack8((vui >> 4) & 0x0F0F0F0F)) - 8.0f) * d;
-
-            buf_a[buf_idx     ] = FLOAT_TYPE(v0.x);
-            buf_a[buf_idx + 1 ] = FLOAT_TYPE(v0.y);
-            buf_a[buf_idx + 2 ] = FLOAT_TYPE(v0.z);
-            buf_a[buf_idx + 3 ] = FLOAT_TYPE(v0.w);
-            buf_a[buf_idx + 16] = FLOAT_TYPE(v1.x);
-            buf_a[buf_idx + 17] = FLOAT_TYPE(v1.y);
-            buf_a[buf_idx + 18] = FLOAT_TYPE(v1.z);
-            buf_a[buf_idx + 19] = FLOAT_TYPE(v1.w);
-#elif defined(DATA_A_Q4_1)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + 4 * loadr_a;
-
-            const uint ib = idx / 4;
-            const uint iqs = idx & 0x03;
-
-            const float d = float(data_a_packed16[ib].d);
-            const float m = float(data_a_packed16[ib].m);
-            const uint vui = uint(data_a_packed16[ib].qs[2*iqs]) | (uint(data_a_packed16[ib].qs[2*iqs + 1]) << 16);
-            const vec4 v0 = vec4(unpack8(vui & 0x0F0F0F0F)) * d + m;
-            const vec4 v1 = vec4(unpack8((vui >> 4) & 0x0F0F0F0F)) * d + m;
-
-            buf_a[buf_idx     ] = FLOAT_TYPE(v0.x);
-            buf_a[buf_idx + 1 ] = FLOAT_TYPE(v0.y);
-            buf_a[buf_idx + 2 ] = FLOAT_TYPE(v0.z);
-            buf_a[buf_idx + 3 ] = FLOAT_TYPE(v0.w);
-            buf_a[buf_idx + 16] = FLOAT_TYPE(v1.x);
-            buf_a[buf_idx + 17] = FLOAT_TYPE(v1.y);
-            buf_a[buf_idx + 18] = FLOAT_TYPE(v1.z);
-            buf_a[buf_idx + 19] = FLOAT_TYPE(v1.w);
-#elif defined(DATA_A_Q5_0)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + 2 * loadr_a;
-
-            const uint ib = idx / 8;
-            const uint iqs = idx & 0x07;
-
-            const float d = float(data_a_packed16[ib].d);
-            const uint uint_qh = uint(data_a_packed16[ib].qh[1]) << 16 | uint(data_a_packed16[ib].qh[0]);
-            const ivec2 qh0 = ivec2(((uint_qh >> 2*iqs) << 4) & 0x10, (uint_qh >> (2*iqs + 12)) & 0x10);
-            const ivec2 qh1 = ivec2(((uint_qh >> (2*iqs + 1)) << 4) & 0x10, (uint_qh >> (2*iqs + 13)) & 0x10);
-
-            const uint vui = uint(data_a_packed16[ib].qs[iqs]);
-            const vec4 v = (vec4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) - 16.0f) * d;
-
-            buf_a[buf_idx     ] = FLOAT_TYPE(v.x);
-            buf_a[buf_idx + 1 ] = FLOAT_TYPE(v.z);
-            buf_a[buf_idx + 16] = FLOAT_TYPE(v.y);
-            buf_a[buf_idx + 17] = FLOAT_TYPE(v.w);
-#elif defined(DATA_A_Q5_1)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + 2 * loadr_a;
-
-            const uint ib = idx / 8;
-            const uint iqs = idx & 0x07;
-
-            const float d = float(data_a_packed16[ib].d);
-            const float m = float(data_a_packed16[ib].m);
-            const uint uint_qh = data_a_packed16[ib].qh;
-            const ivec2 qh0 = ivec2(((uint_qh >> 2*iqs) << 4) & 0x10, (uint_qh >> (2*iqs + 12)) & 0x10);
-            const ivec2 qh1 = ivec2(((uint_qh >> (2*iqs + 1)) << 4) & 0x10, (uint_qh >> (2*iqs + 13)) & 0x10);
-
-            const uint vui = uint(data_a_packed16[ib].qs[iqs]);
-            const vec4 v = vec4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) * d + m;
-
-            buf_a[buf_idx     ] = FLOAT_TYPE(v.x);
-            buf_a[buf_idx + 1 ] = FLOAT_TYPE(v.z);
-            buf_a[buf_idx + 16] = FLOAT_TYPE(v.y);
-            buf_a[buf_idx + 17] = FLOAT_TYPE(v.w);
-#elif defined(DATA_A_Q8_0)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 8;
-            const uint iqs = idx & 0x07;
-
-            const float d = float(data_a_packed16[ib].d);
-            const i8vec2 v0 = unpack8(int32_t(data_a_packed16[ib].qs[2*iqs])).xy; // vec4 used due to #12147
-            const i8vec2 v1 = unpack8(int32_t(data_a_packed16[ib].qs[2*iqs + 1])).xy;
-            const vec4 v = vec4(v0.x, v0.y, v1.x, v1.y) * d;
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
-            buf_a[buf_idx + 2] = FLOAT_TYPE(v.z);
-            buf_a[buf_idx + 3] = FLOAT_TYPE(v.w);
-#elif defined(DATA_A_Q2_K)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 128;                         // 2 values per idx
-            const uint iqs = idx % 128;                        // 0..127
-
-            const uint qsi = (iqs / 64) * 32 + (iqs % 16) * 2; // 0,2,4..30
-            const uint scalesi = iqs / 8;                      // 0..15
-            const uint qsshift = ((iqs % 64) / 16) * 2;        // 0,2,4,6
-
-            const uvec2 qs = uvec2(data_a[ib].qs[qsi], data_a[ib].qs[qsi + 1]);
-            const uint scales = data_a[ib].scales[scalesi];
-            const vec2 d = vec2(data_a[ib].d);
-
-            const vec2 v = d.x * float(scales & 0xF) * vec2((qs >> qsshift) & 3) - d.y * float(scales >> 4);
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
-#elif defined(DATA_A_Q3_K)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 128;                   // 2 values per idx
-            const uint iqs = idx % 128;                  // 0..127
-
-            const uint n = iqs / 64;                     // 0,1
-            const uint qsi = n * 32 + (iqs % 16) * 2;    // 0,2,4..62
-            const uint hmi =          (iqs % 16) * 2;    // 0,2,4..30
-            const uint j = (iqs % 64) / 4;               // 0..3
-            const uint is = iqs / 8;                     // 0..15
-            const uint halfsplit = ((iqs % 64) / 16);    // 0,1,2,3
-            const uint qsshift = halfsplit * 2;          // 0,2,4,6
-            const uint m = 1 << (4 * n + halfsplit);     // 1,2,4,8,16,32,64,128
-
-            const int8_t us = int8_t(((data_a[ib].scales[is % 8] >> (4 * int(is / 8))) & 0xF)
-                                  | (((data_a[ib].scales[8 + (is % 4)] >> (2 * int(is / 4))) & 3) << 4));
-            const float dl = float(data_a[ib].d) * float(us - 32);
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(dl * float(int8_t((data_a[ib].qs[qsi    ] >> qsshift) & 3) - (((data_a[ib].hmask[hmi    ] & m) != 0) ? 0 : 4)));
-            buf_a[buf_idx + 1] = FLOAT_TYPE(dl * float(int8_t((data_a[ib].qs[qsi + 1] >> qsshift) & 3) - (((data_a[ib].hmask[hmi + 1] & m) != 0) ? 0 : 4)));
-#elif defined(DATA_A_Q4_K)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 128;                 // 2 values per idx
-            const uint iqs = idx % 128;                // 0..127
-
-            const uint n = iqs / 32;                   // 0,1,2,3
-            const uint b = (iqs % 32) / 16;            // 0,1
-            const uint is = 2 * n + b;                 // 0..7
-            const uint qsi = n * 32 + (iqs % 16) * 2;  // 0,2,4..126
-
-            const vec2 loadd = vec2(data_a[ib].d);
-
-            const uint scidx0 = (is < 4) ? is : (is + 4);
-            const uint scidx1 = (is < 4) ? is : (is - 4);
-            const uint scidxmask1 = (is < 4) ? 0x30 : 0xC0;
-            const uint scidxshift1 = (is < 4) ? 0 : 2;
-            const uint mbidx0 = is + 4;
-            const uint mbidx1 = (is < 4) ? is + 4 : is;
-            const uint mbidxmask0 = (is < 4) ? 0xF : 0xF0;
-            const uint mbidxshift0 = (is < 4) ? 0 : 4;
-            const uint mbidxmask1 = (is < 4) ? 0x30 : 0xC0;
-            const uint mbidxshift1 = (is < 4) ? 0 : 2;
-
-            const uint8_t sc = uint8_t((data_a[ib].scales[scidx0] & 0xF) | ((data_a[ib].scales[scidx1] & scidxmask1) >> scidxshift1));
-            const uint8_t mbyte = uint8_t((data_a[ib].scales[mbidx0] & mbidxmask0) >> mbidxshift0 | ((data_a[ib].scales[mbidx1] & mbidxmask1) >> mbidxshift1));
-
-            const float d = loadd.x * sc;
-            const float m = -loadd.y * mbyte;
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(fma(d, float((data_a[ib].qs[qsi    ] >> (b * 4)) & 0xF), m));
-            buf_a[buf_idx + 1] = FLOAT_TYPE(fma(d, float((data_a[ib].qs[qsi + 1] >> (b * 4)) & 0xF), m));
-#elif defined(DATA_A_Q5_K)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 128;                 // 2 values per idx
-            const uint iqs = idx % 128;                // 0..127
-
-            const uint n = iqs / 32;                   // 0,1,2,3
-            const uint b = (iqs % 32) / 16;            // 0,1
-            const uint is = 2 * n + b;                 // 0..7
-            const uint qsi = n * 32 + (iqs % 16) * 2;  // 0,2,4..126
-            const uint qhi = (iqs % 16) * 2;           // 0,2,4..30
-
-            const uint8_t hm = uint8_t(1 << (iqs / 16));
-
-            const vec2 loadd = vec2(data_a[ib].d);
-
-            const uint scidx0 = (is < 4) ? is : (is + 4);
-            const uint scidx1 = (is < 4) ? is : (is - 4);
-            const uint scidxmask1 = (is < 4) ? 0x30 : 0xC0;
-            const uint scidxshift1 = (is < 4) ? 0 : 2;
-            const uint mbidx0 = is + 4;
-            const uint mbidx1 = (is < 4) ? is + 4 : is;
-            const uint mbidxmask0 = (is < 4) ? 0xF : 0xF0;
-            const uint mbidxshift0 = (is < 4) ? 0 : 4;
-            const uint mbidxmask1 = (is < 4) ? 0x30 : 0xC0;
-            const uint mbidxshift1 = (is < 4) ? 0 : 2;
-
-            const uint8_t sc    = uint8_t((data_a[ib].scales[scidx0] & 0xF)                         | ((data_a[ib].scales[scidx1] & scidxmask1) >> scidxshift1));
-            const uint8_t mbyte = uint8_t(((data_a[ib].scales[mbidx0] & mbidxmask0) >> mbidxshift0) | ((data_a[ib].scales[mbidx1] & mbidxmask1) >> mbidxshift1));
-
-            const float d = loadd.x * sc;
-            const float m = -loadd.y * mbyte;
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(fma(d, float((data_a[ib].qs[qsi    ] >> (b * 4)) & 0xF) + float((data_a[ib].qh[qhi    ] & hm) != 0 ? 16 : 0), m));
-            buf_a[buf_idx + 1] = FLOAT_TYPE(fma(d, float((data_a[ib].qs[qsi + 1] >> (b * 4)) & 0xF) + float((data_a[ib].qh[qhi + 1] & hm) != 0 ? 16 : 0), m));
-#elif defined(DATA_A_Q6_K)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 128;                  // 2 values per idx
-            const uint iqs = idx % 128;                 // 0..127
-
-            const uint n = iqs / 64;                    // 0,1
-            const uint b = (iqs % 64) / 32;             // 0,1
-            const uint is_b = (iqs % 16) / 8;           // 0,1
-            const uint qhshift = ((iqs % 64) / 16) * 2; // 0,2,4,6
-            const uint is = 8 * n + qhshift + is_b;     // 0..15
-            const uint qsi = n * 64 + (iqs % 32) * 2;   // 0,2,4..126
-            const uint qhi = n * 32 + (iqs % 16) * 2;   // 0,2,4..62
-
-            const float dscale = float(data_a[ib].d) * float(data_a[ib].scales[is]);
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(dscale * float(int8_t(((data_a[ib].ql[qsi    ] >> (b * 4)) & 0xF) | (((data_a[ib].qh[qhi    ] >> qhshift) & 3) << 4)) - 32));
-            buf_a[buf_idx + 1] = FLOAT_TYPE(dscale * float(int8_t(((data_a[ib].ql[qsi + 1] >> (b * 4)) & 0xF) | (((data_a[ib].qh[qhi + 1] >> qhshift) & 3) << 4)) - 32));
-#elif defined(DATA_A_IQ1_S)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 32;                  // 8 values per idx
-            const uint ib32 = (idx % 32) / 4;         // 0..7
-            const uint ib8 = idx % 32;
-
-            const float d = float(data_a[ib].d);
-            const uint qh = data_a[ib].qh[ib32];
-            const uint qs = data_a[ib].qs[ib8];
-            const float dl = d * (2 * bitfieldExtract(qh, 12, 3) + 1);
-            const float delta = ((qh & 0x8000) != 0) ? -IQ1S_DELTA : IQ1S_DELTA;
-            const int16_t grid = int16_t(iq1s_grid[qs | (bitfieldExtract(qh, 3 * int(ib8 & 3), 3) << 8)]);
-
-            [[unroll]] for (int k = 0; k < 8; ++k) {
-                buf_a[buf_idx + k] = FLOAT_TYPE(dl * (bitfieldExtract(grid, 2 * k, 2) + delta));
-            }
-#elif defined(DATA_A_IQ1_M)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 32;  // 8 values per idx
-            const uint ib8 = idx % 32;
-            const uint ib16 = ib8 / 2;
-
-            const uint16_t[4] scales = data_a[ib].scales;
-            const u16vec4 s = u16vec4(scales[0], scales[1], scales[2], scales[3]) >> 12;
-            const float d = float(unpackHalf2x16(s.x | (s.y << 4) | (s.z << 8) | (s.w << 12)).x);
-            const uint sc = scales[ib8 / 8];
-            const uint qs = data_a[ib].qs[ib8];
-            const uint qh = data_a[ib].qh[ib16] >> (4 * (ib8 & 1));
-            const float dl = d * (2 * bitfieldExtract(sc, 3 * int(ib16 & 3), 3) + 1);
-            const float delta = ((qh & 8) != 0) ? -IQ1M_DELTA : IQ1M_DELTA;
-            const int16_t grid = int16_t(iq1s_grid[qs | ((qh & 7) << 8)]);
-
-            [[unroll]] for (int k = 0; k < 8; ++k) {
-                buf_a[buf_idx + k] = FLOAT_TYPE(dl * (bitfieldExtract(grid, 2 * k, 2) + delta));
-            }
-#elif defined(DATA_A_IQ2_XXS)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 32;                 // 8 values per idx
-            const uint ib32 = (idx % 32) / 4;         // 0..7
-            const uint ib8 = idx % 4;
-
-            const float d = float(data_a[ib].d);
-            const uint qs = data_a[ib].qs[8 * ib32 + ib8];
-            const uint signs = pack32(u8vec4(
-                data_a[ib].qs[8*ib32 + 4],
-                data_a[ib].qs[8*ib32 + 5],
-                data_a[ib].qs[8*ib32 + 6],
-                data_a[ib].qs[8*ib32 + 7]
-            ));
-            const FLOAT_TYPE db = FLOAT_TYPE(d * 0.25 * (0.5 + (signs >> 28)));
-            const uint32_t sign7 = bitfieldExtract(signs, 7 * int(ib8), 7);
-            const uint sign = sign7 | (bitCount(sign7) << 7);
-            const uvec2 grid = iq2xxs_grid[qs];
-            const vec4 grid0 = vec4(unpack8(grid.x));
-            const vec4 grid1 = vec4(unpack8(grid.y));
-
-            buf_a[buf_idx    ] = db * FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x);
-            buf_a[buf_idx + 1] = db * FLOAT_TYPE((sign &   2) != 0 ? -grid0.y : grid0.y);
-            buf_a[buf_idx + 2] = db * FLOAT_TYPE((sign &   4) != 0 ? -grid0.z : grid0.z);
-            buf_a[buf_idx + 3] = db * FLOAT_TYPE((sign &   8) != 0 ? -grid0.w : grid0.w);
-            buf_a[buf_idx + 4] = db * FLOAT_TYPE((sign &  16) != 0 ? -grid1.x : grid1.x);
-            buf_a[buf_idx + 5] = db * FLOAT_TYPE((sign &  32) != 0 ? -grid1.y : grid1.y);
-            buf_a[buf_idx + 6] = db * FLOAT_TYPE((sign &  64) != 0 ? -grid1.z : grid1.z);
-            buf_a[buf_idx + 7] = db * FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w);
-#elif defined(DATA_A_IQ2_XS)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 32;            // 8 values per idx
-            const uint ib32 = (idx % 32) / 4;    // 0..7
-            const uint ib8 = idx % 4;            // 0..3
-
-            const float d = float(data_a[ib].d);
-            const uint scale = (data_a[ib].scales[ib32] >> (2 * (ib8 & 2))) & 0xf;
-            const FLOAT_TYPE db = FLOAT_TYPE(d * 0.25 * (0.5 + scale));
-            const uint qs = data_a[ib].qs[4 * ib32 + ib8];
-            const uint sign7 = qs >> 9;
-            const uint sign = sign7 | (bitCount(sign7) << 7);
-            const uvec2 grid = iq2xs_grid[qs & 511];
-            const vec4 grid0 = vec4(unpack8(grid.x));
-            const vec4 grid1 = vec4(unpack8(grid.y));
-
-            buf_a[buf_idx    ] = db * FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x);
-            buf_a[buf_idx + 1] = db * FLOAT_TYPE((sign &   2) != 0 ? -grid0.y : grid0.y);
-            buf_a[buf_idx + 2] = db * FLOAT_TYPE((sign &   4) != 0 ? -grid0.z : grid0.z);
-            buf_a[buf_idx + 3] = db * FLOAT_TYPE((sign &   8) != 0 ? -grid0.w : grid0.w);
-            buf_a[buf_idx + 4] = db * FLOAT_TYPE((sign &  16) != 0 ? -grid1.x : grid1.x);
-            buf_a[buf_idx + 5] = db * FLOAT_TYPE((sign &  32) != 0 ? -grid1.y : grid1.y);
-            buf_a[buf_idx + 6] = db * FLOAT_TYPE((sign &  64) != 0 ? -grid1.z : grid1.z);
-            buf_a[buf_idx + 7] = db * FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w);
-#elif defined(DATA_A_IQ2_S)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 32;  // 8 values per idx
-            const uint ib8 = idx % 32; // 0..31
-            const uint ib32 = ib8 / 4; // 0..7
-
-            const uint scale = (data_a[ib].scales[ib32] >> (2 * (ib8 & 2))) & 0xf;
-            const uint qs = data_a[ib].qs[ib8];
-            const uint qh = data_a[ib].qh[ib32];
-            const uint qhshift = 2 * (ib8 % 4);
-            const uint sign = data_a[ib].qs[QUANT_K / 8 + ib8];
-
-            const float d = float(data_a[ib].d);
-            const FLOAT_TYPE db = FLOAT_TYPE(d * 0.25 * (0.5 + scale));
-            const uvec2 grid = iq2s_grid[qs | ((qh << (8 - qhshift)) & 0x300)];
-            const vec4 grid0 = vec4(unpack8(grid.x));
-            const vec4 grid1 = vec4(unpack8(grid.y));
-
-            buf_a[buf_idx    ] = db * FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x);
-            buf_a[buf_idx + 1] = db * FLOAT_TYPE((sign &   2) != 0 ? -grid0.y : grid0.y);
-            buf_a[buf_idx + 2] = db * FLOAT_TYPE((sign &   4) != 0 ? -grid0.z : grid0.z);
-            buf_a[buf_idx + 3] = db * FLOAT_TYPE((sign &   8) != 0 ? -grid0.w : grid0.w);
-            buf_a[buf_idx + 4] = db * FLOAT_TYPE((sign &  16) != 0 ? -grid1.x : grid1.x);
-            buf_a[buf_idx + 5] = db * FLOAT_TYPE((sign &  32) != 0 ? -grid1.y : grid1.y);
-            buf_a[buf_idx + 6] = db * FLOAT_TYPE((sign &  64) != 0 ? -grid1.z : grid1.z);
-            buf_a[buf_idx + 7] = db * FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w);
-#elif defined(DATA_A_IQ3_XXS)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 64;            // 4 values per idx
-            const uint iqs = idx % 64;           // 0..63
-            const uint is = QUANT_K / 4 + 4 * (iqs / 8); // 8 values
-
-            const float d = float(data_a[ib].d);
-            const uint qs = data_a[ib].qs[iqs];
-            const uint signs = pack32(u8vec4(
-                data_a[ib].qs[is+0],
-                data_a[ib].qs[is+1],
-                data_a[ib].qs[is+2],
-                data_a[ib].qs[is+3]
-            ));
-            const float db = d * 0.5 * (0.5 + (signs >> 28));
-            const uint32_t sign7 = bitfieldExtract(signs, 7 * (int(iqs / 2) % 4), 7);
-            const uint sign = (sign7 | (bitCount(sign7) << 7)) >> (4 * (idx % 2));
-            const uint grid = iq3xxs_grid[qs];
-            const vec4 v = db * vec4(unpack8(grid));
-
-            buf_a[buf_idx    ] = FLOAT_TYPE((sign &   1) != 0 ? -v.x : v.x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE((sign &   2) != 0 ? -v.y : v.y);
-            buf_a[buf_idx + 2] = FLOAT_TYPE((sign &   4) != 0 ? -v.z : v.z);
-            buf_a[buf_idx + 3] = FLOAT_TYPE((sign &   8) != 0 ? -v.w : v.w);
-#elif defined(DATA_A_IQ3_S)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 64;            // 4 values per idx
-            const uint iqs = idx % 64;           // 0..63
-            const uint iqh = iqs / 8;
-
-            const float d = float(data_a[ib].d);
-            const uint qs = data_a[ib].qs[iqs];
-            const uint qh = data_a[ib].qh[iqh];
-            const int8_t sign = int8_t(data_a[ib].signs[iqs / 2] >> (4 * (idx % 2)));
-            const uint scale = data_a[ib].scales[iqs / 16];
-            const i8vec2 sign01 = i8vec2(1 - (2 & i8vec2(sign << 1, sign)));
-            const float db = d * (1 + 2 * ((scale >> (4 * (iqh & 1))) & 0xf));
-            const uint32_t grid = iq3s_grid[qs | ((qh << (8 - (iqs % 8))) & 256)];
-            const vec4 v = db * vec4(unpack8(grid));
-
-            buf_a[buf_idx    ] = FLOAT_TYPE((sign &   1) != 0 ? -v.x : v.x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE((sign &   2) != 0 ? -v.y : v.y);
-            buf_a[buf_idx + 2] = FLOAT_TYPE((sign &   4) != 0 ? -v.z : v.z);
-            buf_a[buf_idx + 3] = FLOAT_TYPE((sign &   8) != 0 ? -v.w : v.w);
-#elif defined(DATA_A_IQ4_XS)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
-
-            const uint ib = idx / 128;                  // 2 values per idx
-            const uint ib32 = (idx % 128) / 16;         // 0..7
-            const uint iq = 16 * ib32 + 2 * (idx % 8);
-
-            const uint sl = (data_a[ib].scales_l[ib32/2] >> (4 * (ib32 & 1))) & 0xF;
-            const uint sh = ((data_a[ib].scales_h) >> (2 * ib32)) & 3;
-            const uint qshift = (idx & 8) >> 1;
-            u8vec2 qs = u8vec2(data_a[ib].qs[iq], data_a[ib].qs[iq + 1]);
-            qs = (qs >> qshift) & uint8_t(0xF);
-
-            const float d = float(data_a[ib].d);
-            const vec2 v = d * float(int(sl | (sh << 4)) - 32) * vec2(kvalues_iq4nl[qs.x], kvalues_iq4nl[qs.y]);
-
-            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
-            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
-#elif defined(DATA_A_IQ4_NL)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + 2 * loadr_a;
-
-            const uint ib = idx / 8;
-            const uint iqs = idx & 0x07;
-
-            const FLOAT_TYPE d = FLOAT_TYPE(data_a_packed16[ib].d);
-            const uint vui = uint(data_a_packed16[ib].qs[iqs]);
-
-            buf_a[buf_idx     ] = FLOAT_TYPE(kvalues_iq4nl[vui & 0xF]) * d;
-            buf_a[buf_idx + 1 ] = FLOAT_TYPE(kvalues_iq4nl[bitfieldExtract(vui, 8, 4)]) * d;
-            buf_a[buf_idx + 16] = FLOAT_TYPE(kvalues_iq4nl[bitfieldExtract(vui, 4, 4)]) * d;
-            buf_a[buf_idx + 17] = FLOAT_TYPE(kvalues_iq4nl[vui >> 12]) * d;
-#elif defined(DATA_A_MXFP4)
-            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
-            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + 2 * loadr_a;
-
-            const uint ib = idx / 8;
-            const uint iqs = (idx & 0x07) * 2;
-
-            const float d = e8m0_to_fp32(data_a[ib].e);
-            const uint vui = uint(data_a[ib].qs[iqs]);
-            const uint vui2 = uint(data_a[ib].qs[iqs+1]);
-
-            buf_a[buf_idx     ] = FLOAT_TYPE(kvalues_mxfp4[vui & 0xF] * d);
-            buf_a[buf_idx + 16] = FLOAT_TYPE(kvalues_mxfp4[vui >>  4] * d);
-            buf_a[buf_idx +  1] = FLOAT_TYPE(kvalues_mxfp4[vui2 & 0xF] * d);
-            buf_a[buf_idx + 17] = FLOAT_TYPE(kvalues_mxfp4[vui2 >>  4] * d);
-#endif
+            load_a_to_shmem(pos_a, loadr_a, loadc_a + l, ir * BM + loadc_a + l, block, end_k);
         }
         [[unroll]] for (uint l = 0; l < BN; l += loadstride_b) {
-#if LOAD_VEC_B == 8
-#ifdef MUL_MAT_ID
-            const u16vec2 row_idx = row_ids[ic * BN + loadc_b + l];
-            const uint idx = pos_b + row_idx.y * p.batch_stride_b / LOAD_VEC_B + (row_idx.x % p.ne11) * p.stride_b / LOAD_VEC_B + loadr_b;
+#if !defined(MUL_MAT_ID)
+            load_b_to_shmem(pos_b, loadr_b, loadc_b + l, ic * BN + loadc_b + l, block, end_k);
 #else
-            const uint idx = pos_b + (loadc_b + l) * p.stride_b / LOAD_VEC_B + loadr_b;
-#endif
-            const uint buf_idx = (loadc_b + l) * SHMEM_STRIDE + loadr_b * LOAD_VEC_B;
-            buf_b[buf_idx + 0] = FLOAT_TYPE(data_b[idx][0].x);
-            buf_b[buf_idx + 1] = FLOAT_TYPE(data_b[idx][0].y);
-            buf_b[buf_idx + 2] = FLOAT_TYPE(data_b[idx][0].z);
-            buf_b[buf_idx + 3] = FLOAT_TYPE(data_b[idx][0].w);
-            buf_b[buf_idx + 4] = FLOAT_TYPE(data_b[idx][1].x);
-            buf_b[buf_idx + 5] = FLOAT_TYPE(data_b[idx][1].y);
-            buf_b[buf_idx + 6] = FLOAT_TYPE(data_b[idx][1].z);
-            buf_b[buf_idx + 7] = FLOAT_TYPE(data_b[idx][1].w);
-#elif LOAD_VEC_B == 4
-#ifdef MUL_MAT_ID
-            const u16vec2 row_idx = row_ids[ic * BN + loadc_b + l];
-            const uint idx = pos_b + row_idx.y * p.batch_stride_b / LOAD_VEC_B + (row_idx.x % p.ne11) * p.stride_b / LOAD_VEC_B + loadr_b;
-#else
-            const uint idx = pos_b + (loadc_b + l) * p.stride_b / LOAD_VEC_B + loadr_b;
-#endif
-            const uint buf_idx = (loadc_b + l) * SHMEM_STRIDE + loadr_b * LOAD_VEC_B;
-            buf_b[buf_idx + 0] = TO_FLOAT_TYPE(data_b[idx].x);
-            buf_b[buf_idx + 1] = TO_FLOAT_TYPE(data_b[idx].y);
-            buf_b[buf_idx + 2] = TO_FLOAT_TYPE(data_b[idx].z);
-            buf_b[buf_idx + 3] = TO_FLOAT_TYPE(data_b[idx].w);
-#elif !MUL_MAT_ID
-            if (ic * BN + loadc_b + l < p.N && block + loadr_b < end_k) {
-                buf_b[(loadc_b + l) * SHMEM_STRIDE + loadr_b] = TO_FLOAT_TYPE(data_b[pos_b + (loadc_b + l) * p.stride_b + loadr_b]);
-            } else {
-                buf_b[(loadc_b + l) * SHMEM_STRIDE + loadr_b] = FLOAT_TYPE(0.0f);
-            }
-#else
-            const uint row_i = ic * BN + loadc_b + l;
-            if (row_i < _ne1) {
-                const u16vec2 row_idx = row_ids[row_i];
-                buf_b[(loadc_b + l) * SHMEM_STRIDE + loadr_b] = TO_FLOAT_TYPE(data_b[pos_b + row_idx.y * p.batch_stride_b + (row_idx.x % p.ne11) * p.stride_b + loadr_b]);
-            } else {
-                buf_b[(loadc_b + l) * SHMEM_STRIDE + loadr_b] = FLOAT_TYPE(0.0f);
-            }
+            load_b_to_shmem(pos_b, loadr_b, loadc_b + l, ic, _ne1, block, end_k);
 #endif
         }
 
@@ -819,17 +343,17 @@ void main() {
         [[unroll]] for (uint i = 0; i < BK; i += TK) {
             [[unroll]] for (uint cm_row = 0; cm_row < cms_per_row; cm_row++) {
                 // Load from shared into cache
-                coopMatLoad(cache_a, buf_a, (warp_r * WM + cm_row * TM) * SHMEM_STRIDE + i, SHMEM_STRIDE, gl_CooperativeMatrixLayoutRowMajor);
+                coopMatLoad(cache_a, buf_a, (warp_r * WM + cm_row * TM) * SHMEM_STRIDE + i / 2, SHMEM_STRIDE, gl_CooperativeMatrixLayoutRowMajor);
 
                 [[unroll]] for (uint cm_col = 0; cm_col < cms_per_col; cm_col++) {
-                    coopMatLoad(cache_b, buf_b, (warp_c * WN + cm_col * TN) * SHMEM_STRIDE + i, SHMEM_STRIDE, gl_CooperativeMatrixLayoutColumnMajor);
+                    coopMatLoad(cache_b, buf_b, (warp_c * WN + cm_col * TN) * SHMEM_STRIDE + i / 2, SHMEM_STRIDE, gl_CooperativeMatrixLayoutColumnMajor);
 
                     sums[cm_col * cms_per_row + cm_row] = coopMatMulAdd(cache_a, cache_b, sums[cm_col * cms_per_row + cm_row]);
                 }
             }
         }
 #else
-        [[unroll]] for (uint i = 0; i < BK; i++) {
+        [[unroll]] for (uint i = 0; i < BK / 2; i++) {
             // Load from shared into cache
             [[unroll]] for (uint wsir = 0; wsir < WMITER; wsir++) {
                 [[unroll]] for (uint j = 0; j < TM; j++) {
@@ -845,7 +369,7 @@ void main() {
                     [[unroll]] for (uint cc = 0; cc < TN; cc++) {
                         [[unroll]] for (uint cr = 0; cr < TM; cr++) {
                             const uint sums_idx = (wsic * TN + cc) * (WMITER * TM) + wsir * TM + cr;
-                            sums[sums_idx] = fma(ACC_TYPE(cache_a[wsir * TM + cr]), ACC_TYPE(cache_b[cc]), sums[sums_idx]);
+                            sums[sums_idx] = fma(ACC_TYPE(cache_a[wsir * TM + cr].x), ACC_TYPE(cache_b[cc].x), fma(ACC_TYPE(cache_a[wsir * TM + cr].y), ACC_TYPE(cache_b[cc].y), sums[sums_idx]));
                         }
                     }
                 }
@@ -855,6 +379,20 @@ void main() {
 
         barrier();
     }
+
+#if defined(ACC_TYPE_MAX)
+#ifdef COOPMAT
+    [[unroll]] for (uint j = 0; j < cms_per_row * cms_per_col; j++) {
+        [[unroll]] for (uint i = 0; i < sums[j].length(); ++i) {
+            sums[j][i] = clamp(sums[j][i], -ACC_TYPE_MAX, ACC_TYPE_MAX);
+        }
+    }
+#else
+    [[unroll]] for (uint i = 0; i < WMITER*TM*WNITER*TN; i++) {
+        sums[i] = clamp(sums[i], -ACC_TYPE_MAX, ACC_TYPE_MAX);
+    }
+#endif
+#endif
 
     const uint dr = ir * BM + warp_r * WM;
     const uint dc = ic * BN + warp_c * WN;
@@ -873,9 +411,11 @@ void main() {
                 const uint row_i = dc + cm_col * TN + col + store_c;
                 if (row_i >= _ne1) break;
 
-                const u16vec2 row_idx = row_ids[row_i];
+                const u16vec2 row_idx = row_ids[row_i - ic * BN];
 
-                data_d[row_idx.y * p.batch_stride_d + row_idx.x * p.stride_d + dr + cm_row * TM + store_r] = D_TYPE(coopmat_stage[warp_i * TM * TN + (col + store_c) * TM + store_r]);
+                if (dr + cm_row * TM + store_r < p.M) {
+                    data_d[row_idx.y * p.batch_stride_d + row_idx.x * p.stride_d + dr + cm_row * TM + store_r] = D_TYPE(coopmat_stage[warp_i * TM * TN + (col + store_c) * TM + store_r]);
+                }
             }
         }
     }
@@ -921,11 +461,13 @@ void main() {
                 const uint row_i = dc_warp + cc;
                 if (row_i >= _ne1) break;
 
-                const u16vec2 row_idx = row_ids[row_i];
+                const u16vec2 row_idx = row_ids[row_i - ic * BN];
 #endif // MUL_MAT_ID
                 [[unroll]] for (uint cr = 0; cr < TM; cr++) {
 #ifdef MUL_MAT_ID
-                    data_d[row_idx.y * p.batch_stride_d + row_idx.x * p.stride_d + dr_warp + cr] = D_TYPE(sums[(wsic * TN + cc) * (WMITER * TM) + wsir * TM + cr]);
+                    if (dr_warp + cr < p.M) {
+                        data_d[row_idx.y * p.batch_stride_d + row_idx.x * p.stride_d + dr_warp + cr] = D_TYPE(sums[(wsic * TN + cc) * (WMITER * TM) + wsir * TM + cr]);
+                    }
 #else
                     if (dr_warp + cr < p.M && dc_warp + cc < p.N) {
                         data_d[offsets + (dc_warp + cc) * p.stride_d + dr_warp + cr] = D_TYPE(sums[(wsic * TN + cc) * (WMITER * TM) + wsir * TM + cr]);

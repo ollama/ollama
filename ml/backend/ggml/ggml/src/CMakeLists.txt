@@ -114,6 +114,9 @@ message(STATUS "GGML_SYSTEM_ARCH: ${GGML_SYSTEM_ARCH}")
 
 if (NOT MSVC)
     if (GGML_STATIC)
+        if (UNIX AND NOT APPLE)
+            set(CMAKE_FIND_LIBRARY_SUFFIXES ".a;.so")
+        endif()
         add_link_options(-static)
         if (MINGW)
             add_link_options(-static-libgcc -static-libstdc++)
@@ -203,6 +206,8 @@ add_library(ggml-base
             ggml-threading.h
             ggml-quants.c
             ggml-quants.h
+            mem_hip.cpp
+            mem_nvml.cpp
             gguf.cpp)
 
 target_include_directories(ggml-base PRIVATE .)
@@ -380,6 +385,7 @@ ggml_add_backend(RPC)
 ggml_add_backend(SYCL)
 ggml_add_backend(Vulkan)
 ggml_add_backend(WebGPU)
+ggml_add_backend(zDNN)
 ggml_add_backend(OpenCL)
 
 foreach (target ggml-base ggml)

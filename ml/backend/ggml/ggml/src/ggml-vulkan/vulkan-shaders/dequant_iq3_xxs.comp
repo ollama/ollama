@@ -35,8 +35,10 @@ void main() {
         const uint sign7 = bitfieldExtract(signscale, 7 * int(l), 7);
         // Restore parity bit.
         const uint sign8 = sign7 | (bitCount(sign7) << 7);
-        const u8vec4 grid0 = unpack8(iq3xxs_grid[data_a[ib].qs[8 * is + 2 * l]]);
-        const u8vec4 grid1 = unpack8(iq3xxs_grid[data_a[ib].qs[8 * is + 2 * l + 1]]);
+        const uint qs0 = data_a[ib].qs[8 * is + 2 * l];
+        const uint qs1 = data_a[ib].qs[8 * is + 2 * l + 1];
+        const u8vec4 grid0 = unpack8(iq3xxs_grid[qs0]);
+        const u8vec4 grid1 = unpack8(iq3xxs_grid[qs1]);
         data_b[b_idx + 8 * l + 0] = D_TYPE(db * grid0.x * ((sign8 & 1) != 0 ? -1.0 : 1.0));
         data_b[b_idx + 8 * l + 1] = D_TYPE(db * grid0.y * ((sign8 & 2) != 0 ? -1.0 : 1.0));
         data_b[b_idx + 8 * l + 2] = D_TYPE(db * grid0.z * ((sign8 & 4) != 0 ? -1.0 : 1.0));
