@@ -48,16 +48,10 @@ Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v12 rocm_v5]
 
 **Experimental LLM Library Override**
 
-You can set OLLAMA_LLM_LIBRARY to any of the available LLM libraries to bypass autodetection, so for example, if you have a CUDA card, but want to force the CPU LLM library with AVX2 vector support, use:
+You can set OLLAMA_LLM_LIBRARY to any of the available LLM libraries to limit autodetection, so for example, if you have both CUDA and AMD GPUs, but want to force the CUDA v13 only, use:
 
 ```shell
-OLLAMA_LLM_LIBRARY="cpu_avx2" ollama serve
-```
-
-You can see what features your CPU has with the following.
-
-```shell
-cat /proc/cpuinfo| grep flags | head -1
+OLLAMA_LLM_LIBRARY="cuda_v13" ollama serve
 ```
 
 ## Installing older or pre-release versions on Linux
