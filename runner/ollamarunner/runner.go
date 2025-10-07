@@ -110,9 +110,7 @@ type NewSequenceParams struct {
 	truncate   bool
 }
 
-var (
-	errorInputTooLong = errors.New("the input length exceeds the context length")
-)
+var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
