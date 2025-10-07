@@ -13,11 +13,9 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
-// parsers shouldn't need to do images
-
 const (
-	CollectingContent         qwenParserState = iota
-	CollectingThinkingContent                 // this is because qwen3vl starts with <thinking>
+	CollectingContent qwenParserState = iota
+	CollectingThinkingContent
 	CollectingToolContent
 )
 
@@ -43,7 +41,6 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
 	return tools
-	// does qwenvl modify tools? what does this mean?
 }
 
 type qwenEventThinkingContent struct {
@@ -103,9 +100,9 @@ func (p *Qwen3VLParser) parseEvents() []qwenEvent {
 
 // think if a better name
 func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qwenEvent {
-	split := strings.SplitN(p.buffer.String(), tag, 2)      // what is his 2 for?
-	before := split[0]                                      // before the tag
-	before = strings.TrimRightFunc(before, unicode.IsSpace) // trim all the space after the bfire
+	split := strings.SplitN(p.buffer.String(), tag, 2)
+	before := split[0]
+	before = strings.TrimRightFunc(before, unicode.IsSpace)
 	if len(before) > 0 {
 		events = append(events, qwenEventContent{content: before})
 	}
@@ -127,52 +124,38 @@ func findFirstTag(p *Qwen3VLParser, tags []string) string {
 			firstTag = tag
 		}
 	}
-	if minIdx == -1 { // just content
+	if minIdx == -1 {
 		return ""
 	}
-	return firstTag // there is a possibility that there is no tag, can you return nil for that?
+	return firstTag
 }
 
 func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	var events []qwenEvent
 
-	// certain events:
-	// - thinking opening tag
-	// - tool opening tag
-
-	// since there is multiple tags, we need to think about which tag comes first
-	// we also need to create a list for
 	firstTag := findFirstTag(p, []string{thinkingOpenTag, toolOpenTag})
 
 	switch p.state {
-	case CollectingContent: // we  can only look for thinking content if we're collecting content
-
-		// if strings.Contains(p.buffer.String(), thinkingOpenTag) { // found thinking
+	case CollectingContent:
 		if firstTag == thinkingOpenTag {
-			// string contains the openThinkingTag, we move it to the CollectingThinkingContent state
 			events = emitContentBeforeTag(p, events, thinkingOpenTag)
-			p.state = CollectingThinkingContent // <found a thinking>
+			p.state = CollectingThinkingContent
 			return events, true
-			// } else if strings.Contains(p.buffer.String(), toolOpenTag) { // found tool call
 		} else if firstTag == toolOpenTag {
 			events = emitContentBeforeTag(p, events, toolOpenTag)
-			p.state = CollectingToolContent // found a <tool_call>
+			p.state = CollectingToolContent
 			return events, true
-		} else if overlapLen := overlap(p.buffer.String(), thinkingOpenTag); overlapLen > 0 { // found a partial thinking tag
-			// it is only possible that they find 1
-			// found a partial think tag, emit the unambiguous before the partial tool call
-			// hello </think -> hello, so ambiguous start includes all the whitespace before the tag
+		} else if overlapLen := overlap(p.buffer.String(), thinkingOpenTag); overlapLen > 0 {
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
-			// HAVENT ADDED TRAILING WHITESPACE YET...
 			unambiguous := p.buffer.String()[:ambiguousStart]
 			ambiguous := p.buffer.String()[ambiguousStart:]
 			p.buffer.Reset()
 			p.buffer.WriteString(ambiguous)
 			events = append(events, qwenEventContent{content: unambiguous})
 			return events, false
-		} else if overlapLen := overlap(p.buffer.String(), toolOpenTag); overlapLen > 0 { // found a partial tool call tag
+		} else if overlapLen := overlap(p.buffer.String(), toolOpenTag); overlapLen > 0 {
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
@@ -183,9 +166,9 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			p.buffer.WriteString(ambiguous)
 			events = append(events, qwenEventContent{content: unambiguous})
 			return events, false
-		} else { // no partial or full thinking or tool call tag found
-			whitespaceLen := trailingWhitespaceLen(p.buffer.String()) // <- all the trailing space we consider ambiguous
-			ambiguousStart := len(p.buffer.String()) - whitespaceLen  // - whitespaceLen
+		} else {
+			whitespaceLen := trailingWhitespaceLen(p.buffer.String())
+			ambiguousStart := len(p.buffer.String()) - whitespaceLen
 			unambiguous := p.buffer.String()[:ambiguousStart]
 			ambiguous := p.buffer.String()[ambiguousStart:]
 			p.buffer.Reset()
@@ -195,16 +178,16 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			}
 			return events, false
 		}
-	case CollectingToolContent: // we only move towards the CollectingContent state
+	case CollectingToolContent:
 		if strings.Contains(p.buffer.String(), toolCloseTag) {
-			split := strings.SplitN(p.buffer.String(), toolCloseTag, 2) // this one splits by the first one
+			split := strings.SplitN(p.buffer.String(), toolCloseTag, 2)
 			before := split[0]
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
-			// after := split[1]
-			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)   // no whit space yet
-			events = append(events, qwenEventRawToolCall{raw: before}) // do these need to be "seperated"?
+
+			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+			events = append(events, qwenEventRawToolCall{raw: before})
 			p.buffer.Reset()
 			p.buffer.WriteString(after)
 			p.state = CollectingContent
@@ -215,13 +198,11 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	case CollectingThinkingContent:
 		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
 			split := strings.SplitN(p.buffer.String(), thinkingCloseTag, 2)
-			// so it looks like before contains the open tag
 			fmt.Println("split", split)
 			before := split[0]
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
-			// after := split[1] // no whit space yet
 			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
 			events = append(events, qwenEventThinkingContent{content: before})
 			p.buffer.Reset()

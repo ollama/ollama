@@ -330,7 +330,6 @@ func (t *ToolFunctionParameters) String() string {
 	return string(bts)
 }
 
-// check what works with toolfunction
 type ToolFunction struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
