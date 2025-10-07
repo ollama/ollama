@@ -78,6 +78,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		}
 
 		slog.Info("discovering available GPUs...")
+		requested := envconfig.LLMLibrary()
 
 		// For our initial discovery pass, we gather all the known GPUs through
 		// all the libraries that were detected. This pass may include GPUs that
@@ -86,6 +87,10 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// times concurrently leading to memory contention
 		for dir := range libDirs {
 			var dirs []string
+			if requested != "" && dir != "" && filepath.Base(dir) != requested {
+				slog.Debug("skipping available library at users request", "requested", requested, "libDir", dir)
+				continue
+			}
 			if dir == "" {
 				dirs = []string{LibOllamaPath}
 			} else {
