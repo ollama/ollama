@@ -15,7 +15,7 @@ import (
 // 	return t
 // }
 
-func TestQwen3VLParserStreaming(t *testing.T) {
+func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 	type step struct {
 		input      string
 		wantEvents []qwenEvent
@@ -30,21 +30,33 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 		{
 			desc: "simple thinking",
 			steps: []step{
-				{input: "<thinking>abc</thinking>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+				{input: "abc</think>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+			},
+		},
+		{
+			desc: "simple trip thinking",
+			steps: []step{
+				{input: "<think>abc</think>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "<think>abc"}}},
 			},
 		},
 		{
 			desc: "thinking with split tags",
 			steps: []step{
-				{input: "<thinking>abc", wantEvents: []qwenEvent{}},
-				{input: "</thinking>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+				{input: "abc", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+				{input: "</think>", wantEvents: []qwenEvent{}},
+			},
+		},
+		{
+			desc: "multiple think tags",
+			steps: []step{
+				{input: "abc<think>actually, is not thinking</think>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc<think>actually, is not thinking"}}},
 			},
 		},
 		{
 			desc: "thinking and tool call",
 			steps: []step{
 				{
-					input: "<thinking>I'm thinking</thinking><tool_call>I'm tool calling</tool_call>",
+					input: "I'm thinking</think><tool_call>I'm tool calling</tool_call>",
 					wantEvents: []qwenEvent{
 						qwenEventThinkingContent{content: "I'm thinking"},
 						qwenEventRawToolCall{raw: "I'm tool calling"},
@@ -56,7 +68,7 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "thinking and content",
 			steps: []step{
 				{
-					input: "<thinking>I'm thinking</thinking>I'm content",
+					input: "I'm thinking</think>I'm content",
 					wantEvents: []qwenEvent{
 						qwenEventThinkingContent{content: "I'm thinking"},
 						qwenEventContent{content: "I'm content"},
@@ -71,10 +83,10 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "nested thinking (outside thinking, inside thinking)",
 			steps: []step{
 				{
-					input: "<thinking>I'm thinking<thinking>I'm nested thinking</thinking></thinking>",
+					input: "I'm thinking<think>I'm nested thinking</think></think>",
 					wantEvents: []qwenEvent{
-						qwenEventThinkingContent{content: "I'm thinking<thinking>I'm nested thinking"},
-						qwenEventContent{content: "</thinking>"},
+						qwenEventThinkingContent{content: "I'm thinking<think>I'm nested thinking"},
+						qwenEventContent{content: "</think>"},
 					},
 				},
 			},
@@ -83,10 +95,10 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "interleaved thinking",
 			steps: []step{
 				{
-					input: "<thinking>I'm thinking<thinking></thinking>I'm actually content</thinking>",
+					input: "<think>I'm thinking</think>I'm actually content</think>",
 					wantEvents: []qwenEvent{
-						qwenEventThinkingContent{content: "I'm thinking<thinking>"},
-						qwenEventContent{content: "I'm actually content</thinking>"},
+						qwenEventThinkingContent{content: "<think>I'm thinking"},
+						qwenEventContent{content: "I'm actually content</think>"},
 					},
 				},
 			},
@@ -95,7 +107,7 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "nested thinking and tool call (outside thinking, inside tool call)",
 			steps: []step{
 				{
-					input:      "<thinking>I'm thinking<tool_call>I'm nested tool call</tool_call></thinking>",
+					input:      "I'm thinking<tool_call>I'm nested tool call</tool_call></think>",
 					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm nested tool call</tool_call>"}},
 				},
 			},
@@ -104,8 +116,11 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "nested thinking and tool call (outside tool call, inside thinking)",
 			steps: []step{
 				{
-					input:      "<tool_call>I'm nested tool call<thinking>I'm thinking</thinking></tool_call>",
-					wantEvents: []qwenEvent{qwenEventRawToolCall{raw: "I'm nested tool call<thinking>I'm thinking</thinking>"}},
+					input: "<tool_call>I'm nested tool call<think>I'm thinking</think></tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "<tool_call>I'm nested tool call<think>I'm thinking"},
+						qwenEventContent{content: "</tool_call>"},
+					},
 				},
 			},
 		},
@@ -113,12 +128,12 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "interleaved thinking and tool call",
 			steps: []step{
 				{
-					input: "<thinking>I'm thinking<tool_call>I'm NOT a nested tool call</thinking></tool_call><tool_call>I'm nested tool call 2<thinking></tool_call></thinking>",
+					input: "I'm thinking<tool_call>I'm NOT a nested tool call</think></tool_call><tool_call>I'm nested tool call 2<think></tool_call></think>",
 					wantEvents: []qwenEvent{
 						qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm NOT a nested tool call"},
 						qwenEventContent{content: "</tool_call>"},
-						qwenEventRawToolCall{raw: "I'm nested tool call 2<thinking>"},
-						qwenEventContent{content: "</thinking>"},
+						qwenEventRawToolCall{raw: "I'm nested tool call 2<think>"},
+						qwenEventContent{content: "</think>"},
 					},
 				},
 			},
@@ -127,16 +142,12 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "partial thinking tag fakeout",
 			steps: []step{
 				{
-					input: "abc<thinking",
-					wantEvents: []qwenEvent{
-						qwenEventContent{content: "abc"},
-					},
+					input:      "abc</think",
+					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}},
 				},
 				{
-					input: " fakeout",
-					wantEvents: []qwenEvent{
-						qwenEventContent{content: "<thinking fakeout"},
-					},
+					input:      " fakeout",
+					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "</think fakeout"}},
 				},
 			},
 		},
@@ -144,9 +155,46 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 			desc: "partial thinking incomplete",
 			steps: []step{
 				{
-					input: "abc<thinking>unfinished</thinking", // when something is ambiguious, we dont emit anything
+					input:      "abc<think>unfinished</think", // when something is ambiguious, we dont emit anything
+					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc<think>unfinished"}},
+				},
+			},
+		},
+		{
+			desc: "test with split thinking and content",
+			steps: []step{
+				{
+					input:      "abc<think>unfinished</th", // when something is ambiguious, we dont emit anything
+					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc<think>unfinished"}},
+				},
+				{
+					input: "ink> def",
 					wantEvents: []qwenEvent{
-						qwenEventContent{content: "abc"},
+						qwenEventContent{content: "def"},
+					},
+				},
+			},
+		},
+		{
+			desc: "thinking with no tags",
+			steps: []step{
+				{
+					input: "Hello I am thinking",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "Hello I am thinking"},
+					},
+				},
+				{
+					input: "Hello I am thinking some more",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "Hello I am thinking some more"},
+					},
+				},
+				{
+					input: "Hello I am think</think>     NOT",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "Hello I am think"},
+						qwenEventContent{content: "NOT"},
 					},
 				},
 			},
@@ -184,42 +232,9 @@ func TestQwen3VLParserStreaming(t *testing.T) {
 	}
 }
 
-func TestQwen3VLComplex(t *testing.T) {
-	type step struct {
-		input      string
-		wantEvents []qwenEvent
-	}
-
-	cases := []struct {
-		desc  string
-		steps []step
-		only  bool
-	}{
-		{
-			desc: "simple tool call",
-			steps: []step{
-				{
-					input:      "Here are 30 distinct and popular emojis for you! 😊\n\n1. 😂  \n2. ❤️  \n3. 🌟  \n4. 🐶  \n5. 🍕  \n6. ✨  \n7. 🌈  \n8. 🎉  \n9. 🌎  \n10. 🦁  \n11. 💯  \n12. 🥰  \n13. 🌸  \n14. 🚀  \n15. 🌊  \n16. 🍦  \n17. 🌙  \n18. 🌞  \n19. 🌻  \n20. 🦋  \n21. 🍃  \n22. 🏆  \n23. 🌮  \n24. 🧸  \n25. 🎮  \n26. 📚  \n27. ✈️  \n28. 🌟 (sparkles)  \n29. 🌈 (rainbow)  \n30. 🥳  \n\n*Bonus fun fact:* The 😂 (Face with Tears of Joy) was Oxford Dictionaries' Word of the Year in 2015! 🎉  \nLet me know if you'd like themed emojis (e.g., animals, food, or emotions)! 🐱🍕📚",
-					wantEvents: []qwenEvent{qwenEventContent{content: "bruh"}},
-				},
-			},
-		},
-	}
-	for _, tc := range cases {
-		for i, step := range tc.steps {
-			parser := Qwen3VLParser{}
-			parser.buffer.WriteString(step.input)
-			gotEvents := parser.parseEvents()
-			if !reflect.DeepEqual(gotEvents, step.wantEvents) {
-				t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
-			}
-		}
-	}
-}
-
 // TODO: devin was saying something about json cant figure out types?
 // do we need to test for
-func TestQwen3VLToolParser(t *testing.T) {
+func TestQwen3VLThinkingToolParser(t *testing.T) {
 	type step struct {
 		name         string
 		rawToolCall  string

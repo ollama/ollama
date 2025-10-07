@@ -17,7 +17,7 @@ var IMAGE2_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADMElEQVR4nOz
 // - [ ] set descriptions to omitempty?
 // - [] images add the auto tag
 
-func TestQwen3VLRenderer(t *testing.T) {
+func TestQwen3VLThinkingRenderer(t *testing.T) {
 	tests := []struct {
 		name     string
 		msgs     []api.Message
@@ -327,7 +327,8 @@ Thanks! What are the results?<|im_end|>
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := Qwen3VLRenderer(tt.msgs, tt.tools, nil)
+			// rendered, err := Qwen3VLRenderer(tt.msgs, tt.tools, nil)
+			rendered, err := (&Qwen3VLRenderer{true}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

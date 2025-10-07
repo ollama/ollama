@@ -13,15 +13,23 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
+func (p *Qwen3VLParser) initialState() qwenParserState {
+	if p.HasThinkingSupport() { // has thinking, start from collecting thinking content
+		return CollectingThinkingContent
+	}
+	return CollectingContent
+}
+
+// its because we dont call the Init function
 const (
-	CollectingContent qwenParserState = iota
-	CollectingThinkingContent
+	CollectingThinkingContent qwenParserState = iota
+	CollectingContent
 	CollectingToolContent
 )
 
 const (
-	thinkingOpenTag  = "<thinking>"
-	thinkingCloseTag = "</thinking>"
+	// thinkingOpenTag  = "<think>"
+	thinkingCloseTag = "</think>"
 )
 
 type Qwen3VLParser struct {
@@ -40,6 +48,8 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
+	p.state = p.initialState()
+	fmt.Println("[qwen3vl parser] initial state", p.state)
 	return tools
 }
 
@@ -112,49 +122,16 @@ func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qw
 	return events
 }
 
-// findFirstTag returns the tag that appears first in the buffer among the provided tags.
-// If no tag is found, it returns an empty string.
-func findFirstTag(p *Qwen3VLParser, tags []string) string {
-	minIdx := -1
-	var firstTag string
-	for _, tag := range tags {
-		idx := strings.Index(p.buffer.String(), tag)
-		if idx != -1 && (minIdx == -1 || idx < minIdx) {
-			minIdx = idx
-			firstTag = tag
-		}
-	}
-	if minIdx == -1 {
-		return ""
-	}
-	return firstTag
-}
-
 func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	var events []qwenEvent
-
-	firstTag := findFirstTag(p, []string{thinkingOpenTag, toolOpenTag})
+	// fmt.Println("[qwen3vl parser] eat", p.state)
 
 	switch p.state {
 	case CollectingContent:
-		if firstTag == thinkingOpenTag {
-			events = emitContentBeforeTag(p, events, thinkingOpenTag)
-			p.state = CollectingThinkingContent
-			return events, true
-		} else if firstTag == toolOpenTag {
+		if strings.Contains(p.buffer.String(), toolOpenTag) {
 			events = emitContentBeforeTag(p, events, toolOpenTag)
 			p.state = CollectingToolContent
 			return events, true
-		} else if overlapLen := overlap(p.buffer.String(), thinkingOpenTag); overlapLen > 0 {
-			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
-			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
-			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
-			unambiguous := p.buffer.String()[:ambiguousStart]
-			ambiguous := p.buffer.String()[ambiguousStart:]
-			p.buffer.Reset()
-			p.buffer.WriteString(ambiguous)
-			events = append(events, qwenEventContent{content: unambiguous})
-			return events, false
 		} else if overlapLen := overlap(p.buffer.String(), toolOpenTag); overlapLen > 0 {
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
@@ -164,11 +141,14 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			ambiguous := p.buffer.String()[ambiguousStart:]
 			p.buffer.Reset()
 			p.buffer.WriteString(ambiguous)
-			events = append(events, qwenEventContent{content: unambiguous})
+			if len(unambiguous) > 0 { // why does qwen3coder not have this here
+				events = append(events, qwenEventContent{content: unambiguous})
+			}
 			return events, false
 		} else {
 			whitespaceLen := trailingWhitespaceLen(p.buffer.String())
 			ambiguousStart := len(p.buffer.String()) - whitespaceLen
+
 			unambiguous := p.buffer.String()[:ambiguousStart]
 			ambiguous := p.buffer.String()[ambiguousStart:]
 			p.buffer.Reset()
@@ -195,21 +175,46 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 		} else {
 			return events, false
 		}
-	case CollectingThinkingContent:
+	case CollectingThinkingContent: // so we want to hip the unambiguous stuff
 		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
 			split := strings.SplitN(p.buffer.String(), thinkingCloseTag, 2)
-			fmt.Println("split", split)
+			// fmt.Println("split", split)
 			before := split[0]
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
 			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
-			events = append(events, qwenEventThinkingContent{content: before})
+			if len(before) > 0 {
+				events = append(events, qwenEventThinkingContent{content: before})
+			}
 			p.buffer.Reset()
 			p.buffer.WriteString(after)
 			p.state = CollectingContent
 			return events, true
+		} else if overlapLen := overlap(p.buffer.String(), thinkingCloseTag); overlapLen > 0 { // we see part of a close thinking tag
+			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
+			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
+
+			unambiguous := p.buffer.String()[:ambiguousStart]
+			ambiguous := p.buffer.String()[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, qwenEventThinkingContent{content: unambiguous})
+			}
+			return events, false
 		} else {
+			whitespaceLen := trailingWhitespaceLen(p.buffer.String())
+			ambiguousStart := len(p.buffer.String()) - whitespaceLen
+
+			unambiguous := p.buffer.String()[:ambiguousStart]
+			ambiguous := p.buffer.String()[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, qwenEventThinkingContent{content: unambiguous})
+			}
 			return events, false
 		}
 	default:
