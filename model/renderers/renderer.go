@@ -16,14 +16,13 @@ type Renderer interface {
 	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
 }
 
-// func rendererForName(name string) rendererFunc {
 func RendererForName(name string) Renderer {
 	switch name {
 	case "qwen3-coder":
 		renderer := &Qwen3CoderRenderer{false} // this is not implemented yet
 		return renderer
 	case "qwen3-vl":
-		renderer := &Qwen3VLRenderer{false}
+		renderer := &Qwen3VLRenderer{false} // not a thinking model?
 		return renderer
 	default:
 		return nil

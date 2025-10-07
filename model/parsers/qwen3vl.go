@@ -20,18 +20,18 @@ func (p *Qwen3VLParser) initialState() qwenParserState {
 	return CollectingContent
 }
 
-// its because we dont call the Init function
+// TODO: call the init function
 const (
-	CollectingThinkingContent qwenParserState = iota
-	CollectingContent
+	CollectingContent         qwenParserState = iota
+	CollectingThinkingContent                 // qwenParserState = iota
 	CollectingToolContent
 )
 
 const (
-	// thinkingOpenTag  = "<think>"
 	thinkingCloseTag = "</think>"
 )
 
+// TODO(gguo): add a field for isThinking
 type Qwen3VLParser struct {
 	state  qwenParserState
 	buffer strings.Builder
@@ -42,6 +42,7 @@ func (p *Qwen3VLParser) HasToolSupport() bool {
 	return true
 }
 
+// TODO(gguo): changes this to reference an objects param
 func (p *Qwen3VLParser) HasThinkingSupport() bool {
 	return true
 }
@@ -49,7 +50,6 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
 	p.state = p.initialState()
-	fmt.Println("[qwen3vl parser] initial state", p.state)
 	return tools
 }
 
@@ -108,7 +108,6 @@ func (p *Qwen3VLParser) parseEvents() []qwenEvent {
 	return all
 }
 
-// think if a better name
 func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qwenEvent {
 	split := strings.SplitN(p.buffer.String(), tag, 2)
 	before := split[0]
@@ -124,7 +123,6 @@ func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qw
 
 func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	var events []qwenEvent
-	// fmt.Println("[qwen3vl parser] eat", p.state)
 
 	switch p.state {
 	case CollectingContent:
