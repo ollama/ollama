@@ -49,7 +49,12 @@ func marshalWithSpaces(v any) ([]byte, error) {
 	return out, nil
 }
 
-func renderContent(content api.Message, doVisionCount bool) string {
+type Qwen3VLRenderer struct {
+	isThinking bool
+}
+
+// func renderContent(content api.Message, doVisionCount bool) string {
+func (r *Qwen3VLRenderer) renderContent(content api.Message, doVisionCount bool) string {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
 	for _ = range content.Images {
@@ -64,9 +69,10 @@ func renderContent(content api.Message, doVisionCount bool) string {
 	return subSb.String()
 }
 
-func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+// func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
-	isThinking := false
+	// r.isThinking = false
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -100,7 +106,7 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 	}
 
 	for i, message := range messages {
-		content := renderContent(message, true)
+		content := r.renderContent(message, true)
 
 		if message.Role == "user" || message.Role == "system" && i != 0 {
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")
@@ -108,7 +114,7 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 			contentReasoning := ""
 
 			// here we need to reconstruct
-			if isThinking { // we only do this if its a thinking model (i.e contentReasoning != "" if its a thinking model)
+			if r.isThinking { // we only do this if its a thinking model (i.e contentReasoning != "" if its a thinking model)
 				if message.Thinking != "" {
 					contentReasoning = message.Thinking
 				} else if strings.Contains(content, "</think>") {
@@ -128,7 +134,7 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 			// reconstruct the content
 
 			// isThinking && i > lastQueryIndex
-			if isThinking && i > lastQueryIndex { // if it is a thinking model
+			if r.isThinking && i > lastQueryIndex { // if it is a thinking model
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n") + "\n</think>\n\n" + strings.TrimLeft(content, "\n"))
 				} else {
@@ -165,7 +171,7 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 	}
 
 	sb.WriteString("<|im_start|>assistant\n")
-	if isThinking {
+	if r.isThinking {
 		sb.WriteString("<think>\n") // Thinking models end with <|im_start|>assistant\n<think>\n
 	}
 

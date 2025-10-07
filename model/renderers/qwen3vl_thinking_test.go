@@ -3,11 +3,21 @@ package renderers
 import (
 	"testing"
 
+	"encoding/base64"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
 
-func TestQwen3VLNonThinkingRenderer(t *testing.T) {
+var IMAGE1_BASE64 = base64.StdEncoding.EncodeToString([]byte("image1"))
+var IMAGE2_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADMElEQVR4nOzVwQnAIBQFQYXff81RUkQCOyDj1YOPnbXWPmeTRef+/3O/OyBjzh3CD95BfqICMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMO0TAAD//2Anhf4QtqobAAAAAElFTkSuQmCC"
+
+// TODO:
+// - [ ] test videos?
+// - [ ] set descriptions to omitempty?
+// - [] images add the auto tag
+
+func TestQwen3VLThinkingRenderer(t *testing.T) {
 	tests := []struct {
 		name     string
 		msgs     []api.Message
@@ -26,9 +36,10 @@ You are a helpful assistant.<|im_end|>
 <|im_start|>user
 Hello, how are you?<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		},
-		{ // C
+		{
 			name: "With thinking, end assistant.",
 			msgs: []api.Message{
 				// {Role: "system", Content: "You are a helpful assistant."},
@@ -38,11 +49,16 @@ Hello, how are you?<|im_end|>
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
-abc<think>To make this story interesting, I will speak in poetry.</think><|im_end|>
+<think>
+To make this story interesting, I will speak in poetry.
+</think>
+
+<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		},
-		{ // C
+		{
 			name: "Multiple thinking",
 			msgs: []api.Message{
 				{Role: "user", Content: "Tell me a story in two sentences."},
@@ -51,11 +67,16 @@ abc<think>To make this story interesting, I will speak in poetry.</think><|im_en
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
-abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think><|im_end|>
+<think>
+To make this story interesting, I will speak in poetry.
+</think>
+
+<|im_end|>
 <|im_start|>assistant
+<think>
 `, // the second thinking tag is not captured
 		},
-		{ // C
+		{
 			name: "Multiple thinking, multiple messages.",
 			msgs: []api.Message{
 				{Role: "user", Content: "Tell me a story in two sentences."},
@@ -66,12 +87,17 @@ abc<think>To make this story interesting, I will speak in poetry.</think><think>
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
-abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think><|im_end|>
+<|im_end|>
 <|im_start|>user
 What is the weather like in San Francisco? <think>I will check the weather in San Francisco for you.</think><|im_end|>
 <|im_start|>assistant
-I'll check the weather in San Francisco for you.<think>Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.</think><|im_end|>
+<think>
+Speak poetry after the first sentence.
+</think>
+
+<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		},
 		{
@@ -82,6 +108,7 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 			expected: `<|im_start|>user
 [img-0]Describe this image.<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		}, // there's no way to do videos?
 		{
@@ -92,6 +119,7 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 			expected: `<|im_start|>user
 [img-0][img-1]Describe these images.<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		},
 		{
@@ -171,6 +199,7 @@ I'll check the weather in New York for you.
 <|im_start|>user
 That sounds nice! What about San Francisco?<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		},
 		{
@@ -265,7 +294,7 @@ You may call one or more functions to assist with the user query.
 You are provided with function signatures within <tools></tools> XML tags:
 <tools>
 {"type": "function", "function": {"name": "add", "description": "Add two numbers", "parameters": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"]}}}
-{"type": "function", "function": {"name": "multiply", "description": "Multiply two numbers", "parameters": {"type": "object", "properties": {"x": {"description": "First factor"}, "y": {"description": "Second factor"}}, "required": ["x", "y"]}}}
+{"type": "function", "function": {"name": "multiply", "description": "Multiply two numbers", "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}}}
 </tools>
 
 For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
@@ -292,19 +321,59 @@ Sure, I'll call both tools for you.
 <|im_start|>user
 Thanks! What are the results?<|im_end|>
 <|im_start|>assistant
+<think>
 `,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// rendered, err := Qwen3VLRenderer(tt.msgs, tt.tools, nil)
-			// renderer := RendererForName("qwen3-vl")
-			rendered, err := (&Qwen3VLRenderer{false}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Qwen3VLRenderer{true}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(rendered, tt.expected); diff != "" {
 				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+// what is this function for?
+
+func TestFormatToolCallArgumentVL(t *testing.T) {
+	tests := []struct {
+		name     string
+		arg      any
+		expected string
+	}{
+		{
+			name: "string",
+			arg:  "foo",
+			// notice no quotes around the string
+			expected: "foo",
+		},
+		{
+			name:     "map",
+			arg:      map[string]any{"foo": "bar"},
+			expected: "{\"foo\":\"bar\"}",
+		},
+		{
+			name:     "number",
+			arg:      1,
+			expected: "1",
+		},
+		{
+			name:     "boolean",
+			arg:      true,
+			expected: "true",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatToolCallArgument(tt.arg)
+			if got != tt.expected {
+				t.Errorf("formatToolCallArgument(%v) = %v, want %v", tt.arg, got, tt.expected)
 			}
 		})
 	}

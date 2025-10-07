@@ -1,27 +1,30 @@
 package renderers
 
-import (
-	"fmt"
+import "github.com/ollama/ollama/api"
 
-	"github.com/ollama/ollama/api"
-)
+// type rendererFunc func([]api.Message, []api.Tool, *api.ThinkValue) (string, error)
 
-type rendererFunc func([]api.Message, []api.Tool, *api.ThinkValue) (string, error)
+// func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+// 	renderer := rendererForName(name)
+// 	if renderer == nil {
+// 		return "", fmt.Errorf("unknown renderer %q", name)
+// 	}
+// 	return renderer(msgs, tools, think)
+// }
 
-func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
-	renderer := rendererForName(name)
-	if renderer == nil {
-		return "", fmt.Errorf("unknown renderer %q", name)
-	}
-	return renderer(msgs, tools, think)
+type Renderer interface {
+	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
 }
 
-func rendererForName(name string) rendererFunc {
+// func rendererForName(name string) rendererFunc {
+func RendererForName(name string) Renderer {
 	switch name {
 	case "qwen3-coder":
-		return Qwen3CoderRenderer
+		renderer := &Qwen3CoderRenderer{false} // this is not implemented yet
+		return renderer
 	case "qwen3-vl":
-		return Qwen3VLRenderer
+		renderer := &Qwen3VLRenderer{false}
+		return renderer
 	default:
 		return nil
 	}
