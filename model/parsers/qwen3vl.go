@@ -13,12 +13,12 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
-func (p *Qwen3VLParser) initialState() qwenParserState {
-	if p.HasThinkingSupport() { // has thinking, start from collecting thinking content
-		return CollectingThinkingContent
-	}
-	return CollectingContent
-}
+// func (p *Qwen3VLParser) initialState() qwenParserState {
+// 	if p.HasThinkingSupport() { // has thinking, start from collecting thinking content
+// 		return CollectingThinkingContent
+// 	}
+// 	return CollectingContent
+// }
 
 // TODO: call the init function
 const (
@@ -49,7 +49,7 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
-	p.state = p.initialState()
+	// p.state = p.initialState()
 	return tools
 }
 
