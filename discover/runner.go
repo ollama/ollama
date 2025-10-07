@@ -158,6 +158,8 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		wg.Wait()
 		logutil.Trace("supported GPU library combinations", "supported", supported)
 
+		filterOutVulkanThatAreSupportedByOtherGPU(needsDelete)
+
 		// Mark for deletion any overlaps - favoring the library version that can cover all GPUs if possible
 		filterOverlapByLibrary(supported, needsDelete)
 
@@ -339,6 +341,37 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 	iGPUWorkarounds(devices)
 
 	return devices
+}
+
+func filterOutVulkanThatAreSupportedByOtherGPU(needsDelete []bool) {
+	// Filter out Vulkan devices that share a PCI ID with a non-Vulkan device that is not marked for deletion
+	for i := range devices {
+		if devices[i].Library != "Vulkan" || needsDelete[i] {
+			continue
+		}
+		if devices[i].PCIID == "" {
+			continue
+		}
+		for j := range devices {
+			if i == j {
+				continue
+			}
+			if devices[j].PCIID == "" {
+				continue
+			}
+			if devices[j].PCIID == devices[i].PCIID && devices[j].Library != "Vulkan" && !needsDelete[j] {
+				needsDelete[i] = true
+				slog.Debug("dropping Vulkan duplicate by PCI ID",
+					"vulkan_id", devices[i].ID,
+					"vulkan_libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+					"pci_id", devices[i].PCIID,
+					"kept_library", devices[j].Library,
+					"kept_id", devices[j].ID,
+				)
+				break
+			}
+		}
+	}
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
