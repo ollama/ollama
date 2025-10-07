@@ -2,7 +2,6 @@ package discover
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -60,17 +59,14 @@ func devInfoToInfoList(devs []ml.DeviceInfo) GpuInfoList {
 			DependencyPath: dev.LibraryPath,
 			DriverMajor:    dev.DriverMajor,
 			DriverMinor:    dev.DriverMinor,
+			ComputeMajor:   dev.ComputeMajor,
+			ComputeMinor:   dev.ComputeMinor,
 		}
 		if dev.Library == "CUDA" || dev.Library == "ROCm" {
 			info.MinimumMemory = 457 * format.MebiByte
 		}
-		if dev.Library == "ROCm" {
-			info.Compute = fmt.Sprintf("gfx%x%02x", dev.ComputeMajor, dev.ComputeMinor)
-			if rocmDir != "" {
-				info.DependencyPath = append(info.DependencyPath, rocmDir)
-			}
-		} else {
-			info.Compute = fmt.Sprintf("%d.%d", dev.ComputeMajor, dev.ComputeMinor)
+		if dev.Library == "ROCm" && rocmDir != "" {
+			info.DependencyPath = append(info.DependencyPath, rocmDir)
 		}
 		resp = append(resp, info)
 	}
