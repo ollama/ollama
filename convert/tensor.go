@@ -35,7 +35,7 @@ func splitDim(t Tensor, dim int, splits ...split) iter.Seq[*ggml.Tensor] {
 
 			slice := split.slices
 			if len(slice) == 0 {
-				slice := slices.Repeat([]tensor.Slice{nil}, len(shape))
+				slice = slices.Repeat([]tensor.Slice{nil}, len(shape))
 				slice[dim] = tensor.S(offset, offset+int(shape[dim]))
 				offset += int(shape[dim])
 			}
