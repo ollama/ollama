@@ -110,6 +110,10 @@ type NewSequenceParams struct {
 	truncate   bool
 }
 
+var (
+	errorInputTooLong = errors.New("the input length exceeds the context length")
+)
+
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
@@ -133,7 +137,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		discard := int32(len(inputs)) - s.cache.numCtx
 
 		if !params.truncate && discard > 0 {
-			return nil, fmt.Errorf("the input length exceeds the context length")
+			return nil, errorInputTooLong
 		}
 
 		promptStart := params.numKeep + discard
@@ -845,6 +849,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		truncate:   req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
