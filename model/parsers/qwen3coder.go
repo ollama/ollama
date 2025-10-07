@@ -268,17 +268,17 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		}
 	}
 
-	toolCall.Function.Arguments = make(api.ToolCallFunctionArguments)
+	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
 	for _, parameter := range functionCall.Parameters {
 		// Look up the parameter type if we found the tool
 		var paramType api.PropertyType
-		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
-			if prop, ok := matchedTool.Function.Parameters.Properties[parameter.Name]; ok {
+		if matchedTool != nil && matchedTool.Function.Parameters.GetProperties() != nil {
+			if prop, ok := matchedTool.Function.Parameters.GetProperties().Get(parameter.Name); ok {
 				paramType = prop.Type
 			}
 		}
 
-		toolCall.Function.Arguments[parameter.Name] = parseValue(parameter.Value, paramType)
+		toolCall.Function.Arguments.Set(parameter.Name, parseValue(parameter.Value, paramType))
 	}
 
 	return toolCall, nil

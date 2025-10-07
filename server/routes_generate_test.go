@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
@@ -44,6 +45,16 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	}
 
 	return
+}
+
+func makeArgs(pairs ...any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i].(string)
+		value := pairs[i+1]
+		args.Set(key, value)
+	}
+	return args
 }
 
 func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
@@ -389,24 +400,26 @@ func TestGenerateChat(t *testing.T) {
 					Name:        "get_weather",
 					Description: "Get the current weather",
 					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
+						Type       string                                        `json:"type"`
+						Defs       any                                           `json:"$defs,omitempty"`
+						Items      any                                           `json:"items,omitempty"`
+						Required   []string                                      `json:"required"`
+						Properties *api.ToolProperties `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
-							"location": {
+						Properties: func() *api.ToolProperties {
+							props := api.NewToolProperties()
+							props.Set("location", api.ToolProperty{
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
-							},
-							"unit": {
+							})
+							props.Set("unit", api.ToolProperty{
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
-							},
-						},
+							})
+							return props
+						}(),
 					},
 				},
 			},
@@ -459,15 +472,12 @@ func TestGenerateChat(t *testing.T) {
 
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
-				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
-					"location": "Seattle, WA",
-					"unit":     "celsius",
-				},
+				Name:      "get_weather",
+				Arguments: makeArgs("location", "Seattle, WA", "unit", "celsius"),
 			},
 		}
 
-		if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall); diff != "" {
+		if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall, cmpopts.IgnoreUnexported(api.ToolCallFunctionArguments{}, api.ToolProperties{})); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -480,24 +490,26 @@ func TestGenerateChat(t *testing.T) {
 					Name:        "get_weather",
 					Description: "Get the current weather",
 					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
+						Type       string                                        `json:"type"`
+						Defs       any                                           `json:"$defs,omitempty"`
+						Items      any                                           `json:"items,omitempty"`
+						Required   []string                                      `json:"required"`
+						Properties *api.ToolProperties `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
-							"location": {
+						Properties: func() *api.ToolProperties {
+							props := api.NewToolProperties()
+							props.Set("location", api.ToolProperty{
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
-							},
-							"unit": {
+							})
+							props.Set("unit", api.ToolProperty{
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
-							},
-						},
+							})
+							return props
+						}(),
 					},
 				},
 			},
@@ -582,15 +594,12 @@ func TestGenerateChat(t *testing.T) {
 
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
-				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
-					"location": "Seattle, WA",
-					"unit":     "celsius",
-				},
+				Name:      "get_weather",
+				Arguments: makeArgs("location", "Seattle, WA", "unit", "celsius"),
 			},
 		}
 
-		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(finalToolCall, expectedToolCall, cmpopts.IgnoreUnexported(api.ToolCallFunctionArguments{}, api.ToolProperties{})); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
