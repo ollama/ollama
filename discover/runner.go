@@ -481,15 +481,18 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	}
 
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
-	cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
 	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 	pathNeeded := true
+	ollamaPathNeeded := true
 	extraDone := make([]bool, len(extraEnvs))
 	for i := range cmd.Env {
 		cmp := strings.SplitN(cmd.Env[i], "=", 2)
 		if strings.EqualFold(cmp[0], pathEnv) {
 			cmd.Env[i] = pathEnv + "=" + pathEnvVal
 			pathNeeded = false
+		} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
+			cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(ollamaLibDirs, string(filepath.ListSeparator))
+			ollamaPathNeeded = false
 		} else {
 			for j := range extraEnvs {
 				if extraDone[j] {
@@ -505,6 +508,9 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	}
 	if pathNeeded {
 		cmd.Env = append(cmd.Env, pathEnv+"="+pathEnvVal)
+	}
+	if ollamaPathNeeded {
+		cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
 	}
 	for i := range extraDone {
 		if !extraDone[i] {
