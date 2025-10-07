@@ -89,11 +89,11 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 			out = append(out, slices.Collect(splitDim(t, 1,
 				split{
 					Replacer: strings.NewReplacer("gate_up_exps", "gate_exps"),
-					slices: []tensor.Slice{nil, tensor.S(0, int(t.Shape()[1]), 2)},
+					slices:   []tensor.Slice{nil, tensor.S(0, int(t.Shape()[1]), 2)},
 				},
 				split{
 					Replacer: strings.NewReplacer("gate_up_exps", "up_exps"),
-					slices: []tensor.Slice{nil, tensor.S(1, int(t.Shape()[1]), 2)},
+					slices:   []tensor.Slice{nil, tensor.S(1, int(t.Shape()[1]), 2)},
 				},
 			))...)
 		} else {
