@@ -274,7 +274,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		devCheck:
 			for _, dev := range deviceIDs {
 				for i := range devices {
-					if dev.ID == devices[i].ID && dev.Library == devices[i].Library {
+					if dev == devices[i].DeviceID {
 						if !updated[i] {
 							skip = false
 							break devCheck
@@ -295,7 +295,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			slog.Debug("existing runner discovery took", "duration", time.Since(start))
 			for _, u := range updatedDevices {
 				for i := range devices {
-					if u.Library == devices[i].Library && u.ID == devices[i].ID {
+					if u.DeviceID == devices[i].DeviceID {
 						updated[i] = true
 						devices[i].FreeMemory = u.FreeMemory
 						break
@@ -319,7 +319,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, nil)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.Library == devices[i].Library && u.ID == devices[i].ID {
+						if u.DeviceID == devices[i].DeviceID {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
