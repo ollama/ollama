@@ -66,6 +66,7 @@ func renderContent(content api.Message, doVisionCount bool) string {
 
 func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
+	isThinking := false
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -105,23 +106,29 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")
 		} else if message.Role == "assistant" {
 			contentReasoning := ""
-			if message.Thinking != "" {
-				contentReasoning = message.Thinking
-			} else if strings.Contains(content, "</think>") {
-				contentReasoning = strings.Split(content, "</think>")[0]
-				contentReasoning = strings.TrimRight(contentReasoning, "\n")
 
-				contentReasoningSplit := strings.Split(contentReasoning, "<think>")
-				contentReasoning = contentReasoningSplit[len(contentReasoningSplit)-1]
+			// here we need to reconstruct
+			if isThinking { // we only do this if its a thinking model (i.e contentReasoning != "" if its a thinking model)
+				if message.Thinking != "" {
+					contentReasoning = message.Thinking
+				} else if strings.Contains(content, "</think>") {
+					contentReasoning = strings.Split(content, "</think>")[0]
+					contentReasoning = strings.TrimRight(contentReasoning, "\n")
 
-				contentReasoning = strings.TrimLeft(contentReasoning, "\n")
+					contentReasoningSplit := strings.Split(contentReasoning, "<think>")
+					contentReasoning = contentReasoningSplit[len(contentReasoningSplit)-1]
 
-				contentSplit := strings.Split(content, "</think>")
-				content = contentSplit[len(contentSplit)-1]
-				content = strings.TrimLeft(content, "\n")
+					contentReasoning = strings.TrimLeft(contentReasoning, "\n")
+
+					contentSplit := strings.Split(content, "</think>")
+					content = contentSplit[len(contentSplit)-1]
+					content = strings.TrimLeft(content, "\n")
+				}
 			}
+			// reconstruct the content
 
-			if i > lastQueryIndex {
+			// isThinking && i > lastQueryIndex
+			if isThinking && i > lastQueryIndex { // if it is a thinking model
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n") + "\n</think>\n\n" + strings.TrimLeft(content, "\n"))
 				} else {
@@ -158,6 +165,10 @@ func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue
 	}
 
 	sb.WriteString("<|im_start|>assistant\n")
+	if isThinking {
+		sb.WriteString("<think>\n") // Thinking models end with <|im_start|>assistant\n<think>\n
+	}
+
 	return sb.String(), nil
 
 }
