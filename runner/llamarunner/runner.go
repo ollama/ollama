@@ -398,12 +398,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		for i, input := range seq.inputs {
 			if len(seq.cache.Inputs)+len(seq.pendingInputs)+1 > s.cache.numCtx {
-				if !seq.shift {
-					s.removeSequence(seqIdx, llm.DoneReasonLength)
-					continue
-				}
-
 				if len(seq.pendingInputs) == 0 {
+					if !seq.shift {
+						s.removeSequence(seqIdx, llm.DoneReasonLength)
+						break
+					}
+
 					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 					if err != nil {
 						var reprocess *ErrReprocessInputs
