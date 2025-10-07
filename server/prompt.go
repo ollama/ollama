@@ -31,7 +31,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	// in reverse, find all messages that fit into context window
 	for i := n; i >= 0; i-- {
 		// always include the last message
-		if i == n || !truncate {
+		if i == n {
 			continue
 		}
 
@@ -59,7 +59,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			}
 		}
 
-		if ctxLen > opts.NumCtx {
+		if truncate && ctxLen > opts.NumCtx {
 			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
 			break
 		} else {
