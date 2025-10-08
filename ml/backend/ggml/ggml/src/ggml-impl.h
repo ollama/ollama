@@ -645,6 +645,8 @@ GGML_API void ggml_nvml_release();
 GGML_API int ggml_hip_mgmt_init();
 GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
 GGML_API void ggml_hip_mgmt_release();
+GGML_API int ggml_l0_sysman_init();
+GGML_API void ggml_l0_sysman_release();
 
 #ifdef __cplusplus
 }
