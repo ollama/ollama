@@ -573,12 +573,12 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 
 		if r.Reasoning.Effort == "none" {
-			think = &api.ThinkValue{false}
+			think = &api.ThinkValue{Value: false}
 		} else {
-			think = &api.ThinkValue{r.Reasoning.Effort}
+			think = &api.ThinkValue{Value: r.Reasoning.Effort}
 		}
 	} else if r.ReasoningEffort != nil {
-		think = &api.ThinkValue{*r.ReasoningEffort}
+		think = &api.ThinkValue{Value: *r.ReasoningEffort}
 	}
 
 	return &api.ChatRequest{
