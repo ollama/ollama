@@ -53,7 +53,6 @@ type Qwen3VLRenderer struct {
 	isThinking bool
 }
 
-// func renderContent(content api.Message, doVisionCount bool) string {
 func (r *Qwen3VLRenderer) renderContent(content api.Message, doVisionCount bool) string {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
@@ -69,10 +68,8 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message, doVisionCount bool)
 	return subSb.String()
 }
 
-// func Qwen3VLRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
-	// r.isThinking = false
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -113,8 +110,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		} else if message.Role == "assistant" {
 			contentReasoning := ""
 
-			// here we need to reconstruct
-			if r.isThinking { // we only do this if its a thinking model (i.e contentReasoning != "" if its a thinking model)
+			if r.isThinking {
 				if message.Thinking != "" {
 					contentReasoning = message.Thinking
 				} else if strings.Contains(content, "</think>") {
@@ -131,10 +127,9 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 					content = strings.TrimLeft(content, "\n")
 				}
 			}
-			// reconstruct the content
 
-			// isThinking && i > lastQueryIndex
-			if r.isThinking && i > lastQueryIndex { // if it is a thinking model
+			// reconstruct the content
+			if r.isThinking && i > lastQueryIndex {
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n") + "\n</think>\n\n" + strings.TrimLeft(content, "\n"))
 				} else {

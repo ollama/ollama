@@ -16,8 +16,6 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
-// used like builtinParser := parsers.ParserForName(m.Config.Parser)
-
 func ParserForName(name string) Parser {
 	switch name {
 	case "qwen3-coder":

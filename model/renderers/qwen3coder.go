@@ -60,7 +60,6 @@ type Qwen3CoderRenderer struct {
 }
 
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
-	// func Qwen3CoderRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
 	// filter out system messages and choose the first (if any) to win
