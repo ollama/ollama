@@ -332,9 +332,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	modelCaps := m.Capabilities()
-	if slices.Contains(modelCaps, model.CapabilityThinking) {
+	if req.Think != nil {
 		caps = append(caps, model.CapabilityThinking)
-		if req.Think == nil {
+	} else {
+		// add thinking if the model supports it
+		if slices.Contains(modelCaps, model.CapabilityThinking) {
+			caps = append(caps, model.CapabilityThinking)
 			req.Think = &api.ThinkValue{Value: true}
 		}
 	}
@@ -1874,9 +1877,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	modelCaps := m.Capabilities()
-	if slices.Contains(modelCaps, model.CapabilityThinking) {
+	if req.Think != nil {
 		caps = append(caps, model.CapabilityThinking)
-		if req.Think == nil {
+	} else {
+		// add thinking if the model supports it
+		if slices.Contains(modelCaps, model.CapabilityThinking) {
+			caps = append(caps, model.CapabilityThinking)
 			req.Think = &api.ThinkValue{Value: true}
 		}
 	}
