@@ -2,7 +2,7 @@
 
 ## System Requirements
 
-* MacOS Monterey (v12) or newer
+* MacOS Sonoma (v14) or newer
 * Apple M series (CPU and GPU support) or x86 (CPU only)
 
 

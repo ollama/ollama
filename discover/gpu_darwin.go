@@ -1,5 +1,3 @@
-//go:build darwin
-
 package discover
 
 /*
@@ -11,7 +9,6 @@ import "C"
 
 import (
 	"log/slog"
-	"runtime"
 	"syscall"
 
 	"github.com/ollama/ollama/format"
@@ -21,39 +18,6 @@ const (
 	metalMinimumMemory = 512 * format.MebiByte
 )
 
-func GetGPUInfo() GpuInfoList {
-	mem, _ := GetCPUMem()
-	if runtime.GOARCH == "amd64" {
-		return []GpuInfo{
-			{
-				Library: "cpu",
-				memInfo: mem,
-			},
-		}
-	}
-	info := GpuInfo{
-		Library: "metal",
-		ID:      "0",
-	}
-	info.TotalMemory = uint64(C.getRecommendedMaxVRAM())
-
-	// TODO is there a way to gather actual allocated video memory? (currentAllocatedSize doesn't work)
-	info.FreeMemory = info.TotalMemory
-
-	info.MinimumMemory = metalMinimumMemory
-	return []GpuInfo{info}
-}
-
-func GetCPUInfo() GpuInfoList {
-	mem, _ := GetCPUMem()
-	return []GpuInfo{
-		{
-			Library: "cpu",
-			memInfo: mem,
-		},
-	}
-}
-
 func GetCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: uint64(C.getPhysicalMemory()),
@@ -62,13 +26,7 @@ func GetCPUMem() (memInfo, error) {
 	}, nil
 }
 
-func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
-	// No-op on darwin
-	return "", ""
-}
-
-func GetSystemInfo() SystemInfo {
-	mem, _ := GetCPUMem()
+func GetCPUDetails() []CPU {
 	query := "hw.perflevel0.physicalcpu"
 	perfCores, err := syscall.SysctlUint32(query)
 	if err != nil {
@@ -81,19 +39,16 @@ func GetSystemInfo() SystemInfo {
 	query = "hw.logicalcpu"
 	logicalCores, _ := syscall.SysctlUint32(query)
 
-	return SystemInfo{
-		System: CPUInfo{
-			GpuInfo: GpuInfo{
-				memInfo: mem,
-			},
-			CPUs: []CPU{
-				{
-					CoreCount:           int(perfCores + efficiencyCores),
-					EfficiencyCoreCount: int(efficiencyCores),
-					ThreadCount:         int(logicalCores),
-				},
-			},
+	return []CPU{
+		{
+			CoreCount:           int(perfCores + efficiencyCores),
+			EfficiencyCoreCount: int(efficiencyCores),
+			ThreadCount:         int(logicalCores),
 		},
-		GPUs: GetGPUInfo(),
 	}
+}
+
+func IsNUMA() bool {
+	// numa support in ggml is linux only
+	return false
 }

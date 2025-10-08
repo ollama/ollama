@@ -83,7 +83,7 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 	hiddenStates = hiddenStates.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx).Mean(ctx)
 	hiddenStates = hiddenStates.Permute(ctx, 2, 0, 1, 3).Contiguous(ctx)
-	hiddenStates = hiddenStates.Rows(ctx, ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs)))
+	hiddenStates = hiddenStates.Rows(ctx, batch.Outputs)
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
 	return m.Output.Forward(ctx, hiddenStates), nil
@@ -95,7 +95,7 @@ func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.T
 		ropeBase = m.ropeBaseLocal
 	}
 
-	return fast.RoPE(ctx, key, shift, m.headDim(), ropeBase, m.ropeScale, rope.WithTypeNeoX()), nil
+	return fast.RoPE(ctx, key, shift, m.headDim(), ropeBase, 1./m.ropeScale, rope.WithTypeNeoX()), nil
 }
 
 type TextScaledWordEmbedding struct {
@@ -170,8 +170,7 @@ func (d TextLayer) Forward(ctx ml.Context, hiddenStates, perLayerInput, position
 	}
 
 	active = d.PerLayerInputGate.Forward(ctx, active)
-	active = active.GELU(ctx)
-	active = active.Mul(ctx, perLayerInput)
+	active = active.GELU(ctx, perLayerInput)
 
 	active = d.PerLayerProjection.Forward(ctx, active)
 	active = d.PostPerLayerNorm.Forward(ctx, active, opts.eps)
@@ -257,14 +256,14 @@ func (attn TextAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Ten
 	query := attn.Query.Forward(ctx, hiddenStates)
 	query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
 	query = attn.QueryNorm.Forward(ctx, query, opts.eps)
-	query = fast.RoPE(ctx, query, positions, opts.headDim(), ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	query = fast.RoPE(ctx, query, positions, opts.headDim(), ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	var key, value ml.Tensor
 	if !sharedKV {
 		key = attn.Key.Forward(ctx, hiddenStates)
 		key = key.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
 		key = attn.KeyNorm.Forward(ctx, key, opts.eps)
-		key = fast.RoPE(ctx, key, positions, opts.headDim(), ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+		key = fast.RoPE(ctx, key, positions, opts.headDim(), ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 		value = attn.Value.Forward(ctx, hiddenStates)
 		value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
@@ -292,7 +291,7 @@ func (mlp TextMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, activationSpa
 		hiddenStates = hiddenStates.Sub(ctx, cutoff).RELU(ctx)
 	}
 
-	hiddenStates = hiddenStates.GELU(ctx).Mul(ctx, upStates)
+	hiddenStates = hiddenStates.GELU(ctx, upStates)
 	hiddenStates = mlp.Down.Forward(ctx, hiddenStates)
 	return hiddenStates
 }
@@ -350,7 +349,7 @@ func newTextModel(c fs.Config) *TextModel {
 			eps:           c.Float("attention.layer_norm_rms_epsilon", 1e-06),
 			ropeBase:      c.Float("rope.freq_base", 1_000_000),
 			ropeBaseLocal: c.Float("rope.freq_base_local", 10_000),
-			ropeScale:     c.Float("rope.freq_scale", 1.0),
+			ropeScale:     c.Float("rope.scaling.factor", 1.0),
 
 			slidingWindowPattern:    c.Bools("attention.sliding_window_pattern"),
 			activationSparsityScale: c.Floats("activation_sparsity_scale"),

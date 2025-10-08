@@ -51,20 +51,23 @@ sudo modprobe nvidia_uvm`
 Ollama supports the following AMD GPUs:
 
 ### Linux Support
-| Family         | Cards and accelerators                                                                                                               |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64` `Vega 56`    |
-| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `VII` `SSG` |
-| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60` `MI50`                                                               |
+| Family         | Cards and accelerators                                                                                                                   |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64`            |
+| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `SSG` |
+| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60`                                                                |
 
 ### Windows Support
-With ROCm v6.1, the following GPUs are supported on Windows.
+With ROCm v6.2, the following GPUs are supported on Windows.
 
 | Family         | Cards and accelerators                                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`    |
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` |
 
+### Known Workarounds
+
+- The RX Vega 56 requires `HSA_ENABLE_SDMA=0` to disable SDMA
 
 ### Overrides on Linux
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
@@ -85,8 +88,6 @@ At this time, the known supported GPU types on linux are the following LLVM Targ
 This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |
 |-----------------|---------------------|
-| gfx900 | Radeon RX Vega 56 |
-| gfx906 | Radeon Instinct MI50 |
 | gfx908 | Radeon Instinct MI100 |
 | gfx90a | Radeon Instinct MI210 |
 | gfx940 | Radeon Instinct MI300 |

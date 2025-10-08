@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Gross <jesse@ollama.com>
+Date: Wed, 27 Aug 2025 14:39:48 -0700
+Subject: [PATCH] ggml: Enable resetting backend devices
+
+Touching a CUDA device causes the allocation of a primary context
+with CUDA data structures (~300 MB of VRAM). If a device is
+unused then it can be reset to free these data structures.
+---
+ ggml/include/ggml-backend.h      |  1 +
+ ggml/src/ggml-backend-impl.h     |  4 ++++
+ ggml/src/ggml-backend.cpp        |  8 ++++++++
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 17 +++++++++++++++--
+ ggml/src/ggml-cuda/vendors/hip.h |  1 +
+ 5 files changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index d4352663..0a2dae26 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -178,6 +178,7 @@ extern "C" {
+     GGML_API void                          ggml_backend_dev_get_props(ggml_backend_dev_t device, struct ggml_backend_dev_props * props);
+     GGML_API ggml_backend_reg_t            ggml_backend_dev_backend_reg(ggml_backend_dev_t device);
+     GGML_API ggml_backend_t                ggml_backend_dev_init(ggml_backend_dev_t device, const char * params);
++    GGML_API void                          ggml_backend_dev_reset(ggml_backend_dev_t device);
+     GGML_API ggml_backend_buffer_type_t    ggml_backend_dev_buffer_type(ggml_backend_dev_t device);
+     GGML_API ggml_backend_buffer_type_t    ggml_backend_dev_host_buffer_type(ggml_backend_dev_t device);
+     GGML_API ggml_backend_buffer_t         ggml_backend_dev_buffer_from_host_ptr(ggml_backend_dev_t device, void * ptr, size_t size, size_t max_tensor_size);
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index 869dc07d..4889df79 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -195,6 +195,10 @@ extern "C" {
+         ggml_backend_event_t (*event_new)         (ggml_backend_dev_t dev);
+         void                 (*event_free)        (ggml_backend_dev_t dev, ggml_backend_event_t event);
+         void                 (*event_synchronize) (ggml_backend_dev_t dev, ggml_backend_event_t event);
++
++        // (optional) reset device, clearing existing allocations and context
++        // the caller must ensure that there are no outstanding buffers, as these will become invalid
++        void (*reset)(ggml_backend_dev_t dev);
+     };
+ 
+     struct ggml_backend_device {
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 6ef5eeaf..0b757af5 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -526,6 +526,14 @@ ggml_backend_t ggml_backend_dev_init(ggml_backend_dev_t device, const char * par
+     return device->iface.init_backend(device, params);
+ }
+ 
++void ggml_backend_dev_reset(ggml_backend_dev_t device) {
++    if (device->iface.reset == NULL) {
++        return;
++    }
++
++    device->iface.reset(device);
++}
++
+ ggml_backend_buffer_type_t ggml_backend_dev_buffer_type(ggml_backend_dev_t device) {
+     GGML_ASSERT(device);
+     return device->iface.get_buffer_type(device);
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index d324bc68..531d6e27 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -107,6 +107,11 @@ int ggml_cuda_get_device() {
+     return id;
+ }
+ 
++void ggml_cuda_reset_device(int device) {
++    ggml_cuda_set_device(device);
++    CUDA_CHECK(cudaDeviceReset());
++}
++
+ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
+     ggml_cuda_set_device(device);
+     cudaError_t err;
+@@ -3512,7 +3517,10 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+     props->id          = ggml_backend_cuda_device_get_id(dev);
+     props->type        = ggml_backend_cuda_device_get_type(dev);
+     props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
+-    ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
++
++    // Memory reporting is disabled to avoid allocation of a CUDA primary context (~300 MB per device).
++    // If you need the memory data, call ggml_backend_dev_memory() explicitly.
++    props->memory_total = props->memory_free = 0;
+ 
+     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
+ #ifdef GGML_CUDA_NO_PEER_COPY
+@@ -3945,6 +3953,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
+     CUDA_CHECK(cudaEventSynchronize((cudaEvent_t)event->context));
+ }
+ 
++static void ggml_backend_cuda_device_reset(ggml_backend_dev_t dev) {
++    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
++    ggml_cuda_reset_device(ctx->device);
++}
++
+ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+     /* .get_name                = */ ggml_backend_cuda_device_get_name,
+     /* .get_description         = */ ggml_backend_cuda_device_get_description,
+@@ -3961,6 +3974,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+     /* .event_new               = */ ggml_backend_cuda_device_event_new,
+     /* .event_free              = */ ggml_backend_cuda_device_event_free,
+     /* .event_synchronize       = */ ggml_backend_cuda_device_event_synchronize,
++    /* .reset                   = */ ggml_backend_cuda_device_reset,
+ };
+ 
+ // backend reg
+@@ -4076,7 +4090,6 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 dev_ctx->device = i;
+                 dev_ctx->name = GGML_CUDA_NAME + std::to_string(i);
+ 
+-                ggml_cuda_set_device(i);
+                 cudaDeviceProp prop;
+                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
+                 dev_ctx->description = prop.name;
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index 37386afc..06f9e7c1 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -41,6 +41,7 @@
+ #define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
+ #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
+ #define cudaDeviceProp hipDeviceProp_t
++#define cudaDeviceReset hipDeviceReset
+ #define cudaDeviceSynchronize hipDeviceSynchronize
+ #define cudaError_t hipError_t
+ #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled

@@ -161,7 +161,7 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, co
         GGML_ABORT("llguidance (cmake -DLLAMA_LLGUIDANCE=ON) is not enabled");
 #endif // LLAMA_USE_LLGUIDANCE
     } else {
-        std::vector<std::string> patterns_at_start;
+        std::vector<std::string> trigger_patterns;
         std::vector<std::string> patterns_anywhere;
         std::vector<llama_token> trigger_tokens;
         for (const auto & trigger : params.grammar_triggers) {
@@ -173,10 +173,13 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, co
                     break;
                 }
                 case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN:
-                case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_START:
                 {
-                    const auto & pattern = trigger.value;
-                    (trigger.type == COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_START ? patterns_at_start : patterns_anywhere).push_back(pattern);
+                    patterns_anywhere.push_back(trigger.value);
+                    break;
+                }
+                case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_FULL:
+                {
+                    trigger_patterns.push_back(trigger.value);
                     break;
                 }
                 case COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN:
@@ -190,10 +193,6 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, co
             }
         }
 
-        std::vector<std::string> trigger_patterns;
-        if (!patterns_at_start.empty()) {
-            trigger_patterns.push_back("^(" + string_join(patterns_at_start, "|") + ")[\\s\\S]*");
-        }
         if (!patterns_anywhere.empty()) {
             trigger_patterns.push_back("^[\\s\\S]*?(" + string_join(patterns_anywhere, "|") + ")[\\s\\S]*");
         }
@@ -333,6 +332,7 @@ void common_perf_print(const struct llama_context * ctx, const struct common_sam
     }
     if (ctx) {
         llama_perf_context_print(ctx);
+        llama_memory_breakdown_print(ctx);
     }
 }
 
@@ -427,8 +427,29 @@ uint32_t common_sampler_get_seed(const struct common_sampler * gsmpl) {
 
 // helpers
 
-llama_token_data_array * common_sampler_get_candidates(struct common_sampler * gsmpl) {
-    return &gsmpl->cur_p;
+llama_token_data_array * common_sampler_get_candidates(struct common_sampler * gsmpl, bool do_sort) {
+    auto * res = &gsmpl->cur_p;
+
+    if (do_sort && !res->sorted) {
+        // remember the selected token before sorting
+        const llama_token id = res->data[res->selected].id;
+
+        std::sort(res->data, res->data + res->size, [](const llama_token_data & a, const llama_token_data & b) {
+            return a.p > b.p;
+        });
+
+        // restore the selected token after sorting
+        for (size_t i = 0; i < res->size; ++i) {
+            if (res->data[i].id == id) {
+                res->selected = i;
+                break;
+            }
+        }
+
+        res->sorted = true;
+    }
+
+    return res;
 }
 
 llama_token common_sampler_last(const struct common_sampler * gsmpl) {

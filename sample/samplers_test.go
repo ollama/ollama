@@ -82,7 +82,6 @@ func modelHelper(t testing.TB) model.BytePairEncoding {
 	merges := make([]string, 0, 1)
 	// Only need vocab for Grammar Test
 	return model.NewBytePairEncoding(
-		``,
 		&model.Vocabulary{
 			Values: tokens,
 			Types:  make([]int32, len(vocab)),
