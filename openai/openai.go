@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,7 +83,7 @@ type StreamOptions struct {
 }
 
 type Reasoning struct {
-	Effort *string `json:"effort,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 type ChatCompletionRequest struct {
@@ -567,13 +568,17 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	var think *api.ThinkValue
 	if r.Reasoning != nil {
-		think = &api.ThinkValue{
-			Value: *r.Reasoning.Effort,
+		if !slices.Contains([]string{"high", "medium", "low", "none"}, r.Reasoning.Effort) {
+			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", or \"none\")", r.Reasoning.Effort)
+		}
+
+		if r.Reasoning.Effort == "none" {
+			think = &api.ThinkValue{Value: false}
+		} else {
+			think = &api.ThinkValue{Value: r.Reasoning.Effort}
 		}
 	} else if r.ReasoningEffort != nil {
-		think = &api.ThinkValue{
-			Value: *r.ReasoningEffort,
-		}
+		think = &api.ThinkValue{Value: *r.ReasoningEffort}
 	}
 
 	return &api.ChatRequest{

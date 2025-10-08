@@ -1120,13 +1120,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		"The answer is 4.",
 		true)
 
-	testChatRequest(t, "thinking disabled but template still adds think tag",
-		"Simple question",
-		" My thoughts </think> The answer.",
-		"",
-		" My thoughts </think> The answer.",
-		false)
-
 	// Test streaming response with template-added <think>
 	t.Run("streaming with thinking", func(t *testing.T) {
 		var wg sync.WaitGroup

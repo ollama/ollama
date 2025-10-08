@@ -330,12 +330,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
-	if req.Think != nil && req.Think.Bool() {
+
+	modelCaps := m.Capabilities()
+	if req.Think != nil {
 		caps = append(caps, model.CapabilityThinking)
-		// TODO(drifkin): consider adding a warning if it's false and the model
-		// doesn't support thinking. It's not strictly required, but it can be a
-		// hint that the user is on an older qwen3/r1 model that doesn't have an
-		// updated template supporting thinking
+	} else {
+		// add thinking if the model supports it
+		if slices.Contains(modelCaps, model.CapabilityThinking) {
+			caps = append(caps, model.CapabilityThinking)
+			req.Think = &api.ThinkValue{Value: true}
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
@@ -1871,8 +1875,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
-	if req.Think != nil && req.Think.Bool() {
+
+	modelCaps := m.Capabilities()
+	if req.Think != nil {
 		caps = append(caps, model.CapabilityThinking)
+	} else {
+		// add thinking if the model supports it
+		if slices.Contains(modelCaps, model.CapabilityThinking) {
+			caps = append(caps, model.CapabilityThinking)
+			req.Think = &api.ThinkValue{Value: true}
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
