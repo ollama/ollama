@@ -128,7 +128,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if len(inputs) > s.cache.numCtx {
 		discard := len(inputs) - s.cache.numCtx
-		if !params.truncate && discard > 0 {
+		if !params.truncate {
 			return nil, errorInputTooLong
 		}
 
