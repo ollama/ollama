@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,6 +84,27 @@ type StreamOptions struct {
 
 type Reasoning struct {
 	Effort *string `json:"effort,omitempty"`
+	think  *api.ThinkValue
+}
+
+func (r *Reasoning) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		r.think = &api.ThinkValue{Value: b}
+		return nil
+	}
+
+	var reason Reasoning
+	if err := json.Unmarshal(data, &reason); err == nil {
+		if !slices.Contains([]string{"high", "medium", "low"}, *reason.Effort) {
+			return fmt.Errorf("invalid reasoning value: %q (must be \"high\", \"medium\", \"low\", true, or false)", *reason.Effort)
+		}
+		fmt.Printf("!!! reasoning = %#v\n", reason)
+		//r.think = &api.ThinkValue{Value: *reason.Effort}
+		return nil
+	}
+
+	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
 }
 
 type ChatCompletionRequest struct {
@@ -567,8 +589,12 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	var think *api.ThinkValue
 	if r.Reasoning != nil {
-		think = &api.ThinkValue{
-			Value: *r.Reasoning.Effort,
+		if r.Reasoning.think != nil {
+			think = r.Reasoning.think
+		} else {
+			think = &api.ThinkValue{
+				Value: *r.Reasoning.Effort,
+			}
 		}
 	} else if r.ReasoningEffort != nil {
 		think = &api.ThinkValue{
