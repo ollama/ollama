@@ -527,7 +527,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "simple tool call",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "get-current-weather", "arguments": {"location": "San Francisco, CA", "unit": "fahrenheit"}}}`,
+			rawToolCall: `{"name": "get-current-weather", "arguments": {"location": "San Francisco, CA", "unit": "fahrenheit"}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get-current-weather",
@@ -541,7 +541,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "names with spaces",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "get current temperature", "arguments": {"location with spaces": "San Francisco", "unit with spaces": "celsius"}}}`,
+			rawToolCall: `{"name": "get current temperature", "arguments": {"location with spaces": "San Francisco", "unit with spaces": "celsius"}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get current temperature",
@@ -555,7 +555,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "names with quotes",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "\"get current temperature\"", "arguments": {"\"location with spaces\"": "San Francisco", "\"unit with spaces\"": "\"celsius\""}}}`,
+			rawToolCall: `{"name": "\"get current temperature\"", "arguments": {"\"location with spaces\"": "San Francisco", "\"unit with spaces\"": "\"celsius\""}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "\"get current temperature\"",
@@ -569,7 +569,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "tool call with typed parameters (json types)",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "calculate", "arguments": {"x": 3.14, "y": 42, "enabled": true, "items": ["a", "b", "c"]}}}`,
+			rawToolCall: `{"name": "calculate", "arguments": {"x": 3.14, "y": 42, "enabled": true, "items": ["a", "b", "c"]}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "calculate",
@@ -585,7 +585,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "ampersands in parameter values",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "exec", "arguments": {"command": "ls && echo \"done\""}}}`,
+			rawToolCall: `{"name": "exec", "arguments": {"command": "ls && echo \"done\""}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
@@ -598,7 +598,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "angle brackets in parameter values",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "exec", "arguments": {"command": "ls && echo \"a > b and a < b\""}}}`,
+			rawToolCall: `{"name": "exec", "arguments": {"command": "ls && echo \"a > b and a < b\""}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
@@ -611,7 +611,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		{
 			name:        "unicode in function names and parameters",
 			tools:       []api.Tool{},
-			rawToolCall: `{"function": {"name": "获取天气", "arguments": {"城市": "北京", "message": "Hello! 你好! 🌟 مرحبا"}}}`,
+			rawToolCall: `{"name": "获取天气", "arguments": {"城市": "北京", "message": "Hello! 你好! 🌟 مرحبا"}}`,
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "获取天气",
