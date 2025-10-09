@@ -8,7 +8,7 @@ Subject: [PATCH] ollama debug tensor
  1 file changed, 6 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index eded6eb..dfa20dd 100644
+index eded6eb7..dfa20ddc 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -15,6 +15,8 @@

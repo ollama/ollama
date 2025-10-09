@@ -16,7 +16,7 @@ must be recreated with no-alloc set to false before loading data.
  5 files changed, 310 insertions(+), 44 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 229bf38..1ff53ed 100644
+index 229bf387..1ff53ed0 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -305,6 +305,7 @@ extern "C" {
@@ -28,7 +28,7 @@ index 229bf38..1ff53ed 100644
  
      // Initialize backend buffers from a measure graph
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index 6792ba9..3c3f22f 100644
+index 6792ba98..3c3f22fc 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -26,12 +26,17 @@ extern "C" {
@@ -75,7 +75,7 @@ index 6792ba9..3c3f22f 100644
  
      struct ggml_backend {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index cb2b995..6ef5eea 100644
+index cb2b9956..6ef5eeaf 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -41,6 +41,19 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t
@@ -218,7 +218,7 @@ index cb2b995..6ef5eea 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index d51abbe..f49ea82 100644
+index d51abbea..f49ea824 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -35,6 +35,31 @@
@@ -299,7 +299,7 @@ index d51abbe..f49ea82 100644
 +    }
  };
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index e8edb13..a3ee464 100644
+index ecac575a..7c83d47f 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -350,6 +350,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {

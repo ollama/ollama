@@ -15,7 +15,7 @@ unused then it can be reset to free these data structures.
  5 files changed, 29 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 1ff53ed..ba181d0 100644
+index 1ff53ed0..ba181d09 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -178,6 +178,7 @@ extern "C" {
@@ -27,7 +27,7 @@ index 1ff53ed..ba181d0 100644
      GGML_API ggml_backend_buffer_type_t    ggml_backend_dev_host_buffer_type(ggml_backend_dev_t device);
      GGML_API ggml_backend_buffer_t         ggml_backend_dev_buffer_from_host_ptr(ggml_backend_dev_t device, void * ptr, size_t size, size_t max_tensor_size);
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index 3c3f22f..43c91d9 100644
+index 3c3f22fc..43c91d9f 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -195,6 +195,10 @@ extern "C" {
@@ -42,7 +42,7 @@ index 3c3f22f..43c91d9 100644
  
      struct ggml_backend_device {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 6ef5eea..0b757af 100644
+index 6ef5eeaf..0b757af5 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -526,6 +526,14 @@ ggml_backend_t ggml_backend_dev_init(ggml_backend_dev_t device, const char * par
@@ -61,7 +61,7 @@ index 6ef5eea..0b757af 100644
      GGML_ASSERT(device);
      return device->iface.get_buffer_type(device);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index a3ee464..e25dd23 100644
+index 7c83d47f..87c6c34a 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -107,6 +107,11 @@ int ggml_cuda_get_device() {
@@ -117,7 +117,7 @@ index a3ee464..e25dd23 100644
                  CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
                  dev_ctx->description = prop.name;
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 890c103..1f06be8 100644
+index 890c1036..1f06be80 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -45,6 +45,7 @@

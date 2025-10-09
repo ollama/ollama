@@ -8,7 +8,7 @@ Subject: [PATCH] no power throttling win32 with gnuc
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index dfa20dd..c3cd4cf 100644
+index dfa20ddc..c3cd4cfe 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -2432,7 +2432,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
