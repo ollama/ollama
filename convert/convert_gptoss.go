@@ -86,6 +86,8 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 				mxfp4s[name].scales = t
 			}
 		} else if strings.HasSuffix(t.Name(), "gate_up_exps.bias") {
+			// gate_up_exps is interleaved, need to split into gate_exps and up_exps
+			// e.g. gate_exps, up_exps = gate_up_exps[:, 0::2, ...], gate_up_exps[:, 1::2, ...]
 			out = append(out, slices.Collect(splitDim(t, 1,
 				split{
 					Replacer: strings.NewReplacer("gate_up_exps", "gate_exps"),
@@ -116,6 +118,8 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 				WriterTo: mxfp4,
 			})
 		} else if strings.Contains(name, "ffn_gate_up_exps") {
+			// gate_up_exps is interleaved, need to split into gate_exps and up_exps
+			// e.g. gate_exps, up_exps = gate_up_exps[:, 0::2, ...], gate_up_exps[:, 1::2, ...]
 			out = append(out, &ggml.Tensor{
 				Name:     strings.Replace(name, "gate_up", "gate", 1) + ".weight",
 				Kind:     uint32(ggml.TensorTypeMXFP4),
