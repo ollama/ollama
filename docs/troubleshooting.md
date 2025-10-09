@@ -38,26 +38,14 @@ Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
 ## LLM libraries
 
-Ollama includes multiple LLM libraries compiled for different GPUs and CPU vector features. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library. `cpu_avx2` will perform the best, followed by `cpu_avx` and the slowest but most compatible is `cpu`. Rosetta emulation under MacOS will work with the `cpu` library.
-
-In the server log, you will see a message that looks something like this (varies from release to release):
-
-```
-Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v12 rocm_v5]
-```
+Ollama includes multiple LLM libraries compiled for different GPU libraries and versions. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library.
 
 **Experimental LLM Library Override**
 
-You can set OLLAMA_LLM_LIBRARY to any of the available LLM libraries to bypass autodetection, so for example, if you have a CUDA card, but want to force the CPU LLM library with AVX2 vector support, use:
+You can set OLLAMA_LLM_LIBRARY to any of the available LLM libraries to limit autodetection, so for example, if you have both CUDA and AMD GPUs, but want to force the CUDA v13 only, use:
 
 ```shell
-OLLAMA_LLM_LIBRARY="cpu_avx2" ollama serve
-```
-
-You can see what features your CPU has with the following.
-
-```shell
-cat /proc/cpuinfo| grep flags | head -1
+OLLAMA_LLM_LIBRARY="cuda_v13" ollama serve
 ```
 
 ## Installing older or pre-release versions on Linux
