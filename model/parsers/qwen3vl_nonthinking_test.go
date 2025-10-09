@@ -503,6 +503,7 @@ func TestQwenOldParserStreaming(t *testing.T) {
 		})
 	}
 }
+
 func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 	type step struct {
 		name         string
