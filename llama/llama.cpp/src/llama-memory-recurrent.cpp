@@ -861,8 +861,11 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
 bool llama_memory_recurrent::state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id) {
     if (dest_seq_id != -1) {
         // single sequence
-
         seq_rm(dest_seq_id, -1, -1);
+
+        if (cell_count == 0) {
+            return true;
+        }
 
         llama_batch_allocr balloc(hparams.n_pos_per_embd());
 

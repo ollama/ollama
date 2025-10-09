@@ -638,6 +638,14 @@ static inline bool ggml_can_fuse(const struct ggml_cgraph * cgraph, int node_idx
     return ggml_can_fuse_ext(cgraph, idxs, ops, num_ops);
 }
 
+// Management libraries for fetching more accurate free VRAM data
+GGML_API int ggml_nvml_init();
+GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
+GGML_API void ggml_nvml_release();
+GGML_API int ggml_hip_mgmt_init();
+GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
+GGML_API void ggml_hip_mgmt_release();
+
 #ifdef __cplusplus
 }
 #endif

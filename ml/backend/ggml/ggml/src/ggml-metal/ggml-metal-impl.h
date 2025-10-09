@@ -70,11 +70,19 @@
 
 // function constants offsets
 #define FC_FLASH_ATTN_EXT_PAD          100
-#define FC_FLASH_ATTN_EXT              200
-#define FC_FLASH_ATTN_EXT_VEC          300
-#define FC_FLASH_ATTN_EXT_VEC_REDUCE   400
-#define FC_MUL_MV                      500
-#define FC_MUL_MM                      600
+#define FC_FLASH_ATTN_EXT_BLK          200
+#define FC_FLASH_ATTN_EXT              300
+#define FC_FLASH_ATTN_EXT_VEC          400
+#define FC_FLASH_ATTN_EXT_VEC_REDUCE   500
+#define FC_MUL_MV                      600
+#define FC_MUL_MM                      700
+
+// op-specific constants
+#define OP_FLASH_ATTN_EXT_NQPTG 8
+#define OP_FLASH_ATTN_EXT_NCPSG 64
+
+#define OP_FLASH_ATTN_EXT_VEC_NQPTG 1
+#define OP_FLASH_ATTN_EXT_VEC_NCPSG 32
 
 // kernel argument structs
 //
@@ -262,6 +270,17 @@ typedef struct {
     uint64_t nb32;
     uint64_t nb33;
 } ggml_metal_kargs_flash_attn_ext_pad;
+
+typedef struct {
+    int32_t  ne01;
+    int32_t  ne30;
+    int32_t  ne31;
+    int32_t  ne32;
+    int32_t  ne33;
+    uint64_t nb31;
+    uint64_t nb32;
+    uint64_t nb33;
+} ggml_metal_kargs_flash_attn_ext_blk;
 
 typedef struct {
     int32_t  ne01;
