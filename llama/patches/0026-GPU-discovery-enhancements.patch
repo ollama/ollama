@@ -52,7 +52,7 @@ index 33b3a15f..86191ef2 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 87c6c34a..7e6e2f00 100644
+index 87c6c34a..6a278b5e 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -261,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -132,7 +132,7 @@ index 87c6c34a..7e6e2f00 100644
      return GGML_BACKEND_DEVICE_TYPE_GPU;
  }
  
-++#define GGML_HIP_NAME "HIP"
++#define GGML_HIP_NAME "HIP"
  static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
  
@@ -184,15 +184,15 @@ index 87c6c34a..7e6e2f00 100644
                      /* .iface   = */ ggml_backend_cuda_device_interface,
                      /* .reg     = */ &reg,
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 1f06be80..9912ac15 100644
+index 1f06be80..2f9ef2dc 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -5,6 +5,8 @@
  #include <hipblas/hipblas.h>
  #include <hip/hip_fp16.h>
  #include <hip/hip_bf16.h>
-++// for rocblas_initialize()
-++#include "rocblas/rocblas.h"
++// for rocblas_initialize()
++#include "rocblas/rocblas.h"
  
  #if defined(GGML_HIP_ROCWMMA_FATTN)
  #include <rocwmma/rocwmma-version.hpp>

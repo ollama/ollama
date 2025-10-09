@@ -5,8 +5,8 @@
 #include <hipblas/hipblas.h>
 #include <hip/hip_fp16.h>
 #include <hip/hip_bf16.h>
-+// for rocblas_initialize()
-+#include "rocblas/rocblas.h"
+// for rocblas_initialize()
+#include "rocblas/rocblas.h"
 
 #if defined(GGML_HIP_ROCWMMA_FATTN)
 #include <rocwmma/rocwmma-version.hpp>
