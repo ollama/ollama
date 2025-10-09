@@ -7,14 +7,6 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// tool creates a test tool with the given name and properties
-// func tool(name string, props map[string]api.ToolProperty) api.Tool {
-// 	t := api.Tool{Type: "function", Function: api.ToolFunction{Name: name}}
-// 	t.Function.Parameters.Type = "object"
-// 	t.Function.Parameters.Properties = props
-// 	return t
-// }
-
 func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 	type step struct {
 		input      string
@@ -26,7 +18,6 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 		steps []step
 		only  bool
 	}{
-		// all of this is just thinking tests
 		{
 			desc: "simple thinking",
 			steps: []step{

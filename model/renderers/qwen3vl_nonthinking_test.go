@@ -28,10 +28,9 @@ Hello, how are you?<|im_end|>
 <|im_start|>assistant
 `,
 		},
-		{ // C
+		{
 			name: "With thinking, end assistant.",
 			msgs: []api.Message{
-				// {Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Tell me a story in two sentences."},
 				{Role: "assistant", Content: "abc<think>To make this story interesting, I will speak in poetry.</think>"}, // does the thinking even work?
 			},
@@ -42,7 +41,7 @@ abc<think>To make this story interesting, I will speak in poetry.</think><|im_en
 <|im_start|>assistant
 `,
 		},
-		{ // C
+		{
 			name: "Multiple thinking",
 			msgs: []api.Message{
 				{Role: "user", Content: "Tell me a story in two sentences."},
@@ -53,9 +52,9 @@ Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
 abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think><|im_end|>
 <|im_start|>assistant
-`, // the second thinking tag is not captured
+`, // NOTE: the second thinking tag is not captured
 		},
-		{ // C
+		{
 			name: "Multiple thinking, multiple messages.",
 			msgs: []api.Message{
 				{Role: "user", Content: "Tell me a story in two sentences."},
@@ -77,9 +76,9 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
 		// 			name: "Image",
-		// 			msgs: []api.Message{ // i think this is because it does not go through the renderer?
-		// 				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData(IMAGE2_BASE64)}}, // does this work?
-		// 			}, // this is actually a local test, remote model may need to be different
+		// 			msgs: []api.Message{
+		// 				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData(IMAGE2_BASE64)}},
+		// 			},
 		// 			expected: `<|im_start|>user
 		// [img-0]Describe this image.<|im_end|>
 		// <|im_start|>assistant
@@ -304,8 +303,6 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// rendered, err := Qwen3VLRenderer(tt.msgs, tt.tools, nil)
-			// renderer := RendererForName("qwen3-vl")
 			rendered, err := (&Qwen3VLRenderer{false}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
