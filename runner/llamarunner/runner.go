@@ -200,13 +200,19 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
-			embed, err := s.image.NewEmbed(s.lc, images[imageIndex].Data)
+			chunks, err := s.image.MultimodalTokenize(s.lc, images[imageIndex].Data)
 			if err != nil {
 				return nil, err
 			}
 
-			for _, e := range embed {
-				inputs = append(inputs, input{embed: e})
+			for _, c := range chunks {
+				if len(c.Embed) != 0 {
+					inputs = append(inputs, input{embed: c.Embed})
+				} else {
+					for _, t := range c.Tokens {
+						inputs = append(inputs, input{token: t})
+					}
+				}
 			}
 		}
 	}
