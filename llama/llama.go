@@ -538,7 +538,7 @@ func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]
 			// If this is a text chunk, add the tokens
 			cNumTokens := C.size_t(0)
 			cTokens := C.mtmd_input_chunk_get_tokens_text(chunk, &cNumTokens)
-			cTokensArr := unsafe.Slice((*C.llama_token)(cTokens), int(cNumTokens))
+			cTokensArr := unsafe.Slice(cTokens, int(cNumTokens))
 			tokens := make([]int, int(cNumTokens))
 			for j := range int(cNumTokens) {
 				tokens[j] = int(cTokensArr[j])
