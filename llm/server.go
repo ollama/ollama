@@ -1500,7 +1500,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
 		log.Printf("llm predict error: %s", bodyBytes)
-		return api.StatusError{StatusCode: res.StatusCode, Status: res.Status, ErrorMessage: string(bodyBytes)}
+		return api.StatusError{StatusCode: res.StatusCode, Status: res.Status, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	scanner := bufio.NewScanner(res.Body)
