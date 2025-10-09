@@ -79,6 +79,9 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
+	// shift if context window is exceeded
+	shift bool
+
 	doneReason llm.DoneReason
 
 	// Metrics
@@ -94,7 +97,11 @@ type NewSequenceParams struct {
 	numKeep        int
 	samplingParams *llama.SamplingParams
 	embedding      bool
+	shift          bool
+	truncate       bool
 }
+
+var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -121,6 +128,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if len(inputs) > s.cache.numCtx {
 		discard := len(inputs) - s.cache.numCtx
+		if !params.truncate {
+			return nil, errorInputTooLong
+		}
+
 		newInputs := inputs[:params.numKeep]
 		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
 
@@ -388,6 +399,11 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		for i, input := range seq.inputs {
 			if len(seq.cache.Inputs)+len(seq.pendingInputs)+1 > s.cache.numCtx {
 				if len(seq.pendingInputs) == 0 {
+					if !seq.shift {
+						s.removeSequence(seqIdx, llm.DoneReasonLength)
+						break
+					}
+
 					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 					if err != nil {
 						var reprocess *ErrReprocessInputs
@@ -583,8 +599,14 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		numKeep:        req.Options.NumKeep,
 		samplingParams: &samplingParams,
 		embedding:      false,
+		shift:          req.Shift,
+		truncate:       req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}

@@ -468,10 +468,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:   prompt,
+			Images:   images,
+			Format:   req.Format,
+			Options:  opts,
+			Shift:    req.Shift == nil || *req.Shift,
+			Truncate: req.Truncate == nil || *req.Truncate,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -533,7 +535,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
@@ -547,13 +549,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				sbThinking.WriteString(t.Thinking)
 				sbContent.WriteString(t.Response)
 				r = t
-			case gin.H:
-				msg, ok := t["error"].(string)
-				if !ok {
-					msg = "unexpected error format in response"
-				}
-
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			case api.StatusError:
+				c.JSON(t.StatusCode, gin.H{"error": t.ErrorMessage})
+				return
+			case error:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": t.Error()})
 				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
@@ -1618,6 +1618,18 @@ func streamResponse(c *gin.Context, ch chan any) {
 			return false
 		}
 
+		if statusError, ok := val.(api.StatusError); ok {
+			c.Header("Content-Type", "application/json")
+			c.AbortWithStatusJSON(statusError.StatusCode, gin.H{"error": statusError.ErrorMessage})
+			return false
+		}
+
+		if err, ok := val.(error); ok {
+			c.Header("Content-Type", "application/json")
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return false
+		}
+
 		bts, err := json.Marshal(val)
 		if err != nil {
 			slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
@@ -1935,7 +1947,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
+	truncate := req.Truncate == nil || *req.Truncate
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1984,10 +1997,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:   prompt,
+			Images:   images,
+			Format:   req.Format,
+			Options:  opts,
+			Shift:    req.Shift == nil || *req.Shift,
+			Truncate: truncate,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
@@ -2060,7 +2075,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
@@ -2078,13 +2093,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				if len(req.Tools) > 0 {
 					toolCalls = append(toolCalls, t.Message.ToolCalls...)
 				}
-			case gin.H:
-				msg, ok := t["error"].(string)
-				if !ok {
-					msg = "unexpected error format in response"
-				}
-
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			case api.StatusError:
+				c.JSON(t.StatusCode, gin.H{"error": t.ErrorMessage})
+				return
+			case error:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": t.Error()})
 				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})

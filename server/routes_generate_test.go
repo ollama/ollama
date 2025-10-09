@@ -594,6 +594,58 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
+
+	t.Run("status error non-streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusServiceUnavailable,
+				Status:       "Service Unavailable",
+				ErrorMessage: "model is overloaded",
+			}
+		}
+
+		stream := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected status 503, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model is overloaded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("status error streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusTooManyRequests,
+				Status:       "Too Many Requests",
+				ErrorMessage: "rate limit exceeded",
+			}
+		}
+
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+		})
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("expected status 429, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"rate limit exceeded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
 }
 
 func TestGenerate(t *testing.T) {
@@ -965,6 +1017,55 @@ func TestGenerate(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "Help me write tests."); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("status error non-streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusServiceUnavailable,
+				Status:       "Service Unavailable",
+				ErrorMessage: "model is overloaded",
+			}
+		}
+
+		streamRequest := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Hello!",
+			Stream: &streamRequest,
+		})
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected status 503, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model is overloaded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("status error streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusTooManyRequests,
+				Status:       "Too Many Requests",
+				ErrorMessage: "rate limit exceeded",
+			}
+		}
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Hello!",
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("expected status 429, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"rate limit exceeded"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
