@@ -88,9 +88,6 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
-	// shift if context window is exceeded
-	shift bool
-
 	doneReason llm.DoneReason
 
 	// Metrics
@@ -106,11 +103,7 @@ type NewSequenceParams struct {
 	numKeep    int32
 	sampler    sample.Sampler
 	embedding  bool
-	shift      bool
-	truncate   bool
 }
-
-var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -133,11 +126,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if int32(len(inputs)) > s.cache.numCtx {
 		discard := int32(len(inputs)) - s.cache.numCtx
-
-		if !params.truncate {
-			return nil, errorInputTooLong
-		}
-
 		promptStart := params.numKeep + discard
 
 		// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
@@ -190,7 +178,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		embeddingOnly:       params.embedding,
 		stop:                params.stop,
 		numKeep:             params.numKeep,
-		shift:               params.shift,
 	}, nil
 }
 
@@ -535,12 +522,6 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 					break
 				}
 
-				if !seq.shift {
-					s.removeSequence(seqIdx, llm.DoneReasonLength)
-					nextBatch.seqs[seqIdx] = nil
-					break
-				}
-
 				err = s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 				if err != nil {
 					var reprocess *ErrReprocessInputs
@@ -843,14 +824,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		numKeep:    int32(req.Options.NumKeep),
 		sampler:    sampler,
 		embedding:  false,
-		shift:      req.Shift,
-		truncate:   req.Truncate,
 	})
 	if err != nil {
-		if errors.Is(err, errorInputTooLong) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
