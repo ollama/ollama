@@ -654,11 +654,11 @@ inline static void ggml_vec_scale_f32(const int n, float * y, const float   v) {
         }
         // leftovers
         // maximum number of leftover elements will be less that ggml_f32_epr. Apply predicated svmad on available elements only
-        if (np < n) {
-            svbool_t pg = svwhilelt_b32(np, n);
-            ay1 = svld1_f32(pg, y + np);
+        for (int i = np; i < n; i += ggml_f32_epr) {
+            svbool_t pg = svwhilelt_b32(i, n);
+            ay1 = svld1_f32(pg, y + i);
             ay1 = svmul_f32_m(pg, ay1, vx);
-            svst1_f32(pg, y + np, ay1);
+            svst1_f32(pg, y + i, ay1);
         }
     #elif defined(__riscv_v_intrinsic)
         for (int i = 0, avl; i < n; i += avl) {

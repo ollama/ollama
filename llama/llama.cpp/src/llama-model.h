@@ -381,6 +381,12 @@ struct llama_layer {
     // openai-moe
     struct ggml_tensor * attn_sinks = nullptr;
 
+    // xIELU activation parameters for Apertus
+    struct ggml_tensor * ffn_act_alpha_n = nullptr;
+    struct ggml_tensor * ffn_act_alpha_p = nullptr;
+    struct ggml_tensor * ffn_act_beta    = nullptr;
+    struct ggml_tensor * ffn_act_eps     = nullptr;
+
     struct ggml_tensor * bskcn_tv = nullptr;
 
     struct llama_layer_posnet posnet;

@@ -1,202 +1,104 @@
-#include "ggml.h"
-
-#ifdef _WIN32
-// AMD Device Library eXtra (ADLX)
+// AMD HIP Memory Management
 //
-// https://github.com/GPUOpen-LibrariesAndSDKs/ADLX
-//
-// This Windows-only library provides accurate VRAM reporting for AMD GPUs.
-// The runtime DLL is installed with every AMD Driver on Windows, however
-// the SDK isn't a part of the HIP SDK packaging.  As such, we avoid including
-// the headers from the SDK to simplify building from source.
-//
-// ADLX relies heavily on function pointer tables.
-// Only the minimal set of types are defined below to facilitate
-// finding the target AMD GPU(s) and querying their current VRAM usage
-// Unused function parameters are commented out to avoid unnecessary type
-// definitions.
+// This file provides accurate VRAM reporting for AMD GPUs, particularly
+// on Windows, where the HIP library provides inaccurate VRAM usage metrics. The
+// runtime DLL is installed with every driver on Windows, and most Linux
+// systems.
 
 #include "ggml-impl.h"
 #include <filesystem>
 #include <mutex>
 
-#define WIN32_LEAN_AND_MEAN
-#ifndef NOMINMAX
-#  define NOMINMAX
+#ifdef _WIN32
+#    define WIN32_LEAN_AND_MEAN
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
+#else
+#    include <dlfcn.h>
+#    include <unistd.h>
 #endif
-#include <windows.h>
 
 namespace fs = std::filesystem;
 
-#include <stdio.h>
-#include <stdint.h>
+#ifdef _WIN32
 
-// Begin minimal ADLX definitions - derived from tag v1.0 (Dec 2022)
-typedef     uint64_t            adlx_uint64;
-typedef     uint32_t            adlx_uint32;
-typedef     int32_t             adlx_int32;
-typedef     adlx_int32          adlx_int;
-typedef     adlx_uint32         adlx_uint;
-typedef     long                adlx_long;
-typedef     uint8_t             adlx_uint8;
-typedef enum
-{
-    ADLX_OK = 0,                    /**< @ENG_START_DOX This result indicates success. @ENG_END_DOX */
-    ADLX_ALREADY_ENABLED,           /**< @ENG_START_DOX This result indicates that the asked action is already enabled. @ENG_END_DOX */
-    ADLX_ALREADY_INITIALIZED,       /**< @ENG_START_DOX This result indicates that ADLX has a unspecified type of initialization. @ENG_END_DOX */
-    ADLX_FAIL,                      /**< @ENG_START_DOX This result indicates an unspecified failure. @ENG_END_DOX */
-    ADLX_INVALID_ARGS,              /**< @ENG_START_DOX This result indicates that the arguments are invalid. @ENG_END_DOX */
-    ADLX_BAD_VER,                   /**< @ENG_START_DOX This result indicates that the asked version is incompatible with the current version. @ENG_END_DOX */
-    ADLX_UNKNOWN_INTERFACE,         /**< @ENG_START_DOX This result indicates that an unknown interface was asked. @ENG_END_DOX */
-    ADLX_TERMINATED,                /**< @ENG_START_DOX This result indicates that the calls were made in an interface after ADLX was terminated. @ENG_END_DOX */
-    ADLX_ADL_INIT_ERROR,            /**< @ENG_START_DOX This result indicates that the ADL initialization failed. @ENG_END_DOX */
-    ADLX_NOT_FOUND,                 /**< @ENG_START_DOX This result indicates that the item is not found. @ENG_END_DOX */
-    ADLX_INVALID_OBJECT,            /**< @ENG_START_DOX This result indicates that the method was called into an invalid object. @ENG_END_DOX */
-    ADLX_ORPHAN_OBJECTS,            /**< @ENG_START_DOX This result indicates that ADLX was terminated with outstanding ADLX objects. Any interface obtained from ADLX points to invalid memory and calls in their methods will result in unexpected behavior. @ENG_END_DOX */
-    ADLX_NOT_SUPPORTED,             /**< @ENG_START_DOX This result indicates that the asked feature is not supported. @ENG_END_DOX */
-    ADLX_PENDING_OPERATION,         /**< @ENG_START_DOX This result indicates a failure due to an operation currently in progress. @ENG_END_DOX */
-    ADLX_GPU_INACTIVE               /**< @ENG_START_DOX This result indicates that the GPU is inactive. @ENG_END_DOX */
-} ADLX_RESULT;
-#define ADLX_SUCCEEDED(x) (ADLX_OK == (x) || ADLX_ALREADY_ENABLED == (x) || ADLX_ALREADY_INITIALIZED == (x))
-#define ADLX_FAILED(x) (ADLX_OK != (x)  && ADLX_ALREADY_ENABLED != (x) && ADLX_ALREADY_INITIALIZED != (x))
-#define ADLX_VER_MAJOR       1
-#define ADLX_VER_MINOR       0
-#define ADLX_VER_RELEASE     5
-#define ADLX_VER_BUILD_NUM   30
-#define ADLX_MAKE_FULL_VER(VERSION_MAJOR, VERSION_MINOR, VERSION_RELEASE, VERSION_BUILD_NUM)    ( ((adlx_uint64)(VERSION_MAJOR) << 48ull) | ((adlx_uint64)(VERSION_MINOR) << 32ull) | ((adlx_uint64)(VERSION_RELEASE) << 16ull)  | (adlx_uint64)(VERSION_BUILD_NUM))
-#define ADLX_FULL_VERSION ADLX_MAKE_FULL_VER(ADLX_VER_MAJOR, ADLX_VER_MINOR, ADLX_VER_RELEASE, ADLX_VER_BUILD_NUM)
-#define ADLX_CORE_LINK          __declspec(dllexport)
-#define ADLX_STD_CALL           __stdcall
-#define ADLX_CDECL_CALL         __cdecl
-#define ADLX_FAST_CALL          __fastcall
-#define ADLX_INLINE              __inline
-#define ADLX_FORCEINLINE         __forceinline
-#define ADLX_NO_VTABLE          __declspec(novtable)
+// Minimal definitions to avoid including the adlx.h header
+typedef int ADLX_RESULT;
+#define ADLX_SUCCEEDED(res)      (res == 0)
+#define ADLX_FAILED(res)         (res != 0)
+#define ADLX_OK                  0
+#define ADLX_NOT_FOUND           1
+#define ADLX_ADL_INIT_ERROR      2
+#define ADLX_FULL_VERSION        ((10 << 16) | (0 << 8) | 0)
 
-#if defined(__cplusplus)
-typedef     bool                adlx_bool;
-#else
-typedef     adlx_uint8           adlx_bool;
-#define     true                1
-#define     false               0
-#endif
+typedef bool adlx_bool;
+typedef int adlx_int;
+typedef unsigned int adlx_uint;
+typedef unsigned long long adlx_uint64;
+typedef double adlx_double;
 
 typedef struct IADLXSystem IADLXSystem;
-typedef struct IADLXGPUList IADLXGPUList;
 typedef struct IADLXGPU IADLXGPU;
-typedef struct IADLXInterface IADLXInterface;
+typedef struct IADLXGPUList IADLXGPUList;
 typedef struct IADLXPerformanceMonitoringServices IADLXPerformanceMonitoringServices;
-typedef struct IADLXGPUMetrics IADLXGPUMetrics;
 typedef struct IADLXGPUMetricsSupport IADLXGPUMetricsSupport;
+typedef struct IADLXGPUMetrics IADLXGPUMetrics;
 
-typedef struct IADLXSystemVtbl
-{
-    // IADLXSystem interface
-    ADLX_RESULT (ADLX_STD_CALL *GetHybridGraphicsType)(/* IADLXSystem* pThis, ADLX_HG_TYPE* hgType */);
-    ADLX_RESULT (ADLX_STD_CALL *GetGPUs)(IADLXSystem* pThis, IADLXGPUList** ppGPUs); // Used
-    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXSystem* pThis, const wchar_t* interfaceId, void** ppInterface */);
-    ADLX_RESULT (ADLX_STD_CALL *GetDisplaysServices)(/* IADLXSystem* pThis, IADLXDisplayServices** ppDispServices */);
-    ADLX_RESULT (ADLX_STD_CALL *GetDesktopsServices)(/* IADLXSystem* pThis, IADLXDesktopServices** ppDeskServices */);
-    ADLX_RESULT (ADLX_STD_CALL *GetGPUsChangedHandling)(/* IADLXSystem* pThis, IADLXGPUsChangedHandling** ppGPUsChangedHandling */);
-    ADLX_RESULT (ADLX_STD_CALL *EnableLog)(/* IADLXSystem* pThis, ADLX_LOG_DESTINATION mode, ADLX_LOG_SEVERITY severity, IADLXLog* pLogger, const wchar_t* fileName */);
-    ADLX_RESULT (ADLX_STD_CALL *Get3DSettingsServices)(/* IADLXSystem* pThis, IADLX3DSettingsServices** pp3DSettingsServices */);
-    ADLX_RESULT (ADLX_STD_CALL *GetGPUTuningServices)(/* IADLXSystem* pThis, IADLXGPUTuningServices** ppGPUTuningServices */);
-    ADLX_RESULT (ADLX_STD_CALL *GetPerformanceMonitoringServices)(IADLXSystem* pThis, IADLXPerformanceMonitoringServices** ppPerformanceMonitoringServices); // Used
-    ADLX_RESULT (ADLX_STD_CALL *TotalSystemRAM)(/* IADLXSystem* pThis, adlx_uint* ramMB */);
-    ADLX_RESULT (ADLX_STD_CALL *GetI2C)(/* IADLXSystem* pThis, IADLXGPU* pGPU, IADLXI2C** ppI2C */);
+// IADLXInterface
+typedef struct {
+    ADLX_RESULT (ADLX_STD_CALL* Release)(/* IADLXInterface* pThis */);
+} IADLXInterfaceVtbl;
+struct IADLXInterface { const IADLXInterfaceVtbl *pVtbl; };
+
+// IADLXSystem
+typedef struct {
+    // IADLXInterface
+    ADLX_RESULT (ADLX_STD_CALL* Release)(/* IADLXSystem* pThis */);
+
+    ADLX_RESULT (ADLX_STD_CALL* GetGPUs)(IADLXSystem* pThis, IADLXGPUList** ppGPUs); // Used
+    ADLX_RESULT (ADLX_STD_CALL* GetPerformanceMonitoringServices)(IADLXSystem* pThis, IADLXPerformanceMonitoringServices** ppPerformanceMonitoringServices); // Used
 } IADLXSystemVtbl;
 struct IADLXSystem { const IADLXSystemVtbl *pVtbl; };
 
-typedef struct IADLXGPUVtbl
-{
-    //IADLXInterface
-    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXGPU* pThis */);
-    adlx_long (ADLX_STD_CALL *Release)(IADLXGPU* pThis); // Used
-    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXGPU* pThis, const wchar_t* interfaceId, void** ppInterface */);
+// IADLXGPUList
+typedef struct {
+    // IADLXInterface
+    ADLX_RESULT (ADLX_STD_CALL* Release)(IADLXGPUList* pThis);
 
-    //IADLXGPU
-    ADLX_RESULT (ADLX_STD_CALL *VendorId)(/* IADLXGPU* pThis, const char** vendorId */);
-    ADLX_RESULT (ADLX_STD_CALL *ASICFamilyType)(/* IADLXGPU* pThis, ADLX_ASIC_FAMILY_TYPE* asicFamilyType */);
-    ADLX_RESULT (ADLX_STD_CALL *Type)(/* IADLXGPU* pThis, ADLX_GPU_TYPE* gpuType */);
-    ADLX_RESULT (ADLX_STD_CALL *IsExternal)(/* IADLXGPU* pThis, adlx_bool* isExternal */);
-    ADLX_RESULT (ADLX_STD_CALL *Name)(/* IADLXGPU* pThis, const char** gpuName */);
-    ADLX_RESULT (ADLX_STD_CALL *DriverPath)(/* IADLXGPU* pThis, const char** driverPath */);
-    ADLX_RESULT (ADLX_STD_CALL *PNPString)(/* IADLXGPU* pThis, const char** pnpString */);
-    ADLX_RESULT (ADLX_STD_CALL *HasDesktops)(/* IADLXGPU* pThis, adlx_bool* hasDesktops */);
-    ADLX_RESULT (ADLX_STD_CALL *TotalVRAM)(IADLXGPU* pThis, adlx_uint* vramMB); // Used
-    ADLX_RESULT (ADLX_STD_CALL *VRAMType)(/* IADLXGPU* pThis, const char** type */);
-    ADLX_RESULT (ADLX_STD_CALL *BIOSInfo)(/* IADLXGPU* pThis, const char** partNumber, const char** version, const char** date */);
-    ADLX_RESULT (ADLX_STD_CALL *DeviceId)(/* IADLXGPU* pThis, const char** deviceId */);
-    ADLX_RESULT (ADLX_STD_CALL *RevisionId)(/* IADLXGPU* pThis, const char** revisionId */);
-    ADLX_RESULT (ADLX_STD_CALL *SubSystemId)(/* IADLXGPU* pThis, const char** subSystemId */);
-    ADLX_RESULT (ADLX_STD_CALL *SubSystemVendorId)(/* IADLXGPU* pThis, const char** subSystemVendorId */);
-    ADLX_RESULT (ADLX_STD_CALL *UniqueId)(IADLXGPU* pThis, adlx_int* uniqueId); // Used
-} IADLXGPUVtbl;
-struct IADLXGPU { const IADLXGPUVtbl *pVtbl; };
-
-typedef struct IADLXGPUListVtbl
-{
-    //IADLXInterface
-    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXGPUList* pThis */);
-    adlx_long (ADLX_STD_CALL *Release)(IADLXGPUList* pThis); // Used
-    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXGPUList* pThis, const wchar_t* interfaceId, void** ppInterface */);
-
-    //IADLXList
-    adlx_uint (ADLX_STD_CALL *Size)(/* IADLXGPUList* pThis */);
-    adlx_uint8 (ADLX_STD_CALL *Empty)(/* IADLXGPUList* pThis */);
-    adlx_uint (ADLX_STD_CALL *Begin)(IADLXGPUList* pThis); // Used
-    adlx_uint (ADLX_STD_CALL *End)(IADLXGPUList* pThis); // Used
-    ADLX_RESULT (ADLX_STD_CALL *At)(/* IADLXGPUList* pThis, const adlx_uint location, IADLXInterface** ppItem */);
-    ADLX_RESULT (ADLX_STD_CALL *Clear)(/* IADLXGPUList* pThis */);
-    ADLX_RESULT (ADLX_STD_CALL *Remove_Back)(/* IADLXGPUList* pThis */);
-    ADLX_RESULT (ADLX_STD_CALL *Add_Back)(/* IADLXGPUList* pThis, IADLXInterface* pItem */);
-
-    //IADLXGPUList
-    ADLX_RESULT (ADLX_STD_CALL *At_GPUList)(IADLXGPUList* pThis, const adlx_uint location, IADLXGPU** ppItem); // Used
-    ADLX_RESULT (ADLX_STD_CALL *Add_Back_GPUList)(/* IADLXGPUList* pThis, IADLXGPU* pItem */);
-
+    ADLX_RESULT (ADLX_STD_CALL* At_GPUList)(IADLXGPUList* pThis, adlx_uint location, IADLXGPU** ppGPU); // Used
+    adlx_uint (ADLX_STD_CALL* Begin)(IADLXGPUList* pThis); // Used
+    adlx_uint (ADLX_STD_CALL* End)(IADLXGPUList* pThis); // Used
+    adlx_uint (ADLX_STD_CALL* Size)(/* IADLXGPUList* pThis */);
 } IADLXGPUListVtbl;
 struct IADLXGPUList { const IADLXGPUListVtbl *pVtbl; };
 
-typedef struct IADLXPerformanceMonitoringServicesVtbl
-{
-    //IADLXInterface
-    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXPerformanceMonitoringServices* pThis */);
-    adlx_long (ADLX_STD_CALL *Release)(IADLXPerformanceMonitoringServices* pThis); // Used
-    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXPerformanceMonitoringServices* pThis, const wchar_t* interfaceId, void** ppInterface */);
+// IADLXGPU
+typedef struct {
+    // IADLXInterface
+    ADLX_RESULT (ADLX_STD_CALL* Release)(IADLXGPU* pThis);
 
-    //IADLXPerformanceMonitoringServices
-    ADLX_RESULT (ADLX_STD_CALL *GetSamplingIntervalRange)(/* IADLXPerformanceMonitoringServices* pThis, ADLX_IntRange* range */);
-    ADLX_RESULT (ADLX_STD_CALL *SetSamplingInterval)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int intervalMs */);
-    ADLX_RESULT (ADLX_STD_CALL *GetSamplingInterval)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* intervalMs */);
-    ADLX_RESULT (ADLX_STD_CALL *GetMaxPerformanceMetricsHistorySizeRange)(/* IADLXPerformanceMonitoringServices* pThis, ADLX_IntRange* range */);
-    ADLX_RESULT (ADLX_STD_CALL *SetMaxPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int sizeSec */);
-    ADLX_RESULT (ADLX_STD_CALL *GetMaxPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* sizeSec */);
-    ADLX_RESULT (ADLX_STD_CALL *ClearPerformanceMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis */);
-    ADLX_RESULT (ADLX_STD_CALL *GetCurrentPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* sizeSec */);
-    ADLX_RESULT (ADLX_STD_CALL *StartPerformanceMetricsTracking)(/* IADLXPerformanceMonitoringServices* pThis */);
-    ADLX_RESULT (ADLX_STD_CALL *StopPerformanceMetricsTracking)(/* IADLXPerformanceMonitoringServices* pThis */);
-    ADLX_RESULT (ADLX_STD_CALL *GetAllMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXAllMetricsList** ppMetricsList */);
-    ADLX_RESULT (ADLX_STD_CALL *GetGPUMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, adlx_int startMs, adlx_int stopMs, IADLXGPUMetricsList** ppMetricsList */);
-    ADLX_RESULT (ADLX_STD_CALL *GetSystemMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXSystemMetricsList** ppMetricsList */);
-    ADLX_RESULT (ADLX_STD_CALL *GetFPSHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXFPSList** ppMetricsList */);
-    ADLX_RESULT (ADLX_STD_CALL *GetCurrentAllMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXAllMetrics** ppMetrics */);
-    ADLX_RESULT (ADLX_STD_CALL *GetCurrentGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetrics** ppMetrics); // Used
-    ADLX_RESULT (ADLX_STD_CALL *GetCurrentSystemMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXSystemMetrics** ppMetrics */);
-    ADLX_RESULT (ADLX_STD_CALL *GetCurrentFPS)(/* IADLXPerformanceMonitoringServices* pThis, IADLXFPS** ppMetrics */);
-    ADLX_RESULT (ADLX_STD_CALL *GetSupportedGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetricsSupport** ppMetricsSupported); // Used
-    ADLX_RESULT (ADLX_STD_CALL *GetSupportedSystemMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXSystemMetricsSupport** ppMetricsSupported */);
-}IADLXPerformanceMonitoringServicesVtbl;
+    ADLX_RESULT (ADLX_STD_CALL* UniqueId)(IADLXGPU* pThis, adlx_int* uniqueId); // Used
+    ADLX_RESULT (ADLX_STD_CALL* TotalVRAM)(IADLXGPU* pThis, adlx_uint* vramMB); // Used
+} IADLXGPUVtbl;
+struct IADLXGPU { const IADLXGPUVtbl *pVtbl; };
+
+// IADLXPerformanceMonitoringServices
+typedef struct {
+    // IADLXInterface
+    ADLX_RESULT (ADLX_STD_CALL* Release)(IADLXPerformanceMonitoringServices* pThis);
+
+    ADLX_RESULT (ADLX_STD_CALL* GetSupportedGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetricsSupport** ppMetricsSupport); // Used
+    ADLX_RESULT (ADLX_STD_CALL* GetCurrentGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetrics** ppMetrics); // Used
+} IADLXPerformanceMonitoringServicesVtbl;
 struct IADLXPerformanceMonitoringServices { const IADLXPerformanceMonitoringServicesVtbl *pVtbl; };
 
-typedef struct IADLXGPUMetricsSupportVtbl
-{
-    //IADLXInterface
-    adlx_long (ADLX_STD_CALL* Acquire)(/* IADLXGPUMetricsSupport* pThis */);
-    adlx_long (ADLX_STD_CALL* Release)(IADLXGPUMetricsSupport* pThis); // Used
-    ADLX_RESULT (ADLX_STD_CALL* QueryInterface)(/* IADLXGPUMetricsSupport* pThis, const wchar_t* interfaceId, void** ppInterface */);
+// IADLXGPUMetricsSupport
+typedef struct {
+    // IADLXInterface
+    ADLX_RESULT (ADLX_STD_CALL* Release)(IADLXGPUMetricsSupport* pThis);
 
-    //IADLXGPUMetricsSupport
     ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUUsage)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
     ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUClockSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
     ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVRAMClockSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
@@ -207,26 +109,13 @@ typedef struct IADLXGPUMetricsSupportVtbl
     ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUFanSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
     ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVRAM)(IADLXGPUMetricsSupport* pThis, adlx_bool* supported); // Used
     ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVoltage)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
-
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUUsageRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUClockSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUVRAMClockSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUTemperatureRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUHotspotTemperatureRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUPowerRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUFanSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUVRAMRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUVoltageRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
-    ADLX_RESULT (ADLX_STD_CALL* GetGPUTotalBoardPowerRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
 } IADLXGPUMetricsSupportVtbl;
 struct IADLXGPUMetricsSupport { const IADLXGPUMetricsSupportVtbl *pVtbl; };
 
-typedef struct IADLXGPUMetricsVtbl
-{
-    //IADLXInterface
-    adlx_long (ADLX_STD_CALL* Acquire)(/* IADLXGPUMetrics* pThis */);
-    adlx_long (ADLX_STD_CALL* Release)(IADLXGPUMetrics* pThis); // Used
-    ADLX_RESULT (ADLX_STD_CALL* QueryInterface)(/* IADLXGPUMetrics* pThis, const wchar_t* interfaceId, void** ppInterface */);
+// IADLXGPUMetrics
+typedef struct {
+    // IADLXInterface
+    ADLX_RESULT (ADLX_STD_CALL* Release)(IADLXGPUMetrics* pThis);
 
     //IADLXGPUMetrics
     ADLX_RESULT (ADLX_STD_CALL* TimeStamp)(/* IADLXGPUMetrics* pThis, adlx_int64* ms */);
@@ -288,7 +177,7 @@ int ggml_hip_mgmt_init() {
         const char *version = NULL;
         ADLX_RESULT status = adlx.ADLXQueryVersion(&version);
         if (ADLX_SUCCEEDED(status)) {
-            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);  
+            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);
         }
     }
 
@@ -343,7 +232,7 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, 
     IADLXGPU* gpu = NULL;
     IADLXGPUMetrics *gpuMetrics = NULL;
     ADLX_RESULT status;
-    // The "UniqueID" exposed in ADLX is the PCI Bus and Device IDs 
+    // The "UniqueID" exposed in ADLX is the PCI Bus and Device IDs
     adlx_int target = (pci_bus_id << 8) | (pci_device_id & 0xff);
 
     status = adlx.sys->pVtbl->GetPerformanceMonitoringServices(adlx.sys, &perfMonitoringServices);
@@ -403,7 +292,7 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, 
             adlx_gdm_cleanup;
             return status;
         }
-        
+
         adlx_uint totalVRAM = 0;
         status = gpu->pVtbl->TotalVRAM(gpu, &totalVRAM);
         if (ADLX_FAILED(status)) {
@@ -447,3 +336,5 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, 
 } // extern "C"
 
 #endif // #ifdef _WIN32
+
+// Made with Bob

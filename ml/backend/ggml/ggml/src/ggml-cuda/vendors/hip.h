@@ -5,9 +5,10 @@
 #include <hipblas/hipblas.h>
 #include <hip/hip_fp16.h>
 #include <hip/hip_bf16.h>
-// for rocblas_initialize()
-#include "rocblas/rocblas.h"
 
+#if defined(GGML_HIP_ROCWMMA_FATTN)
+#include <rocwmma/rocwmma-version.hpp>
+#endif // defined(GGML_HIP_ROCWMMA_FATTN)
 
 #define CUBLAS_GEMM_DEFAULT HIPBLAS_GEMM_DEFAULT
 #define CUBLAS_GEMM_DEFAULT_TENSOR_OP HIPBLAS_GEMM_DEFAULT
@@ -46,7 +47,6 @@
 #define cudaDeviceProp hipDeviceProp_t
 #define cudaDeviceReset hipDeviceReset
 #define cudaDeviceSynchronize hipDeviceSynchronize
-#define cudaDriverGetVersion hipDriverGetVersion
 #define cudaError_t hipError_t
 #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled

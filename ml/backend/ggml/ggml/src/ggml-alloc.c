@@ -392,12 +392,8 @@ static void ggml_dyn_tallocr_free(struct ggml_dyn_tallocr * alloc) {
     free(alloc);
 }
 
-static size_t ggml_dyn_tallocr_max_size(struct ggml_dyn_tallocr * alloc) {
-    size_t max_size = 0;
-    for (int i = 0; i < alloc->n_chunks; i++) {
-        max_size += alloc->chunks[i]->max_size;
-    }
-    return max_size;
+static size_t ggml_dyn_tallocr_max_size(struct ggml_dyn_tallocr * alloc, int chunk) {
+    return chunk < alloc->n_chunks ? alloc->chunks[chunk]->max_size : 0;
 }
 
 
@@ -417,10 +413,8 @@ static void ggml_vbuffer_free(struct vbuffer * buf) {
     free(buf);
 }
 
-static int ggml_vbuffer_n_chunks(struct vbuffer * buf) {
-    int n = 0;
-    while (n < GGML_VBUFFER_MAX_CHUNKS && buf->chunks[n]) n++;
-    return n;
+static size_t ggml_vbuffer_chunk_size(struct vbuffer * buf, int chunk) {
+    return buf->chunks[chunk] ? ggml_backend_buffer_get_size(buf->chunks[chunk]) : 0;
 }
 
 static size_t ggml_vbuffer_size(struct vbuffer * buf) {
@@ -892,12 +886,20 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
             }
         }
 
-        size_t cur_size = galloc->buffers[i] ? ggml_vbuffer_size(galloc->buffers[i]) : 0;
-        size_t new_size = ggml_dyn_tallocr_max_size(galloc->buf_tallocs[i]);
-
         // even if there are no tensors allocated in this buffer, we still need to allocate it to initialize views
-        if (new_size > cur_size || galloc->buffers[i] == NULL) {
+        bool realloc = galloc->buffers[i] == NULL;
+        size_t new_size = 0;
+        for (int c = 0; c < galloc->buf_tallocs[i]->n_chunks; c++) {
+            size_t cur_chunk_size = galloc->buffers[i] ? ggml_vbuffer_chunk_size(galloc->buffers[i], c) : 0;
+            size_t new_chunk_size = ggml_dyn_tallocr_max_size(galloc->buf_tallocs[i], c);
+            new_size += new_chunk_size;
+            if (new_chunk_size > cur_chunk_size) {
+                realloc = true;
+            }
+        }
+        if (realloc) {
 #ifndef NDEBUG
+            size_t cur_size = galloc->buffers[i] ? ggml_vbuffer_size(galloc->buffers[i]) : 0;
             GGML_LOG_DEBUG("%s: reallocating %s buffer from size %.02f MiB to %.02f MiB\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), cur_size / 1024.0 / 1024.0, new_size / 1024.0 / 1024.0);
 #endif
 

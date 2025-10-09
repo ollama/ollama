@@ -8,7 +8,7 @@ Subject: [PATCH] harden uncaught exception registration
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml.cpp b/ggml/src/ggml.cpp
-index 0d388d45..f5bcb446 100644
+index 0d388d4..f5bcb44 100644
 --- a/ggml/src/ggml.cpp
 +++ b/ggml/src/ggml.cpp
 @@ -19,8 +19,12 @@ static bool ggml_uncaught_exception_init = []{
