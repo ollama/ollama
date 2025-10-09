@@ -74,6 +74,7 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 <|im_start|>assistant
 `,
 		},
+		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
 		// 			name: "Image",
 		// 			msgs: []api.Message{ // i think this is because it does not go through the renderer?
@@ -84,6 +85,8 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 		// <|im_start|>assistant
 		// `,
 		// 		},
+
+		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
 		// 			name: "Multiple images",
 		// 			msgs: []api.Message{
@@ -94,6 +97,8 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 		// <|im_start|>assistant
 		// `,
 		// 		},
+
+		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
 		// 		{
 		// 			name: "with tools and response",
 		// 			msgs: []api.Message{
@@ -173,6 +178,8 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 		// <|im_start|>assistant
 		// `,
 		// 		},
+
+		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
 		// 		{
 		// 			name: "With tools and response, multiple tool calls",
 		// 			msgs: []api.Message{

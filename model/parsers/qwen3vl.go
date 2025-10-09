@@ -2,12 +2,11 @@ package parsers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
-
-	"encoding/json"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -22,8 +21,8 @@ import (
 
 // TODO: call the init function
 const (
-	CollectingContent         qwenParserState = iota
-	CollectingThinkingContent                 // qwenParserState = iota
+	CollectingContent qwenParserState = iota
+	CollectingThinkingContent
 	CollectingToolContent
 )
 
@@ -76,7 +75,7 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 				return "", "", nil, err
 			}
 			toolCalls = append(toolCalls, toolCall)
-		case qwenEventThinkingContent: // maybe we only need one?
+		case qwenEventThinkingContent:
 			sb.WriteString(event.content)
 		case qwenEventContent:
 			// TODO(drifkin): if the same turn contains multiple interleaved content

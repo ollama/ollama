@@ -7,9 +7,6 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-var imageCount int
-var videoCount int
-
 func marshalWithSpaces(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -56,10 +53,7 @@ type Qwen3VLRenderer struct {
 func (r *Qwen3VLRenderer) renderContent(content api.Message, doVisionCount bool) string {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
-	for _ = range content.Images {
-		if doVisionCount {
-			imageCount++
-		}
+	for range content.Images {
 		subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
 	}
 	// TODO: support videos
@@ -162,7 +156,6 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 				sb.WriteString("<|im_end|>\n")
 			}
 		}
-
 	}
 
 	sb.WriteString("<|im_start|>assistant\n")
@@ -171,5 +164,4 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 	}
 
 	return sb.String(), nil
-
 }
