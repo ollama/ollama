@@ -173,9 +173,14 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 						slog.Info("skipping long prompt", "model", model, "num_ctx", numCtx, "gpu_percent", gpuPercent)
 						continue
 					}
-					req := api.GenerateRequest{
-						Model:     model,
-						Prompt:    tc.prompt,
+					req := api.ChatRequest{
+						Model: model,
+						Messages: []api.Message{
+							{
+								Role:    "user",
+								Content: tc.prompt,
+							},
+						},
 						KeepAlive: &api.Duration{Duration: 20 * time.Second}, // long enough to ensure a ps returns
 						Options: map[string]interface{}{
 							"temperature": 0,
@@ -184,7 +189,7 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 						},
 					}
 					atLeastOne := false
-					var resp api.GenerateResponse
+					var resp api.ChatResponse
 
 					stream := false
 					req.Stream = &stream
@@ -198,7 +203,7 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 					)
 					defer cancel()
 
-					err = client.Generate(genCtx, &req, func(rsp api.GenerateResponse) error {
+					err = client.Chat(genCtx, &req, func(rsp api.ChatResponse) error {
 						resp = rsp
 						return nil
 					})
@@ -214,13 +219,13 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 					}
 					loaded = true
 					for _, expResp := range tc.anyResp {
-						if strings.Contains(strings.ToLower(resp.Response), expResp) {
+						if strings.Contains(strings.ToLower(resp.Message.Content), expResp) {
 							atLeastOne = true
 							break
 						}
 					}
 					if !atLeastOne {
-						t.Fatalf("response didn't contain expected values: ctx:%d  expected:%v response:%s ", numCtx, tc.anyResp, resp.Response)
+						t.Fatalf("response didn't contain expected values: ctx:%d  expected:%v response:%s ", numCtx, tc.anyResp, resp.Message.Content)
 					}
 					models, err := client.ListRunning(ctx)
 					if err != nil {

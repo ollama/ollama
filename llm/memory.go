@@ -266,11 +266,18 @@ func estimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		}
 		// Only include GPUs that can fit the graph, gpu minimum, the layer buffer and at least more layer
 		if gpus[i].FreeMemory < overhead+gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerSize {
+			var compute string
+			if gpus[i].Library == "ROCm" {
+				compute = fmt.Sprintf("gfx%x%02x", gpus[i].ComputeMajor, gpus[i].ComputeMinor)
+			} else {
+				compute = fmt.Sprintf("%d.%d", gpus[i].ComputeMajor, gpus[i].ComputeMinor)
+			}
+
 			slog.Debug("gpu has too little memory to allocate any layers",
 				"id", gpus[i].ID,
 				"library", gpus[i].Library,
 				"variant", gpus[i].Variant,
-				"compute", gpus[i].Compute,
+				"compute", compute,
 				"driver", fmt.Sprintf("%d.%d", gpus[i].DriverMajor, gpus[i].DriverMinor),
 				"name", gpus[i].Name,
 				"total", format.HumanBytes2(gpus[i].TotalMemory),

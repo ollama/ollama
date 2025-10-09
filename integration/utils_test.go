@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -24,7 +25,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/format"
 )
 
@@ -38,6 +38,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"qwen3-coder:30b",
 		"gpt-oss:20b",
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
@@ -46,6 +47,7 @@ var (
 		"qwen2.5-coder:latest",
 		"qwen2.5vl:3b",
 		"qwen3:0.6b", // dense
+		"qwen3:1.7b", // dense
 		"qwen3:30b",  // MOE
 		"gemma3:1b",
 		"llama3.1:latest",
@@ -265,16 +267,16 @@ var (
 		"Explain the physics involved in them.  Be breif in your reply",
 		"Explain the chemistry involved in them.  Be breif in your reply",
 		"What are common myths related to them? Be brief in your reply",
-		"What are common fairytales related to them? Be brief in your reply",
 		"Can they form if there is no rain?  Be breif in your reply",
 		"Can they form if there are no clouds?  Be breif in your reply",
 		"Do they happen on other planets? Be brief in your reply",
 	}
-	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "end", "gold", "fortune", "blessing", "prosperity", "magic", "shower", "sky", "shimmer", "light", "storm", "sunny"}
+	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "particles", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "shower", "sky", "shimmer", "light", "storm", "sunny", "sunburst", "phenomenon", "mars", "venus", "jupiter"}
 )
 
 func init() {
-	lifecycle.InitLogging()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(logger)
 	custom := os.Getenv("OLLAMA_TEST_DEFAULT_MODEL")
 	if custom != "" {
 		slog.Info("setting default test model to " + custom)
@@ -335,6 +337,7 @@ func GetTestEndpoint() (*api.Client, string) {
 
 var serverMutex sync.Mutex
 var serverReady bool
+var serverLogFile string
 
 func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
@@ -361,8 +364,9 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 		t.Setenv("OLLAMA_HOST", ollamaHost)
 	}
 
+	logDir := t.TempDir()
 	slog.Info("starting server", "url", ollamaHost)
-	done, err := lifecycle.SpawnServer(ctx, "../ollama")
+	done, err := SpawnServer(ctx, "../ollama", logDir)
 	if err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
@@ -383,6 +387,36 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 
 	serverReady = true
 	return nil
+}
+
+func SpawnServer(ctx context.Context, command, logDir string) (chan int, error) {
+	done := make(chan int)
+	fp, err := os.CreateTemp(logDir, "ollama-server-*.log")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log file: %w", err)
+	}
+	serverLogFile = fp.Name()
+
+	cmd := exec.CommandContext(ctx, command, "serve")
+	cmd.Stderr = fp
+	cmd.Stdout = fp
+
+	go func() {
+		slog.Info("starting server...")
+		if err := cmd.Run(); err != nil {
+			// "signal: killed" expected
+			if !strings.Contains(err.Error(), "signal") {
+				slog.Info("failed to run server", "error", err)
+			}
+		}
+		var code int
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		slog.Info("server exited")
+		done <- code
+	}()
+	return done, nil
 }
 
 func PullIfMissing(ctx context.Context, client *api.Client, modelName string) error {
@@ -445,12 +479,6 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 	client, testEndpoint := GetTestEndpoint()
 	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
 		serverProcMutex.Lock()
-		fp, err := os.CreateTemp("", "ollama-server-*.log")
-		if err != nil {
-			t.Fatalf("failed to generate log file: %s", err)
-		}
-		lifecycle.ServerLogFile = fp.Name()
-		fp.Close()
 		if err := startServer(t, ctx, testEndpoint); err != nil {
 			t.Fatal(err)
 		}
@@ -478,36 +506,32 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
 			defer serverProcMutex.Unlock()
 			if t.Failed() {
-				fp, err := os.Open(lifecycle.ServerLogFile)
+				fp, err := os.Open(serverLogFile)
 				if err != nil {
-					slog.Error("failed to open server log", "logfile", lifecycle.ServerLogFile, "error", err)
+					slog.Error("failed to open server log", "logfile", serverLogFile, "error", err)
 					return
 				}
 				defer fp.Close()
 				data, err := io.ReadAll(fp)
 				if err != nil {
-					slog.Error("failed to read server log", "logfile", lifecycle.ServerLogFile, "error", err)
+					slog.Error("failed to read server log", "logfile", serverLogFile, "error", err)
 					return
 				}
 				slog.Warn("SERVER LOG FOLLOWS")
 				os.Stderr.Write(data)
 				slog.Warn("END OF SERVER")
 			}
-			err := os.Remove(lifecycle.ServerLogFile)
-			if err != nil && !os.IsNotExist(err) {
-				slog.Warn("failed to cleanup", "logfile", lifecycle.ServerLogFile, "error", err)
-			}
 		}
 	}
 }
 
-func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRequest, anyResp []string) {
+func ChatTestHelper(ctx context.Context, t *testing.T, req api.ChatRequest, anyResp []string) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, genReq.Model); err != nil {
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
 		t.Fatal(err)
 	}
-	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
+	DoChat(ctx, t, client, req, anyResp, 30*time.Second, 10*time.Second)
 }
 
 func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
@@ -726,8 +750,14 @@ func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, m
 	loaded := []string{}
 	for _, m := range models.Models {
 		loaded = append(loaded, m.Name)
-		if m.Name != model {
-			continue
+		if strings.Contains(model, ":") {
+			if m.Name != model {
+				continue
+			}
+		} else if strings.Contains(m.Name, ":") {
+			if !strings.HasPrefix(m.Name, model+":") {
+				continue
+			}
 		}
 		gpuPercent := 0
 		switch {

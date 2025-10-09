@@ -34,16 +34,21 @@ func TestVisionModels(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req := api.GenerateRequest{
-				Model:  v.model,
-				Prompt: "what does the text in this image say?",
+			req := api.ChatRequest{
+				Model: v.model,
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "what does the text in this image say?",
+						Images: []api.ImageData{
+							image,
+						},
+					},
+				},
 				Stream: &stream,
 				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
-				},
-				Images: []api.ImageData{
-					image,
 				},
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -56,8 +61,15 @@ func TestVisionModels(t *testing.T) {
 			if err := PullIfMissing(ctx, client, req.Model); err != nil {
 				t.Fatal(err)
 			}
+			// Preload to skip if we're less than 80% on GPU to avoid extremely slow tests
+			err = client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
+			if err != nil {
+				t.Fatalf("failed to load model %s: %s", req.Model, err)
+			}
+			skipIfNotGPULoaded(ctx, t, client, req.Model, 80)
+
 			// llava models on CPU can be quite slow to start
-			DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
+			DoChat(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
 		})
 	}
 }

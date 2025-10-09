@@ -936,7 +936,7 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\")")
+	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
 }
 
 // MarshalJSON implements json.Marshaler
