@@ -229,8 +229,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 
 				if runnerToExpire == nil {
-					// Shouildn't happen
-					slog.Error("runner to expire was nil!")
+					// While we were performing load calculations, the loaded runner(s) unloaded in parallel
+					// so findRunnerToUnload returned no runners.  We'll try again and the loadedCount should be zero
+					slog.Debug("runner to expire was nil, retrying")
 					continue
 				}
 				// Trigger an expiration to unload once it's done
