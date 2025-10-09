@@ -170,5 +170,3 @@ int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
 }
 
 }
-
-// Made with Bob
