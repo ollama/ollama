@@ -53,6 +53,7 @@ Advanced parameters (optional):
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
+- `truncate`: truncates the composed prompt to fit within the context length. If `false`, the server returns `400` when the prompt exceeds the effective context length. Defaults to `true`.
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 
@@ -508,6 +509,7 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `truncate`: truncates older messages to fit the prompt into the context window (keeping the latest message and any system messages). If `false`, the server returns `400` when the composed prompt exceeds the effective context length. Defaults to `true`.
 
 ### Tool calling
 
