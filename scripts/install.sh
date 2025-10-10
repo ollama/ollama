@@ -69,7 +69,9 @@ fi
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
-OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+if [[ ! -v OLLAMA_INSTALL_DIR ]]; then
+    OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+fi
 
 if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
@@ -113,10 +115,15 @@ trap install_success EXIT
 
 # Everything from this point onwards is optional.
 
+if [[ ! -v OLLAMA_HOME_DIR ]]; then
+    OLLAMA_HOME_DIR="/usr/share/ollama"
+fi
+echo "Setting $OLLAMA_HOME_DIR as home for ollama user"
+
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+        $SUDO useradd -r -s /bin/false -U -m -d $OLLAMA_HOME_DIR ollama
     fi
     if getent group render >/dev/null 2>&1; then
         status "Adding ollama user to render group..."
