@@ -243,7 +243,6 @@ func (kv KV) OllamaEngineRequired() bool {
 		"gemma3",
 		"gemma3n",
 		"mistral3",
-		"qwen3",
 		"qwen3moe",
 		"llama4",
 		"mllama",
