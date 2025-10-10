@@ -12,12 +12,14 @@ const store = new Store()
 enum Step {
   WELCOME = 0,
   CLI,
+  CUSTOM_PATH,
   FINISH,
 }
 
 export default function () {
   const [step, setStep] = useState<Step>(Step.WELCOME)
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
+  const [customPathChecked, setCustomPathChecked] = useState<boolean>(false)
 
   const command = 'ollama run llama3.2'
 
@@ -48,7 +50,7 @@ export default function () {
             <div className='mx-auto flex flex-col space-y-28 text-center'>
               <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Install the command line</h1>
               <pre className='mx-auto text-4xl text-gray-400'>&gt; ollama</pre>
-              <div className='mx-auto'>
+              <div className='mx-auto flex items-center flex-col space-y-4'>
                 <button
                   onClick={async () => {
                     try {
@@ -65,13 +67,70 @@ export default function () {
                 >
                   Install
                 </button>
-                <p className='mx-auto my-4 w-[70%] text-xs text-gray-400'>
+                <p className='mx-auto my-2 w-[70%] text-xs text-gray-400'>
                   You will be prompted for administrator access
                 </p>
+                <div className="flex items-center mt-2">
+                  <span className="text-xs text-gray-500 mr-2">or</span>
+                  <button
+                    onClick={() => setStep(Step.CUSTOM_PATH)}
+                    className='no-drag text-xs text-gray-700 underline hover:text-black'
+                  >
+                    Configure a custom path
+                  </button>
+                </div>
               </div>
             </div>
           </>
         )}
+        {
+          <div>
+            {step === Step.CUSTOM_PATH && (
+              <>
+                <div className='mx-auto flex flex-col space-y-8 text-center max-w-sm'>
+                  <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Configure custom path</h1>
+                    <p className="w-[80%] mx-auto text-sm text-gray-600">
+                      If you prefer to install Ollama in a custom location, you can do so manually 
+                      and configure your system PATH accordingly.
+                    </p>
+                    <div className="flex items-center justify-center mb-2">
+                      <input
+                        id="remember-preference"
+                        type="checkbox"
+                        className="no-drag w-5 h-5 rounded border-gray-300 text-black"
+                        checked={customPathChecked}
+                        onChange={(el) => {
+                          const isChecked = el.target.checked;
+                          setCustomPathChecked(isChecked);
+                          store.set('custom-path', isChecked);
+                        }}
+                      />
+                      <label htmlFor="remember-preference" className="ml-3 text-sm text-gray-700 cursor-pointer hover:text-black">
+                        Remember this preference
+                      </label>
+                    </div>
+                  </div>                  
+                  <div className="flex justify-between gap-4 mt-12">
+                    <button
+                      className='no-drag rounded-md bg-gray-200 px-6 py-2 text-sm font-medium text-gray-800 hover:bg-gray-300 flex-1'
+                      onClick={() => setStep(Step.CLI)}
+                    >   
+                      Back
+                    </button>
+                    <button
+                      onClick={() => {
+                        store.set('first-time-run', true)
+                        window.close()
+                      }}
+                      className='no-drag rounded-md bg-black px-6 py-2 text-sm font-medium text-white hover:brightness-110 flex-1'
+                    >
+                      Finish
+                    </button>
+                  </div>
+              </>
+            )}
+          </div>
+        }
         {step === Step.FINISH && (
           <>
             <div className='mx-auto flex flex-col space-y-20 text-center'>
