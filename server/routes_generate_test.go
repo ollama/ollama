@@ -158,8 +158,23 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support thinking"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"\"test\" does not support thinking"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("model can't think but think set false", func(t *testing.T) {
+		think := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Think: &api.ThinkValue{Value: think},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
 		}
 	})
 
