@@ -84,11 +84,11 @@ function buildCPU() {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-        & cmake --fresh --preset CPU --install-prefix $script:DIST_DIR
+        & cmake -B build\cpu --preset CPU --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build --preset CPU  --config Release --parallel $script:JOBS
+        & cmake --build build\cpu --target ggml-cpu --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --install build --component CPU --strip
+        & cmake --install build\cpu --component CPU --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
 }
@@ -105,11 +105,11 @@ function buildCUDA11() {
             $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
             write-host "Building CUDA v11 backend libraries $cuda"
             $env:CUDAToolkit_ROOT=$cuda
-            & cmake --fresh --preset "CUDA 11" -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v11"
+            & cmake -B build\cuda_v11 --preset "CUDA 11" -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v11"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
+            & cmake --build build\cuda_v11 --target ggml-cuda --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
+            & cmake --install build\cuda_v11 --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
@@ -124,11 +124,11 @@ function buildCUDA12() {
             $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12_8")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
             write-host "Building CUDA v12 backend libraries $cuda"
             $env:CUDAToolkit_ROOT=$cuda
-            & cmake --fresh --preset "CUDA 12" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v12"
+            & cmake -B build\cuda_v12 --preset "CUDA 12" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v12"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
+            & cmake --build build\cuda_v12 --target ggml-cuda --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
+            & cmake --install build\cuda_v12 --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
@@ -143,11 +143,11 @@ function buildCUDA13() {
             $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V13")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
             $env:CUDAToolkit_ROOT=$cuda
             write-host "Building CUDA v13 backend libraries $cuda"
-            & cmake --fresh --preset "CUDA 13" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v13"
+            & cmake -B build\cuda_v13 --preset "CUDA 13" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v13"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 13"  --config Release --parallel $script:JOBS
+            & cmake --build build\cuda_v13 --target ggml-cuda --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
+            & cmake --install build\cuda_v13 --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
@@ -165,7 +165,7 @@ function buildROCm() {
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-            & cmake --fresh --preset "ROCm 6" -G Ninja -DOLLAMA_RUNNER_DIR="rocm" `
+            & cmake --fresh -B build\rocm --preset "ROCm 6" -G Ninja -DOLLAMA_RUNNER_DIR="rocm" `
                 -DCMAKE_C_COMPILER=clang `
                 -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
@@ -175,9 +175,9 @@ function buildROCm() {
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
             $env:CMAKE_PREFIX_PATH=""
-            & cmake --build --preset "ROCm 6" --config Release --parallel $script:JOBS
+            & cmake --build build\rocm --target ggml-hip --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "HIP" --strip
+            & cmake --install build\rocm --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             Remove-Item -Path $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         }
