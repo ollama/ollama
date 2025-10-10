@@ -80,6 +80,18 @@ SignedUninstaller=yes
 
 SetupMutex=OllamaSetupMutex
 
+[Types]
+Name: "full"; Description: "Full installation"
+Name: "cuda"; Description: "CUDA support only"
+Name: "rocm"; Description: "ROCm support only"
+Name: "custom"; Description: "Custom installation"; Flags: iscustom
+
+[Components]
+Name: "main"; Description: "Main Files"; Types: full cuda rocm custom; Flags: fixed
+Name: "gpu"; Description: "GPU support"
+Name: "gpu/cuda"; Description: "CUDA support"; Types: full cuda; Flags: disablenouninstallwarning
+Name: "gpu/rocm"; Description: "ROCm support"; Types: full rocm; Flags: disablenouninstallwarning
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
@@ -90,7 +102,10 @@ DialogFontSize=12
 #if DirExists("..\dist\windows-amd64")
 Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
-Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
+Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit
+Source: "..\dist\windows-amd64\lib\ollama\cuda_v11\*"; DestDir: "{app}\lib\ollama\cuda_v11\"; Check: not IsArm64(); Flags: ignoreversion 64bit; Components: gpu/cuda
+Source: "..\dist\windows-amd64\lib\ollama\cuda_v12\*"; DestDir: "{app}\lib\ollama\cuda_v12\"; Check: not IsArm64(); Flags: ignoreversion 64bit; Components: gpu/cuda
+Source: "..\dist\windows-amd64\lib\ollama\rocm\*"; DestDir: "{app}\lib\ollama\rocm\"; Check: not IsArm64(); Flags: ignoreversion recursesubdirs 64bit; Components: gpu/rocm
 #endif
 
 #if DirExists("..\dist\windows-arm64")
@@ -124,15 +139,15 @@ Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
-Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
-Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\{#MyAppName}"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\{#MyAppName}"
 Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
 Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [InstallDelete]
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
-Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\{#MyAppName}"
 
 [Messages]
 WizardReady=Ollama
