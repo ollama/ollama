@@ -8680,7 +8680,7 @@ static void ggml_compute_forward_ssm_scan_f32(
                 // n_head
                 for (int h = ih0; h < ih1; ++h) {
                     // ref: https://github.com/state-spaces/mamba/blob/62db608da60f6fc790b8ed9f4b3225e95ca15fde/mamba_ssm/ops/triton/softplus.py#L16
-                    const float dt_soft_plus = dt[h] <= 20.0f ? log1pf(expf(dt[h])) : dt[h];
+                    const float dt_soft_plus = ggml_softplus(dt[h]);
                     const float dA = expf(dt_soft_plus * A[h]);
                     const int g = h / (nh / ng); // repeat_interleave
 
@@ -8777,7 +8777,7 @@ static void ggml_compute_forward_ssm_scan_f32(
                 // n_head
                 for (int h = ih0; h < ih1; ++h) {
                     // ref: https://github.com/state-spaces/mamba/blob/62db608da60f6fc790b8ed9f4b3225e95ca15fde/mamba_ssm/ops/triton/softplus.py#L16
-                    const float dt_soft_plus = dt[h] <= 20.0f ? log1pf(expf(dt[h])) : dt[h];
+                    const float dt_soft_plus = ggml_softplus(dt[h]);
                     const int g = h / (nh / ng); // repeat_interleave
 
                     // dim
@@ -9039,6 +9039,10 @@ void ggml_compute_forward_unary(
         case GGML_UNARY_OP_EXP:
             {
                 ggml_compute_forward_exp(params, dst);
+            } break;
+        case GGML_UNARY_OP_XIELU:
+            {
+                ggml_compute_forward_xielu(params, dst);
             } break;
         default:
             {

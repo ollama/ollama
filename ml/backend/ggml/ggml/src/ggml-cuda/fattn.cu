@@ -222,7 +222,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             if (V->ne[0] != K->ne[0]) {
                 return BEST_FATTN_KERNEL_NONE;
             }
-            if (!fp16_mma_available(cc) && !turing_mma_available(cc)) {
+            if (!ggml_cuda_should_use_wmma_fattn(cc) && !turing_mma_available(cc)) {
                 return BEST_FATTN_KERNEL_NONE;
             }
             break;
@@ -300,7 +300,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     // For large batch sizes, use the WMMA kernel if possible:
-    if (fp16_mma_available(cc)) {
+    if (ggml_cuda_should_use_wmma_fattn(cc)) {
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 

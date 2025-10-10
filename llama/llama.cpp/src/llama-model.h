@@ -383,6 +383,12 @@ struct llama_layer {
 
     struct ggml_tensor * bskcn_tv = nullptr;
 
+    // xIELU activation parameters for Apertus
+    struct ggml_tensor * ffn_act_alpha_n = nullptr;
+    struct ggml_tensor * ffn_act_alpha_p = nullptr;
+    struct ggml_tensor * ffn_act_beta    = nullptr;
+    struct ggml_tensor * ffn_act_eps     = nullptr;
+
     struct llama_layer_posnet posnet;
 
     struct llama_layer_convnext convnext;
