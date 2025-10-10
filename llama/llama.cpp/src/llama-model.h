@@ -108,6 +108,7 @@ enum llm_type {
     LLM_TYPE_17B_16E, // llama4 Scout
     LLM_TYPE_17B_128E, // llama4 Maverick
     LLM_TYPE_A13B,
+    LLM_TYPE_8B_A1B, // lfm2moe
     LLM_TYPE_21B_A3B, // Ernie MoE small
     LLM_TYPE_30B_A3B,
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
@@ -381,6 +382,12 @@ struct llama_layer {
     // openai-moe
     struct ggml_tensor * attn_sinks = nullptr;
 
+    // xIELU activation parameters for Apertus
+    struct ggml_tensor * ffn_act_alpha_n = nullptr;
+    struct ggml_tensor * ffn_act_alpha_p = nullptr;
+    struct ggml_tensor * ffn_act_beta    = nullptr;
+    struct ggml_tensor * ffn_act_eps     = nullptr;
+
     struct ggml_tensor * bskcn_tv = nullptr;
 
     struct llama_layer_posnet posnet;
@@ -433,6 +440,12 @@ struct llama_model {
     struct ggml_tensor * per_layer_proj_norm  = nullptr;
 
     std::vector<llama_layer> layers;
+
+    //Dense linear projections for SentenceTransformers models like embeddinggemma
+    // For Sentence Transformers models structure see
+    // https://sbert.net/docs/sentence_transformer/usage/custom_models.html#structure-of-sentence-transformer-models
+    struct ggml_tensor * dense_2_out_layers = nullptr;
+    struct ggml_tensor * dense_3_out_layers = nullptr;
 
     llama_model_params params;
 

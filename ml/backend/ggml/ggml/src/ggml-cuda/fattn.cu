@@ -208,6 +208,12 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     const int cc = ggml_cuda_info().devices[device].cc;
 
+    // TODO: temporary until support is extended
+    //       https://github.com/ggml-org/llama.cpp/pull/16148#issuecomment-3343525206
+    if (K->ne[1] % FATTN_KQ_STRIDE != 0) {
+        return BEST_FATTN_KERNEL_NONE;
+    }
+
     switch (K->ne[0]) {
         case  64:
         case 128:
@@ -222,7 +228,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             if (V->ne[0] != K->ne[0]) {
                 return BEST_FATTN_KERNEL_NONE;
             }
-            if (!fp16_mma_available(cc) && !turing_mma_available(cc)) {
+            if (!ggml_cuda_should_use_wmma_fattn(cc) && !turing_mma_available(cc)) {
                 return BEST_FATTN_KERNEL_NONE;
             }
             break;
@@ -300,7 +306,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     // For large batch sizes, use the WMMA kernel if possible:
-    if (fp16_mma_available(cc)) {
+    if (ggml_cuda_should_use_wmma_fattn(cc)) {
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 

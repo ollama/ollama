@@ -2345,6 +2345,12 @@ llama_context * llama_init_from_model(
         return nullptr;
     }
 
+    if (params.pooling_type != model->hparams.pooling_type) {
+        //user-specified pooling-type is different from the model default
+        LLAMA_LOG_WARN("%s: model default pooling_type is [%d], but [%d] was specified\n", __func__,
+                       model->hparams.pooling_type, params.pooling_type);
+    }
+
     try {
         auto * ctx = new llama_context(*model, params);
         return ctx;

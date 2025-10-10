@@ -229,9 +229,6 @@ extern "C" {
         void * context;
     };
 
-    // Internal backend registry API
-    GGML_API void ggml_backend_register(ggml_backend_reg_t reg);
-
     // Add backend dynamic loading support to the backend
 
     // Initialize the backend
