@@ -557,6 +557,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
 				return
+			// TODO (jmorganca): remove use of gin.H here and instead expect
+			// api.StatusError to be send in the channel
+			case gin.H:
+				if msg, ok := t["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
+				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
 				return
@@ -2168,6 +2177,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+				return
+			// TODO (jmorganca): remove use of gin.H here and instead expect
+			// api.StatusError to be send in the channel
+			case gin.H:
+				if msg, ok := t["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
 				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
