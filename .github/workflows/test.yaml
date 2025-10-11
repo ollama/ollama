@@ -52,6 +52,12 @@ jobs:
             container: rocm/dev-ubuntu-22.04:6.1.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: Vulkan
+            container: ubuntu:22.04
+            extra-packages: >
+              mesa-vulkan-drivers vulkan-tools
+              libvulkan1 libvulkan-dev
+              vulkan-sdk cmake ccache g++ make
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
@@ -59,7 +65,19 @@ jobs:
       - run: |
           [ -n "${{ matrix.container }}" ] || sudo=sudo
           $sudo apt-get update
+          # Add LunarG Vulkan SDK apt repo for Ubuntu 22.04
+          if [ "${{ matrix.preset }}" = "Vulkan" ]; then
+            $sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates software-properties-common
+            wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | $sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
+            # Use signed-by to bind the repo to the installed keyring to avoid NO_PUBKEY
+            echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg]  https://packages.lunarg.com/vulkan/1.4.313 jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313-jammy.list > /dev/null
+            $sudo apt-get update
+          fi
           $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
+          # Export VULKAN_SDK if provided by LunarG package (defensive)
+          if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
+            echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+          fi
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/cache@v4
@@ -92,18 +110,21 @@ jobs:
           - preset: ROCm
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+          - preset: Vulkan
+            install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
     runs-on: windows
     steps:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm'
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan'
         id: cache-install
         uses: actions/cache/restore@v4
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\VulkanSDK
           key: ${{ matrix.install }}
       - if: matrix.preset == 'CUDA'
         name: Install CUDA ${{ matrix.cuda-version }}
@@ -133,6 +154,18 @@ jobs:
           echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: matrix.preset == 'Vulkan'
+        name: Install Vulkan ${{ matrix.rocm-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
+          }
+          
+          $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
+          echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
