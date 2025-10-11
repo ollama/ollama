@@ -434,7 +434,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// the real chat handler, but doing this as a stopgap to get renderer
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
-			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think)
+			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, req.Truncate == nil || *req.Truncate)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -488,10 +488,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:   prompt,
+			Images:   images,
+			Format:   req.Format,
+			Options:  opts,
+			Shift:    req.Shift == nil || *req.Shift,
+			Truncate: req.Truncate == nil || *req.Truncate,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -553,7 +555,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			var serr api.StatusError
+			if errors.As(err, &serr) {
+				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+			} else {
+				ch <- gin.H{"error": err.Error()}
+			}
 		}
 	}()
 
@@ -573,7 +580,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					msg = "unexpected error format in response"
 				}
 
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+				status, ok := t["status"].(int)
+				if !ok {
+					status = http.StatusInternalServerError
+				}
+
+				c.JSON(status, gin.H{"error": msg})
 				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
@@ -1638,6 +1650,30 @@ func streamResponse(c *gin.Context, ch chan any) {
 			return false
 		}
 
+		// errors are provided as a gin.H with an "error" field and
+		// an optional "status" field.  For errors that are streamed
+		// before any content, we need to set the status code and
+		// content type for the error.
+		if h, ok := val.(gin.H); ok {
+			if e, ok := h["error"].(string); ok {
+				status, ok := h["status"].(int)
+				if !ok {
+					status = http.StatusInternalServerError
+				}
+
+				if !c.Writer.Written() {
+					c.Header("Content-Type", "application/json")
+					c.JSON(status, gin.H{"error": e})
+				} else {
+					if err := json.NewEncoder(c.Writer).Encode(gin.H{"error": e}); err != nil {
+						slog.Error("streamResponse failed to encode json error", "error", err)
+					}
+				}
+
+				return false
+			}
+		}
+
 		bts, err := json.Marshal(val)
 		if err != nil {
 			slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
@@ -1957,7 +1993,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
+	truncate := req.Truncate == nil || *req.Truncate
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2034,10 +2071,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:  prompt,
-				Images:  images,
-				Format:  currentFormat,
-				Options: opts,
+				Prompt:   prompt,
+				Images:   images,
+				Format:   currentFormat,
+				Options:  opts,
+				Shift:    req.Shift == nil || *req.Shift,
+				Truncate: truncate,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,
@@ -2131,7 +2170,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				if structuredOutputsState == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
 					// only ignores error if it's a context cancellation due to setting structured outputs
 				} else {
-					ch <- gin.H{"error": err.Error()}
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+					} else {
+						ch <- gin.H{"error": err.Error()}
+					}
 					return
 				}
 			}
@@ -2145,7 +2189,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				msgs = append(msgs, msg)
-				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think)
+				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 				if err != nil {
 					slog.Error("chat prompt error applying structured outputs", "error", err)
 					ch <- gin.H{"error": err.Error()}
@@ -2185,7 +2229,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					msg = "unexpected error format in response"
 				}
 
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+				status, ok := t["status"].(int)
+				if !ok {
+					status = http.StatusInternalServerError
+				}
+
+				c.JSON(status, gin.H{"error": msg})
 				return
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
