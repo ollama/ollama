@@ -146,7 +146,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 				DebugRenderOnly: true,
 			},
 			expectDebug:     true,
-			expectTemplate:  "[img-0]\n\nDescribe this image",
+			expectTemplate:  "[img-0]Describe this image",
 			expectNumImages: 1,
 		},
 		{
