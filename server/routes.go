@@ -403,12 +403,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				msgs = append(msgs, m.Messages...)
 			}
 
+			userMsg := api.Message{Role: "user", Content: req.Prompt}
 			for _, i := range images {
-				imgPrompt := ""
-				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]"+imgPrompt, i.ID)})
+				userMsg.Images = append(userMsg.Images, i.Data)
 			}
-
-			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
+			values.Messages = append(msgs, userMsg)
 		}
 
 		values.Think = req.Think != nil && req.Think.Bool()
@@ -429,12 +428,31 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			b.WriteString(s)
 		}
 
-		if err := tmpl.Execute(&b, values); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+		// check that we're in the `api/chat`-like flow, and if so, generate the
+		// prompt the same way
+		// TEMP(drifkin): we should really just detect the chat-like flow and call
+		// the real chat handler, but doing this as a stopgap to get renderer
+		// support for generate
+		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
+			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
+			if req.Context != nil {
+				b.WriteString(prompt)
+				prompt = b.String()
+			}
+		} else {
+			// legacy flow
+			if err := tmpl.Execute(&b, values); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
 
-		prompt = b.String()
+			prompt = b.String()
+		}
 	}
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
