@@ -13,13 +13,13 @@ management libraries for more accurate VRAM usage reporting if available.
  ggml/src/ggml-impl.h               |   8 +
  ggml/src/ggml-metal/ggml-metal.cpp |   3 +-
  ggml/src/mem_hip.cpp               | 449 +++++++++++++++++++++++++++++
- ggml/src/mem_nvml.cpp              | 172 +++++++++++
- 8 files changed, 718 insertions(+), 1 deletion(-)
+ ggml/src/mem_nvml.cpp              | 209 ++++++++++++++
+ 8 files changed, 755 insertions(+), 1 deletion(-)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 0a2dae26..a6bf3378 100644
+index 0a2dae26a..a6bf33785 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -169,6 +169,15 @@ extern "C" {
@@ -39,7 +39,7 @@ index 0a2dae26..a6bf3378 100644
  
      GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 33b3a15f..86191ef2 100644
+index 33b3a15f0..86191ef2c 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -206,6 +206,8 @@ add_library(ggml-base
@@ -52,7 +52,7 @@ index 33b3a15f..86191ef2 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 531d6e27..3fa3a057 100644
+index 531d6e272..3fa3a0575 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -261,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -184,7 +184,7 @@ index 531d6e27..3fa3a057 100644
                      /* .iface   = */ ggml_backend_cuda_device_interface,
                      /* .reg     = */ &reg,
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 06f9e7c1..eb8f66cb 100644
+index 06f9e7c1e..eb8f66cb0 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -5,6 +5,9 @@
@@ -206,7 +206,7 @@ index 06f9e7c1..eb8f66cb 100644
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index 86a1ebf6..9fc9fbfc 100644
+index 86a1ebf62..9fc9fbfcf 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
 @@ -635,6 +635,14 @@ static inline bool ggml_can_fuse(const struct ggml_cgraph * cgraph, int node_idx
@@ -225,7 +225,7 @@ index 86a1ebf6..9fc9fbfc 100644
  }
  #endif
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 08ab4fc9..17999a61 100644
+index 08ab4fc91..17999a616 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -535,6 +535,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
@@ -247,7 +247,7 @@ index 08ab4fc9..17999a61 100644
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
 new file mode 100644
-index 00000000..8ef19b8c
+index 000000000..8ef19b8cf
 --- /dev/null
 +++ b/ggml/src/mem_hip.cpp
 @@ -0,0 +1,449 @@
@@ -703,10 +703,10 @@ index 00000000..8ef19b8c
 \ No newline at end of file
 diff --git a/ggml/src/mem_nvml.cpp b/ggml/src/mem_nvml.cpp
 new file mode 100644
-index 00000000..aa05e9dc
+index 000000000..c9073cef0
 --- /dev/null
 +++ b/ggml/src/mem_nvml.cpp
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,209 @@
 +// NVIDIA Management Library (NVML)
 +//
 +// https://developer.nvidia.com/management-library-nvml
@@ -721,6 +721,7 @@ index 00000000..aa05e9dc
 +#include "ggml-impl.h"
 +#include <filesystem>
 +#include <mutex>
++#include <array>
 +
 +#ifdef _WIN32
 +#    define WIN32_LEAN_AND_MEAN
@@ -787,6 +788,7 @@ index 00000000..aa05e9dc
 +  nvmlReturn_t (*nvmlShutdown)(void);
 +  nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
 +  nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
++  const char * (*nvmlErrorString)(nvmlReturn_t result);
 +} nvml { NULL, NULL, NULL, NULL, NULL };
 +static std::mutex ggml_nvml_lock;
 +
@@ -824,7 +826,8 @@ index 00000000..aa05e9dc
 +    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlShutdown");
 +    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetHandleByUUID");
 +    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetMemoryInfo");
-+    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
++    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) GetProcAddress((HMODULE)(nvml.handle), "nvmlErrorString");
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlErrorString == NULL) {
 +        GGML_LOG_INFO("%s unable to locate required symbols in NVML.dll", __func__);
 +        FreeLibrary((HMODULE)(nvml.handle));
 +        nvml.handle = NULL;
@@ -833,11 +836,45 @@ index 00000000..aa05e9dc
 +
 +    SetErrorMode(old_mode);
 +
++    nvmlReturn_t status = nvml.nvmlInit_v2();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++        FreeLibrary((HMODULE)(nvml.handle));
++        nvml.handle = NULL;
++        return status;
++    }
 +#else
-+    // Not currently wired up on Linux
-+    return NVML_ERROR_NOT_SUPPORTED;
++    constexpr std::array<const char*, 2> libPaths = {
++        "/usr/lib/wsl/lib/libnvidia-ml.so.1", // Favor WSL2 path if present
++        "libnvidia-ml.so.1" // On a non-WSL2 system, it should be in the path
++    };
++    for (const char* path : libPaths) {
++        nvml.handle = dlopen(path, RTLD_LAZY);
++        if (nvml.handle) break;
++    }
++    if (nvml.handle == NULL) {
++        GGML_LOG_INFO("%s unable to load libnvidia-ml: %s\n", __func__, dlerror());
++        return NVML_ERROR_NOT_FOUND;
++    }
++    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlInit_v2");
++    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlShutdown");
++    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) dlsym(nvml.handle, "nvmlDeviceGetHandleByUUID");
++    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) dlsym(nvml.handle, "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) dlsym(nvml.handle, "nvmlErrorString");
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in libnvidia-ml.so", __func__);
++        dlclose(nvml.handle);
++        nvml.handle = NULL;
++        return NVML_ERROR_NOT_FOUND;
++    }
++    nvmlReturn_t status = nvml.nvmlInit_v2();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++        dlclose(nvml.handle);
++        nvml.handle = NULL;
++        return status;
++    }
 +#endif
-+    int status = nvml.nvmlInit_v2();
 +    return NVML_SUCCESS;
 +}
 +
@@ -849,14 +886,14 @@ index 00000000..aa05e9dc
 +    }
 +    nvmlReturn_enum status = nvml.nvmlShutdown();
 +    if (status != NVML_SUCCESS) {
-+        GGML_LOG_INFO("%s failed to shutdown NVML: %d\n", __func__, status);
++        GGML_LOG_INFO("%s failed to shutdown NVML: %s\n", __func__, nvml.nvmlErrorString(status));
 +    }
 +#ifdef _WIN32
 +    FreeLibrary((HMODULE)(nvml.handle));
-+    nvml.handle = NULL;
 +#else
-+    // Not currently wired up on Linux
++    dlclose(nvml.handle);
 +#endif
++    nvml.handle = NULL;
 +}
 +
 +int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {

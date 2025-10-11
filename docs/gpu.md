@@ -51,11 +51,11 @@ sudo modprobe nvidia_uvm`
 Ollama supports the following AMD GPUs:
 
 ### Linux Support
-| Family         | Cards and accelerators                                                                                                                   |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64`            |
-| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `SSG` |
-| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60`                                                                |
+| Family         | Cards and accelerators                                                                                               |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`  |
+| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320`           |
+| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100`                                                   |
 
 ### Windows Support
 With ROCm v6.2, the following GPUs are supported on Windows.

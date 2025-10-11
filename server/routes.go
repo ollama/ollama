@@ -332,13 +332,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	modelCaps := m.Capabilities()
-	if req.Think != nil {
+	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
-	} else {
-		// add thinking if the model supports it
-		if slices.Contains(modelCaps, model.CapabilityThinking) {
-			caps = append(caps, model.CapabilityThinking)
+		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
+		}
+	} else {
+		if req.Think != nil && req.Think.Bool() {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+			return
 		}
 	}
 
@@ -1877,13 +1879,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	modelCaps := m.Capabilities()
-	if req.Think != nil {
+	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
-	} else {
-		// add thinking if the model supports it
-		if slices.Contains(modelCaps, model.CapabilityThinking) {
-			caps = append(caps, model.CapabilityThinking)
+		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
+		}
+	} else {
+		if req.Think != nil && req.Think.Bool() {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+			return
 		}
 	}
 
