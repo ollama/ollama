@@ -4,8 +4,31 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 )
+
+// Helper function to create ordered arguments for tests
+func makeArgs(pairs ...any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i].(string)
+		value := pairs[i+1]
+		args.Set(key, value)
+	}
+	return args
+}
+
+// Helper function to create ordered properties for tests
+func makeProps(pairs ...any) *api.ToolProperties {
+	props := api.NewToolProperties()
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i].(string)
+		value := pairs[i+1].(api.ToolProperty)
+		props.Set(key, value)
+	}
+	return props
+}
 
 func TestQwen3CoderRenderer(t *testing.T) {
 	tests := []struct {
@@ -38,10 +61,8 @@ Hello, how are you?<|im_end|>
 					ToolCalls: []api.ToolCall{
 						{
 							Function: api.ToolCallFunction{
-								Name: "get_weather",
-								Arguments: map[string]any{
-									"unit": "fahrenheit",
-								},
+								Name:      "get_weather",
+								Arguments: makeArgs("unit", "fahrenheit"),
 							},
 						},
 					},
@@ -53,18 +74,13 @@ Hello, how are you?<|im_end|>
 				{Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather in a given location",
-					Parameters: api.ToolFunctionParameters{
-						Required: []string{"unit"},
-						Properties: map[string]api.ToolProperty{
-							"unit": {Type: api.PropertyType{"string"}, Enum: []any{"celsius", "fahrenheit"}, Description: "The unit of temperature"},
-							// TODO(drifkin): add multiple params back once we have predictable
-							// order via some sort of ordered map type (see
-							// <https://github.com/ollama/ollama/issues/12244>)
-							/*
-								"location": {Type: api.PropertyType{"string"}, Description: "The city and state, e.g. San Francisco, CA"},
-							*/
-						},
-					},
+					Parameters: api.NewToolFunctionParametersWithProps(
+						"object",
+						[]string{"unit"},
+						makeProps(
+							"unit", api.ToolProperty{Type: api.PropertyType{"string"}, Enum: []any{"celsius", "fahrenheit"}, Description: "The unit of temperature"},
+						),
+					),
 				}},
 			},
 			expected: `<|im_start|>system
@@ -140,19 +156,19 @@ That sounds nice! What about New York?<|im_end|>
 				{Role: "system", Content: "You are a helpful assistant with access to tools."},
 				{Role: "user", Content: "call double(1) and triple(2)"},
 				{Role: "assistant", Content: "I'll call double(1) and triple(2) for you.", ToolCalls: []api.ToolCall{
-					{Function: api.ToolCallFunction{Name: "double", Arguments: map[string]any{"number": "1"}}},
-					{Function: api.ToolCallFunction{Name: "triple", Arguments: map[string]any{"number": "2"}}},
+					{Function: api.ToolCallFunction{Name: "double", Arguments: makeArgs("number", "1")}},
+					{Function: api.ToolCallFunction{Name: "triple", Arguments: makeArgs("number", "2")}},
 				}},
 				{Role: "tool", Content: "{\"number\": 2}", ToolName: "double"},
 				{Role: "tool", Content: "{\"number\": 6}", ToolName: "triple"},
 			},
 			tools: []api.Tool{
-				{Function: api.ToolFunction{Name: "double", Description: "Double a number", Parameters: api.ToolFunctionParameters{Properties: map[string]api.ToolProperty{
-					"number": {Type: api.PropertyType{"string"}, Description: "The number to double"},
-				}}}},
-				{Function: api.ToolFunction{Name: "triple", Description: "Triple a number", Parameters: api.ToolFunctionParameters{Properties: map[string]api.ToolProperty{
-					"number": {Type: api.PropertyType{"string"}, Description: "The number to triple"},
-				}}}},
+				{Function: api.ToolFunction{Name: "double", Description: "Double a number", Parameters: api.NewToolFunctionParametersWithProps("object", nil, makeProps(
+					"number", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The number to double"},
+				))}},
+				{Function: api.ToolFunction{Name: "triple", Description: "Triple a number", Parameters: api.NewToolFunctionParametersWithProps("object", nil, makeProps(
+					"number", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The number to triple"},
+				))}},
 			},
 			expected: `<|im_start|>system
 You are a helpful assistant with access to tools.
@@ -258,10 +274,8 @@ I'll tell you something interesting about cats`,
 				{Role: "user", Content: "call tool"},
 				{Role: "assistant", ToolCalls: []api.ToolCall{
 					{Function: api.ToolCallFunction{
-						Name: "echo",
-						Arguments: map[string]any{
-							"payload": map[string]any{"foo": "bar"},
-						},
+						Name:      "echo",
+						Arguments: makeArgs("payload", map[string]any{"foo": "bar"}),
 					}},
 				}},
 				{Role: "tool", Content: "{\"payload\": {\"foo\": \"bar\"}}", ToolName: "echo"},
@@ -366,5 +380,64 @@ func TestQwen3ToolDefinitionTypes(t *testing.T) {
 				t.Errorf("formatToolDefinitionType() = %v, want %v", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestMultipleParametersNonDeterministic(t *testing.T) {
+	// This test demonstrates that tools with multiple parameters are rendered
+	// non-deterministically due to Go's map iteration order.
+	// See https://github.com/ollama/ollama/issues/12244
+
+	tools := []api.Tool{
+		{Function: api.ToolFunction{
+			Name:        "get_weather",
+			Description: "Get the current weather",
+			Parameters: api.NewToolFunctionParametersWithProps(
+				"object",
+				[]string{"location", "unit"},
+				makeProps(
+					"location", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The city and state"},
+					"unit", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The temperature unit"},
+					"format", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The output format"},
+				),
+			),
+		}},
+	}
+
+	msgs := []api.Message{
+		{Role: "user", Content: "What's the weather?"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{Function: api.ToolCallFunction{
+				Name: "get_weather",
+				Arguments: makeArgs(
+					"location", "San Francisco, CA",
+					"unit", "fahrenheit",
+					"format", "detailed",
+				),
+			}},
+		}},
+	}
+
+	// Run the renderer multiple times and collect unique outputs
+	outputs := make(map[string]bool)
+	for i := 0; i < 15; i++ {
+		rendered, err := Qwen3CoderRenderer(msgs, tools, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs[rendered] = true
+	}
+
+	// The renderer should be deterministic - we should only get one unique output
+	if len(outputs) > 1 {
+		// Show the first two different outputs for comparison
+		count := 0
+		for output := range outputs {
+			if count < 2 {
+				t.Logf("\nOutput variant %d:\n%s", count+1, output)
+				count++
+			}
+		}
+		t.Fatalf("Renderer produced %d different outputs across 15 runs (expected deterministic output)", len(outputs))
 	}
 }

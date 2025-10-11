@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -450,23 +451,25 @@ func TestToolFunctionParameters_String(t *testing.T) {
 	}{
 		{
 			name: "simple object with string property",
-			params: ToolFunctionParameters{
-				Type:     "object",
-				Required: []string{"name"},
-				Properties: map[string]ToolProperty{
-					"name": {
+			params: NewToolFunctionParametersWithProps(
+				"object",
+				[]string{"name"},
+				func() *ToolProperties {
+					om := NewToolProperties()
+					om.Set("name", ToolProperty{
 						Type:        PropertyType{"string"},
 						Description: "The name of the person",
-					},
-				},
-			},
+					})
+					return om
+				}(),
+			),
 			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"The name of the person"}}}`,
 		},
 		{
 			name: "marshal failure returns empty string",
-			params: ToolFunctionParameters{
-				Type: "object",
-				Defs: func() any {
+			params: func() ToolFunctionParameters {
+				p := NewToolFunctionParametersWithProps("object", nil, NewToolProperties())
+				p.Defs = func() any {
 					// Create a cycle that will cause json.Marshal to fail
 					type selfRef struct {
 						Self *selfRef
@@ -474,9 +477,9 @@ func TestToolFunctionParameters_String(t *testing.T) {
 					s := &selfRef{}
 					s.Self = s
 					return s
-				}(),
-				Properties: map[string]ToolProperty{},
-			},
+				}()
+				return p
+			}(),
 			expected: "",
 		},
 	}
@@ -487,4 +490,32 @@ func TestToolFunctionParameters_String(t *testing.T) {
 			assert.Equal(t, test.expected, result)
 		})
 	}
+}
+
+func TestTemplateRenderingWithArguments(t *testing.T) {
+	// Test that ToolCallFunctionArguments renders correctly in templates
+	// This verifies the String() method works for template interpolation
+	args := NewToolCallFunctionArguments()
+	args.Set("location", "San Francisco")
+	args.Set("unit", "fahrenheit")
+
+	// Simulate what a template would do: convert to string
+	rendered := args.String()
+
+	// Should produce valid JSON
+	var parsed map[string]any
+	err := json.Unmarshal([]byte(rendered), &parsed)
+	require.NoError(t, err, "Arguments should render as valid JSON")
+
+	// Verify the values are present and in order
+	assert.Equal(t, "San Francisco", parsed["location"])
+	assert.Equal(t, "fahrenheit", parsed["unit"])
+
+	// Verify it maintains insertion order by checking the JSON string directly
+	// The first Set was "location", so it should appear before "unit"
+	assert.Contains(t, rendered, `"location":"San Francisco"`)
+	assert.Contains(t, rendered, `"unit":"fahrenheit"`)
+	locIndex := strings.Index(rendered, "location")
+	unitIndex := strings.Index(rendered, "unit")
+	assert.Less(t, locIndex, unitIndex, "insertion order should be preserved")
 }

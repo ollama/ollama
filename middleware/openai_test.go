@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
@@ -28,6 +29,16 @@ var (
 	False = false
 	True  = true
 )
+
+func makeArgs(pairs ...any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i].(string)
+		value := pairs[i+1]
+		args.Set(key, value)
+	}
+	return args
+}
 
 func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -220,10 +231,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
+									Arguments: makeArgs("location", "Paris, France", "format", "celsius"),
 								},
 							},
 						},
@@ -259,10 +267,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
+									Arguments: makeArgs("location", "Paris, France", "format", "celsius"),
 								},
 							},
 						},
@@ -297,10 +302,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
+									Arguments: makeArgs("location", "Paris, France", "format", "celsius"),
 								},
 							},
 						},
@@ -336,10 +338,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
+									Arguments: makeArgs("location", "Paris, France", "format", "celsius"),
 								},
 							},
 						},
@@ -375,10 +374,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
+									Arguments: makeArgs("location", "Paris, France", "format", "celsius"),
 								},
 							},
 						},
@@ -419,10 +415,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
+									Arguments: makeArgs("location", "Paris, France", "format", "celsius"),
 								},
 							},
 						},
@@ -484,26 +477,22 @@ func TestChatMiddleware(t *testing.T) {
 						Function: api.ToolFunction{
 							Name:        "get_weather",
 							Description: "Get the current weather",
-							Parameters: struct {
-								Type       string                      `json:"type"`
-								Defs       any                         `json:"$defs,omitempty"`
-								Items      any                         `json:"items,omitempty"`
-								Required   []string                    `json:"required"`
-								Properties map[string]api.ToolProperty `json:"properties"`
-							}{
-								Type:     "object",
-								Required: []string{"location"},
-								Properties: map[string]api.ToolProperty{
-									"location": {
+							Parameters: api.NewToolFunctionParametersWithProps(
+								"object",
+								[]string{"location"},
+								func() *api.ToolProperties {
+									props := api.NewToolProperties()
+									props.Set("location", api.ToolProperty{
 										Type:        api.PropertyType{"string"},
 										Description: "The city and state",
-									},
-									"unit": {
+									})
+									props.Set("unit", api.ToolProperty{
 										Type: api.PropertyType{"string"},
 										Enum: []any{"celsius", "fahrenheit"},
-									},
-								},
-							},
+									})
+									return props
+								}(),
+							),
 						},
 					},
 				},
@@ -557,7 +546,7 @@ func TestChatMiddleware(t *testing.T) {
 				}
 				return
 			}
-			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+			if diff := cmp.Diff(&tc.req, capturedRequest, cmpopts.IgnoreUnexported(api.ToolCallFunctionArguments{}, api.ToolProperties{}, api.ToolFunctionParameters{})); diff != "" {
 				t.Fatalf("requests did not match: %+v", diff)
 			}
 			if diff := cmp.Diff(tc.err, errResp); diff != "" {

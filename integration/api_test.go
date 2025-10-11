@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	orderedmap "github.com/wk8/go-ordered-map/v2"
+
 	"github.com/ollama/ollama/api"
 )
 
@@ -432,12 +434,14 @@ func TestAPIToolCalling(t *testing.T) {
 				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"location"},
-					Properties: map[string]api.ToolProperty{
-						"location": {
+					Properties: func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("location", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The city and state, e.g. San Francisco, CA",
-						},
-					},
+						})
+						return props
+					}(),
 				},
 			},
 		},
@@ -497,7 +501,7 @@ func TestAPIToolCalling(t *testing.T) {
 			t.Errorf("unexpected tool called: got %q want %q", lastToolCall.Function.Name, "get_weather")
 		}
 
-		if _, ok := lastToolCall.Function.Arguments["location"]; !ok {
+		if _, ok := lastToolCall.Function.Arguments.Get("location"); !ok {
 			t.Errorf("expected tool arguments to include 'location', got: %s", lastToolCall.Function.Arguments.String())
 		}
 	case <-ctx.Done():
