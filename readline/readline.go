@@ -218,6 +218,11 @@ func (i *Instance) Readline() (string, error) {
 				buf.DeleteWord()
 			case CharEscapeEx:
 				escex = true
+				// Check for potential Shift+Enter sequence
+				shiftEnterSeq = true
+			case CharEnter, CharCtrlJ:
+				// Alt+Enter: insert newline
+				buf.Add('\n')
 			}
 			continue
 		}
