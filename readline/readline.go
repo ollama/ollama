@@ -112,6 +112,59 @@ func (i *Instance) Readline() (string, error) {
 			return "", io.EOF
 		}
 
+		if shiftEnterSeq {
+			shiftEnterSeq = false
+			// Handle Shift+Enter sequences from different terminals
+			// Windows Terminal: ESC[13;2~
+			// xterm variants: ESC[27;2;13~
+			if r == '1' {
+				// Could be start of 13;2~ sequence
+				r2, err := i.Terminal.Read()
+				if err == nil && r2 == '3' {
+					r3, err := i.Terminal.Read()
+					if err == nil && r3 == ';' {
+						r4, err := i.Terminal.Read()
+						if err == nil && r4 == '2' {
+							r5, err := i.Terminal.Read()
+							if err == nil && r5 == '~' {
+								// Confirmed Shift+Enter: insert newline
+								buf.Add('\n')
+								continue
+							}
+						}
+					}
+				}
+			} else if r == '2' {
+				// Could be start of 27;2;13~ sequence
+				r2, err := i.Terminal.Read()
+				if err == nil && r2 == '7' {
+					r3, err := i.Terminal.Read()
+					if err == nil && r3 == ';' {
+						r4, err := i.Terminal.Read()
+						if err == nil && r4 == '2' {
+							r5, err := i.Terminal.Read()
+							if err == nil && r5 == ';' {
+								r6, err := i.Terminal.Read()
+								if err == nil && r6 == '1' {
+									r7, err := i.Terminal.Read()
+									if err == nil && r7 == '3' {
+										r8, err := i.Terminal.Read()
+										if err == nil && r8 == '~' {
+											// Confirmed Shift+Enter: insert newline
+											buf.Add('\n')
+											continue
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			// If not Shift+Enter sequence, fall through
+			continue
+		}
+
 		if escex {
 			escex = false
 
