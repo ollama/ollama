@@ -69,6 +69,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	usageShortcuts := func() {
 		fmt.Fprintln(os.Stderr, "Available keyboard shortcuts:")
+		fmt.Fprintln(os.Stderr, "  Shift + Enter       Insert a new line (multiline input)")
+		fmt.Fprintln(os.Stderr, "  Alt + Enter         Insert a new line (multiline input)")
+		fmt.Fprintln(os.Stderr, "  Enter               Submit message")
+		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + a            Move to the beginning of the line (Home)")
 		fmt.Fprintln(os.Stderr, "  Ctrl + e            Move to the end of the line (End)")
 		fmt.Fprintln(os.Stderr, "   Alt + b            Move back (left) one word")
