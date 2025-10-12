@@ -15,3 +15,7 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
+-e 
+# Environment files
+*.env
+*.env.*
