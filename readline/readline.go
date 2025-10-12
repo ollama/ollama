@@ -90,6 +90,7 @@ func (i *Instance) Readline() (string, error) {
 	var esc bool
 	var escex bool
 	var metaDel bool
+	var shiftEnterSeq bool
 
 	var currentLineBuf []rune
 
