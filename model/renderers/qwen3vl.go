@@ -110,30 +110,13 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		} else if message.Role == "assistant" {
 			contentReasoning := ""
 
-			// here can we safely assume that message.Thinking will only be populated
-			// if the model is a thinking model?
-
 			if r.isThinking {
 				if message.Thinking != "" {
 					contentReasoning = message.Thinking
 				}
 			}
 
-			// so i think all we're changing is here
 			if r.isThinking && i > lastQueryIndex {
-				// so if this is the last message and prefill?
-				// if it has content:
-				// write content
-				// if it has thinking
-				// write thinking
-				// if it has thinking:
-				// write thinking
-
-				// if its the last one, or we reason, then we
-				// <think>reasoning
-				// if there is content, then we close the thinking tag and write the content
-				// </think>content
-				// otherwise we just add content
 				fmt.Println("contentReasoning:", contentReasoning)
 				fmt.Println("content:", content)
 
@@ -148,12 +131,6 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 				} else {
 					sb.WriteString("<|im_start|>" + message.Role + "\n" + content)
 				}
-
-				// if i == len(messages)-1 || contentReasoning != "" {
-				// 	sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n") + "\n</think>\n\n" + strings.TrimLeft(content, "\n"))
-				// } else {
-				// 	sb.WriteString("<|im_start|>" + message.Role + "\n" + content)
-				// }
 			} else {
 				sb.WriteString("<|im_start|>" + message.Role + "\n" + content)
 			}
@@ -172,10 +149,9 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 				}
 			}
 
-			if !prefill { // why do we do it if its thinking?
+			if !prefill {
 				sb.WriteString("<|im_end|>\n")
 			}
-			// prefill affects up to here
 		} else if message.Role == "tool" {
 			if i == 0 || messages[i-1].Role != "tool" {
 				sb.WriteString("<|im_start|>user")
@@ -193,16 +169,6 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 				sb.WriteString("<think>\n")
 			}
 		}
-
-		// if lastMessage { // we defo need to change this
-		// 	if r.isThinking {
-		// 		// always add prefill for thinking models
-		// 		sb.WriteString("<|im_start|>assistant\n<think>\n")
-		// 	} else if !prefill {
-		// 		// non-thinking: only if last wasn't assistant
-		// 		sb.WriteString("<|im_start|>assistant\n")
-		// 	}
-		// }
 	}
 
 	return sb.String(), nil
