@@ -162,6 +162,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		embeddingOnly:    params.embedding,
 		stop:             params.stop,
 		numKeep:          params.numKeep,
+		shift:            params.shift,
 	}, nil
 }
 
