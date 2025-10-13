@@ -20,6 +20,8 @@ func rendererForName(name string) rendererFunc {
 	switch name {
 	case "qwen3-coder":
 		return Qwen3CoderRenderer
+	case "glm-4.6":
+		return GLM46Renderer
 	default:
 		return nil
 	}
