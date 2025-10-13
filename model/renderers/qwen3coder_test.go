@@ -288,7 +288,7 @@ call tool<|im_end|>
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := Qwen3CoderRenderer(tt.msgs, tt.tools, nil)
+			rendered, err := (&Qwen3CoderRenderer{}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

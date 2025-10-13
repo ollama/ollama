@@ -104,6 +104,21 @@ func TestQwenParserStreaming(t *testing.T) {
 			},
 		},
 		{
+			desc: "unambiguous empty: partial tool open at buffer start",
+			steps: []step{
+				{
+					input:      "<tool_ca",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "ll>abc</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "abc"},
+					},
+				},
+			},
+		},
+		{
 			desc: "trailing whitespace between tool call and content",
 			steps: []step{
 				{
