@@ -37,7 +37,7 @@ Hello, how are you?<|assistant|>`,
 			name: "basic with user assistant user",
 			messages: []api.Message{
 				{Role: "user", Content: "What is the capital of France?"},
-				{Role: "assistant", Content: "The capital of France is Paris."},
+				{Role: "assistant", Thinking: "Let me analyze the request...", Content: "The capital of France is Paris."},
 				{Role: "user", Content: "Fantastic!"},
 			},
 			expected: `[gMASK]<sop><|user|>
@@ -112,11 +112,25 @@ What is the weather like in Tokyo?<|assistant|>`,
 								},
 							},
 						},
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Japan",
+									"unit":     "fahrenheit",
+								},
+							},
+						},
 					},
 				},
 				{
 					Role:     "tool",
 					Content:  "{\"temperature\": 22, \"weather\": \"partly cloudy\", \"humidity\": 65}",
+					ToolName: "get_weather",
+				},
+				{
+					Role:     "tool",
+					Content:  "{\"temperature\": 68, \"weather\": \"sunny\", \"humidity\": 75}",
 					ToolName: "get_weather",
 				},
 				{
@@ -173,9 +187,18 @@ What is the weather like in Tokyo?<|assistant|>
 <arg_value>Tokyo, Japan</arg_value>
 <arg_key>unit</arg_key>
 <arg_value>celsius</arg_value>
+</tool_call>
+<tool_call>get_weather
+<arg_key>location</arg_key>
+<arg_value>Japan</arg_value>
+<arg_key>unit</arg_key>
+<arg_value>fahrenheit</arg_value>
 </tool_call><|observation|>
 <tool_response>
 {"temperature": 22, "weather": "partly cloudy", "humidity": 65}
+</tool_response>
+<tool_response>
+{"temperature": 68, "weather": "sunny", "humidity": 75}
 </tool_response><|assistant|>
 <think></think>
 The weather in Tokyo is currently partly cloudy with a temperature of 22°C and 65% humidity. It's a pleasant day with moderate temperatures.<|assistant|>`,
@@ -196,7 +219,7 @@ Hello, how are you?<|assistant|>`,
 			},
 			thinkValue: &api.ThinkValue{Value: false},
 			expected: `[gMASK]<sop><|user|>
-Hello, how are you?<|assistant|>
+Hello, how are you?/nothink<|assistant|>
 <think></think>`,
 		},
 	}
