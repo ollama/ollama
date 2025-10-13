@@ -10,9 +10,9 @@ unused then it can be reset to free these data structures.
  ggml/include/ggml-backend.h      |  1 +
  ggml/src/ggml-backend-impl.h     |  4 ++++
  ggml/src/ggml-backend.cpp        |  8 ++++++++
- ggml/src/ggml-cuda/ggml-cuda.cu  | 17 +++++++++++++++--
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 16 +++++++++++++++-
  ggml/src/ggml-cuda/vendors/hip.h |  1 +
- 5 files changed, 29 insertions(+), 2 deletions(-)
+ 5 files changed, 29 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 1ff53ed0..ba181d09 100644
@@ -61,7 +61,7 @@ index 6ef5eeaf..0b757af5 100644
      GGML_ASSERT(device);
      return device->iface.get_buffer_type(device);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 7c83d47f..87c6c34a 100644
+index 811462c7..87c6c34a 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -107,6 +107,11 @@ int ggml_cuda_get_device() {
@@ -108,14 +108,6 @@ index 7c83d47f..87c6c34a 100644
  };
  
  // backend reg
-@@ -4079,7 +4093,6 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
-                 dev_ctx->device = i;
-                 dev_ctx->name = GGML_CUDA_NAME + std::to_string(i);
- 
--                ggml_cuda_set_device(i);
-                 cudaDeviceProp prop;
-                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
-                 dev_ctx->description = prop.name;
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
 index 890c1036..1f06be80 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h

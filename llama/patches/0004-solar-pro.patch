@@ -96,10 +96,10 @@ index c3ae7165..dc7a362a 100644
      LLM_TENSOR_CONVNEXT_DW,
      LLM_TENSOR_CONVNEXT_NORM,
 diff --git a/src/llama-hparams.cpp b/src/llama-hparams.cpp
-index c04ac58f..24a515a0 100644
+index db65d69e..b6bf6bbf 100644
 --- a/src/llama-hparams.cpp
 +++ b/src/llama-hparams.cpp
-@@ -147,6 +147,14 @@ uint32_t llama_hparams::n_pos_per_embd() const {
+@@ -151,6 +151,14 @@ uint32_t llama_hparams::n_pos_per_embd() const {
      return rope_type == LLAMA_ROPE_TYPE_MROPE ? 4 : 1;
  }
  
@@ -151,7 +151,7 @@ index aa3a65f8..ee303bd5 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index a5fe5b74..ade3409f 100644
+index 36d495d6..74e1d162 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -1865,6 +1865,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {

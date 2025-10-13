@@ -272,10 +272,10 @@ index 746f4396..911220e9 100644
          ggml_cpy_flt_cuda<nv_bfloat16, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
      } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F16) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 45d91def..f39273a1 100644
+index 74a9aa99..375a0c7f 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4328,8 +4328,72 @@ kernel void kernel_argsort_f32_i32(
+@@ -4346,8 +4346,72 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  

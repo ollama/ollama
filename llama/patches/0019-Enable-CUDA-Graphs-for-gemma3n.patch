@@ -13,7 +13,7 @@ checks.
  1 file changed, 18 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index fbfc8b32..ecac575a 100644
+index 5b852f69..827e3205 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -2689,14 +2689,26 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud

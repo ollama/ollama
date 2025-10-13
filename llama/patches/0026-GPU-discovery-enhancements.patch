@@ -39,10 +39,10 @@ index ba181d09..09ff75f9 100644
  
      GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 33b3a15f..86191ef2 100644
+index 0609c650..aefe43bd 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -206,6 +206,8 @@ add_library(ggml-base
+@@ -209,6 +209,8 @@ add_library(ggml-base
              ggml-threading.h
              ggml-quants.c
              ggml-quants.h

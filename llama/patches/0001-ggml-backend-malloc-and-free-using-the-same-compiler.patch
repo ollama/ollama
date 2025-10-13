@@ -84,7 +84,7 @@ index ad1adba6..7d44f74f 100755
  
  /**
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index fb691528..f5bd7f00 100644
+index 856e9de2..c0b1e4c1 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -567,6 +567,7 @@ struct ggml_backend_cuda_buffer_context {
@@ -156,10 +156,10 @@ index aad48d62..a46c0f52 100644
  
  static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index e4cc3c8e..351557a8 100644
+index 45b8c216..4ec9a592 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -332,6 +332,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
+@@ -334,6 +334,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
      ggml_sycl_set_device(ctx->device);
  
      delete ctx;
@@ -167,7 +167,7 @@ index e4cc3c8e..351557a8 100644
  }
  catch (sycl::exception const &exc) {
    std::cerr << exc.what() << "Exception caught at file:" << __FILE__
-@@ -793,6 +794,7 @@ struct ggml_backend_sycl_split_buffer_context {
+@@ -795,6 +796,7 @@ struct ggml_backend_sycl_split_buffer_context {
  static void ggml_backend_sycl_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_sycl_split_buffer_context * ctx = (ggml_backend_sycl_split_buffer_context *)buffer->context;
      delete ctx;
@@ -175,7 +175,7 @@ index e4cc3c8e..351557a8 100644
  }
  
  static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -1135,6 +1137,7 @@ static const char * ggml_backend_sycl_host_buffer_type_name(ggml_backend_buffer_
+@@ -1137,6 +1139,7 @@ static const char * ggml_backend_sycl_host_buffer_type_name(ggml_backend_buffer_
  
  static void ggml_backend_sycl_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_sycl_host_free(buffer->context);
