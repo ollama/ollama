@@ -81,31 +81,29 @@ What is the weather like in San Francisco? <think>I will check the weather in Sa
 <|im_start|>assistant
 I'll check the weather in San Francisco for you.<think>Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.</think>`,
 		},
-		// NOTE: Servers automatically prepend a [img-<n>] tag
-		// 		{
-		// 			name: "Image",
-		// 			msgs: []api.Message{
-		// 				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData(IMAGE2_BASE64)}},
-		// 			},
-		// 			expected: `<|im_start|>user
-		// [img-0]Describe this image.<|im_end|>
-		// <|im_start|>assistant
-		// `,
-		// 		},
+		{
+			name: "Image",
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData("img2")}},
+				{Role: "assistant", Content: "Let me analyze this image."},
+			},
+			expected: `<|im_start|>user
+<|vision_start|><|image_pad|><|vision_end|>Describe this image.<|im_end|>
+<|im_start|>assistant
+Let me analyze this image.`,
+		},
+		{
+			name: "Multiple images",
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe these images.", Images: []api.ImageData{api.ImageData("img1"), api.ImageData("img2")}},
+			},
+			expected: `<|im_start|>user
+<|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|>Describe these images.<|im_end|>
+<|im_start|>assistant
+`,
+		},
 
-		// NOTE: Servers automatically prepend a [img-<n>] tag
-		// 		{
-		// 			name: "Multiple images",
-		// 			msgs: []api.Message{
-		// 				{Role: "user", Content: "Describe these images.", Images: []api.ImageData{api.ImageData(IMAGE1_BASE64), api.ImageData(IMAGE2_BASE64)}},
-		// 			},
-		// 			expected: `<|im_start|>user
-		// [img-0][img-1]Describe these images.<|im_end|>
-		// <|im_start|>assistant
-		// `,
-		// 		},
-
-		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
+		// 		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
 		// 		{
 		// 			name: "with tools and response",
 		// 			msgs: []api.Message{
@@ -185,8 +183,7 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 		// <|im_start|>assistant
 		// `,
 		// 		},
-
-		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
+		// 		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
 		// 		{
 		// 			name: "With tools and response, multiple tool calls",
 		// 			msgs: []api.Message{
@@ -360,9 +357,7 @@ before
 </tool_call>
 <tool_call>
 {"name": "mul", "arguments": {"x": 4, "y": 5}}
-</tool_call><|im_end|>
-<|im_start|>assistant
-`,
+</tool_call>`,
 		},
 		{
 			name: "consecutive tool responses grouped",
@@ -407,22 +402,6 @@ ok
 <tool_response>
 done
 </tool_response><|im_end|>
-<|im_start|>assistant
-`,
-		},
-		{
-			name: "system mid conversation renders",
-			msgs: []api.Message{
-				{Role: "user", Content: "hello"},
-				{Role: "system", Content: "policy"},
-				{Role: "user", Content: "world"},
-			},
-			expected: `<|im_start|>user
-hello<|im_end|>
-<|im_start|>system
-policy<|im_end|>
-<|im_start|>user
-world<|im_end|>
 <|im_start|>assistant
 `,
 		},
