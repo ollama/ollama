@@ -128,7 +128,10 @@ configure_systemd() {
     fi
 
     status "Adding current user to ollama group..."
-    $SUDO usermod -a -G ollama $(whoami)
+    # `usermod` might fail (e.g., non-local user)
+    if ! $SUDO usermod -a -G ollama $(whoami); then
+        warning "Could not add the current user to the 'ollama' group automatically. You may add the user manually (optional) using \`vigr\` or a similar tool."
+    fi
 
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
@@ -239,7 +242,7 @@ CUDA_REPO_ERR_MSG="NVIDIA GPU detected, but your OS and Architecture are not sup
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#fedora
 install_cuda_driver_yum() {
     status 'Installing NVIDIA repository...'
-    
+
     case $PACKAGE_MANAGER in
         yum)
             $SUDO $PACKAGE_MANAGER -y install yum-utils
