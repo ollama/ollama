@@ -426,7 +426,7 @@ struct common_params {
     int32_t n_threads_http    = -1;           // number of threads to process HTTP requests (TODO: support threadpool)
     int32_t n_cache_reuse     = 0;            // min chunk size to reuse from the cache via KV shifting
     int32_t n_ctx_checkpoints = 8;            // max number of context checkpoints per slot
-    int32_t cache_ram_mib     = 8192;         // 0 = no limit, 1 = 1 MiB, etc.
+    int32_t cache_ram_mib     = 8192;         // -1 = no limit, 0 - disable, 1 = 1 MiB, etc.
 
     std::string hostname      = "127.0.0.1";
     std::string public_path   = "";                                                                         // NOLINT

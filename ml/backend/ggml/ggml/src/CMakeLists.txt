@@ -145,6 +145,9 @@ endif()
 # which was introduced in POSIX.1-2008, forcing us to go higher
 if (CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
     add_compile_definitions(_XOPEN_SOURCE=700)
+elseif (CMAKE_SYSTEM_NAME MATCHES "AIX")
+    # Don't define _XOPEN_SOURCE.  We need _ALL_SOURCE, which is the default,
+    # in order to define _SC_PHYS_PAGES.
 else()
     add_compile_definitions(_XOPEN_SOURCE=600)
 endif()
