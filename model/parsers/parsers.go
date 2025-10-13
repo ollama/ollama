@@ -22,7 +22,8 @@ func ParserForName(name string) Parser {
 		parser := &Qwen3CoderParser{}
 		return parser
 	case "qwen3-vl":
-		parser := &Qwen3VLParser{}
+		// instruct only - no thinking support
+		parser := &Qwen3VLParser{hasThinkingSupport: false}
 		return parser
 	case "passthrough":
 		return &PassthroughParser{}

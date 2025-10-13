@@ -11,17 +11,10 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
-// func (p *Qwen3VLParser) initialState() qwenParserState {
-// 	if p.HasThinkingSupport() { // has thinking, start from collecting thinking content
-// 		return CollectingThinkingContent
-// 	}
-// 	return CollectingContent
-// }
-
 // TODO: call the init function
 const (
-	CollectingContent qwenParserState = iota
-	CollectingThinkingContent
+	CollectingContent         qwenParserState = iota // instruct
+	CollectingThinkingContent                        // thinking
 	CollectingToolContent
 )
 
@@ -31,9 +24,10 @@ const (
 
 // TODO(gguo): add a field for isThinking
 type Qwen3VLParser struct {
-	state  qwenParserState
-	buffer strings.Builder
-	tools  []api.Tool
+	state              qwenParserState
+	buffer             strings.Builder
+	tools              []api.Tool
+	hasThinkingSupport bool
 }
 
 func (p *Qwen3VLParser) HasToolSupport() bool {
@@ -42,12 +36,19 @@ func (p *Qwen3VLParser) HasToolSupport() bool {
 
 // TODO(gguo): changes this to reference an objects param
 func (p *Qwen3VLParser) HasThinkingSupport() bool {
-	return true
+	return p.hasThinkingSupport
+}
+
+func (p *Qwen3VLParser) initialState() qwenParserState {
+	if p.HasThinkingSupport() { // has thinking, start from collecting thinking content
+		return CollectingThinkingContent
+	}
+	return CollectingContent
 }
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
-	// p.state = p.initialState()
+	p.state = p.initialState()
 	return tools
 }
 

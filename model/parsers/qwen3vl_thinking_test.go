@@ -204,8 +204,9 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 		}
 
 		t.Run(tc.desc, func(t *testing.T) {
-			parser := Qwen3VLParser{}
-			parser.state = CollectingThinkingContent
+			parser := Qwen3VLParser{hasThinkingSupport: true}
+			parser.Init([]api.Tool{}, nil)
+			// parser.state = CollectingThinkingContent
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)

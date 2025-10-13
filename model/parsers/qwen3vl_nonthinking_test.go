@@ -513,7 +513,8 @@ func TestQwenOldParserStreaming(t *testing.T) {
 		}
 
 		t.Run(tc.desc, func(t *testing.T) {
-			parser := Qwen3VLParser{}
+			parser := Qwen3VLParser{hasThinkingSupport: false}
+			parser.Init([]api.Tool{}, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
