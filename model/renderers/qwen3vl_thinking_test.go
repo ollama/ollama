@@ -46,6 +46,7 @@ Tell me a story in two sentences.<|im_end|>
 <think>
 To make this story interesting, I will speak in poetry.
 </think>
+
 abc`,
 		},
 		{
@@ -64,43 +65,34 @@ To make this story interesting, I will speak in poetry.`,
 			name: "Multiple thinking",
 			msgs: []api.Message{
 				{Role: "user", Content: "Tell me a story in two sentences."},
-				{Role: "assistant", Content: "abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think>"},
+				{Role: "assistant", Content: "abc", Thinking: "To make this story interesting, I will speak in poetry.<think>And I will speak in poetry after the first sentence.</think>"},
 			},
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
 <think>
-To make this story interesting, I will speak in poetry.
+To make this story interesting, I will speak in poetry.<think>And I will speak in poetry after the first sentence.</think>
 </think>
 
-<|im_end|>
-<|im_start|>assistant
-<think>
-`, // NOTE: the second thinking tag is not captured
+abc`, // NOTE: the second thinking tag is not captured
 		},
 		{
 			name: "Multiple thinking, multiple messages.",
 			msgs: []api.Message{
 				{Role: "user", Content: "Tell me a story in two sentences."},
-				{Role: "assistant", Content: "abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think>"},
-				{Role: "user", Content: "What is the weather like in San Francisco? <think>I will check the weather in San Francisco for you.</think>"},
-				{Role: "assistant", Content: "I'll check the weather in San Francisco for you.<think>Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.</think>"},
+				{Role: "assistant", Thinking: "To make this story interesting, I will speak in poetry.", Content: "abc"},
+				{Role: "user", Content: "What is the weather like in San Francisco?"},
+				{Role: "assistant", Thinking: "Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence."},
 			},
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
-<|im_end|>
+abc<|im_end|>
 <|im_start|>user
-What is the weather like in San Francisco? <think>I will check the weather in San Francisco for you.</think><|im_end|>
+What is the weather like in San Francisco?<|im_end|>
 <|im_start|>assistant
 <think>
-Speak poetry after the first sentence.
-</think>
-
-<|im_end|>
-<|im_start|>assistant
-<think>
-`,
+Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.`,
 		},
 		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
