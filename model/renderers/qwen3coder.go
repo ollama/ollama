@@ -55,8 +55,7 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 	return sb.String()
 }
 
-type Qwen3CoderRenderer struct {
-}
+type Qwen3CoderRenderer struct{}
 
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
