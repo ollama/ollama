@@ -339,6 +339,104 @@ Thanks!<|im_end|>
 `,
 		},
 		{
+			name: "assistant with multiple tool calls and content",
+			msgs: []api.Message{
+				{Role: "user", Content: "Hi"},
+				{
+					Role:    "assistant",
+					Content: "before",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{Name: "add", Arguments: map[string]any{"a": 2, "b": 3}}},
+						{Function: api.ToolCallFunction{Name: "mul", Arguments: map[string]any{"x": 4, "y": 5}}},
+					},
+				},
+			},
+			expected: `<|im_start|>user
+Hi<|im_end|>
+<|im_start|>assistant
+before
+<tool_call>
+{"name": "add", "arguments": {"a": 2, "b": 3}}
+</tool_call>
+<tool_call>
+{"name": "mul", "arguments": {"x": 4, "y": 5}}
+</tool_call><|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
+			name: "consecutive tool responses grouped",
+			msgs: []api.Message{
+				{Role: "user", Content: "Compute results"},
+				{Role: "assistant", Content: "ok", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "job", Arguments: map[string]any{"n": 1}}}}},
+				{Role: "tool", Content: "5", ToolName: "job"},
+				{Role: "tool", Content: "6", ToolName: "job"},
+			},
+			expected: `<|im_start|>user
+Compute results<|im_end|>
+<|im_start|>assistant
+ok
+<tool_call>
+{"name": "job", "arguments": {"n": 1}}
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+5
+</tool_response>
+<tool_response>
+6
+</tool_response><|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
+			name: "last message is tool then prefill",
+			msgs: []api.Message{
+				{Role: "user", Content: "run"},
+				{Role: "assistant", Content: "ok", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "exec", Arguments: map[string]any{"cmd": "ls"}}}}},
+				{Role: "tool", Content: "done", ToolName: "exec"},
+			},
+			expected: `<|im_start|>user
+run<|im_end|>
+<|im_start|>assistant
+ok
+<tool_call>
+{"name": "exec", "arguments": {"cmd": "ls"}}
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+done
+</tool_response><|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
+			name: "system mid conversation renders",
+			msgs: []api.Message{
+				{Role: "user", Content: "hello"},
+				{Role: "system", Content: "policy"},
+				{Role: "user", Content: "world"},
+			},
+			expected: `<|im_start|>user
+hello<|im_end|>
+<|im_start|>system
+policy<|im_end|>
+<|im_start|>user
+world<|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
+			name: "user with multiple images",
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe.", Images: []api.ImageData{api.ImageData("img1"), api.ImageData("img2")}},
+			},
+			expected: `<|im_start|>user
+<|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|>Describe.<|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
 			name: "user tool_response, no whitespace",
 			msgs: []api.Message{
 				{Role: "user", Content: "What's the weather?"},
