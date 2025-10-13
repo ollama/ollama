@@ -56,7 +56,6 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 }
 
 type Qwen3CoderRenderer struct {
-	isThinking bool
 }
 
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {

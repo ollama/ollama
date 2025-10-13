@@ -16,6 +16,20 @@ func TestQwen3VLNonThinkingRenderer(t *testing.T) {
 		expected string
 	}{
 		{
+			name: "prefill",
+			msgs: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "Tell me something interesting."},
+				{Role: "assistant", Content: "I'll tell you something interesting about cats"},
+			},
+			expected: `<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Tell me something interesting.<|im_end|>
+<|im_start|>assistant
+I'll tell you something interesting about cats`,
+		},
+		{
 			name: "basic",
 			msgs: []api.Message{
 				{Role: "system", Content: "You are a helpful assistant."},
@@ -37,9 +51,7 @@ Hello, how are you?<|im_end|>
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
-abc<think>To make this story interesting, I will speak in poetry.</think><|im_end|>
-<|im_start|>assistant
-`,
+abc<think>To make this story interesting, I will speak in poetry.</think>`,
 		},
 		{
 			name: "Multiple thinking",
@@ -50,9 +62,7 @@ abc<think>To make this story interesting, I will speak in poetry.</think><|im_en
 			expected: `<|im_start|>user
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
-abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think><|im_end|>
-<|im_start|>assistant
-`, // NOTE: the second thinking tag is not captured
+abc<think>To make this story interesting, I will speak in poetry.</think><think>And I will speak in poetry after the first sentence.</think>`, // NOTE: the second thinking tag is not captured
 		},
 		{
 			name: "Multiple thinking, multiple messages.",
@@ -69,9 +79,7 @@ abc<think>To make this story interesting, I will speak in poetry.</think><think>
 <|im_start|>user
 What is the weather like in San Francisco? <think>I will check the weather in San Francisco for you.</think><|im_end|>
 <|im_start|>assistant
-I'll check the weather in San Francisco for you.<think>Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.</think><|im_end|>
-<|im_start|>assistant
-`,
+I'll check the weather in San Francisco for you.<think>Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.</think>`,
 		},
 		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
@@ -300,6 +308,103 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 		// <|im_start|>assistant
 		// `,
 		// 		},
+		{
+			name: "user tool_response block preserved",
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:    "assistant",
+					Content: "I'll check.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: map[string]any{"location": "Paris", "unit": "celsius"}}},
+					},
+				},
+				{Role: "user", Content: "<tool_response>\n18\n</tool_response>"},
+				{Role: "user", Content: "Thanks!"},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+I'll check.
+<tool_call>
+{"name": "get-current-weather", "arguments": {"location": "Paris", "unit": "celsius"}}
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+18
+</tool_response><|im_end|>
+<|im_start|>user
+Thanks!<|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
+			name: "user tool_response, no whitespace",
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:    "assistant",
+					Content: "I'll check.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: map[string]any{"location": "Paris", "unit": "celsius"}}},
+					},
+				},
+				{Role: "user", Content: "<tool_response>\n18\n</tool_response>"},
+				{Role: "user", Content: "Thanks!"},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+I'll check.
+<tool_call>
+{"name": "get-current-weather", "arguments": {"location": "Paris", "unit": "celsius"}}
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+18
+</tool_response><|im_end|>
+<|im_start|>user
+Thanks!<|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
+			name: "user tool_response with surrounding whitespace",
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:    "assistant",
+					Content: "I'll check.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: map[string]any{"location": "Paris", "unit": "celsius"}}},
+					},
+				},
+				{Role: "user", Content: "\n\n\n\n<tool_response>\n18\n</tool_response> extra\n\n\n\n\n\n"},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+I'll check.
+<tool_call>
+{"name": "get-current-weather", "arguments": {"location": "Paris", "unit": "celsius"}}
+</tool_call><|im_end|>
+<|im_start|>user
+
+
+
+
+<tool_response>
+18
+</tool_response> extra
+
+
+
+
+
+<|im_end|>
+<|im_start|>assistant
+`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

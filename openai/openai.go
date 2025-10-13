@@ -456,6 +456,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 					types := []string{"jpeg", "jpg", "png", "webp"}
 					valid := false
+					// support blank mime type to match api/chat taking just unadorned base64
+					if strings.HasPrefix(url, "data:;base64,") {
+						url = strings.TrimPrefix(url, "data:;base64,")
+						valid = true
+					}
 					for _, t := range types {
 						prefix := "data:image/" + t + ";base64,"
 						if strings.HasPrefix(url, prefix) {

@@ -9,7 +9,7 @@ type Renderer interface {
 func RendererForName(name string) Renderer {
 	switch name {
 	case "qwen3-coder":
-		renderer := &Qwen3CoderRenderer{false}
+		renderer := &Qwen3CoderRenderer{}
 		return renderer
 	case "qwen3-vl":
 		renderer := &Qwen3VLRenderer{false}

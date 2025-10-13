@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -88,7 +89,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		message := messages[i]
 		if multiStepTool && message.Role == "user" {
 			// Check if content starts with <tool_response> and ends with </tool_response>
-			content := message.Content
+			content := r.renderContent(message, true)
 			if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
 				multiStepTool = false
 				lastQueryIndex = i
@@ -98,6 +99,11 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 
 	for i, message := range messages {
 		content := r.renderContent(message, true)
+
+		lastMessage := i == len(messages)-1
+		prefill := lastMessage && message.Role == "assistant"
+
+		fmt.Println("message", i, prefill)
 
 		if message.Role == "user" || message.Role == "system" && i != 0 {
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")
@@ -146,7 +152,11 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 					sb.WriteString("}\n</tool_call>")
 				}
 			}
-			sb.WriteString("<|im_end|>\n")
+
+			if !prefill { // why do we do it if its thinking?
+				sb.WriteString("<|im_end|>\n")
+			}
+
 		} else if message.Role == "tool" {
 			if i == 0 || messages[i-1].Role != "tool" {
 				sb.WriteString("<|im_start|>user")
@@ -156,11 +166,17 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 				sb.WriteString("<|im_end|>\n")
 			}
 		}
-	}
 
-	sb.WriteString("<|im_start|>assistant\n")
-	if r.isThinking {
-		sb.WriteString("<think>\n") // Thinking models end with <|im_start|>assistant\n<think>\n
+		// prefill at the end
+		if lastMessage {
+			if r.isThinking {
+				// always add prefill for thinking models
+				sb.WriteString("<|im_start|>assistant\n<think>\n")
+			} else if !prefill {
+				// non-thinking: only if last wasn't assistant
+				sb.WriteString("<|im_start|>assistant\n")
+			}
+		}
 	}
 
 	return sb.String(), nil

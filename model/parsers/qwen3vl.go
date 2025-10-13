@@ -3,7 +3,6 @@ package parsers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -67,8 +66,6 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
-			fmt.Print("[qwen3vl parser] qwenEventRawToolCall ", event.raw)
-			fmt.Print("[qwen3vl parser] p.tools ", p.tools)
 			toolCall, err := parseJSONToolCall(event, p.tools)
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
@@ -79,8 +76,7 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 			sb.WriteString(event.content)
 		case qwenEventContent:
 			// TODO(drifkin): if the same turn contains multiple interleaved content
-			// events, we naively append them together here. See the note below about
-			// `qwenEvent`s for more details
+			// events, we naively append them together here.
 			sb.WriteString(event.content)
 		}
 	}
@@ -175,7 +171,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	case CollectingThinkingContent: // so we want to hip the unambiguous stuff
 		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
 			split := strings.SplitN(p.buffer.String(), thinkingCloseTag, 2)
-			// fmt.Println("split", split)
 			before := split[0]
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
@@ -220,8 +215,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 }
 
 func parseJSONToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
-	fmt.Printf("[qwen3vl parseJSONToolCall] raw.raw %s\n", raw.raw)
-
 	var toolCallFunction api.ToolCallFunction
 	if err := json.Unmarshal([]byte(raw.raw), &toolCallFunction); err != nil {
 		return api.ToolCall{}, err
@@ -230,6 +223,5 @@ func parseJSONToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall
 	toolCall := api.ToolCall{}
 	toolCall.Function = toolCallFunction
 
-	fmt.Printf("[qwen3vl parser] toolCall %#v\n", toolCall)
 	return toolCall, nil
 }
