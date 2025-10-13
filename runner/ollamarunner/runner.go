@@ -88,13 +88,17 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
+	// shift if context window is exceeded
+	shift bool
+
 	doneReason llm.DoneReason
 
 	// Metrics
-	startProcessingTime time.Time
-	startGenerationTime time.Time
-	numPredicted        int
-	numPromptInputs     int
+	startedAt, lastUpdatedAt time.Time
+	processingDuration       time.Duration
+	samplingDuration         time.Duration
+	numPredicted             int
+	numPromptInputs          int
 }
 
 type NewSequenceParams struct {
@@ -103,12 +107,14 @@ type NewSequenceParams struct {
 	numKeep    int32
 	sampler    sample.Sampler
 	embedding  bool
+	shift      bool
+	truncate   bool
 }
+
+var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
-
-	startTime := time.Now()
 
 	inputs, ctxs, mmStore, err := s.inputs(prompt, images)
 	if err != nil {
@@ -126,6 +132,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if int32(len(inputs)) > s.cache.numCtx {
 		discard := int32(len(inputs)) - s.cache.numCtx
+
+		if !params.truncate {
+			return nil, errorInputTooLong
+		}
+
 		promptStart := params.numKeep + discard
 
 		// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
@@ -164,20 +175,20 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// TODO(jessegross): Ingest cached history for grammar
 
 	return &Sequence{
-		ctxs:                ctxs,
-		mmStore:             mmStore,
-		inputs:              inputs,
-		numPromptInputs:     len(inputs),
-		startProcessingTime: startTime,
-		numPredict:          params.numPredict,
-		pendingResponses:    make([]string, 0),
-		responses:           make(chan string, 100),
-		quit:                make(chan bool, 1),
-		embedding:           make(chan []float32, 1),
-		sampler:             params.sampler,
-		embeddingOnly:       params.embedding,
-		stop:                params.stop,
-		numKeep:             params.numKeep,
+		ctxs:             ctxs,
+		mmStore:          mmStore,
+		inputs:           inputs,
+		numPromptInputs:  len(inputs),
+		numPredict:       params.numPredict,
+		pendingResponses: make([]string, 0),
+		responses:        make(chan string, 100),
+		quit:             make(chan bool, 1),
+		embedding:        make(chan []float32, 1),
+		sampler:          params.sampler,
+		embeddingOnly:    params.embedding,
+		stop:             params.stop,
+		numKeep:          params.numKeep,
+		shift:            params.shift,
 	}, nil
 }
 
@@ -323,9 +334,6 @@ type Server struct {
 	// TODO (jmorganca): make this n_batch
 	batchSize int
 
-	// Used to signal a hard failure during async processing which will panic the runner
-	hardErrCh chan error
-
 	// Simple counter used only for trace logging batches
 	batchID int
 
@@ -408,25 +416,25 @@ func (s *Server) run(ctx context.Context) {
 
 	supportsAsync := pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone
 
-	var activeBatch batchState
+	var previousBatch batchState
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case err := <-s.hardErrCh:
-			panic(err)
 		default:
 			var err error
-			activeBatch, err = s.forwardBatch(activeBatch)
+			nextBatch, err := s.forwardBatch(previousBatch)
 			if err != nil {
 				panic(err)
 			}
 
 			if supportsAsync {
-				go s.computeBatch(activeBatch)
+				go s.computeBatch(nextBatch)
 			} else {
-				s.computeBatch(activeBatch)
+				s.computeBatch(nextBatch)
 			}
+
+			previousBatch = nextBatch
 		}
 	}
 }
@@ -522,6 +530,12 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 					break
 				}
 
+				if !seq.shift {
+					s.removeSequence(seqIdx, llm.DoneReasonLength)
+					nextBatch.seqs[seqIdx] = nil
+					break
+				}
+
 				err = s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 				if err != nil {
 					var reprocess *ErrReprocessInputs
@@ -560,6 +574,13 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 		}
 
 		seq.inputs = seq.inputs[len(seq.pendingInputs):]
+	}
+
+	startedAt := time.Now()
+	for i := range nextBatch.seqs {
+		if nextBatch.seqs[i] != nil && nextBatch.seqs[i].startedAt.IsZero() {
+			nextBatch.seqs[i].startedAt = startedAt
+		}
 	}
 
 	if resumeSeq != -1 {
@@ -656,9 +677,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			if !s.cache.enabled {
-				s.hardErrCh <- fmt.Errorf("caching disabled but unable to fit entire input in a batch")
-				s.mu.Unlock()
-				return
+				panic("caching disabled but unable to fit entire input in a batch")
 			}
 			continue
 		}
@@ -682,6 +701,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		activeBatch.modelOutput)
 
 	outputs := activeBatch.modelOutput.Floats()
+	t := time.Now()
 
 	logutil.Trace("computeBatch: logits ready", "batchID", activeBatch.id)
 
@@ -694,8 +714,10 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
+		seq.lastUpdatedAt = t
 		if seq.numPredicted == 1 {
-			seq.startGenerationTime = time.Now()
+			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
+			seq.startedAt = seq.lastUpdatedAt
 		}
 
 		// if done processing the prompt, generate an embedding and return
@@ -710,8 +732,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
 		token, err := seq.sampler.Sample(outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize])
 		if err != nil {
-			s.hardErrCh <- fmt.Errorf("failed to sample token: %w", err)
-			return
+			panic("failed to sample token")
 		}
 
 		nextBatchTokens[i].Token = token
@@ -728,8 +749,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 
 		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
 		if err != nil {
-			s.hardErrCh <- fmt.Errorf("failed to decode token: %w", err)
-			return
+			panic("failed to decode token")
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
@@ -772,6 +792,13 @@ func (s *Server) computeBatch(activeBatch batchState) {
 
 		if !flushPending(seq) {
 			s.removeSequence(i, llm.DoneReasonConnectionClosed)
+		}
+	}
+
+	samplingDuration := time.Since(t)
+	for i, seq := range s.seqs {
+		if seq != nil && nextBatchTokens[i] != nil {
+			s.seqs[i].samplingDuration += samplingDuration
 		}
 	}
 }
@@ -824,8 +851,14 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		numKeep:    int32(req.Options.NumKeep),
 		sampler:    sampler,
 		embedding:  false,
+		shift:      req.Shift,
+		truncate:   req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -887,9 +920,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
-					PromptEvalDuration: seq.startGenerationTime.Sub(seq.startProcessingTime),
+					PromptEvalDuration: seq.processingDuration,
 					EvalCount:          seq.numPredicted,
-					EvalDuration:       time.Since(seq.startGenerationTime),
+					EvalDuration:       seq.lastUpdatedAt.Sub(seq.startedAt) - seq.samplingDuration,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode final response: %v", err), http.StatusInternalServerError)
 				}
@@ -1304,7 +1337,6 @@ func Execute(args []string) error {
 	server := &Server{
 		modelPath: *mpath,
 		status:    llm.ServerStatusLaunched,
-		hardErrCh: make(chan error, 1),
 	}
 
 	server.cond = sync.NewCond(&server.mu)

@@ -1379,7 +1379,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar string // set before sending the request to the subprocess
+	Grammar  string // set before sending the request to the subprocess
+	Shift    bool
+	Truncate bool
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1486,7 +1488,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	serverReq.Header.Set("Content-Type", "application/json")
 
 	res, err := http.DefaultClient.Do(serverReq)
-	if err != nil {
+	if err != nil && errors.Is(err, context.Canceled) {
+		// client closed connection
+		return err
+	} else if err != nil {
 		slog.Error("post predict", "error", err)
 		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
@@ -1498,7 +1503,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
 		log.Printf("llm predict error: %s", bodyBytes)
-		return fmt.Errorf("%s", bodyBytes)
+		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	scanner := bufio.NewScanner(res.Body)

@@ -12,6 +12,7 @@
 #include "ggml-impl.h"
 #include <filesystem>
 #include <mutex>
+#include <array>
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -78,6 +79,7 @@ struct {
   nvmlReturn_t (*nvmlShutdown)(void);
   nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
   nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
+  const char * (*nvmlErrorString)(nvmlReturn_t result);
 } nvml { NULL, NULL, NULL, NULL, NULL };
 static std::mutex ggml_nvml_lock;
 
@@ -115,7 +117,8 @@ int ggml_nvml_init() {
     nvml.nvmlShutdown = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlShutdown");
     nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetHandleByUUID");
     nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetMemoryInfo");
-    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
+    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) GetProcAddress((HMODULE)(nvml.handle), "nvmlErrorString");
+    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlErrorString == NULL) {
         GGML_LOG_INFO("%s unable to locate required symbols in NVML.dll", __func__);
         FreeLibrary((HMODULE)(nvml.handle));
         nvml.handle = NULL;
@@ -124,11 +127,45 @@ int ggml_nvml_init() {
 
     SetErrorMode(old_mode);
 
+    nvmlReturn_t status = nvml.nvmlInit_v2();
+    if (status != NVML_SUCCESS) {
+        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
+        FreeLibrary((HMODULE)(nvml.handle));
+        nvml.handle = NULL;
+        return status;
+    }
 #else
-    // Not currently wired up on Linux
-    return NVML_ERROR_NOT_SUPPORTED;
+    constexpr std::array<const char*, 2> libPaths = {
+        "/usr/lib/wsl/lib/libnvidia-ml.so.1", // Favor WSL2 path if present
+        "libnvidia-ml.so.1" // On a non-WSL2 system, it should be in the path
+    };
+    for (const char* path : libPaths) {
+        nvml.handle = dlopen(path, RTLD_LAZY);
+        if (nvml.handle) break;
+    }
+    if (nvml.handle == NULL) {
+        GGML_LOG_INFO("%s unable to load libnvidia-ml: %s\n", __func__, dlerror());
+        return NVML_ERROR_NOT_FOUND;
+    }
+    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlInit_v2");
+    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlShutdown");
+    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) dlsym(nvml.handle, "nvmlDeviceGetHandleByUUID");
+    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) dlsym(nvml.handle, "nvmlDeviceGetMemoryInfo");
+    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) dlsym(nvml.handle, "nvmlErrorString");
+    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
+        GGML_LOG_INFO("%s unable to locate required symbols in libnvidia-ml.so", __func__);
+        dlclose(nvml.handle);
+        nvml.handle = NULL;
+        return NVML_ERROR_NOT_FOUND;
+    }
+    nvmlReturn_t status = nvml.nvmlInit_v2();
+    if (status != NVML_SUCCESS) {
+        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
+        dlclose(nvml.handle);
+        nvml.handle = NULL;
+        return status;
+    }
 #endif
-    int status = nvml.nvmlInit_v2();
     return NVML_SUCCESS;
 }
 
@@ -140,14 +177,14 @@ void ggml_nvml_release() {
     }
     nvmlReturn_enum status = nvml.nvmlShutdown();
     if (status != NVML_SUCCESS) {
-        GGML_LOG_INFO("%s failed to shutdown NVML: %d\n", __func__, status);
+        GGML_LOG_INFO("%s failed to shutdown NVML: %s\n", __func__, nvml.nvmlErrorString(status));
     }
 #ifdef _WIN32
     FreeLibrary((HMODULE)(nvml.handle));
-    nvml.handle = NULL;
 #else
-    // Not currently wired up on Linux
+    dlclose(nvml.handle);
 #endif
+    nvml.handle = NULL;
 }
 
 int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
