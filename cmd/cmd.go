@@ -446,17 +446,19 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
-		if err := loadOrUnloadModel(cmd, &opts); err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+		if len(info.Messages) > 0 {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				var sErr api.AuthorizationError
+				if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
 
-				if sErr.SigninURL != "" {
-					fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					if sErr.SigninURL != "" {
+						fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					}
+					return nil
 				}
-				return nil
+				return err
 			}
-			return err
 		}
 
 		for _, msg := range info.Messages {
@@ -473,7 +475,35 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 		return generateInteractive(cmd, opts)
 	}
-	return generate(cmd, opts)
+	local := opts.Copy()
+
+	if local.MultiModal {
+		prompt, images, err := extractFileData(local.Prompt)
+		if err != nil {
+			return err
+		}
+		local.Prompt = prompt
+		local.Images = images
+	}
+
+	messages := make([]api.Message, len(local.Messages))
+	copy(messages, local.Messages)
+
+	if local.System != "" {
+		hasSystem := len(messages) > 0 && messages[0].Role == "system"
+		if !hasSystem {
+			messages = append([]api.Message{{Role: "system", Content: local.System}}, messages...)
+		}
+	}
+
+	if local.Prompt != "" || len(local.Images) > 0 {
+		messages = append(messages, api.Message{Role: "user", Content: local.Prompt, Images: local.Images})
+	}
+
+	local.Messages = messages
+
+	_, err = chat(cmd, local)
+	return err
 }
 
 func SigninHandler(cmd *cobra.Command, args []string) error {
