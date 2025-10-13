@@ -78,6 +78,8 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		}
 
 		slog.Info("discovering available GPUs...")
+		requested := envconfig.LLMLibrary()
+		jetpack := cudaJetpack()
 
 		// For our initial discovery pass, we gather all the known GPUs through
 		// all the libraries that were detected. This pass may include GPUs that
@@ -86,6 +88,14 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// times concurrently leading to memory contention
 		for dir := range libDirs {
 			var dirs []string
+			if dir != "" {
+				if requested != "" && filepath.Base(dir) != requested {
+					slog.Debug("skipping available library at users request", "requested", requested, "libDir", dir)
+					continue
+				} else if jetpack != "" && filepath.Base(dir) != "cuda_"+jetpack {
+					continue
+				}
+			}
 			if dir == "" {
 				dirs = []string{LibOllamaPath}
 			} else {
@@ -330,6 +340,9 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		}
 	}
 
+	// Apply any iGPU workarounds
+	iGPUWorkarounds(devices)
+
 	return devices
 }
 
@@ -395,7 +408,7 @@ func (r *bootstrapRunner) HasExited() bool {
 
 func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []string) []ml.DeviceInfo {
 	// TODO DRY out with llm/server.go
-	slog.Debug("spawing runner with", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
+	slog.Debug("spawning runner with", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
 	start := time.Now()
 	defer func() {
 		slog.Debug("bootstrap discovery took", "duration", time.Since(start), "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
@@ -439,15 +452,18 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		cmd.Stderr = os.Stderr
 	}
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
-	cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
 	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 	pathNeeded := true
+	ollamaPathNeeded := true
 	extraDone := make([]bool, len(extraEnvs))
 	for i := range cmd.Env {
 		cmp := strings.SplitN(cmd.Env[i], "=", 2)
 		if strings.EqualFold(cmp[0], pathEnv) {
 			cmd.Env[i] = pathEnv + "=" + pathEnvVal
 			pathNeeded = false
+		} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
+			cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(ollamaLibDirs, string(filepath.ListSeparator))
+			ollamaPathNeeded = false
 		} else {
 			for j := range extraEnvs {
 				if extraDone[j] {
@@ -463,6 +479,9 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	}
 	if pathNeeded {
 		cmd.Env = append(cmd.Env, pathEnv+"="+pathEnvVal)
+	}
+	if ollamaPathNeeded {
+		cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
 	}
 	for i := range extraDone {
 		if !extraDone[i] {
@@ -537,6 +556,35 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceIn
 				continue
 			}
 			return moreDevices, nil
+		}
+	}
+}
+
+func iGPUWorkarounds(devices []ml.DeviceInfo) {
+	// short circuit if we have no iGPUs
+	anyiGPU := false
+	for i := range devices {
+		if devices[i].Integrated {
+			anyiGPU = true
+			break
+		}
+	}
+	if !anyiGPU {
+		return
+	}
+
+	memInfo, err := GetCPUMem()
+	if err != nil {
+		slog.Debug("failed to fetch system memory information for iGPU", "error", err)
+		return
+	}
+	for i := range devices {
+		if !devices[i].Integrated {
+			continue
+		}
+		// NVIDIA iGPUs return useless free VRAM data which ignores system buff/cache
+		if devices[i].Library == "CUDA" {
+			devices[i].FreeMemory = memInfo.FreeMemory
 		}
 	}
 }

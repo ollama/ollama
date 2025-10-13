@@ -150,7 +150,9 @@ func (moe *sparse) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml
 }
 
 func (moe *sparse) topKIndices(ctx ml.Context, scores ml.Tensor, opts *Options) ml.Tensor {
-	scores = scores.Add(ctx, moe.ExpProbsBias)
+	if moe.ExpProbsBias != nil {
+		scores = scores.Add(ctx, moe.ExpProbsBias)
+	}
 	topKIndices := scores.TopK(ctx, opts.numExpertsUsed)
 	return topKIndices
 }

@@ -74,16 +74,26 @@ extern "C" {
         GGML_OPT_BUILD_TYPE_OPT     = 30,
     };
 
+    enum ggml_opt_optimizer_type {
+        GGML_OPT_OPTIMIZER_TYPE_ADAMW,
+        GGML_OPT_OPTIMIZER_TYPE_SGD,
+
+        GGML_OPT_OPTIMIZER_TYPE_COUNT
+    };
+
     // parameters that control which optimizer is used and how said optimizer tries to find the minimal loss
     struct ggml_opt_optimizer_params {
-        // AdamW optimizer parameters
         struct {
             float alpha; // learning rate
-            float beta1;
-            float beta2;
+            float beta1; // first AdamW momentum
+            float beta2; // second AdamW momentum
             float eps;   // epsilon for numerical stability
-            float wd;    // weight decay for AdamW, use 0.0f to disable
+            float wd;    // weight decay - 0.0f to disable
         } adamw;
+        struct {
+            float alpha; // learning rate
+            float wd;    // weight decay
+        } sgd;
     };
 
     // callback to calculate optimizer parameters prior to a backward pass
@@ -112,8 +122,11 @@ extern "C" {
 
         int32_t opt_period; // after how many gradient accumulation steps an optimizer step should be done
 
-        ggml_opt_get_optimizer_params get_opt_pars; // callback for calculating optimizer parameters
-        void * get_opt_pars_ud;                     // userdata for calculating optimizer parameters
+        ggml_opt_get_optimizer_params get_opt_pars;    // callback for calculating optimizer parameters
+        void *                        get_opt_pars_ud; // userdata for calculating optimizer parameters
+
+        // only GGML_OPT_OPTIMIZER_TYPE_ADAMW needs m, v momenta per parameter tensor
+        enum ggml_opt_optimizer_type optimizer;
     };
 
     // get parameters for an optimization context with defaults set where possible
@@ -141,6 +154,10 @@ extern "C" {
 
     // get the gradient accumulator for a node from the forward graph
     GGML_API struct ggml_tensor * ggml_opt_grad_acc(ggml_opt_context_t opt_ctx, struct ggml_tensor * node);
+
+    GGML_API enum ggml_opt_optimizer_type ggml_opt_context_optimizer_type(ggml_opt_context_t); //TODO consistent naming scheme
+
+    GGML_API const char * ggml_opt_optimizer_name(enum ggml_opt_optimizer_type);
 
     // ====== Optimization Result ======
 
@@ -226,11 +243,13 @@ extern "C" {
             struct ggml_tensor            * outputs,        // output tensor, must have shape [ne_label, ndata_batch] if labels are used
             ggml_opt_dataset_t              dataset,        // dataset with data and optionally also labels
             enum ggml_opt_loss_type         loss_type,      // loss to minimize
+            enum ggml_opt_optimizer_type    optimizer,      // sgd or adamw
             ggml_opt_get_optimizer_params   get_opt_pars,   // callback to get optimizer params, userdata is pointer to epoch (of type int64_t)
             int64_t                         nepoch,         // how many times the dataset should be iterated over
             int64_t                         nbatch_logical, // datapoints optimizer step, must be a multiple of ndata_batch in inputs/outputs
             float                           val_split,      // fraction of the dataset to use for validation, must be in [0.0f, 1.0f)
             bool                            silent);        // whether or not info prints to stderr should be suppressed
+
 
 #ifdef  __cplusplus
 }

@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-#define LLAMA_MAX_SEQ 64
+#define LLAMA_MAX_SEQ 256
 
 struct llama_cparams {
     uint32_t n_ctx;           // context size used during inference
@@ -24,7 +24,6 @@ struct llama_cparams {
     float yarn_attn_factor;
     float yarn_beta_fast;
     float yarn_beta_slow;
-    float defrag_thold;
 
     bool embeddings;
     bool causal_attn;

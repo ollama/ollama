@@ -105,12 +105,16 @@ func (m *Model) Capabilities() []model.Capability {
 
 	builtinParser := parsers.ParserForName(m.Config.Parser)
 	// Check for tools capability
-	if slices.Contains(m.Template.Vars(), "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
+	v, err := m.Template.Vars()
+	if err != nil {
+		slog.Warn("model template contains errors", "error", err)
+	}
+	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
 		capabilities = append(capabilities, model.CapabilityTools)
 	}
 
 	// Check for insert capability
-	if slices.Contains(m.Template.Vars(), "suffix") {
+	if slices.Contains(v, "suffix") {
 		capabilities = append(capabilities, model.CapabilityInsert)
 	}
 

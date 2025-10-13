@@ -196,14 +196,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		loadRequest.ProjectorPath = projectors[0]
 	}
 
+	fa := envconfig.FlashAttention(f.FlashAttention())
+
 	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
 	// that can handle it.
-	fa := envconfig.FlashAttention()
-	if f.FlashAttention() {
-		slog.Info("model wants flash attention")
-		fa = true
-	}
-
 	if fa && !gpus.FlashAttentionSupported() {
 		slog.Warn("flash attention enabled but not supported by gpu")
 		fa = false
@@ -363,20 +359,22 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
 
-		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
-
 		// Always filter down the set of GPUs in case there are any unsupported devices that might crash
 		envWorkarounds := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path variable with our adjusted version
 		pathNeeded := true
+		ollamaPathNeeded := true
 		envWorkaroundDone := make([]bool, len(envWorkarounds))
 		for i := range s.cmd.Env {
 			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
 			if strings.EqualFold(cmp[0], pathEnv) {
 				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
 				pathNeeded = false
+			} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
+				s.cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(ggmlPaths, string(filepath.ListSeparator))
+				ollamaPathNeeded = false
 			} else if len(envWorkarounds) != 0 {
 				for j, kv := range envWorkarounds {
 					tmp := strings.SplitN(kv, "=", 2)
@@ -389,6 +387,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 		if pathNeeded {
 			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+		}
+		if ollamaPathNeeded {
+			s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 		}
 		for i, done := range envWorkaroundDone {
 			if !done {
@@ -1378,7 +1379,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar string // set before sending the request to the subprocess
+	Grammar  string // set before sending the request to the subprocess
+	Shift    bool
+	Truncate bool
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1485,7 +1488,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	serverReq.Header.Set("Content-Type", "application/json")
 
 	res, err := http.DefaultClient.Do(serverReq)
-	if err != nil {
+	if err != nil && errors.Is(err, context.Canceled) {
+		// client closed connection
+		return err
+	} else if err != nil {
 		slog.Error("post predict", "error", err)
 		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
@@ -1497,7 +1503,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
 		log.Printf("llm predict error: %s", bodyBytes)
-		return fmt.Errorf("%s", bodyBytes)
+		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	scanner := bufio.NewScanner(res.Body)

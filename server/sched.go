@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 )
@@ -229,8 +230,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 
 				if runnerToExpire == nil {
-					// Shouildn't happen
-					slog.Error("runner to expire was nil!")
+					// While we were performing load calculations, the loaded runner(s) unloaded in parallel
+					// so findRunnerToUnload returned no runners.  We'll try again and the loadedCount should be zero
+					slog.Debug("runner to expire was nil, retrying")
 					continue
 				}
 				// Trigger an expiration to unload once it's done
@@ -644,27 +646,35 @@ func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []discover.Fi
 		totalMemoryBefore += gpu.TotalMemory
 		freeMemoryBefore += gpu.FreeMemory
 	}
+	totalMemoryNow := totalMemoryBefore
+	freeMemoryNow := freeMemoryBefore
+
 	go func() {
-		expiresAt := start.Add(5 * time.Second) // typical convergence is 0.5-1.5s
+		// typical convergence is 0.5-1.5s - If it takes more than 5 seconds to discover and converge, let the scheduler estimate VRAM usage
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			<-ticker.C
-			if time.Now().After(expiresAt) {
-				slog.Warn("gpu VRAM usage didn't recover within timeout", "seconds", time.Since(start).Seconds(), "runner", runner)
-				finished <- struct{}{}
-			}
-
-			// Query GPUs, look for free to go back up
-			gpusNow := s.getGpuFn(context.Background(), runners)
-			var totalMemoryNow, freeMemoryNow uint64
-			for _, gpu := range gpusNow {
-				totalMemoryNow += gpu.TotalMemory
-				freeMemoryNow += gpu.FreeMemory
-			}
-			// If we're within ~80% of the estimated memory usage recovered, bail out
-			if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.vramSize)*0.8 {
-				slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "runner", runner)
+			select {
+			case <-ticker.C:
+				// Query GPUs, look for free to go back up
+				gpusNow := s.getGpuFn(ctx, runners)
+				totalMemoryNow = 0
+				freeMemoryNow = 0
+				for _, gpu := range gpusNow {
+					totalMemoryNow += gpu.TotalMemory
+					freeMemoryNow += gpu.FreeMemory
+				}
+				logutil.Trace("gpu VRAM convergence", "percent", int(max(float32(freeMemoryNow-freeMemoryBefore), 0.0)/float32(runner.vramSize)*100))
+				// If we're within ~75% of the estimated memory usage recovered, bail out
+				if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.vramSize)*0.75 {
+					slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "free_before", format.HumanBytes2(freeMemoryBefore), "free_now", format.HumanBytes2(freeMemoryNow), "runner", runner)
+					finished <- struct{}{}
+					return
+				}
+			case <-ctx.Done():
+				slog.Debug("gpu VRAM usage didn't recover within timeout", "seconds", time.Since(start).Seconds(), "free_before", format.HumanBytes2(freeMemoryBefore), "free_now", format.HumanBytes2(freeMemoryNow), "runner", runner)
 				finished <- struct{}{}
 				return
 			}

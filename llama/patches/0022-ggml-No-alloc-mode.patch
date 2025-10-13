@@ -16,10 +16,10 @@ must be recreated with no-alloc set to false before loading data.
  5 files changed, 310 insertions(+), 44 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 2773cc310..ae94887dd 100644
+index 48777212..d4352663 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
-@@ -291,6 +291,7 @@ extern "C" {
+@@ -303,6 +303,7 @@ extern "C" {
  
      // Initialize a backend scheduler, backends with low index are given priority over backends with high index
      GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
@@ -28,7 +28,7 @@ index 2773cc310..ae94887dd 100644
  
      // Initialize backend buffers from a measure graph
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index c36c12d65..369e9e25a 100644
+index 07784d6f..869dc07d 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -26,12 +26,17 @@ extern "C" {
@@ -57,10 +57,10 @@ index c36c12d65..369e9e25a 100644
      };
  
      GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
-@@ -114,6 +120,16 @@ extern "C" {
-         void (*event_record)(ggml_backend_t backend, ggml_backend_event_t event);
-         // wait for an event on on a different stream
-         void (*event_wait)  (ggml_backend_t backend, ggml_backend_event_t event);
+@@ -117,6 +123,16 @@ extern "C" {
+ 
+         // (optional) sort/optimize the nodes in the graph
+         void                      (*graph_optimize)    (ggml_backend_t backend, struct ggml_cgraph * cgraph);
 +
 +        // (optional) reserves intermediate buffers needed for the compution
 +        // if alloc is true, memory is actually allocated, otherwise the required amount is just returned by buffer_size
@@ -75,7 +75,7 @@ index c36c12d65..369e9e25a 100644
  
      struct ggml_backend {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index d02a40e60..6b4dee4c7 100644
+index cb2b9956..6ef5eeaf 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -41,6 +41,19 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t
@@ -95,10 +95,10 @@ index d02a40e60..6b4dee4c7 100644
 +        return buf;
 +    }
 +
+     GGML_ASSERT(buft);
      return buft->iface.alloc_buffer(buft, size);
  }
- 
-@@ -89,7 +102,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
+@@ -95,7 +108,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
          /* .buft      = */ buft,
          /* .context   = */ context,
          /* .size      = */ size,
@@ -108,7 +108,7 @@ index d02a40e60..6b4dee4c7 100644
      };
  
      return buffer;
-@@ -119,6 +133,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -127,6 +141,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
          return NULL;
      }
  
@@ -121,7 +121,7 @@ index d02a40e60..6b4dee4c7 100644
      void * base = buffer->iface.get_base(buffer);
  
      GGML_ASSERT(base != NULL && "backend buffer base cannot be NULL");
-@@ -663,6 +683,12 @@ struct ggml_backend_sched {
+@@ -723,6 +743,12 @@ struct ggml_backend_sched {
      bool op_offload;
  
      int debug;
@@ -134,7 +134,7 @@ index d02a40e60..6b4dee4c7 100644
  };
  
  #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
-@@ -1449,6 +1475,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1606,6 +1632,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
          size_t graph_size,
          bool parallel,
          bool op_offload) {
@@ -152,7 +152,7 @@ index d02a40e60..6b4dee4c7 100644
      GGML_ASSERT(n_backends > 0);
      GGML_ASSERT(n_backends <= GGML_SCHED_MAX_BACKENDS);
      GGML_ASSERT(ggml_backend_dev_type(ggml_backend_get_device(backends[n_backends - 1])) == GGML_BACKEND_DEVICE_TYPE_CPU);
-@@ -1490,10 +1527,13 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1647,10 +1684,13 @@ ggml_backend_sched_t ggml_backend_sched_new(
                  sched->events[b][c] = ggml_backend_event_new(backends[b]->device);
              }
          }
@@ -166,7 +166,7 @@ index d02a40e60..6b4dee4c7 100644
  
      ggml_backend_sched_reset(sched);
  
-@@ -1508,6 +1548,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+@@ -1665,6 +1705,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
          for (int c = 0; c < sched->n_copies; c++) {
              ggml_backend_event_free(sched->events[b][c]);
          }
@@ -177,7 +177,7 @@ index d02a40e60..6b4dee4c7 100644
      }
      ggml_gallocr_free(sched->galloc);
      ggml_free(sched->ctx);
-@@ -1547,6 +1591,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
+@@ -1708,6 +1752,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
          return false;
      }
  
@@ -202,7 +202,7 @@ index d02a40e60..6b4dee4c7 100644
      ggml_backend_sched_reset(sched);
  
      return true;
-@@ -1635,7 +1697,13 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched,
+@@ -1813,7 +1875,13 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched,
      int backend_index = ggml_backend_sched_backend_id(sched, backend);
      GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
  
@@ -218,7 +218,7 @@ index d02a40e60..6b4dee4c7 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 2e5d48797..b915ee1b8 100644
+index c4246b65..448badf0 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -35,6 +35,31 @@
@@ -253,7 +253,7 @@ index 2e5d48797..b915ee1b8 100644
  #define STRINGIZE_IMPL(...) #__VA_ARGS__
  #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
  
-@@ -771,6 +796,9 @@ struct ggml_cuda_pool {
+@@ -880,6 +905,9 @@ struct ggml_cuda_pool {
  
      virtual void * alloc(size_t size, size_t * actual_size) = 0;
      virtual void free(void * ptr, size_t size) = 0;
@@ -263,7 +263,7 @@ index 2e5d48797..b915ee1b8 100644
  };
  
  template<typename T>
-@@ -914,11 +942,11 @@ struct ggml_backend_cuda_context {
+@@ -1023,11 +1051,11 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES];
  
@@ -277,7 +277,7 @@ index 2e5d48797..b915ee1b8 100644
          }
          return *pools[device];
      }
-@@ -926,4 +954,20 @@ struct ggml_backend_cuda_context {
+@@ -1035,4 +1063,20 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -299,7 +299,7 @@ index 2e5d48797..b915ee1b8 100644
 +    }
  };
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index c7f9dc3a5..d5abe09e0 100644
+index e51c5035..d324bc68 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -350,6 +350,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
@@ -540,7 +540,7 @@ index c7f9dc3a5..d5abe09e0 100644
  };
  
  ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
-@@ -2936,6 +2998,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx,
+@@ -3008,6 +3070,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx,
  
  static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
      bool & graph_evaluated_or_captured, bool & use_cuda_graph, bool & cuda_graph_update_required) {
@@ -548,7 +548,7 @@ index c7f9dc3a5..d5abe09e0 100644
      // flag used to determine whether it is an integrated_gpu
      const bool integrated = ggml_cuda_info().devices[cuda_ctx->device].integrated;
  
-@@ -2951,6 +3014,11 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+@@ -3023,6 +3086,11 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
                      continue;
                  }
  
@@ -559,8 +559,8 @@ index c7f9dc3a5..d5abe09e0 100644
 +
                  static bool disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
                  if (!disable_fusion) {
-                     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {})) {
-@@ -3022,6 +3090,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+ 
+@@ -3149,6 +3217,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
  
  static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
@@ -568,7 +568,7 @@ index c7f9dc3a5..d5abe09e0 100644
  
      ggml_cuda_set_device(cuda_ctx->device);
  
-@@ -3101,6 +3170,71 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3228,6 +3297,71 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  }
  
@@ -640,10 +640,10 @@ index c7f9dc3a5..d5abe09e0 100644
  static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
-@@ -3140,6 +3274,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
-     /* .graph_compute           = */ ggml_backend_cuda_graph_compute,
+@@ -3268,6 +3402,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
+     /* .graph_optimize          = */ NULL,
 +    /* .graph_reserve           = */ ggml_backend_cuda_graph_reserve,
 +    /* .buffer_size             = */ ggml_backend_cuda_buffer_size,
 +    /* .reset                   = */ ggml_backend_cuda_reset,

@@ -5,7 +5,12 @@ find_library(METALKIT_FRAMEWORK MetalKit   REQUIRED)
 message(STATUS "Metal framework found")
 
 ggml_add_backend_library(ggml-metal
-                         ggml-metal.m
+                         ggml-metal.cpp
+                         ggml-metal-device.m
+                         ggml-metal-device.cpp
+                         ggml-metal-common.cpp
+                         ggml-metal-context.m
+                         ggml-metal-ops.cpp
                         )
 
 target_link_libraries(ggml-metal PRIVATE
@@ -16,10 +21,6 @@ target_link_libraries(ggml-metal PRIVATE
 
 if (GGML_METAL_NDEBUG)
     add_compile_definitions(GGML_METAL_NDEBUG)
-endif()
-
-if (GGML_METAL_USE_BF16)
-    add_compile_definitions(GGML_METAL_USE_BF16)
 endif()
 
 # copy metal files to bin directory

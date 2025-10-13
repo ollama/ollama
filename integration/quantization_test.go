@@ -74,9 +74,14 @@ func TestQuantization(t *testing.T) {
 				}
 
 				stream := true
-				genReq := api.GenerateRequest{
-					Model:     newName,
-					Prompt:    blueSkyPrompt,
+				chatReq := api.ChatRequest{
+					Model: newName,
+					Messages: []api.Message{
+						{
+							Role:    "user",
+							Content: blueSkyPrompt,
+						},
+					},
 					KeepAlive: &api.Duration{Duration: 3 * time.Second},
 					Options: map[string]any{
 						"seed":        42,
@@ -91,8 +96,8 @@ func TestQuantization(t *testing.T) {
 				reqCtx, reqCancel := context.WithCancel(ctx)
 				atLeastOne := false
 				var buf bytes.Buffer
-				genfn := func(response api.GenerateResponse) error {
-					buf.Write([]byte(response.Response))
+				chatfn := func(response api.ChatResponse) error {
+					buf.Write([]byte(response.Message.Content))
 					fullResp := strings.ToLower(buf.String())
 					for _, resp := range blueSkyExpected {
 						if strings.Contains(fullResp, resp) {
@@ -108,14 +113,14 @@ func TestQuantization(t *testing.T) {
 				done := make(chan int)
 				var genErr error
 				go func() {
-					genErr = client.Generate(reqCtx, &genReq, genfn)
+					genErr = client.Chat(reqCtx, &chatReq, chatfn)
 					done <- 0
 				}()
 
 				select {
 				case <-done:
 					if genErr != nil && !atLeastOne {
-						t.Fatalf("failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
+						t.Fatalf("failed with %s request prompt %s ", chatReq.Model, chatReq.Messages[0].Content)
 					}
 				case <-ctx.Done():
 					t.Error("outer test context done while waiting for generate")
