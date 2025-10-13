@@ -116,6 +116,34 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 			},
 		},
 		{
+			desc: "emit unambiguous before partial tool open (trailing ws)",
+			steps: []step{
+				{
+					input:      "abc\u00a0\n<tool_call",
+					wantEvents: []qwenEvent{qwenEventContent{content: "abc"}},
+				},
+				{
+					input:      " fakeout",
+					wantEvents: []qwenEvent{qwenEventContent{content: "\u00a0\n<tool_call fakeout"}},
+				},
+			},
+		},
+		{
+			desc: "unambiguous empty: partial tool open at buffer start",
+			steps: []step{
+				{
+					input:      "<tool_ca",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "ll>abc</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "abc"},
+					},
+				},
+			},
+		},
+		{
 			desc: "partial thinking tag fakeout",
 			steps: []step{
 				{

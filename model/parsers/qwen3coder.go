@@ -150,7 +150,9 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			ambiguous := p.acc.String()[ambiguousStart:]
 			p.acc.Reset()
 			p.acc.WriteString(ambiguous)
-			events = append(events, qwenEventContent{content: unambiguous})
+			if len(unambiguous) > 0 {
+				events = append(events, qwenEventContent{content: unambiguous})
+			}
 			return events, false
 		} else {
 			// we found content that is entirely not a tool call. We should withhold

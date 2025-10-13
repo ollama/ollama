@@ -134,7 +134,7 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			ambiguous := p.buffer.String()[ambiguousStart:]
 			p.buffer.Reset()
 			p.buffer.WriteString(ambiguous)
-			if len(unambiguous) > 0 { // why does qwen3coder not have this here
+			if len(unambiguous) > 0 {
 				events = append(events, qwenEventContent{content: unambiguous})
 			}
 			return events, false
