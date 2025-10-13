@@ -11,7 +11,7 @@ func RendererForName(name string) Renderer {
 	case "qwen3-coder":
 		renderer := &Qwen3CoderRenderer{}
 		return renderer
-	case "qwen3-vl":
+	case "qwen3-vl-instruct":
 		renderer := &Qwen3VLRenderer{false}
 		return renderer
 	default:

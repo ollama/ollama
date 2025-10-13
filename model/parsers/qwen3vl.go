@@ -13,8 +13,8 @@ import (
 
 // TODO: call the init function
 const (
-	CollectingContent         qwenParserState = iota // instruct
-	CollectingThinkingContent                        // thinking
+	CollectingThinkingContent qwenParserState = iota
+	CollectingContent
 	CollectingToolContent
 )
 
