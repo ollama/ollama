@@ -2,7 +2,6 @@ package renderers
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -103,8 +102,6 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		lastMessage := i == len(messages)-1
 		prefill := lastMessage && message.Role == "assistant"
 
-		fmt.Println("message", i, prefill)
-
 		if message.Role == "user" || message.Role == "system" && i != 0 {
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")
 		} else if message.Role == "assistant" {
@@ -117,16 +114,11 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 			}
 
 			if r.isThinking && i > lastQueryIndex {
-				fmt.Println("contentReasoning:", contentReasoning)
-				fmt.Println("content:", content)
 
 				if i == len(messages)-1 || contentReasoning != "" {
-					fmt.Println("should be in here if we have content reasoning")
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
-					fmt.Println("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n"))
 					if content != "" {
 						sb.WriteString("\n</think>\n\n" + strings.TrimLeft(content, "\n"))
-						fmt.Println("\n</think>\n\n" + strings.TrimLeft(content, "\n"))
 					}
 				} else {
 					sb.WriteString("<|im_start|>" + message.Role + "\n" + content)
