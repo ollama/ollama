@@ -31,6 +31,7 @@
 
 // vision-specific
 #define KEY_IMAGE_SIZE          "clip.vision.image_size"
+#define KEY_PREPROC_IMAGE_SIZE  "clip.vision.preproc_image_size"
 #define KEY_PATCH_SIZE          "clip.vision.patch_size"
 #define KEY_IMAGE_MEAN          "clip.vision.image_mean"
 #define KEY_IMAGE_STD           "clip.vision.image_std"

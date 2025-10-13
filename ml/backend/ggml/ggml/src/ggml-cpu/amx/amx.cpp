@@ -149,6 +149,7 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
         if (op->op == GGML_OP_MUL_MAT && is_contiguous_2d(op->src[0]) &&  // src0 must be contiguous
             is_contiguous_2d(op->src[1]) &&                               // src1 must be contiguous
             op->src[0]->buffer && op->src[0]->buffer->buft == ggml_backend_amx_buffer_type() &&
+            op->src[0]->ne[0] % (TILE_K * 2 * 32) == 0 && // TODO: not sure if correct (https://github.com/ggml-org/llama.cpp/pull/16315)
             op->ne[0] % (TILE_N * 2) == 0 &&                              // out_features is 32x
             (qtype_has_amx_kernels(op->src[0]->type) || (op->src[0]->type == GGML_TYPE_F16))) {
             // src1 must be host buffer

@@ -13,10 +13,10 @@ checks.
  1 file changed, 18 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ad389ece..e51c5035 100644
+index 5b852f69..827e3205 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2686,14 +2686,26 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2689,14 +2689,26 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
      cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
  
@@ -43,7 +43,7 @@ index ad389ece..e51c5035 100644
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
  
-@@ -2717,6 +2729,12 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2720,6 +2732,12 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
  
          if (node->op == GGML_OP_ADD &&
              node->src[1] && node->src[1]->ne[1] > 1 &&

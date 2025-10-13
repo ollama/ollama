@@ -226,6 +226,8 @@ extern "C" {
     // Backend registry
     //
 
+    GGML_API void ggml_backend_register(ggml_backend_reg_t reg);
+
     GGML_API void ggml_backend_device_register(ggml_backend_dev_t device);
 
     // Backend (reg) enumeration

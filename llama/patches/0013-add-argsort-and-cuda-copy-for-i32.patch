@@ -12,10 +12,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  5 files changed, 256 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 14f7dcf4..f7f8da35 100644
+index 1c43865f..31478dd8 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -7893,6 +7893,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -7889,6 +7889,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -61,7 +61,7 @@ index 14f7dcf4..f7f8da35 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -7904,6 +7943,10 @@ void ggml_compute_forward_argsort(
+@@ -7900,6 +7939,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -272,10 +272,10 @@ index 746f4396..911220e9 100644
          ggml_cpy_flt_cuda<nv_bfloat16, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
      } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F16) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 96df6f0c..44dc31c0 100644
+index 74a9aa99..375a0c7f 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4428,8 +4428,72 @@ kernel void kernel_argsort_f32_i32(
+@@ -4346,8 +4346,72 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  

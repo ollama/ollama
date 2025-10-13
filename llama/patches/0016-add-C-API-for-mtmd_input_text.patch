@@ -10,11 +10,11 @@ Signed-off-by: Gabe Goodhart <ghart@us.ibm.com>
  2 files changed, 13 insertions(+)
 
 diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
-index cd022c5e..3d680945 100644
+index 4d487581..35a0d25e 100644
 --- a/tools/mtmd/mtmd.cpp
 +++ b/tools/mtmd/mtmd.cpp
 @@ -79,6 +79,16 @@ enum mtmd_slice_tmpl {
-     // TODO @ngxson : add support for idefics (SmolVLM)
+     MTMD_SLICE_TMPL_IDEFICS3,
  };
  
 +mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {
