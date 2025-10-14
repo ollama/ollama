@@ -106,8 +106,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	if m.Config.Renderer != "" {
-		renderer := renderers.RendererForName(m.Config.Renderer)
-		rendered, err := renderer.Render(msgs, tools, think)
+		rendered, err := renderers.RenderWithRenderer(m.Config.Renderer, msgs, tools, think)
 		if err != nil {
 			return "", err
 		}
