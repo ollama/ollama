@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/api"

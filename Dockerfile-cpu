@@ -48,10 +48,21 @@ RUN curl -fsSL https://golang.org/dl/go${GOVERSION}.linux-$(case $(uname -m) in 
 ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-ARG GOFLAGS="'-ldflags=-w -s'"
+ENV GOFLAGS="-ldflags=-s -w"
+ENV GOMODCACHE=/go/pkg/mod
 ENV CGO_ENABLED=1
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -buildmode=pie -o /bin/ollama .
+
+# Show how many packages we’re about to build (a quick progress yardstick)
+RUN env -u GOFLAGS go list -deps ./cmd/ollama | wc -l
+RUN env -u GOFLAGS go env -json
+
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -buildmode=pie -buildvcs=false \
+    -v -x \
+    -o /bin/ollama .
+
 
 FROM --platform=linux/amd64 scratch AS amd64
 

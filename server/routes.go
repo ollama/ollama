@@ -74,12 +74,11 @@ func getEnvOrDefault(key, defaultValue string) string {
 
 var useClient2 = experimentEnabled("client2")
 
-var mode string = getEnvOrDefault("GIN_MODE", gin.DebugMode)
 // Low VRAM mode is based on the sum of total VRAM (not free) and triggers
 // reduced context length on some models
 var lowVRAMThreshold uint64 = 20 * format.GibiByte
 
-var mode string = gin.DebugMode
+var mode string = getEnvOrDefault("GIN_MODE", gin.DebugMode)
 
 type Server struct {
 	addr    net.Addr

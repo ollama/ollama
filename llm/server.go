@@ -541,6 +541,33 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		}
 	}
 
+	// Bypass ollama's memory check guardrail based on env setting.
+	if envconfig.AvailableMemoryCheckOverride() == 1 {
+		slog.Warn("OLLAMA_SKIP_MEMORY_CHECK set; bypassing memory check")
+	} else {
+		// On linux and windows, over-allocating CPU memory will almost always result in an error
+		// Darwin has fully dynamic swap so has no direct concept of free swap space
+		slog.Debug("OLLAMA_SKIP_MEMORY_CHECK not set; running memory check")
+		if runtime.GOOS != "darwin" {
+			systemMemoryRequired := s.estimate.TotalSize - s.estimate.VRAMSize
+			available := systemFreeMemory + systemSwapFreeMemory
+
+			// On Linux, reclaim ZFS ARC (size – c_min) if applicable.
+			if runtime.GOOS == "linux" {
+				if reclaim, err := GetZFSReclaimableMemory(); err == nil {
+					slog.Info("reclaiming ZFS Arc cache size:", "size", format.HumanBytes2(reclaim))
+					available += reclaim
+				} else {
+					slog.Warn("failure while computing ZFS Arc cache size:", "error", err)
+				}
+			}
+			if systemMemoryRequired > available {
+				slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.System.TotalMemory), "free", format.HumanBytes2(systemInfo.System.FreeMemory), "swap", format.HumanBytes2(systemInfo.System.FreeSwap))
+				return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
+			}
+		}
+	}
+
 	slog.Info("offload", "", s.estimate)
 
 	s.gpus = gpus

@@ -1,6 +1,11 @@
 #!/bin/bash
 set -eu
 
+# Enable debug mode for better traceability
+set -o pipefail
+export PS4='+ [$(date "+%H:%M:%S")] ${BASH_SOURCE##*/}:${LINENO}: '
+set -x
+
 # Artifactory configuration
 REGISTRY=${REGISTRY:-""}
 IMAGE_NAME=${IMAGE_NAME:-"ollama-cpu"}
@@ -41,6 +46,9 @@ docker buildx inspect --bootstrap
 
 # Build and push the multi-arch image
 FULL_IMAGE_NAME="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+CACHE_DIR="${CACHE_DIR:-.buildx-cache}"
+mkdir -p "${CACHE_DIR}"
+
 echo "Building and pushing ${FULL_IMAGE_NAME} for platforms: ${PLATFORMS}"
 
 docker buildx build \
@@ -48,9 +56,14 @@ docker buildx build \
     --platform ${PLATFORMS} \
     --output=type=image,push=true,registry.insecure=true \
     --tag ${FULL_IMAGE_NAME} \
+    --progress=plain \
+    --cache-from=type=local,src="${CACHE_DIR}" \
+    --cache-to=type=local,dest="${CACHE_DIR}",mode=max \
     -f Dockerfile-cpu \
-    . \
-    --no-cache
+    . 
+
+docker version
+docker buildx ls
 
 echo "Build and push completed successfully!"
 echo "Image pushed to: ${FULL_IMAGE_NAME}"
