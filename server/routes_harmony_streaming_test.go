@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
@@ -27,20 +28,22 @@ func getTestTools() []api.Tool {
 				Name:        "get_weather",
 				Description: "Get the current weather in a given location",
 				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
+					Type       string                                        `json:"type"`
+					Defs       any                                           `json:"$defs,omitempty"`
+					Items      any                                           `json:"items,omitempty"`
+					Required   []string                                      `json:"required"`
+					Properties *api.ToolProperties `json:"properties"`
 				}{
 					Type:     "object",
 					Required: []string{"location"},
-					Properties: map[string]api.ToolProperty{
-						"location": {
+					Properties: func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("location", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The city and state, e.g. San Francisco, CA",
-						},
-					},
+						})
+						return props
+					}(),
 				},
 			},
 		},
@@ -50,20 +53,22 @@ func getTestTools() []api.Tool {
 				Name:        "calculate",
 				Description: "Calculate a mathematical expression",
 				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
+					Type       string                                        `json:"type"`
+					Defs       any                                           `json:"$defs,omitempty"`
+					Items      any                                           `json:"items,omitempty"`
+					Required   []string                                      `json:"required"`
+					Properties *api.ToolProperties `json:"properties"`
 				}{
 					Type:     "object",
 					Required: []string{"expression"},
-					Properties: map[string]api.ToolProperty{
-						"expression": {
+					Properties: func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("expression", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The mathematical expression to calculate",
-						},
-					},
+						})
+						return props
+					}(),
 				},
 			},
 		},
@@ -196,10 +201,8 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 					wantToolCalls: []api.ToolCall{
 						{
 							Function: api.ToolCallFunction{
-								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
-									"location": "San Francisco",
-								},
+								Name:      "get_weather",
+								Arguments: makeArgs("location", "San Francisco"),
 							},
 						},
 					},
@@ -222,10 +225,8 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 					wantToolCalls: []api.ToolCall{
 						{
 							Function: api.ToolCallFunction{
-								Name: "calculate",
-								Arguments: api.ToolCallFunctionArguments{
-									"expression": "2+2",
-								},
+								Name:      "calculate",
+								Arguments: makeArgs("expression", "2+2"),
 							},
 						},
 					},

@@ -96,26 +96,28 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 				}
 				sb.WriteString("\n<parameters>")
 
-				for name, prop := range tool.Function.Parameters.Properties {
-					sb.WriteString("\n<parameter>")
-					sb.WriteString("\n<name>" + name + "</name>")
+				if tool.Function.Parameters.GetProperties() != nil {
+					for name, prop := range tool.Function.Parameters.Properties() {
+						sb.WriteString("\n<parameter>")
+						sb.WriteString("\n<name>" + name + "</name>")
 
-					if len(prop.Type) > 0 {
-						sb.WriteString("\n<type>" + formatToolDefinitionType(prop.Type) + "</type>")
+						if len(prop.Type) > 0 {
+							sb.WriteString("\n<type>" + formatToolDefinitionType(prop.Type) + "</type>")
+						}
+
+						if prop.Description != "" {
+							sb.WriteString("\n<description>" + prop.Description + "</description>")
+						}
+
+						// Render any additional keys not already handled
+						handledKeys := map[string]bool{
+							"type":        true,
+							"description": true,
+						}
+						sb.WriteString(renderAdditionalKeys(prop, handledKeys))
+
+						sb.WriteString("\n</parameter>")
 					}
-
-					if prop.Description != "" {
-						sb.WriteString("\n<description>" + prop.Description + "</description>")
-					}
-
-					// Render any additional keys not already handled
-					handledKeys := map[string]bool{
-						"type":        true,
-						"description": true,
-					}
-					sb.WriteString(renderAdditionalKeys(prop, handledKeys))
-
-					sb.WriteString("\n</parameter>")
 				}
 
 				// Render extra keys for parameters (everything except 'type' and 'properties')
@@ -147,7 +149,7 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 				}
 				for _, toolCall := range message.ToolCalls {
 					sb.WriteString("\n<tool_call>\n<function=" + toolCall.Function.Name + ">")
-					for name, value := range toolCall.Function.Arguments {
+					for name, value := range toolCall.Function.Arguments.All() {
 						valueStr := formatToolCallArgument(value)
 						sb.WriteString("\n<parameter=" + name + ">\n" + valueStr + "\n</parameter>")
 					}

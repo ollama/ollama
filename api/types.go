@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"math"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	orderedmap "github.com/wk8/go-ordered-map/v2"
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
@@ -209,11 +211,68 @@ type ToolCallFunction struct {
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
 
-type ToolCallFunctionArguments map[string]any
+type ToolCallFunctionArguments struct {
+	om *orderedmap.OrderedMap[string, any]
+}
+
+func NewToolCallFunctionArguments() ToolCallFunctionArguments {
+	return ToolCallFunctionArguments{
+		om: orderedmap.New[string, any](),
+	}
+}
+
+func (t *ToolCallFunctionArguments) Get(key string) (any, bool) {
+	if t == nil || t.om == nil {
+		return nil, false
+	}
+	return t.om.Get(key)
+}
+
+func (t *ToolCallFunctionArguments) Set(key string, value any) {
+	if t == nil {
+		return
+	}
+	if t.om == nil {
+		t.om = orderedmap.New[string, any]()
+	}
+	t.om.Set(key, value)
+}
+
+func (t *ToolCallFunctionArguments) Len() int {
+	if t == nil || t.om == nil {
+		return 0
+	}
+	return t.om.Len()
+}
+
+func (t *ToolCallFunctionArguments) All() iter.Seq2[string, any] {
+	return func(yield func(string, any) bool) {
+		if t == nil || t.om == nil {
+			return
+		}
+		for pair := t.om.Oldest(); pair != nil; pair = pair.Next() {
+			if !yield(pair.Key, pair.Value) {
+				return
+			}
+		}
+	}
+}
 
 func (t *ToolCallFunctionArguments) String() string {
-	bts, _ := json.Marshal(t)
+	if t == nil || t.om == nil {
+		return "{}"
+	}
+	bts, _ := json.Marshal(t.om)
 	return string(bts)
+}
+
+func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
+	t.om = orderedmap.New[string, any]()
+	return json.Unmarshal(data, &t.om)
+}
+
+func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.om)
 }
 
 type Tool struct {
@@ -317,17 +376,151 @@ func mapToTypeScriptType(jsonType string) string {
 	}
 }
 
+type ToolProperties struct {
+	om *orderedmap.OrderedMap[string, ToolProperty]
+}
+
+func NewToolProperties() *ToolProperties {
+	return &ToolProperties{
+		om: orderedmap.New[string, ToolProperty](),
+	}
+}
+
+func (t *ToolProperties) Get(key string) (ToolProperty, bool) {
+	if t == nil || t.om == nil {
+		return ToolProperty{}, false
+	}
+	return t.om.Get(key)
+}
+
+func (t *ToolProperties) Set(key string, value ToolProperty) {
+	if t == nil {
+		return
+	}
+	if t.om == nil {
+		t.om = orderedmap.New[string, ToolProperty]()
+	}
+	t.om.Set(key, value)
+}
+
+func (t *ToolProperties) Len() int {
+	if t == nil || t.om == nil {
+		return 0
+	}
+	return t.om.Len()
+}
+
+func (t *ToolProperties) All() iter.Seq2[string, ToolProperty] {
+	return func(yield func(string, ToolProperty) bool) {
+		if t == nil || t.om == nil {
+			return
+		}
+		for pair := t.om.Oldest(); pair != nil; pair = pair.Next() {
+			if !yield(pair.Key, pair.Value) {
+				return
+			}
+		}
+	}
+}
+
+func (t *ToolProperties) MarshalJSON() ([]byte, error) {
+	if t == nil || t.om == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(t.om)
+}
+
+func (t *ToolProperties) UnmarshalJSON(data []byte) error {
+	t.om = orderedmap.New[string, ToolProperty]()
+	return json.Unmarshal(data, &t.om)
+}
+
 type ToolFunctionParameters struct {
-	Type       string                  `json:"type"`
-	Defs       any                     `json:"$defs,omitempty"`
-	Items      any                     `json:"items,omitempty"`
-	Required   []string                `json:"required"`
-	Properties map[string]ToolProperty `json:"properties"`
+	Type       string          `json:"type"`
+	Defs       any             `json:"$defs,omitempty"`
+	Items      any             `json:"items,omitempty"`
+	Required   []string        `json:"required"`
+	properties *ToolProperties // unexported - accessed via Properties() method
+}
+
+// Properties returns an iterator for template compatibility.
+// Templates can range over this directly: {{range $k, $v := .Properties}}
+func (t ToolFunctionParameters) Properties() iter.Seq2[string, ToolProperty] {
+	if t.properties == nil {
+		return func(yield func(string, ToolProperty) bool) {}
+	}
+	return t.properties.All()
+}
+
+// HasProperties returns true if properties exist and are non-empty.
+// This is used by templates for conditional checks: {{if .HasProperties}}
+func (t ToolFunctionParameters) HasProperties() bool {
+	return t.properties != nil && t.properties.Len() > 0
+}
+
+// Len returns the number of properties.
+// This is used by templates: {{.Function.Parameters.Len}}
+func (t ToolFunctionParameters) Len() int {
+	if t.properties == nil {
+		return 0
+	}
+	return t.properties.Len()
+}
+
+// SetProperties sets the properties (used by tests and internal code)
+func (t *ToolFunctionParameters) SetProperties(props *ToolProperties) {
+	t.properties = props
+}
+
+// NewToolFunctionParametersWithProps creates a ToolFunctionParameters with properties (helper for tests)
+func NewToolFunctionParametersWithProps(typ string, required []string, props *ToolProperties) ToolFunctionParameters {
+	return ToolFunctionParameters{
+		Type:       typ,
+		Required:   required,
+		properties: props,
+	}
+}
+
+// GetProperties returns the properties wrapper (used by renderers)
+func (t *ToolFunctionParameters) GetProperties() *ToolProperties {
+	return t.properties
 }
 
 func (t *ToolFunctionParameters) String() string {
 	bts, _ := json.Marshal(t)
 	return string(bts)
+}
+
+func (t *ToolFunctionParameters) MarshalJSON() ([]byte, error) {
+	type Alias ToolFunctionParameters
+	return json.Marshal(&struct {
+		Type       string          `json:"type"`
+		Defs       any             `json:"$defs,omitempty"`
+		Items      any             `json:"items,omitempty"`
+		Required   []string        `json:"required"`
+		Properties *ToolProperties `json:"properties"`
+	}{
+		Type:       t.Type,
+		Defs:       t.Defs,
+		Items:      t.Items,
+		Required:   t.Required,
+		Properties: t.properties,
+	})
+}
+
+func (t *ToolFunctionParameters) UnmarshalJSON(data []byte) error {
+	type Alias ToolFunctionParameters
+	aux := &struct {
+		Properties *ToolProperties `json:"properties"`
+		*Alias
+	}{
+		Alias: (*Alias)(t),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	t.properties = aux.Properties
+	return nil
 }
 
 type ToolFunction struct {

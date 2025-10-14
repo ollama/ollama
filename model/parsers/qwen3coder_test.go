@@ -11,8 +11,23 @@ import (
 func tool(name string, props map[string]api.ToolProperty) api.Tool {
 	t := api.Tool{Type: "function", Function: api.ToolFunction{Name: name}}
 	t.Function.Parameters.Type = "object"
-	t.Function.Parameters.Properties = props
+	p := api.NewToolProperties()
+	for k, v := range props {
+		p.Set(k, v)
+	}
+	t.Function.Parameters.SetProperties(p)
 	return t
+}
+
+// Helper function to create ordered arguments for tests
+func makeArgs(pairs ...any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i].(string)
+		value := pairs[i+1]
+		args.Set(key, value)
+	}
+	return args
 }
 
 func TestQwenParserStreaming(t *testing.T) {
@@ -369,10 +384,7 @@ celsius
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_current_temperature",
-					Arguments: map[string]any{
-						"location": "San Francisco",
-						"unit":     "celsius",
-					},
+					Arguments: makeArgs("location", "San Francisco", "unit", "celsius"),
 				},
 			},
 		},
@@ -390,10 +402,10 @@ celsius
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get current temperature",
-					Arguments: map[string]any{
-						"location with spaces": "San Francisco",
-						"unit with spaces":     "celsius",
-					},
+     Arguments: makeArgs(
+     	"location with spaces", "San Francisco",
+     	"unit with spaces", "celsius",
+     ),
 				},
 			},
 		},
@@ -415,10 +427,10 @@ San Francisco
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "\"get current temperature\"",
-					Arguments: map[string]any{
-						"\"location with spaces\"": "San Francisco",
-						"\"unit with spaces\"":     "\"celsius\"",
-					},
+     Arguments: makeArgs(
+     	"\"location with spaces\"", "San Francisco",
+     	"\"unit with spaces\"", "\"celsius\"",
+     ),
 				},
 			},
 		},
@@ -449,12 +461,12 @@ true
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "calculate",
-					Arguments: map[string]any{
-						"x":       3.14,
-						"y":       42,
-						"enabled": true,
-						"items":   []any{"a", "b", "c"},
-					},
+     Arguments: makeArgs(
+     	"x", 3.14,
+     	"y", 42,
+     	"enabled", true,
+     	"items", []any{"a", "b", "c"},
+     ),
 				},
 			},
 		},
@@ -470,9 +482,7 @@ ls && echo "done"
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
-						"command": "ls && echo \"done\"",
-					},
+					Arguments: makeArgs("command", "ls && echo \"done\""),
 				},
 			},
 		},
@@ -487,9 +497,7 @@ ls && echo "a > b and a < b"
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
-						"command": "ls && echo \"a > b and a < b\"",
-					},
+					Arguments: makeArgs("command", "ls && echo \"a > b and a < b\""),
 				},
 			},
 		},
@@ -507,10 +515,7 @@ Hello! 你好! 🌟 مرحبا
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "获取天气",
-					Arguments: map[string]any{
-						"城市":      "北京",
-						"message": "Hello! 你好! 🌟 مرحبا",
-					},
+					Arguments: makeArgs("城市", "北京", "message", "Hello! 你好! 🌟 مرحبا"),
 				},
 			},
 		},

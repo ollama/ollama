@@ -6,8 +6,32 @@ import (
 	"text/template"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/ollama/ollama/api"
 )
+
+func makeArgs(pairs ...any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i].(string)
+		value := pairs[i+1]
+		args.Set(key, value)
+	}
+	return args
+}
+
+// helper to build ToolFunctionParameters with properties
+func makeParams(typ string, required []string, propsFn func() *api.ToolProperties) api.ToolFunctionParameters {
+	params := api.ToolFunctionParameters{
+		Type:     typ,
+		Required: required,
+	}
+	if propsFn != nil {
+		params.SetProperties(propsFn())
+	}
+	return params
+}
 
 func TestParser(t *testing.T) {
 	qwen, err := template.New("qwen").Parse(`{{if .ToolCalls}}<tool_call>{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}</tool_call>{{end}}`)
@@ -41,21 +65,19 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_temperature",
 				Description: "Retrieve the temperature for a given location",
-				Parameters: api.ToolFunctionParameters{
-					Type:     "object",
-					Required: []string{"city"},
-					Properties: map[string]api.ToolProperty{
-						"format": {
+				Parameters: makeParams("object", []string{"city"}, func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("format", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The format to return the temperature in",
 							Enum:        []any{"fahrenheit", "celsius"},
-						},
-						"city": {
+						})
+						props.Set("city", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The city to get the temperature for",
-						},
-					},
-				},
+						})
+						return props
+					}),
 			},
 		},
 		{
@@ -63,15 +85,14 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_conditions",
 				Description: "Retrieve the current weather conditions for a given location",
-				Parameters: api.ToolFunctionParameters{
-					Type: "object",
-					Properties: map[string]api.ToolProperty{
-						"location": {
+				Parameters: makeParams("object", nil, func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("location", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the weather conditions for",
-						},
-					},
-				},
+						})
+						return props
+					}),
 			},
 		},
 		{
@@ -93,15 +114,14 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_address",
 				Description: "Get the address of a given location",
-				Parameters: api.ToolFunctionParameters{
-					Type: "object",
-					Properties: map[string]api.ToolProperty{
-						"location": {
+				Parameters: makeParams("object", nil, func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("location", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the address for",
-						},
-					},
-				},
+						})
+						return props
+					}),
 			},
 		},
 		{
@@ -109,19 +129,18 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "add",
 				Description: "Add two numbers",
-				Parameters: api.ToolFunctionParameters{
-					Type: "object",
-					Properties: map[string]api.ToolProperty{
-						"a": {
+				Parameters: makeParams("object", nil, func() *api.ToolProperties {
+						props := api.NewToolProperties()
+						props.Set("a", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The first number to add",
-						},
-						"b": {
+						})
+						props.Set("b", api.ToolProperty{
 							Type:        api.PropertyType{"string"},
 							Description: "The second number to add",
-						},
-					},
-				},
+						})
+						return props
+					}),
 			},
 		},
 	}
@@ -155,11 +174,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "San Francisco",
-						},
+						Index:     0,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "San Francisco"),
 					},
 				},
 			},
@@ -174,7 +191,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 			},
@@ -187,11 +204,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city": "New York",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "New York"),
 					},
 				},
 			},
@@ -211,21 +226,16 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city":   "London",
-							"format": "fahrenheit",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "London", "format", "fahrenheit"),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
-						Index: 1,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
+						Index:     1,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "Tokyo"),
 					},
 				},
 			},
@@ -238,21 +248,16 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city":   "London",
-							"format": "fahrenheit",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "London", "format", "fahrenheit"),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
-						Index: 1,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
+						Index:     1,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "Tokyo"),
 					},
 				},
 			},
@@ -267,17 +272,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
-						Index: 1,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city":   "London",
-							"format": "fahrenheit",
-						},
+						Index:     1,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "London", "format", "fahrenheit"),
 					},
 				},
 			},
@@ -292,16 +294,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
-						Index: 1,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
+						Index:     1,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "Tokyo"),
 					},
 				},
 			},
@@ -314,11 +314,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city": "Tokyo",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "Tokyo"),
 					},
 				},
 			},
@@ -345,11 +343,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city": "Tokyo",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "Tokyo"),
 					},
 				},
 			},
@@ -369,11 +365,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city": "Tokyo",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "Tokyo"),
 					},
 				},
 			},
@@ -451,20 +445,16 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
-							"city": "London",
-						},
+						Index:     0,
+						Name:      "get_temperature",
+						Arguments: makeArgs("city", "London"),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
-						Index: 1,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
+						Index:     1,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "Tokyo"),
 					},
 				},
 			},
@@ -484,11 +474,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
+						Index:     0,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "Tokyo"),
 					},
 				},
 			},
@@ -526,11 +514,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
+						Index:     0,
+						Name:      "get_conditions",
+						Arguments: makeArgs("location", "Tokyo"),
 					},
 				},
 			},
@@ -563,7 +549,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 			},
@@ -591,14 +577,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index:     1,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 			},
@@ -624,14 +610,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index:     1,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 			},
@@ -648,7 +634,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 			},
@@ -665,7 +651,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: makeArgs(),
 					},
 				},
 			},
@@ -685,11 +671,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_address",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "London",
-						},
+						Index:     0,
+						Name:      "get_address",
+						Arguments: makeArgs("location", "London"),
 					},
 				},
 			},
@@ -704,11 +688,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_address",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "London",
-						},
+						Index:     0,
+						Name:      "get_address",
+						Arguments: makeArgs("location", "London"),
 					},
 				},
 			},
@@ -723,12 +705,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "add",
-						Arguments: api.ToolCallFunctionArguments{
-							"a": "5",
-							"b": "10",
-						},
+						Index:     0,
+						Name:      "add",
+						Arguments: makeArgs("a", "5", "b", "10"),
 					},
 				},
 			},
@@ -756,7 +735,7 @@ func TestParser(t *testing.T) {
 			}
 
 			for i, want := range tt.calls {
-				if diff := cmp.Diff(calls[i], want); diff != "" {
+				if diff := cmp.Diff(calls[i], want, cmpopts.IgnoreUnexported(api.ToolCallFunctionArguments{})); diff != "" {
 					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
 				}
 			}
