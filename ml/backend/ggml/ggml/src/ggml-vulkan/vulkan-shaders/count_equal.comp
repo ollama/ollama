@@ -2,8 +2,8 @@
 
 #extension GL_EXT_control_flow_attributes : enable
 
-#include "types.comp"
-#include "generic_head.comp"
+#include "types.glsl"
+#include "generic_head.glsl"
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 

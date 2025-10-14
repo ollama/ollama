@@ -1,6 +1,6 @@
 #version 450
 
-#include "glu_head.comp"
+#include "glu_head.glsl"
 
 float op(float a, float b) {
     float xi = min(a, p.limit);
@@ -11,4 +11,4 @@ float op(float a, float b) {
     return out_glu;
 }
 
-#include "glu_main.comp"
+#include "glu_main.glsl"

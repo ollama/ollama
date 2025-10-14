@@ -2,8 +2,8 @@
 
 #extension GL_EXT_control_flow_attributes : enable
 
-#include "generic_head.comp"
-#include "types.comp"
+#include "generic_head.glsl"
+#include "types.glsl"
 
 layout(constant_id = 0) const uint BLOCK_SIZE = 32;
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;

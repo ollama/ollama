@@ -1,6 +1,6 @@
 #version 450
 
-#include "rope_head.comp"
+#include "rope_head.glsl"
 
 void main() {
     const uint i0 = 2*gl_GlobalInvocationID.y;

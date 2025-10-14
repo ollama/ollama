@@ -11,7 +11,7 @@
 #    extension GL_KHR_shader_subgroup_shuffle : enable
 #endif
 
-#include "types.comp"
+#include "types.glsl"
 
 // shape notation: [dim(N), ..., dim(0)] -- stride(dim(j)) >= stride(dim(i)) if i > j
 layout(binding = 0) readonly buffer A {

@@ -1,7 +1,7 @@
 #version 450
 
-#include "generic_binary_head.comp"
-#include "types.comp"
+#include "generic_binary_head.glsl"
+#include "types.glsl"
 
 #extension GL_EXT_control_flow_attributes : enable
 #extension GL_KHR_shader_subgroup_arithmetic : enable

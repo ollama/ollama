@@ -1,7 +1,7 @@
 #version 450
 
-#include "types.comp"
-#include "generic_unary_head.comp"
+#include "types.glsl"
+#include "generic_unary_head.glsl"
 
 #extension GL_EXT_control_flow_attributes : require
 

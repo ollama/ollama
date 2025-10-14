@@ -1,6 +1,6 @@
 #version 450
 
-#include "types.comp"
+#include "types.glsl"
 
 #extension GL_EXT_shader_16bit_storage : require
 

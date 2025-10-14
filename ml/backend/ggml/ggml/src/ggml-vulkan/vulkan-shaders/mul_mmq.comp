@@ -20,7 +20,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
 #endif
 
-#include "types.comp"
+#include "types.glsl"
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
@@ -110,7 +110,7 @@ shared u16vec2 row_ids[4096];
 shared ACC_TYPE coopmat_stage[TM * TN * NUM_WARPS];
 #endif
 
-#include "mul_mmq_funcs.comp"
+#include "mul_mmq_funcs.glsl"
 
 void main() {
 #ifdef NEEDS_INIT_IQ_SHMEM

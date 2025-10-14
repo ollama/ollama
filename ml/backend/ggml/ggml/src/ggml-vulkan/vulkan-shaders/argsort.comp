@@ -1,7 +1,7 @@
 #version 450
 #extension GL_EXT_control_flow_attributes : enable
 
-#include "types.comp"
+#include "types.glsl"
 
 layout(constant_id = 0) const int BLOCK_SIZE = 1024;
 layout(constant_id = 1) const int BLOCK_SIZE_LOG2 = 10;

@@ -1,8 +1,8 @@
 #version 450
 
-#include "rte.comp"
-#include "generic_head.comp"
-#include "types.comp"
+#include "rte.glsl"
+#include "generic_head.glsl"
+#include "types.glsl"
 
 #extension GL_EXT_control_flow_attributes : enable
 

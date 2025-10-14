@@ -1,7 +1,0 @@
-#version 460
-
-#extension GL_NV_cooperative_matrix2 : require
-
-void main()
-{
-}

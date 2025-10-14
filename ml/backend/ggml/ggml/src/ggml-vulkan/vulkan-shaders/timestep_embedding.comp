@@ -9,7 +9,7 @@ layout (push_constant) uniform parameter
     uint max_period;
 } p;
 
-#include "types.comp"
+#include "types.glsl"
 
 #extension GL_EXT_control_flow_attributes : enable
 #define BLOCK_SIZE 256

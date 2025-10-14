@@ -18,8 +18,8 @@
 #extension GL_EXT_bfloat16 : enable
 #endif
 
-#include "types.comp"
-#include "utils.comp"
+#include "types.glsl"
+#include "utils.glsl"
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
@@ -71,7 +71,7 @@ layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
 #if QUANT_K > 1
 #define DECODEFUNCA , dequantFuncA
 
-#include "dequant_funcs_cm2.comp"
+#include "dequant_funcs_cm2.glsl"
 
 #else
 #define DECODEFUNCA

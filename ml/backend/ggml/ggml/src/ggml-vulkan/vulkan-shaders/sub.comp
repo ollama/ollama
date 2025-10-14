@@ -2,8 +2,8 @@
 
 #extension GL_EXT_shader_16bit_storage : require
 
-#include "types.comp"
-#include "generic_binary_head.comp"
+#include "types.glsl"
+#include "generic_binary_head.glsl"
 
 const uint num_threads = 256;
 

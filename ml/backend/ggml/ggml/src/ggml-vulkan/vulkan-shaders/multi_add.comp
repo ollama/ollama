@@ -8,9 +8,9 @@
 #extension GL_KHR_shader_subgroup_basic : enable
 #endif
 
-#include "rte.comp"
-#include "types.comp"
-#include "utils.comp"
+#include "rte.glsl"
+#include "types.glsl"
+#include "utils.glsl"
 
 layout (push_constant) uniform parameter2
 {

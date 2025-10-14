@@ -1,7 +1,7 @@
 #version 450
 
-#include "rte.comp"
-#include "types.comp"
+#include "rte.glsl"
+#include "types.glsl"
 
 #if defined(SET_ROWS) && QUANT_K == 1
 layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
@@ -14,7 +14,7 @@ const uint BLOCK_SIZE = 32;
 layout (binding = 0) readonly buffer S {float data_s[];};
 
 #if defined(SET_ROWS)
-#include "generic_binary_head.comp"
+#include "generic_binary_head.glsl"
 layout (binding = 1) readonly buffer C {B_TYPE data_i[];};
 layout (binding = 2) writeonly buffer Q {A_TYPE data_q[];};
 
@@ -25,7 +25,7 @@ layout (binding = 2) writeonly buffer Q {A_TYPE data_q[];};
 #endif
 
 #else
-#include "generic_unary_head.comp"
+#include "generic_unary_head.glsl"
 layout (binding = 1) writeonly buffer Q {A_TYPE data_q[];};
 #endif
 

@@ -1,6 +1,6 @@
 #version 450
 
-#include "types.comp"
+#include "types.glsl"
 
 layout (binding = 0) readonly buffer A {A_TYPE data_a[];};   // src0 - kernel:    [K, Cout, Cin]
 layout (binding = 1) readonly buffer B {B_TYPE data_b[];};   // src1 - input:     [L, Cin]

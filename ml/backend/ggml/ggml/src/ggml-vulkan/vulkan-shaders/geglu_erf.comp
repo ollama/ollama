@@ -1,6 +1,6 @@
 #version 450
 
-#include "glu_head.comp"
+#include "glu_head.glsl"
 
 // based on Abramowitz and Stegun formula 7.1.26 or similar Hastings' approximation
 // ref: https://www.johndcook.com/blog/python_erf/
@@ -24,4 +24,4 @@ float op(float a, float b) {
     return 0.5f * a * (1.0f + erf_approx) * b;
 }
 
-#include "glu_main.comp"
+#include "glu_main.glsl"

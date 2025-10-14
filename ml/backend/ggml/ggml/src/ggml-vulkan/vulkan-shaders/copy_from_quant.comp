@@ -1,8 +1,8 @@
 #version 450
 
-#include "types.comp"
-#include "generic_unary_head.comp"
-#include "dequant_funcs.comp"
+#include "types.glsl"
+#include "generic_unary_head.glsl"
+#include "dequant_funcs.glsl"
 
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_MXFP4)
 // 16 invocations needed for init_iq_shmem

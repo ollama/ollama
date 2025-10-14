@@ -1,7 +1,0 @@
-#version 460
-
-#extension GL_KHR_cooperative_matrix : require
-
-void main()
-{
-}

@@ -9,7 +9,7 @@ layout (push_constant) uniform parameter
     float sf0; float sf1; float sf2; float sf3;
 } p;
 
-#include "types.comp"
+#include "types.glsl"
 
 layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
 

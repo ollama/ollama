@@ -10,7 +10,7 @@ layout (push_constant) uniform parameter
     uint n_past;
 } p;
 
-#include "types.comp"
+#include "types.glsl"
 
 layout(local_size_x = 1, local_size_y = 512, local_size_z = 1) in;
 
