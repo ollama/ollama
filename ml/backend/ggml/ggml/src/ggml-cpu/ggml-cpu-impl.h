@@ -68,7 +68,7 @@ struct ggml_compute_params {
 #endif  // __VXE2__
 #endif  // __s390x__ && __VEC__
 
-#if defined(__ARM_FEATURE_SVE)
+#if defined(__ARM_FEATURE_SVE) && defined(__linux__)
 #include <sys/prctl.h>
 #endif
 

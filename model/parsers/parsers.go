@@ -21,6 +21,9 @@ func ParserForName(name string) Parser {
 	case "qwen3-coder":
 		parser := &Qwen3CoderParser{}
 		return parser
+	case "qwen3-vl-instruct":
+		parser := &Qwen3VLParser{hasThinkingSupport: false}
+		return parser
 	case "passthrough":
 		return &PassthroughParser{}
 	case "harmony":

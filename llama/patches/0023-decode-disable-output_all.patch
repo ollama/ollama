@@ -8,7 +8,7 @@ Subject: [PATCH] decode: disable output_all
  1 file changed, 1 insertion(+), 2 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index d8a8b5e6..09247cef 100644
+index e7526e7d..53a5e3a9 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -974,8 +974,7 @@ int llama_context::decode(const llama_batch & batch_inp) {

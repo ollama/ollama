@@ -1380,7 +1380,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar string // set before sending the request to the subprocess
+	Grammar  string // set before sending the request to the subprocess
+	Shift    bool
+	Truncate bool
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1502,7 +1504,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
 		log.Printf("llm predict error: %s", bodyBytes)
-		return fmt.Errorf("%s", bodyBytes)
+		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	scanner := bufio.NewScanner(res.Body)

@@ -42,7 +42,7 @@ struct llama_hparams {
     uint32_t n_embd;
     uint32_t n_embd_features = 0;
     uint32_t n_layer;
-     int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
+    int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
     uint32_t n_rot;
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
@@ -170,6 +170,18 @@ struct llama_hparams {
     uint32_t i_altup_act  = 0; // altup_active_idx
     uint32_t laurel_rank  = 64;
     uint32_t n_embd_altup = 256;
+
+    // needed for sentence-transformers dense layers
+    uint32_t dense_2_feat_in  = 0;  // in_features of the 2_Dense
+    uint32_t dense_2_feat_out = 0;  // out_features of the 2_Dense
+    uint32_t dense_3_feat_in  = 0;  // in_features of the 3_Dense
+    uint32_t dense_3_feat_out = 0;  // out_features of the 3_Dense
+
+    // xIELU
+    std::array<float, LLAMA_MAX_LAYERS> xielu_alpha_n;
+    std::array<float, LLAMA_MAX_LAYERS> xielu_alpha_p;
+    std::array<float, LLAMA_MAX_LAYERS> xielu_beta;
+    std::array<float, LLAMA_MAX_LAYERS> xielu_eps;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141

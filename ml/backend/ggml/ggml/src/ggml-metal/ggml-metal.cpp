@@ -195,9 +195,9 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
             } break;
         case GGML_OP_FLASH_ATTN_EXT:
             {
-                if (ggml_metal_op_flash_attn_ext_use_vec(tensor)) {
-                    res += ggml_metal_op_flash_attn_ext_extra_tmp(tensor);
-                }
+                res += ggml_metal_op_flash_attn_ext_extra_pad(tensor);
+                res += ggml_metal_op_flash_attn_ext_extra_blk(tensor);
+                res += ggml_metal_op_flash_attn_ext_extra_tmp(tensor);
             } break;
         default:
             break;
@@ -543,6 +543,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
     props->type        = ggml_backend_metal_device_get_type(dev);
 
     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+
     props->library = GGML_METAL_NAME;
     props->caps = {
         /* .async                 = */ true,

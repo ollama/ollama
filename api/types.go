@@ -106,6 +106,14 @@ type GenerateRequest struct {
 	// before this option was introduced)
 	Think *ThinkValue `json:"think,omitempty"`
 
+	// Truncate is a boolean that, when set to true, truncates the chat history messages
+	// if the rendered prompt exceeds the context length limit.
+	Truncate *bool `json:"truncate,omitempty"`
+
+	// Shift is a boolean that, when set to true, shifts the chat history
+	// when hitting the context length limit instead of erroring.
+	Shift *bool `json:"shift,omitempty"`
+
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
@@ -139,6 +147,14 @@ type ChatRequest struct {
 	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
 	// for supported models.
 	Think *ThinkValue `json:"think,omitempty"`
+
+	// Truncate is a boolean that, when set to true, truncates the chat history messages
+	// if the rendered prompt exceeds the context length limit.
+	Truncate *bool `json:"truncate,omitempty"`
+
+	// Shift is a boolean that, when set to true, shifts the chat history
+	// when hitting the context length limit instead of erroring.
+	Shift *bool `json:"shift,omitempty"`
 
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.
@@ -250,9 +266,9 @@ func (pt PropertyType) String() string {
 
 type ToolProperty struct {
 	AnyOf       []ToolProperty `json:"anyOf,omitempty"`
-	Type        PropertyType   `json:"type"`
+	Type        PropertyType   `json:"type,omitempty"`
 	Items       any            `json:"items,omitempty"`
-	Description string         `json:"description"`
+	Description string         `json:"description,omitempty"`
 	Enum        []any          `json:"enum,omitempty"`
 }
 
@@ -316,7 +332,7 @@ func (t *ToolFunctionParameters) String() string {
 
 type ToolFunction struct {
 	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
+	Description string                 `json:"description,omitempty"`
 	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 

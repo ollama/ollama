@@ -9,17 +9,17 @@ management libraries for more accurate VRAM usage reporting if available.
  ggml/include/ggml-backend.h        |   9 +
  ggml/src/CMakeLists.txt            |   2 +
  ggml/src/ggml-cuda/ggml-cuda.cu    |  72 +++++
- ggml/src/ggml-cuda/vendors/hip.h   |   4 +
+ ggml/src/ggml-cuda/vendors/hip.h   |   3 +
  ggml/src/ggml-impl.h               |   8 +
- ggml/src/ggml-metal/ggml-metal.cpp |   3 +-
+ ggml/src/ggml-metal/ggml-metal.cpp |   2 +
  ggml/src/mem_hip.cpp               | 449 +++++++++++++++++++++++++++++
  ggml/src/mem_nvml.cpp              | 209 ++++++++++++++
- 8 files changed, 755 insertions(+), 1 deletion(-)
+ 8 files changed, 754 insertions(+)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 0a2dae26a..a6bf33785 100644
+index ba181d09..09ff75f9 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -169,6 +169,15 @@ extern "C" {
@@ -39,10 +39,10 @@ index 0a2dae26a..a6bf33785 100644
  
      GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 33b3a15f0..86191ef2c 100644
+index 0609c650..aefe43bd 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -206,6 +206,8 @@ add_library(ggml-base
+@@ -209,6 +209,8 @@ add_library(ggml-base
              ggml-threading.h
              ggml-quants.c
              ggml-quants.h
@@ -52,7 +52,7 @@ index 33b3a15f0..86191ef2c 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 531d6e272..3fa3a0575 100644
+index 87c6c34a..6a278b5e 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -261,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -84,7 +84,7 @@ index 531d6e272..3fa3a0575 100644
          GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
                          id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
                          ggml_cuda_parse_uuid(prop, id).c_str());
-@@ -3481,6 +3496,14 @@ struct ggml_backend_cuda_device_context {
+@@ -3484,6 +3499,14 @@ struct ggml_backend_cuda_device_context {
      std::string description;
      std::string pci_bus_id;
      std::string id;
@@ -99,7 +99,7 @@ index 531d6e272..3fa3a0575 100644
  };
  
  static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
-@@ -3501,6 +3524,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
+@@ -3504,6 +3527,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
  static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
      ggml_cuda_set_device(ctx->device);
@@ -128,7 +128,7 @@ index 531d6e272..3fa3a0575 100644
      CUDA_CHECK(cudaMemGetInfo(free, total));
  }
  
-@@ -3509,6 +3554,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+@@ -3512,6 +3557,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
      return GGML_BACKEND_DEVICE_TYPE_GPU;
  }
  
@@ -136,7 +136,7 @@ index 531d6e272..3fa3a0575 100644
  static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
  
-@@ -3522,6 +3568,22 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+@@ -3525,6 +3571,22 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
      // If you need the memory data, call ggml_backend_dev_memory() explicitly.
      props->memory_total = props->memory_free = 0;
  
@@ -159,7 +159,7 @@ index 531d6e272..3fa3a0575 100644
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
      bool events = false;
-@@ -4084,6 +4146,8 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -4087,6 +4149,8 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
@@ -168,7 +168,7 @@ index 531d6e272..3fa3a0575 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -4099,6 +4163,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -4102,6 +4166,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
  
@@ -184,20 +184,19 @@ index 531d6e272..3fa3a0575 100644
                      /* .iface   = */ ggml_backend_cuda_device_interface,
                      /* .reg     = */ &reg,
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 06f9e7c1e..eb8f66cb0 100644
+index 1f06be80..2f9ef2dc 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
-@@ -5,6 +5,9 @@
+@@ -5,6 +5,8 @@
  #include <hipblas/hipblas.h>
  #include <hip/hip_fp16.h>
  #include <hip/hip_bf16.h>
 +// for rocblas_initialize()
 +#include "rocblas/rocblas.h"
-+
  
- #define CUBLAS_GEMM_DEFAULT HIPBLAS_GEMM_DEFAULT
- #define CUBLAS_GEMM_DEFAULT_TENSOR_OP HIPBLAS_GEMM_DEFAULT
-@@ -43,6 +46,7 @@
+ #if defined(GGML_HIP_ROCWMMA_FATTN)
+ #include <rocwmma/rocwmma-version.hpp>
+@@ -47,6 +49,7 @@
  #define cudaDeviceProp hipDeviceProp_t
  #define cudaDeviceReset hipDeviceReset
  #define cudaDeviceSynchronize hipDeviceSynchronize
@@ -206,10 +205,10 @@ index 06f9e7c1e..eb8f66cb0 100644
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index 86a1ebf62..9fc9fbfcf 100644
+index d0fb3bcc..80597b6e 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
-@@ -635,6 +635,14 @@ static inline bool ggml_can_fuse(const struct ggml_cgraph * cgraph, int node_idx
+@@ -638,6 +638,14 @@ static inline bool ggml_can_fuse(const struct ggml_cgraph * cgraph, int node_idx
      return ggml_can_fuse_ext(cgraph, idxs, ops, num_ops);
  }
  
@@ -225,7 +224,7 @@ index 86a1ebf62..9fc9fbfcf 100644
  }
  #endif
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 08ab4fc91..17999a616 100644
+index f2ff9f32..f356e4a0 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -535,6 +535,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
@@ -236,18 +235,17 @@ index 08ab4fc91..17999a616 100644
  static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      props->name        = ggml_backend_metal_device_get_name(dev);
      props->description = ggml_backend_metal_device_get_description(dev);
-@@ -542,7 +543,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
-     props->type        = ggml_backend_metal_device_get_type(dev);
+@@ -543,6 +544,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
  
      ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
--
+ 
 +    props->library = GGML_METAL_NAME;
      props->caps = {
          /* .async                 = */ true,
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
 new file mode 100644
-index 000000000..8ef19b8cf
+index 00000000..8ef19b8c
 --- /dev/null
 +++ b/ggml/src/mem_hip.cpp
 @@ -0,0 +1,449 @@
@@ -703,7 +701,7 @@ index 000000000..8ef19b8cf
 \ No newline at end of file
 diff --git a/ggml/src/mem_nvml.cpp b/ggml/src/mem_nvml.cpp
 new file mode 100644
-index 000000000..c9073cef0
+index 00000000..c9073cef
 --- /dev/null
 +++ b/ggml/src/mem_nvml.cpp
 @@ -0,0 +1,209 @@

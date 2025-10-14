@@ -94,12 +94,14 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_SMOLLM3,          "smollm3"          },
     { LLM_ARCH_OPENAI_MOE,       "gpt-oss"          },
     { LLM_ARCH_LFM2,             "lfm2"             },
+    { LLM_ARCH_LFM2MOE,          "lfm2moe"          },
     { LLM_ARCH_DREAM,            "dream"            },
     { LLM_ARCH_SMALLTHINKER,     "smallthinker"     },
     { LLM_ARCH_LLADA,            "llada"            },
     { LLM_ARCH_LLADA_MOE,        "llada-moe"        },
     { LLM_ARCH_SEED_OSS,         "seed_oss"         },
     { LLM_ARCH_GROVEMOE,         "grovemoe"         },
+    { LLM_ARCH_APERTUS,          "apertus"          },
     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
 };
 
@@ -219,6 +221,11 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_CLASSIFIER_OUTPUT_LABELS, "%s.classifier.output_labels" },
 
     { LLM_KV_SHORTCONV_L_CACHE, "%s.shortconv.l_cache" },
+    // sentence-transformers dense modules feature dims
+    { LLM_KV_DENSE_2_FEAT_IN,        "%s.dense_2_feat_in"  },
+    { LLM_KV_DENSE_2_FEAT_OUT,       "%s.dense_2_feat_out"  },
+    { LLM_KV_DENSE_3_FEAT_IN,        "%s.dense_3_feat_in"   },
+    { LLM_KV_DENSE_3_FEAT_OUT,       "%s.dense_3_feat_out"  },
 
     { LLM_KV_TOKENIZER_MODEL,                "tokenizer.ggml.model"                    },
     { LLM_KV_TOKENIZER_PRE,                  "tokenizer.ggml.pre"                      },
@@ -257,6 +264,11 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_ADAPTER_LORA_TASK_NAME,          "adapter.lora.task_name"     },
     { LLM_KV_ADAPTER_LORA_PROMPT_PREFIX,      "adapter.lora.prompt_prefix" },
     { LLM_KV_ADAPTER_ALORA_INVOCATION_TOKENS, "adapter.alora.invocation_tokens" },
+
+    { LLM_KV_XIELU_ALPHA_N,         "xielu.alpha_n"         },
+    { LLM_KV_XIELU_ALPHA_P,         "xielu.alpha_p"         },
+    { LLM_KV_XIELU_BETA,            "xielu.beta"            },
+    { LLM_KV_XIELU_EPS,             "xielu.eps"             },
 
     // deprecated
     { LLM_KV_TOKENIZER_PREFIX_ID, "tokenizer.ggml.prefix_token_id" },
@@ -1066,6 +1078,8 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
             { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
             { LLM_TENSOR_OUTPUT,          "output" },
+            { LLM_TENSOR_DENSE_2_OUT,     "dense_2" },
+            { LLM_TENSOR_DENSE_3_OUT,     "dense_3" },
             { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
             { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
             { LLM_TENSOR_ATTN_Q_NORM,     "blk.%d.attn_q_norm" },
@@ -2119,6 +2133,32 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
         }
     },
     {
+        LLM_ARCH_LFM2MOE,
+        {
+            { LLM_TENSOR_ATTN_NORM,         "blk.%d.attn_norm" },
+            { LLM_TENSOR_ATTN_Q,            "blk.%d.attn_q" },
+            { LLM_TENSOR_ATTN_K,            "blk.%d.attn_k" },
+            { LLM_TENSOR_ATTN_V,            "blk.%d.attn_v" },
+            { LLM_TENSOR_ATTN_OUT,          "blk.%d.attn_output" },
+            { LLM_TENSOR_ATTN_K_NORM,       "blk.%d.attn_k_norm" },
+            { LLM_TENSOR_ATTN_Q_NORM,       "blk.%d.attn_q_norm" },
+            { LLM_TENSOR_FFN_DOWN,          "blk.%d.ffn_down" },
+            { LLM_TENSOR_FFN_GATE,          "blk.%d.ffn_gate" },
+            { LLM_TENSOR_FFN_NORM,          "blk.%d.ffn_norm" },
+            { LLM_TENSOR_FFN_UP,            "blk.%d.ffn_up" },
+            { LLM_TENSOR_SHORTCONV_CONV,    "blk.%d.shortconv.conv" },
+            { LLM_TENSOR_SHORTCONV_INPROJ,  "blk.%d.shortconv.in_proj" },
+            { LLM_TENSOR_SHORTCONV_OUTPROJ, "blk.%d.shortconv.out_proj" },
+            { LLM_TENSOR_TOKEN_EMBD,        "token_embd" },
+            { LLM_TENSOR_TOKEN_EMBD_NORM,   "token_embd_norm" },
+            { LLM_TENSOR_FFN_GATE_INP,      "blk.%d.ffn_gate_inp" },
+            { LLM_TENSOR_FFN_GATE_EXPS,     "blk.%d.ffn_gate_exps" },
+            { LLM_TENSOR_FFN_DOWN_EXPS,     "blk.%d.ffn_down_exps" },
+            { LLM_TENSOR_FFN_UP_EXPS,       "blk.%d.ffn_up_exps" },
+            { LLM_TENSOR_FFN_EXP_PROBS_B,   "blk.%d.exp_probs_b" },
+        }
+    },
+    {
         LLM_ARCH_SMALLTHINKER,
         {
             { LLM_TENSOR_TOKEN_EMBD,         "token_embd" },
@@ -2137,6 +2177,25 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_FFN_GATE_EXPS,      "blk.%d.ffn_gate_exps" },
             { LLM_TENSOR_FFN_DOWN_EXPS,      "blk.%d.ffn_down_exps" },
             { LLM_TENSOR_FFN_UP_EXPS,        "blk.%d.ffn_up_exps" }
+        },
+    },
+    {
+        LLM_ARCH_APERTUS,
+        {
+            { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
+            { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
+            { LLM_TENSOR_OUTPUT,          "output" },
+            { LLM_TENSOR_ROPE_FREQS,      "rope_freqs" },
+            { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
+            { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
+            { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
+            { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
+            { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
+            { LLM_TENSOR_ATTN_Q_NORM,     "blk.%d.attn_q_norm" },
+            { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
+            { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
+            { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
+            { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
         },
     },
     {
@@ -2249,6 +2308,8 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_OUTPUT,                     {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL_MAT}},
     {LLM_TENSOR_CLS,                        {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL_MAT}},
     {LLM_TENSOR_CLS_OUT,                    {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_DENSE_2_OUT,                {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL_MAT}}, // Dense layer output
+    {LLM_TENSOR_DENSE_3_OUT,                {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL_MAT}}, // Dense layer output
     {LLM_TENSOR_OUTPUT_NORM,                {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL}},
     {LLM_TENSOR_DEC_OUTPUT_NORM,            {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL}},
     {LLM_TENSOR_ENC_OUTPUT_NORM,            {LLM_TENSOR_LAYER_OUTPUT, GGML_OP_MUL}},
@@ -2489,6 +2550,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
         case LLM_ARCH_PLAMO2:
         case LLM_ARCH_GRANITE_HYBRID:
         case LLM_ARCH_LFM2:
+        case LLM_ARCH_LFM2MOE:
         case LLM_ARCH_NEMOTRON_H:
             return true;
         default:
