@@ -57,7 +57,8 @@ var initDevices = sync.OnceFunc(func() {
 			}
 		case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
 			accels = append(accels, d)
-		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			gpus = append(gpus, d)
 		}
 
@@ -470,7 +471,9 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	// Mimic llama runner logs summarizing layers and memory
 	gpuLayers := 0
 	for layer := range maps.Values(b.layers) {
-		if C.ggml_backend_dev_type(layer.d) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
+		switch C.ggml_backend_dev_type(layer.d) {
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			gpuLayers++
 		}
 	}
@@ -479,7 +482,8 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	switch C.ggml_backend_dev_type(b.output) {
 	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
 		slog.Info("offloading output layer to CPU")
-	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+	case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+		C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 		slog.Info("offloading output layer to GPU")
 		gpuLayers++
 	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
