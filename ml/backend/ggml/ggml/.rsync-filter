@@ -29,4 +29,5 @@ include *.cu
 include *.cuh
 include *.metal
 include *.comp
+include *.glsl
 hide *
