@@ -132,6 +132,8 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			go func(i int) {
 				defer wg.Done()
 				var envVar string
+				var id string
+				id = devices[i].ID
 				if devices[i].Library == "ROCm" {
 					if runtime.GOOS != "linux" {
 						envVar = "HIP_VISIBLE_DEVICES"
@@ -141,14 +143,15 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				} else if devices[i].Library == "CUDA" {
 					envVar = "CUDA_VISIBLE_DEVICES"
 				} else if devices[i].Library == "Vulkan" {
+					id = devices[i].FilteredID
 					envVar = "GGML_VK_VISIBLE_DEVICES"
 				} else {
 					slog.Error("Unknown Library:" + devices[i].Library)
 				}
 
 				extraEnvs := []string{
-					"GGML_CUDA_INIT=1",                   // force deep initialization to trigger crash on unsupported GPUs
-					envVar + "=" + devices[i].FilteredID, // Filter to just this one GPU
+					"GGML_CUDA_INIT=1", // force deep initialization to trigger crash on unsupported GPUs
+					envVar + "=" + id,  // Filter to just this one GPU
 				}
 				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
 					needsDelete[i] = true
