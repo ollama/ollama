@@ -132,8 +132,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			go func(i int) {
 				defer wg.Done()
 				var envVar string
-				var id string
-				id = devices[i].ID
+				id := devices[i].ID
 				if devices[i].Library == "ROCm" {
 					if runtime.GOOS != "linux" {
 						envVar = "HIP_VISIBLE_DEVICES"
