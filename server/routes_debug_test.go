@@ -36,8 +36,8 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
@@ -146,7 +146,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 				DebugRenderOnly: true,
 			},
 			expectDebug:     true,
-			expectTemplate:  "[img-0]\n\nDescribe this image",
+			expectTemplate:  "[img-0]Describe this image",
 			expectNumImages: 1,
 		},
 		{
@@ -229,8 +229,8 @@ func TestChatDebugRenderOnly(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
+			getGpuFn:      getGpuFn,
+			getCpuFn:      getCpuFn,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading

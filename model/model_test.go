@@ -1,9 +1,9 @@
 package model
 
 import (
+	"errors"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -12,7 +12,6 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/model/input"
 )
 
 func TestParseTags(t *testing.T) {
@@ -23,14 +22,14 @@ func TestParseTags(t *testing.T) {
 		{
 			value: "output",
 			want: Tag{
-				Name: "output",
+				name: "output",
 			},
 		},
 		{
 			value: "output,alt:token_embd",
 			want: Tag{
-				Name: "output",
-				Alternate: []string{
+				name: "output",
+				alternatives: []string{
 					"token_embd",
 				},
 			},
@@ -39,8 +38,8 @@ func TestParseTags(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
-			got := ParseTags(tt.value)
-			if diff := cmp.Diff(tt.want, got); diff != "" {
+			got := parseTag(tt.value)
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported((Tag{}))); diff != "" {
 				t.Errorf("ParseTags() returned unexpected values (-want +got):\n%s", diff)
 			}
 		})
@@ -126,6 +125,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		Input  *nn.Embedding `gguf:"input"`
 		Output *nn.Linear    `gguf:"output,alt:input"`
 		Nested *nested       `gguf:"nested"`
+		Tensor ml.Tensor     `gguf:"leaf,alt:tensor"`
 	}
 
 	var m fakeModel
@@ -134,6 +134,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		names: []string{
 			"input.weight",
 			"nested.b.weight",
+			"leaf",
 		},
 	}}, v.Elem()))
 
@@ -143,44 +144,115 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		Nested: &nested{
 			Weight: &nn.Linear{Weight: &fakeTensor{Name: "nested.b.weight"}},
 		},
+		Tensor: &fakeTensor{Name: "leaf"},
 	}, m); diff != "" {
 		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
 	}
 }
 
-func TestGetTextProcessor(t *testing.T) {
-	tp, err := getTextProcessor(fsggml.KV{})
-	if err == nil {
-		t.Error("expected error")
-	} else if !strings.Contains(err.Error(), "unsupported model architecture") {
-		t.Errorf("unexpected error: %v", err)
-	} else if tp != nil {
-		t.Error("expected nil tp")
+func TestPopulateFieldsPrefixSuffixName(t *testing.T) {
+	type fakeBlock struct {
+		A  *nn.Linear `gguf:"a"`
+		B  *nn.Linear `gguf:",pre:b_"`
+		C  *nn.Linear `gguf:",suf:_c"`
+		XY *nn.Linear `gguf:",pre:x_,suf:_y"`
 	}
 
-	models["dummy"] = func(fs.Config) (Model, error) {
-		return notTextProcessorModel{}, nil
+	type fakeModel struct {
+		Blocks []fakeBlock `gguf:"blk"`
 	}
-	tp, err = getTextProcessor(fsggml.KV{"general.architecture": "dummy"})
-	if err == nil {
-		t.Error("expected error")
-	} else if !strings.Contains(err.Error(), "not a TextProcessor") {
-		t.Errorf("unexpected error: %v", err)
-	} else if tp != nil {
-		t.Error("expected nil tp")
+
+	m := fakeModel{
+		Blocks: make([]fakeBlock, 2),
+	}
+	v := reflect.ValueOf(&m)
+	v.Elem().Set(populateFields(Base{b: &fakeBackend{
+		names: []string{
+			"blk.0.a.weight",
+			"blk.0.b_weight",
+			"blk.0.b_bias",
+			"blk.0.weight_c",
+			"blk.0.x_weight_y",
+			"blk.1.a.weight",
+			"blk.1.b_weight",
+			"blk.1.b_bias",
+			"blk.1.weight_c",
+			"blk.1.x_weight_y",
+		},
+	}}, v.Elem()))
+
+	if diff := cmp.Diff(fakeModel{
+		Blocks: []fakeBlock{
+			{
+				A:  &nn.Linear{Weight: &fakeTensor{Name: "blk.0.a.weight"}},
+				B:  &nn.Linear{Weight: &fakeTensor{Name: "blk.0.b_weight"}, Bias: &fakeTensor{Name: "blk.0.b_bias"}},
+				C:  &nn.Linear{Weight: &fakeTensor{Name: "blk.0.weight_c"}},
+				XY: &nn.Linear{Weight: &fakeTensor{Name: "blk.0.x_weight_y"}},
+			},
+			{
+				A:  &nn.Linear{Weight: &fakeTensor{Name: "blk.1.a.weight"}},
+				B:  &nn.Linear{Weight: &fakeTensor{Name: "blk.1.b_weight"}, Bias: &fakeTensor{Name: "blk.1.b_bias"}},
+				C:  &nn.Linear{Weight: &fakeTensor{Name: "blk.1.weight_c"}},
+				XY: &nn.Linear{Weight: &fakeTensor{Name: "blk.1.x_weight_y"}},
+			},
+		},
+	}, m); diff != "" {
+		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
 	}
 }
 
-type notTextProcessorModel struct{}
+func TestModelForArch(t *testing.T) {
+	type fakeModel struct {
+		Model
+	}
 
-func (notTextProcessorModel) Forward(ml.Context, input.Batch) (ml.Tensor, error) {
-	panic("unimplemented")
-}
+	type fakeEmbeddingModel struct {
+		Model
+	}
 
-func (notTextProcessorModel) Backend() ml.Backend {
-	panic("unimplemented")
-}
+	models["model"] = func(c fs.Config) (Model, error) { return fakeModel{}, nil }
+	models["model_embed"] = func(c fs.Config) (Model, error) { return fakeEmbeddingModel{}, nil }
 
-func (notTextProcessorModel) Config() config {
-	panic("unimplemented")
+	cases := []struct {
+		name   string
+		config fs.Config
+		want   any
+		err    error
+	}{
+		{
+			name: "model",
+			config: fsggml.KV{
+				"general.architecture": "model",
+			},
+			want: fakeModel{},
+		},
+		{
+			name: "embedding",
+			config: fsggml.KV{
+				"general.architecture": "model",
+				"model.pooling_type":   uint32(1),
+			},
+			want: fakeEmbeddingModel{},
+		},
+		{
+			name: "unsupported",
+			config: fsggml.KV{
+				"general.architecture": "unsupported",
+			},
+			err: ErrUnsupportedModel,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := modelForArch(tt.config)
+			if !errors.Is(err, tt.err) {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("modelForArch() returned unexpected values (-want +got):\n%s", diff)
+			}
+		})
+	}
 }

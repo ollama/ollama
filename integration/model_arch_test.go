@@ -19,7 +19,7 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-func TestModelsGenerate(t *testing.T) {
+func TestModelsChat(t *testing.T) {
 	softTimeout, hardTimeout := getTimeouts(t)
 	slog.Info("Setting timeouts", "soft", softTimeout, "hard", hardTimeout)
 	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
@@ -66,16 +66,23 @@ func TestModelsGenerate(t *testing.T) {
 				}
 			}
 			// TODO - fiddle with context size
-			req := api.GenerateRequest{
-				Model:  model,
-				Prompt: "why is the sky blue?",
+			req := api.ChatRequest{
+				Model: model,
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: blueSkyPrompt,
+					},
+				},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"temperature": 0,
 					"seed":        123,
 				},
 			}
-			anyResp := []string{"rayleigh", "scattering", "atmosphere", "nitrogen", "oxygen"}
-			DoGenerate(ctx, t, client, req, anyResp, 120*time.Second, 30*time.Second)
+			DoChat(ctx, t, client, req, blueSkyExpected, 120*time.Second, 30*time.Second)
+			// best effort unload once we're done with the model
+			client.Generate(ctx, &api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		})
 	}
 }
@@ -129,8 +136,9 @@ func TestModelsEmbed(t *testing.T) {
 				}
 			}
 			req := api.EmbeddingRequest{
-				Model:  model,
-				Prompt: "why is the sky blue?",
+				Model:     model,
+				Prompt:    "why is the sky blue?",
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"temperature": 0,
 					"seed":        123,
@@ -140,6 +148,10 @@ func TestModelsEmbed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("embeddings call failed %s", err)
 			}
+			defer func() {
+				// best effort unload once we're done with the model
+				client.Generate(ctx, &api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
+			}()
 			if len(resp.Embedding) == 0 {
 				t.Errorf("zero length embedding response")
 			}

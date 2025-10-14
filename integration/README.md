@@ -12,3 +12,6 @@ The integration tests have 2 modes of operating.
 
 > [!IMPORTANT]
 > Before running the tests locally without the "test existing" setting, compile ollama from the top of the source tree  `go build .` in addition to GPU support with cmake if applicable on your platform.  The integration tests expect to find an ollama binary at the top of the tree.
+
+
+Many tests use a default small model suitable to run on many systems.  You can override this default model by setting `OLLAMA_TEST_DEFAULT_MODEL`

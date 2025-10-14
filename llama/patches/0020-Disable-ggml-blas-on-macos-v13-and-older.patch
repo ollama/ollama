@@ -8,10 +8,10 @@ Subject: [PATCH] Disable ggml-blas on macos v13 and older
  1 file changed, 5 insertions(+)
 
 diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
-index aeac2e57..40738d5b 100644
+index 5b888cdd..2a9ff7f6 100644
 --- a/ggml/src/ggml-blas/ggml-blas.cpp
 +++ b/ggml/src/ggml-blas/ggml-blas.cpp
-@@ -505,6 +505,11 @@ static const struct ggml_backend_reg_i ggml_backend_blas_reg_i = {
+@@ -506,6 +506,11 @@ static const struct ggml_backend_reg_i ggml_backend_blas_reg_i = {
  };
  
  ggml_backend_reg_t ggml_backend_blas_reg(void) {

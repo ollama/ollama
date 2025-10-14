@@ -1,6 +1,7 @@
 # vim: filetype=dockerfile
 
 ARG FLAVOR=${TARGETARCH}
+ARG PARALLEL=8
 
 ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
@@ -34,46 +35,52 @@ ENV LDFLAGS=-s
 FROM base AS cpu
 RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CPU' \
-        && cmake --build --parallel --preset 'CPU' \
-        && cmake --install build --component CPU --strip --parallel 8
+        && cmake --build --parallel ${PARALLEL} --preset 'CPU' \
+        && cmake --install build --component CPU --strip --parallel ${PARALLEL}
 
 FROM base AS cuda-11
 ARG CUDA11VERSION=11.8
 RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 11' -DOLLAMA_RUNNER_DIR="cuda_v11" \
-        && cmake --build --parallel --preset 'CUDA 11' \
-        && cmake --install build --component CUDA --strip --parallel 8
+        && cmake --build --parallel ${PARALLEL} --preset 'CUDA 11' \
+        && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 FROM base AS cuda-12
 ARG CUDA12VERSION=12.8
 RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 12' -DOLLAMA_RUNNER_DIR="cuda_v12"\
-        && cmake --build --parallel --preset 'CUDA 12' \
-        && cmake --install build --component CUDA --strip --parallel 8
+        && cmake --build --parallel ${PARALLEL} --preset 'CUDA 12' \
+        && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 
 FROM base AS cuda-13
 ARG CUDA13VERSION=13.0
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 13' -DOLLAMA_RUNNER_DIR="cuda_v13" \
-        && cmake --build --parallel --preset 'CUDA 13' \
-        && cmake --install build --component CUDA --strip --parallel 8
+        && cmake --build --parallel ${PARALLEL} --preset 'CUDA 13' \
+        && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 
 FROM base AS rocm-6
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 6' \
-        && cmake --build --parallel --preset 'ROCm 6' \
-        && cmake --install build --component HIP --strip --parallel 8
+    cmake --preset 'ROCm 6' -DOLLAMA_RUNNER_DIR="rocm" \
+        && cmake --build --parallel ${PARALLEL} --preset 'ROCm 6' \
+        && cmake --install build --component HIP --strip --parallel ${PARALLEL}
+RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
@@ -81,10 +88,11 @@ RUN apt-get update && apt-get install -y curl ccache \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 5' \
-        && cmake --build --parallel --preset 'JetPack 5' \
-        && cmake --install build --component CUDA --strip --parallel 8
+    cmake --preset 'JetPack 5' -DOLLAMA_RUNNER_DIR="cuda_jetpack5" \
+        && cmake --build --parallel ${PARALLEL} --preset 'JetPack 5' \
+        && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
 ARG CMAKEVERSION
@@ -92,10 +100,11 @@ RUN apt-get update && apt-get install -y curl ccache \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 6' \
-        && cmake --build --parallel --preset 'JetPack 6' \
-        && cmake --install build --component CUDA --strip --parallel 8
+    cmake --preset 'JetPack 6' -DOLLAMA_RUNNER_DIR="cuda_jetpack6" \
+        && cmake --build --parallel ${PARALLEL} --preset 'JetPack 6' \
+        && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
@@ -120,8 +129,8 @@ FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
-COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/cuda_jetpack5
-COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
+COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
+COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama

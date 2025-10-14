@@ -3,11 +3,9 @@ package pooling_test
 import (
 	"bytes"
 	"os"
-	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/ollama/ollama/discover"
 	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
@@ -32,20 +30,7 @@ func setup(tb testing.TB, n int) ml.Backend {
 		tb.Fatal(err)
 	}
 
-	var gpuLayers ml.GPULayersList
-	if gpus := discover.GetGPUInfo(); len(gpus) > 0 {
-		gpuLayers = append(gpuLayers, ml.GPULayers{
-			ID: gpus[0].ID,
-			Layers: slices.Collect(func(yield func(int) bool) {
-				for i := range n {
-					if !yield(i) {
-						return
-					}
-				}
-			}),
-		})
-	}
-	b, err := ggml.New(f.Name(), ml.BackendParams{AllocMemory: true, GPULayers: gpuLayers})
+	b, err := ggml.New(f.Name(), ml.BackendParams{AllocMemory: true})
 	if err != nil {
 		tb.Fatal(err)
 	}

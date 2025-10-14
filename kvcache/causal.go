@@ -160,7 +160,15 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity
 	if c.swaMemorySize == 0 {
 		c.swaMemorySize = c.swaWindowSize
 	}
-	if int(c.swaMemorySize) > capacity {
+	// We will allocate space in the cache for the stop token, which won't be part of a follow on
+	// sequence, so allocate an extra token of storage to ensure that we can jump back without
+	// causing a cache break. As an optimization, only do this when we have parallel sequences
+	// because the extra token will live in the batch buffer and won't get overwritten if we
+	// only have a single sequence.
+	if c.swaMemorySize != math.MaxInt32 && maxSequences > 1 {
+		c.swaMemorySize = max(c.swaMemorySize, c.swaWindowSize+1)
+	}
+	if int(c.swaMemorySize) >= capacity {
 		c.swaMemorySize = math.MaxInt32
 	}
 
@@ -214,7 +222,6 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 			c.curLoc, err = c.findStartLoc()
 		}
 		if err != nil {
-			slog.Warn("unable to find a kv cache slot", "cache", c)
 			return err
 		}
 
@@ -288,23 +295,44 @@ func (c *Causal) updateSlidingWindow() {
 		return
 	}
 
+	type lowestPosition struct {
+		pos      int32
+		curBatch bool
+	}
+
 	// create a map of unique sequences to the lowest position in that sequence
-	lowestPos := make(map[int]int32)
+	lowestPos := make(map[int]lowestPosition)
 	for i := range c.curPositions {
 		seq := c.curSequences[i]
 
-		pos, ok := lowestPos[seq]
+		lowest, ok := lowestPos[seq]
 		if !ok {
-			pos = c.curPositions[i]
-		} else if c.curPositions[i] < pos {
-			pos = c.curPositions[i]
+			lowest = lowestPosition{pos: c.curPositions[i], curBatch: true}
+		} else if c.curPositions[i] < lowest.pos {
+			lowest.pos = c.curPositions[i]
 		}
 
-		lowestPos[seq] = pos
+		lowestPos[seq] = lowest
+	}
+
+	// for any sequences are not part of this batch, clean up any tokens
+	// that are no longer needed after the processing of the previous
+	// batch
+	for seq, seqRange := range c.cellRanges {
+		if _, ok := lowestPos[seq]; !ok {
+			var last int32
+			for i := seqRange.min; i <= seqRange.max; i++ {
+				if slices.Contains(c.cells[i].sequences, seq) {
+					last = max(last, c.cells[i].pos)
+				}
+			}
+
+			lowestPos[seq] = lowestPosition{pos: last + 1, curBatch: false}
+		}
 	}
 
 	// delete any entries that are beyond the window of the oldest position in the sequence
-	for seq, pos := range lowestPos {
+	for seq, lowest := range lowestPos {
 		oldRange, ok := c.cellRanges[seq]
 		if !ok {
 			continue
@@ -314,13 +342,13 @@ func (c *Causal) updateSlidingWindow() {
 
 		for i := oldRange.min; i <= oldRange.max; i++ {
 			if slices.Contains(c.cells[i].sequences, seq) {
-				if c.cells[i].pos < pos-c.swaMemorySize {
+				if c.cells[i].pos < lowest.pos-c.swaMemorySize {
 					c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int) bool { return s == seq })
 				} else {
 					newRange.min = min(newRange.min, i)
 					newRange.max = max(newRange.max, i)
 				}
-				if c.cells[i].pos >= pos-c.swaWindowSize {
+				if lowest.curBatch && c.cells[i].pos >= lowest.pos-c.swaWindowSize {
 					c.curCellRange.min = min(c.curCellRange.min, i)
 					c.curCellRange.max = max(c.curCellRange.max, i)
 				}
@@ -657,9 +685,11 @@ func (c *Causal) CanResume(seq int, pos int32) bool {
 
 	// for sliding window, check that the window of the new sequence is contained in
 	// the window of what we are storing
+	var first int32 = math.MaxInt32
 	var last int32 = -1
 	for i := seqRange.min; i <= seqRange.max; i++ {
 		if slices.Contains(c.cells[i].sequences, seq) {
+			first = min(first, c.cells[i].pos)
 			last = max(last, c.cells[i].pos)
 		}
 	}
@@ -668,10 +698,8 @@ func (c *Causal) CanResume(seq int, pos int32) bool {
 		return false
 	}
 
-	lastWindowStart := max(0, last-c.swaMemorySize)
 	posWindowStart := max(0, pos-c.swaWindowSize)
-
-	return posWindowStart >= lastWindowStart
+	return posWindowStart >= first && pos <= last+1
 }
 
 func (c *Causal) shift(seq int, beginIndex, offset int32) error {

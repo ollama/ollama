@@ -79,13 +79,16 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
+	// shift if context window is exceeded
+	shift bool
+
 	doneReason llm.DoneReason
 
 	// Metrics
-	startProcessingTime time.Time
-	startGenerationTime time.Time
-	numDecoded          int
-	numPromptInputs     int
+	processingDuration time.Duration
+	generationDuration time.Duration
+	numDecoded         int
+	numPromptInputs    int
 }
 
 type NewSequenceParams struct {
@@ -94,12 +97,14 @@ type NewSequenceParams struct {
 	numKeep        int
 	samplingParams *llama.SamplingParams
 	embedding      bool
+	shift          bool
+	truncate       bool
 }
+
+var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
-
-	startTime := time.Now()
 
 	inputs, err := s.inputs(prompt, images)
 	if err != nil {
@@ -121,6 +126,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if len(inputs) > s.cache.numCtx {
 		discard := len(inputs) - s.cache.numCtx
+		if !params.truncate {
+			return nil, errorInputTooLong
+		}
+
 		newInputs := inputs[:params.numKeep]
 		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
 
@@ -142,18 +151,18 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	return &Sequence{
-		inputs:              inputs,
-		numPromptInputs:     len(inputs),
-		startProcessingTime: startTime,
-		numPredict:          params.numPredict,
-		pendingResponses:    make([]string, 0),
-		responses:           make(chan string, 100),
-		quit:                make(chan bool, 1),
-		embedding:           make(chan []float32, 1),
-		samplingCtx:         sc,
-		embeddingOnly:       params.embedding,
-		stop:                params.stop,
-		numKeep:             params.numKeep,
+		inputs:           inputs,
+		numPromptInputs:  len(inputs),
+		numPredict:       params.numPredict,
+		pendingResponses: make([]string, 0),
+		responses:        make(chan string, 100),
+		quit:             make(chan bool, 1),
+		embedding:        make(chan []float32, 1),
+		samplingCtx:      sc,
+		embeddingOnly:    params.embedding,
+		stop:             params.stop,
+		numKeep:          params.numKeep,
+		shift:            params.shift,
 	}, nil
 }
 
@@ -200,13 +209,19 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
-			embed, err := s.image.NewEmbed(s.lc, images[imageIndex].Data)
+			chunks, err := s.image.MultimodalTokenize(s.lc, images[imageIndex].Data)
 			if err != nil {
 				return nil, err
 			}
 
-			for _, e := range embed {
-				inputs = append(inputs, input{embed: e})
+			for _, c := range chunks {
+				if len(c.Embed) != 0 {
+					inputs = append(inputs, input{embed: c.Embed})
+				} else {
+					for _, t := range c.Tokens {
+						inputs = append(inputs, input{token: t})
+					}
+				}
 			}
 		}
 	}
@@ -388,6 +403,11 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		for i, input := range seq.inputs {
 			if len(seq.cache.Inputs)+len(seq.pendingInputs)+1 > s.cache.numCtx {
 				if len(seq.pendingInputs) == 0 {
+					if !seq.shift {
+						s.removeSequence(seqIdx, llm.DoneReasonLength)
+						break
+					}
+
 					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 					if err != nil {
 						var reprocess *ErrReprocessInputs
@@ -438,8 +458,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		return nil
 	}
 
-	err := s.lc.Decode(batch)
-	if err != nil {
+	t := time.Now()
+	if err := s.lc.Decode(batch); err != nil {
 		return fmt.Errorf("failed to decode batch: %w", err)
 	}
 
@@ -459,9 +479,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
-		seq.numDecoded += 1
-		if seq.numDecoded == 1 {
-			seq.startGenerationTime = time.Now()
+		s.lc.Synchronize()
+		seq.numDecoded++
+		if seq.numDecoded > 1 {
+			seq.generationDuration += time.Since(t)
+		} else {
+			seq.processingDuration += time.Since(t)
 		}
 
 		// if done processing the prompt, generate an embedding and return
@@ -583,8 +606,14 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		numKeep:        req.Options.NumKeep,
 		samplingParams: &samplingParams,
 		embedding:      false,
+		shift:          req.Shift,
+		truncate:       req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -646,9 +675,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
-					PromptEvalDuration: seq.startGenerationTime.Sub(seq.startProcessingTime),
+					PromptEvalDuration: seq.processingDuration,
 					EvalCount:          seq.numDecoded,
-					EvalDuration:       time.Since(seq.startGenerationTime),
+					EvalDuration:       seq.generationDuration,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode final response: %v", err), http.StatusInternalServerError)
 				}
@@ -812,7 +841,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		numGPU := 0
 		for i := range gpuIDs {
 			for _, layers := range req.GPULayers {
-				if gpuIDs[i] == layers.ID {
+				if gpuIDs[i] == layers.DeviceID {
 					tensorSplit[i] = float32(len(layers.Layers))
 					numGPU += len(layers.Layers)
 				}
