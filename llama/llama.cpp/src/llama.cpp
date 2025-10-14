@@ -267,10 +267,12 @@ static struct llama_model * llama_model_load_from_file_impl(
     for (auto * dev : model->devices) {
         ggml_backend_dev_props props;
         ggml_backend_dev_get_props(dev, &props);
+        size_t memory_free, memory_total;
+        ggml_backend_dev_memory(dev, &memory_free, &memory_total);
         LLAMA_LOG_INFO("%s: using device %s (%s) (%s) - %zu MiB free\n", __func__,
                 ggml_backend_dev_name(dev), ggml_backend_dev_description(dev),
                 props.device_id ? props.device_id : "unknown id",
-                props.memory_free/1024/1024);
+                memory_free/1024/1024);
     }
 
     const int status = llama_model_load(path_model, splits, *model, params);
