@@ -3,6 +3,7 @@ package parsers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -39,21 +40,23 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *Qwen3VLParser) initialState(lastMessage *api.Message) qwenParserState {
-	// no last messages == nil
+func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 	if p.HasThinkingSupport() {
-		if prefill && !strings.HasSuffix(lastMessage.Content, thinkingCloseTag) {
-			// closing tag has not been completed, we're still thinking
-			return CollectingThinkingContent
+		if prefill && lastMessage.Thinking != "" && lastMessage.Content == "" { // so there is thinking, but no content
+			p.state = CollectingThinkingContent
+			return
 		}
 	}
-	return CollectingContent
+
+	p.state = CollectingContent
 }
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
-	p.state = p.initialState(lastMessage)
+	p.setInitialState(lastMessage)
+
+	fmt.Println("initial state: p.state", p.state)
 
 	print("starting state: p.state", p.state)
 	return tools
@@ -66,6 +69,7 @@ type qwenEventThinkingContent struct {
 func (qwenEventThinkingContent) isQwenEvent() {}
 
 func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
+	// fmt.Println("[grace - IMPORTANT] adding: s", s)
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
 
