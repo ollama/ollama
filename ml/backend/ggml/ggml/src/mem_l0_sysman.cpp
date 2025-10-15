@@ -268,7 +268,7 @@ struct {
 extern "C" {
 
 int ggml_l0_sysman_init() {
-    GGML_LOG_INFO("%s called", __func__);
+    GGML_LOG_DEBUG("%s called\n", __func__);
     std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
     if (l0_sysman.handle != nullptr) {
         // Already initialized
@@ -285,7 +285,16 @@ int ggml_l0_sysman_init() {
     }
     
     l0_sysman.zesInit = (ze_result_t(*)(int)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesInit");
-    if (l0_sysman.zesInit == nullptr) {
+    l0_sysman.zesDriverGet = (ze_result_t(*)(uint32_t*, zes_driver_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDriverGet");
+    l0_sysman.zesDeviceGet = (ze_result_t(*)(zes_driver_handle_t, uint32_t*, zes_device_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceGet");
+    l0_sysman.zesDeviceGetProperties = (ze_result_t(*)(zes_device_handle_t, zes_device_properties_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceGetProperties");
+    l0_sysman.zesDeviceEnumMemoryModules = (ze_result_t(*)(zes_device_handle_t, uint32_t*, zes_mem_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceEnumMemoryModules");
+    l0_sysman.zesMemoryGetProperties = (ze_result_t(*)(zes_mem_handle_t, zes_mem_properties_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesMemoryGetProperties");
+    l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesMemoryGetState");
+    if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || 
+        l0_sysman.zesDeviceGet == nullptr|| l0_sysman.zesDeviceGetProperties == nullptr ||
+        l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetProperties == nullptr ||
+        l0_sysman.zesMemoryGetState == nullptr) {
         GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, dll_name);
         FreeLibrary((HMODULE)(l0_sysman.handle));
         l0_sysman.handle = nullptr;
@@ -294,15 +303,23 @@ int ggml_l0_sysman_init() {
 
     SetErrorMode(old_mode);
 
+    auto ret = l0_sysman.zesInit(0);
+    if (ret != ZE_RESULT_SUCCESS) {
+      GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
+      FreeLibrary((HMODULE)(l0_sysman.handle));
+      l0_sysman.handle = nullptr;
+      return ret;
+    }
+    return ZE_RESULT_SUCCESS;
+
 #else
     // Not currently wired up on Linux
-    return ZE_RESULT_ERROR_;
+    return ZE_RESULT_ERROR_UNSUPPORTED_FEATURE;
 #endif
-    return ZE_RESULT_SUCCESS;
 }
 
 void ggml_l0_sysman_release() {
-    GGML_LOG_INFO("%s called", __func__);
+    GGML_LOG_DEBUG("%s called\n", __func__);
     std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
     if (l0_sysman.handle == nullptr) {
         // Already free
@@ -314,6 +331,43 @@ void ggml_l0_sysman_release() {
 #else
     // Not currently wired up on Linux
 #endif
+}
+
+int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *total) {
+    GGML_LOG_DEBUG("%s called\n", __func__);
+    std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
+    if (l0_sysman.handle == nullptr) {
+        GGML_LOG_INFO("%s Level Zero Sysman was not initialized\n", __func__);
+        return ZE_RESULT_ERROR_INVALID_NULL_POINTER;
+    }
+
+    uint32_t driverCount = 0;
+    auto ret = l0_sysman.zesDriverGet(&driverCount, nullptr);
+    if (ret != ZE_RESULT_SUCCESS) {
+        GGML_LOG_INFO("%s Failed running zesDriverGet: %d\n", __func__, ret);
+        FreeLibrary((HMODULE)(l0_sysman.handle));
+        l0_sysman.handle = nullptr;
+    }
+    GGML_LOG_DEBUG("Found %d L0 Sysman drivers\n", driverCount);
+
+    std::vector<zes_driver_handle_t> allDrivers(driverCount);
+    ret = l0_sysman.zesDriverGet(&driverCount, allDrivers.data());
+    if (ret != ZE_RESULT_SUCCESS) {
+        GGML_LOG_INFO("%s Failed running zesDriverGet: %d\n", __func__, ret);
+        FreeLibrary((HMODULE)(l0_sysman.handle));
+        l0_sysman.handle = nullptr;
+    }
+
+    // ret = (*resp->oh.zesDriverGet)(&resp->oh.num_drivers, NULL);
+    // if (ret != ZE_RESULT_SUCCESS) {
+    //   LOG(resp->oh.verbose, "zesDriverGet err: %x\n", ret);
+    //   snprintf(buf, buflen, "unable to get driver count: %x", ret);
+    //   resp->err = strdup(buf);
+    //   oneapi_release(resp->oh);
+    //   return;
+    // }
+    // LOG(resp->oh.verbose, "oneapi driver count: %d\n", resp->oh.num_drivers);
+    return 0;
 }
 
 } // extern "C"

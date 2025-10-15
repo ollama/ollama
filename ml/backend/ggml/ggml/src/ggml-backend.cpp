@@ -503,6 +503,7 @@ const char * ggml_backend_dev_description(ggml_backend_dev_t device) {
 
 void ggml_backend_dev_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
     GGML_ASSERT(device);
+    GGML_LOG_DEBUG("ggml_backend_dev_memory called!!!!!!!!\n");
     device->iface.get_memory(device, free, total);
 }
 
