@@ -298,6 +298,30 @@ func TestToolFunction_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
+	fn := ToolCallFunction{
+		Name:      "echo",
+		Arguments: ToolCallFunctionArguments{"message": "hi"},
+	}
+
+	data, err := json.Marshal(fn)
+	require.NoError(t, err)
+
+	raw := map[string]any{}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Contains(t, raw, "index")
+	assert.Equal(t, float64(0), raw["index"])
+
+	fn.Index = 3
+	data, err = json.Marshal(fn)
+	require.NoError(t, err)
+
+	raw = map[string]any{}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Contains(t, raw, "index")
+	assert.Equal(t, float64(3), raw["index"])
+}
+
 func TestPropertyType_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string
