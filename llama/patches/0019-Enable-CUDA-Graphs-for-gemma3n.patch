@@ -13,10 +13,10 @@ checks.
  1 file changed, 18 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 57eae461..c7f9dc3a 100644
+index 5b852f69..827e3205 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2671,12 +2671,24 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2689,14 +2689,26 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
      cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
  
@@ -36,12 +36,14 @@ index 57eae461..c7f9dc3a 100644
      const std::string ffn_moe_gate_bias_prefix = "ffn_moe_gate_biased";
      const std::string ffn_moe_up_bias_prefix = "ffn_moe_up_biased";
      const std::string ffn_moe_down_bias_prefix = "ffn_moe_down_biased";
+     const std::string nemotron_h_block_out_prefix = "nemotron_h_block_out";
+     const std::string mamba2_y_add_d_prefix = "mamba2_y_add_d";
  
 +
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
  
-@@ -2700,6 +2712,12 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+@@ -2720,6 +2732,12 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
  
          if (node->op == GGML_OP_ADD &&
              node->src[1] && node->src[1]->ne[1] > 1 &&

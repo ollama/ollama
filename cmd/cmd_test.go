@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -491,8 +492,34 @@ func TestPushHandler(t *testing.T) {
 						w.(http.Flusher).Flush()
 					}
 				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+				},
 			},
 			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
+		},
+		{
+			name:      "not signed in push",
+			modelName: "notsignedin-model",
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error":      "unauthorized",
+						"signin_url": "https://somethingsomething",
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+				},
+			},
+			expectedOutput: "You need to be signed in to push",
 		},
 		{
 			name:      "unauthorized push",
@@ -506,6 +533,11 @@ func TestPushHandler(t *testing.T) {
 					})
 					if err != nil {
 						t.Fatal(err)
+					}
+				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
 					}
 				},
 			},
@@ -564,7 +596,7 @@ func TestPushHandler(t *testing.T) {
 					t.Errorf("expected no error, got %v", err)
 				}
 				if tt.expectedOutput != "" {
-					if got := string(stdout); got != tt.expectedOutput {
+					if got := string(stdout); !strings.Contains(got, tt.expectedOutput) {
 						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
 					}
 				}
@@ -920,5 +952,288 @@ func TestNewCreateRequest(t *testing.T) {
 				t.Errorf("expected output %#v, got %#v", tt.expected, actual)
 			}
 		})
+	}
+}
+
+func TestRunOptions_Copy(t *testing.T) {
+	// Setup test data
+	originalKeepAlive := &api.Duration{Duration: 5 * time.Minute}
+	originalThink := &api.ThinkValue{Value: "test reasoning"}
+
+	original := runOptions{
+		Model:       "test-model",
+		ParentModel: "parent-model",
+		Prompt:      "test prompt",
+		Messages: []api.Message{
+			{Role: "user", Content: "hello"},
+			{Role: "assistant", Content: "hi there"},
+		},
+		WordWrap: true,
+		Format:   "json",
+		System:   "system prompt",
+		Images: []api.ImageData{
+			[]byte("image1"),
+			[]byte("image2"),
+		},
+		Options: map[string]any{
+			"temperature": 0.7,
+			"max_tokens":  1000,
+			"top_p":       0.9,
+		},
+		MultiModal:   true,
+		KeepAlive:    originalKeepAlive,
+		Think:        originalThink,
+		HideThinking: false,
+		ShowConnect:  true,
+	}
+
+	// Test the copy
+	copied := original.Copy()
+
+	// Test 1: Verify the copy is not the same instance
+	if &copied == &original {
+		t.Error("Copy should return a different instance")
+	}
+
+	// Test 2: Verify all fields are copied correctly
+	tests := []struct {
+		name string
+		got  interface{}
+		want interface{}
+	}{
+		{"Model", copied.Model, original.Model},
+		{"ParentModel", copied.ParentModel, original.ParentModel},
+		{"Prompt", copied.Prompt, original.Prompt},
+		{"WordWrap", copied.WordWrap, original.WordWrap},
+		{"Format", copied.Format, original.Format},
+		{"System", copied.System, original.System},
+		{"MultiModal", copied.MultiModal, original.MultiModal},
+		{"HideThinking", copied.HideThinking, original.HideThinking},
+		{"ShowConnect", copied.ShowConnect, original.ShowConnect},
+	}
+
+	for _, tt := range tests {
+		if !reflect.DeepEqual(tt.got, tt.want) {
+			t.Errorf("%s mismatch: got %v, want %v", tt.name, tt.got, tt.want)
+		}
+	}
+
+	// Test 3: Verify Messages slice is deeply copied
+	if len(copied.Messages) != len(original.Messages) {
+		t.Errorf("Messages length mismatch: got %d, want %d", len(copied.Messages), len(original.Messages))
+	}
+
+	if len(copied.Messages) > 0 && &copied.Messages[0] == &original.Messages[0] {
+		t.Error("Messages should be different instances")
+	}
+
+	// Modify original to verify independence
+	if len(original.Messages) > 0 {
+		originalContent := original.Messages[0].Content
+		original.Messages[0].Content = "modified"
+		if len(copied.Messages) > 0 && copied.Messages[0].Content == "modified" {
+			t.Error("Messages should be independent after copy")
+		}
+		// Restore for other tests
+		original.Messages[0].Content = originalContent
+	}
+
+	// Test 4: Verify Images slice is deeply copied
+	if len(copied.Images) != len(original.Images) {
+		t.Errorf("Images length mismatch: got %d, want %d", len(copied.Images), len(original.Images))
+	}
+
+	if len(copied.Images) > 0 && &copied.Images[0] == &original.Images[0] {
+		t.Error("Images should be different instances")
+	}
+
+	// Modify original to verify independence
+	if len(original.Images) > 0 {
+		originalImage := original.Images[0]
+		original.Images[0] = []byte("modified")
+		if len(copied.Images) > 0 && string(copied.Images[0]) == "modified" {
+			t.Error("Images should be independent after copy")
+		}
+		// Restore for other tests
+		original.Images[0] = originalImage
+	}
+
+	// Test 5: Verify Options map is deeply copied
+	if len(copied.Options) != len(original.Options) {
+		t.Errorf("Options length mismatch: got %d, want %d", len(copied.Options), len(original.Options))
+	}
+
+	if len(copied.Options) > 0 && &copied.Options == &original.Options {
+		t.Error("Options map should be different instances")
+	}
+
+	// Modify original to verify independence
+	if len(original.Options) > 0 {
+		originalTemp := original.Options["temperature"]
+		original.Options["temperature"] = 0.9
+		if copied.Options["temperature"] == 0.9 {
+			t.Error("Options should be independent after copy")
+		}
+		// Restore for other tests
+		original.Options["temperature"] = originalTemp
+	}
+
+	// Test 6: Verify KeepAlive pointer is copied (shallow copy)
+	if copied.KeepAlive != original.KeepAlive {
+		t.Error("KeepAlive pointer should be the same (shallow copy)")
+	}
+
+	// Test 7: Verify Think pointer creates a new instance
+	if original.Think != nil && copied.Think == original.Think {
+		t.Error("Think should be a different instance")
+	}
+
+	if original.Think != nil && copied.Think != nil {
+		if !reflect.DeepEqual(copied.Think.Value, original.Think.Value) {
+			t.Errorf("Think.Value mismatch: got %v, want %v", copied.Think.Value, original.Think.Value)
+		}
+	}
+
+	// Test 8: Test with zero values
+	zeroOriginal := runOptions{}
+	zeroCopy := zeroOriginal.Copy()
+
+	if !reflect.DeepEqual(zeroCopy, zeroOriginal) {
+		fmt.Printf("orig: %#v\ncopy: %#v\n", zeroOriginal, zeroCopy)
+		t.Error("Copy of zero value should equal original zero value")
+	}
+}
+
+func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
+	// Test with empty slices and maps
+	original := runOptions{
+		Messages: []api.Message{},
+		Images:   []api.ImageData{},
+		Options:  map[string]any{},
+	}
+
+	copied := original.Copy()
+
+	if copied.Messages == nil {
+		t.Error("Empty Messages slice should remain empty, not nil")
+	}
+
+	if copied.Images == nil {
+		t.Error("Empty Images slice should remain empty, not nil")
+	}
+
+	if copied.Options == nil {
+		t.Error("Empty Options map should remain empty, not nil")
+	}
+
+	if len(copied.Messages) != 0 {
+		t.Error("Empty Messages slice should remain empty")
+	}
+
+	if len(copied.Images) != 0 {
+		t.Error("Empty Images slice should remain empty")
+	}
+
+	if len(copied.Options) != 0 {
+		t.Error("Empty Options map should remain empty")
+	}
+}
+
+func TestRunOptions_Copy_NilPointers(t *testing.T) {
+	// Test with nil pointers
+	original := runOptions{
+		KeepAlive: nil,
+		Think:     nil,
+	}
+
+	copied := original.Copy()
+
+	if copied.KeepAlive != nil {
+		t.Error("Nil KeepAlive should remain nil")
+	}
+
+	if copied.Think != nil {
+		t.Error("Nil Think should remain nil")
+	}
+}
+
+func TestRunOptions_Copy_ThinkValueVariants(t *testing.T) {
+	tests := []struct {
+		name  string
+		think *api.ThinkValue
+	}{
+		{"nil Think", nil},
+		{"bool true", &api.ThinkValue{Value: true}},
+		{"bool false", &api.ThinkValue{Value: false}},
+		{"string value", &api.ThinkValue{Value: "reasoning text"}},
+		{"int value", &api.ThinkValue{Value: 42}},
+		{"nil value", &api.ThinkValue{Value: nil}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := runOptions{Think: tt.think}
+			copied := original.Copy()
+
+			if tt.think == nil {
+				if copied.Think != nil {
+					t.Error("Nil Think should remain nil")
+				}
+				return
+			}
+
+			if copied.Think == nil {
+				t.Error("Non-nil Think should not become nil")
+				return
+			}
+
+			if copied.Think == original.Think {
+				t.Error("Think should be a different instance")
+			}
+
+			if !reflect.DeepEqual(copied.Think.Value, original.Think.Value) {
+				t.Errorf("Think.Value mismatch: got %v, want %v", copied.Think.Value, original.Think.Value)
+			}
+		})
+	}
+}
+
+func TestRunOptions_Copy_Independence(t *testing.T) {
+	// Test that modifications to original don't affect copy
+	originalThink := &api.ThinkValue{Value: "original"}
+	original := runOptions{
+		Model:    "original-model",
+		Messages: []api.Message{{Role: "user", Content: "original"}},
+		Options:  map[string]any{"key": "value"},
+		Think:    originalThink,
+	}
+
+	copied := original.Copy()
+
+	// Modify original
+	original.Model = "modified-model"
+	if len(original.Messages) > 0 {
+		original.Messages[0].Content = "modified"
+	}
+	original.Options["key"] = "modified"
+	if original.Think != nil {
+		original.Think.Value = "modified"
+	}
+
+	// Verify copy is unchanged
+	if copied.Model == "modified-model" {
+		t.Error("Copy Model should not be affected by original modification")
+	}
+
+	if len(copied.Messages) > 0 && copied.Messages[0].Content == "modified" {
+		t.Error("Copy Messages should not be affected by original modification")
+	}
+
+	if copied.Options["key"] == "modified" {
+		t.Error("Copy Options should not be affected by original modification")
+	}
+
+	if copied.Think != nil && copied.Think.Value == "modified" {
+		t.Error("Copy Think should not be affected by original modification")
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
@@ -55,7 +56,9 @@ func TestEstimateGPULayers(t *testing.T) {
 	// Simple CPU scenario
 	gpus := []discover.GpuInfo{
 		{
-			Library: "cpu",
+			DeviceID: ml.DeviceID{
+				Library: "cpu",
+			},
 		},
 	}
 	projectors := []string{}
@@ -77,11 +80,15 @@ func TestEstimateGPULayers(t *testing.T) {
 	gpuMinimumMemory := uint64(2048)
 	gpus = []discover.GpuInfo{
 		{
-			Library:       "cuda",
+			DeviceID: ml.DeviceID{
+				Library: "cuda",
+			},
 			MinimumMemory: gpuMinimumMemory,
 		},
 		{
-			Library:       "cuda",
+			DeviceID: ml.DeviceID{
+				Library: "cuda",
+			},
 			MinimumMemory: gpuMinimumMemory,
 		},
 	}

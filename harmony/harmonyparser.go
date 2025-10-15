@@ -463,6 +463,10 @@ func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
 
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {
 	harmonyFunctionName := m.deriveName(userFunctionName)
+	// built-in functions should not be renamed
+	if userFunctionName == "browser.open" || userFunctionName == "browser.search" || userFunctionName == "browser.find" || userFunctionName == "python" {
+		harmonyFunctionName = userFunctionName
+	}
 	m.userToHarmony[userFunctionName] = harmonyFunctionName
 	m.harmonyToUser[harmonyFunctionName] = userFunctionName
 	return harmonyFunctionName

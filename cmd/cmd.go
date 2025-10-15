@@ -540,6 +540,25 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	n := model.ParseName(args[0])
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
+		_, err := client.Whoami(cmd.Context())
+		if err != nil {
+			var aErr api.AuthorizationError
+			if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+				fmt.Println("You need to be signed in to push models to ollama.com.")
+				fmt.Println()
+
+				if aErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, aErr.SigninURL)
+				}
+				return nil
+			}
+
+			return err
+		}
+	}
+
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -576,7 +595,6 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 
-	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -1098,6 +1116,51 @@ type runOptions struct {
 	Think        *api.ThinkValue
 	HideThinking bool
 	ShowConnect  bool
+}
+
+func (r runOptions) Copy() runOptions {
+	var messages []api.Message
+	if r.Messages != nil {
+		messages = make([]api.Message, len(r.Messages))
+		copy(messages, r.Messages)
+	}
+
+	var images []api.ImageData
+	if r.Images != nil {
+		images = make([]api.ImageData, len(r.Images))
+		copy(images, r.Images)
+	}
+
+	var opts map[string]any
+	if r.Options != nil {
+		opts = make(map[string]any, len(r.Options))
+		for k, v := range r.Options {
+			opts[k] = v
+		}
+	}
+
+	var think *api.ThinkValue
+	if r.Think != nil {
+		cThink := *r.Think
+		think = &cThink
+	}
+
+	return runOptions{
+		Model:        r.Model,
+		ParentModel:  r.ParentModel,
+		Prompt:       r.Prompt,
+		Messages:     messages,
+		WordWrap:     r.WordWrap,
+		Format:       r.Format,
+		System:       r.System,
+		Images:       images,
+		Options:      opts,
+		MultiModal:   r.MultiModal,
+		KeepAlive:    r.KeepAlive,
+		Think:        think,
+		HideThinking: r.HideThinking,
+		ShowConnect:  r.ShowConnect,
+	}
 }
 
 type displayResponseState struct {

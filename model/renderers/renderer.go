@@ -6,20 +6,48 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type rendererFunc func([]api.Message, []api.Tool, *api.ThinkValue) (string, error)
+type Renderer interface {
+	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
+}
+
+type (
+	RendererConstructor func() Renderer
+	RendererRegistry    struct {
+		renderers map[string]RendererConstructor
+	}
+)
+
+func (r *RendererRegistry) Register(name string, renderer RendererConstructor) {
+	r.renderers[name] = renderer
+}
+
+var registry = RendererRegistry{
+	renderers: make(map[string]RendererConstructor),
+}
+
+func Register(name string, renderer RendererConstructor) {
+	registry.Register(name, renderer)
+}
 
 func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	renderer := rendererForName(name)
 	if renderer == nil {
 		return "", fmt.Errorf("unknown renderer %q", name)
 	}
-	return renderer(msgs, tools, think)
+	return renderer.Render(msgs, tools, think)
 }
 
-func rendererForName(name string) rendererFunc {
+func rendererForName(name string) Renderer {
+	if constructor, ok := registry.renderers[name]; ok {
+		return constructor()
+	}
 	switch name {
 	case "qwen3-coder":
-		return Qwen3CoderRenderer
+		renderer := &Qwen3CoderRenderer{}
+		return renderer
+	case "qwen3-vl-instruct":
+		renderer := &Qwen3VLRenderer{false}
+		return renderer
 	default:
 		return nil
 	}

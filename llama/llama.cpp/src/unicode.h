@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+// TODO: reimplement this structure in endian-independent way
 struct unicode_cpt_flags {
     enum {
         UNDEFINED       = 0x0001,
@@ -15,6 +16,10 @@ struct unicode_cpt_flags {
         SYMBOL          = 0x0040,  // regex: \p{S}
         CONTROL         = 0x0080,  // regex: \p{C}
         MASK_CATEGORIES = 0x00FF,
+        WHITESPACE      = 0x0100,
+        LOWERCASE       = 0x0200,
+        UPPERCASE       = 0x0400,
+        NFD             = 0x0800,
     };
 
     // codepoint type
@@ -34,11 +39,49 @@ struct unicode_cpt_flags {
 
     // decode from uint16
     inline unicode_cpt_flags(const uint16_t flags = 0) {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
         *reinterpret_cast<uint16_t*>(this) = flags;
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        is_undefined   = (flags & UNDEFINED)   ? 1 : 0;
+        is_number      = (flags & NUMBER)      ? 1 : 0;
+        is_letter      = (flags & LETTER)      ? 1 : 0;
+        is_separator   = (flags & SEPARATOR)   ? 1 : 0;
+        is_accent_mark = (flags & ACCENT_MARK) ? 1 : 0;
+        is_punctuation = (flags & PUNCTUATION) ? 1 : 0;
+        is_symbol      = (flags & SYMBOL)      ? 1 : 0;
+        is_control     = (flags & CONTROL)     ? 1 : 0;
+        is_whitespace  = (flags & WHITESPACE)  ? 1 : 0;
+        is_lowercase   = (flags & LOWERCASE)   ? 1 : 0;
+        is_uppercase   = (flags & UPPERCASE)   ? 1 : 0;
+        is_nfd         = (flags & NFD)         ? 1 : 0;
+#else
+#error Unexpected or undefined __BYTE_ORDER__
+#endif
     }
 
     inline uint16_t as_uint() const {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
         return *reinterpret_cast<const uint16_t*>(this);
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        uint16_t result =
+              is_undefined   * UNDEFINED
+            + is_number      * NUMBER
+            + is_letter      * LETTER
+            + is_separator   * SEPARATOR
+            + is_accent_mark * ACCENT_MARK
+            + is_punctuation * PUNCTUATION
+            + is_symbol      * SYMBOL
+            + is_control     * CONTROL
+            + is_whitespace  * WHITESPACE
+            + is_lowercase   * LOWERCASE
+            + is_uppercase   * UPPERCASE
+            + is_nfd         * NFD
+            ;
+
+        return result;
+#else
+#error Unexpected or undefined __BYTE_ORDER__
+#endif
     }
 
     inline uint16_t category_flag() const {

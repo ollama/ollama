@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -149,7 +150,9 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			ambiguous := p.acc.String()[ambiguousStart:]
 			p.acc.Reset()
 			p.acc.WriteString(ambiguous)
-			events = append(events, qwenEventContent{content: unambiguous})
+			if len(unambiguous) > 0 {
+				events = append(events, qwenEventContent{content: unambiguous})
+			}
 			return events, false
 		} else {
 			// we found content that is entirely not a tool call. We should withhold
@@ -204,12 +207,21 @@ func overlap(s, delim string) int {
 }
 
 func trailingWhitespaceLen(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if !unicode.IsSpace(rune(s[i])) {
-			return len(s) - i - 1
+	remaining := s
+	total := 0
+	for len(remaining) > 0 {
+		r, size := utf8.DecodeLastRuneInString(remaining)
+		// if it's an invalid utf8 rune, assume it isn't whitespace
+		if r == utf8.RuneError && size == 1 {
+			break
 		}
+		if !unicode.IsSpace(r) {
+			break
+		}
+		total += size
+		remaining = remaining[:len(remaining)-size]
 	}
-	return len(s)
+	return total
 }
 
 type XMLFunctionCall struct {
@@ -264,7 +276,14 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		var paramType api.PropertyType
 		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
 			if prop, ok := matchedTool.Function.Parameters.Properties[parameter.Name]; ok {
-				paramType = prop.Type
+				// Handle anyOf by collecting all types from the union
+				if len(prop.AnyOf) > 0 {
+					for _, anyOfProp := range prop.AnyOf {
+						paramType = append(paramType, anyOfProp.Type...)
+					}
+				} else {
+					paramType = prop.Type
+				}
 			}
 		}
 

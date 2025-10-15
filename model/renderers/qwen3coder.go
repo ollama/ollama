@@ -55,7 +55,9 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 	return sb.String()
 }
 
-func Qwen3CoderRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+type Qwen3CoderRenderer struct{}
+
+func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
 	// filter out system messages and choose the first (if any) to win
@@ -99,9 +101,7 @@ func Qwen3CoderRenderer(messages []api.Message, tools []api.Tool, _ *api.ThinkVa
 					sb.WriteString("\n<name>" + name + "</name>")
 
 					if len(prop.Type) > 0 {
-						// TODO(!!!)(drifkin): we should match the reference implementation for
-						// more complex types here instead of using this format
-						sb.WriteString("\n<type>" + prop.ToTypeScriptType() + "</type>")
+						sb.WriteString("\n<type>" + formatToolDefinitionType(prop.Type) + "</type>")
 					}
 
 					if prop.Description != "" {
@@ -214,4 +214,25 @@ func formatToolCallArgument(value any) string {
 	}
 
 	return fmt.Sprintf("%v", value)
+}
+
+func formatToolDefinitionType(tp api.PropertyType) string {
+	if len(tp) == 0 {
+		return "[]"
+	}
+
+	if len(tp) == 1 {
+		return tp[0]
+	}
+
+	// TODO(drifkin): it would be nice to format the JSON here similarly to
+	// python's default json.dumps behavior (spaces after commas and colons).
+	// This would let us be byte-for-byte compatible with the reference
+	// implementation for most common inputs
+	jsonBytes, err := json.Marshal(tp)
+	if err != nil {
+		return "[]"
+	}
+
+	return string(jsonBytes)
 }
