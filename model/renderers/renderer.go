@@ -48,6 +48,9 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-instruct":
 		renderer := &Qwen3VLRenderer{false}
 		return renderer
+	case "qwen3-vl-thinking":
+		renderer := &Qwen3VLRenderer{true}
+		return renderer
 	default:
 		return nil
 	}
