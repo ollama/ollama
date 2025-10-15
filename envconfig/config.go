@@ -24,6 +24,9 @@ func Host() *url.URL {
 	switch {
 	case !ok:
 		scheme, hostport = "http", s
+		if s == "ollama.com" {
+			scheme, hostport = "https", "ollama.com:443"
+		}
 	case scheme == "http":
 		defaultPort = "80"
 	case scheme == "https":
