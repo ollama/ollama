@@ -39,16 +39,23 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *Qwen3VLParser) initialState() qwenParserState {
-	if p.HasThinkingSupport() { // has thinking, start from collecting thinking content
-		return CollectingThinkingContent
+func (p *Qwen3VLParser) initialState(lastMessage *api.Message) qwenParserState {
+	// no last messages == nil
+	prefill := lastMessage != nil && lastMessage.Role == "assistant"
+	if p.HasThinkingSupport() {
+		if prefill && !strings.HasSuffix(lastMessage.Content, thinkingCloseTag) {
+			// closing tag has not been completed, we're still thinking
+			return CollectingThinkingContent
+		}
 	}
 	return CollectingContent
 }
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 	p.tools = tools
-	p.state = p.initialState()
+	p.state = p.initialState(lastMessage)
+
+	print("starting state: p.state", p.state)
 	return tools
 }
 
