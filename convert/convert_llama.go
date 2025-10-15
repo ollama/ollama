@@ -51,38 +51,38 @@ var _ ModelConverter = (*llamaModel)(nil)
 func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
-	kv["llama.vocab_size"] = p.VocabSize
+	kv["vocab_size"] = p.VocabSize
 
-	kv["llama.block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
+	kv["block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
 
 	if contextLength := cmp.Or(p.MaxPositionEmbeddings, p.NCtx); contextLength > 0 {
-		kv["llama.context_length"] = contextLength
+		kv["context_length"] = contextLength
 	}
 
 	if embeddingLength := cmp.Or(p.HiddenSize, p.NEmbd); embeddingLength > 0 {
-		kv["llama.embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
+		kv["embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
 	}
 
 	if feedForwardLength := cmp.Or(p.IntermediateSize, p.NInner); feedForwardLength > 0 {
-		kv["llama.feed_forward_length"] = cmp.Or(p.IntermediateSize, p.NInner)
+		kv["feed_forward_length"] = cmp.Or(p.IntermediateSize, p.NInner)
 	}
 
 	if headCount := cmp.Or(p.NumAttentionHeads, p.NHead); headCount > 0 {
-		kv["llama.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
-		kv["llama.rope.dimension_count"] = p.HiddenSize / headCount
+		kv["attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
+		kv["rope.dimension_count"] = p.HiddenSize / headCount
 	}
 
 	if p.HeadDim > 0 {
-		kv["llama.attention.head_dim"] = p.HeadDim
+		kv["attention.head_dim"] = p.HeadDim
 	}
 
 	if p.RopeTheta > 0 {
-		kv["llama.rope.freq_base"] = p.RopeTheta
+		kv["rope.freq_base"] = p.RopeTheta
 	}
 
 	if p.RopeScaling.Type == "linear" {
-		kv["llama.rope.scaling.type"] = p.RopeScaling.Type
-		kv["llama.rope.scaling.factor"] = p.RopeScaling.Factor
+		kv["rope.scaling.type"] = p.RopeScaling.Type
+		kv["rope.scaling.factor"] = p.RopeScaling.Factor
 	} else if p.RopeScaling.RopeType == "llama3" {
 		dim := p.HiddenSize / p.NumAttentionHeads
 		for i := uint32(0); i < dim; i += 2 {
@@ -107,20 +107,20 @@ func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
 	}
 
 	if p.NumKeyValueHeads > 0 {
-		kv["llama.attention.head_count_kv"] = p.NumKeyValueHeads
+		kv["attention.head_count_kv"] = p.NumKeyValueHeads
 	}
 
 	if p.RMSNormEPS > 0 {
-		kv["llama.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+		kv["attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
 	}
 
 	if layerNormEpsilon := cmp.Or(p.LayerNormEPS, p.LayerNormEpsilon, p.NormEpsilon); layerNormEpsilon > 0 {
-		kv["llama.attention.layer_norm_epsilon"] = layerNormEpsilon
+		kv["attention.layer_norm_epsilon"] = layerNormEpsilon
 	}
 
 	if p.HeadDim > 0 {
-		kv["llama.attention.key_length"] = p.HeadDim
-		kv["llama.attention.value_length"] = p.HeadDim
+		kv["attention.key_length"] = p.HeadDim
+		kv["attention.value_length"] = p.HeadDim
 	}
 
 	return kv

@@ -40,17 +40,17 @@ var _ ModelConverter = (*phi3Model)(nil)
 func (p *phi3Model) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "phi3"
-	kv["phi3.context_length"] = p.MaxPositionEmbeddings
-	kv["phi3.embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
-	kv["phi3.feed_forward_length"] = p.IntermediateSize
-	kv["phi3.block_count"] = cmp.Or(p.NumHiddenLayers, p.NLayers)
-	kv["phi3.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
-	kv["phi3.attention.head_count_kv"] = cmp.Or(p.NumKeyValueHeads, p.NHeadKV)
-	kv["phi3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
-	kv["phi3.rope.dimension_count"] = p.HiddenSize / cmp.Or(p.NumAttentionHeads, p.NHead)
-	kv["phi3.rope.freq_base"] = p.RopeTheta
-	kv["phi3.rope.scaling.original_context_length"] = p.OriginalMaxPositionEmbeddings
-	kv["phi3.attention.sliding_window"] = p.SlidingWindow
+	kv["context_length"] = p.MaxPositionEmbeddings
+	kv["embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
+	kv["feed_forward_length"] = p.IntermediateSize
+	kv["block_count"] = cmp.Or(p.NumHiddenLayers, p.NLayers)
+	kv["attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
+	kv["attention.head_count_kv"] = cmp.Or(p.NumKeyValueHeads, p.NHeadKV)
+	kv["attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+	kv["rope.dimension_count"] = p.HiddenSize / cmp.Or(p.NumAttentionHeads, p.NHead)
+	kv["rope.freq_base"] = p.RopeTheta
+	kv["rope.scaling.original_context_length"] = p.OriginalMaxPositionEmbeddings
+	kv["attention.sliding_window"] = p.SlidingWindow
 
 	scale := float64(p.MaxPositionEmbeddings) / float64(p.OriginalMaxPositionEmbeddings)
 
@@ -58,9 +58,9 @@ func (p *phi3Model) KV(t *Tokenizer) ggml.KV {
 	case "":
 		// no scaling
 	case "su", "longrope":
-		kv["phi3.rope.scaling.attn_factor"] = float32(max(math.Sqrt(1+math.Log(scale)/math.Log(float64(p.OriginalMaxPositionEmbeddings))), 1.0))
+		kv["rope.scaling.attn_factor"] = float32(max(math.Sqrt(1+math.Log(scale)/math.Log(float64(p.OriginalMaxPositionEmbeddings))), 1.0))
 	case "yarn":
-		kv["phi3.rope.scaling.attn_factor"] = float32(max(0.1*math.Log(scale)+1.0, 1.0))
+		kv["rope.scaling.attn_factor"] = float32(max(0.1*math.Log(scale)+1.0, 1.0))
 	default:
 		panic("unknown rope scaling type")
 	}

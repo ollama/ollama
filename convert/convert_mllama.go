@@ -35,31 +35,26 @@ type mllamaModel struct {
 }
 
 func (m *mllamaModel) KV(t *Tokenizer) ggml.KV {
-	kv := m.ModelParameters.KV(t)
+	kv :=  m.TextModel.KV(t)
+
 	kv["general.architecture"] = "mllama"
 
-	for k, v := range m.TextModel.KV(t) {
-		if strings.HasPrefix(k, "llama.") {
-			kv[strings.ReplaceAll(k, "llama.", "mllama.")] = v
-		}
-	}
+	kv["attention.cross_attention_layers"] = m.TextModel.CrossAttentionLayers
 
-	kv["mllama.attention.cross_attention_layers"] = m.TextModel.CrossAttentionLayers
+	kv["vision.block_count"] = m.VisionModel.NumHiddenLayers
+	kv["vision.global.block_count"] = m.VisionModel.NumGlobalLayers
+	kv["vision.intermediate_layers_indices"] = m.VisionModel.IntermediateLayersIndices
 
-	kv["mllama.vision.block_count"] = m.VisionModel.NumHiddenLayers
-	kv["mllama.vision.global.block_count"] = m.VisionModel.NumGlobalLayers
-	kv["mllama.vision.intermediate_layers_indices"] = m.VisionModel.IntermediateLayersIndices
+	kv["vision.embedding_length"] = m.VisionModel.HiddenSize
+	kv["vision.feed_forward_length"] = m.VisionModel.IntermediateSize
 
-	kv["mllama.vision.embedding_length"] = m.VisionModel.HiddenSize
-	kv["mllama.vision.feed_forward_length"] = m.VisionModel.IntermediateSize
+	kv["vision.attention.head_count"] = m.VisionModel.AttentionHeads
+	kv["vision.attention.layer_norm_epsilon"] = m.VisionModel.NormEpsilon
 
-	kv["mllama.vision.attention.head_count"] = m.VisionModel.AttentionHeads
-	kv["mllama.vision.attention.layer_norm_epsilon"] = m.VisionModel.NormEpsilon
-
-	kv["mllama.vision.image_size"] = m.VisionModel.ImageSize
-	kv["mllama.vision.patch_size"] = m.VisionModel.PatchSize
-	kv["mllama.vision.max_num_tiles"] = m.VisionModel.MaxNumTiles
-	kv["mllama.vision.num_channels"] = m.VisionModel.NumChannels
+	kv["vision.image_size"] = m.VisionModel.ImageSize
+	kv["vision.patch_size"] = m.VisionModel.PatchSize
+	kv["vision.max_num_tiles"] = m.VisionModel.MaxNumTiles
+	kv["vision.num_channels"] = m.VisionModel.NumChannels
 
 	return kv
 }

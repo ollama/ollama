@@ -25,23 +25,23 @@ var _ ModelConverter = (*qwen2Model)(nil)
 func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen2"
-	kv["qwen2.block_count"] = q.HiddenLayers
-	kv["qwen2.context_length"] = q.MaxPositionEmbeddings
-	kv["qwen2.embedding_length"] = q.HiddenSize
-	kv["qwen2.feed_forward_length"] = q.IntermediateSize
-	kv["qwen2.attention.head_count"] = q.NumAttentionHeads
-	kv["qwen2.attention.head_count_kv"] = q.NumKeyValueHeads
-	kv["qwen2.rope.freq_base"] = q.RopeTheta
-	kv["qwen2.attention.layer_norm_rms_epsilon"] = q.RMSNormEPS
+	kv["block_count"] = q.HiddenLayers
+	kv["context_length"] = q.MaxPositionEmbeddings
+	kv["embedding_length"] = q.HiddenSize
+	kv["feed_forward_length"] = q.IntermediateSize
+	kv["attention.head_count"] = q.NumAttentionHeads
+	kv["attention.head_count_kv"] = q.NumKeyValueHeads
+	kv["rope.freq_base"] = q.RopeTheta
+	kv["attention.layer_norm_rms_epsilon"] = q.RMSNormEPS
 
 	switch q.RopeScaling.Type {
 	case "":
 		// no scaling
 	case "yarn":
-		kv["qwen2.rope.scaling.type"] = q.RopeScaling.Type
-		kv["qwen2.rope.scaling.factor"] = q.RopeScaling.Factor
+		kv["rope.scaling.type"] = q.RopeScaling.Type
+		kv["rope.scaling.factor"] = q.RopeScaling.Factor
 	case "mrope", "default":
-		kv["qwen2.rope.mrope_section"] = q.RopeScaling.MropeSection
+		kv["rope.mrope_section"] = q.RopeScaling.MropeSection
 	default:
 		panic("unknown rope scaling type")
 	}

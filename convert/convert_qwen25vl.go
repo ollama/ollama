@@ -30,31 +30,25 @@ type qwen25VLModel struct {
 var _ ModelConverter = (*qwen25VLModel)(nil)
 
 func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
-	kv := q.ModelParameters.KV(t)
+	kv := q.qwen2Model.KV(t)
 	kv["general.architecture"] = "qwen25vl"
 
-	for k, v := range q.qwen2Model.KV(t) {
-		if strings.HasPrefix(k, "qwen2.") {
-			kv[strings.Replace(k, "qwen2.", "qwen25vl.", 1)] = v
-		}
-	}
-
 	if q.VisionModel.FullAttentionBlocks == nil {
-		kv["qwen25vl.vision.fullatt_block_indexes"] = []int32{7, 15, 23, 31}
+		kv["vision.fullatt_block_indexes"] = []int32{7, 15, 23, 31}
 	}
 
-	kv["qwen25vl.vision.block_count"] = cmp.Or(q.VisionModel.Depth, 32)
-	kv["qwen25vl.vision.embedding_length"] = q.VisionModel.HiddenSize
-	kv["qwen25vl.vision.attention.head_count"] = cmp.Or(q.VisionModel.NumHeads, 16)
-	kv["qwen25vl.vision.num_channels"] = q.VisionModel.InChannels
-	kv["qwen25vl.vision.patch_size"] = cmp.Or(q.VisionModel.PatchSize, 14)
-	kv["qwen25vl.vision.spatial_merge_size"] = cmp.Or(q.VisionModel.SpatialMergeSize, 2)
-	kv["qwen25vl.vision.spatial_patch_size"] = q.VisionModel.SpatialPatchSize
-	kv["qwen25vl.vision.window_size"] = cmp.Or(q.VisionModel.WindowSize, 112)
-	kv["qwen25vl.vision.attention.layer_norm_epsilon"] = cmp.Or(q.VisionModel.RMSNormEps, 1e-6)
-	kv["qwen25vl.vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e4)
-	kv["qwen25vl.vision.fullatt_block_indexes"] = q.VisionModel.FullAttentionBlocks
-	kv["qwen25vl.vision.temporal_patch_size"] = cmp.Or(q.VisionModel.TemporalPatchSize, 2)
+	kv["vision.block_count"] = cmp.Or(q.VisionModel.Depth, 32)
+	kv["vision.embedding_length"] = q.VisionModel.HiddenSize
+	kv["vision.attention.head_count"] = cmp.Or(q.VisionModel.NumHeads, 16)
+	kv["vision.num_channels"] = q.VisionModel.InChannels
+	kv["vision.patch_size"] = cmp.Or(q.VisionModel.PatchSize, 14)
+	kv["vision.spatial_merge_size"] = cmp.Or(q.VisionModel.SpatialMergeSize, 2)
+	kv["vision.spatial_patch_size"] = q.VisionModel.SpatialPatchSize
+	kv["vision.window_size"] = cmp.Or(q.VisionModel.WindowSize, 112)
+	kv["vision.attention.layer_norm_epsilon"] = cmp.Or(q.VisionModel.RMSNormEps, 1e-6)
+	kv["vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e4)
+	kv["vision.fullatt_block_indexes"] = q.VisionModel.FullAttentionBlocks
+	kv["vision.temporal_patch_size"] = cmp.Or(q.VisionModel.TemporalPatchSize, 2)
 
 	return kv
 }

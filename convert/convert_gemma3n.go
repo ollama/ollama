@@ -41,7 +41,7 @@ type gemma3nModel struct {
 func (m *gemma3nModel) KV(t *Tokenizer) ggml.KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma3n"
-	kv["gemma3n.activation_sparsity_scale"] = slices.Collect(func(yield func(float32) bool) {
+	kv["activation_sparsity_scale"] = slices.Collect(func(yield func(float32) bool) {
 		norm := distuv.Normal{Mu: 0, Sigma: 1}
 		for _, v := range m.TextModel.ActivationSparsityPattern {
 			if !yield(float32(norm.Quantile(float64(v)))) {
@@ -49,30 +49,30 @@ func (m *gemma3nModel) KV(t *Tokenizer) ggml.KV {
 			}
 		}
 	})
-	kv["gemma3n.altup.active_idx"] = m.TextModel.AltupActiveIdx
-	kv["gemma3n.altup.correct_scale"] = m.TextModel.AltupCorrectScale
-	kv["gemma3n.altup.lr_multiplier"] = m.TextModel.AltupLRMultiplier
-	kv["gemma3n.altup.num_inputs"] = m.TextModel.AltupNumInputs
-	kv["gemma3n.attention.head_count_kv"] = m.TextModel.NumKeyValueHeads
-	kv["gemma3n.attention.head_count"] = m.TextModel.NumAttentionHeads
-	kv["gemma3n.attention.layer_norm_rms_epsilon"] = m.TextModel.RMSNormEPS
-	kv["gemma3n.attention.sliding_window"] = m.TextModel.SlidingWindow
-	kv["gemma3n.attention.sliding_window_pattern"] = slices.Collect(func(yield func(bool) bool) {
+	kv["altup.active_idx"] = m.TextModel.AltupActiveIdx
+	kv["altup.correct_scale"] = m.TextModel.AltupCorrectScale
+	kv["altup.lr_multiplier"] = m.TextModel.AltupLRMultiplier
+	kv["altup.num_inputs"] = m.TextModel.AltupNumInputs
+	kv["attention.head_count_kv"] = m.TextModel.NumKeyValueHeads
+	kv["attention.head_count"] = m.TextModel.NumAttentionHeads
+	kv["attention.layer_norm_rms_epsilon"] = m.TextModel.RMSNormEPS
+	kv["attention.sliding_window"] = m.TextModel.SlidingWindow
+	kv["attention.sliding_window_pattern"] = slices.Collect(func(yield func(bool) bool) {
 		for _, t := range m.TextModel.LayerTypes {
 			if !yield(t == "sliding_attention") {
 				break
 			}
 		}
 	})
-	kv["gemma3n.attention.shared_kv_layers"] = m.TextModel.NumKVSharedLayers
-	kv["gemma3n.block_count"] = m.TextModel.NumHiddenLayers
-	kv["gemma3n.context_length"] = m.TextModel.MaxPositionEmbeddings
-	kv["gemma3n.embedding_length_per_layer_input"] = m.TextModel.HiddenSizePerLayerInput
-	kv["gemma3n.embedding_length"] = m.TextModel.HiddenSize
-	kv["gemma3n.feed_forward_length"] = m.TextModel.IntermediateSize
-	kv["gemma3n.head_dim"] = m.TextModel.HeadDim
-	kv["gemma3n.rope.freq_base_local"] = m.TextModel.RopeLocalBaseFreq
-	kv["gemma3n.rope.freq_base"] = m.TextModel.RopeTheta
+	kv["attention.shared_kv_layers"] = m.TextModel.NumKVSharedLayers
+	kv["block_count"] = m.TextModel.NumHiddenLayers
+	kv["context_length"] = m.TextModel.MaxPositionEmbeddings
+	kv["embedding_length_per_layer_input"] = m.TextModel.HiddenSizePerLayerInput
+	kv["embedding_length"] = m.TextModel.HiddenSize
+	kv["feed_forward_length"] = m.TextModel.IntermediateSize
+	kv["head_dim"] = m.TextModel.HeadDim
+	kv["rope.freq_base_local"] = m.TextModel.RopeLocalBaseFreq
+	kv["rope.freq_base"] = m.TextModel.RopeTheta
 	return kv
 }
 

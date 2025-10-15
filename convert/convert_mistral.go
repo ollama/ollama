@@ -49,41 +49,41 @@ type mistral3Model struct {
 func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "mistral3"
-	kv["mistral3.vocab_size"] = p.TextModel.VocabSize
+	kv["vocab_size"] = p.TextModel.VocabSize
 
 	// Text configuration
-	kv["mistral3.block_count"] = p.TextModel.NumHiddenLayers
-	kv["mistral3.context_length"] = p.TextModel.MaxPositionEmbeddings
-	kv["mistral3.embedding_length"] = p.TextModel.HiddenSize
-	kv["mistral3.feed_forward_length"] = p.TextModel.IntermediateSize
-	kv["mistral3.attention.head_count"] = p.TextModel.NumAttentionHeads
-	kv["mistral3.attention.head_count_kv"] = p.TextModel.NumKeyValueHeads
-	kv["mistral3.attention.layer_norm_rms_epsilon"] = p.TextModel.RMSNormEPS
-	kv["mistral3.attention.key_length"] = p.TextModel.HeadDim
-	kv["mistral3.attention.value_length"] = p.TextModel.HeadDim
-	kv["mistral3.rope.dimension_count"] = p.TextModel.HiddenSize / p.TextModel.NumHiddenLayers
-	kv["mistral3.rope.freq_base"] = p.TextModel.RopeTheta
+	kv["block_count"] = p.TextModel.NumHiddenLayers
+	kv["context_length"] = p.TextModel.MaxPositionEmbeddings
+	kv["embedding_length"] = p.TextModel.HiddenSize
+	kv["feed_forward_length"] = p.TextModel.IntermediateSize
+	kv["attention.head_count"] = p.TextModel.NumAttentionHeads
+	kv["attention.head_count_kv"] = p.TextModel.NumKeyValueHeads
+	kv["attention.layer_norm_rms_epsilon"] = p.TextModel.RMSNormEPS
+	kv["attention.key_length"] = p.TextModel.HeadDim
+	kv["attention.value_length"] = p.TextModel.HeadDim
+	kv["rope.dimension_count"] = p.TextModel.HiddenSize / p.TextModel.NumHiddenLayers
+	kv["rope.freq_base"] = p.TextModel.RopeTheta
 
 	// Vision configuration
-	kv["mistral3.vision.block_count"] = p.VisionModel.NumHiddenLayers
-	kv["mistral3.vision.embedding_length"] = p.VisionModel.HiddenSize
-	kv["mistral3.vision.feed_forward_length"] = p.VisionModel.IntermediateSize
-	kv["mistral3.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
-	kv["mistral3.vision.attention.key_length"] = p.VisionModel.HeadDim
-	kv["mistral3.vision.image_size"] = p.VisionModel.ImageSize
-	kv["mistral3.vision.patch_size"] = p.VisionModel.PatchSize
-	kv["mistral3.vision.num_channels"] = p.VisionModel.NumChannels
-	// kv["mistral3.vision.attention.layer_norm_epsilon"] = 1e-05 // Default value
-	kv["mistral3.vision.rope.freq_base"] = p.VisionModel.RopeTheta
+	kv["vision.block_count"] = p.VisionModel.NumHiddenLayers
+	kv["vision.embedding_length"] = p.VisionModel.HiddenSize
+	kv["vision.feed_forward_length"] = p.VisionModel.IntermediateSize
+	kv["vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
+	kv["vision.attention.key_length"] = p.VisionModel.HeadDim
+	kv["vision.image_size"] = p.VisionModel.ImageSize
+	kv["vision.patch_size"] = p.VisionModel.PatchSize
+	kv["vision.num_channels"] = p.VisionModel.NumChannels
+	// kv["vision.attention.layer_norm_epsilon"] = 1e-05 // Default value
+	kv["vision.rope.freq_base"] = p.VisionModel.RopeTheta
 
 	// Multimodal configuration
-	kv["mistral3.image_token_index"] = p.ImageTokenIndex
-	kv["mistral3.spatial_merge_size"] = p.SpatialMergeSize
+	kv["image_token_index"] = p.ImageTokenIndex
+	kv["spatial_merge_size"] = p.SpatialMergeSize
 
-	kv["mistral3.mm.projector_bias"] = p.MultiModalProjectorBias
+	kv["mm.projector_bias"] = p.MultiModalProjectorBias
 
 	if p.ProjectorHiddenAct != "" {
-		kv["mistral3.mm.projector_hidden_act"] = p.ProjectorHiddenAct
+		kv["mm.projector_hidden_act"] = p.ProjectorHiddenAct
 	}
 
 	return kv

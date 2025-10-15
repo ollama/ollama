@@ -49,7 +49,7 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 	kv["general.architecture"] = "gemma3"
 
 	numBlocks := cmp.Or(p.HiddenLayers, p.TextModel.HiddenLayers)
-	kv["gemma3.block_count"] = numBlocks
+	kv["block_count"] = numBlocks
 
 	var (
 		numHeads   uint32
@@ -71,40 +71,40 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		numKVHeads = p.NumKeyValueHeads
 	}
 
-	kv["gemma3.attention.head_count"] = numHeads
-	kv["gemma3.attention.head_count_kv"] = numKVHeads
+	kv["attention.head_count"] = numHeads
+	kv["attention.head_count_kv"] = numKVHeads
 
 	switch p.Architecture {
 	case "Gemma3ForCausalLM":
-		kv["gemma3.context_length"] = p.MaxPositionEmbeddings
-		kv["gemma3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
-		kv["gemma3.attention.key_length"] = p.HeadDim
-		kv["gemma3.attention.value_length"] = p.HeadDim
-		kv["gemma3.attention.sliding_window"] = p.SlidingWindow
-		kv["gemma3.final_logit_softcapping"] = cmp.Or(p.FinalLogitSoftcap, 30)
-		kv["gemma3.rope.local.freq_base"] = cmp.Or(p.RopeLocalTheta, 10000.0)
-		kv["gemma3.rope.global.freq_base"] = cmp.Or(p.RopeGlobalTheta, 1000000.0)
-		kv["gemma3.embedding_length"] = p.HiddenSize
-		kv["gemma3.feed_forward_length"] = p.IntermediateSize
+		kv["context_length"] = p.MaxPositionEmbeddings
+		kv["attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+		kv["attention.key_length"] = p.HeadDim
+		kv["attention.value_length"] = p.HeadDim
+		kv["attention.sliding_window"] = p.SlidingWindow
+		kv["final_logit_softcapping"] = cmp.Or(p.FinalLogitSoftcap, 30)
+		kv["rope.local.freq_base"] = cmp.Or(p.RopeLocalTheta, 10000.0)
+		kv["rope.global.freq_base"] = cmp.Or(p.RopeGlobalTheta, 1000000.0)
+		kv["embedding_length"] = p.HiddenSize
+		kv["feed_forward_length"] = p.IntermediateSize
 	default:
-		kv["gemma3.context_length"] = cmp.Or(p.MaxPositionEmbeddings, 131072)
-		kv["gemma3.embedding_length"] = p.TextModel.HiddenSize
-		kv["gemma3.feed_forward_length"] = p.TextModel.IntermediateSize
-		kv["gemma3.attention.sliding_window"] = p.TextModel.SlidingWindow
-		kv["gemma3.vision.block_count"] = p.VisionModel.NumHiddenLayers
-		kv["gemma3.vision.embedding_length"] = p.VisionModel.HiddenSize
-		kv["gemma3.vision.feed_forward_length"] = p.VisionModel.IntermediateSize
-		kv["gemma3.vision.image_size"] = p.VisionModel.ImageSize
-		kv["gemma3.vision.patch_size"] = p.VisionModel.PatchSize
-		kv["gemma3.vision.num_channels"] = cmp.Or(p.VisionModel.NumChannels, 3)
-		kv["gemma3.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
-		kv["gemma3.vision.attention.layer_norm_epsilon"] = cmp.Or(p.VisionModel.LayerNormEpsilon, 1e-6)
-		kv["gemma3.attention.key_length"] = cmp.Or(p.TextModel.HeadDim, 256)
-		kv["gemma3.attention.value_length"] = cmp.Or(p.TextModel.HeadDim, 256)
+		kv["context_length"] = cmp.Or(p.MaxPositionEmbeddings, 131072)
+		kv["embedding_length"] = p.TextModel.HiddenSize
+		kv["feed_forward_length"] = p.TextModel.IntermediateSize
+		kv["attention.sliding_window"] = p.TextModel.SlidingWindow
+		kv["vision.block_count"] = p.VisionModel.NumHiddenLayers
+		kv["vision.embedding_length"] = p.VisionModel.HiddenSize
+		kv["vision.feed_forward_length"] = p.VisionModel.IntermediateSize
+		kv["vision.image_size"] = p.VisionModel.ImageSize
+		kv["vision.patch_size"] = p.VisionModel.PatchSize
+		kv["vision.num_channels"] = cmp.Or(p.VisionModel.NumChannels, 3)
+		kv["vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
+		kv["vision.attention.layer_norm_epsilon"] = cmp.Or(p.VisionModel.LayerNormEpsilon, 1e-6)
+		kv["attention.key_length"] = cmp.Or(p.TextModel.HeadDim, 256)
+		kv["attention.value_length"] = cmp.Or(p.TextModel.HeadDim, 256)
 	}
 
 	if p.MultiModalTokensPerImage > 0 {
-		kv["gemma3.mm.tokens_per_image"] = p.MultiModalTokensPerImage
+		kv["mm.tokens_per_image"] = p.MultiModalTokensPerImage
 	}
 
 	return kv

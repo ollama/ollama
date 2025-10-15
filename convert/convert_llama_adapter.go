@@ -21,8 +21,8 @@ var _ AdapterConverter = (*llamaAdapter)(nil)
 func (p *llamaAdapter) KV(baseKV ggml.KV) ggml.KV {
 	kv := p.AdapterParameters.KV()
 	kv["general.architecture"] = "llama"
-	kv["llama.attention.head_count"] = baseKV["llama.attention.head_count"]
-	kv["llama.attention.head_count_kv"] = baseKV["llama.attention.head_count_kv"]
+	kv["attention.head_count"] = baseKV["llama.attention.head_count"]
+	kv["attention.head_count_kv"] = baseKV["llama.attention.head_count_kv"]
 
 	p.NumAttentionHeads = baseKV["llama.attention.head_count"].(uint32)
 

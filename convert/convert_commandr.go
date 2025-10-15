@@ -28,17 +28,17 @@ func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "command-r"
 	kv["general.name"] = "command-r"
-	kv["command-r.context_length"] = cmp.Or(p.MaxLength, p.MaxPositionEmbeddings, p.NCtx)
-	kv["command-r.embedding_length"] = p.HiddenSize
-	kv["command-r.block_count"] = p.HiddenLayers
-	kv["command-r.feed_forward_length"] = p.IntermediateSize
-	kv["command-r.attention.head_count"] = p.NumAttentionHeads
-	kv["command-r.attention.head_count_kv"] = p.NumKeyValueHeads
-	kv["command-r.attention.layer_norm_epsilon"] = p.LayerNormEPS
-	kv["command-r.rope.freq_base"] = p.RopeTheta
-	kv["command-r.max_position_embeddings"] = cmp.Or(p.MaxLength, p.MaxPositionEmbeddings)
-	kv["command-r.logit_scale"] = p.LogitScale
-	kv["command-r.rope.scaling.type"] = "none"
+	kv["context_length"] = cmp.Or(p.MaxLength, p.MaxPositionEmbeddings, p.NCtx)
+	kv["embedding_length"] = p.HiddenSize
+	kv["block_count"] = p.HiddenLayers
+	kv["feed_forward_length"] = p.IntermediateSize
+	kv["attention.head_count"] = p.NumAttentionHeads
+	kv["attention.head_count_kv"] = p.NumKeyValueHeads
+	kv["attention.layer_norm_epsilon"] = p.LayerNormEPS
+	kv["rope.freq_base"] = p.RopeTheta
+	kv["max_position_embeddings"] = cmp.Or(p.MaxLength, p.MaxPositionEmbeddings)
+	kv["logit_scale"] = p.LogitScale
+	kv["rope.scaling.type"] = "none"
 
 	return kv
 }

@@ -91,30 +91,30 @@ func (p *bertModel) parseMore(fsys fs.FS) error {
 func (p *bertModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "bert"
-	kv["bert.attention.causal"] = false
-	kv["bert.pooling_type"] = p.PoolingType
-	kv["bert.normalize_embeddings"] = p.normalizeEmbeddings
+	kv["attention.causal"] = false
+	kv["pooling_type"] = p.PoolingType
+	kv["normalize_embeddings"] = p.normalizeEmbeddings
 
-	kv["bert.block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
+	kv["block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
 
 	if contextLength := cmp.Or(p.MaxPositionEmbeddings, p.NCtx); contextLength > 0 {
-		kv["bert.context_length"] = contextLength
+		kv["context_length"] = contextLength
 	}
 
 	if embeddingLength := cmp.Or(p.HiddenSize, p.NEmbd); embeddingLength > 0 {
-		kv["bert.embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
+		kv["embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
 	}
 
 	if feedForwardLength := cmp.Or(p.IntermediateSize, p.NInner); feedForwardLength > 0 {
-		kv["bert.feed_forward_length"] = cmp.Or(p.IntermediateSize, p.NInner)
+		kv["feed_forward_length"] = cmp.Or(p.IntermediateSize, p.NInner)
 	}
 
 	if headCount := cmp.Or(p.NumAttentionHeads, p.NHead); headCount > 0 {
-		kv["bert.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
+		kv["attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
 	}
 
 	if layerNormEpsilon := cmp.Or(p.LayerNormEPS, p.LayerNormEpsilon, p.NormEpsilon); layerNormEpsilon > 0 {
-		kv["bert.attention.layer_norm_epsilon"] = layerNormEpsilon
+		kv["attention.layer_norm_epsilon"] = layerNormEpsilon
 	}
 
 	kv["tokenizer.ggml.model"] = "bert"
