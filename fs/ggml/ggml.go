@@ -893,6 +893,7 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"gemma3",
 		"gptoss", "gpt-oss",
 		"qwen3",
 		"qwen3moe",
