@@ -324,12 +324,20 @@ func (d DeviceInfo) MinimumMemory() uint64 {
 	return 457 * format.MebiByte
 }
 
-// Sort by Free Space
+// Sort by Free Space.
+// iGPUs are reported first, thus Reverse() yields the largest discrete GPU first
 type ByFreeMemory []DeviceInfo
 
-func (a ByFreeMemory) Len() int           { return len(a) }
-func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
+func (a ByFreeMemory) Len() int      { return len(a) }
+func (a ByFreeMemory) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByFreeMemory) Less(i, j int) bool {
+	if a[i].Integrated && !a[j].Integrated {
+		return true
+	} else if !a[i].Integrated && a[j].Integrated {
+		return false
+	}
+	return a[i].FreeMemory < a[j].FreeMemory
+}
 
 func ByLibrary(l []DeviceInfo) [][]DeviceInfo {
 	resp := [][]DeviceInfo{}
