@@ -127,6 +127,14 @@ func TestLLMServerFitGPU(t *testing.T) {
 			requireFull: true,
 			expectedErr: ErrLoadRequiredFull,
 		},
+		{
+			name:        "requireFull numGPU",
+			gpus:        []gpu{{id: ml.DeviceID{ID: "gpu0"}, free: 256 * format.MebiByte}},
+			layers:      []int{100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte, 100 * format.MebiByte},
+			numGPU:      4,
+			requireFull: true,
+			expectedErr: ErrLoadRequiredFull,
+		},
 	}
 
 	for _, tt := range tests {
