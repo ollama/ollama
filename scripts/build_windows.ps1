@@ -170,7 +170,7 @@ function buildROCm() {
                 -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
-                --install-prefix $script:DIST_DIR
+                --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="rocm"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
@@ -278,27 +278,33 @@ function buildInstaller() {
 }
 
 function distZip() {
-    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64") {
-        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm") {
-            write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip"
-            # Temporarily adjust paths so we can retain the same directory structure
-            Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-amd64-rocm"
-            mkdir -Force -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
-            Write-Output "Extract this ROCm zip file to the same location where you extracted ollama-windows-amd64.zip" > "${script:SRC_DIR}\dist\windows-amd64-rocm\README.txt"
-            Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -destination "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
-            Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64-rocm\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip" -Force
-        }
+    foreach ($arch in @('amd64', 'arm64')) {
+        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-${arch}") {
+            # CPU bundle
+            $name = "cpu"
+            write-host "Creating ${arch} ${name} bundle"
+            $gpuDirs = @('rocm', 'cuda_v12', 'cuda_v13')
+            Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-${arch}-${name}"
+            Copy-Item -Recurse -path "${script:SRC_DIR}\dist\windows-${arch}" -destination "${script:SRC_DIR}\dist\windows-${arch}-${name}"
+            foreach ($dir in $gpuDirs) {
+                Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-${arch}-${name}\lib\ollama\${dir}"
+            }
+            Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-${arch}-${name}\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-${arch}-${name}.zip" -Force
+            Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-${arch}-${name}"
 
-        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
-        Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
-        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-rocm") {
-            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama\rocm"
+            # GPU bundles if present
+            foreach ($dir in $gpuDirs) {
+                $name = $dir -replace '_', '-'
+                if (Test-Path -Path "${script:SRC_DIR}\dist\windows-${arch}\lib\ollama\${dir}") {
+                    write-host "Creating ${arch} ${name} bundle"
+                    Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-${arch}-${name}"
+                    mkdir -Force -path "${script:SRC_DIR}\dist\windows-${arch}-${name}\lib\ollama"
+                    Copy-Item -Recurse -path "${script:SRC_DIR}\dist\windows-${arch}\lib\ollama\${dir}" -destination "${script:SRC_DIR}\dist\windows-${arch}-${name}\lib\ollama"
+                    Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-${arch}-${name}\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-${arch}-${name}.zip" -Force
+                    Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-${arch}-${name}"
+                }
+            }
         }
-    }
-
-    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-arm64") {
-        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-arm64.zip"
-        Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-arm64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-arm64.zip" -Force
     }
 }
 

@@ -13,13 +13,40 @@ curl -fsSL https://ollama.com/install.sh | sh
 > [!NOTE]
 > If you are upgrading from a prior version, you **MUST** remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
 
-Download and extract the package:
+Download and extract the base CPU package:
 
 ```shell
-curl -LO https://ollama.com/download/ollama-linux-amd64.tgz
+curl -LO https://ollama.com/download/ollama-linux-amd64-cpu.tgz
 sudo rm -rf /usr/lib/ollama
-sudo tar -C /usr -xzf ollama-linux-amd64.tgz
+sudo tar -C /usr -xzf ollama-linux-amd64-cpu.tgz
 ```
+
+If you have a GPU, install the bundle(s) applicable to your system
+
+> [!IMPORTANT]
+> The GPU bundles contains only GPU specific libraries.  You must extract **both** `ollama-linux-amd64-cpu.tgz` and the `ollama-linux-amd64-GPULIB.tgz` bundles into the same location.
+
+
+### NVIDIA v13 (driver 580 or newer)
+Compute Capability 7.5 or newer (e.g. RTX 2080 or newer)
+```shell
+curl -LO https://ollama.com/download/ollama-linux-amd64-cuda-v13.tgz
+sudo tar -C /usr -xzf ollama-linux-amd64-cuda-v13.tgz
+```
+
+### NVIDIA v12 (driver 575 or older)
+Compute Capability 5.0 or newer (e.g. GTX 750 or newer)
+```shell
+curl -LO https://ollama.com/download/ollama-linux-amd64-cuda-v12.tgz
+sudo tar -C /usr -xzf ollama-linux-amd64-cuda-v12.tgz
+```
+
+### AMD GPUs
+```shell
+curl -LO https://ollama.com/download/ollama-linux-amd64-rocm.tgz
+sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
+```
+
 
 Start Ollama:
 
@@ -33,27 +60,46 @@ In another terminal, verify that Ollama is running:
 ollama -v
 ```
 
-### AMD GPU install
-
-If you have an AMD GPU, **also** download and extract the additional ROCm package:
-
-> [!IMPORTANT]
-> The ROCm tgz contains only AMD dependent libraries.  You must extract **both** `ollama-linux-amd64.tgz` and `ollama-linux-amd64-rocm.tgz` into the same location.
-
-
-```shell
-curl -L https://ollama.com/download/ollama-linux-amd64-rocm.tgz -o ollama-linux-amd64-rocm.tgz
-sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
-```
 
 ### ARM64 install
 
 Download and extract the ARM64-specific package:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-arm64.tgz -o ollama-linux-arm64.tgz
-sudo tar -C /usr -xzf ollama-linux-arm64.tgz
+curl -LO https://ollama.com/download/ollama-linux-arm64-cpu.tgz
+sudo rm -rf /usr/lib/ollama
+sudo tar -C /usr -xzf ollama-linux-arm64-cpu.tgz
 ```
+
+If you have a GPU, install the bundle(s) applicable to your system
+
+> [!IMPORTANT]
+> The GPU bundles contains only GPU specific libraries.  You must extract **both** `ollama-linux-arm64-cpu.tgz` and the `ollama-linux-arm64-GPULIB.tgz` bundles into the same location.
+
+### NVIDIA v13 (driver 580 or newer)
+```shell
+curl -LO https://ollama.com/download/ollama-linux-arm64-cuda-v13.tgz
+sudo tar -C /usr -xzf ollama-linux-arm64-cuda-v13.tgz
+```
+
+### NVIDIA v12 (driver 575 or older)
+```shell
+curl -LO https://ollama.com/download/ollama-linux-arm64-cuda-v12.tgz
+sudo tar -C /usr -xzf ollama-linux-arm64-cuda-v12.tgz
+```
+
+### NVIDIA JetPack 6
+```shell
+curl -LO https://ollama.com/download/ollama-linux-arm64-jetpack6.tgz
+sudo tar -C /usr -xzf ollama-linux-arm64-jetpack6.tgz
+```
+
+### NVIDIA JetPack 5
+```shell
+curl -LO https://ollama.com/download/ollama-linux-arm64-jetpack5.tgz
+sudo tar -C /usr -xzf ollama-linux-arm64-jetpack5.tgz
+```
+
 
 ### Adding Ollama as a startup service (recommended)
 
@@ -143,12 +189,7 @@ Update Ollama by running the install script again:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Or by re-downloading Ollama:
-
-```shell
-curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
-sudo tar -C /usr -xzf ollama-linux-amd64.tgz
-```
+Or by re-downloading the base CPU and any GPU bundles.  See (manual install)[#manual-install]
 
 ## Installing specific versions
 
@@ -157,7 +198,7 @@ Use `OLLAMA_VERSION` environment variable with the install script to install a s
 For example:
 
 ```shell
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.11.12 sh
 ```
 
 ## Viewing logs
