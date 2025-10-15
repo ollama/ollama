@@ -12449,7 +12449,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
-    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called!!!!!!!\n");
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s!!!!!!!\n", ctx->uuid.c_str());
 
     // Use vendor specific management libraries for best VRAM reporting if available
     switch (props2.properties.vendorID) {

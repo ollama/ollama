@@ -248,6 +248,8 @@ struct {
 
   ze_result_t (*zesInit)(int);
   ze_result_t (*zesDriverGet)(uint32_t *pCount, zes_driver_handle_t *phDrivers);
+  ze_result_t (*zesDriverGetDeviceByUuidExp)(zes_driver_handle_t hDriver, zes_uuid_t uuid,
+                                             zes_device_handle_t *hDevice, ze_bool_t *onSubdevice, uint32_t *subdeviceId);
   ze_result_t (*zesDeviceGet)(zes_driver_handle_t hDriver, uint32_t *pCount,
                               zes_device_handle_t *phDevices);
   ze_result_t (*zesDeviceGetProperties)(zes_device_handle_t hDevice,
@@ -261,8 +263,8 @@ struct {
                                    zes_mem_state_t *pState);
 
 } l0_sysman { 
-        nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr,
 };
 
 extern "C" {
@@ -286,12 +288,13 @@ int ggml_l0_sysman_init() {
     
     l0_sysman.zesInit = (ze_result_t(*)(int)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesInit");
     l0_sysman.zesDriverGet = (ze_result_t(*)(uint32_t*, zes_driver_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDriverGet");
+    l0_sysman.zesDriverGetDeviceByUuidExp = (ze_result_t(*)(zes_driver_handle_t, zes_uuid_t, zes_device_handle_t*, ze_bool_t*, uint32_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDriverGetDeviceByUuidExp"); 
     l0_sysman.zesDeviceGet = (ze_result_t(*)(zes_driver_handle_t, uint32_t*, zes_device_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceGet");
     l0_sysman.zesDeviceGetProperties = (ze_result_t(*)(zes_device_handle_t, zes_device_properties_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceGetProperties");
     l0_sysman.zesDeviceEnumMemoryModules = (ze_result_t(*)(zes_device_handle_t, uint32_t*, zes_mem_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceEnumMemoryModules");
     l0_sysman.zesMemoryGetProperties = (ze_result_t(*)(zes_mem_handle_t, zes_mem_properties_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesMemoryGetProperties");
     l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesMemoryGetState");
-    if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || 
+    if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || l0_sysman.zesDriverGetDeviceByUuidExp == nullptr || 
         l0_sysman.zesDeviceGet == nullptr|| l0_sysman.zesDeviceGetProperties == nullptr ||
         l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetProperties == nullptr ||
         l0_sysman.zesMemoryGetState == nullptr) {
@@ -305,10 +308,10 @@ int ggml_l0_sysman_init() {
 
     auto ret = l0_sysman.zesInit(0);
     if (ret != ZE_RESULT_SUCCESS) {
-      GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
-      FreeLibrary((HMODULE)(l0_sysman.handle));
-      l0_sysman.handle = nullptr;
-      return ret;
+        GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
+        FreeLibrary((HMODULE)(l0_sysman.handle));
+        l0_sysman.handle = nullptr;
+        return ret;
     }
     return ZE_RESULT_SUCCESS;
 
@@ -347,6 +350,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         GGML_LOG_INFO("%s Failed running zesDriverGet: %d\n", __func__, ret);
         FreeLibrary((HMODULE)(l0_sysman.handle));
         l0_sysman.handle = nullptr;
+        return ret;
     }
     GGML_LOG_DEBUG("Found %d L0 Sysman drivers\n", driverCount);
 
@@ -356,17 +360,104 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         GGML_LOG_INFO("%s Failed running zesDriverGet: %d\n", __func__, ret);
         FreeLibrary((HMODULE)(l0_sysman.handle));
         l0_sysman.handle = nullptr;
+        return ret;
     }
 
-    // ret = (*resp->oh.zesDriverGet)(&resp->oh.num_drivers, NULL);
-    // if (ret != ZE_RESULT_SUCCESS) {
-    //   LOG(resp->oh.verbose, "zesDriverGet err: %x\n", ret);
-    //   snprintf(buf, buflen, "unable to get driver count: %x", ret);
-    //   resp->err = strdup(buf);
-    //   oneapi_release(resp->oh);
-    //   return;
-    // }
-    // LOG(resp->oh.verbose, "oneapi driver count: %d\n", resp->oh.num_drivers);
+    // Iterate through devices per driver to find the matching device
+    for (uint32_t i=0; i<driverCount; i++) {
+        const auto& driver = allDrivers[i];
+        // Get the number of devices for this driver
+        uint32_t deviceCount = 0;
+        ret = l0_sysman.zesDeviceGet(driver, &deviceCount, nullptr);
+        if (ret != ZE_RESULT_SUCCESS) {
+            GGML_LOG_INFO("%s Failed running zesDeviceGet: %d\n", __func__, ret);
+            FreeLibrary((HMODULE)(l0_sysman.handle));
+            l0_sysman.handle = nullptr;
+            return ret;
+        }
+        if (deviceCount == 0) {
+            GGML_LOG_DEBUG("No device found for this driver\n");
+            continue;
+        }
+
+        GGML_LOG_DEBUG("Found %d devices for driver %d\n", deviceCount, i);
+
+        // Setup UUID for target device and search for it
+        zes_device_handle_t device = {};
+        ze_bool_t onSubDevice = false;
+        uint32_t subDeviceId = 0;
+        // TODO: Drop "GPU" and "-" from UUID string and copy
+        zes_uuid_t ze_uuid = {};
+        ret = l0_sysman.zesDriverGetDeviceByUuidExp(driver, ze_uuid, &device, &onSubDevice, &subDeviceId);
+        if (ret != ZE_RESULT_SUCCESS) {
+            if (ret == ZE_RESULT_ERROR_INVALID_ARGUMENT) {
+                // We get this error when we couldn't find the specified UUID device.
+                // Skip this driver and go next
+                GGML_LOG_DEBUG("%s Could not find device UUID %s for driver %d\n", __func__, uuid, i);
+                continue;
+            } else {
+                // All other errors should abort
+                GGML_LOG_INFO("%s Failed running zesDriverGetDeviceByUuidExp: %d\n", __func__, ret);
+                FreeLibrary((HMODULE)(l0_sysman.handle));
+                l0_sysman.handle = nullptr;
+                return ret;
+            }
+        }
+        GGML_LOG_DEBUG("Found matching device for UUID: %s", uuid);
+        //     zes_device_ext_properties_t ext_props = {};
+        //     ext_props.stype = ZES_STRUCTURE_TYPE_DEVICE_EXT_PROPERTIES;
+        //     ext_props.pNext = nullptr;
+
+        //     zes_device_properties_t props = {};
+        //     props.stype = ZES_STRUCTURE_TYPE_DEVICE_PROPERTIES;
+        //     props.pNext = &ext_props;
+
+        //     // Get the device properties
+        //     ret = l0_sysman.zesDeviceGetProperties(device, &props);
+        //     if (ret != ZE_RESULT_SUCCESS) {
+        //         GGML_LOG_INFO("%s Failed running zesDeviceGetProperties: %d\n", __func__, ret);
+        //         FreeLibrary((HMODULE)(l0_sysman.handle));
+        //         l0_sysman.handle = nullptr;
+        //         return ret;
+        //     }
+
+        //     GGML_LOG_DEBUG("Device: %d, model: %s, brand: %s, vendor %s\n",
+        //         j, props.modelName, props.brandName, props.vendorName);
+
+
+        // std::vector<zes_device_handle_t> allDevices(deviceCount);
+        // ret = l0_sysman.zesDeviceGet(driver, &deviceCount, allDevices.data());
+        // if (ret != ZE_RESULT_SUCCESS) {
+        //     GGML_LOG_INFO("%s Failed running zesDeviceGet: %d\n", __func__, ret);
+        //     FreeLibrary((HMODULE)(l0_sysman.handle));
+        //     l0_sysman.handle = nullptr;
+        //     return ret;
+        // }
+        // for (uint32_t j=0; j<deviceCount; j++) {
+        //     const auto& device = allDevices[i];
+
+        //     zes_device_ext_properties_t ext_props = {};
+        //     ext_props.stype = ZES_STRUCTURE_TYPE_DEVICE_EXT_PROPERTIES;
+        //     ext_props.pNext = nullptr;
+
+        //     zes_device_properties_t props = {};
+        //     props.stype = ZES_STRUCTURE_TYPE_DEVICE_PROPERTIES;
+        //     props.pNext = &ext_props;
+
+        //     // Get the device properties
+        //     ret = l0_sysman.zesDeviceGetProperties(device, &props);
+        //     if (ret != ZE_RESULT_SUCCESS) {
+        //         GGML_LOG_INFO("%s Failed running zesDeviceGetProperties: %d\n", __func__, ret);
+        //         FreeLibrary((HMODULE)(l0_sysman.handle));
+        //         l0_sysman.handle = nullptr;
+        //         return ret;
+        //     }
+
+        //     GGML_LOG_DEBUG("Device: %d, model: %s, brand: %s, vendor %s\n",
+        //         j, props.modelName, props.brandName, props.vendorName);
+
+        // }
+    }
     return 0;
 }
 
