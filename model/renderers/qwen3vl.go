@@ -48,13 +48,22 @@ func marshalWithSpaces(v any) ([]byte, error) {
 
 type Qwen3VLRenderer struct {
 	isThinking bool
+
+	useImgTags bool
 }
 
-func (r *Qwen3VLRenderer) renderContent(content api.Message, doVisionCount bool) string {
+func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
 	for range content.Images {
-		subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
+		// TODO: (jmorganca): how to render this is different for different
+		// model backends, and so we should eventually parameterize this or
+		// only output a placeholder such as [img]
+		if r.useImgTags {
+			subSb.WriteString("[img]")
+		} else {
+			subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
+		}
 	}
 	// TODO: support videos
 
@@ -88,7 +97,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		message := messages[i]
 		if multiStepTool && message.Role == "user" {
 			// Check if content starts with <tool_response> and ends with </tool_response>
-			content := r.renderContent(message, true)
+			content := r.renderContent(message)
 			if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
 				multiStepTool = false
 				lastQueryIndex = i
@@ -97,7 +106,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 	}
 
 	for i, message := range messages {
-		content := r.renderContent(message, true)
+		content := r.renderContent(message)
 
 		lastMessage := i == len(messages)-1
 		prefill := lastMessage && message.Role == "assistant"

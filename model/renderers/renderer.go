@@ -17,6 +17,11 @@ type (
 	}
 )
 
+// RenderImgTags is a global flag that tells renderers to use [img] tags
+// for images. This is set by the Ollama server package on init, or left as
+// false for other environments where renderers are used
+var RenderImgTags bool
+
 func (r *RendererRegistry) Register(name string, renderer RendererConstructor) {
 	r.renderers[name] = renderer
 }
@@ -46,10 +51,10 @@ func rendererForName(name string) Renderer {
 		renderer := &Qwen3CoderRenderer{}
 		return renderer
 	case "qwen3-vl-instruct":
-		renderer := &Qwen3VLRenderer{false}
+		renderer := &Qwen3VLRenderer{isThinking: false, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3-vl-thinking":
-		renderer := &Qwen3VLRenderer{true}
+		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
 	default:
 		return nil
