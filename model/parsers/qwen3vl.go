@@ -162,7 +162,7 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	case CollectingToolContent:
 		if strings.Contains(p.buffer.String(), toolCloseTag) {
 			split := strings.SplitN(p.buffer.String(), toolCloseTag, 2)
-			before := split[0]
+			before := split[0] // do we also need to do it to tool calls?
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
@@ -179,7 +179,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	case CollectingThinkingContent:
 		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
 			split := strings.SplitN(p.buffer.String(), thinkingCloseTag, 2)
-			before := split[0]
+			// before := split[0]
+			before := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			if len(before) == 0 {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
