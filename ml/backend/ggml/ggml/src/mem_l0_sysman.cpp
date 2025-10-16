@@ -1,3 +1,10 @@
+// oneAPI Level Zero Sysman
+//
+// https://github.com/oneapi-src/level-zero
+// https://oneapi-src.github.io/level-zero-spec/level-zero/latest/sysman/PROG.html
+//
+// Level Zero Sysman is a system resource management library which can detect GPU memory usage for Intel GPU.
+
 #include "ggml-impl.h"
 #include <filesystem>
 #include <mutex>
@@ -16,13 +23,6 @@
 #define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #endif
-
-// oneAPI Level Zero Sysman
-//
-// https://github.com/oneapi-src/level-zero
-// https://oneapi-src.github.io/level-zero-spec/level-zero/latest/sysman/PROG.html
-//
-// Level Zero Sysman is a system resource management library which can detect GPU memory usage for Intel GPU.
 
 namespace fs = std::filesystem;
 
