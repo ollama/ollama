@@ -401,7 +401,7 @@ func TestQwen3VLParserState(t *testing.T) {
 // can you add some that are more like TestQwen3VLThinkingParserStreaming
 // but for with/without prefill in the last message?
 
-func TestQwen3VLThinkingParserWithPrefill(t *testing.T) {
+func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
 	type step struct {
 		input      string
 		wantEvents []qwenEvent
@@ -438,9 +438,72 @@ func TestQwen3VLThinkingParserWithPrefill(t *testing.T) {
 			steps: []step{
 				{input: "        </think> starting content", wantEvents: []qwenEvent{qwenEventContent{content: "starting content"}}},
 			},
-		},
+		}, // this one also, how do we deal with extra spaces in a thinking context
 	}
 	last := &api.Message{Role: "assistant", Thinking: "i am thinking"} // so if there is thinking the test is still thinking
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			parser := Qwen3VLParser{hasThinkingSupport: true}
+			parser.Init([]api.Tool{}, last)
+
+			for i, step := range tc.steps {
+				parser.buffer.WriteString(step.input)
+				gotEvents := parser.parseEvents()
+
+				if len(gotEvents) == 0 && len(step.wantEvents) == 0 {
+					// avoid deep equal on empty vs. nil slices
+					continue
+				}
+
+				if !reflect.DeepEqual(gotEvents, step.wantEvents) {
+					t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
+				}
+			}
+		})
+	}
+}
+
+func TestQwen3VLThinkingParserWithNonThinkingPrefill(t *testing.T) {
+	type step struct {
+		input      string
+		wantEvents []qwenEvent
+	}
+
+	cases := []struct {
+		desc  string
+		steps []step
+		only  bool
+	}{
+		{
+			desc: "thinking prefill",
+			steps: []step{
+				{input: "abc</think>", wantEvents: []qwenEvent{qwenEventContent{content: "abc"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with content",
+			steps: []step{
+				{input: "abc</th", wantEvents: []qwenEvent{qwenEventContent{content: "abc"}}},
+				{input: "ink> def", wantEvents: []qwenEvent{qwenEventContent{content: "def"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with fakeout",
+			steps: []step{
+				{input: "abc</think", wantEvents: []qwenEvent{qwenEventContent{content: "abc"}}},
+				{input: " fakeout </think", wantEvents: []qwenEvent{qwenEventContent{content: "</think fakeout"}}},
+				{input: ">", wantEvents: []qwenEvent{}},
+			},
+		}, // hm... why does this one not work?
+		{
+			desc: "thinking prefill with spaces",
+			steps: []step{
+				{input: "        </think> starting content", wantEvents: []qwenEvent{qwenEventContent{content: "starting content"}}},
+			},
+		}, // this one also, how do we deal with extra spaces in a thinking context
+	}
+	last := &api.Message{Role: "assistant", Thinking: "i am thinking", Content: "i am content"} // so if there is thinking the test is still thinking
 
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
