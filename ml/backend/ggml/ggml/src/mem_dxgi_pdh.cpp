@@ -30,11 +30,7 @@ static PDH_HQUERY ggml_dxgi_pdh_query = nullptr;
 static PDH_HCOUNTER ggml_dxgi_pdh_counter = nullptr;
 
 // TODO tasks
-// 1. Enumerate all GPUs (iGPU and dGPU)
-// 2. Detect whether IGPU or DGPU using DXCore
-// 3. Implement a function to retrieve the memory usage information for a specific GPU
-// 4, fetch the corresponding memory info (dedicated memory, shared memory)
-// 5. replace all -1 with proper error codes
+// 1. replace all -1 with proper error codes
 
 struct GpuInfo {
     std::wstring name; // debug field
@@ -171,7 +167,6 @@ bool GetGpuMemoryUsage(GpuInfo gpu) {
 }
 
 
-
 extern "C" {
 
     int ggml_dxgi_pdh_init() {
@@ -184,6 +179,10 @@ extern "C" {
         }
         */
 
+        GGML_LOG_DEBUG("%s called\n", __func__);
+        std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
+        
+
         return -1; // change when implemented
     }
 
@@ -192,6 +191,7 @@ extern "C" {
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
 
         // Enumerate GPUs using DXGI and find the matching LUID
+        // This also fetches the total memory info for each of the enumerated GPUs
         std::vector<GpuInfo> gpus = GetDxgiGpuInfos();
         GpuInfo *targetGpu = nullptr;
         for (auto& gpu : gpus) {
@@ -205,7 +205,7 @@ extern "C" {
             return -1;
         }
 
-        // Get the memory usage and total memory for the target GPU
+        // Get the current memory usage for the target GPU
         int status = GetGpuMemoryUsage(*targetGpu);
         if (!status) {
             GGML_LOG_ERROR("Failed to get GPU memory usage.\n");
