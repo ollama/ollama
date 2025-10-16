@@ -349,9 +349,6 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		}
 	}
 
-	// Apply any iGPU workarounds
-	iGPUWorkarounds(devices)
-
 	return devices
 }
 
@@ -598,35 +595,6 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceIn
 				continue
 			}
 			return moreDevices, nil
-		}
-	}
-}
-
-func iGPUWorkarounds(devices []ml.DeviceInfo) {
-	// short circuit if we have no iGPUs
-	anyiGPU := false
-	for i := range devices {
-		if devices[i].Integrated {
-			anyiGPU = true
-			break
-		}
-	}
-	if !anyiGPU {
-		return
-	}
-
-	memInfo, err := GetCPUMem()
-	if err != nil {
-		slog.Debug("failed to fetch system memory information for iGPU", "error", err)
-		return
-	}
-	for i := range devices {
-		if !devices[i].Integrated {
-			continue
-		}
-		// NVIDIA iGPUs return useless free VRAM data which ignores system buff/cache
-		if devices[i].Library == "CUDA" {
-			devices[i].FreeMemory = memInfo.FreeMemory
 		}
 	}
 }
