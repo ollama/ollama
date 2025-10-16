@@ -7,6 +7,7 @@
 #include <pdh.h>
 #include <dxgi.h>
 #include <dxgi1_2.h>
+#include <sstream>
 #include <filesystem>
 #include <mutex>
 
@@ -36,13 +37,50 @@ static PDH_HCOUNTER ggml_dxgi_pdh_counter = nullptr;
 // 5. replace all -1 with proper error codes
 
 struct GpuInfo {
+    std::wstring name; // debug field
     LUID luid;
     std::wstring pdhInstance;
+    double dedicatedTotal = 0.0;
+    double sharedTotal = 0.0;
     double dedicatedUsage = 0.0;
     double sharedUsage = 0.0;
     double totalCommitted = 0.0;
     double localUsage = 0.0;
 };
+
+/*
+Maybe not needed
+*/
+std::wstring GeneratePdhInstanceNameFromLuid(const LUID& luid) {
+    std::wstringstream ss;
+    ss << L"luid_0x" << std::hex << std::setw(8) << std::setfill(L'0') << std::uppercase << luid.HighPart
+        << L"_0x" << std::setw(8) << std::setfill(L'0') << luid.LowPart;
+    return ss.str();
+}
+
+/*
+Conversion from Bytes to GigaBytes
+*/
+template <typename T>
+static inline double BtoGB(T n)
+{
+    return (double(n) / (1024.0 * 1024 * 1024));
+}
+
+/*
+Fetch the GPU adapter 'dedicated memory' and 'shared memory' using DXGI
+*/
+void FetchDxgiAdapterDesc1(const DXGI_ADAPTER_DESC1& desc, GpuInfo* info) {
+    auto dedicatedVideoMemory = desc.DedicatedVideoMemory;
+    auto sharedSystemMemory = desc.SharedSystemMemory;
+    GGML_LOG_DEBUG("Dedicated Video Memory: %.2f GB\n", BtoGB(dedicatedVideoMemory));
+    GGML_LOG_DEBUG("Shared System Memory: %.2f GB\n", BtoGB(sharedSystemMemory));
+
+    if (info) {
+        info->dedicatedTotal = BtoGB(dedicatedVideoMemory); // check if needs to be bytes or GB
+        info->sharedTotal = BtoGB(sharedSystemMemory);
+    }
+}
 
 /*
 Enumerate over the GPU adapters detected using DXGI and return their information
@@ -57,15 +95,13 @@ std::vector<GpuInfo> GetDxgiGpuInfos() {
         while (pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
             DXGI_ADAPTER_DESC1 desc;
             pAdapter->GetDesc1(&desc);
-
-            PrintDxgiAdapterDesc1(desc);
-            
-            std::wstring name(desc.Description);
             
             // Get all the GPU adapter info
             GpuInfo info;
+            FetchDxgiAdapterDesc1(desc, &info);
+            info.name = std::wstring(desc.Description);
             info.luid = desc.AdapterLuid;
-            info.pdhInstance = GeneratePdhInstanceNameFromLuid(desc.AdapterLuid);
+            info.pdhInstance = GeneratePdhInstanceNameFromLuid(desc.AdapterLuid); // maybe not needed
             infos.push_back(info);
 
             pAdapter->Release();
@@ -89,26 +125,23 @@ bool GetGpuMemoryUsage(GpuInfo gpu) {
         PDH_HCOUNTER local;
     };
 
-    std::vector<GpuCounters> counters;
+    GpuCounters gpuCounter;
 
-    for (auto& info : gpus) {
-        std::wstring dedicatedPath = L"\\GPU Adapter Memory(" + info.pdhInstance + L"*)\\Dedicated Usage";
-        std::wstring sharedPath = L"\\GPU Adapter Memory(" + info.pdhInstance + L"*)\\Shared Usage";
-        std::wstring totalCommittedPath = L"\\GPU Adapter Memory(" + info.pdhInstance + L"*)\\Total Committed";
-        std::wstring localUsagePath = L"\\GPU Local Adapter Memory(" + info.pdhInstance + L"*)\\Local Usage";
+    std::wstring dedicatedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Dedicated Usage";
+    std::wstring sharedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Shared Usage";
+    std::wstring totalCommittedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Total Committed";
+    std::wstring localUsagePath = L"\\GPU Local Adapter Memory(" + gpu.pdhInstance + L"*)\\Local Usage";
 
-        GpuCounters gpuCounter{};
-        if (PdhAddCounter(query, dedicatedPath.c_str(), 0, &gpuCounter.dedicated) != ERROR_SUCCESS ||
-            PdhAddCounter(query, sharedPath.c_str(), 0, &gpuCounter.shared) != ERROR_SUCCESS ||
-            PdhAddCounter(query, totalCommittedPath.c_str(), 0, &gpuCounter.committed) != ERROR_SUCCESS ||
-            PdhAddCounter(query, localUsagePath.c_str(), 0, &gpuCounter.local) != ERROR_SUCCESS) {
-            continue;
-        }
-
-        counters.push_back(gpuCounter);
+    if (PdhAddCounter(query, dedicatedPath.c_str(), 0, &gpuCounter.dedicated) != ERROR_SUCCESS ||
+        PdhAddCounter(query, sharedPath.c_str(), 0, &gpuCounter.shared) != ERROR_SUCCESS ||
+        PdhAddCounter(query, totalCommittedPath.c_str(), 0, &gpuCounter.committed) != ERROR_SUCCESS ||
+        PdhAddCounter(query, localUsagePath.c_str(), 0, &gpuCounter.local) != ERROR_SUCCESS) {
+            GGML_LOG_ERROR("Failed to add PDH counters for GPU %s\n", std::string(gpu.pdhInstance.begin(), gpu.pdhInstance.end()).c_str());
+            PdhCloseQuery(query);
+            return false;
     }
 
-    // Collect data multiple times
+    // Sample data multiple times
     constexpr int sampleCount = 3;
     for (int i = 0; i < sampleCount; ++i) {
         if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
@@ -119,21 +152,19 @@ bool GetGpuMemoryUsage(GpuInfo gpu) {
     }
 
     // Read final values
-    for (size_t i = 0; i < gpus.size(); ++i) {
-        PDH_FMT_COUNTERVALUE val;
+    PDH_FMT_COUNTERVALUE val;
 
-        if (PdhGetFormattedCounterValue(counters[i].dedicated, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
-            gpus[i].dedicatedUsage = val.doubleValue;
+    if (PdhGetFormattedCounterValue(gpuCounter.dedicated, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+        gpu.dedicatedUsage = val.doubleValue;
 
-        if (PdhGetFormattedCounterValue(counters[i].shared, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
-            gpus[i].sharedUsage = val.doubleValue;
+    if (PdhGetFormattedCounterValue(gpuCounter.shared, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+        gpu.sharedUsage = val.doubleValue;
 
-        if (PdhGetFormattedCounterValue(counters[i].committed, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
-            gpus[i].totalCommitted = val.doubleValue;
+    if (PdhGetFormattedCounterValue(gpuCounter.committed, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+        gpu.totalCommitted = val.doubleValue;
 
-        if (PdhGetFormattedCounterValue(counters[i].local, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
-            gpus[i].localUsage = val.doubleValue;
-    }
+    if (PdhGetFormattedCounterValue(gpuCounter.local, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+        gpu.localUsage = val.doubleValue;
 
     PdhCloseQuery(query);
     return true;
@@ -183,16 +214,17 @@ extern "C" {
 
         // Calculate the free memory based on whether it's an integrated or discrete GPU
         if (is_integrated_gpu) {
-            // IGPU
+            // IGPU free = SharedTotal - SharedUsage
+            *free = targetGpu->sharedTotal - targetGpu->sharedUsage;
+            *total = targetGpu->sharedTotal;
         }
         else {
-            // DGPU
+            // DGPU free = DedicatedTotal - DedicatedUsage
+            *free = targetGpu->dedicatedTotal - targetGpu->dedicatedUsage;
+            *total = targetGpu->dedicatedTotal;
         }
 
-
-
-
-        return -1; // change when implemented
+        return 0; // change when implemented
     }
 
     void ggml_dxgi_pdh_release() {
