@@ -33,8 +33,9 @@ type AdapterParameters struct {
 	} `json:"lora_parameters"`
 }
 
-func (ModelParameters) KV(t *Tokenizer) ggml.KV {
+func (ModelParameters) KV(arch string, t *Tokenizer) ggml.KV {
 	kv := ggml.KV{
+		"general.architecture":         arch,
 		"general.file_type":            uint32(1),
 		"general.quantization_version": uint32(2),
 		"tokenizer.ggml.pre":           t.Pre,
@@ -63,7 +64,7 @@ func (ModelParameters) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p AdapterParameters) KV() ggml.KV {
+func (p AdapterParameters) KV(base ggml.KV) ggml.KV {
 	var alpha float32
 	if p.LoraParameters.Alpha == 0 {
 		alpha = float32(p.Alpha)
@@ -72,11 +73,12 @@ func (p AdapterParameters) KV() ggml.KV {
 	}
 
 	kv := ggml.KV{
-		"adapter.lora.alpha": alpha,
-		"adapter.type":       "lora",
-		"general.file_type":  uint32(1),
-		"general.type":       "adapter",
-		"general.version":    "v0.2",
+		"general.architecture": base["general.architecture"],
+		"adapter.lora.alpha":   alpha,
+		"adapter.type":         "lora",
+		"general.file_type":    uint32(1),
+		"general.type":         "adapter",
+		"general.version":      "v0.2",
 	}
 
 	return kv

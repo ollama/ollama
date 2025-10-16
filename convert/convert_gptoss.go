@@ -38,8 +38,7 @@ type gptossModel struct {
 var _ ModelConverter = (*gptossModel)(nil)
 
 func (m *gptossModel) KV(t *Tokenizer) ggml.KV {
-	kv := m.ModelParameters.KV(t)
-	kv["general.architecture"] = "gptoss"
+	kv := m.ModelParameters.KV("gptoss", t)
 	kv["general.file_type"] = uint32(4)
 	kv["context_length"] = cmp.Or(m.MaxPositionEmbeddings, uint32(m.RopeScalingFactor*float32(m.InitialContextLength)))
 	kv["block_count"] = m.HiddenLayers

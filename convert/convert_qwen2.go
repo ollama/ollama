@@ -23,8 +23,7 @@ type qwen2Model struct {
 var _ ModelConverter = (*qwen2Model)(nil)
 
 func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
-	kv := q.ModelParameters.KV(t)
-	kv["general.architecture"] = "qwen2"
+	kv := q.ModelParameters.KV("qwen2", t)
 	kv["block_count"] = q.HiddenLayers
 	kv["context_length"] = q.MaxPositionEmbeddings
 	kv["embedding_length"] = q.HiddenSize

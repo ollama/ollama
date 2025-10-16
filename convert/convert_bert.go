@@ -89,8 +89,7 @@ func (p *bertModel) parseMore(fsys fs.FS) error {
 }
 
 func (p *bertModel) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "bert"
+	kv := p.ModelParameters.KV("bert", t)
 	kv["attention.causal"] = false
 	kv["pooling_type"] = p.PoolingType
 	kv["normalize_embeddings"] = p.normalizeEmbeddings

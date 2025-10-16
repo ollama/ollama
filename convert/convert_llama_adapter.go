@@ -18,14 +18,12 @@ type llamaAdapter struct {
 
 var _ AdapterConverter = (*llamaAdapter)(nil)
 
-func (p *llamaAdapter) KV(baseKV ggml.KV) ggml.KV {
-	kv := p.AdapterParameters.KV()
-	kv["general.architecture"] = "llama"
-	kv["attention.head_count"] = baseKV["llama.attention.head_count"]
-	kv["attention.head_count_kv"] = baseKV["llama.attention.head_count_kv"]
-
-	p.NumAttentionHeads = baseKV["llama.attention.head_count"].(uint32)
-
+func (p *llamaAdapter) KV(base ggml.KV) ggml.KV {
+	kv := p.AdapterParameters.KV(base)
+	p.NumAttentionHeads = base.Uint("attention.head_count")
+	p.NumKeyValueHeads = base.Uint("attention.head_count_kv")
+	kv["attention.head_count"] = p.NumAttentionHeads
+	kv["attention.head_count_kv"] = p.NumKeyValueHeads
 	return kv
 }
 

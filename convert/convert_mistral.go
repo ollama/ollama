@@ -47,8 +47,7 @@ type mistral3Model struct {
 }
 
 func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "mistral3"
+	kv := p.ModelParameters.KV("mistral3", t)
 	kv["vocab_size"] = p.TextModel.VocabSize
 
 	// Text configuration

@@ -45,9 +45,7 @@ const (
 )
 
 func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "gemma3"
-
+	kv := p.ModelParameters.KV("gemma3", t)
 	numBlocks := cmp.Or(p.HiddenLayers, p.TextModel.HiddenLayers)
 	kv["block_count"] = numBlocks
 

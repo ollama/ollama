@@ -35,7 +35,7 @@ type mllamaModel struct {
 }
 
 func (m *mllamaModel) KV(t *Tokenizer) ggml.KV {
-	kv :=  m.TextModel.KV(t)
+	kv := m.TextModel.KV(t)
 
 	kv["general.architecture"] = "mllama"
 

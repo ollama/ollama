@@ -25,8 +25,7 @@ type commandrModel struct {
 var _ ModelConverter = (*commandrModel)(nil)
 
 func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "command-r"
+	kv := p.ModelParameters.KV("command-r", t)
 	kv["general.name"] = "command-r"
 	kv["context_length"] = cmp.Or(p.MaxLength, p.MaxPositionEmbeddings, p.NCtx)
 	kv["embedding_length"] = p.HiddenSize

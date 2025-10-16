@@ -24,8 +24,7 @@ type gemmaModel struct {
 var _ ModelConverter = (*gemmaModel)(nil)
 
 func (p *gemmaModel) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "gemma"
+	kv := p.ModelParameters.KV("gemma", t)
 	kv["context_length"] = p.MaxPositionEmbeddings
 	kv["embedding_length"] = p.HiddenSize
 	kv["block_count"] = p.HiddenLayers

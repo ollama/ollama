@@ -49,8 +49,7 @@ type llamaModel struct {
 var _ ModelConverter = (*llamaModel)(nil)
 
 func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "llama"
+	kv := p.ModelParameters.KV("llama", t)
 	kv["vocab_size"] = p.VocabSize
 
 	kv["block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)

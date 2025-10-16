@@ -38,8 +38,7 @@ type phi3Model struct {
 var _ ModelConverter = (*phi3Model)(nil)
 
 func (p *phi3Model) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "phi3"
+	kv := p.ModelParameters.KV("phi3", t)
 	kv["context_length"] = p.MaxPositionEmbeddings
 	kv["embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
 	kv["feed_forward_length"] = p.IntermediateSize

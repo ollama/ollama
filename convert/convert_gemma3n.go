@@ -39,8 +39,7 @@ type gemma3nModel struct {
 }
 
 func (m *gemma3nModel) KV(t *Tokenizer) ggml.KV {
-	kv := m.ModelParameters.KV(t)
-	kv["general.architecture"] = "gemma3n"
+	kv := m.ModelParameters.KV("gemma3n", t)
 	kv["activation_sparsity_scale"] = slices.Collect(func(yield func(float32) bool) {
 		norm := distuv.Normal{Mu: 0, Sigma: 1}
 		for _, v := range m.TextModel.ActivationSparsityPattern {
