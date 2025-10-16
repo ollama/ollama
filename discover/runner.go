@@ -188,6 +188,9 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 					// Replace the numeric ID with the post-filtered IDs
 					devices[i].FilteredID = devices[i].ID
 					devices[i].ID = strconv.Itoa(rocmID)
+				} else {
+					// The runner may have been pre-filtered, so it's FilteredIDs may be incorrect
+					devices[i].FilteredID = ""
 				}
 				rocmID++
 			}
