@@ -463,8 +463,8 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             return ret;
         }
         GGML_LOG_DEBUG("Found %d memory modules for device %s\n", memModuleCount, uuid);
-        size_t totalMemory = 0;
         size_t freeMemory = 0;
+        size_t totalMemory = 0;
         for (uint32_t j = 0; j < memModuleCount; ++j) {
             auto memory = memHandles[j];
 
@@ -480,17 +480,17 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
 
             // Sum the values from all memory modules on a single device.
             // At the moment we haven't seen a device with multiple memory modules so this logic hasn't been tested
-            totalMemory += memState.size;
             freeMemory += memState.free;
+            totalMemory += memState.size;
         }
 
-        if (totalMemory || freeMemory) {
+        if (freeMemory || totalMemory) {
             // We were able to get values from the memory modules.
             // Write to output and exit
-            GGML_LOG_DEBUG("Got memory info from device %s: total: %lu free: %lu\n",
-                uuid, totalMemory, freeMemory);
-            *total = totalMemory;
+            GGML_LOG_DEBUG("Got memory info from device %s: free: %zu total: %zu \n",
+                uuid, freeMemory, totalMemory);
             *free = freeMemory;
+            *total = totalMemory;
             return ZE_RESULT_SUCCESS;
         }
         // If we didn't get any values keep iterating
