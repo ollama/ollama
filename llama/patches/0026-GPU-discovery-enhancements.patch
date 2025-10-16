@@ -22,7 +22,7 @@ diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index ba181d09..09ff75f9 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
-@@ -169,6 +169,15 @@ extern "C" {
+@@ -169,6 +169,17 @@ extern "C" {
          const char * device_id;
          // device capabilities
          struct ggml_backend_dev_caps caps;

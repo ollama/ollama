@@ -175,7 +175,7 @@ index adea7783..fb7204ce 100644
      ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
      props->caps = {
          /* .async                 = */ false,
-@@ -12564,6 +12633,16 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+@@ -12564,6 +12633,17 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
          /* .buffer_from_host_ptr  = */ false,
          /* .events                = */ false,
      };
