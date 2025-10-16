@@ -726,6 +726,9 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		}
 		info.PCIID = fmt.Sprintf("%02x:%02x.%x", props.pci_bus_id, props.pci_device_id, props.pci_domain_id)
 		info.LibraryPath = ggml.LibPaths()
+		if props.numeric_id != nil {
+			info.FilteredID = C.GoString(props.numeric_id)
+		}
 
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
 		info.TotalMemory = (uint64)(props.memory_total)
