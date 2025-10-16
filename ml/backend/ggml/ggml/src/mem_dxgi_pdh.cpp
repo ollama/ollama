@@ -1,8 +1,7 @@
 // DXGI and PDH Performance Counters Library
-// This Windows-only library provides accurate VRAM reporting for Intel GPUs
+// This Windows-only (10/11) library provides accurate VRAM reporting for Intel GPUs
 
 #include <initguid.h> // Required for GUID definitions
-#include <dxcore.h>
 #include "ggml-impl.h"
 #include <windows.h>
 #include <pdh.h>
@@ -34,21 +33,54 @@ static PDH_HCOUNTER ggml_dxgi_pdh_counter = nullptr;
 // 2. Detect whether IGPU or DGPU using DXCore
 // 3. Implement a function to retrieve the memory usage information for a specific GPU
 // 4, fetch the corresponding memory info (dedicated memory, shared memory)
+// 5. replace all -1 with proper error codes
 
 struct GpuInfo {
-    std::wstring name;
     LUID luid;
     std::wstring pdhInstance;
-    bool isIntegrated = false;
     double dedicatedUsage = 0.0;
     double sharedUsage = 0.0;
     double totalCommitted = 0.0;
     double localUsage = 0.0;
 };
 
-bool GetGpuMemoryUsage(std::vector<GpuInfo>& gpus) {
+/*
+Enumerate over the GPU adapters detected using DXGI and return their information
+*/
+std::vector<GpuInfo> GetDxgiGpuInfos() {
+    std::vector<GpuInfo> infos;
+    IDXGIFactory1* pFactory = nullptr;
+
+    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory))) {
+        UINT i = 0;
+        IDXGIAdapter1* pAdapter = nullptr;
+        while (pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
+            DXGI_ADAPTER_DESC1 desc;
+            pAdapter->GetDesc1(&desc);
+
+            PrintDxgiAdapterDesc1(desc);
+            
+            std::wstring name(desc.Description);
+            
+            // Get all the GPU adapter info
+            GpuInfo info;
+            info.luid = desc.AdapterLuid;
+            info.pdhInstance = GeneratePdhInstanceNameFromLuid(desc.AdapterLuid);
+            infos.push_back(info);
+
+            pAdapter->Release();
+            ++i;
+        }
+        pFactory->Release();
+    }
+    return infos;
+}
+
+bool GetGpuMemoryUsage(GpuInfo gpu) {
     PDH_HQUERY query;
-    if (PdhOpenQuery(NULL, 0, &query) != ERROR_SUCCESS) return false;
+    if (PdhOpenQuery(NULL, 0, &query) != ERROR_SUCCESS) {
+        return false;
+    }
 
     struct GpuCounters {
         PDH_HCOUNTER dedicated;
@@ -107,6 +139,8 @@ bool GetGpuMemoryUsage(std::vector<GpuInfo>& gpus) {
     return true;
 }
 
+
+
 extern "C" {
 
     int ggml_dxgi_pdh_init() {
@@ -122,14 +156,38 @@ extern "C" {
         return -1; // change when implemented
     }
 
-    int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total) {
+    int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu) {
 
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
 
-        // DXCore - Enumerate GPU adapters and get their LUIDs. Find which GPU is integrated vs discrete
-        
+        // Enumerate GPUs using DXGI and find the matching LUID
+        std::vector<GpuInfo> gpus = GetDxgiGpuInfos();
+        GpuInfo *targetGpu = nullptr;
+        for (auto& gpu : gpus) {
+            if (memcmp(&gpu.luid, luid, sizeof(LUID)) == 0) {
+                targetGpu = &gpu;
+                break;
+            }
+        }
+        if (!targetGpu) {
+            GGML_LOG_ERROR("GPU with specified LUID not found.\n");
+            return -1;
+        }
 
+        // Get the memory usage and total memory for the target GPU
+        int status = GetGpuMemoryUsage(*targetGpu);
+        if (!status) {
+            GGML_LOG_ERROR("Failed to get GPU memory usage.\n");
+            return -1;
+        }
 
+        // Calculate the free memory based on whether it's an integrated or discrete GPU
+        if (is_integrated_gpu) {
+            // IGPU
+        }
+        else {
+            // DGPU
+        }
 
 
 

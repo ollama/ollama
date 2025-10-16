@@ -12512,7 +12512,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
             GGML_LOG_DEBUG("Got Intel GPU. Initializing DXGI + PDH...\n");
             if (ggml_dxgi_pdh_init() == 0) {
                 GGML_LOG_DEBUG("DXGI + PDH Initialized. Getting GPU free memory info\n");
-                int status = ggml_dxgi_pdh_get_device_memory(ctx->luid.c_str(), free, total);
+                int status = ggml_dxgi_pdh_get_device_memory(ctx->luid.c_str(), free, total, ctx->is_integrated_gpu);
                 if (status == 0) {
                     GGML_LOG_DEBUG("%s utilizing DXGI + PDH memory reporting free: %zu total: %zu\n", __func__, *free, *total);
                     ggml_dxgi_pdh_release();
