@@ -9,15 +9,20 @@ Check your compute compatibility to see if your card is supported:
 | ------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 12.0               | GeForce RTX 50xx    | `RTX 5060` `RTX 5060 Ti` `RTX 5070` `RTX 5070 Ti` `RTX 5080` `RTX 5090`                                     |
 |                    | NVIDIA Professioal  | `RTX PRO 4000 Blackwell` `RTX PRO 4500 Blackwell` `RTX PRO 5000 Blackwell` `RTX PRO 6000 Blackwell`         |
-| 9.0                | NVIDIA              | `H200` `H100`                                                                                               |
+| 11.0               | Jetson              | `T4000` `T5000` (Requires driver 580 or newer)                                                              |
+| 10.3               | NVIDIA Professioal  | `B300` `GB300` (Requires driver 580 or newer)                                                               |
+| 10.0               | NVIDIA Professioal  | `B200` `GB200` (Requires driver 580 or newer)                                                               |
+| 9.0                | NVIDIA              | `H200` `H100` `GH200`                                                                                       |
 | 8.9                | GeForce RTX 40xx    | `RTX 4090` `RTX 4080 SUPER` `RTX 4080` `RTX 4070 Ti SUPER` `RTX 4070 Ti` `RTX 4070 SUPER` `RTX 4070` `RTX 4060 Ti` `RTX 4060`  |
 |                    | NVIDIA Professional | `L4` `L40` `RTX 6000`                                                                                       |
+| 8.7                | Jetson              | `Orin Nano` `Orin NX` `AGX Orin`                                                                            |
 | 8.6                | GeForce RTX 30xx    | `RTX 3090 Ti` `RTX 3090` `RTX 3080 Ti` `RTX 3080` `RTX 3070 Ti` `RTX 3070` `RTX 3060 Ti` `RTX 3060` `RTX 3050 Ti` `RTX 3050`   |
 |                    | NVIDIA Professional | `A40` `RTX A6000` `RTX A5000` `RTX A4000` `RTX A3000` `RTX A2000` `A10` `A16` `A2`                          |
 | 8.0                | NVIDIA              | `A100` `A30`                                                                                                |
 | 7.5                | GeForce GTX/RTX     | `GTX 1650 Ti` `TITAN RTX` `RTX 2080 Ti` `RTX 2080` `RTX 2070` `RTX 2060`                                    |
 |                    | NVIDIA Professional | `T4` `RTX 5000` `RTX 4000` `RTX 3000` `T2000` `T1200` `T1000` `T600` `T500`                                 |
 |                    | Quadro              | `RTX 8000` `RTX 6000` `RTX 5000` `RTX 4000`                                                                 |
+| 7.2                | Jetson              | `Xavier NX` `AGX Xavier` (Jetpack 5)                                                                        |
 | 7.0                | NVIDIA              | `TITAN V` `V100` `Quadro GV100`                                                                             |
 | 6.1                | NVIDIA TITAN        | `TITAN Xp` `TITAN X`                                                                                        |
 |                    | GeForce GTX         | `GTX 1080 Ti` `GTX 1080` `GTX 1070 Ti` `GTX 1070` `GTX 1060` `GTX 1050 Ti` `GTX 1050`                       |
