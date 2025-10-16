@@ -455,6 +455,7 @@ func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
 		})
 	}
 }
+
 func TestQwen3VLThinkingParserWithNonThinkingPrefill(t *testing.T) {
 	type step struct {
 		input      string
