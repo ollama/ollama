@@ -345,11 +345,6 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 	}
 }
 
-// so a couple of tests i want to write:
-// - with last message = assistant, only did thinking
-// - with last message = assistant, only did content
-// - with last message != assistant
-
 func TestQwen3VLParserState(t *testing.T) {
 	cases := []struct {
 		desc        string
@@ -397,9 +392,6 @@ func TestQwen3VLParserState(t *testing.T) {
 		}
 	}
 }
-
-// can you add some that are more like TestQwen3VLThinkingParserStreaming
-// but for with/without prefill in the last message?
 
 func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
 	type step struct {
@@ -463,8 +455,6 @@ func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
 		})
 	}
 }
-
-// so everything that should come out of here should be content
 func TestQwen3VLThinkingParserWithNonThinkingPrefill(t *testing.T) {
 	type step struct {
 		input      string
@@ -540,9 +530,7 @@ func TestQwen3VLThinkingParserStreamingAssistantPrefillContent(t *testing.T) {
 	}
 
 	steps := []step{
-		// Thinking close tag should be treated as plain text in content mode
 		{input: "abc</think>", wantEvents: []qwenEvent{qwenEventContent{content: "abc</think>"}}},
-		// Tool call should still be parsed from content mode
 		{input: "<tool_call>{\"name\": \"x\", \"arguments\": {}}</tool_call>", wantEvents: []qwenEvent{qwenEventRawToolCall{raw: "{\"name\": \"x\", \"arguments\": {}}"}}},
 	}
 
