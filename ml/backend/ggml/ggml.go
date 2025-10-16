@@ -724,7 +724,11 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		if props.library != nil {
 			info.Library = C.GoString(props.library)
 		}
-		info.PCIID = fmt.Sprintf("%02x:%02x.%x", props.pci_bus_id, props.pci_device_id, props.pci_domain_id)
+		if props.device_id != nil {
+			info.PCIID = C.GoString(props.device_id)
+		} else {
+			info.PCIID = fmt.Sprintf("%04x:%02x:%02x.%x", props.pci_domain_id, props.pci_bus_id, props.pci_device_id, 0)
+		}
 		info.LibraryPath = ggml.LibPaths()
 
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
