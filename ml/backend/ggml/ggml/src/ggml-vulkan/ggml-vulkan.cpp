@@ -73,6 +73,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
 #define VK_KHR_SHADER_BFLOAT16_EXTENSION_NAME                        "VK_KHR_shader_bfloat16"
 #define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR ((VkStructureType)1000141000)
 #define VK_COMPONENT_TYPE_BFLOAT16_KHR                               ((VkComponentTypeKHR)1000141000)
+#define VK_LUID_SIZE_KHR                  VK_LUID_SIZE
 
 typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
     VkStructureType                       sType;
@@ -11608,6 +11609,22 @@ static std::string ggml_vk_get_device_id(int device) {
     return std::string(id);
 }
 
+static std::string ggml_vk_get_device_luid(int device) {
+    // DXCore and DXGI libraries can query LUIDs on Windows
+    ggml_vk_instance_init();
+
+    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
+
+    vk::PhysicalDeviceProperties2 props;
+    vk::PhysicalDeviceIDProperties deviceIDProps;
+    props.pNext = &deviceIDProps;
+    devices[device].getProperties2(&props);
+
+    const auto& luid = deviceIDProps.deviceLUID;
+
+    return std::string((const char *)luid.data(), VK_LUID_SIZE_KHR);
+}
+
 // backend interface
 
 #define UNUSED GGML_UNUSED
@@ -12420,6 +12437,12 @@ std::string ggml_backend_vk_get_device_id(int device) {
     return ggml_vk_get_device_id(dev_idx);
 }
 
+std::string ggml_backend_vk_get_device_luid(int device) {
+    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
+    int dev_idx = vk_instance.device_indices[device];
+    return ggml_vk_get_device_luid(dev_idx);
+}
+
 //////////////////////////
 
 struct ggml_backend_vk_device_context {
@@ -12431,6 +12454,7 @@ struct ggml_backend_vk_device_context {
     std::string pci_id;
     std::string id;
     std::string uuid;
+    std::string luid;
     int major;
     int minor;
     int driver_major;
@@ -13081,6 +13105,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
                 ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->id = ggml_backend_vk_get_device_id(i);
+                ctx->luid = ggml_backend_vk_get_device_luid(i);
                 devices.push_back(new ggml_backend_device {
                     /* .iface   = */ ggml_backend_vk_device_i,
                     /* .reg     = */ reg,
