@@ -1,0 +1,49 @@
+#version 450
+
+#include "types.glsl"
+
+layout (push_constant) uniform parameter
+{
+    uint ne;
+    uint ne00; uint ne01; uint ne02; uint ne03; uint nb00; uint nb01; uint nb02; uint nb03;
+    uint ne10; uint ne11; uint ne12; uint ne13; uint nb10; uint nb11; uint nb12; uint nb13;
+    uint misalign_offsets;
+
+    uint lp0; uint rp0;
+    uint lp1; uint rp1;
+    uint lp2; uint rp2;
+    uint lp3; uint rp3;
+} p;
+
+uint get_aoffset() { return p.misalign_offsets >> 16; }
+uint get_doffset() { return p.misalign_offsets & 0xFFFF; }
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+    const uint i3 = idx / (p.ne12*p.ne11*p.ne10);
+    const uint i3_offset = i3 * p.ne12*p.ne11*p.ne10;
+    const uint i2 = (idx - i3_offset) / (p.ne11*p.ne10);
+    const uint i2_offset = i2*p.ne11*p.ne10;
+    const uint i1 = (idx - i3_offset - i2_offset) / p.ne10;
+    const uint i0 = idx - i3_offset - i2_offset - i1*p.ne10;
+
+    const uint src0_idx = (i3 - p.lp3)*p.nb03 + (i2 - p.lp2)*p.nb02 + (i1 - p.lp1)*p.nb01 + (i0 - p.lp0)*p.nb00;
+    const uint dst_idx = i3*p.nb13 + i2*p.nb12 + i1*p.nb11 + i0*p.nb10;
+
+    const bool is_src0 = i0 >= p.lp0 && i0 < p.ne10 - p.rp0 &&
+                         i1 >= p.lp1 && i1 < p.ne11 - p.rp1 &&
+                         i2 >= p.lp2 && i2 < p.ne12 - p.rp2 &&
+                         i3 >= p.lp3 && i3 < p.ne13 - p.rp3;
+
+    data_d[get_doffset() + dst_idx] = D_TYPE(is_src0 ? data_a[get_aoffset() + src0_idx] : 0.0f);
+}

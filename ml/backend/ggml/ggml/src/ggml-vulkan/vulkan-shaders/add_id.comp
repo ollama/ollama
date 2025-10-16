@@ -1,0 +1,42 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : require
+
+#include "types.glsl"
+
+layout (push_constant) uniform parameter
+{
+    uint ne0;
+    uint ne1;
+    uint s01;
+    uint s02;
+    uint s11;
+    uint s21;
+} p;
+
+#define BLOCK_SIZE 512
+
+layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer Y {B_TYPE data_b[];};
+layout (binding = 2) readonly buffer Z {int32_t data_c[];};
+layout (binding = 3) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint i1 = gl_WorkGroupID.x;
+    const uint i2 = gl_WorkGroupID.y;
+
+    const uint i11 = data_c[i1 + i2 * p.s21];
+
+    const uint s1 = p.ne0;
+    const uint s2 = p.ne0 * p.ne1;
+
+    const uint d0 = i1 * s1 + i2 * s2;
+    const uint a0 = i1 * p.s01 + i2 * p.s02;
+    const uint b0 = i11 * p.s11;
+
+    for (uint i0 = gl_LocalInvocationID.x; i0 < p.ne0; i0 += BLOCK_SIZE) {
+        data_d[d0 + i0] = data_a[a0 + i0] + data_b[b0 + i0];
+    }
+}

@@ -977,6 +977,21 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 			raw:       "123",
 			want:      123, // Integer has higher precedence than string
 		},
+		{
+			desc:      "anyOf array or string - with array of objects",
+			paramType: api.PropertyType{"array", "string"},
+			raw:       `[{"content": "task 1", "status": "pending", "priority": "high", "id": "1"}, {"content": "task 2", "status": "completed", "priority": "low", "id": "2"}]`,
+			want: []any{
+				map[string]any{"content": "task 1", "status": "pending", "priority": "high", "id": "1"},
+				map[string]any{"content": "task 2", "status": "completed", "priority": "low", "id": "2"},
+			},
+		},
+		{
+			desc:      "anyOf array or string - with plain string",
+			paramType: api.PropertyType{"array", "string"},
+			raw:       "Error: could not load data",
+			want:      "Error: could not load data",
+		},
 	}
 
 	for _, tc := range cases {

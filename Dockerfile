@@ -7,6 +7,7 @@ ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
+ARG VULKANVERSION=1.4.321.1
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -17,6 +18,16 @@ RUN yum install -y yum-utils \
     && dnf install -y ccache \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
+ARG VULKANVERSION
+RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
+    && tar xvf /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
+    && dnf -y install ninja-build \
+    && ln -s /usr/bin/python3 /usr/bin/python \  
+    && /${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
+    && /${VULKANVERSION}/vulkansdk -j 8 shaderc
+RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
+    && cp -r /${VULKANVERSION}/x86_64/lib/* /usr/local/lib
+ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
 
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
@@ -106,6 +117,13 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel ${PARALLEL} --preset 'JetPack 6' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
+FROM base AS vulkan
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'Vulkan' -DOLLAMA_RUNNER_DIR="vulkan" \
+        && cmake --build --parallel --preset 'Vulkan' \
+        && cmake --install build --component Vulkan --strip --parallel 8 
+
+
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
 COPY go.mod go.sum .
@@ -123,7 +141,8 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM --platform=linux/amd64 scratch AS amd64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
-COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
+COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
+COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
@@ -136,12 +155,38 @@ FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
+ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-FROM ubuntu:24.04
+# Temporary opt-out stages for Vulkan
+FROM --platform=linux/amd64 scratch AS amd64_novulkan
+# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
+COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
+FROM arm64 AS arm64_novulkan
+FROM ${FLAVOR}_novulkan AS archive_novulkan
+COPY --from=cpu dist/lib/ollama /lib/ollama
+COPY --from=build /bin/ollama /bin/ollama
+FROM ubuntu:24.04 AS novulkan
 RUN apt-get update \
     && apt-get install -y ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=archive_novulkan /bin /usr/bin
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COPY --from=archive_novulkan /lib/ollama /usr/lib/ollama
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV OLLAMA_HOST=0.0.0.0:11434
+EXPOSE 11434
+ENTRYPOINT ["/bin/ollama"]
+CMD ["serve"]
+
+FROM ubuntu:24.04 AS default
+RUN apt-get update \
+    && apt-get install -y ca-certificates libvulkan1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin

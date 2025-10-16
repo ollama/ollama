@@ -86,6 +86,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// are enumerated, but not actually supported.
 		// We run this in serial to avoid potentially initializing a GPU multiple
 		// times concurrently leading to memory contention
+		// TODO refactor so we group the lib dirs and do serial per version, but parallel for different libs
 		for dir := range libDirs {
 			var dirs []string
 			if dir != "" {
@@ -131,19 +132,25 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			go func(i int) {
 				defer wg.Done()
 				var envVar string
+				id := devices[i].ID
 				if devices[i].Library == "ROCm" {
 					if runtime.GOOS != "linux" {
 						envVar = "HIP_VISIBLE_DEVICES"
 					} else {
 						envVar = "ROCR_VISIBLE_DEVICES"
 					}
-				} else {
+				} else if devices[i].Library == "CUDA" {
 					envVar = "CUDA_VISIBLE_DEVICES"
+				} else if devices[i].Library == "Vulkan" {
+					id = devices[i].FilteredID
+					envVar = "GGML_VK_VISIBLE_DEVICES"
+				} else {
+					slog.Error("Unknown Library:" + devices[i].Library)
 				}
 
 				extraEnvs := []string{
-					"GGML_CUDA_INIT=1",           // force deep initialization to trigger crash on unsupported GPUs
-					envVar + "=" + devices[i].ID, // Filter to just this one GPU
+					"GGML_CUDA_INIT=1", // force deep initialization to trigger crash on unsupported GPUs
+					envVar + "=" + id,  // Filter to just this one GPU
 				}
 				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
 					needsDelete[i] = true
@@ -162,6 +169,8 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		}
 		wg.Wait()
 		logutil.Trace("supported GPU library combinations", "supported", supported)
+
+		filterOutVulkanThatAreSupportedByOtherGPU(needsDelete)
 
 		// Mark for deletion any overlaps - favoring the library version that can cover all GPUs if possible
 		filterOverlapByLibrary(supported, needsDelete)
@@ -184,7 +193,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}
 		}
 
-		// Now filter out any overlap with different libraries (favor CUDA/ROCm over others)
+		// Now filter out any overlap with different libraries (favor CUDA/HIP over others)
 		for i := 0; i < len(devices); i++ {
 			for j := i + 1; j < len(devices); j++ {
 				// For this pass, we only drop exact duplicates
@@ -340,10 +349,38 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		}
 	}
 
-	// Apply any iGPU workarounds
-	iGPUWorkarounds(devices)
-
 	return devices
+}
+
+func filterOutVulkanThatAreSupportedByOtherGPU(needsDelete []bool) {
+	// Filter out Vulkan devices that share a PCI ID with a non-Vulkan device that is not marked for deletion
+	for i := range devices {
+		if devices[i].Library != "Vulkan" || needsDelete[i] {
+			continue
+		}
+		if devices[i].PCIID == "" {
+			continue
+		}
+		for j := range devices {
+			if i == j {
+				continue
+			}
+			if devices[j].PCIID == "" {
+				continue
+			}
+			if devices[j].PCIID == devices[i].PCIID && devices[j].Library != "Vulkan" && !needsDelete[j] {
+				needsDelete[i] = true
+				slog.Debug("dropping Vulkan duplicate by PCI ID",
+					"vulkan_id", devices[i].ID,
+					"vulkan_libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+					"pci_id", devices[i].PCIID,
+					"kept_library", devices[j].Library,
+					"kept_id", devices[j].ID,
+				)
+				break
+			}
+		}
+	}
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
@@ -451,6 +488,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
+
 	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
 	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 	pathNeeded := true
@@ -508,6 +546,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 		}
 	}
 	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
+
 	return devices
 }
 
@@ -556,35 +595,6 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceIn
 				continue
 			}
 			return moreDevices, nil
-		}
-	}
-}
-
-func iGPUWorkarounds(devices []ml.DeviceInfo) {
-	// short circuit if we have no iGPUs
-	anyiGPU := false
-	for i := range devices {
-		if devices[i].Integrated {
-			anyiGPU = true
-			break
-		}
-	}
-	if !anyiGPU {
-		return
-	}
-
-	memInfo, err := GetCPUMem()
-	if err != nil {
-		slog.Debug("failed to fetch system memory information for iGPU", "error", err)
-		return
-	}
-	for i := range devices {
-		if !devices[i].Integrated {
-			continue
-		}
-		// NVIDIA iGPUs return useless free VRAM data which ignores system buff/cache
-		if devices[i].Library == "CUDA" {
-			devices[i].FreeMemory = memInfo.FreeMemory
 		}
 	}
 }
