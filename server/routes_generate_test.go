@@ -68,15 +68,15 @@ func TestGenerateChat(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      getGpuFn,
-			getCpuFn:      getCpuFn,
-			reschedDelay:  250 * time.Millisecond,
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getCpuFn:        getCpuFn,
+			waitForRecovery: 250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
@@ -679,15 +679,15 @@ func TestGenerate(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      getGpuFn,
-			getCpuFn:      getCpuFn,
-			reschedDelay:  250 * time.Millisecond,
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getCpuFn:        getCpuFn,
+			waitForRecovery: 250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
@@ -1104,15 +1104,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		s := &Server{
 			sched: &Scheduler{
-				pendingReqCh:  make(chan *LlmRequest, 1),
-				finishedReqCh: make(chan *LlmRequest, 1),
-				expiredCh:     make(chan *runnerRef, 1),
-				unloadedCh:    make(chan any, 1),
-				loaded:        make(map[string]*runnerRef),
-				newServerFn:   newMockServer(mock),
-				getGpuFn:      getGpuFn,
-				getCpuFn:      getCpuFn,
-				reschedDelay:  250 * time.Millisecond,
+				pendingReqCh:    make(chan *LlmRequest, 1),
+				finishedReqCh:   make(chan *LlmRequest, 1),
+				expiredCh:       make(chan *runnerRef, 1),
+				unloadedCh:      make(chan any, 1),
+				loaded:          make(map[string]*runnerRef),
+				newServerFn:     newMockServer(mock),
+				getGpuFn:        getGpuFn,
+				getCpuFn:        getCpuFn,
+				waitForRecovery: 250 * time.Millisecond,
 				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 					time.Sleep(time.Millisecond)
 					req.successCh <- &runnerRef{llama: mock}
