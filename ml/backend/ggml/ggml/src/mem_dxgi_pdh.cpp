@@ -73,8 +73,8 @@ void FetchDxgiAdapterDesc1(const DXGI_ADAPTER_DESC1& desc, GpuInfo* info) {
     GGML_LOG_DEBUG("Shared System Memory: %.2f GB\n", BtoGB(sharedSystemMemory));
 
     if (info) {
-        info->dedicatedTotal = BtoGB(dedicatedVideoMemory); // check if needs to be bytes or GB
-        info->sharedTotal = BtoGB(sharedSystemMemory);
+        info->dedicatedTotal = dedicatedVideoMemory; // values in bytes
+        info->sharedTotal = sharedSystemMemory;
     }
 }
 
@@ -181,7 +181,7 @@ extern "C" {
 
         GGML_LOG_DEBUG("%s called\n", __func__);
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
-        
+
 
         return -1; // change when implemented
     }
