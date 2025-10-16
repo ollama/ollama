@@ -486,8 +486,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		local.Images = images
 	}
 
-	messages := make([]api.Message, len(local.Messages))
-	copy(messages, local.Messages)
+	messages := slices.Clone(local.Messages)
 
 	if local.System != "" {
 		hasSystem := len(messages) > 0 && messages[0].Role == "system"
@@ -1129,8 +1128,6 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return client.Pull(cmd.Context(), &request, fn)
 }
 
-type generateContextKey string
-
 type runOptions struct {
 	Model        string
 	ParentModel  string
@@ -1391,137 +1388,6 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	}
 
 	return &api.Message{Role: role, Content: fullResponse.String()}, nil
-}
-
-func generate(cmd *cobra.Command, opts runOptions) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	var latest api.GenerateResponse
-
-	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
-	if !ok {
-		generateContext = []int{}
-	}
-
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	var state *displayResponseState = &displayResponseState{}
-	var thinkingContent strings.Builder
-	var thinkTagOpened bool = false
-	var thinkTagClosed bool = false
-
-	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
-
-	fn := func(response api.GenerateResponse) error {
-		latest = response
-		content := response.Response
-
-		if response.Response != "" || !opts.HideThinking {
-			p.StopAndClear()
-		}
-
-		if response.Thinking != "" && !opts.HideThinking {
-			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(plainText))
-				thinkTagOpened = true
-				thinkTagClosed = false
-			}
-			thinkingContent.WriteString(response.Thinking)
-			displayResponse(response.Thinking, opts.WordWrap, state)
-		}
-
-		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.ToolCalls) > 0) {
-			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
-			}
-			fmt.Print(thinkingOutputClosingText(plainText))
-			thinkTagOpened = false
-			thinkTagClosed = true
-			state = &displayResponseState{}
-		}
-
-		displayResponse(content, opts.WordWrap, state)
-
-		if response.ToolCalls != nil {
-			toolCalls := response.ToolCalls
-			if len(toolCalls) > 0 {
-				fmt.Print(renderToolCalls(toolCalls, plainText))
-			}
-		}
-
-		return nil
-	}
-
-	if opts.MultiModal {
-		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
-		if err != nil {
-			return err
-		}
-	}
-
-	if opts.Format == "json" {
-		opts.Format = `"` + opts.Format + `"`
-	}
-
-	request := api.GenerateRequest{
-		Model:     opts.Model,
-		Prompt:    opts.Prompt,
-		Context:   generateContext,
-		Images:    opts.Images,
-		Format:    json.RawMessage(opts.Format),
-		System:    opts.System,
-		Options:   opts.Options,
-		KeepAlive: opts.KeepAlive,
-		Think:     opts.Think,
-	}
-
-	if err := client.Generate(ctx, &request, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
-	}
-
-	if opts.Prompt != "" {
-		fmt.Println()
-		fmt.Println()
-	}
-
-	if !latest.Done {
-		return nil
-	}
-
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return err
-	}
-
-	if verbose {
-		latest.Summary()
-	}
-
-	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-	cmd.SetContext(ctx)
-
-	return nil
 }
 
 func RunServer(_ *cobra.Command, _ []string) error {
