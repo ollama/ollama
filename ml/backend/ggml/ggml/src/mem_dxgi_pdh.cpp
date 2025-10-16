@@ -111,16 +111,18 @@ extern "C" {
 
     int ggml_dxgi_pdh_init() {
 
+        /*
         fs::path libPath = fs::path("\\Windows") / fs::path("System32") / fs::path("DXCore.dll");
         adlx.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
         if (adlx.handle == NULL) {
             return FAILURE;
         }
+        */
 
         return -1; // change when implemented
     }
 
-    int ggml_dxgi_pdh_get_device_memory(int adapter_idx, size_t *free, size_t *total) {
+    int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total) {
 
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
 

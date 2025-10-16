@@ -12473,35 +12473,56 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s\n", ctx->uuid.c_str());
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: luid %s\n", ctx->luid.c_str());
 
-    if (!ctx->is_integrated_gpu)
-    {
-        // Use vendor specific management libraries for best VRAM reporting if available
-        switch (props2.properties.vendorID) {
+    // Use vendor specific management libraries for best VRAM reporting if available
+    switch (props2.properties.vendorID) {
         case VK_VENDOR_ID_AMD:
-            if (ggml_hip_mgmt_init() == 0) {
-                int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
-                if (status == 0) {
-                    GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            if (!ctx->is_integrated_gpu)
+            {
+                if (ggml_hip_mgmt_init() == 0) {
+                    int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
+                    if (status == 0) {
+                        GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                        ggml_hip_mgmt_release();
+                        return;
+                    }
                     ggml_hip_mgmt_release();
-                    return;
                 }
-                ggml_hip_mgmt_release();
             }
             break;
         case VK_VENDOR_ID_NVIDIA:
-            if (ggml_nvml_init() == 0) {
-                int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
-                if (status == 0) {
-                    GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            if (!ctx->is_integrated_gpu)
+            {
+                if (ggml_nvml_init() == 0) {
+                    int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
+                    if (status == 0) {
+                        GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                        ggml_nvml_release();
+                        return;
+                    }
                     ggml_nvml_release();
+                }
+            }
+            break;
+        case VK_VENDOR_ID_INTEL:
+            // DXGI + PDH can support both IGPU and DGPU on Windows 10/11
+            // Fallback API for a wide variety of drivers
+            GGML_LOG_DEBUG("Got Intel GPU. Initializing DXGI + PDH...\n");
+            if (ggml_dxgi_pdh_init() == 0) {
+                GGML_LOG_DEBUG("DXGI + PDH Initialized. Getting GPU free memory info\n");
+                int status = ggml_dxgi_pdh_get_device_memory(ctx->luid.c_str(), free, total);
+                if (status == 0) {
+                    GGML_LOG_DEBUG("%s utilizing DXGI + PDH memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                    ggml_dxgi_pdh_release();
                     return;
                 }
-                ggml_nvml_release();
+                ggml_dxgi_pdh_release();
             }
             break;
         }
-    }
+
     // else fallback to memory budget if supported
 
     *total = 0;
