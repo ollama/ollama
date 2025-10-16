@@ -11,6 +11,7 @@ package ggml
 import "C"
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -1154,6 +1155,10 @@ func (t *Tensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 }
 
 func (t *Tensor) Contiguous(ctx ml.Context, shape ...int) ml.Tensor {
+	if slices.Contains(shape, -1) {
+		inferShape(t, shape)
+	}
+
 	switch len(shape) {
 	case 0:
 		return &Tensor{
@@ -1289,6 +1294,13 @@ func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SetRows(ctx ml.Context, t2, indices ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, indices.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1296,7 +1308,35 @@ func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func inferShape(t *Tensor, shape []int) {
+	total := 1
+	for _, dim := range t.Shape() {
+		total *= dim
+	}
+
+	dim := -1
+	for i := range shape {
+		if shape[i] > 0 {
+			total /= shape[i]
+		} else if shape[i] == -1 {
+			if dim != -1 {
+				panic("only one dimension can be inferred")
+			}
+
+			dim = i
+		}
+	}
+
+	if dim != -1 {
+		shape[dim] = total
+	}
+}
+
 func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
+	if slices.Contains(shape, -1) {
+		inferShape(t, shape)
+	}
+
 	switch len(shape) {
 	case 1:
 		return &Tensor{
@@ -1410,14 +1450,7 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 
 func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase, ropeScale float32, options ...func(*rope.Options)) ml.Tensor {
 	// Default options
-	opts := rope.Options{
-		Factors:               &Tensor{},
-		OriginalContextLength: 131072,
-		ExtrapolationFactor:   0.,
-		AttentionFactor:       1.,
-		BetaFast:              32.,
-		BetaSlow:              1.,
-	}
+	opts := rope.Options{Factors: &Tensor{}}
 
 	// Apply any provided options
 	for _, option := range options {
@@ -1429,24 +1462,39 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
 	}
 
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_rope_ext(
+	var tt *C.struct_ggml_tensor
+	if opts.Type&0b1000 != 0 {
+		tt = C.ggml_rope_multi(
 			ctx.(*Context).ctx,
 			dequant,
 			positions.(*Tensor).t,
 			opts.Factors.(*Tensor).t,
 			C.int(ropeDim),
+			(*C.int)(unsafe.Pointer(&opts.MRoPE.Sections[0])),
 			C.int(opts.Type),
-			C.int(opts.OriginalContextLength),
-			C.float(ropeBase),
-			C.float(ropeScale),
-			C.float(opts.ExtrapolationFactor),
-			C.float(opts.AttentionFactor),
-			C.float(opts.BetaFast),
-			C.float(opts.BetaSlow),
-		),
+			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
+			C.float(ropeBase), C.float(ropeScale),
+			C.float(opts.YaRN.ExtrapolationFactor),
+			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
+			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
+			cmp.Or(C.float(opts.YaRN.BetaSlow), 1),
+		)
+	} else {
+		tt = C.ggml_rope_ext(
+			ctx.(*Context).ctx,
+			dequant,
+			positions.(*Tensor).t,
+			opts.Factors.(*Tensor).t,
+			C.int(ropeDim), C.int(opts.Type),
+			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
+			C.float(ropeBase), C.float(ropeScale),
+			C.float(opts.YaRN.ExtrapolationFactor),
+			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
+			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
+			cmp.Or(C.float(opts.YaRN.BetaSlow), 1),
+		)
 	}
+	return &Tensor{b: t.b, t: tt}
 }
 
 func (t *Tensor) IM2Col(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
@@ -1507,6 +1555,16 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 		b: t.b,
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
 	}
+}
+
+func (t *Tensor) Conv3D(ctx ml.Context, t2 ml.Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) ml.Tensor {
+	var tt ml.Tensor = &Tensor{
+		b: t.b,
+		t: C.ggml_conv_3d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int64_t(c), C.int(s0), C.int(s1), C.int(s2), C.int(p0), C.int(p1), C.int(p2), C.int(d0), C.int(d1), C.int(d2)),
+	}
+
+	tt = tt.Reshape(ctx, t.Dim(3)/c, t2.Dim(3)/c)
+	return tt
 }
 
 func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {

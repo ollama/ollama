@@ -158,6 +158,7 @@ type Tensor interface {
 
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
+	Conv3D(ctx Context, weight Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) Tensor
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
@@ -186,6 +187,7 @@ type Tensor interface {
 	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
+	SetRows(ctx Context, t2, indices Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
 
