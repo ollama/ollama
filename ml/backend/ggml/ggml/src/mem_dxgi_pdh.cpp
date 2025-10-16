@@ -1,26 +1,20 @@
 // DXGI and PDH Performance Counters Library
 // This Windows-only (10/11) library provides accurate VRAM reporting for Intel GPUs
 
+#ifdef _WIN32
+#    define WIN32_LEAN_AND_MEAN
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#include <windows.h>
 #include <initguid.h> // Required for GUID definitions
 #include "ggml-impl.h"
-#include <windows.h>
 #include <pdh.h>
 #include <dxgi.h>
 #include <dxgi1_2.h>
 #include <sstream>
 #include <filesystem>
 #include <mutex>
-
-#ifdef _WIN32
-#    define WIN32_LEAN_AND_MEAN
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#else
-#    include <dlfcn.h>
-#    include <unistd.h>
-#endif
 
 namespace fs = std::filesystem;
 
@@ -178,11 +172,8 @@ extern "C" {
             return FAILURE;
         }
         */
-
         GGML_LOG_DEBUG("%s called\n", __func__);
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
-
-
         return -1; // change when implemented
     }
 
@@ -232,3 +223,20 @@ extern "C" {
     }
 
 } // extern "C"
+
+#else // #ifdef _WIN32
+
+extern "C" {
+
+    // DXGI + PDH not available for Linux implementation
+    int ggml_dxgi_pdh_init() {
+        return -1;
+    }
+    void ggml_dxgi_pdh_release() {}
+    int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu) {
+        return -1;
+    }
+
+} // extern "C"
+
+#endif // #ifdef _WIN32
