@@ -193,14 +193,14 @@ extern "C" {
         }
         if (!targetGpu) {
             GGML_LOG_ERROR("GPU with specified LUID not found.\n");
-            return -1;
+            return ERROR_NOT_FOUND;
         }
 
         // Get the current memory usage for the target GPU
         int status = GetGpuMemoryUsage(*targetGpu);
         if (!status) {
             GGML_LOG_ERROR("Failed to get GPU memory usage.\n");
-            return -1;
+            return ERROR_DEVICE_NOT_AVAILABLE;
         }
 
         // Calculate the free memory based on whether it's an integrated or discrete GPU
@@ -215,11 +215,11 @@ extern "C" {
             *total = targetGpu->dedicatedTotal;
         }
 
-        return 0; // change when implemented
+        return ERROR_SUCCESS; // change when implemented
     }
 
     void ggml_dxgi_pdh_release() {
-        return; // change when implemented
+        return -1; // change when implemented
     }
 
 } // extern "C"
