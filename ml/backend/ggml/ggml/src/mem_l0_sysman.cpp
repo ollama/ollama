@@ -3,14 +3,18 @@
 #include <mutex>
 
 #ifdef _WIN32
-#    define WIN32_LEAN_AND_MEAN
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#else
-#    include <dlfcn.h>
-#    include <unistd.h>
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#define LOAD_SYMBOL(handle, sym) GetProcAddress((HMODULE)handle, sym)
+#define UNLOAD_LIBRARY(handle) FreeLibrary((HMODULE)handle)
+#else // _WIN32
+#include <dlfcn.h>
+#include <unistd.h>
+#define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
+#define UNLOAD_LIBRARY(handle) dlclose(handle)
 #endif
 
 // oneAPI Level Zero Sysman
@@ -279,46 +283,51 @@ int ggml_l0_sysman_init() {
 #ifdef _WIN32
     DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
     SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
-    const auto dll_name = fs::path("ze_loader.dll");
-    fs::path libPath = fs::path("\\Windows") / fs::path("System32") / dll_name;
+    const auto libFilePath = fs::path("ze_loader.dll");
+    fs::path libPath = fs::path("\\Windows") / fs::path("System32") / libFilePath;
     l0_sysman.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
     if (l0_sysman.handle == nullptr) {
         return ZE_RESULT_ERROR_NOT_AVAILABLE;
     }
-    
-    l0_sysman.zesInit = (ze_result_t(*)(int)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesInit");
-    l0_sysman.zesDriverGet = (ze_result_t(*)(uint32_t*, zes_driver_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDriverGet");
-    l0_sysman.zesDriverGetDeviceByUuidExp = (ze_result_t(*)(zes_driver_handle_t, zes_uuid_t, zes_device_handle_t*, ze_bool_t*, uint32_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDriverGetDeviceByUuidExp"); 
-    l0_sysman.zesDeviceGet = (ze_result_t(*)(zes_driver_handle_t, uint32_t*, zes_device_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceGet");
-    l0_sysman.zesDeviceGetProperties = (ze_result_t(*)(zes_device_handle_t, zes_device_properties_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceGetProperties");
-    l0_sysman.zesDeviceEnumMemoryModules = (ze_result_t(*)(zes_device_handle_t, uint32_t*, zes_mem_handle_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesDeviceEnumMemoryModules");
-    l0_sysman.zesMemoryGetProperties = (ze_result_t(*)(zes_mem_handle_t, zes_mem_properties_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesMemoryGetProperties");
-    l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) GetProcAddress((HMODULE)(l0_sysman.handle), "zesMemoryGetState");
+#else
+    fs::path libFilePath = "libze_loader.so.1"; // On a non-WSL2 system, it should be in the path
+    l0_sysman.handle = (void*)dlopen(libFilePath.c_str(), RTLD_LAZY);
+    if (l0_sysman.handle == nullptr) {
+        GGML_LOG_INFO("%s unable to load libze_loader: %s\n", __func__, dlerror());
+        return ZE_RESULT_ERROR_NOT_AVAILABLE;
+    }
+#endif
+
+    l0_sysman.zesInit = (ze_result_t(*)(int)) LOAD_SYMBOL(l0_sysman.handle, "zesInit");
+    l0_sysman.zesDriverGet = (ze_result_t(*)(uint32_t*, zes_driver_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDriverGet");
+    l0_sysman.zesDriverGetDeviceByUuidExp = (ze_result_t(*)(zes_driver_handle_t, zes_uuid_t, zes_device_handle_t*, ze_bool_t*, uint32_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDriverGetDeviceByUuidExp");
+    l0_sysman.zesDeviceGet = (ze_result_t(*)(zes_driver_handle_t, uint32_t*, zes_device_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceGet");
+    l0_sysman.zesDeviceGetProperties = (ze_result_t(*)(zes_device_handle_t, zes_device_properties_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceGetProperties");
+    l0_sysman.zesDeviceEnumMemoryModules = (ze_result_t(*)(zes_device_handle_t, uint32_t*, zes_mem_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceEnumMemoryModules");
+    l0_sysman.zesMemoryGetProperties = (ze_result_t(*)(zes_mem_handle_t, zes_mem_properties_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetProperties");
+    l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetState");
     if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || l0_sysman.zesDriverGetDeviceByUuidExp == nullptr || 
         l0_sysman.zesDeviceGet == nullptr|| l0_sysman.zesDeviceGetProperties == nullptr ||
         l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetProperties == nullptr ||
         l0_sysman.zesMemoryGetState == nullptr) {
-        GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, dll_name);
-        FreeLibrary((HMODULE)(l0_sysman.handle));
+        GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, libFilePath.c_str());
+        UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
         return ZE_RESULT_ERROR_NOT_AVAILABLE;
     }
 
+#ifdef _WIN32
     SetErrorMode(old_mode);
+#endif
 
     auto ret = l0_sysman.zesInit(0);
     if (ret != ZE_RESULT_SUCCESS) {
         GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
-        FreeLibrary((HMODULE)(l0_sysman.handle));
+        UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
         return ret;
     }
     return ZE_RESULT_SUCCESS;
-
-#else
-    // Not currently wired up on Linux
-    return ZE_RESULT_ERROR_UNSUPPORTED_FEATURE;
-#endif
 }
 
 void ggml_l0_sysman_release() {
@@ -328,12 +337,8 @@ void ggml_l0_sysman_release() {
         // Already free
         return;
     }
-#ifdef _WIN32
-    FreeLibrary((HMODULE)(l0_sysman.handle));
+    UNLOAD_LIBRARY(l0_sysman.handle);
     l0_sysman.handle = nullptr;
-#else
-    // Not currently wired up on Linux
-#endif
 }
 
 static void convert_to_uuid_array(zes_uuid_t& uuid_out, const char* input) {
@@ -373,7 +378,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
     auto ret = l0_sysman.zesDriverGet(&driverCount, nullptr);
     if (ret != ZE_RESULT_SUCCESS) {
         GGML_LOG_INFO("%s: Failed running zesDriverGet: %d\n", __func__, ret);
-        FreeLibrary((HMODULE)(l0_sysman.handle));
+        UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
         return ret;
     }
@@ -383,7 +388,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
     ret = l0_sysman.zesDriverGet(&driverCount, allDrivers.data());
     if (ret != ZE_RESULT_SUCCESS) {
         GGML_LOG_INFO("%s: Failed running zesDriverGet: %d\n", __func__, ret);
-        FreeLibrary((HMODULE)(l0_sysman.handle));
+        UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
         return ret;
     }
@@ -396,7 +401,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         ret = l0_sysman.zesDeviceGet(driver, &deviceCount, nullptr);
         if (ret != ZE_RESULT_SUCCESS) {
             GGML_LOG_INFO("%s: Failed running zesDeviceGet: %d\n", __func__, ret);
-            FreeLibrary((HMODULE)(l0_sysman.handle));
+            UNLOAD_LIBRARY(l0_sysman.handle);
             l0_sysman.handle = nullptr;
             return ret;
         }
@@ -425,7 +430,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             } else {
                 // All other errors should abort
                 GGML_LOG_INFO("%s: Failed running zesDriverGetDeviceByUuidExp: %d\n", __func__, ret);
-                FreeLibrary((HMODULE)(l0_sysman.handle));
+                UNLOAD_LIBRARY(l0_sysman.handle);
                 l0_sysman.handle = nullptr;
                 return ret;
             }
@@ -437,7 +442,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         ret = l0_sysman.zesDeviceEnumMemoryModules(device, &memModuleCount, nullptr);
         if (ret != ZE_RESULT_SUCCESS) {
             GGML_LOG_INFO("%s: Failed running zesDeviceEnumMemoryModules: %d\n", __func__, ret);
-            FreeLibrary((HMODULE)(l0_sysman.handle));
+            UNLOAD_LIBRARY(l0_sysman.handle);
             l0_sysman.handle = nullptr;
             return ret;
         }
@@ -453,7 +458,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         ret = l0_sysman.zesDeviceEnumMemoryModules(device, &memModuleCount, memHandles.data());
         if (ret != ZE_RESULT_SUCCESS) {
             GGML_LOG_INFO("%s: Failed running zesDeviceEnumMemoryModules: %d\n", __func__, ret);
-            FreeLibrary((HMODULE)(l0_sysman.handle));
+            UNLOAD_LIBRARY(l0_sysman.handle);
             l0_sysman.handle = nullptr;
             return ret;
         }
@@ -467,7 +472,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             ret = l0_sysman.zesMemoryGetProperties(memory, &memProperties);
             if (ret != ZE_RESULT_SUCCESS) {
                 GGML_LOG_INFO("%s: Failed running zesMemoryGetProperties: %d\n", __func__, ret);
-                FreeLibrary((HMODULE)(l0_sysman.handle));
+                UNLOAD_LIBRARY(l0_sysman.handle);
                 l0_sysman.handle = nullptr;
                 return ret;
             }
@@ -477,7 +482,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             ret = l0_sysman.zesMemoryGetState(memory, &memState);
             if (ret != ZE_RESULT_SUCCESS) {
                 GGML_LOG_INFO("%s: Failed running zesMemoryGetState: %d\n", __func__, ret);
-                FreeLibrary((HMODULE)(l0_sysman.handle));
+                UNLOAD_LIBRARY(l0_sysman.handle);
                 l0_sysman.handle = nullptr;
                 return ret;
             }
@@ -491,7 +496,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         if (totalMemory || freeMemory) {
             // We were able to get values from the memory modules.
             // Write to output and exit
-            GGML_LOG_DEBUG("Got memory info from device %s: total: %llu free: %llu\n",
+            GGML_LOG_DEBUG("Got memory info from device %s: total: %lu free: %lu\n",
                 uuid, totalMemory, freeMemory);
             *total = totalMemory;
             *free = freeMemory;
