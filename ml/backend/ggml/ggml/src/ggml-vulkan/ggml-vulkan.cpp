@@ -12482,7 +12482,10 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
         }
         break;
     case VK_VENDOR_ID_INTEL:
-        // L0 sysman can support both iGPU and dGPU (for Windows)
+        // L0 sysman can support both iGPU and dGPU on Windows and Linux.
+        // If the driver is old on Windows we will fail to get memory info for iGPU.
+        // For Linux you need to run ollama with `sudo` or run `sudo setcap cap_perfmon=+ep /path/to/ollama_binary`
+        // to apply perfmon priviledge to the ollama binary
         GGML_LOG_DEBUG("Got Intel GPU. Initializing L0 sysman...\n");
         if (ggml_l0_sysman_init() == 0) {
             GGML_LOG_DEBUG("L0 sysman Initialized. Getting GPU free memory info\n");
@@ -12493,9 +12496,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
                 return;
             }
             ggml_l0_sysman_release();
-            return;
         }
-        GGML_LOG_DEBUG("Failed to initialize L0 sysman\n");
         break;
     }
     // else fallback to memory budget if supported
