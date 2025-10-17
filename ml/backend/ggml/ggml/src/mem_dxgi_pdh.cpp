@@ -23,9 +23,9 @@ static std::mutex ggml_dxgi_pdh_lock;
 static PDH_HQUERY ggml_dxgi_pdh_query = nullptr;
 static PDH_HCOUNTER ggml_dxgi_pdh_counter = nullptr;
 
-// TODO tasks
-// 1. replace all -1 with proper error codes
-
+/*
+Struct to keep track of GPU adapter information at runtime
+*/
 struct GpuInfo {
     std::wstring name; // debug field
     LUID luid;
@@ -36,6 +36,24 @@ struct GpuInfo {
     double sharedUsage = 0.0;
     double totalCommitted = 0.0;
     double localUsage = 0.0;
+};
+
+/*
+DLL Function Pointers
+*/
+struct {
+    void *dxgi_dll_handle;
+    void *pdh_dll_handle;
+    // DXGI Functions
+    HRESULT (*CreateDXGIFactory1)(REFIID riid, void **ppFactory);
+    // PDH functions  
+    PDH_STATUS (*PdhOpenQuery)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery);
+    PDH_STATUS (*PdhAddCounter)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter);
+    PDH_STATUS (*PdhCollectQueryData)(PDH_HQUERY hQuery);
+    PDH_STATUS (*PdhGetFormattedCounterValue)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue);
+    PDH_STATUS (*PdhCloseQuery)(PDH_HQUERY hQuery);
+} dll_functions {
+    nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr
 };
 
 /*
@@ -164,17 +182,54 @@ bool GetGpuMemoryUsage(GpuInfo gpu) {
 extern "C" {
 
     int ggml_dxgi_pdh_init() {
-
-        /*
-        fs::path libPath = fs::path("\\Windows") / fs::path("System32") / fs::path("DXCore.dll");
-        adlx.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
-        if (adlx.handle == NULL) {
-            return FAILURE;
-        }
-        */
         GGML_LOG_DEBUG("%s called\n", __func__);
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
-        return -1; // change when implemented
+
+        DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
+        SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
+        fs::path libPath_dxgi = fs::path("\\Windows") / fs::path("System32") / fs::path("dxgi.dll"); // may need to modify this
+        fs::path libPath_pdh = fs::path("\\Windows") / fs::path("System32") / fs::path("pdh.dll"); // may need to modify this
+
+        // Call LoadLibraryW on both DLLs to ensure they are loaded
+        void *dxgi = (void*)LoadLibraryW(libPath_dxgi.wstring().c_str());
+        void *pdh = (void*)LoadLibraryW(libPath_pdh.wstring().c_str());
+        if(dxgi == NULL || pdh == NULL) {
+            if (dxgi != NULL) {
+                FreeLibrary((HMODULE)(dxgi));
+            }
+            if (pdh != NULL) {
+                FreeLibrary((HMODULE)(pdh));
+            }
+            return ERROR_DLL_NOT_FOUND;
+        }
+        else {
+            // save the dll handles
+            dll_functions.dxgi_dll_handle = dxgi;
+            dll_functions.pdh_dll_handle = pdh;
+        }
+
+        // Get pointers to the library functions loaded by the DLLs
+        dll_functions.CreateDXGIFactory1 = (HRESULT (*)(REFIID riid, void **ppFactory)) GetProcAddress((HMODULE)(dll_functions.dxgi_dll_handle), "CreateDXGIFactory1");
+        dll_functions.PdhOpenQuery = (PDH_STATUS (*)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhOpenQuery");
+        dll_functions.PdhAddCounter = (PDH_STATUS (*)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhAddCounter");
+        dll_functions.PdhCollectQueryData = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCollectQueryData");
+        dll_functions.PdhGetFormattedCounterValue = (PDH_STATUS (*)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhGetFormattedCounterValue");
+        dll_functions.PdhCloseQuery = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCloseQuery");
+    
+        // Check if any function pointers are NULL (not found)
+        if (dll_functions.CreateDXGIFactory1 == NULL || dll_functions.PdhOpenQuery == NULL || dll_functions.PdhAddCounter == NULL || dll_functions.PdhCollectQueryData == NULL || dll_functions.PdhGetFormattedCounterValue == NULL || dll_functions.PdhCloseQuery == NULL) {
+            GGML_LOG_INFO("%s unable to locate required symbols in either dxgi.dll or pdh.dll", __func__);
+            FreeLibrary((HMODULE)(dll_functions.dxgi_dll_handle));
+            FreeLibrary((HMODULE)(dll_functions.pdh_dll_handle));
+            dll_functions.dxgi_dll_handle = NULL;
+            dll_functions.pdh_dll_handle = NULL;
+            return ERROR_PROC_NOT_FOUND;
+        }
+        
+        SetErrorMode(old_mode);
+    
+        // No other initializations needed, successfully loaded the libraries and functions!
+        return ERROR_SUCCESS;
     }
 
     int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu) {
@@ -219,7 +274,10 @@ extern "C" {
     }
 
     void ggml_dxgi_pdh_release() {
-        return -1; // change when implemented
+
+        // Call FreeLibrary
+
+        return; // change when implemented
     }
 
 } // extern "C"
