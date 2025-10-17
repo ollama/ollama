@@ -43,8 +43,8 @@ struct {
     // DXGI Functions
     HRESULT (*CreateDXGIFactory1)(REFIID riid, void **ppFactory);
     // PDH functions  
-    PDH_STATUS (*PdhOpenQuery)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery);
-    PDH_STATUS (*PdhAddCounter)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter);
+    PDH_STATUS (*PdhOpenQueryW)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery);
+    PDH_STATUS (*PdhAddCounterW)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter);
     PDH_STATUS (*PdhCollectQueryData)(PDH_HQUERY hQuery);
     PDH_STATUS (*PdhGetFormattedCounterValue)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue);
     PDH_STATUS (*PdhCloseQuery)(PDH_HQUERY hQuery);
@@ -93,7 +93,7 @@ static std::vector<GpuInfo> get_dxgi_gpu_infos() {
     std::vector<GpuInfo> infos;
     IDXGIFactory1* pFactory = nullptr;
 
-    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory))) {
+    if (SUCCEEDED(dll_functions.CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory))) {
         UINT i = 0;
         IDXGIAdapter1* pAdapter = nullptr;
         while (pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
@@ -118,7 +118,7 @@ static std::vector<GpuInfo> get_dxgi_gpu_infos() {
 
 static bool get_gpu_memory_usage(GpuInfo gpu) {
     PDH_HQUERY query;
-    if (PdhOpenQuery(NULL, 0, &query) != ERROR_SUCCESS) {
+    if (dll_functions.PdhOpenQueryW(NULL, 0, &query) != ERROR_SUCCESS) {
         return false;
     }
 
@@ -136,20 +136,20 @@ static bool get_gpu_memory_usage(GpuInfo gpu) {
     std::wstring totalCommittedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Total Committed";
     std::wstring localUsagePath = L"\\GPU Local Adapter Memory(" + gpu.pdhInstance + L"*)\\Local Usage";
 
-    if (PdhAddCounter(query, dedicatedPath.c_str(), 0, &gpuCounter.dedicated) != ERROR_SUCCESS ||
-        PdhAddCounter(query, sharedPath.c_str(), 0, &gpuCounter.shared) != ERROR_SUCCESS ||
-        PdhAddCounter(query, totalCommittedPath.c_str(), 0, &gpuCounter.committed) != ERROR_SUCCESS ||
-        PdhAddCounter(query, localUsagePath.c_str(), 0, &gpuCounter.local) != ERROR_SUCCESS) {
+    if (dll_functions.PdhAddCounterW(query, dedicatedPath.c_str(), 0, &gpuCounter.dedicated) != ERROR_SUCCESS ||
+        dll_functions.PdhAddCounterW(query, sharedPath.c_str(), 0, &gpuCounter.shared) != ERROR_SUCCESS ||
+        dll_functions.PdhAddCounterW(query, totalCommittedPath.c_str(), 0, &gpuCounter.committed) != ERROR_SUCCESS ||
+        dll_functions.PdhAddCounterW(query, localUsagePath.c_str(), 0, &gpuCounter.local) != ERROR_SUCCESS) {
             GGML_LOG_ERROR("Failed to add PDH counters for GPU %s\n", std::string(gpu.pdhInstance.begin(), gpu.pdhInstance.end()).c_str());
-            PdhCloseQuery(query);
+            dll_functions.PdhCloseQuery(query);
             return false;
     }
 
     // Sample data multiple times
     constexpr int sampleCount = 3;
     for (int i = 0; i < sampleCount; ++i) {
-        if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
-            PdhCloseQuery(query);
+        if (dll_functions.PdhCollectQueryData(query) != ERROR_SUCCESS) {
+            dll_functions.PdhCloseQuery(query);
             return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -158,19 +158,19 @@ static bool get_gpu_memory_usage(GpuInfo gpu) {
     // Read final values
     PDH_FMT_COUNTERVALUE val;
 
-    if (PdhGetFormattedCounterValue(gpuCounter.dedicated, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+    if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.dedicated, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
         gpu.dedicatedUsage = val.doubleValue;
 
-    if (PdhGetFormattedCounterValue(gpuCounter.shared, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+    if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.shared, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
         gpu.sharedUsage = val.doubleValue;
 
-    if (PdhGetFormattedCounterValue(gpuCounter.committed, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+    if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.committed, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
         gpu.totalCommitted = val.doubleValue;
 
-    if (PdhGetFormattedCounterValue(gpuCounter.local, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
+    if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.local, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
         gpu.localUsage = val.doubleValue;
 
-    PdhCloseQuery(query);
+    dll_functions.PdhCloseQuery(query);
     return true;
 }
 
@@ -210,14 +210,14 @@ extern "C" {
 
         // Get pointers to the library functions loaded by the DLLs
         dll_functions.CreateDXGIFactory1 = (HRESULT (*)(REFIID riid, void **ppFactory)) GetProcAddress((HMODULE)(dll_functions.dxgi_dll_handle), "CreateDXGIFactory1");
-        dll_functions.PdhOpenQuery = (PDH_STATUS (*)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhOpenQuery");
-        dll_functions.PdhAddCounter = (PDH_STATUS (*)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhAddCounter");
+        dll_functions.PdhOpenQueryW = (PDH_STATUS (*)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhOpenQueryW");
+        dll_functions.PdhAddCounterW = (PDH_STATUS (*)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhAddCounterW");
         dll_functions.PdhCollectQueryData = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCollectQueryData");
         dll_functions.PdhGetFormattedCounterValue = (PDH_STATUS (*)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhGetFormattedCounterValue");
         dll_functions.PdhCloseQuery = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCloseQuery");
     
         // Check if any function pointers are NULL (not found)
-        if (dll_functions.CreateDXGIFactory1 == NULL || dll_functions.PdhOpenQuery == NULL || dll_functions.PdhAddCounter == NULL || dll_functions.PdhCollectQueryData == NULL || dll_functions.PdhGetFormattedCounterValue == NULL || dll_functions.PdhCloseQuery == NULL) {
+        if (dll_functions.CreateDXGIFactory1 == NULL || dll_functions.PdhOpenQueryW == NULL || dll_functions.PdhAddCounterW == NULL || dll_functions.PdhCollectQueryData == NULL || dll_functions.PdhGetFormattedCounterValue == NULL || dll_functions.PdhCloseQuery == NULL) {
             GGML_LOG_INFO("%s unable to locate required symbols in either dxgi.dll or pdh.dll", __func__);
             FreeLibrary((HMODULE)(dll_functions.dxgi_dll_handle));
             FreeLibrary((HMODULE)(dll_functions.pdh_dll_handle));
