@@ -5,14 +5,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
@@ -20,13 +18,7 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
-func TestMain(m *testing.M) {
-	os.Setenv("OLLAMA_DEBUG", "1")
-	lifecycle.InitLogging()
-	os.Exit(m.Run())
-}
-
-func TestSchedInit(t *testing.T) {
+func TestInitScheduler(t *testing.T) {
 	ctx, done := context.WithCancel(t.Context())
 	defer done()
 	s := InitScheduler(ctx)
