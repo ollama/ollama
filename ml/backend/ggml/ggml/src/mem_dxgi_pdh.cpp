@@ -7,7 +7,6 @@
 #        define NOMINMAX
 #    endif
 #include <windows.h>
-#include <initguid.h> // Required for GUID definitions
 #include "ggml-impl.h"
 #include <pdh.h>
 #include <dxgi.h>
@@ -184,6 +183,10 @@ extern "C" {
     int ggml_dxgi_pdh_init() {
         GGML_LOG_DEBUG("%s called\n", __func__);
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
+        if (dll_functions.dxgi_dll_handle != NULL && dll_functions.pdh_dll_handle != NULL) {
+            // Already initialized as we have both DLL handles
+            return ERROR_SUCCESS;
+        }
 
         DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
         SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
@@ -232,6 +235,23 @@ extern "C" {
         return ERROR_SUCCESS;
     }
 
+    void ggml_dxgi_pdh_release() {
+        std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
+        if (dll_functions.dxgi_dll_handle == NULL && dll_functions.pdh_dll_handle == NULL) {
+            // Already freed the DLLs
+            return;
+        }
+
+        // Call FreeLibrary on both DLLs
+        FreeLibrary((HMODULE)(dll_functions.dxgi_dll_handle));
+        FreeLibrary((HMODULE)(dll_functions.pdh_dll_handle));
+
+        dll_functions.dxgi_dll_handle = NULL;
+        dll_functions.pdh_dll_handle = NULL;
+
+        return; // successfully released
+    }
+
     int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu) {
 
         std::lock_guard<std::mutex> lock(ggml_dxgi_pdh_lock);
@@ -270,14 +290,7 @@ extern "C" {
             *total = targetGpu->dedicatedTotal;
         }
 
-        return ERROR_SUCCESS; // change when implemented
-    }
-
-    void ggml_dxgi_pdh_release() {
-
-        // Call FreeLibrary
-
-        return; // change when implemented
+        return ERROR_SUCCESS;
     }
 
 } // extern "C"
