@@ -743,6 +743,13 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 
 // Skip if the target model isn't X% GPU loaded to avoid excessive runtime
 func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
+	gpuPercent := getGPUPercent(ctx, t, client, model)
+	if gpuPercent < minPercent {
+		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
+	}
+}
+
+func getGPUPercent(ctx context.Context, t *testing.T, client *api.Client, model string) int {
 	models, err := client.ListRunning(ctx)
 	if err != nil {
 		t.Fatalf("failed to list running models: %s", err)
@@ -772,12 +779,10 @@ func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, m
 			cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 110)
 			gpuPercent = int(100 - cpuPercent)
 		}
-		if gpuPercent < minPercent {
-			t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
-		}
-		return
+		return gpuPercent
 	}
-	t.Skip(fmt.Sprintf("model %s not loaded - actually loaded: %v", model, loaded))
+	t.Fatalf("model %s not loaded - actually loaded: %v", model, loaded)
+	return 0
 }
 
 func getTimeouts(t *testing.T) (soft time.Duration, hard time.Duration) {
