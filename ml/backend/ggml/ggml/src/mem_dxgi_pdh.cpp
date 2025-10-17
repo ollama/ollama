@@ -31,8 +31,6 @@ struct GpuInfo {
     double sharedTotal = 0.0;
     double dedicatedUsage = 0.0;
     double sharedUsage = 0.0;
-    double totalCommitted = 0.0;
-    double localUsage = 0.0;
 };
 
 /*
@@ -126,21 +124,15 @@ static bool get_gpu_memory_usage(GpuInfo gpu) {
     struct GpuCounters {
         PDH_HCOUNTER dedicated;
         PDH_HCOUNTER shared;
-        PDH_HCOUNTER committed;
-        PDH_HCOUNTER local;
     };
 
     GpuCounters gpuCounter;
 
     std::wstring dedicatedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Dedicated Usage";
     std::wstring sharedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Shared Usage";
-    std::wstring totalCommittedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Total Committed";
-    std::wstring localUsagePath = L"\\GPU Local Adapter Memory(" + gpu.pdhInstance + L"*)\\Local Usage";
 
     if (dll_functions.PdhAddCounterW(query, dedicatedPath.c_str(), 0, &gpuCounter.dedicated) != ERROR_SUCCESS ||
-        dll_functions.PdhAddCounterW(query, sharedPath.c_str(), 0, &gpuCounter.shared) != ERROR_SUCCESS ||
-        dll_functions.PdhAddCounterW(query, totalCommittedPath.c_str(), 0, &gpuCounter.committed) != ERROR_SUCCESS ||
-        dll_functions.PdhAddCounterW(query, localUsagePath.c_str(), 0, &gpuCounter.local) != ERROR_SUCCESS) {
+        dll_functions.PdhAddCounterW(query, sharedPath.c_str(), 0, &gpuCounter.shared) != ERROR_SUCCESS) {
             GGML_LOG_ERROR("Failed to add PDH counters for GPU %s\n", std::string(gpu.pdhInstance.begin(), gpu.pdhInstance.end()).c_str());
             dll_functions.PdhCloseQuery(query);
             return false;
@@ -164,12 +156,6 @@ static bool get_gpu_memory_usage(GpuInfo gpu) {
 
     if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.shared, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
         gpu.sharedUsage = val.doubleValue;
-
-    if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.committed, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
-        gpu.totalCommitted = val.doubleValue;
-
-    if (dll_functions.PdhGetFormattedCounterValue(gpuCounter.local, PDH_FMT_DOUBLE, NULL, &val) == ERROR_SUCCESS)
-        gpu.localUsage = val.doubleValue;
 
     dll_functions.PdhCloseQuery(query);
     return true;
@@ -259,7 +245,13 @@ extern "C" {
         std::vector<GpuInfo> gpus = get_dxgi_gpu_infos();
         GpuInfo *targetGpu = nullptr;
         for (auto& gpu : gpus) {
-            if (memcmp(&gpu.luid, luid, sizeof(LUID)) == 0) {
+            GGML_LOG_DEBUG("DXGI LUID: High=0x%08x, Low=0x%08x\n", gpu.luid.HighPart, gpu.luid.LowPart);
+            char luid_buffer[32]; // "0x" + 16 hex digits + null terminator
+            snprintf(luid_buffer, sizeof(luid_buffer), "0x%08x%08x", gpu.luid.HighPart, gpu.luid.LowPart);
+            std::string gpu_luid_str(luid_buffer);
+            GGML_LOG_DEBUG("Converted LUID String: %s\n", gpu_luid_str.c_str());
+            if (gpu_luid_str == std::string(luid)) {
+                GGML_LOG_DEBUG("DXGI found matched GPU LUID!\n");
                 targetGpu = &gpu;
                 break;
             }

@@ -11621,8 +11621,13 @@ static std::string ggml_vk_get_device_luid(int device) {
     devices[device].getProperties2(&props);
 
     const auto& luid = deviceIDProps.deviceLUID;
-
-    return std::string((const char *)luid.data(), VK_LUID_SIZE_KHR);
+    char luid_str[32]; // "0x" + 16 hex digits + null terminator = 19 chars
+    snprintf(luid_str, sizeof(luid_str), // high part + low part
+        "0x%02x%02x%02x%02x%02x%02x%02x%02x",
+        luid[7], luid[6], luid[5], luid[4],
+        luid[3], luid[2], luid[1], luid[0]
+    );
+    return std::string(luid_str);
 }
 
 // backend interface
@@ -13127,6 +13132,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->id = ggml_backend_vk_get_device_id(i);
                 ctx->luid = ggml_backend_vk_get_device_luid(i);
+                GGML_LOG_DEBUG("Vulkan device %d: %s, luid: %s\n", i, ctx->name.c_str(), ctx->luid.c_str());
                 devices.push_back(new ggml_backend_device {
                     /* .iface   = */ ggml_backend_vk_device_i,
                     /* .reg     = */ reg,
