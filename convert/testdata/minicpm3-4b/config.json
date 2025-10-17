@@ -1,0 +1,42 @@
+{
+    "_name_or_path": "openbmb/MiniCPM3-4B",
+    "architectures": [
+        "MiniCPM3ForCausalLM"
+    ],
+    "auto_map": {
+        "AutoConfig": "configuration_minicpm.MiniCPM3Config",
+        "AutoModel": "modeling_minicpm.MiniCPM3Model",
+        "AutoModelForCausalLM": "modeling_minicpm.MiniCPM3ForCausalLM",
+        "AutoModelForSeq2SeqLM": "modeling_minicpm.MiniCPM3ForCausalLM",
+        "AutoModelForSequenceClassification": "modeling_minicpm.MiniCPM3ForSequenceClassification"
+    },
+    "bos_token_id": 1,
+    "eos_token_id": [2, 73440],
+    "hidden_act": "silu",
+    "initializer_range": 0.1,
+    "hidden_size": 2560,
+    "num_hidden_layers": 62,
+    "intermediate_size": 6400,
+    "max_position_embeddings": 32768,
+    "model_type": "minicpm3",
+    "num_attention_heads": 40,
+    "num_key_value_heads": 40,
+    "qk_nope_head_dim": 64,
+    "qk_rope_head_dim": 32,
+    "q_lora_rank": 768,
+    "kv_lora_rank": 256,
+    "rms_norm_eps": 1e-05,
+    "rope_scaling": {
+        "type": "longrope", 
+        "long_factor": [1.0591234137867171, 1.1241891283591912, 1.2596935748670968, 1.5380380402321725, 2.093982484148734, 3.1446935121267696, 4.937952647693647, 7.524541999994549, 10.475458000005451, 13.062047352306353, 14.85530648787323, 15.906017515851266, 16.461961959767827, 16.740306425132907, 16.87581087164081, 16.940876586213285],
+        "short_factor": [1.0591234137867171, 1.1241891283591912, 1.2596935748670968, 1.5380380402321725, 2.093982484148734, 3.1446935121267696, 4.937952647693647, 7.524541999994549, 10.475458000005451, 13.062047352306353, 14.85530648787323, 15.906017515851266, 16.461961959767827, 16.740306425132907, 16.87581087164081, 16.940876586213285],
+        "original_max_position_embeddings": 32768
+    },
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.41.0",
+    "use_cache": true,
+    "vocab_size": 73448,
+    "scale_emb": 12,
+    "dim_model_base": 256,
+    "scale_depth": 1.4
+}
