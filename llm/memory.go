@@ -98,12 +98,21 @@ func predictServerFit(allGpus []ml.DeviceInfo, f *ggml.GGML, adapters, projector
 				return true, estimatedVRAM
 			}
 		}
-
-		if len(gpus) == 0 {
-			return true, estimatedVRAM
-		}
 	}
 	return false, estimatedVRAM
+}
+
+func verifyCPUFit(f *ggml.GGML, modelPath string, projectors []string, adapters []string, opts api.Options, systemInfo ml.SystemInfo, numParallel int) bool {
+	estimate := estimateGPULayers(nil, f, projectors, opts, numParallel)
+	if estimate.TotalSize > systemInfo.FreeMemory {
+		return false
+	}
+	slog.Info("new model will fit in available system memory for CPU inference, loading",
+		"model", modelPath,
+		"parallel", numParallel,
+		"required", format.HumanBytes2(estimate.TotalSize),
+	)
+	return true
 }
 
 type MemoryEstimate struct {
