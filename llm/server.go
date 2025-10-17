@@ -226,8 +226,6 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 	}
 
-	// TODO - somewhere around here pull out to a helper routine so ./discover/runner.go can call this to spawn
-
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 	cmd, port, err := StartRunner(
@@ -456,17 +454,24 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus [
 	systemSwapFreeMemory := systemInfo.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
-	g := pickBestFullFitByLibrary(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
-	if g == nil {
-		if !requireFull {
-			g = pickBestPartialFitByLibrary(s.ggml, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
-		} else {
+	if len(gpus) == 0 || s.options.NumGPU == 0 {
+		if !verifyCPUFit(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, systemInfo, s.numParallel) {
 			slog.Info("model requires more memory than is currently available, evicting a model to make space", "estimate", s.estimate)
-			return nil, ErrLoadRequiredFull
+			return nil, fmt.Errorf("model requires more system memory than is currently available %w", ErrLoadRequiredFull)
 		}
+	} else {
+		g := pickBestFullFitByLibrary(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
+		if g == nil {
+			if !requireFull {
+				g = pickBestPartialFitByLibrary(s.ggml, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
+			} else {
+				slog.Info("model requires more memory than is currently available, evicting a model to make space", "estimate", s.estimate)
+				return nil, ErrLoadRequiredFull
+			}
+		}
+		gpus = g
 	}
 
-	gpus = g
 	s.estimate = estimateGPULayers(gpus, s.ggml, []string{s.loadRequest.ProjectorPath}, s.options, s.numParallel)
 
 	if len(gpus) >= 1 {
@@ -659,6 +664,16 @@ func (s *ollamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus 
 
 	if err := s.waitUntilRunnerLaunched(ctx); err != nil {
 		return nil, err
+	}
+
+	if len(gpus) == 0 || s.options.NumGPU == 0 {
+		resp, err := s.initModel(ctx, s.loadRequest, LoadOperationFit)
+		if err != nil {
+			return nil, err
+		}
+		if resp.Memory.CPU.Size() > systemInfo.FreeMemory {
+			return nil, fmt.Errorf("insufficient available system memory %s to load model %s - %w", format.HumanBytes2(systemInfo.FreeMemory), format.HumanBytes2(resp.Memory.CPU.Size()), ErrLoadRequiredFull)
+		}
 	}
 
 nextOperation:
