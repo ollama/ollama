@@ -116,6 +116,14 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		defer cancel()
 		var wg sync.WaitGroup
 		needsDelete := make([]bool, len(devices))
+		if envconfig.DisableIGPU() {
+			for i := range devices {
+				if devices[i].Integrated {
+					slog.Info("disabling iGPU at users request", "description", devices[i].Description, "pci_id", devices[i].PCIID)
+					needsDelete[i] = true
+				}
+			}
+		}
 		supportedMu := sync.Mutex{}
 		supported := make(map[string]map[string]map[string]int) // [Library][libDir][ID] = pre-deletion devices index
 		for i := range devices {
