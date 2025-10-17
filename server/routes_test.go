@@ -882,8 +882,6 @@ func TestFilterThinkTags(t *testing.T) {
 }
 
 func TestWaitForStream(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	cases := []struct {
 		name       string
 		messages   []any
