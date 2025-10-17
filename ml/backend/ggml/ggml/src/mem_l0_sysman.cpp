@@ -467,15 +467,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         size_t freeMemory = 0;
         for (uint32_t j = 0; j < memModuleCount; ++j) {
             auto memory = memHandles[j];
-            zes_mem_properties_t memProperties = {};
-            memProperties.stype = ZES_STRUCTURE_TYPE_MEM_PROPERTIES;
-            ret = l0_sysman.zesMemoryGetProperties(memory, &memProperties);
-            if (ret != ZE_RESULT_SUCCESS) {
-                GGML_LOG_INFO("%s: Failed running zesMemoryGetProperties: %d\n", __func__, ret);
-                UNLOAD_LIBRARY(l0_sysman.handle);
-                l0_sysman.handle = nullptr;
-                return ret;
-            }
 
             zes_mem_state_t memState = {};
             memState.stype = ZES_STRUCTURE_TYPE_MEM_STATE;
@@ -489,7 +480,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
 
             // Sum the values from all memory modules on a single device.
             // At the moment we haven't seen a device with multiple memory modules so this logic hasn't been tested
-            totalMemory += memProperties.physicalSize;
+            totalMemory += memState.size;
             freeMemory += memState.free;
         }
 
