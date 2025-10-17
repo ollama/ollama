@@ -19,9 +19,6 @@ namespace fs = std::filesystem;
 
 static std::mutex ggml_dxgi_pdh_lock;
 
-static PDH_HQUERY ggml_dxgi_pdh_query = nullptr;
-static PDH_HCOUNTER ggml_dxgi_pdh_counter = nullptr;
-
 /*
 Struct to keep track of GPU adapter information at runtime
 */
@@ -58,7 +55,7 @@ struct {
 /*
 Maybe not needed
 */
-std::wstring GeneratePdhInstanceNameFromLuid(const LUID& luid) {
+static std::wstring generate_pdh_instance_name_from_luid(const LUID& luid) {
     std::wstringstream ss;
     ss << L"luid_0x" << std::hex << std::setw(8) << std::setfill(L'0') << std::uppercase << luid.HighPart
         << L"_0x" << std::setw(8) << std::setfill(L'0') << luid.LowPart;
@@ -69,7 +66,7 @@ std::wstring GeneratePdhInstanceNameFromLuid(const LUID& luid) {
 Conversion from Bytes to GigaBytes
 */
 template <typename T>
-static inline double BtoGB(T n)
+static inline double b_to_gb(T n)
 {
     return (double(n) / (1024.0 * 1024 * 1024));
 }
@@ -77,11 +74,11 @@ static inline double BtoGB(T n)
 /*
 Fetch the GPU adapter 'dedicated memory' and 'shared memory' using DXGI
 */
-void FetchDxgiAdapterDesc1(const DXGI_ADAPTER_DESC1& desc, GpuInfo* info) {
+static void fetch_dxgi_adapter_desc1(const DXGI_ADAPTER_DESC1& desc, GpuInfo* info) {
     auto dedicatedVideoMemory = desc.DedicatedVideoMemory;
     auto sharedSystemMemory = desc.SharedSystemMemory;
-    GGML_LOG_DEBUG("Dedicated Video Memory: %.2f GB\n", BtoGB(dedicatedVideoMemory));
-    GGML_LOG_DEBUG("Shared System Memory: %.2f GB\n", BtoGB(sharedSystemMemory));
+    GGML_LOG_DEBUG("Dedicated Video Memory: %.2f GB\n", b_to_gb(dedicatedVideoMemory));
+    GGML_LOG_DEBUG("Shared System Memory: %.2f GB\n", b_to_gb(sharedSystemMemory));
 
     if (info) {
         info->dedicatedTotal = dedicatedVideoMemory; // values in bytes
@@ -92,7 +89,7 @@ void FetchDxgiAdapterDesc1(const DXGI_ADAPTER_DESC1& desc, GpuInfo* info) {
 /*
 Enumerate over the GPU adapters detected using DXGI and return their information
 */
-std::vector<GpuInfo> GetDxgiGpuInfos() {
+static std::vector<GpuInfo> get_dxgi_gpu_infos() {
     std::vector<GpuInfo> infos;
     IDXGIFactory1* pFactory = nullptr;
 
@@ -105,10 +102,10 @@ std::vector<GpuInfo> GetDxgiGpuInfos() {
             
             // Get all the GPU adapter info
             GpuInfo info;
-            FetchDxgiAdapterDesc1(desc, &info);
+            fetch_dxgi_adapter_desc1(desc, &info);
             info.name = std::wstring(desc.Description);
             info.luid = desc.AdapterLuid;
-            info.pdhInstance = GeneratePdhInstanceNameFromLuid(desc.AdapterLuid); // maybe not needed
+            info.pdhInstance = generate_pdh_instance_name_from_luid(desc.AdapterLuid); // maybe not needed
             infos.push_back(info);
 
             pAdapter->Release();
@@ -119,7 +116,7 @@ std::vector<GpuInfo> GetDxgiGpuInfos() {
     return infos;
 }
 
-bool GetGpuMemoryUsage(GpuInfo gpu) {
+static bool get_gpu_memory_usage(GpuInfo gpu) {
     PDH_HQUERY query;
     if (PdhOpenQuery(NULL, 0, &query) != ERROR_SUCCESS) {
         return false;
@@ -258,7 +255,7 @@ extern "C" {
 
         // Enumerate GPUs using DXGI and find the matching LUID
         // This also fetches the total memory info for each of the enumerated GPUs
-        std::vector<GpuInfo> gpus = GetDxgiGpuInfos();
+        std::vector<GpuInfo> gpus = get_dxgi_gpu_infos();
         GpuInfo *targetGpu = nullptr;
         for (auto& gpu : gpus) {
             if (memcmp(&gpu.luid, luid, sizeof(LUID)) == 0) {
@@ -272,7 +269,7 @@ extern "C" {
         }
 
         // Get the current memory usage for the target GPU
-        int status = GetGpuMemoryUsage(*targetGpu);
+        int status = get_gpu_memory_usage(*targetGpu);
         if (!status) {
             GGML_LOG_ERROR("Failed to get GPU memory usage.\n");
             return ERROR_DEVICE_NOT_AVAILABLE;
