@@ -6,14 +6,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/ollama/ollama/api"
 )
 
 func TestList(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	expectNames := []string{

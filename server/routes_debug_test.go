@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
@@ -15,8 +14,6 @@ import (
 )
 
 func TestGenerateDebugRenderOnly(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
@@ -208,8 +205,6 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 }
 
 func TestChatDebugRenderOnly(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,

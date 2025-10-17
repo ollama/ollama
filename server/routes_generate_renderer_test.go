@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
@@ -20,8 +19,6 @@ import (
 // TestGenerateWithBuiltinRenderer tests that api/generate uses built-in renderers
 // when in chat-like flow (messages present, no suffix, no template)
 func TestGenerateWithBuiltinRenderer(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
@@ -204,8 +201,6 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 
 // TestGenerateWithDebugRenderOnly tests that debug_render_only works with built-in renderers
 func TestGenerateWithDebugRenderOnly(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
