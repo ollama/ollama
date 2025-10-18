@@ -73,6 +73,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
 #define VK_KHR_SHADER_BFLOAT16_EXTENSION_NAME                        "VK_KHR_shader_bfloat16"
 #define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR ((VkStructureType)1000141000)
 #define VK_COMPONENT_TYPE_BFLOAT16_KHR                               ((VkComponentTypeKHR)1000141000)
+#define VK_LUID_SIZE_KHR                  VK_LUID_SIZE
 
 typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
     VkStructureType                       sType;
@@ -11608,6 +11609,27 @@ static std::string ggml_vk_get_device_id(int device) {
     return std::string(id);
 }
 
+static std::string ggml_vk_get_device_luid(int device) {
+    // DXCore and DXGI libraries can query LUIDs on Windows
+    ggml_vk_instance_init();
+
+    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
+
+    vk::PhysicalDeviceProperties2 props;
+    vk::PhysicalDeviceIDProperties deviceIDProps;
+    props.pNext = &deviceIDProps;
+    devices[device].getProperties2(&props);
+
+    const auto& luid = deviceIDProps.deviceLUID;
+    char luid_str[32]; // "0x" + 16 hex digits + null terminator = 19 chars
+    snprintf(luid_str, sizeof(luid_str), // high part + low part
+        "0x%02x%02x%02x%02x%02x%02x%02x%02x",
+        luid[7], luid[6], luid[5], luid[4],
+        luid[3], luid[2], luid[1], luid[0]
+    );
+    return std::string(luid_str);
+}
+
 // backend interface
 
 #define UNUSED GGML_UNUSED
@@ -12420,6 +12442,12 @@ std::string ggml_backend_vk_get_device_id(int device) {
     return ggml_vk_get_device_id(dev_idx);
 }
 
+std::string ggml_backend_vk_get_device_luid(int device) {
+    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
+    int dev_idx = vk_instance.device_indices[device];
+    return ggml_vk_get_device_luid(dev_idx);
+}
+
 //////////////////////////
 
 struct ggml_backend_vk_device_context {
@@ -12431,6 +12459,7 @@ struct ggml_backend_vk_device_context {
     std::string pci_id;
     std::string id;
     std::string uuid;
+    std::string luid;
     int major;
     int minor;
     int driver_major;
@@ -12449,35 +12478,56 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s\n", ctx->uuid.c_str());
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: luid %s\n", ctx->luid.c_str());
 
-    if (!ctx->is_integrated_gpu)
-    {
-        // Use vendor specific management libraries for best VRAM reporting if available
-        switch (props2.properties.vendorID) {
+    // Use vendor specific management libraries for best VRAM reporting if available
+    switch (props2.properties.vendorID) {
         case VK_VENDOR_ID_AMD:
-            if (ggml_hip_mgmt_init() == 0) {
-                int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
-                if (status == 0) {
-                    GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            if (!ctx->is_integrated_gpu)
+            {
+                if (ggml_hip_mgmt_init() == 0) {
+                    int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
+                    if (status == 0) {
+                        GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                        ggml_hip_mgmt_release();
+                        return;
+                    }
                     ggml_hip_mgmt_release();
-                    return;
                 }
-                ggml_hip_mgmt_release();
             }
             break;
         case VK_VENDOR_ID_NVIDIA:
-            if (ggml_nvml_init() == 0) {
-                int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
-                if (status == 0) {
-                    GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            if (!ctx->is_integrated_gpu)
+            {
+                if (ggml_nvml_init() == 0) {
+                    int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
+                    if (status == 0) {
+                        GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                        ggml_nvml_release();
+                        return;
+                    }
                     ggml_nvml_release();
+                }
+            }
+            break;
+        case VK_VENDOR_ID_INTEL:
+            // DXGI + PDH can support both IGPU and DGPU on Windows 10/11
+            // Fallback API for a wide variety of drivers
+            GGML_LOG_DEBUG("Got Intel GPU. Initializing DXGI + PDH...\n");
+            if (ggml_dxgi_pdh_init() == 0) {
+                GGML_LOG_DEBUG("DXGI + PDH Initialized. Getting GPU free memory info\n");
+                int status = ggml_dxgi_pdh_get_device_memory(ctx->luid.c_str(), free, total, ctx->is_integrated_gpu);
+                if (status == 0) {
+                    GGML_LOG_DEBUG("%s utilizing DXGI + PDH memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                    ggml_dxgi_pdh_release();
                     return;
                 }
-                ggml_nvml_release();
+                ggml_dxgi_pdh_release();
             }
             break;
         }
-    }
+
     // else fallback to memory budget if supported
 
     *total = 0;
@@ -13081,6 +13131,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
                 ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->id = ggml_backend_vk_get_device_id(i);
+                ctx->luid = ggml_backend_vk_get_device_luid(i);
+                GGML_LOG_DEBUG("Vulkan device %d: %s, luid: %s\n", i, ctx->name.c_str(), ctx->luid.c_str());
                 devices.push_back(new ggml_backend_device {
                     /* .iface   = */ ggml_backend_vk_device_i,
                     /* .reg     = */ reg,
