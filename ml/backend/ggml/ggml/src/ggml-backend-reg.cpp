@@ -118,6 +118,18 @@ static dl_handle * dl_load_library(const fs::path & path) {
     SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
 
     HMODULE handle = LoadLibraryW(path.wstring().c_str());
+    if (!handle) {
+        DWORD error_code = GetLastError();
+        std::string msg;
+        LPSTR lpMsgBuf = NULL;
+        DWORD bufLen = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                      NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&lpMsgBuf, 0, NULL);
+        if (bufLen) {
+            msg = lpMsgBuf;
+            LocalFree(lpMsgBuf);
+            GGML_LOG_INFO("%s unable to load library %s: %s\n", __func__, path_str(path).c_str(), msg.c_str());
+        }
+    }
 
     SetErrorMode(old_mode);
 
