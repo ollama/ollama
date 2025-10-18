@@ -88,6 +88,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// times concurrently leading to memory contention
 		// TODO refactor so we group the lib dirs and do serial per version, but parallel for different libs
 		for dir := range libDirs {
+			bootstrapTimeout := 30 * time.Second
 			var dirs []string
 			if dir != "" {
 				if requested != "" && filepath.Base(dir) != requested {
@@ -102,11 +103,16 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			} else {
 				dirs = []string{LibOllamaPath, dir}
 			}
+
+			// ROCm can take a long time on some systems, so give it more time before giving up
+			if dir != "" && strings.Contains(filepath.Base(dir), "rocm") {
+				bootstrapTimeout = 60 * time.Second
+			}
 			// Typically bootstrapping takes < 1s, but on some systems, with devices
 			// in low power/idle mode, initialization can take multiple seconds.  We
 			// set a long timeout just for bootstrap discovery to reduce the chance
 			// of giving up too quickly
-			ctx1stPass, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ctx1stPass, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 			defer cancel()
 
 			// For this pass, we retain duplicates in case any are incompatible with some libraries
