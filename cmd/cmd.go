@@ -446,17 +446,19 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
-		if err := loadOrUnloadModel(cmd, &opts); err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+		if len(info.Messages) > 0 {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				var sErr api.AuthorizationError
+				if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
 
-				if sErr.SigninURL != "" {
-					fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					if sErr.SigninURL != "" {
+						fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					}
+					return nil
 				}
-				return nil
+				return err
 			}
-			return err
 		}
 
 		for _, msg := range info.Messages {
@@ -473,7 +475,34 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 		return generateInteractive(cmd, opts)
 	}
-	return generate(cmd, opts)
+	local := opts.Copy()
+
+	if local.MultiModal {
+		prompt, images, err := extractFileData(local.Prompt)
+		if err != nil {
+			return err
+		}
+		local.Prompt = prompt
+		local.Images = images
+	}
+
+	messages := slices.Clone(local.Messages)
+
+	if local.System != "" {
+		hasSystem := len(messages) > 0 && messages[0].Role == "system"
+		if !hasSystem {
+			messages = append([]api.Message{{Role: "system", Content: local.System}}, messages...)
+		}
+	}
+
+	if local.Prompt != "" || len(local.Images) > 0 {
+		messages = append(messages, api.Message{Role: "user", Content: local.Prompt, Images: local.Images})
+	}
+
+	local.Messages = messages
+
+	_, err = chat(cmd, local)
+	return err
 }
 
 func SigninHandler(cmd *cobra.Command, args []string) error {
@@ -1099,8 +1128,6 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return client.Pull(cmd.Context(), &request, fn)
 }
 
-type generateContextKey string
-
 type runOptions struct {
 	Model        string
 	ParentModel  string
@@ -1361,137 +1388,6 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	}
 
 	return &api.Message{Role: role, Content: fullResponse.String()}, nil
-}
-
-func generate(cmd *cobra.Command, opts runOptions) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	var latest api.GenerateResponse
-
-	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
-	if !ok {
-		generateContext = []int{}
-	}
-
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	var state *displayResponseState = &displayResponseState{}
-	var thinkingContent strings.Builder
-	var thinkTagOpened bool = false
-	var thinkTagClosed bool = false
-
-	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
-
-	fn := func(response api.GenerateResponse) error {
-		latest = response
-		content := response.Response
-
-		if response.Response != "" || !opts.HideThinking {
-			p.StopAndClear()
-		}
-
-		if response.Thinking != "" && !opts.HideThinking {
-			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(plainText))
-				thinkTagOpened = true
-				thinkTagClosed = false
-			}
-			thinkingContent.WriteString(response.Thinking)
-			displayResponse(response.Thinking, opts.WordWrap, state)
-		}
-
-		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.ToolCalls) > 0) {
-			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
-			}
-			fmt.Print(thinkingOutputClosingText(plainText))
-			thinkTagOpened = false
-			thinkTagClosed = true
-			state = &displayResponseState{}
-		}
-
-		displayResponse(content, opts.WordWrap, state)
-
-		if response.ToolCalls != nil {
-			toolCalls := response.ToolCalls
-			if len(toolCalls) > 0 {
-				fmt.Print(renderToolCalls(toolCalls, plainText))
-			}
-		}
-
-		return nil
-	}
-
-	if opts.MultiModal {
-		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
-		if err != nil {
-			return err
-		}
-	}
-
-	if opts.Format == "json" {
-		opts.Format = `"` + opts.Format + `"`
-	}
-
-	request := api.GenerateRequest{
-		Model:     opts.Model,
-		Prompt:    opts.Prompt,
-		Context:   generateContext,
-		Images:    opts.Images,
-		Format:    json.RawMessage(opts.Format),
-		System:    opts.System,
-		Options:   opts.Options,
-		KeepAlive: opts.KeepAlive,
-		Think:     opts.Think,
-	}
-
-	if err := client.Generate(ctx, &request, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
-	}
-
-	if opts.Prompt != "" {
-		fmt.Println()
-		fmt.Println()
-	}
-
-	if !latest.Done {
-		return nil
-	}
-
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return err
-	}
-
-	if verbose {
-		latest.Summary()
-	}
-
-	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-	cmd.SetContext(ctx)
-
-	return nil
 }
 
 func RunServer(_ *cobra.Command, _ []string) error {
