@@ -178,6 +178,8 @@ extern "C" {
         int pci_device_id;
         int pci_domain_id;
         const char *library;
+        // number with which the devices are accessed (Vulkan)
+        const char *numeric_id;
     };
 
     GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);

@@ -65,6 +65,23 @@ func TestModelsChat(t *testing.T) {
 					}
 				}
 			}
+			initialTimeout := 120 * time.Second
+			streamTimeout := 30 * time.Second
+			slog.Info("loading", "model", model)
+			err := client.Generate(ctx,
+				&api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
+				func(response api.GenerateResponse) error { return nil },
+			)
+			if err != nil {
+				t.Fatalf("failed to load model %s: %s", model, err)
+			}
+			gpuPercent := getGPUPercent(ctx, t, client, model)
+			if gpuPercent < 80 {
+				slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
+				initialTimeout = 240 * time.Second
+				streamTimeout = 40 * time.Second
+			}
+
 			// TODO - fiddle with context size
 			req := api.ChatRequest{
 				Model: model,
@@ -80,7 +97,7 @@ func TestModelsChat(t *testing.T) {
 					"seed":        123,
 				},
 			}
-			DoChat(ctx, t, client, req, blueSkyExpected, 120*time.Second, 30*time.Second)
+			DoChat(ctx, t, client, req, blueSkyExpected, initialTimeout, streamTimeout)
 			// best effort unload once we're done with the model
 			client.Generate(ctx, &api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		})

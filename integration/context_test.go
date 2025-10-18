@@ -78,7 +78,7 @@ func TestContextExhaustion(t *testing.T) {
 
 // Send multiple generate requests with prior context and ensure the response is coherant and expected
 func TestParallelGenerateWithHistory(t *testing.T) {
-	modelOverride := "gpt-oss:20b"
+	modelName := "gpt-oss:20b"
 	req, resp := GenerateRequests()
 	numParallel := 2
 	iterLimit := 2
@@ -88,15 +88,23 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	initialTimeout := 120 * time.Second
+	streamTimeout := 20 * time.Second
 
 	// Get the server running (if applicable) warm the model up with a single initial request
-	slog.Info("loading", "model", modelOverride)
+	slog.Info("loading", "model", modelName)
 	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: modelOverride, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
+		&api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
 		func(response api.GenerateResponse) error { return nil },
 	)
 	if err != nil {
-		t.Fatalf("failed to load model %s: %s", modelOverride, err)
+		t.Fatalf("failed to load model %s: %s", modelName, err)
+	}
+	gpuPercent := getGPUPercent(ctx, t, client, modelName)
+	if gpuPercent < 80 {
+		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
+		initialTimeout = 240 * time.Second
+		streamTimeout = 30 * time.Second
 	}
 
 	var wg sync.WaitGroup
@@ -105,7 +113,7 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			k := i % len(req)
-			req[k].Model = modelOverride
+			req[k].Model = modelName
 			for j := 0; j < iterLimit; j++ {
 				if time.Now().Sub(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
@@ -114,7 +122,7 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
-				c := DoGenerate(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
+				c := DoGenerate(ctx, t, client, req[k], resp[k], initialTimeout, streamTimeout)
 				req[k].Context = c
 				req[k].Prompt = "tell me more!"
 			}
@@ -165,7 +173,7 @@ func TestGenerateWithHistory(t *testing.T) {
 
 // Send multiple chat requests with prior context and ensure the response is coherant and expected
 func TestParallelChatWithHistory(t *testing.T) {
-	modelOverride := "gpt-oss:20b"
+	modelName := "gpt-oss:20b"
 	req, resp := ChatRequests()
 	numParallel := 2
 	iterLimit := 2
@@ -175,15 +183,23 @@ func TestParallelChatWithHistory(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	initialTimeout := 120 * time.Second
+	streamTimeout := 20 * time.Second
 
 	// Get the server running (if applicable) warm the model up with a single initial empty request
-	slog.Info("loading", "model", modelOverride)
+	slog.Info("loading", "model", modelName)
 	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: modelOverride, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
+		&api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
 		func(response api.GenerateResponse) error { return nil },
 	)
 	if err != nil {
-		t.Fatalf("failed to load model %s: %s", modelOverride, err)
+		t.Fatalf("failed to load model %s: %s", modelName, err)
+	}
+	gpuPercent := getGPUPercent(ctx, t, client, modelName)
+	if gpuPercent < 80 {
+		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
+		initialTimeout = 240 * time.Second
+		streamTimeout = 30 * time.Second
 	}
 
 	var wg sync.WaitGroup
@@ -192,7 +208,7 @@ func TestParallelChatWithHistory(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			k := i % len(req)
-			req[k].Model = modelOverride
+			req[k].Model = modelName
 			for j := 0; j < iterLimit; j++ {
 				if time.Now().Sub(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
@@ -201,7 +217,7 @@ func TestParallelChatWithHistory(t *testing.T) {
 				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
-				assistant := DoChat(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
+				assistant := DoChat(ctx, t, client, req[k], resp[k], initialTimeout, streamTimeout)
 				if assistant == nil {
 					t.Fatalf("didn't get an assistant response for context")
 				}
