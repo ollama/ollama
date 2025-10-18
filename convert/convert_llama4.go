@@ -36,33 +36,27 @@ type llama4Model struct {
 
 // KV implements ModelConverter.
 func (p *llama4Model) KV(t *Tokenizer) ggml.KV {
-	kv := p.ModelParameters.KV(t)
+	kv := p.TextModel.KV(t)
 	kv["general.architecture"] = "llama4"
 
-	for k, v := range p.TextModel.KV(t) {
-		if strings.HasPrefix(k, "llama.") {
-			kv[strings.ReplaceAll(k, "llama.", "llama4.")] = v
-		}
-	}
+	kv["feed_forward_length"] = p.TextModel.IntermediateSizeMLP
+	kv["expert_feed_forward_length"] = p.TextModel.IntermediateSize
 
-	kv["llama4.feed_forward_length"] = p.TextModel.IntermediateSizeMLP
-	kv["llama4.expert_feed_forward_length"] = p.TextModel.IntermediateSize
+	kv["expert_count"] = p.TextModel.NumLocalExperts
+	kv["expert_used_count"] = p.TextModel.NumExpertsPerToken
+	kv["interleave_moe_layer_step"] = p.TextModel.InterleaveMOELayerStep
+	kv["use_qk_norm"] = p.TextModel.UseQKNorm
+	kv["attention.chunk_size"] = p.TextModel.AttentionChunkSize
 
-	kv["llama4.expert_count"] = p.TextModel.NumLocalExperts
-	kv["llama4.expert_used_count"] = p.TextModel.NumExpertsPerToken
-	kv["llama4.interleave_moe_layer_step"] = p.TextModel.InterleaveMOELayerStep
-	kv["llama4.use_qk_norm"] = p.TextModel.UseQKNorm
-	kv["llama4.attention.chunk_size"] = p.TextModel.AttentionChunkSize
-
-	kv["llama4.vision.block_count"] = p.VisionModel.NumHiddenLayers
-	kv["llama4.vision.embedding_length"] = p.VisionModel.HiddenSize
-	kv["llama4.vision.feed_forward_length"] = p.VisionModel.IntermediateSize
-	kv["llama4.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
-	kv["llama4.vision.image_size"] = p.VisionModel.ImageSize
-	kv["llama4.vision.patch_size"] = p.VisionModel.PatchSize
-	kv["llama4.vision.rope.freq_base"] = p.VisionModel.RopeTheta
-	kv["llama4.vision.layer_norm_epsilon"] = p.VisionModel.NormEpsilon
-	kv["llama4.vision.pixel_shuffle_ratio"] = p.VisionModel.PixelShuffleRatio
+	kv["vision.block_count"] = p.VisionModel.NumHiddenLayers
+	kv["vision.embedding_length"] = p.VisionModel.HiddenSize
+	kv["vision.feed_forward_length"] = p.VisionModel.IntermediateSize
+	kv["vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
+	kv["vision.image_size"] = p.VisionModel.ImageSize
+	kv["vision.patch_size"] = p.VisionModel.PatchSize
+	kv["vision.rope.freq_base"] = p.VisionModel.RopeTheta
+	kv["vision.layer_norm_epsilon"] = p.VisionModel.NormEpsilon
+	kv["vision.pixel_shuffle_ratio"] = p.VisionModel.PixelShuffleRatio
 	return kv
 }
 

@@ -16,11 +16,11 @@ func (p *mixtralModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.llamaModel.KV(t)
 
 	if p.NumLocalExperts > 0 {
-		kv["llama.expert_count"] = p.NumLocalExperts
+		kv["expert_count"] = p.NumLocalExperts
 	}
 
 	if p.NumExpertsPerToken > 0 {
-		kv["llama.expert_used_count"] = p.NumExpertsPerToken
+		kv["expert_used_count"] = p.NumExpertsPerToken
 	}
 
 	return kv

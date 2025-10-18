@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -339,13 +340,8 @@ func TestConvertAdapter(t *testing.T) {
 			}
 
 			actual := generateResultsJSON(t, r, m.KV(), m.Tensors())
-
-			for _, k := range slices.Sorted(maps.Keys(c.Expected)) {
-				if v, ok := actual[k]; !ok {
-					t.Errorf("missing %s", k)
-				} else if v != c.Expected[k] {
-					t.Errorf("unexpected %s: want %s, got %s", k, c.Expected[k], v)
-				}
+			if diff := cmp.Diff(c.Expected, actual); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
