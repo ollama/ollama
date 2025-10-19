@@ -16,10 +16,37 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
+type ParserConstructor func() Parser
+
+type ParserRegistry struct {
+	constructors map[string]ParserConstructor
+}
+
+func (r *ParserRegistry) Register(name string, constructor ParserConstructor) {
+	r.constructors[name] = constructor
+}
+
+var registry = ParserRegistry{
+	constructors: make(map[string]ParserConstructor),
+}
+
+func Register(name string, constructor ParserConstructor) {
+	registry.Register(name, constructor)
+}
+
 func ParserForName(name string) Parser {
+	if parser, ok := registry.constructors[name]; ok {
+		return parser()
+	}
 	switch name {
 	case "qwen3-coder":
 		parser := &Qwen3CoderParser{}
+		return parser
+	case "qwen3-vl-instruct":
+		parser := &Qwen3VLParser{hasThinkingSupport: false}
+		return parser
+	case "qwen3-vl-thinking":
+		parser := &Qwen3VLParser{hasThinkingSupport: true}
 		return parser
 	case "passthrough":
 		return &PassthroughParser{}

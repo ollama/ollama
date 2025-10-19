@@ -68,15 +68,15 @@ func TestGenerateChat(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      getGpuFn,
-			getCpuFn:      getCpuFn,
-			reschedDelay:  250 * time.Millisecond,
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getCpuFn:        getCpuFn,
+			waitForRecovery: 250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
@@ -158,8 +158,23 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support thinking"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"\"test\" does not support thinking"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("model can't think but think set false", func(t *testing.T) {
+		think := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Think: &api.ThinkValue{Value: think},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
 		}
 	})
 
@@ -594,6 +609,58 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
+
+	t.Run("status error non-streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusServiceUnavailable,
+				Status:       "Service Unavailable",
+				ErrorMessage: "model is overloaded",
+			}
+		}
+
+		stream := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected status 503, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model is overloaded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("status error streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusTooManyRequests,
+				Status:       "Too Many Requests",
+				ErrorMessage: "rate limit exceeded",
+			}
+		}
+
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+		})
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("expected status 429, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"rate limit exceeded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
 }
 
 func TestGenerate(t *testing.T) {
@@ -612,15 +679,15 @@ func TestGenerate(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      getGpuFn,
-			getCpuFn:      getCpuFn,
-			reschedDelay:  250 * time.Millisecond,
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getCpuFn:        getCpuFn,
+			waitForRecovery: 250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
@@ -968,6 +1035,55 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
+
+	t.Run("status error non-streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusServiceUnavailable,
+				Status:       "Service Unavailable",
+				ErrorMessage: "model is overloaded",
+			}
+		}
+
+		streamRequest := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Hello!",
+			Stream: &streamRequest,
+		})
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected status 503, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model is overloaded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("status error streaming", func(t *testing.T) {
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			return api.StatusError{
+				StatusCode:   http.StatusTooManyRequests,
+				Status:       "Too Many Requests",
+				ErrorMessage: "rate limit exceeded",
+			}
+		}
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Hello!",
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("expected status 429, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"rate limit exceeded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
 }
 
 func TestChatWithPromptEndingInThinkTag(t *testing.T) {
@@ -988,15 +1104,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		s := &Server{
 			sched: &Scheduler{
-				pendingReqCh:  make(chan *LlmRequest, 1),
-				finishedReqCh: make(chan *LlmRequest, 1),
-				expiredCh:     make(chan *runnerRef, 1),
-				unloadedCh:    make(chan any, 1),
-				loaded:        make(map[string]*runnerRef),
-				newServerFn:   newMockServer(mock),
-				getGpuFn:      getGpuFn,
-				getCpuFn:      getCpuFn,
-				reschedDelay:  250 * time.Millisecond,
+				pendingReqCh:    make(chan *LlmRequest, 1),
+				finishedReqCh:   make(chan *LlmRequest, 1),
+				expiredCh:       make(chan *runnerRef, 1),
+				unloadedCh:      make(chan any, 1),
+				loaded:          make(map[string]*runnerRef),
+				newServerFn:     newMockServer(mock),
+				getGpuFn:        getGpuFn,
+				getCpuFn:        getCpuFn,
+				waitForRecovery: 250 * time.Millisecond,
 				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 					time.Sleep(time.Millisecond)
 					req.successCh <- &runnerRef{llama: mock}
@@ -1120,13 +1236,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		"The answer is 4.",
 		true)
 
-	testChatRequest(t, "thinking disabled but template still adds think tag",
-		"Simple question",
-		" My thoughts </think> The answer.",
-		"",
-		" My thoughts </think> The answer.",
-		false)
-
 	// Test streaming response with template-added <think>
 	t.Run("streaming with thinking", func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -1196,6 +1305,240 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if got := allContent.String(); got != "Based on my analysis, the solution is straightforward." {
 			t.Errorf("expected content %q, got %q", "Based on my analysis, the solution is straightforward.", got)
+		}
+	})
+
+	t.Run("structured outputs restart non-stream", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+			wg         sync.WaitGroup
+		)
+
+		wg.Add(2)
+
+		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			defer wg.Done()
+
+			requestsMu.Lock()
+			requests = append(requests, r)
+			callNum := len(requests)
+			requestsMu.Unlock()
+
+			switch callNum {
+			case 1:
+				fn(llm.CompletionResponse{
+					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
+					Done:               false,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+				})
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+					t.Fatalf("timeout waiting for structured outputs cancellation")
+					return nil
+				}
+			case 2:
+				fn(llm.CompletionResponse{
+					Content:            `{"answer":"42"}`,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			default:
+				t.Fatalf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+		}
+
+		think := true
+		streamRequest := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+			Think:    &api.ThinkValue{Value: think},
+			Stream:   &streamRequest,
+			Format:   format,
+		})
+
+		wg.Wait()
+		mock.CompletionFn = nil
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		if len(requests) != 2 {
+			t.Fatalf("expected two completion calls, got %d", len(requests))
+		}
+
+		if requests[0].Format != nil {
+			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+		}
+
+		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+			t.Errorf("expected second completion format to match original format")
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Message.Thinking != "I am thinking through this problem. " {
+			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", resp.Message.Thinking)
+		}
+
+		if resp.Message.Content != `{"answer":"42"}` {
+			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
+		}
+
+		if !resp.Done {
+			t.Errorf("expected response to be done")
+		}
+
+		if resp.DoneReason != "stop" {
+			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+		}
+	})
+
+	t.Run("structured outputs restart streaming", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+			wg         sync.WaitGroup
+		)
+
+		wg.Add(2)
+
+		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			defer wg.Done()
+
+			requestsMu.Lock()
+			requests = append(requests, r)
+			callNum := len(requests)
+			requestsMu.Unlock()
+
+			switch callNum {
+			case 1:
+				fn(llm.CompletionResponse{
+					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
+					Done:               false,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+				})
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+					t.Fatalf("timeout waiting for structured outputs cancellation")
+					return nil
+				}
+			case 2:
+				fn(llm.CompletionResponse{
+					Content:            `{"answer":"42"}`,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			default:
+				t.Fatalf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+		}
+
+		think := true
+		streamRequest := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+			Think:    &api.ThinkValue{Value: think},
+			Stream:   &streamRequest,
+			Format:   format,
+		})
+
+		wg.Wait()
+		mock.CompletionFn = nil
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		if len(requests) != 2 {
+			t.Fatalf("expected two completion calls, got %d", len(requests))
+		}
+
+		if requests[0].Format != nil {
+			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+		}
+
+		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+			t.Errorf("expected second completion format to match original format")
+		}
+
+		decoder := json.NewDecoder(w.Body)
+		var events []api.ChatResponse
+		for {
+			var event api.ChatResponse
+			if err := decoder.Decode(&event); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			events = append(events, event)
+			if event.Done {
+				break
+			}
+		}
+
+		if len(events) < 2 {
+			t.Fatalf("expected at least two streaming events, got %d", len(events))
+		}
+
+		first := events[0]
+		if first.Message.Thinking != "I am thinking through this problem. " {
+			t.Errorf("expected first event thinking %q, got %q", "I am thinking through this problem. ", first.Message.Thinking)
+		}
+
+		if first.Message.Content != "" {
+			t.Errorf("expected first event content to be empty, got %q", first.Message.Content)
+		}
+
+		if first.Done {
+			t.Error("expected first event to be non-terminal")
+		}
+
+		last := events[len(events)-1]
+		if last.Message.Thinking != "" {
+			t.Errorf("expected final event thinking to be empty, got %q", last.Message.Thinking)
+		}
+
+		if last.Message.Content != `{"answer":"42"}` {
+			t.Errorf("expected final event content %q, got %q", `{"answer":"42"}`, last.Message.Content)
+		}
+
+		if !last.Done {
+			t.Error("expected final event to be done")
+		}
+
+		if last.DoneReason != "stop" {
+			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
 		}
 	})
 }

@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Julius Tischbein <ju.tischbein@gmail.com>
+Date: Wed, 15 Oct 2025 13:54:15 +0200
+Subject: [PATCH] CUDA: Changing the CUDA scheduling strategy to spin (#16585)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+* CUDA set scheduling strategy to spinning for cc121
+
+* Using prop.major and prop.minor, include HIP and MUSA
+
+* Exclude HIP and MUSA
+
+* Remove trailing whitespace
+
+Co-authored-by: Johannes Gäßler <johannesg@5d6.de>
+
+* Remove empty line
+
+Co-authored-by: Johannes Gäßler <johannesg@5d6.de>
+
+---------
+
+Co-authored-by: Johannes Gäßler <johannesg@5d6.de>
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 6a278b5e9..87941f872 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -340,6 +340,15 @@ static ggml_cuda_device_info ggml_cuda_init() {
+         } else if (device_name.substr(0, 21) == "NVIDIA GeForce GTX 16") {
+             turing_devices_without_mma.push_back({ id, device_name });
+         }
++
++        // Temporary performance fix:
++        // Setting device scheduling strategy for iGPUs with cc121 to "spinning" to avoid delays in cuda synchronize calls.
++        // TODO: Check for future drivers the default scheduling strategy and
++        // remove this call again when cudaDeviceScheduleSpin is default.
++        if (prop.major == 12 && prop.minor == 1) {
++            CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceScheduleSpin));
++        }
++
+ #endif  // defined(GGML_USE_HIP)
+     }
+ 

@@ -20,9 +20,9 @@ import (
 )
 
 // Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected
-func TestConcurrentGenerate(t *testing.T) {
+func TestConcurrentChat(t *testing.T) {
 	// Assumes all requests have the same model
-	req, resp := GenerateRequests()
+	req, resp := ChatRequests()
 	numParallel := int(envconfig.NumParallel() + 1)
 	iterLimit := 3
 
@@ -57,7 +57,7 @@ func TestConcurrentGenerate(t *testing.T) {
 				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
-				DoGenerate(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
+				DoChat(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
 			}
 		}(i)
 	}
@@ -109,6 +109,8 @@ func TestMultiModelStress(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	initialTimeout := 120 * time.Second
+	streamTimeout := 20 * time.Second
 
 	// Make sure all the models are pulled before we get started
 	for _, model := range chosenModels {
@@ -147,6 +149,8 @@ chooseModels:
 			for _, m := range models.Models {
 				if m.SizeVRAM == 0 {
 					slog.Info("model running on CPU", "name", m.Name, "target", targetLoadCount, "chosen", chosenModels[:targetLoadCount])
+					initialTimeout = 240 * time.Second
+					streamTimeout = 30 * time.Second
 					break chooseModels
 				}
 			}
@@ -163,7 +167,7 @@ chooseModels:
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			reqs, resps := GenerateRequests()
+			reqs, resps := ChatRequests()
 			for j := 0; j < 3; j++ {
 				if time.Now().Sub(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
@@ -171,11 +175,8 @@ chooseModels:
 				}
 				k := r.Int() % len(reqs)
 				reqs[k].Model = chosenModels[i]
-				slog.Info("Starting", "model", reqs[k].Model, "iteration", j, "request", reqs[k].Prompt)
-				DoGenerate(ctx, t, client, reqs[k], resps[k],
-					120*time.Second, // Be extra patient for the model to load initially
-					10*time.Second,  // Once results start streaming, fail if they stall
-				)
+				slog.Info("Starting", "model", reqs[k].Model, "iteration", j, "request", reqs[k].Messages[0].Content)
+				DoChat(ctx, t, client, reqs[k], resps[k], initialTimeout, streamTimeout)
 			}
 		}(i)
 	}

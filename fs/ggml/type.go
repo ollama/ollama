@@ -229,7 +229,7 @@ const (
 	TensorTypeMXFP4
 )
 
-// ParseFileType parses the provided GGUF file type
+// ParseTensorType parses the provided GGUF tensor type
 // Only Ollama supported types are considered valid
 func ParseTensorType(s string) (TensorType, error) {
 	switch s {

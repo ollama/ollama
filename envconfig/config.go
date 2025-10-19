@@ -24,6 +24,9 @@ func Host() *url.URL {
 	switch {
 	case !ok:
 		scheme, hostport = "http", s
+		if s == "ollama.com" {
+			scheme, hostport = "https", "ollama.com:443"
+		}
 	case scheme == "http":
 		defaultPort = "80"
 	case scheme == "https":
@@ -145,8 +148,8 @@ func Remotes() []string {
 	return r
 }
 
-func Bool(k string) func() bool {
-	return func() bool {
+func BoolWithDefault(k string) func(defaultValue bool) bool {
+	return func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
 			b, err := strconv.ParseBool(s)
 			if err != nil {
@@ -156,7 +159,14 @@ func Bool(k string) func() bool {
 			return b
 		}
 
-		return false
+		return defaultValue
+	}
+}
+
+func Bool(k string) func() bool {
+	withDefault := BoolWithDefault(k)
+	return func() bool {
+		return withDefault(false)
 	}
 }
 
@@ -177,7 +187,7 @@ func LogLevel() slog.Level {
 
 var (
 	// FlashAttention enables the experimental flash attention feature.
-	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
+	FlashAttention = BoolWithDefault("OLLAMA_FLASH_ATTENTION")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
 	// NoHistory disables readline history.
@@ -210,6 +220,7 @@ var (
 	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
+	VkVisibleDevices      = String("GGML_VK_VISIBLE_DEVICES")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
@@ -263,7 +274,7 @@ type EnvVar struct {
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
@@ -300,6 +311,7 @@ func AsMap() map[string]EnvVar {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
 		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible by numeric ID"}
 		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible by UUID or numeric ID"}
+		ret["GGML_VK_VISIBLE_DEVICES"] = EnvVar{"GGML_VK_VISIBLE_DEVICES", VkVisibleDevices(), "Set which Vulkan devices are visible by numeric ID"}
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}

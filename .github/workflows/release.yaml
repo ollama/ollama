@@ -94,7 +94,7 @@ jobs:
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             rocm-version: '6.2'
             flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
-            runner_dir: ''
+            runner_dir: 'rocm'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -163,6 +163,7 @@ jobs:
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} -DOLLAMA_RUNNER_DIR="${{ matrix.runner_dir }}"
           cmake --build --parallel --preset "${{ matrix.preset }}"
           cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
+          Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
       - uses: actions/upload-artifact@v4
@@ -175,19 +176,19 @@ jobs:
       matrix:
         os: [windows]
         arch: [amd64, arm64]
+        include:
+        - os: windows
+          arch: amd64
+          llvmarch: x86_64
+        - os: windows
+          arch: arm64
+          llvmarch: aarch64
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: [setup-environment]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - name: Install AMD64 system dependencies
-        if: matrix.arch == 'amd64'
-        run: |
-          $ErrorActionPreference = "Stop"
-          Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
-          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install ARM64 system dependencies
         if: matrix.arch == 'arm64'
         run: |
@@ -199,15 +200,29 @@ jobs:
 
           choco install -y --no-progress git gzip
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
-          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
-          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
-          echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install clang and gcc-compat
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-${{ matrix.llvmarch }}.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt*").path
+          echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify gcc is actually clang
+        run: |
+          $ErrorActionPreference='Continue'
+          $version=& gcc -v 2>&1
+          $version=$version -join "`n"
+          echo "gcc is $version"
+          if ($version -notmatch 'clang') {
+            echo "ERROR: GCC must be clang for proper utf16 handling"
+            exit 1
+          }
+          $ErrorActionPreference='Stop'
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
       - uses: actions/upload-artifact@v4
@@ -222,13 +237,13 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            target: archive
+            target: archive_novulkan
           - os: linux
             arch: amd64
             target: rocm
           - os: linux
             arch: arm64
-            target: archive
+            target: archive_novulkan
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -284,12 +299,14 @@ jobs:
         include:
           - os: linux
             arch: arm64
+            target: novulkan
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
           - os: linux
             arch: amd64
+            target: novulkan
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
@@ -302,6 +319,14 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
+          - os: linux
+            arch: amd64
+            suffix: '-vulkan'
+            target: default
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -319,6 +344,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: ${{ matrix.target }}
           build-args: ${{ matrix.build-args }}
           outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest

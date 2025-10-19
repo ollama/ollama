@@ -870,11 +870,6 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 		return true
 	}
 
-	if arch := f.KV().Architecture(); slices.Contains([]string{"gptoss", "gpt-oss"}, arch) {
-		// gpt-oss uses attention with sinks which does not support quantized cache types
-		slog.Warn("model only supports non-quantized cache types", "model", arch)
-		return false
-	}
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
@@ -898,7 +893,10 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"gemma3",
 		"gptoss", "gpt-oss",
+		"qwen3",
+		"qwen3moe",
 	}, f.KV().String("general.architecture"))
 }
 

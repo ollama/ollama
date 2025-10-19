@@ -12,6 +12,8 @@
 #include "ggml-impl.h"
 #include <filesystem>
 #include <mutex>
+#include <array>
+#include <cstring>
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -22,6 +24,8 @@
 #else
 #    include <dlfcn.h>
 #    include <unistd.h>
+#    include <fstream>
+#    include <string>
 #endif
 
 namespace fs = std::filesystem;
@@ -78,10 +82,35 @@ struct {
   nvmlReturn_t (*nvmlShutdown)(void);
   nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
   nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
-} nvml { NULL, NULL, NULL, NULL, NULL };
+  nvmlReturn_t (*nvmlDeviceGetName)(nvmlDevice_t, char *, unsigned int);
+  const char * (*nvmlErrorString)(nvmlReturn_t result);
+} nvml { NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 static std::mutex ggml_nvml_lock;
 
 extern "C" {
+
+#ifndef _WIN32
+// Helper function to get available memory from /proc/meminfo on Linux
+// Returns MemAvailable as calculated by the kernel
+static size_t get_mem_available() {
+    std::ifstream meminfo("/proc/meminfo");
+    if (!meminfo.is_open()) {
+        return 0;
+    }
+
+    std::string line;
+    while (std::getline(meminfo, line)) {
+        if (line.find("MemAvailable:") == 0) {
+            size_t available_kb;
+            sscanf(line.c_str(), "MemAvailable: %zu kB", &available_kb);
+            // Convert from kB to bytes
+            return available_kb * 1024;
+        }
+    }
+
+    return 0;
+}
+#endif
 
 int ggml_nvml_init() {
     std::lock_guard<std::mutex> lock(ggml_nvml_lock);
@@ -115,7 +144,9 @@ int ggml_nvml_init() {
     nvml.nvmlShutdown = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlShutdown");
     nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetHandleByUUID");
     nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetMemoryInfo");
-    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
+    nvml.nvmlDeviceGetName = (nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetName");
+    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) GetProcAddress((HMODULE)(nvml.handle), "nvmlErrorString");
+    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlDeviceGetName == NULL || nvml.nvmlErrorString == NULL) {
         GGML_LOG_INFO("%s unable to locate required symbols in NVML.dll", __func__);
         FreeLibrary((HMODULE)(nvml.handle));
         nvml.handle = NULL;
@@ -124,11 +155,46 @@ int ggml_nvml_init() {
 
     SetErrorMode(old_mode);
 
+    nvmlReturn_t status = nvml.nvmlInit_v2();
+    if (status != NVML_SUCCESS) {
+        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
+        FreeLibrary((HMODULE)(nvml.handle));
+        nvml.handle = NULL;
+        return status;
+    }
 #else
-    // Not currently wired up on Linux
-    return NVML_ERROR_NOT_SUPPORTED;
+    constexpr std::array<const char*, 2> libPaths = {
+        "/usr/lib/wsl/lib/libnvidia-ml.so.1", // Favor WSL2 path if present
+        "libnvidia-ml.so.1" // On a non-WSL2 system, it should be in the path
+    };
+    for (const char* path : libPaths) {
+        nvml.handle = dlopen(path, RTLD_LAZY);
+        if (nvml.handle) break;
+    }
+    if (nvml.handle == NULL) {
+        GGML_LOG_INFO("%s unable to load libnvidia-ml: %s\n", __func__, dlerror());
+        return NVML_ERROR_NOT_FOUND;
+    }
+    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlInit_v2");
+    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlShutdown");
+    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) dlsym(nvml.handle, "nvmlDeviceGetHandleByUUID");
+    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) dlsym(nvml.handle, "nvmlDeviceGetMemoryInfo");
+    nvml.nvmlDeviceGetName = (nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int)) dlsym(nvml.handle, "nvmlDeviceGetName");
+    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) dlsym(nvml.handle, "nvmlErrorString");
+    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlDeviceGetName == NULL) {
+        GGML_LOG_INFO("%s unable to locate required symbols in libnvidia-ml.so", __func__);
+        dlclose(nvml.handle);
+        nvml.handle = NULL;
+        return NVML_ERROR_NOT_FOUND;
+    }
+    nvmlReturn_t status = nvml.nvmlInit_v2();
+    if (status != NVML_SUCCESS) {
+        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
+        dlclose(nvml.handle);
+        nvml.handle = NULL;
+        return status;
+    }
 #endif
-    int status = nvml.nvmlInit_v2();
     return NVML_SUCCESS;
 }
 
@@ -140,14 +206,14 @@ void ggml_nvml_release() {
     }
     nvmlReturn_enum status = nvml.nvmlShutdown();
     if (status != NVML_SUCCESS) {
-        GGML_LOG_INFO("%s failed to shutdown NVML: %d\n", __func__, status);
+        GGML_LOG_INFO("%s failed to shutdown NVML: %s\n", __func__, nvml.nvmlErrorString(status));
     }
 #ifdef _WIN32
     FreeLibrary((HMODULE)(nvml.handle));
-    nvml.handle = NULL;
 #else
-    // Not currently wired up on Linux
+    dlclose(nvml.handle);
 #endif
+    nvml.handle = NULL;
 }
 
 int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
@@ -162,10 +228,46 @@ int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
     }
     nvmlMemory_t memInfo = {0};
     status = nvml.nvmlDeviceGetMemoryInfo(device, &memInfo);
+
     if (status == NVML_SUCCESS) {
+        // NVML working correctly, use its values
         *free = memInfo.free;
         *total = memInfo.total;
+        return NVML_SUCCESS;
     }
+
+#ifndef _WIN32
+    // Handle NVML_ERROR_NOT_SUPPORTED - this indicates NVML doesn't support
+    // reporting framebuffer memory (e.g., unified memory GPUs where FB memory is 0)
+    if (status == NVML_ERROR_NOT_SUPPORTED) {
+        // Use system memory from /proc/meminfo
+        size_t mem_available = get_mem_available();
+        size_t mem_total = 0;
+
+        // Read MemTotal
+        std::ifstream meminfo("/proc/meminfo");
+        if (meminfo.is_open()) {
+            std::string line;
+            while (std::getline(meminfo, line)) {
+                if (line.find("MemTotal:") == 0) {
+                    size_t total_kb;
+                    sscanf(line.c_str(), "MemTotal: %zu kB", &total_kb);
+                    mem_total = total_kb * 1024;
+                    break;
+                }
+            }
+        }
+
+        if (mem_total > 0) {
+            *total = mem_total;
+            *free = mem_available;
+            GGML_LOG_INFO("%s NVML not supported for memory query, using system memory (total=%zu, available=%zu)\n",
+                          __func__, mem_total, mem_available);
+            return NVML_SUCCESS;
+        }
+    }
+#endif
+
     return status;
 }
 

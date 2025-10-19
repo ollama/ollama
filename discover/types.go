@@ -37,9 +37,10 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	UnreliableFreeMemory bool
 
 	// GPU information
-	filterID string // AMD Workaround: The numeric ID of the device used to filter out other devices
-	Name     string `json:"name"`    // user friendly name if available
-	Compute  string `json:"compute"` // Compute Capability or gfx
+	filterID     string // AMD/Vulkan Workaround: The numeric ID of the device used to filter out other devices
+	Name         string `json:"name"`          // user friendly name if available
+	ComputeMajor int    `json:"compute_major"` // Compute Capability or gfx
+	ComputeMinor int    `json:"compute_minor"`
 
 	// Driver Information - TODO no need to put this on each GPU
 	DriverMajor int `json:"driver_major,omitempty"`
@@ -173,8 +174,9 @@ func (l GpuInfoList) FlashAttentionSupported() bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "ROCm"
+			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) || // We don't have kernels for Jetson Xavier
+			gpu.Library == "ROCm" ||
+			gpu.Library == "Vulkan"
 
 		if !supportsFA {
 			return false

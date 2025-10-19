@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 )
@@ -51,11 +52,13 @@ type Scheduler struct {
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
 
-	loadFn       func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool
-	newServerFn  func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
-	getGpuFn     func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList
-	getCpuFn     func() discover.GpuInfo
-	reschedDelay time.Duration
+	loadFn      func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool
+	newServerFn func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	getGpuFn    func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList
+	getCpuFn    func() discover.GpuInfo
+
+	// waitForRecovery sets the limit for how long to wait for memory usage to recover after unload before scheduling the next model
+	waitForRecovery time.Duration
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -68,15 +71,15 @@ var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending re
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
 	sched := &Scheduler{
-		pendingReqCh:  make(chan *LlmRequest, maxQueue),
-		finishedReqCh: make(chan *LlmRequest, maxQueue),
-		expiredCh:     make(chan *runnerRef, maxQueue),
-		unloadedCh:    make(chan any, maxQueue),
-		loaded:        make(map[string]*runnerRef),
-		newServerFn:   llm.NewLlamaServer,
-		getGpuFn:      discover.GetGPUInfo,
-		getCpuFn:      discover.GetCPUInfo,
-		reschedDelay:  250 * time.Millisecond,
+		pendingReqCh:    make(chan *LlmRequest, maxQueue),
+		finishedReqCh:   make(chan *LlmRequest, maxQueue),
+		expiredCh:       make(chan *runnerRef, maxQueue),
+		unloadedCh:      make(chan any, maxQueue),
+		loaded:          make(map[string]*runnerRef),
+		newServerFn:     llm.NewLlamaServer,
+		getGpuFn:        discover.GetGPUInfo,
+		getCpuFn:        discover.GetCPUInfo,
+		waitForRecovery: 5 * time.Second,
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -229,8 +232,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 
 				if runnerToExpire == nil {
-					// Shouildn't happen
-					slog.Error("runner to expire was nil!")
+					// While we were performing load calculations, the loaded runner(s) unloaded in parallel
+					// so findRunnerToUnload returned no runners.  We'll try again and the loadedCount should be zero
+					slog.Debug("runner to expire was nil, retrying")
 					continue
 				}
 				// Trigger an expiration to unload once it's done
@@ -644,27 +648,35 @@ func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []discover.Fi
 		totalMemoryBefore += gpu.TotalMemory
 		freeMemoryBefore += gpu.FreeMemory
 	}
+	totalMemoryNow := totalMemoryBefore
+	freeMemoryNow := freeMemoryBefore
+
 	go func() {
-		expiresAt := start.Add(5 * time.Second) // typical convergence is 0.5-1.5s
+		// typical convergence is 0.5-1.5s - If it takes too long to discover and converge, let the scheduler estimate VRAM usage
+		ctx, cancel := context.WithTimeout(context.Background(), s.waitForRecovery)
+		defer cancel()
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			<-ticker.C
-			if time.Now().After(expiresAt) {
-				slog.Warn("gpu VRAM usage didn't recover within timeout", "seconds", time.Since(start).Seconds(), "runner", runner)
-				finished <- struct{}{}
-			}
-
-			// Query GPUs, look for free to go back up
-			gpusNow := s.getGpuFn(context.Background(), runners)
-			var totalMemoryNow, freeMemoryNow uint64
-			for _, gpu := range gpusNow {
-				totalMemoryNow += gpu.TotalMemory
-				freeMemoryNow += gpu.FreeMemory
-			}
-			// If we're within ~80% of the estimated memory usage recovered, bail out
-			if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.vramSize)*0.8 {
-				slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "runner", runner)
+			select {
+			case <-ticker.C:
+				// Query GPUs, look for free to go back up
+				gpusNow := s.getGpuFn(ctx, runners)
+				totalMemoryNow = 0
+				freeMemoryNow = 0
+				for _, gpu := range gpusNow {
+					totalMemoryNow += gpu.TotalMemory
+					freeMemoryNow += gpu.FreeMemory
+				}
+				logutil.Trace("gpu VRAM convergence", "percent", int(max(float32(freeMemoryNow-freeMemoryBefore), 0.0)/float32(runner.vramSize)*100))
+				// If we're within ~75% of the estimated memory usage recovered, bail out
+				if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.vramSize)*0.75 {
+					slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "free_before", format.HumanBytes2(freeMemoryBefore), "free_now", format.HumanBytes2(freeMemoryNow), "runner", runner)
+					finished <- struct{}{}
+					return
+				}
+			case <-ctx.Done():
+				slog.Debug("gpu VRAM usage didn't recover within timeout", "seconds", time.Since(start).Seconds(), "free_before", format.HumanBytes2(freeMemoryBefore), "free_now", format.HumanBytes2(freeMemoryNow), "runner", runner)
 				finished <- struct{}{}
 				return
 			}

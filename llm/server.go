@@ -196,14 +196,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		loadRequest.ProjectorPath = projectors[0]
 	}
 
+	fa := envconfig.FlashAttention(f.FlashAttention())
+
 	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
 	// that can handle it.
-	fa := envconfig.FlashAttention()
-	if f.FlashAttention() {
-		slog.Info("model wants flash attention")
-		fa = true
-	}
-
 	if fa && !gpus.FlashAttentionSupported() {
 		slog.Warn("flash attention enabled but not supported by gpu")
 		fa = false
@@ -363,20 +359,22 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
 
-		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
-
 		// Always filter down the set of GPUs in case there are any unsupported devices that might crash
 		envWorkarounds := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path variable with our adjusted version
 		pathNeeded := true
+		ollamaPathNeeded := true
 		envWorkaroundDone := make([]bool, len(envWorkarounds))
 		for i := range s.cmd.Env {
 			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
 			if strings.EqualFold(cmp[0], pathEnv) {
 				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
 				pathNeeded = false
+			} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
+				s.cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(ggmlPaths, string(filepath.ListSeparator))
+				ollamaPathNeeded = false
 			} else if len(envWorkarounds) != 0 {
 				for j, kv := range envWorkarounds {
 					tmp := strings.SplitN(kv, "=", 2)
@@ -389,6 +387,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 		if pathNeeded {
 			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+		}
+		if ollamaPathNeeded {
+			s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 		}
 		for i, done := range envWorkaroundDone {
 			if !done {
@@ -566,6 +567,7 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		if (runtime.GOOS == "windows" && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
 			(runtime.GOOS == "linux" && systemInfo.System.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
 			(gpus[0].Library == "cpu" && s.options.UseMMap == nil) ||
+			(gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
 			(s.options.UseMMap != nil && !*s.options.UseMMap) {
 			s.loadRequest.UseMmap = false
 		}
@@ -926,7 +928,7 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 			}
 		}
 
-		libraryGpuLayers := assignLayers(layers, gl, s.options.NumGPU, lastUsedGPU)
+		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, lastUsedGPU)
 		if libraryGpuLayers.Sum() > gpuLayers.Sum() {
 			gpuLayers = libraryGpuLayers
 		}
@@ -992,7 +994,7 @@ nextLayer:
 }
 
 // assignLayers packs the maximum number of layers onto the smallest set of GPUs and comes up with a layer assignment
-func assignLayers(layers []uint64, gpus discover.GpuInfoList, requestedLayers int, lastUsedGPU int) (gpuLayers ml.GPULayersList) {
+func assignLayers(layers []uint64, gpus discover.GpuInfoList, requireFull bool, requestedLayers int, lastUsedGPU int) (gpuLayers ml.GPULayersList) {
 	// If we can't fit everything then prefer offloading layers other than the output layer
 	for range 2 {
 		// requestedLayers may be -1 if nothing was requested
@@ -1001,14 +1003,14 @@ func assignLayers(layers []uint64, gpus discover.GpuInfoList, requestedLayers in
 		if !envconfig.SchedSpread() {
 			for i := lastUsedGPU; i < len(gpus); i++ {
 				// Try to pack things into as few GPUs as possible
-				forceRequest := i == len(gpus)-1
+				forceRequest := i == len(gpus)-1 && !requireFull
 				gpuLayers = findBestFit(layers, gpus[:i+1], requestedLayers, forceRequest)
 				if gpuLayers.Sum() == len(layers) || gpuLayers.Sum() == requestedLayers {
 					break
 				}
 			}
 		} else {
-			gpuLayers = findBestFit(layers, gpus, requestedLayers, true)
+			gpuLayers = findBestFit(layers, gpus, requestedLayers, !requireFull)
 		}
 
 		// We only stop if we've gotten all of the layers - even if we got requestedLayers, we still
@@ -1378,7 +1380,9 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar string // set before sending the request to the subprocess
+	Grammar  string // set before sending the request to the subprocess
+	Shift    bool
+	Truncate bool
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1485,7 +1489,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	serverReq.Header.Set("Content-Type", "application/json")
 
 	res, err := http.DefaultClient.Do(serverReq)
-	if err != nil {
+	if err != nil && errors.Is(err, context.Canceled) {
+		// client closed connection
+		return err
+	} else if err != nil {
 		slog.Error("post predict", "error", err)
 		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
@@ -1497,7 +1504,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
 		log.Printf("llm predict error: %s", bodyBytes)
-		return fmt.Errorf("%s", bodyBytes)
+		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
 	scanner := bufio.NewScanner(res.Body)

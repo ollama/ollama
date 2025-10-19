@@ -1,3 +1,4 @@
+#pragma once
 // This file contains primitives that expose the tensor core PTX instructions for CUDA code.
 // The primitives can be used in a similar way as the nvcuda::wmma interface but with a well-defined memory layout.
 // The documentation for the PTX instructions can be found under:
@@ -291,9 +292,7 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs));
 #else
-        GGML_UNUSED(t);
-        GGML_UNUSED(xs0);
-        GGML_UNUSED(stride);
+        GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -315,9 +314,7 @@ namespace ggml_cuda_mma {
             : "r"(A.x[1]), "r"(B.x[0]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -345,9 +342,7 @@ namespace ggml_cuda_mma {
             : "r"(A.x[3]), "r"(B.x[1]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -372,9 +367,7 @@ namespace ggml_cuda_mma {
             : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[1]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -408,9 +401,7 @@ namespace ggml_cuda_mma {
             : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[3]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -425,9 +416,7 @@ namespace ggml_cuda_mma {
             : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
             : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // AMPERE_MMA_AVAILABLE
     }
@@ -452,9 +441,7 @@ namespace ggml_cuda_mma {
             : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[1]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -469,9 +456,7 @@ namespace ggml_cuda_mma {
             : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
             : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // AMPERE_MMA_AVAILABLE
     }
@@ -505,9 +490,7 @@ namespace ggml_cuda_mma {
             : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[3]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
     }
@@ -533,9 +516,7 @@ namespace ggml_cuda_mma {
                                                       0, 0, 0);
 #endif // defined(CDNA3)
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // AMD_MFMA_AVAILABLE
     }
@@ -561,9 +542,7 @@ namespace ggml_cuda_mma {
                                                      0, 0, 0);
 #endif // defined(CDNA3)
 #else
-        GGML_UNUSED(D);
-        GGML_UNUSED(A);
-        GGML_UNUSED(B);
+        GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // AMD_MFMA_AVAILABLE
     }
