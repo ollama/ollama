@@ -198,6 +198,34 @@ BADCOMMAND param1 value1
 	}
 }
 
+func TestParseFileRenderer(t *testing.T) {
+	input := `
+FROM foo
+RENDERER renderer1
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "renderer", Args: "renderer1"}}, modelfile.Commands)
+}
+
+func TestParseFileParser(t *testing.T) {
+	input := `
+FROM foo
+PARSER parser1
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "parser", Args: "parser1"}}, modelfile.Commands)
+}
+
 func TestParseFileMessages(t *testing.T) {
 	cases := []struct {
 		input    string

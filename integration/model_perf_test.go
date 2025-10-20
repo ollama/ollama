@@ -40,6 +40,18 @@ var (
 // cat int.log | grep MODEL_PERF_HEADER | head -1| cut -f2- -d: > perf.csv
 // cat int.log | grep MODEL_PERF_DATA | cut -f2- -d: >> perf.csv
 func TestModelsPerf(t *testing.T) {
+	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
+		doModelPerfTest(t, ollamaEngineChatModels)
+	} else {
+		doModelPerfTest(t, append(ollamaEngineChatModels, llamaRunnerChatModels...))
+	}
+}
+
+func TestLibraryModelsPerf(t *testing.T) {
+	doModelPerfTest(t, libraryChatModels)
+}
+
+func doModelPerfTest(t *testing.T, chatModels []string) {
 	softTimeout, hardTimeout := getTimeouts(t)
 	slog.Info("Setting timeouts", "soft", softTimeout, "hard", hardTimeout)
 	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
@@ -65,14 +77,12 @@ func TestModelsPerf(t *testing.T) {
 	}
 	longPrompt := "summarize the following: " + string(data)
 
-	var chatModels []string
-	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		chatModels = ollamaEngineChatModels
-	} else {
-		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
-	}
+	targetArch := os.Getenv("OLLAMA_TEST_ARCHITECTURE")
 
 	for _, model := range chatModels {
+		if !strings.Contains(model, ":") {
+			model = model + ":latest"
+		}
 		t.Run(model, func(t *testing.T) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
@@ -88,6 +98,9 @@ func TestModelsPerf(t *testing.T) {
 			}
 			arch := resp.ModelInfo["general.architecture"].(string)
 			maxContext = int(resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))
+			if targetArch != "" && arch != targetArch {
+				t.Skip(fmt.Sprintf("Skipping %s architecture %s != %s", model, arch, targetArch))
+			}
 
 			if maxVram > 0 {
 				resp, err := client.List(ctx)
@@ -151,8 +164,8 @@ func TestModelsPerf(t *testing.T) {
 					prompt  string
 					anyResp []string
 				}{
-					{"why is the sky blue?", []string{"rayleigh", "scattering", "atmosphere", "nitrogen", "oxygen"}},
-					{maxPrompt, []string{"shakespeare", "oppression", "sorrows", "gutenberg", "child", "license", "sonnet", "melancholy"}},
+					{blueSkyPrompt, blueSkyExpected},
+					{maxPrompt, []string{"shakespeare", "oppression", "sorrows", "gutenberg", "child", "license", "sonnet", "melancholy", "love", "sorrow", "beauty"}},
 				}
 				var gpuPercent int
 				for _, tc := range testCases {
@@ -160,9 +173,14 @@ func TestModelsPerf(t *testing.T) {
 						slog.Info("skipping long prompt", "model", model, "num_ctx", numCtx, "gpu_percent", gpuPercent)
 						continue
 					}
-					req := api.GenerateRequest{
-						Model:     model,
-						Prompt:    tc.prompt,
+					req := api.ChatRequest{
+						Model: model,
+						Messages: []api.Message{
+							{
+								Role:    "user",
+								Content: tc.prompt,
+							},
+						},
 						KeepAlive: &api.Duration{Duration: 20 * time.Second}, // long enough to ensure a ps returns
 						Options: map[string]interface{}{
 							"temperature": 0,
@@ -171,7 +189,7 @@ func TestModelsPerf(t *testing.T) {
 						},
 					}
 					atLeastOne := false
-					var resp api.GenerateResponse
+					var resp api.ChatResponse
 
 					stream := false
 					req.Stream = &stream
@@ -185,7 +203,7 @@ func TestModelsPerf(t *testing.T) {
 					)
 					defer cancel()
 
-					err = client.Generate(genCtx, &req, func(rsp api.GenerateResponse) error {
+					err = client.Chat(genCtx, &req, func(rsp api.ChatResponse) error {
 						resp = rsp
 						return nil
 					})
@@ -201,13 +219,13 @@ func TestModelsPerf(t *testing.T) {
 					}
 					loaded = true
 					for _, expResp := range tc.anyResp {
-						if strings.Contains(strings.ToLower(resp.Response), expResp) {
+						if strings.Contains(strings.ToLower(resp.Message.Content), expResp) {
 							atLeastOne = true
 							break
 						}
 					}
 					if !atLeastOne {
-						t.Fatalf("response didn't contain expected values: ctx:%d  expected:%v response:%s ", numCtx, tc.anyResp, resp.Response)
+						t.Fatalf("response didn't contain expected values: ctx:%d  expected:%v response:%s ", numCtx, tc.anyResp, resp.Message.Content)
 					}
 					models, err := client.ListRunning(ctx)
 					if err != nil {
@@ -241,11 +259,12 @@ func TestModelsPerf(t *testing.T) {
 							}
 						}
 					}
+					// Round the logged prompt count for comparisons across versions/configurations which can vary slightly
 					fmt.Fprintf(os.Stderr, "MODEL_PERF_HEADER:%s,%s,%s,%s,%s,%s,%s\n",
 						"MODEL",
 						"CONTEXT",
 						"GPU PERCENT",
-						"PROMPT COUNT",
+						"APPROX PROMPT COUNT",
 						"LOAD TIME",
 						"PROMPT EVAL TPS",
 						"EVAL TPS",
@@ -254,7 +273,7 @@ func TestModelsPerf(t *testing.T) {
 						model,
 						numCtx,
 						gpuPercent,
-						resp.PromptEvalCount,
+						(resp.PromptEvalCount/10)*10,
 						float64(resp.LoadDuration)/1000000000.0,
 						float64(resp.PromptEvalCount)/(float64(resp.PromptEvalDuration)/1000000000.0),
 						float64(resp.EvalCount)/(float64(resp.EvalDuration)/1000000000.0),

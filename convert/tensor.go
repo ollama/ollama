@@ -16,7 +16,8 @@ import (
 
 type split struct {
 	*strings.Replacer
-	dim int
+	dim    int
+	slices []tensor.Slice
 
 	// fn is an optional function to apply to the tensor after slicing
 	fn func(tensor.Tensor) (tensor.Tensor, error)
@@ -32,9 +33,12 @@ func splitDim(t Tensor, dim int, splits ...split) iter.Seq[*ggml.Tensor] {
 			shape := slices.Clone(t.Shape())
 			shape[dim] = cmp.Or(uint64(split.dim), shape[dim]/uint64(len(splits)))
 
-			slice := slices.Repeat([]tensor.Slice{nil}, len(shape))
-			slice[dim] = tensor.S(offset, offset+int(shape[dim]))
-			offset += int(shape[dim])
+			slice := split.slices
+			if len(slice) == 0 {
+				slice = slices.Repeat([]tensor.Slice{nil}, len(shape))
+				slice[dim] = tensor.S(offset, offset+int(shape[dim]))
+				offset += int(shape[dim])
+			}
 
 			t.SetRepacker(func(_ string, data []float32, shape []uint64) ([]float32, error) {
 				dims := make([]int, len(shape))

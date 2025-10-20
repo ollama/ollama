@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Wed, 30 Jul 2025 08:43:46 -0700
+Subject: [PATCH] BF16 macos version guard
+
+Only enable BF16 on supported MacOS versions (v14+)
+---
+ ggml/src/ggml-metal/ggml-metal-context.m | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+index 052efb7a..b47dc787 100644
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -125,7 +125,12 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
+ 
+     res->d_queue = dispatch_queue_create("ggml-metal", DISPATCH_QUEUE_CONCURRENT);
+ 
+-    res->use_bfloat      = props_dev->has_bfloat;
++    if (@available(macOS 14.0, *)) {
++        res->use_bfloat = props_dev->has_bfloat;
++    } else {
++        res->use_bfloat = false;
++    }
++
+     res->use_fusion      = getenv("GGML_METAL_FUSION_DISABLE") == nil;
+     res->use_concurrency = getenv("GGML_METAL_CONCURRENCY_DISABLE") == nil;
+ 
