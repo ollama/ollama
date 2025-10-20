@@ -22,12 +22,18 @@ func pickBestFullFitByLibrary(f *ggml.GGML, modelPath string, projectors []strin
 	for _, gl := range ml.ByLibrary(gpus) {
 		sgl := append(make([]ml.DeviceInfo, 0, len(gl)), gl...)
 
-		// TODO - potentially sort by performance capability, existing models loaded, etc.
-		// TODO - Eliminate any GPUs that already have envconfig.MaxRunners loaded on them
-		// Note: at present, this will favor most current available VRAM descending and ignoring faster GPU speed in mixed setups
-		sort.Sort(sort.Reverse(ml.ByFreeMemory(sgl)))
-
-		if !envconfig.SchedSpread() {
+	// TODO - potentially sort by performance capability, existing models loaded, etc.
+	// TODO - Eliminate any GPUs that already have envconfig.MaxRunners loaded on them
+	// Respect Vulkan device enumeration order (ID 0, 1, 2...) instead of reordering by VRAM
+	// This allows VkConfig and driver-level device ordering to be honored
+	sort.Slice(sgl, func(i, j int) bool {
+		return sgl[i].ID < sgl[j].ID
+	})
+	
+	// Debug log to verify GPU ordering
+	for idx, gpu := range sgl {
+		slog.Debug("GPU order after sort", "index", idx, "ID", gpu.ID, "name", gpu.Name, "free", format.HumanBytes2(gpu.FreeMemory))
+	}		if !envconfig.SchedSpread() {
 			// Try to pack into as few GPUs as possible, starting from 1 GPU
 			for numGPUs := 1; numGPUs <= len(sgl); numGPUs++ {
 				gpuSubset := sgl[:numGPUs]

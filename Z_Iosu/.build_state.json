@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
     "LastBuild":  "2025-10-21T00:32:22.7635276-05:00",
     "Components":  {
                        "App":  {
@@ -19,6 +20,28 @@
                                },
                        "Vulkan":  {
                                       "LastModified":  "2025-10-20T21:11:18.1539263-05:00",
+=======
+    "LastBuild":  "2025-10-20T16:12:39.4148936-05:00",
+    "Components":  {
+                       "App":  {
+                                   "LastModified":  "2025-10-18T10:00:22.5534265-05:00",
+                                   "FileCount":  57
+                               },
+                       "CUDA":  {
+                                    "LastModified":  "2025-10-18T09:59:44.7143808-05:00",
+                                    "FileCount":  214
+                                },
+                       "Ollama":  {
+                                      "LastModified":  "2025-10-20T16:10:39.1356998-05:00",
+                                      "FileCount":  446
+                                  },
+                       "CPU":  {
+                                   "LastModified":  "2025-10-20T15:42:39.5692009-05:00",
+                                   "FileCount":  222
+                               },
+                       "Vulkan":  {
+                                      "LastModified":  "2025-10-20T15:42:39.5692009-05:00",
+>>>>>>> 1f279e404 (Fix: GPU selection respeta orden Vulkan, overflow Intel solo si es necesario. Smart build siempre verbose. Pruebas y logs actualizados.)
                                       "FileCount":  121
                                   }
                    }

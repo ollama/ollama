@@ -820,6 +820,21 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 // - Assigning layers
 // - Ensuring that we don't exceed limits, such as requirements about partial offloading or system memory
 func (s *ollamaServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, error) {
+	if s.totalLayers == 0 || s.options.NumGPU == 0 || len(systemGPUs) == 0 || (len(systemGPUs) == 1 && systemGPUs[0].Library == "cpu") {
+		return ml.GPULayersList{}, nil
+	}
+
+	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
+	// Respect Vulkan device enumeration order (ID 0, 1, 2...) instead of reordering by VRAM
+	sort.Slice(gpus, func(i, j int) bool {
+		return gpus[i].ID < gpus[j].ID
+	})
+	
+	// Debug log to verify GPU ordering
+	for idx, gpu := range gpus {
+		slog.Debug("GPU order in createLayout", "index", idx, "ID", gpu.ID, "name", gpu.Name, "free", format.HumanBytes2(gpu.FreeMemory))
+	}
+
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
 			Weights: make([]uint64, s.totalLayers),
