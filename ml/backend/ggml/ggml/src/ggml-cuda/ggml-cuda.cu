@@ -4159,7 +4159,6 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
         if (!initialized) {
             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
             int driverVersion = 0;
-            CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
 
             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
@@ -4177,6 +4176,9 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
 
                 dev_ctx->major = prop.major;
                 dev_ctx->minor = prop.minor;
+                if (driverVersion == 0) {
+                    CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
+                }
                 dev_ctx->driver_major = driverVersion / 1000;
                 dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
                 dev_ctx->integrated = prop.integrated;
