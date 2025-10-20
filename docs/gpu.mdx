@@ -52,7 +52,11 @@ sudo modprobe nvidia_uvm`
 
 ## AMD Radeon
 
-Ollama supports the following AMD GPUs:
+Ollama supports the following AMD GPUs via the ROCm library:
+
+> [!NOTE]
+> Additional AMD GPU support is provided by the Vulkan Library - see below.
+
 
 ### Linux Support
 
@@ -124,3 +128,35 @@ accessing the AMD GPU devices. On the host system you can run
 ## Metal (Apple GPUs)
 
 Ollama supports GPU acceleration on Apple devices via the Metal API.
+
+
+## Vulkan GPU Support
+
+Additional GPU support on Windows and Linux is provided via
+[Vulkan](https://www.vulkan.org/). On Windows most GPU vendors drivers come
+bundled with Vulkan support and require no additional setup steps. Most Linux
+distributions require installing additional components, and you may have
+multiple options for Vulkan drivers between Mesa and GPU Vendor specific packages
+
+- Linux Intel GPU Instructions - https://dgpu-docs.intel.com/driver/client/overview.html
+- Linux AMD GPU Instructions - https://amdgpu-install.readthedocs.io/en/latest/install-script.html#specifying-a-vulkan-implementation
+
+For AMD GPUs on some Linux distributions, you may need to add the `ollama` user to the `render` group.
+
+The Ollama scheduler leverages available VRAM data reported by the GPU libraries to
+make optimal scheduling decisions.  Vulkan requires additional capabilities or
+running as root to expose this available VRAM data.  If neither root access or this
+capability are granted, Ollama will use approximate sizes of the models
+to make best effort scheduling decisions.
+
+```bash
+sudo setcap cap_perfmon+ep /usr/local/bin/ollama
+```
+
+### GPU Selection
+
+To select specific Vulkan GPU(s), you can set the environment variable
+`GGML_VK_VISIBLE_DEVICES` to one or more numeric IDs on the Ollama server as
+described in the [FAQ](faq.md#how-do-i-configure-ollama-server). If you
+encounter any problems with Vulkan based GPUs, you can disable all Vulkan GPUs
+by setting `GGML_VK_VISIBLE_DEVICES=-1` 
