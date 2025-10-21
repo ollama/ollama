@@ -355,6 +355,177 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+func TestEmbedHandlerPlainFormat(t *testing.T) {
+	reqCh := make(chan api.EmbedRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+		var req api.EmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		reqCh <- req
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+			Model:      "test-model",
+			Embeddings: [][]float32{{0.1, 0.2}},
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+
+	cmd.SetIn(bytes.NewBufferString("hello world\n"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	if err := EmbedHandler(cmd, []string{"test-model"}); err != nil {
+		t.Fatalf("EmbedHandler returned error: %v", err)
+	}
+
+	select {
+	case req := <-reqCh:
+		inputText, _ := req.Input.(string)
+		if diff := cmp.Diff("hello world", inputText); diff != "" {
+			t.Errorf("unexpected input (-want +got):\n%s", diff)
+		}
+		if req.Truncate != nil {
+			t.Errorf("expected truncate to be nil, got %v", *req.Truncate)
+		}
+		if req.KeepAlive != nil {
+			t.Errorf("expected keepalive to be nil, got %v", req.KeepAlive)
+		}
+	default:
+		t.Fatal("server did not receive embed request")
+	}
+
+	expectOutput := "0.1 0.2\n"
+	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestEmbedHandlerJSONFormat(t *testing.T) {
+	reqCh := make(chan api.EmbedRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		var req api.EmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		reqCh <- req
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+			Model:        "test-model",
+			Embeddings:   [][]float32{{0.3, 0.4}},
+			LoadDuration: 5 * time.Millisecond,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+
+	if err := cmd.Flags().Set("format", "json"); err != nil {
+		t.Fatalf("failed to set format flag: %v", err)
+	}
+	if err := cmd.Flags().Set("truncate", "true"); err != nil {
+		t.Fatalf("failed to set truncate flag: %v", err)
+	}
+	if err := cmd.Flags().Set("dimensions", "4"); err != nil {
+		t.Fatalf("failed to set dimensions flag: %v", err)
+	}
+	if err := cmd.Flags().Set("keepalive", "5m"); err != nil {
+		t.Fatalf("failed to set keepalive flag: %v", err)
+	}
+
+	cmd.SetIn(bytes.NewBufferString("json input\n"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	if err := EmbedHandler(cmd, []string{"test-model"}); err != nil {
+		t.Fatalf("EmbedHandler returned error: %v", err)
+	}
+
+	select {
+	case req := <-reqCh:
+		if req.Truncate == nil || !*req.Truncate {
+			t.Fatalf("expected truncate pointer true, got %v", req.Truncate)
+		}
+		if req.Dimensions != 4 {
+			t.Fatalf("expected dimensions 4, got %d", req.Dimensions)
+		}
+		if req.KeepAlive == nil || req.KeepAlive.Duration != 5*time.Minute {
+			t.Fatalf("unexpected keepalive duration: %v", req.KeepAlive)
+		}
+	default:
+		t.Fatal("server did not receive embed request")
+	}
+
+	var resp api.EmbedResponse
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode json output: %v", err)
+	}
+	if diff := cmp.Diff(float32(0.3), resp.Embeddings[0][0]); diff != "" {
+		t.Errorf("unexpected embedding response (-want +got):\n%s", diff)
+	}
+}
+
+func TestEmbedHandlerNoInput(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+
+	cmd.SetIn(bytes.NewBuffer(nil))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := EmbedHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "no input provided") {
+		t.Fatalf("expected error about missing input, got %v", err)
+	}
+}
+
 func TestGetModelfileName(t *testing.T) {
 	tests := []struct {
 		name          string
