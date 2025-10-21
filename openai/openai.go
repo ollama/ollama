@@ -3,10 +3,12 @@ package openai
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net/http"
 	"slices"
@@ -73,9 +75,10 @@ type JsonSchema struct {
 }
 
 type EmbedRequest struct {
-	Input      any    `json:"input"`
-	Model      string `json:"model"`
-	Dimensions int    `json:"dimensions,omitempty"`
+	Input          any    `json:"input"`
+	Model          string `json:"model"`
+	Dimensions     int    `json:"dimensions,omitempty"`
+	EncodingFormat string `json:"encoding_format,omitempty"` // "float" or "base64"
 }
 
 type StreamOptions struct {
@@ -181,9 +184,9 @@ type Model struct {
 }
 
 type Embedding struct {
-	Object    string    `json:"object"`
-	Embedding []float32 `json:"embedding"`
-	Index     int       `json:"index"`
+	Object    string `json:"object"`
+	Embedding any    `json:"embedding"` // Can be []float32 (float format) or string (base64 format)
+	Index     int    `json:"index"`
 }
 
 type ListCompletion struct {
@@ -377,13 +380,25 @@ func ToListCompletion(r api.ListResponse) ListCompletion {
 }
 
 // ToEmbeddingList converts an api.EmbedResponse to EmbeddingList
-func ToEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
+// encodingFormat can be "float", "base64", or empty (defaults to "float")
+func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) EmbeddingList {
 	if r.Embeddings != nil {
+		if encodingFormat == "" {
+			encodingFormat = "float"
+		}
+
 		var data []Embedding
 		for i, e := range r.Embeddings {
+			var embedding any
+			if encodingFormat == "base64" {
+				embedding = convertFloatsToBase64(e)
+			} else {
+				embedding = e
+			}
+
 			data = append(data, Embedding{
 				Object:    "embedding",
-				Embedding: e,
+				Embedding: embedding,
 				Index:     i,
 			})
 		}
@@ -400,6 +415,17 @@ func ToEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
 	}
 
 	return EmbeddingList{}
+}
+
+// convertFloatsToBase64 converts a []float32 to a base64-encoded string
+func convertFloatsToBase64(floats []float32) string {
+	byteData := make([]byte, len(floats)*4)
+	for i, f := range floats {
+		bits := math.Float32bits(f)
+		binary.LittleEndian.PutUint32(byteData[i*4:], bits)
+	}
+
+	return base64.StdEncoding.EncodeToString(byteData)
 }
 
 // ToModel converts an api.ShowResponse to Model

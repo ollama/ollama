@@ -44,7 +44,8 @@ type RetrieveWriter struct {
 
 type EmbedWriter struct {
 	BaseWriter
-	model string
+	model          string
+	encodingFormat string
 }
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
@@ -254,7 +255,8 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.ToEmbeddingList(w.model, embedResponse))
+	converted := openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat)
+	err = json.NewEncoder(w.ResponseWriter).Encode(converted)
 	if err != nil {
 		return 0, err
 	}
@@ -348,6 +350,16 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Check if input is tokenized (nested arrays of numbers)
+		if inputArray, ok := req.Input.([]any); ok {
+			if len(inputArray) > 0 {
+				if _, isNestedArray := inputArray[0].([]any); isNestedArray {
+					c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "Tokenized input not supported. Please send text input instead of token IDs."))
+					return
+				}
+			}
+		}
+
 		if req.Input == "" {
 			req.Input = []string{""}
 		}
@@ -371,8 +383,9 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &EmbedWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			model:      req.Model,
+			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
+			model:          req.Model,
+			encodingFormat: req.EncodingFormat,
 		}
 
 		c.Writer = w
