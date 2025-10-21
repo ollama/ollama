@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/tsisw/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=461411fdf36912afa26d0bb9f3aca5216a57af53
+FETCH_HEAD=3b74066a03fb8d88c99b41c46d4b6628d99ce710
 
 .PHONY: help
 help:
@@ -20,8 +20,8 @@ sync: llama/build-info.cpp ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.
 llama/build-info.cpp: llama/build-info.cpp.in llama/llama.cpp
 	sed -e 's|@FETCH_HEAD@|$(FETCH_HEAD)|' <$< >$@
 
-ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal: ml/backend/ggml/ggml
-	go generate ./$(@D)
+#ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal: ml/backend/ggml/ggml
+#	go generate ./$(@D)
 
 .PHONY: llama/llama.cpp
 llama/llama.cpp: llama/vendor

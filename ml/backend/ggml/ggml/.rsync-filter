@@ -20,6 +20,8 @@ include /src/ggml-cuda/vendors/
 include /src/ggml-cuda/template-instances/
 include /src/ggml-hip/
 include /src/ggml-metal/
+include /src/ggml-tsavorite/
+include /src/ggml-tsavorite/include/
 include src/ggml-vulkan/
 include src/ggml-vulkan/vulkan-shaders
 include CMakeLists.txt
