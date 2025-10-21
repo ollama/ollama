@@ -9,7 +9,6 @@
 #include <windows.h>
 #include "ggml-impl.h"
 #include <pdh.h>
-#include <dxgi.h>
 #include <dxgi1_2.h>
 #include <sstream>
 #include <thread>
