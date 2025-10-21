@@ -52,7 +52,7 @@ struct {
 };
 
 /*
-Maybe not needed
+Create a PDH Instance name
 */
 static std::wstring generate_pdh_instance_name_from_luid(const LUID& luid) {
     std::wstringstream ss;
@@ -104,7 +104,7 @@ static std::vector<GpuInfo> get_dxgi_gpu_infos() {
             fetch_dxgi_adapter_desc1(desc, &info);
             info.name = std::wstring(desc.Description);
             info.luid = desc.AdapterLuid;
-            info.pdhInstance = generate_pdh_instance_name_from_luid(desc.AdapterLuid); // maybe not needed
+            info.pdhInstance = generate_pdh_instance_name_from_luid(desc.AdapterLuid);
             infos.push_back(info);
 
             pAdapter->Release();
@@ -115,7 +115,7 @@ static std::vector<GpuInfo> get_dxgi_gpu_infos() {
     return infos;
 }
 
-static bool get_gpu_memory_usage(GpuInfo gpu) {
+static bool get_gpu_memory_usage(GpuInfo& gpu) {
     PDH_HQUERY query;
     if (dll_functions.PdhOpenQueryW(NULL, 0, &query) != ERROR_SUCCESS) {
         return false;
@@ -126,7 +126,7 @@ static bool get_gpu_memory_usage(GpuInfo gpu) {
         PDH_HCOUNTER shared;
     };
 
-    GpuCounters gpuCounter;
+    GpuCounters gpuCounter{};
 
     std::wstring dedicatedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Dedicated Usage";
     std::wstring sharedPath = L"\\GPU Adapter Memory(" + gpu.pdhInstance + L"*)\\Shared Usage";
@@ -271,11 +271,13 @@ extern "C" {
         // Calculate the free memory based on whether it's an integrated or discrete GPU
         if (is_integrated_gpu) {
             // IGPU free = SharedTotal - SharedUsage
+            GGML_LOG_DEBUG("Integrated GPU detected. Shared Total: %.2f bytes (%.2f GB), Shared Usage: %.2f bytes (%.2f GB)\n", targetGpu->sharedTotal, b_to_gb(targetGpu->sharedTotal), targetGpu->sharedUsage, b_to_gb(targetGpu->sharedUsage));
             *free = targetGpu->sharedTotal - targetGpu->sharedUsage;
             *total = targetGpu->sharedTotal;
         }
         else {
             // DGPU free = DedicatedTotal - DedicatedUsage
+            GGML_LOG_DEBUG("Discrete GPU detected. Dedicated Total: %.2f bytes (%.2f GB), Dedicated Usage: %.2f bytes (%.2f GB)\n", targetGpu->dedicatedTotal, b_to_gb(targetGpu->dedicatedTotal), targetGpu->dedicatedUsage, b_to_gb(targetGpu->dedicatedUsage));
             *free = targetGpu->dedicatedTotal - targetGpu->dedicatedUsage;
             *total = targetGpu->dedicatedTotal;
         }
