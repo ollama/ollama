@@ -256,8 +256,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	converted := openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat)
-	err = json.NewEncoder(w.ResponseWriter).Encode(converted)
+	err = json.NewEncoder(w.ResponseWriter).Encode(openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat))
 	if err != nil {
 		return 0, err
 	}
