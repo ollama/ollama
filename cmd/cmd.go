@@ -322,6 +322,156 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func EmbedHandler(cmd *cobra.Command, args []string) error {
+	model := args[0]
+
+	formatValue, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
+	formatValue = strings.ToLower(formatValue)
+	if formatValue == "" {
+		formatValue = "plain"
+	}
+	if formatValue != "plain" && formatValue != "json" {
+		return fmt.Errorf("invalid format %q (supported: plain, json)", formatValue)
+	}
+
+	keepAliveFlag, err := cmd.Flags().GetString("keepalive")
+	if err != nil {
+		return err
+	}
+	var keepAlive *api.Duration
+	if keepAliveFlag != "" {
+		d, err := time.ParseDuration(keepAliveFlag)
+		if err != nil {
+			return err
+		}
+		keepAlive = &api.Duration{Duration: d}
+	}
+
+	truncateSpecified := cmd.Flags().Changed("truncate")
+	truncateValue, err := cmd.Flags().GetBool("truncate")
+	if err != nil {
+		return err
+	}
+
+	dimensions, err := cmd.Flags().GetInt("dimensions")
+	if err != nil {
+		return err
+	}
+	if dimensions < 0 {
+		return fmt.Errorf("dimensions must be non-negative")
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+
+	embedOnce := func(inputText string) error {
+		inputText = strings.TrimRight(inputText, "\r\n")
+		if strings.TrimSpace(inputText) == "" {
+			return nil
+		}
+
+		req := &api.EmbedRequest{
+			Model: model,
+			Input: inputText,
+		}
+		if keepAlive != nil {
+			req.KeepAlive = keepAlive
+		}
+		if truncateSpecified {
+			req.Truncate = &truncateValue
+		}
+		if dimensions > 0 {
+			req.Dimensions = dimensions
+		}
+
+		resp, err := client.Embed(cmd.Context(), req)
+		if err != nil {
+			return err
+		}
+
+		switch formatValue {
+		case "json":
+			encoder := json.NewEncoder(out)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(resp)
+		default:
+			for _, embedding := range resp.Embeddings {
+				var b strings.Builder
+				for i, val := range embedding {
+					if i > 0 {
+						b.WriteByte(' ')
+					}
+					b.WriteString(strconv.FormatFloat(float64(val), 'g', -1, 32))
+				}
+				fmt.Fprintln(out, b.String())
+			}
+		}
+
+		return nil
+	}
+
+	in := cmd.InOrStdin()
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		scanner, err := readline.New(readline.Prompt{
+			Prompt:      ">>> ",
+			Placeholder: "Send a message",
+		})
+		if err != nil {
+			return err
+		}
+
+		if envconfig.NoHistory() {
+			scanner.HistoryDisable()
+		}
+
+		fmt.Print(readline.StartBracketedPaste)
+		defer fmt.Printf(readline.EndBracketedPaste)
+
+		for {
+			line, readErr := scanner.Readline()
+			switch {
+			case errors.Is(readErr, io.EOF):
+				fmt.Println()
+				return nil
+			case errors.Is(readErr, readline.ErrInterrupt):
+				if line == "" {
+					fmt.Println("\nUse Ctrl + d to exit.")
+				}
+				scanner.Prompt.UseAlt = false
+				continue
+			case readErr != nil:
+				return readErr
+			}
+
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+
+			if err := embedOnce(line); err != nil {
+				return err
+			}
+		}
+	}
+
+	inputBytes, err := io.ReadAll(in)
+	if err != nil {
+		return err
+	}
+	inputText := strings.TrimRight(string(inputBytes), "\r\n")
+	if strings.TrimSpace(inputText) == "" {
+		return errors.New("no input provided to embed")
+	}
+
+	return embedOnce(inputText)
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -1685,6 +1835,19 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
+	embedCmd := &cobra.Command{
+		Use:     "embed MODEL",
+		Short:   "Generate embeddings from a model",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    EmbedHandler,
+	}
+
+	embedCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
+	embedCmd.Flags().Bool("truncate", false, "Truncate input that exceeds the model's context length")
+	embedCmd.Flags().Int("dimensions", 0, "Truncate the output embedding to the specified dimensions")
+	embedCmd.Flags().String("format", "", "Response format (plain or json)")
+
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -1787,6 +1950,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		embedCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -1828,6 +1992,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		embedCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
