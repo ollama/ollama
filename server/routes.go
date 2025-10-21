@@ -1874,23 +1874,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			req.Options = map[string]any{}
 		}
 
-		// just short-circuit if there's nothing to do
-		if len(req.Messages) == 0 {
-			c.JSON(http.StatusOK, api.ChatResponse{
-				Model:       origModel,
-				RemoteModel: m.Config.RemoteModel,
-				RemoteHost:  m.Config.RemoteHost,
-				CreatedAt:   time.Now().UTC(),
-				Message:     api.Message{Role: "assistant"},
-				Done:        true,
-				DoneReason:  "load",
-			})
-			return
-		}
-
-		msgs := append(m.Messages, req.Messages...)
-		if req.Messages[0].Role != "system" && m.System != "" {
-			msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+		var msgs []api.Message
+		if len(req.Messages) > 0 {
+			msgs = append(m.Messages, req.Messages...)
+			if req.Messages[0].Role != "system" && m.System != "" {
+				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+			}
 		}
 
 		msgs = filterThinkTags(msgs, m)

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -55,10 +57,37 @@ func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *ggml.GG
 func TestGenerateChatRemote(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	rs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("Expected path '/api/chat', got %s", r.URL.Path)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		resp := api.ChatResponse{
+			Model:      "test",
+			Done:       true,
+			DoneReason: "load",
+		}
+		if err := json.NewEncoder(w).Encode(&resp); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer rs.Close()
+
+	p, err := url.Parse(rs.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OLLAMA_REMOTES", p.Hostname())
 	s := Server{}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:      "test-cloud",
-		RemoteHost: "https://ollama.com:443",
+		RemoteHost: rs.URL,
 		From:       "test",
 		Info: map[string]any{
 			"capabilities": []string{"completion", "thinking"},
@@ -91,8 +120,8 @@ func TestGenerateChatRemote(t *testing.T) {
 			t.Errorf("expected remote model test, got %s", actual.RemoteModel)
 		}
 
-		if actual.RemoteHost != "https://ollama.com:443" {
-			t.Errorf("expected remote host https://ollama.com:443, got %s", actual.RemoteHost)
+		if actual.RemoteHost != rs.URL {
+			t.Errorf("expected remote host '%s', got %s", rs.URL, actual.RemoteHost)
 		}
 
 		if !actual.Done {
