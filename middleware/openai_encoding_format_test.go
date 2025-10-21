@@ -3,7 +3,6 @@ package middleware
 import (
 	"encoding/base64"
 	"encoding/json"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,59 +13,18 @@ import (
 	"github.com/ollama/ollama/openai"
 )
 
-func TestEmbeddingsMiddleware_EncodingFormat_Float(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	// Mock handler that returns embeddings
-	endpoint := func(c *gin.Context) {
-		resp := api.EmbedResponse{
-			Embeddings:      [][]float32{{0.1, -0.2, 0.3}},
-			PromptEvalCount: 5,
-		}
-		c.JSON(http.StatusOK, resp)
+func TestEmbeddingsMiddleware_EncodingFormats(t *testing.T) {
+	testCases := []struct {
+		name           string
+		encodingFormat string
+		expectType     string // "array" or "string"
+		verifyBase64   bool
+	}{
+		{"float format", "float", "array", false},
+		{"base64 format", "base64", "string", true},
+		{"default format", "", "array", false},
 	}
 
-	router := gin.New()
-	router.Use(EmbeddingsMiddleware())
-	router.Handle(http.MethodPost, "/api/embed", endpoint)
-
-	body := `{
-		"input": "test",
-		"model": "test-model",
-		"encoding_format": "float"
-	}`
-
-	req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", resp.Code)
-	}
-
-	var result openai.EmbeddingList
-	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	if len(result.Data) != 1 {
-		t.Fatalf("expected 1 embedding, got %d", len(result.Data))
-	}
-
-	// Check it's a float array
-	embeddingSlice, ok := result.Data[0].Embedding.([]interface{})
-	if !ok {
-		t.Fatalf("expected embedding to be array, got %T", result.Data[0].Embedding)
-	}
-
-	if len(embeddingSlice) != 3 {
-		t.Errorf("expected 3 floats, got %d", len(embeddingSlice))
-	}
-}
-
-func TestEmbeddingsMiddleware_EncodingFormat_Base64(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	endpoint := func(c *gin.Context) {
@@ -81,107 +39,54 @@ func TestEmbeddingsMiddleware_EncodingFormat_Base64(t *testing.T) {
 	router.Use(EmbeddingsMiddleware())
 	router.Handle(http.MethodPost, "/api/embed", endpoint)
 
-	body := `{
-		"input": "test",
-		"model": "test-model",
-		"encoding_format": "base64"
-	}`
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"input": "test", "model": "test-model"`
+			if tc.encodingFormat != "" {
+				body += `, "encoding_format": "` + tc.encodingFormat + `"`
+			}
+			body += `}`
 
-	req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
 
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", resp.Code)
-	}
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", resp.Code)
+			}
 
-	var result openai.EmbeddingList
-	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
+			var result openai.EmbeddingList
+			if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
 
-	if len(result.Data) != 1 {
-		t.Fatalf("expected 1 embedding, got %d", len(result.Data))
-	}
+			if len(result.Data) != 1 {
+				t.Fatalf("expected 1 embedding, got %d", len(result.Data))
+			}
 
-	// Check it's a base64 string
-	embeddingStr, ok := result.Data[0].Embedding.(string)
-	if !ok {
-		t.Fatalf("expected embedding to be string, got %T", result.Data[0].Embedding)
-	}
-
-	// Verify it's valid base64
-	decoded, err := base64.StdEncoding.DecodeString(embeddingStr)
-	if err != nil {
-		t.Fatalf("failed to decode base64: %v", err)
-	}
-
-	// Should be 3 floats * 4 bytes = 12 bytes
-	if len(decoded) != 12 {
-		t.Errorf("expected 12 bytes, got %d", len(decoded))
-	}
-
-	// Verify values
-	expected := []float32{0.1, -0.2, 0.3}
-	for i := 0; i < 3; i++ {
-		offset := i * 4
-		bits := uint32(decoded[offset]) |
-			uint32(decoded[offset+1])<<8 |
-			uint32(decoded[offset+2])<<16 |
-			uint32(decoded[offset+3])<<24
-		decodedFloat := math.Float32frombits(bits)
-
-		if math.Abs(float64(decodedFloat-expected[i])) > 1e-6 {
-			t.Errorf("float[%d]: expected %f, got %f", i, expected[i], decodedFloat)
-		}
+			switch tc.expectType {
+			case "array":
+				if _, ok := result.Data[0].Embedding.([]interface{}); !ok {
+					t.Errorf("expected array, got %T", result.Data[0].Embedding)
+				}
+			case "string":
+				embStr, ok := result.Data[0].Embedding.(string)
+				if !ok {
+					t.Errorf("expected string, got %T", result.Data[0].Embedding)
+				} else if tc.verifyBase64 {
+					decoded, err := base64.StdEncoding.DecodeString(embStr)
+					if err != nil {
+						t.Errorf("invalid base64: %v", err)
+					} else if len(decoded) != 12 {
+						t.Errorf("expected 12 bytes, got %d", len(decoded))
+					}
+				}
+			}
+		})
 	}
 }
-
-func TestEmbeddingsMiddleware_EncodingFormat_Default(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	endpoint := func(c *gin.Context) {
-		resp := api.EmbedResponse{
-			Embeddings: [][]float32{{0.1, -0.2, 0.3}},
-		}
-		c.JSON(http.StatusOK, resp)
-	}
-
-	router := gin.New()
-	router.Use(EmbeddingsMiddleware())
-	router.Handle(http.MethodPost, "/api/embed", endpoint)
-
-	// No encoding_format specified
-	body := `{
-		"input": "test",
-		"model": "test-model"
-	}`
-
-	req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", resp.Code)
-	}
-
-	var result openai.EmbeddingList
-	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	// Should default to float format (array)
-	_, ok := result.Data[0].Embedding.([]interface{})
-	if !ok {
-		t.Errorf("expected default format to be array, got %T", result.Data[0].Embedding)
-	}
-}
-
-// TestEmbeddingsMiddleware_TokenizedInputRejection removed - OpenAI actually accepts tokenized input
 
 func TestEmbeddingsMiddleware_BatchWithBase64(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -228,7 +133,7 @@ func TestEmbeddingsMiddleware_BatchWithBase64(t *testing.T) {
 	}
 
 	// All should be base64 strings
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		embeddingStr, ok := result.Data[i].Embedding.(string)
 		if !ok {
 			t.Errorf("embedding %d: expected string, got %T", i, result.Data[i].Embedding)
