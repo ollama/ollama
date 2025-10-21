@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -255,8 +256,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	converted := openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat)
-	err = json.NewEncoder(w.ResponseWriter).Encode(converted)
+	err = json.NewEncoder(w.ResponseWriter).Encode(openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat))
 	if err != nil {
 		return 0, err
 	}
@@ -350,13 +350,11 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Check if input is tokenized (nested arrays of numbers)
-		if inputArray, ok := req.Input.([]any); ok {
-			if len(inputArray) > 0 {
-				if _, isNestedArray := inputArray[0].([]any); isNestedArray {
-					c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "Tokenized input not supported. Please send text input instead of token IDs."))
-					return
-				}
+		// Validate encoding_format parameter
+		if req.EncodingFormat != "" {
+			if !strings.EqualFold(req.EncodingFormat, "float") && !strings.EqualFold(req.EncodingFormat, "base64") {
+				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, fmt.Sprintf("Invalid value for 'encoding_format' = %s. Supported values: ['float', 'base64'].", req.EncodingFormat)))
+				return
 			}
 		}
 
