@@ -78,6 +78,80 @@ type EmbedRequest struct {
 	Dimensions int    `json:"dimensions,omitempty"`
 }
 
+// FromEmbedRequest converts an EmbedRequest to api.EmbedRequest
+func FromEmbedRequest(r EmbedRequest) (*api.EmbedRequest, error) {
+	var images []api.ImageData
+	var input []string
+	switch v := r.Input.(type) {
+	case string:
+		input = []string{v}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				input = append(input, s)
+			} else {
+				return nil, errors.New("invalid input type")
+			}
+		}
+	case [][]any:
+		for _, items := range v {
+			for _, item := range items {
+				if s, ok := item.(map[string]any); ok {
+					switch s["type"] {
+					case "text":
+						input = append(input, s["text"].(string))
+					case "image_url":
+						var url string
+						if urlMap, ok := s["image_url"].(map[string]any); ok {
+							if url, ok = urlMap["url"].(string); !ok {
+								return nil, errors.New("invalid message format")
+							}
+						} else {
+							if url, ok = s["image_url"].(string); !ok {
+								return nil, errors.New("invalid message format")
+							}
+						}
+						types := []string{"jpeg", "jpg", "png", "webp"}
+						valid := false
+						// support blank mime type to match api/chat taking just unadorned base64
+						if strings.HasPrefix(url, "data:;base64,") {
+							url = strings.TrimPrefix(url, "data:;base64,")
+							valid = true
+						}
+						for _, t := range types {
+							prefix := "data:image/" + t + ";base64,"
+							if strings.HasPrefix(url, prefix) {
+								url = strings.TrimPrefix(url, prefix)
+								valid = true
+								break
+							}
+						}
+
+						if !valid {
+							return nil, errors.New("invalid image input")
+						}
+
+						img, err := base64.StdEncoding.DecodeString(url)
+						if err != nil {
+							return nil, errors.New("invalid message format")
+						}
+						images = append(images, api.ImageData(img))
+					}
+				} else {
+					return nil, errors.New("invalid input type")
+				}
+			}
+		}
+	}
+
+	return &api.EmbedRequest{
+		Model:      r.Model,
+		Input:      input,
+		Images:     images,
+		Dimensions: r.Dimensions,
+	}, nil
+}
+
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }

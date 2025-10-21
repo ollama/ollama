@@ -661,9 +661,25 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	if len(input) == 0 {
-		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
-		return
+	var g errgroup.Group
+	embeddings := make([][]float32, len(input)+len(req.Images))
+
+	for i, image := range req.Images {
+		i := i
+		image := image
+		g.Go(func() error {
+			embedding, err := r.ImageEmbedding(c.Request.Context(), llm.ImageData{ID: i, Data: image})
+			if err != nil {
+				return err
+			}
+			// TODO: this first normalization should be done by the model
+			embedding = normalize(embedding)
+			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
+				embedding = normalize(embedding[:req.Dimensions])
+			}
+			embeddings[i] = embedding
+			return nil
+		})
 	}
 
 	kvData, _, err := getModelData(m.ModelPath, false)
@@ -716,9 +732,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		input[i] = s
 	}
 
-	var g errgroup.Group
-	embeddings := make([][]float32, len(input))
 	for i, text := range input {
+		i := i
+		text := text
 		g.Go(func() error {
 			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
@@ -729,7 +745,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
-			embeddings[i] = embedding
+			embeddings[i+len(req.Images)] = embedding
 			return nil
 		})
 	}
@@ -778,9 +794,49 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	if len(req.Images) > 0 {
+		if !slices.Contains(m.Capabilities(), model.CapabilityVision) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "vision model required"})
+			return
+		}
+
+		var g errgroup.Group
+		embeddings := make([][]float32, len(req.Images))
+		for i, image := range req.Images {
+			i := i
+			image := image
+			g.Go(func() error {
+				embedding, err := r.ImageEmbedding(c.Request.Context(), llm.ImageData{ID: i, Data: image})
+				if err != nil {
+					return err
+				}
+				embeddings[i] = embedding
+				return nil
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+			return
+		}
+
+		var e []float64
+		for _, embedding := range embeddings {
+			for _, v := range embedding {
+				e = append(e, float64(v))
+			}
+		}
+
+		resp := api.EmbeddingResponse{
+			Embedding: e,
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 

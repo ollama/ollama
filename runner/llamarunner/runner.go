@@ -784,7 +784,7 @@ func (s *Server) loadModel(
 	}
 
 	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
-	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
+	s.lc, err = llama.NewContextWithModel(s.model, ctxParams, ppath)
 	if err != nil {
 		panic(err)
 	}
@@ -926,6 +926,7 @@ func Execute(args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("/embedding", server.embeddings)
+	mux.HandleFunc("/image-embedding", server.imageEmbeddings)
 	mux.HandleFunc("/completion", server.completion)
 	mux.HandleFunc("/health", server.health)
 
@@ -940,4 +941,32 @@ func Execute(args []string) error {
 	}
 
 	return nil
+}
+
+func (s *Server) imageEmbeddings(w http.ResponseWriter, r *http.Request) {
+	s.ready.Wait()
+
+	var req llm.ImageEmbeddingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad request: %s", err), http.StatusBadRequest)
+		return
+	}
+
+	if s.image == nil {
+		http.Error(w, "vision model not loaded", http.StatusBadRequest)
+		return
+	}
+
+	embedding, err := s.image.EmbedImage(s.lc, req.Image.Data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
+		Embedding: embedding,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
 }
