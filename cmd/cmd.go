@@ -1836,8 +1836,12 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
 	embedCmd := &cobra.Command{
-		Use:     "embed MODEL",
-		Short:   "Generate embeddings from a model",
+		Use:   "embed MODEL",
+		Short: "Generate embeddings from a model",
+		Long: "Generate embeddings for text input using an Ollama model. " +
+			"Run the command and enter messages interactively, or pipe text via stdin for scripted use.",
+		Example: strings.TrimSpace(`  ollama embed nomic-embed-text
+	ollama embed nomic-embed-text --format json`),
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    EmbedHandler,
