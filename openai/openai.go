@@ -383,11 +383,15 @@ func ToListCompletion(r api.ListResponse) ListCompletion {
 // encodingFormat can be "float", "base64", or empty (defaults to "float")
 func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) EmbeddingList {
 	if r.Embeddings != nil {
+		if encodingFormat == "" {
+			encodingFormat = "float"
+		}
+
 		var data []Embedding
 		for i, e := range r.Embeddings {
 			var embedding any
-			if strings.EqualFold(encodingFormat, "base64") {
-				embedding = floatsToBase64(e)
+			if encodingFormat == "base64" {
+				embedding = convertFloatsToBase64(e)
 			} else {
 				embedding = e
 			}
