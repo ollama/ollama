@@ -243,7 +243,9 @@ MESSAGE <role> <message>
 ```
 MESSAGE user Is Toronto in Canada?
 MESSAGE assistant yes
-MESSAGE user Is Sacramento in Canada?
+MESSAGE user """
+Is Sacramento in Canada?
+"""
 MESSAGE assistant no
 MESSAGE user Is Ontario in Canada?
 MESSAGE assistant yes
