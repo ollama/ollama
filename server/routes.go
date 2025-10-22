@@ -2192,7 +2192,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						}
 						res.Message.ToolCalls = toolCalls
 						res.Message.Content = ""
-
 					} else if res.Message.Thinking != "" {
 						// don't return
 					} else {
