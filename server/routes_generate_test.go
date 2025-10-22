@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
@@ -135,8 +134,6 @@ func TestGenerateChatRemote(t *testing.T) {
 }
 
 func TestGenerateChat(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
@@ -746,8 +743,6 @@ func TestGenerateChat(t *testing.T) {
 }
 
 func TestGenerate(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
@@ -1169,8 +1164,6 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestChatWithPromptEndingInThinkTag(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	// Helper to create a standard thinking test setup
 	setupThinkingTest := func(t *testing.T) (*mockRunner, *Server) {
 		mock := &mockRunner{
