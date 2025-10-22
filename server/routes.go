@@ -1874,10 +1874,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			req.Options = map[string]any{}
 		}
 
-		msgs := append(m.Messages, req.Messages...)
-		if req.Messages[0].Role != "system" && m.System != "" {
-			msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+		var msgs []api.Message
+		if len(req.Messages) > 0 {
+			msgs = append(m.Messages, req.Messages...)
+			if req.Messages[0].Role != "system" && m.System != "" {
+				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+			}
 		}
+
 		msgs = filterThinkTags(msgs, m)
 		req.Messages = msgs
 
