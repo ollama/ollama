@@ -109,6 +109,8 @@ func TestMultiModelStress(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	initialTimeout := 120 * time.Second
+	streamTimeout := 20 * time.Second
 
 	// Make sure all the models are pulled before we get started
 	for _, model := range chosenModels {
@@ -147,6 +149,8 @@ chooseModels:
 			for _, m := range models.Models {
 				if m.SizeVRAM == 0 {
 					slog.Info("model running on CPU", "name", m.Name, "target", targetLoadCount, "chosen", chosenModels[:targetLoadCount])
+					initialTimeout = 240 * time.Second
+					streamTimeout = 30 * time.Second
 					break chooseModels
 				}
 			}
@@ -172,10 +176,7 @@ chooseModels:
 				k := r.Int() % len(reqs)
 				reqs[k].Model = chosenModels[i]
 				slog.Info("Starting", "model", reqs[k].Model, "iteration", j, "request", reqs[k].Messages[0].Content)
-				DoChat(ctx, t, client, reqs[k], resps[k],
-					120*time.Second, // Be extra patient for the model to load initially
-					10*time.Second,  // Once results start streaming, fail if they stall
-				)
+				DoChat(ctx, t, client, reqs[k], resps[k], initialTimeout, streamTimeout)
 			}
 		}(i)
 	}

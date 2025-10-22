@@ -52,11 +52,13 @@ type Scheduler struct {
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
 
-	loadFn       func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool
-	newServerFn  func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
-	getGpuFn     func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList
-	getCpuFn     func() discover.GpuInfo
-	reschedDelay time.Duration
+	loadFn      func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, requireFull bool) bool
+	newServerFn func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	getGpuFn    func(ctx context.Context, runners []discover.FilteredRunnerDiscovery) discover.GpuInfoList
+	getCpuFn    func() discover.GpuInfo
+
+	// waitForRecovery sets the limit for how long to wait for memory usage to recover after unload before scheduling the next model
+	waitForRecovery time.Duration
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -69,15 +71,15 @@ var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending re
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
 	sched := &Scheduler{
-		pendingReqCh:  make(chan *LlmRequest, maxQueue),
-		finishedReqCh: make(chan *LlmRequest, maxQueue),
-		expiredCh:     make(chan *runnerRef, maxQueue),
-		unloadedCh:    make(chan any, maxQueue),
-		loaded:        make(map[string]*runnerRef),
-		newServerFn:   llm.NewLlamaServer,
-		getGpuFn:      discover.GetGPUInfo,
-		getCpuFn:      discover.GetCPUInfo,
-		reschedDelay:  250 * time.Millisecond,
+		pendingReqCh:    make(chan *LlmRequest, maxQueue),
+		finishedReqCh:   make(chan *LlmRequest, maxQueue),
+		expiredCh:       make(chan *runnerRef, maxQueue),
+		unloadedCh:      make(chan any, maxQueue),
+		loaded:          make(map[string]*runnerRef),
+		newServerFn:     llm.NewLlamaServer,
+		getGpuFn:        discover.GetGPUInfo,
+		getCpuFn:        discover.GetCPUInfo,
+		waitForRecovery: 5 * time.Second,
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -650,8 +652,8 @@ func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []discover.Fi
 	freeMemoryNow := freeMemoryBefore
 
 	go func() {
-		// typical convergence is 0.5-1.5s - If it takes more than 5 seconds to discover and converge, let the scheduler estimate VRAM usage
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// typical convergence is 0.5-1.5s - If it takes too long to discover and converge, let the scheduler estimate VRAM usage
+		ctx, cancel := context.WithTimeout(context.Background(), s.waitForRecovery)
 		defer cancel()
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()

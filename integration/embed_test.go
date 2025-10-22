@@ -258,6 +258,19 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "boundary truncation",
+			request: api.EmbedRequest{
+				Model:   "all-minilm",
+				Input:   "why is the sky blue? Why is the sky blue? hi there my",
+				Options: map[string]any{"num_ctx": 16},
+			},
+			check: func(res *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
 	}
 
 	for _, req := range cases {

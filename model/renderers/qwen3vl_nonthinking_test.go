@@ -9,11 +9,12 @@ import (
 
 func TestQwen3VLNonThinkingRenderer(t *testing.T) {
 	tests := []struct {
-		name     string
-		msgs     []api.Message
-		images   []api.ImageData
-		tools    []api.Tool
-		expected string
+		name       string
+		msgs       []api.Message
+		images     []api.ImageData
+		tools      []api.Tool
+		useImgTags bool
+		expected   string
 	}{
 		{
 			name: "prefill",
@@ -93,6 +94,18 @@ I'll check the weather in San Francisco for you.<think>Speak poetry after the fi
 Let me analyze this image.`,
 		},
 		{
+			name: "Image with image tags",
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData("img2")}},
+				{Role: "assistant", Content: "Let me analyze this image."},
+			},
+			useImgTags: true,
+			expected: `<|im_start|>user
+[img]Describe this image.<|im_end|>
+<|im_start|>assistant
+Let me analyze this image.`,
+		},
+		{
 			name: "Multiple images",
 			msgs: []api.Message{
 				{Role: "user", Content: "Describe these images.", Images: []api.ImageData{api.ImageData("img1"), api.ImageData("img2")}},
@@ -102,7 +115,18 @@ Let me analyze this image.`,
 <|im_start|>assistant
 `,
 		},
-
+		{
+			name: "Multiple images with image tags",
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe these images.", Images: []api.ImageData{api.ImageData("img1"), api.ImageData("img2")}},
+				{Role: "assistant", Content: "Let me analyze this image."},
+			},
+			useImgTags: true,
+			expected: `<|im_start|>user
+[img][img]Describe these images.<|im_end|>
+<|im_start|>assistant
+Let me analyze this image.`,
+		},
 		// 		// NOTE: solved with #12518: https://github.com/ollama/ollama/compare/main...drifkin/stable-tool-args
 		// 		{
 		// 			name: "with tools and response",
@@ -485,7 +509,7 @@ I'll check.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := (&Qwen3VLRenderer{false}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Qwen3VLRenderer{isThinking: false, useImgTags: tt.useImgTags}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -12658,6 +12658,7 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->pci_device_id = ctx->pci_device_id;
     props->pci_domain_id = ctx->pci_domain_id;
     props->library = GGML_VK_NAME;
+    props->numeric_id = ctx->id.empty() ? nullptr : ctx->id.c_str();
 }
 
 static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {

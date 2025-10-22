@@ -39,6 +39,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -91,6 +92,9 @@ func init() {
 	}
 
 	gin.SetMode(mode)
+
+	// Tell renderers to use [img] tags
+	renderers.RenderImgTags = true
 }
 
 var (
@@ -1870,10 +1874,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			req.Options = map[string]any{}
 		}
 
-		msgs := append(m.Messages, req.Messages...)
-		if req.Messages[0].Role != "system" && m.System != "" {
-			msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+		var msgs []api.Message
+		if len(req.Messages) > 0 {
+			msgs = append(m.Messages, req.Messages...)
+			if req.Messages[0].Role != "system" && m.System != "" {
+				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+			}
 		}
+
 		msgs = filterThinkTags(msgs, m)
 		req.Messages = msgs
 

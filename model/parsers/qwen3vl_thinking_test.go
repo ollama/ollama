@@ -344,3 +344,205 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 		}
 	}
 }
+
+func TestQwen3VLParserState(t *testing.T) {
+	cases := []struct {
+		desc        string
+		hasThinking bool
+		last        *api.Message
+		wantState   qwenParserState
+	}{
+		{
+			desc:        "no thinking support => CollectingContent",
+			hasThinking: false,
+			last:        nil,
+			wantState:   CollectingContent,
+		},
+		{
+			desc:        "thinking support, no last message => CollectingThinkingContent",
+			hasThinking: true,
+			last:        nil,
+			wantState:   CollectingThinkingContent,
+		},
+		{
+			desc:        "thinking support, last assistant with empty content => CollectingThinkingContent",
+			hasThinking: true,
+			last:        &api.Message{Role: "assistant", Content: ""},
+			wantState:   CollectingThinkingContent,
+		},
+		{
+			desc:        "thinking support, last assistant with content => CollectingContent",
+			hasThinking: true,
+			last:        &api.Message{Role: "assistant", Content: "hello"},
+			wantState:   CollectingContent,
+		},
+		{
+			desc:        "thinking support, last is user => CollectingThinkingContent",
+			hasThinking: true,
+			last:        &api.Message{Role: "user", Content: "hi"},
+			wantState:   CollectingThinkingContent,
+		},
+	}
+
+	for _, tc := range cases {
+		parser := Qwen3VLParser{hasThinkingSupport: tc.hasThinking}
+		parser.Init(nil, tc.last)
+		if parser.state != tc.wantState {
+			t.Errorf("%s: got state %v, want %v", tc.desc, parser.state, tc.wantState)
+		}
+	}
+}
+
+func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
+	type step struct {
+		input      string
+		wantEvents []qwenEvent
+	}
+
+	cases := []struct {
+		desc  string
+		steps []step
+		only  bool
+	}{
+		{
+			desc: "thinking prefill",
+			steps: []step{
+				{input: "abc</think>", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with content",
+			steps: []step{
+				{input: "abc</th", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+				{input: "ink> def", wantEvents: []qwenEvent{qwenEventContent{content: "def"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with fakeout",
+			steps: []step{
+				{input: "abc</think", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc"}}},
+				{input: " fakeout </think", wantEvents: []qwenEvent{qwenEventThinkingContent{content: "</think fakeout"}}},
+				{input: ">", wantEvents: []qwenEvent{}},
+			},
+		},
+		{
+			desc: "thinking prefill with spaces",
+			steps: []step{
+				{input: "        </think> starting content", wantEvents: []qwenEvent{qwenEventContent{content: "starting content"}}},
+			},
+		},
+	}
+	last := &api.Message{Role: "assistant", Thinking: "i am thinking"} // so if there is thinking the test is still thinking
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			parser := Qwen3VLParser{hasThinkingSupport: true}
+			parser.Init([]api.Tool{}, last)
+
+			for i, step := range tc.steps {
+				parser.buffer.WriteString(step.input)
+				gotEvents := parser.parseEvents()
+
+				if len(gotEvents) == 0 && len(step.wantEvents) == 0 {
+					// avoid deep equal on empty vs. nil slices
+					continue
+				}
+
+				if !reflect.DeepEqual(gotEvents, step.wantEvents) {
+					t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
+				}
+			}
+		})
+	}
+}
+
+func TestQwen3VLThinkingParserWithNonThinkingPrefill(t *testing.T) {
+	type step struct {
+		input      string
+		wantEvents []qwenEvent
+	}
+
+	cases := []struct {
+		desc  string
+		steps []step
+		only  bool
+	}{
+		{
+			desc: "thinking prefill",
+			steps: []step{
+				{input: "abc</think>", wantEvents: []qwenEvent{qwenEventContent{content: "abc</think>"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with content",
+			steps: []step{
+				{input: "abc</th", wantEvents: []qwenEvent{qwenEventContent{content: "abc</th"}}},
+				{input: "ink> def", wantEvents: []qwenEvent{qwenEventContent{content: "ink> def"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with fakeout",
+			steps: []step{
+				{input: "abc</think", wantEvents: []qwenEvent{qwenEventContent{content: "abc</think"}}},
+				{input: " fakeout </think", wantEvents: []qwenEvent{qwenEventContent{content: " fakeout </think"}}},
+				{input: ">", wantEvents: []qwenEvent{qwenEventContent{content: ">"}}},
+			},
+		},
+		{
+			desc: "thinking prefill with spaces",
+			steps: []step{
+				{input: "        </think> starting content", wantEvents: []qwenEvent{qwenEventContent{content: "        </think> starting content"}}},
+			},
+		},
+	}
+	last := &api.Message{Role: "assistant", Thinking: "i am thinking", Content: "i am content"} // so if there is thinking the test is still thinking
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			parser := Qwen3VLParser{hasThinkingSupport: true}
+			parser.Init([]api.Tool{}, last)
+
+			for i, step := range tc.steps {
+				parser.buffer.WriteString(step.input)
+				gotEvents := parser.parseEvents()
+
+				if len(gotEvents) == 0 && len(step.wantEvents) == 0 {
+					// avoid deep equal on empty vs. nil slices
+					continue
+				}
+
+				if !reflect.DeepEqual(gotEvents, step.wantEvents) {
+					t.Errorf("step %d: input %q: got events %#v, want %#v", i, step.input, gotEvents, step.wantEvents)
+				}
+			}
+		})
+	}
+}
+
+func TestQwen3VLThinkingParserStreamingAssistantPrefillContent(t *testing.T) {
+	// last message is assistant with content ⇒ start in CollectingContent
+	last := &api.Message{Role: "assistant", Content: "has content"}
+	parser := Qwen3VLParser{hasThinkingSupport: true}
+	parser.Init([]api.Tool{}, last)
+
+	type step struct {
+		input      string
+		wantEvents []qwenEvent
+	}
+
+	steps := []step{
+		{input: "abc</think>", wantEvents: []qwenEvent{qwenEventContent{content: "abc</think>"}}},
+		{input: "<tool_call>{\"name\": \"x\", \"arguments\": {}}</tool_call>", wantEvents: []qwenEvent{qwenEventRawToolCall{raw: "{\"name\": \"x\", \"arguments\": {}}"}}},
+	}
+
+	for i, s := range steps {
+		parser.buffer.WriteString(s.input)
+		gotEvents := parser.parseEvents()
+		if len(gotEvents) == 0 && len(s.wantEvents) == 0 {
+			continue
+		}
+		if !reflect.DeepEqual(gotEvents, s.wantEvents) {
+			t.Fatalf("step %d: input %q: got %#v, want %#v", i, s.input, gotEvents, s.wantEvents)
+		}
+	}
+}

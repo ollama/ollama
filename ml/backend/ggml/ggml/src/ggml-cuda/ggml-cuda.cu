@@ -340,6 +340,15 @@ static ggml_cuda_device_info ggml_cuda_init() {
         } else if (device_name.substr(0, 21) == "NVIDIA GeForce GTX 16") {
             turing_devices_without_mma.push_back({ id, device_name });
         }
+
+        // Temporary performance fix:
+        // Setting device scheduling strategy for iGPUs with cc121 to "spinning" to avoid delays in cuda synchronize calls.
+        // TODO: Check for future drivers the default scheduling strategy and
+        // remove this call again when cudaDeviceScheduleSpin is default.
+        if (prop.major == 12 && prop.minor == 1) {
+            CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceScheduleSpin));
+        }
+
 #endif  // defined(GGML_USE_HIP)
     }
 
@@ -4150,7 +4159,6 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
         if (!initialized) {
             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
             int driverVersion = 0;
-            CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
 
             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
@@ -4168,6 +4176,9 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
 
                 dev_ctx->major = prop.major;
                 dev_ctx->minor = prop.minor;
+                if (driverVersion == 0) {
+                    CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
+                }
                 dev_ctx->driver_major = driverVersion / 1000;
                 dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
                 dev_ctx->integrated = prop.integrated;
