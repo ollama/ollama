@@ -1,13 +1,14 @@
 package discover
 
 import (
+	"log/slog"
+	"os"
 	"testing"
-
-	"github.com/ollama/ollama/app/lifecycle"
 )
 
 func init() {
-	lifecycle.InitLogging()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(logger)
 }
 
 func TestFilterOverlapByLibrary(t *testing.T) {

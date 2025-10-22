@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
@@ -21,7 +20,8 @@ import (
 
 func TestMain(m *testing.M) {
 	os.Setenv("OLLAMA_DEBUG", "1")
-	lifecycle.InitLogging()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(logger)
 	os.Exit(m.Run())
 }
 

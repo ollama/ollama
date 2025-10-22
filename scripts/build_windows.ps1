@@ -6,6 +6,8 @@
 
 $ErrorActionPreference = "Stop"
 
+mkdir -Force -path .\dist | Out-Null
+
 function checkEnv() {
     if ($null -ne $env:ARCH ) {
         $script:ARCH = $env:ARCH
@@ -78,7 +80,7 @@ function checkEnv() {
 }
 
 
-function buildCPU() {
+function cpu() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
@@ -93,7 +95,7 @@ function buildCPU() {
     }
 }
 
-function buildCUDA11() {
+function cuda11() {
     # CUDA v11 claims to be compatible with MSVC 2022, but the latest updates are no longer compatible
     # 19.40 is the last compiler version that works, but recent udpates are 19.43
     # So this pins to MSVC 2019 for best compatibility
@@ -115,7 +117,7 @@ function buildCUDA11() {
     }
 }
 
-function buildCUDA12() {
+function cuda12() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
@@ -134,7 +136,7 @@ function buildCUDA12() {
     }
 }
 
-function buildCUDA13() {
+function cuda13() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
@@ -153,7 +155,7 @@ function buildCUDA13() {
     }
 }
 
-function buildROCm() {
+function rocm() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         if ($env:HIP_PATH) {
@@ -184,7 +186,7 @@ function buildROCm() {
     }
 }
 
-function buildVulkan(){
+function vulkan(){
     if ($env:VULKAN_SDK) {
         write-host "Building Vulkan backend libraries"
         & cmake --fresh --preset Vulkan --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="vulkan"
@@ -196,7 +198,7 @@ function buildVulkan(){
     }
 }
 
-function buildOllama() {
+function ollama() {
     mkdir -Force -path "${script:DIST_DIR}\"
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
@@ -204,15 +206,56 @@ function buildOllama() {
     cp .\ollama.exe "${script:DIST_DIR}\"
 }
 
-function buildApp() {
-    write-host "Building Ollama App"
-    cd "${script:SRC_DIR}\app"
-    & windres -l 0 -o ollama.syso ollama.rc
-    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe" .
+function app() {
+    write-host "Building Ollama App $script:VERSION with package version $script:PKG_VERSION"
+
+    if (!(Get-Command npm -ErrorAction SilentlyContinue)) {
+        write-host "npm is not installed. Please install Node.js and npm first:"
+        write-host "   Visit: https://nodejs.org/"
+        exit 1
+    }
+
+    if (!(Get-Command tsc -ErrorAction SilentlyContinue)) {
+        write-host "Installing TypeScript compiler..."
+        npm install -g typescript
+    }
+
+    Push-Location app/ui/app
+    npm install
+    if ($LASTEXITCODE -ne 0) { 
+        write-host "ERROR: npm install failed with exit code $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
+
+    write-host "Building React application..."
+    npm run build
+    if ($LASTEXITCODE -ne 0) { 
+        write-host "ERROR: npm run build failed with exit code $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
+
+    # Check if dist directory exists and has content
+    if (!(Test-Path "dist")) {
+        write-host "ERROR: dist directory was not created by npm run build"
+        exit 1
+    }
+
+    $distFiles = Get-ChildItem "dist" -Recurse
+    if ($distFiles.Count -eq 0) {
+        write-host "ERROR: dist directory is empty after npm run build"
+        exit 1
+    }
+
+    Pop-Location
+
+    write-host "Running go generate"
+    & go generate ./...
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+	& go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-${script:ARCH}.exe ./app/cmd/app/
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
-function gatherDependencies() {
+function deps() {
     if ($null -eq $env:VCToolsRedistDir) {
         write-error "Unable to locate VC Install location - please use a Developer shell"
         exit 1
@@ -240,12 +283,14 @@ function gatherDependencies() {
             write-host "cp ${llvmCrtDir}\api-ms-win-crt-${part}*.dll ${script:DIST_DIR}\lib\ollama\"
             cp "${llvmCrtDir}\api-ms-win-crt-${part}*.dll" "${script:DIST_DIR}\lib\ollama\"
         }
-    } else {
-        # Carying the dll's doesn't seem to work, so use the redist installer
-        copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
+    write-host "Download MSVC Redistributables"
+    mkdir -Force -path "${script:SRC_DIR}\dist\\windows-arm64"
+    mkdir -Force -path "${script:SRC_DIR}\dist\\windows-amd64"
+    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-arm64\vc_redist.arm64.exe"
+    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-amd64\vc_redist.x64.exe"
+    write-host "Done."
 
-    cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
 }
 
 function sign() {
@@ -253,7 +298,6 @@ function sign() {
         write-host "Signing Ollama executables, scripts and libraries"
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
-            $(get-childitem -path "${script:SRC_DIR}\dist" -r -include @('ollama_welcome.ps1')) `
             $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
@@ -261,10 +305,10 @@ function sign() {
     }
 }
 
-function buildInstaller() {
+function installer() {
     if ($null -eq ${script:INNO_SETUP_DIR}) {
-        write-host "Inno Setup not present, skipping installer build"
-        return
+        write-host "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
+        exit 1
     }
     write-host "Building Ollama Installer"
     cd "${script:SRC_DIR}\app"
@@ -277,7 +321,7 @@ function buildInstaller() {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
-function distZip() {
+function zip() {
     if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64") {
         if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm") {
             write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip"
@@ -305,17 +349,17 @@ function distZip() {
 checkEnv
 try {
     if ($($args.count) -eq 0) {
-        buildCPU
-        buildCUDA12
-        buildCUDA13
-        buildROCm
-        buildVulkan
-        buildOllama
-        buildApp
-        gatherDependencies
+        cpu
+        cuda12
+        cuda13
+        rocm
+        vulkan
+        ollama
+        app
+        deps
         sign
-        buildInstaller
-        distZip
+        installer
+        zip
     } else {
         for ( $i = 0; $i -lt $args.count; $i++ ) {
             write-host "performing $($args[$i])"
