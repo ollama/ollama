@@ -107,7 +107,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 			// Adding the 'Picture' prefix is a hack, at the time of writing there is no way to prefix
 			// the image tokens with a prompt, so we add a prefix here
 			nImg++
-			pre, err := m.Encode(fmt.Sprintf(" Picture %d: ", nImg), true)
+			pre, err := m.Encode(fmt.Sprintf(" Picture %d: ", nImg), false)
 			if err != nil {
 				return nil, fmt.Errorf("failed to encode image prompt: %w", err)
 			}

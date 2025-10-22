@@ -332,11 +332,9 @@ func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 	pos := ctx.Input().FromIntSlice(coords, 2, grid.Width, grid.Height)
 
 	// Reshape and permute positions to match spatial merging pattern
-	pos = pos.Reshape(ctx, 2, grid.Width, merge, grid.Height/merge)
+	pos = pos.Reshape(ctx, -1, grid.Width/merge, merge, grid.Height/merge)
 	pos = pos.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	pos = pos.Reshape(ctx, 2, merge, merge, grid.Width/merge*grid.Height/merge)
-	pos = pos.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	pos = pos.Reshape(ctx, 2*merge*merge*grid.Width/merge*grid.Height/merge)
+	pos = pos.Reshape(ctx, -1)
 
 	// Use position indices to look up corresponding frequency values
 	positionalEmbedding := freqs.Rows(ctx, pos)

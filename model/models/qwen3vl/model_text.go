@@ -1,8 +1,9 @@
-package qwen3
+package qwen3vl
 
 import (
 	"cmp"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs"
@@ -12,10 +13,9 @@ import (
 	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
-	"github.com/ollama/ollama/model/input"
 )
 
-type Options struct {
+type TextOptions struct {
 	hiddenSize,
 	numHeads,
 	numKVHeads,
@@ -25,31 +25,24 @@ type Options struct {
 	eps,
 	ropeBase,
 	ropeScale float32
-	ropeType              string
-	originalContextLength int
+	mropeSections []int
 
 	numExperts, numExpertsUsed int
 	normTopKProb               bool
 }
 
-func (o Options) headDim() int {
+func (o TextOptions) headDim() int {
 	return cmp.Or(o.keyLength, o.valueLength, o.hiddenSize/o.numHeads)
 }
 
-func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
-	opts := []func(*rope.Options){rope.WithTypeNeoX()}
-	if o.ropeType == "yarn" {
-		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
-		opts = append(opts,
-			rope.WithOriginalContextLength(o.originalContextLength),
-			rope.WithExtrapolationFactor(1.),
-			rope.WithAttentionFactor(attnFactor),
-		)
-	}
-	return fast.RoPE(ctx, states, positions, o.headDim(), o.ropeBase, 1./o.ropeScale, opts...)
+func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	return fast.RoPE(ctx, states, positions, o.headDim(), o.ropeBase, 1./o.ropeScale,
+		rope.WithTypeMRoPE(),
+		rope.WithMRoPESections(o.mropeSections),
+	)
 }
 
-type Attention struct {
+type TextAttention struct {
 	Query     *nn.Linear  `gguf:"attn_q"`
 	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Key       *nn.Linear  `gguf:"attn_k"`
@@ -58,7 +51,7 @@ type Attention struct {
 	Output    *nn.Linear  `gguf:"attn_output"`
 }
 
-func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenStates.Dim(1)
 
 	query := sa.Query.Forward(ctx, hiddenStates)
@@ -80,8 +73,8 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 	return sa.Output.Forward(ctx, attention)
 }
 
-type MLP interface {
-	Forward(ml.Context, ml.Tensor, *Options) ml.Tensor
+type TextMLP interface {
+	Forward(ml.Context, ml.Tensor, *TextOptions) ml.Tensor
 }
 
 type sparse struct {
@@ -91,7 +84,7 @@ type sparse struct {
 	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
-func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *TextOptions) ml.Tensor {
 	hiddenDim, sequenceLength, batchSize := hiddenStates.Dim(0), hiddenStates.Dim(1), hiddenStates.Dim(2)
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, sequenceLength*batchSize)
 	routerLogits := mlp.Router.Forward(ctx, hiddenStates)
@@ -126,24 +119,23 @@ type dense struct {
 	Down *nn.Linear `gguf:"ffn_down"`
 }
 
-func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *Options) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).
-		SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
+func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *TextOptions) ml.Tensor {
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
-type Layer struct {
+type TextLayer struct {
 	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	*Attention
+	*TextAttention
 
 	MLPNorm *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP
+	TextMLP
 }
 
-func (d *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (d *TextLayer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	residual := hiddenStates
 	hiddenStates = d.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
-	hiddenStates = d.Attention.Forward(ctx, hiddenStates, positions, cache, opts)
+	hiddenStates = d.TextAttention.Forward(ctx, hiddenStates, positions, cache, opts)
 
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
@@ -154,11 +146,11 @@ func (d *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tens
 
 	residual = hiddenStates
 	hiddenStates = d.MLPNorm.Forward(ctx, hiddenStates, opts.eps)
-	hiddenStates = d.MLP.Forward(ctx, hiddenStates, opts)
+	hiddenStates = d.TextMLP.Forward(ctx, hiddenStates, opts)
 	return hiddenStates.Add(ctx, residual)
 }
 
-type Model struct {
+type TextModel struct {
 	model.Base
 	model.BytePairEncoding
 
@@ -166,59 +158,28 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	Layers []Layer `gguf:"blk"`
+	Layers []TextLayer `gguf:"blk"`
 
-	*Options
+	Options *TextOptions
 }
 
-func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	hiddenStates, err := m.forward(ctx, batch)
-	if err != nil {
-		return nil, err
-	}
-
-	return m.Output.Forward(ctx, hiddenStates), nil
-}
-
-// Forward implements model.Model.
-func (m *Model) forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-
-	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-
-	for i, layer := range m.Layers {
-		if m.Cache != nil {
-			m.Cache.SetLayer(i)
-		}
-
-		var outputs ml.Tensor
-		if i == len(m.Layers)-1 {
-			outputs = batch.Outputs
-		}
-
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
-	}
-
-	return m.OutputNorm.Forward(ctx, hiddenStates, m.eps), nil
-}
-
-func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 var _ model.Model = (*Model)(nil)
 
-func New(c fs.Config) (model.Model, error) {
-	layers := make([]Layer, c.Uint("block_count"))
+func newTextModel(c fs.Config) *TextModel {
+	layers := make([]TextLayer, c.Uint("block_count"))
 	for i := range layers {
 		if strings.HasSuffix(c.String("general.architecture"), "moe") {
-			layers[i].MLP = &sparse{}
+			layers[i].TextMLP = &sparse{}
 		} else {
-			layers[i].MLP = &dense{}
+			layers[i].TextMLP = &dense{}
 		}
 	}
 
-	m := Model{
+	m := TextModel{
 		BytePairEncoding: model.NewBytePairEncoding(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
@@ -235,29 +196,27 @@ func New(c fs.Config) (model.Model, error) {
 			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		Layers: layers,
-		Options: &Options{
-			hiddenSize:            int(c.Uint("embedding_length")),
-			numHeads:              int(c.Uint("attention.head_count")),
-			numKVHeads:            int(c.Uint("attention.head_count_kv")),
-			keyLength:             int(c.Uint("attention.key_length")),
-			valueLength:           int(c.Uint("attention.value_length")),
-			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
-			ropeType:              c.String("rope.scaling.type"),
-			ropeBase:              c.Float("rope.freq_base"),
-			ropeScale:             c.Float("rope.scaling.factor", 1),
-			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
-			numExperts:            int(c.Uint("expert_count")),
-			numExpertsUsed:        int(c.Uint("expert_used_count")),
-			normTopKProb:          c.Bool("norm_top_k_prob", true),
+		Options: &TextOptions{
+			hiddenSize:     int(c.Uint("embedding_length")),
+			numHeads:       int(c.Uint("attention.head_count")),
+			numKVHeads:     int(c.Uint("attention.head_count_kv")),
+			keyLength:      int(c.Uint("attention.key_length")),
+			valueLength:    int(c.Uint("attention.value_length")),
+			eps:            c.Float("attention.layer_norm_rms_epsilon"),
+			ropeBase:       c.Float("rope.freq_base"),
+			ropeScale:      c.Float("rope.scaling.factor", 1),
+			numExperts:     int(c.Uint("expert_count")),
+			numExpertsUsed: int(c.Uint("expert_used_count")),
+			normTopKProb:   c.Bool("norm_top_k_prob", true),
+			mropeSections: slices.Collect(func(yield func(int) bool) {
+				for _, section := range c.Ints("mrope_sections", []int32{24, 20, 20}) {
+					if !yield(int(section)) {
+						return
+					}
+				}
+			}),
 		},
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.Shift)
-	return &m, nil
-}
-
-func init() {
-	model.Register("qwen3", New)
-	model.Register("qwen3moe", New)
-	model.Register("qwen3_embed", newEmbed)
+	return &m
 }

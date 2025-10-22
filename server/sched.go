@@ -405,7 +405,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 
 	// `mllama` is a snowflake and uses an encoder cache which cannot be used with num_parallel > 1
 	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains(req.model.Config.ModelFamilies, "mllama") && numParallel != 1 {
+	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe"}, req.model.Config.ModelFamily) && numParallel != 1 {
 		numParallel = 1
 		slog.Warn("mllama does not currently support parallel requests")
 	}

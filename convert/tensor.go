@@ -19,8 +19,8 @@ type split struct {
 	dim    int
 	slices []tensor.Slice
 
-	// fn is an optional function to apply to the tensor after slicing
-	fn func(tensor.Tensor) (tensor.Tensor, error)
+	// afterFunc is an optional function to apply to the tensor after slicing
+	afterFunc func(tensor.Tensor) (tensor.Tensor, error)
 }
 
 // splitDim splits a tensor along a specified dimension into multiple tensors. The dimension
@@ -54,8 +54,8 @@ func splitDim(t Tensor, dim int, splits ...split) iter.Seq[*ggml.Tensor] {
 
 				tt = tensor.Materialize(tt)
 
-				if split.fn != nil {
-					tt, err = split.fn(tt)
+				if split.afterFunc != nil {
+					tt, err = split.afterFunc(tt)
 					if err != nil {
 						return nil, err
 					}
