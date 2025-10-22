@@ -274,7 +274,6 @@ struct {
 extern "C" {
 
 int ggml_l0_sysman_init() {
-    GGML_LOG_DEBUG("%s called\n", __func__);
     std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
     if (l0_sysman.handle != nullptr) {
         // Already initialized
@@ -331,7 +330,6 @@ int ggml_l0_sysman_init() {
 }
 
 void ggml_l0_sysman_release() {
-    GGML_LOG_DEBUG("%s called\n", __func__);
     std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
     if (l0_sysman.handle == nullptr) {
         // Already free
@@ -367,7 +365,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         return ZE_RESULT_ERROR_INVALID_ARGUMENT;
     }
 
-    GGML_LOG_DEBUG("%s called\n", __func__);
     std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
     if (l0_sysman.handle == nullptr) {
         GGML_LOG_INFO("%s: Level Zero Sysman was not initialized\n", __func__);
@@ -382,7 +379,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         l0_sysman.handle = nullptr;
         return ret;
     }
-    GGML_LOG_DEBUG("Found %d L0 Sysman drivers\n", driverCount);
 
     std::vector<zes_driver_handle_t> allDrivers(driverCount);
     ret = l0_sysman.zesDriverGet(&driverCount, allDrivers.data());
@@ -425,7 +421,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             if (ret == ZE_RESULT_ERROR_INVALID_ARGUMENT) {
                 // We get this error when we couldn't find the specified UUID device.
                 // Skip this driver and go next
-                GGML_LOG_DEBUG("Could not find device UUID %s for driver %d. Skipping driver...\n", uuid, i);
                 continue;
             } else {
                 // All other errors should abort
@@ -435,7 +430,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
                 return ret;
             }
         }
-        GGML_LOG_DEBUG("Found matching device for UUID: %s\n", uuid);
         // Get the number of memory modules.
         // Typically this will be 1 (haven't seen a GPU other than 1 yet)
         uint32_t memModuleCount = 0;
@@ -450,7 +444,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         if (memModuleCount <= 0) {
             // No memory module found. Driver maybe too old?
             // Skipping the device so we can fallback to other methods
-            GGML_LOG_DEBUG("Could not find memory module for device %s.\n", uuid);
             continue;
         }
 
@@ -462,7 +455,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             l0_sysman.handle = nullptr;
             return ret;
         }
-        GGML_LOG_DEBUG("Found %d memory modules for device %s\n", memModuleCount, uuid);
         size_t freeMemory = 0;
         size_t totalMemory = 0;
         for (uint32_t j = 0; j < memModuleCount; ++j) {
@@ -487,8 +479,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         if (freeMemory || totalMemory) {
             // We were able to get values from the memory modules.
             // Write to output and exit
-            GGML_LOG_DEBUG("Got memory info from device %s: free: %zu total: %zu \n",
-                uuid, freeMemory, totalMemory);
             *free = freeMemory;
             *total = totalMemory;
             return ZE_RESULT_SUCCESS;

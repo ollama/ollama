@@ -12449,7 +12449,6 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
-    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s!!!!!!!\n", ctx->uuid.c_str());
 
     // Use vendor specific management libraries for best VRAM reporting if available
     switch (props2.properties.vendorID) {
@@ -12486,9 +12485,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
         // If the driver is old on Windows we will fail to get memory info for iGPU.
         // For Linux you need to run ollama with `sudo` or run `sudo setcap cap_perfmon=+ep /path/to/ollama_binary`
         // to apply perfmon privilege to the ollama binary
-        GGML_LOG_DEBUG("Got Intel GPU. Initializing L0 sysman...\n");
         if (ggml_l0_sysman_init() == 0) {
-            GGML_LOG_DEBUG("L0 sysman Initialized. Getting GPU free memory info\n");
             int status = ggml_l0_sysman_get_device_memory(ctx->uuid.c_str(), free, total);
             if (status == 0) {
                 GGML_LOG_DEBUG("%s utilizing Level Zero Sysman memory reporting free: %zu total: %zu\n", __func__, *free, *total);
