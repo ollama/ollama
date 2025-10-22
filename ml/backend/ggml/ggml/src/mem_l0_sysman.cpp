@@ -398,8 +398,6 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             continue;
         }
 
-        GGML_LOG_DEBUG("Found %d devices for driver %d\n", deviceCount, i);
-
         // Setup UUID for target device and search for it
         zes_device_handle_t device = {};
         ze_bool_t onSubDevice = false;
