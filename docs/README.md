@@ -14,6 +14,7 @@
 * [API Reference](./api.md)
 * [Modelfile Reference](./modelfile.md)
 * [OpenAI Compatibility](./openai.md)
+* [Shell Completion](./shell_completion.md)
 
 ### Resources
 
