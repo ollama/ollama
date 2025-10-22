@@ -416,6 +416,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Clueless](https://github.com/KashyapTan/clueless) (Open Source & Local Cluely: A desktop application LLM assistant to help you talk to anything on your screen using locally served Ollama models. Also undetectable to screenshare)
 - [ollama-co2](https://github.com/carbonatedWaterOrg/ollama-co2) (FastAPI web interface for monitoring and managing local and remote Ollama servers with real-time model monitoring and concurrent downloads)
 
+### Agent Platforms & Orchestration
+  - [AgentSystems](https://github.com/agentsystems/agentsystems) (Discover and run third-party AI agents using your local Ollama models - self-hosted containerized platform with a federated agent ecosystem)
+
 ### Cloud
 
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
