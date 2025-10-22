@@ -221,7 +221,9 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
     exit 0
 fi
 
-if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+OLLAMA_INSTALL_ROCM=${OLLAMA_INSTALL_ROCM:-true}
+
+if [ "$OLLAMA_INSTALL_ROCM" != false ] && ( check_gpu lspci amdgpu || check_gpu lshw amdgpu ); then
     status "Downloading Linux ROCm ${ARCH} bundle"
     curl --fail --show-error --location --progress-bar \
         "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
