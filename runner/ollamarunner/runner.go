@@ -735,21 +735,24 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			panic("failed to sample token")
 		}
 
+		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
+		if err != nil {
+			panic("failed to decode token")
+		}
+
 		nextBatchTokens[i].Token = token
 
 		// if it's an end of sequence token, break
 		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
-			// TODO (jmorganca): we should send this back
-			// as it's important for the /api/generate context
-			// seq.responses <- piece
+			seq.pendingResponses = append(seq.pendingResponses, piece)
+			if !flushPending(seq) {
+				s.removeSequence(i, llm.DoneReasonConnectionClosed)
+				continue
+			}
+
 			logutil.Trace("computeBatch: EOS", "batchID", activeBatch.id, "seqIdx", i)
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
-		}
-
-		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
-		if err != nil {
-			panic("failed to decode token")
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
