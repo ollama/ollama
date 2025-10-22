@@ -350,3 +350,23 @@ Ollama for Windows and macOS register as a login item during installation.  You 
 
 **MacOS Ventura (v13) and later**
 - Open `Settings` and search for "Login Items", find the `Ollama` entry under "Allow in the Background`, then click the slider to disable.
+
+
+## How do I bypass available memory check before loading a model?
+
+By default, Ollama checks if your system has sufficient available memory before loading a model to prevent out-of-memory errors that could crash your system or cause instability.
+You can bypass this safety check by setting the OLLAMA_SKIP_MEMORY_CHECK environment variable to 1. 
+
+### When to use this option
+
+- You have swap space configured and accept slower performance
+- You're running on a system with non-standard memory reporting
+- You're debugging memory-related issues
+- You understand the risks and have adequate system monitoring
+
+###  Important Warnings
+
+- System instability: Loading models without sufficient memory can cause system freezes or crashes
+- Performance degradation: Your system may become unresponsive due to excessive swapping
+- Data loss risk: System crashes could result in unsaved work being lost
+
