@@ -200,6 +200,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 }
 
 type ToolCall struct {
+	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
