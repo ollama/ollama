@@ -653,7 +653,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	caps := []model.Capability{}
+	if len(req.Images) > 0 {
+		caps = append(caps, model.CapabilityVision)
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -719,8 +724,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
 	for i, text := range input {
+		i, text := i, text
 		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
+			images := make([]llm.ImageData, len(req.Images))
+			for j := range req.Images {
+				images[j] = llm.ImageData{ID: j, Data: req.Images[j]}
+			}
+
+			embedding, err := r.Embedding(c.Request.Context(), text, images...)
 			if err != nil {
 				return err
 			}

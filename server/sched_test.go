@@ -778,7 +778,11 @@ func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn 
 	return s.completionResp
 }
 
-func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, error) {
+func (s *mockLlm) Embedding(ctx context.Context, input string, images ...llm.ImageData) ([]float32, error) {
+	return s.embeddingResp, s.embeddingRespErr
+}
+
+func (s *mockLlm) ImageEmbedding(ctx context.Context, image llm.ImageData) ([]float32, error) {
 	return s.embeddingResp, s.embeddingRespErr
 }
 
