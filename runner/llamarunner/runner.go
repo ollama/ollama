@@ -399,6 +399,10 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			s.removeSequence(seqIdx, llm.DoneReasonLength)
 			continue
 		}
+		if seq.numPredict == -2 && len(seq.cache.Inputs) >= s.cache.numCtx {
+			s.removeSequence(seqIdx, llm.DoneReasonLength)
+			continue
+		}
 
 		for i, input := range seq.inputs {
 			if len(seq.cache.Inputs)+len(seq.pendingInputs)+1 > s.cache.numCtx {

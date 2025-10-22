@@ -494,6 +494,10 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			nextBatch.seqs[seqIdx] = nil
 			continue
 		}
+		if seq.numPredict == -2 && int32(len(seq.cache.Inputs)) >= s.cache.numCtx {
+			s.removeSequence(seqIdx, llm.DoneReasonLength)
+			continue
+		}
 
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
