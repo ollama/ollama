@@ -256,19 +256,15 @@ struct {
                                              zes_device_handle_t *hDevice, ze_bool_t *onSubdevice, uint32_t *subdeviceId);
   ze_result_t (*zesDeviceGet)(zes_driver_handle_t hDriver, uint32_t *pCount,
                               zes_device_handle_t *phDevices);
-  ze_result_t (*zesDeviceGetProperties)(zes_device_handle_t hDevice,
-                                        zes_device_properties_t *pProperties);
   ze_result_t (*zesDeviceEnumMemoryModules)(zes_device_handle_t hDevice,
                                             uint32_t *pCount,
                                             zes_mem_handle_t *phMemory);
-  ze_result_t (*zesMemoryGetProperties)(zes_mem_handle_t hMemory,
-                                        zes_mem_properties_t *pProperties);
   ze_result_t (*zesMemoryGetState)(zes_mem_handle_t hMemory,
                                    zes_mem_state_t *pState);
 
 } l0_sysman { 
     nullptr, nullptr, nullptr, nullptr, nullptr,
-    nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr
 };
 
 extern "C" {
@@ -301,14 +297,10 @@ int ggml_l0_sysman_init() {
     l0_sysman.zesDriverGet = (ze_result_t(*)(uint32_t*, zes_driver_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDriverGet");
     l0_sysman.zesDriverGetDeviceByUuidExp = (ze_result_t(*)(zes_driver_handle_t, zes_uuid_t, zes_device_handle_t*, ze_bool_t*, uint32_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDriverGetDeviceByUuidExp");
     l0_sysman.zesDeviceGet = (ze_result_t(*)(zes_driver_handle_t, uint32_t*, zes_device_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceGet");
-    l0_sysman.zesDeviceGetProperties = (ze_result_t(*)(zes_device_handle_t, zes_device_properties_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceGetProperties");
     l0_sysman.zesDeviceEnumMemoryModules = (ze_result_t(*)(zes_device_handle_t, uint32_t*, zes_mem_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceEnumMemoryModules");
-    l0_sysman.zesMemoryGetProperties = (ze_result_t(*)(zes_mem_handle_t, zes_mem_properties_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetProperties");
     l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetState");
     if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || l0_sysman.zesDriverGetDeviceByUuidExp == nullptr || 
-        l0_sysman.zesDeviceGet == nullptr|| l0_sysman.zesDeviceGetProperties == nullptr ||
-        l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetProperties == nullptr ||
-        l0_sysman.zesMemoryGetState == nullptr) {
+        l0_sysman.zesDeviceGet == nullptr || l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetState == nullptr) {
         GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, libFilePath.c_str());
         UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
