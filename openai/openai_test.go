@@ -7,7 +7,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -176,7 +175,8 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 		},
 	}
 
-	toolCalls := slices.Clone(original)
+	toolCalls := make([]api.ToolCall, len(original))
+	copy(toolCalls, original)
 	got := ToToolCalls(toolCalls)
 
 	if len(got) != len(original) {
