@@ -301,18 +301,42 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	})
 }
 
-func StopHandler(cmd *cobra.Command, args []string) error {
+func stopModel(cmd *cobra.Command, model string) error {
 	opts := &runOptions{
-		Model:     args[0],
+		Model:     model,
 		KeepAlive: &api.Duration{Duration: 0},
 	}
+
 	if err := loadOrUnloadModel(cmd, opts); err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+			return fmt.Errorf("couldn't find model \"%s\" to stop", model)
 		}
 		return err
 	}
 	return nil
+}
+
+func StopHandler(cmd *cobra.Command, args []string) error {
+	if args[0] == "all" {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+
+		models, err := client.List(cmd.Context())
+		if err != nil {
+			return err
+		}
+
+		for _, m := range models.Models {
+			err = stopModel(cmd, m.Name)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return stopModel(cmd, args[0])
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
@@ -1681,7 +1705,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
 	stopCmd := &cobra.Command{
-		Use:     "stop MODEL",
+		Use:     "stop MODEL|all",
 		Short:   "Stop a running model",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
