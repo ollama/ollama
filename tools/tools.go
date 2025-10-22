@@ -269,8 +269,7 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 
 				var findObject func(obj map[string]any) (map[string]any, bool)
 				findObject = func(obj map[string]any) (map[string]any, bool) {
-					var findMap func(string, map[string]any) (map[string]any, bool)
-					findMap = func(name string, obj map[string]any) (map[string]any, bool) {
+					var findMap = func(name string, obj map[string]any) (map[string]any, bool) {
 						if args, ok := obj[name].(map[string]any); ok {
 							return args, true
 						}
