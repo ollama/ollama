@@ -132,6 +132,9 @@ writing manifest
 success
 ```
 
+**Note:** When quantizing models, the Ollama server will write temporary files of approximately the same size as the input model to the temporary files directory. If you do not have sufficient space the operation will fail.
+On Windows based systems Ollama will use the first non-empty value from the `TMP`, `TEMP` and `USERPROFILE` envvars in that order. On Unix-like systems (*nix and MacOS) `TMPDIR` is used.
+
 ### Supported Quantizations
 
 - `q8_0`
