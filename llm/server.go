@@ -666,16 +666,6 @@ func (s *ollamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus 
 		return nil, err
 	}
 
-	if len(gpus) == 0 || s.options.NumGPU == 0 {
-		resp, err := s.initModel(ctx, s.loadRequest, LoadOperationFit)
-		if err != nil {
-			return nil, err
-		}
-		if resp.Memory.CPU.Size() > systemInfo.FreeMemory {
-			return nil, fmt.Errorf("insufficient available system memory %s to load model %s - %w", format.HumanBytes2(systemInfo.FreeMemory), format.HumanBytes2(resp.Memory.CPU.Size()), ErrLoadRequiredFull)
-		}
-	}
-
 nextOperation:
 	for operation := LoadOperationFit; operation < LoadOperationCommit; operation++ {
 	nextLoad:
@@ -731,7 +721,6 @@ nextOperation:
 						if err != nil {
 							return nil, err
 						}
-
 						slog.Debug("new layout created", "layers", newGPULayers)
 
 						s.loadRequest.GPULayers = newGPULayers
@@ -834,19 +823,26 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 // - Assigning layers
 // - Ensuring that we don't exceed limits, such as requirements about partial offloading or system memory
 func (s *ollamaServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, error) {
-	if s.totalLayers == 0 || s.options.NumGPU == 0 || len(systemGPUs) == 0 {
-		return ml.GPULayersList{}, nil
-	}
-
-	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
-	sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
-
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
 			Weights: make([]uint64, s.totalLayers),
 			Cache:   make([]uint64, s.totalLayers),
 		}}
 	}
+	gpuLayers, layers, err := s.buildLayout(systemGPUs, memory, requireFull, backoff)
+	if err != nil {
+		return nil, err
+	}
+	err = s.verifyLayout(systemInfo, memory, requireFull, gpuLayers, layers)
+	if err != nil {
+		return nil, err
+	}
+	return gpuLayers, nil
+}
+
+func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, []uint64, error) {
+	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
+	sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
 
 	layers := make([]uint64, len(memory.CPU.Weights))
 	for i := range layers {
@@ -902,7 +898,11 @@ func (s *ollamaServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.De
 			gpuLayers = libraryGpuLayers
 		}
 	}
+	return gpuLayers, layers, nil
+}
 
+// verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
+func (s *ollamaServer) verifyLayout(systemInfo ml.SystemInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
@@ -930,11 +930,11 @@ nextLayer:
 
 	if requireFull {
 		if gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
-			return nil, ErrLoadRequiredFull
+			return ErrLoadRequiredFull
 		}
 
 		if cpuSize > systemInfo.FreeMemory {
-			return nil, ErrLoadRequiredFull
+			return ErrLoadRequiredFull
 		}
 	}
 
@@ -944,7 +944,7 @@ nextLayer:
 		available := systemInfo.FreeMemory + systemInfo.FreeSwap
 		if cpuSize > available {
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(cpuSize), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
-			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(cpuSize), format.HumanBytes2(available))
+			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(cpuSize), format.HumanBytes2(available))
 		}
 	} else {
 		if vramSize > systemInfo.TotalMemory {
@@ -959,7 +959,7 @@ nextLayer:
 		slog.Debug("insufficient VRAM to load any model layers")
 	}
 
-	return gpuLayers, nil
+	return nil
 }
 
 // assignLayers packs the maximum number of layers onto the smallest set of GPUs and comes up with a layer assignment
