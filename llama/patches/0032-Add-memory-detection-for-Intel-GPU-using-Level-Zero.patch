@@ -1,0 +1,475 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Masato Nakasaka <masato.nakasaka@intel.com>
+Date: Wed, 22 Oct 2025 18:00:50 +0900
+Subject: [PATCH] Add memory detection for Intel GPU using Level Zero
+
+---
+ ggml/src/CMakeLists.txt              |   1 +
+ ggml/src/ggml-impl.h                 |   3 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |  34 ++-
+ ggml/src/mem_l0_sysman.cpp           | 369 +++++++++++++++++++++++++++
+ 4 files changed, 399 insertions(+), 8 deletions(-)
+ create mode 100644 ggml/src/mem_l0_sysman.cpp
+
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index aefe43bd..97833ff1 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -211,6 +211,7 @@ add_library(ggml-base
+             ggml-quants.h
+             mem_hip.cpp
+             mem_nvml.cpp
++            mem_l0_sysman.cpp
+             gguf.cpp)
+ 
+ target_include_directories(ggml-base PRIVATE .)
+diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
+index 80597b6e..0a5d18ae 100644
+--- a/ggml/src/ggml-impl.h
++++ b/ggml/src/ggml-impl.h
+@@ -645,6 +645,9 @@ GGML_API void ggml_nvml_release();
+ GGML_API int ggml_hip_mgmt_init();
+ GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
+ GGML_API void ggml_hip_mgmt_release();
++GGML_API int ggml_l0_sysman_init();
++GGML_API int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *total);
++GGML_API void ggml_l0_sysman_release();
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 564bc4a7..998f0cfd 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -12450,11 +12450,11 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+     vk::PhysicalDeviceProperties2 props2;
+     vkdev.getProperties2(&props2);
+ 
+-    if (!ctx->is_integrated_gpu)
+-    {
+-        // Use vendor specific management libraries for best VRAM reporting if available
+-        switch (props2.properties.vendorID) {
+-        case VK_VENDOR_ID_AMD:
++    // Use vendor specific management libraries for best VRAM reporting if available
++    switch (props2.properties.vendorID) {
++    case VK_VENDOR_ID_AMD:
++        if (!ctx->is_integrated_gpu)
++        {
+             if (ggml_hip_mgmt_init() == 0) {
+                 int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
+                 if (status == 0) {
+@@ -12464,8 +12464,11 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+                 }
+                 ggml_hip_mgmt_release();
+             }
+-            break;
+-        case VK_VENDOR_ID_NVIDIA:
++        }
++        break;
++    case VK_VENDOR_ID_NVIDIA:
++        if (!ctx->is_integrated_gpu)
++        {
+             if (ggml_nvml_init() == 0) {
+                 int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
+                 if (status == 0) {
+@@ -12475,8 +12478,23 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+                 }
+                 ggml_nvml_release();
+             }
+-            break;
+         }
++        break;
++    case VK_VENDOR_ID_INTEL:
++        // L0 sysman can support both iGPU and dGPU on Windows and Linux.
++        // If the driver is old on Windows we will fail to get memory info for iGPU.
++        // For Linux you need to run ollama with `sudo` or run `sudo setcap cap_perfmon=+ep /path/to/ollama_binary`
++        // to apply perfmon privilege to the ollama binary
++        if (ggml_l0_sysman_init() == 0) {
++            int status = ggml_l0_sysman_get_device_memory(ctx->uuid.c_str(), free, total);
++            if (status == 0) {
++                GGML_LOG_DEBUG("%s utilizing Level Zero Sysman memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                ggml_l0_sysman_release();
++                return;
++            }
++            ggml_l0_sysman_release();
++        }
++        break;
+     }
+     // else fallback to memory budget if supported
+ 
+diff --git a/ggml/src/mem_l0_sysman.cpp b/ggml/src/mem_l0_sysman.cpp
+new file mode 100644
+index 00000000..de43e7ce
+--- /dev/null
++++ b/ggml/src/mem_l0_sysman.cpp
+@@ -0,0 +1,369 @@
++// oneAPI Level Zero Sysman
++//
++// https://github.com/oneapi-src/level-zero
++// https://oneapi-src.github.io/level-zero-spec/level-zero/latest/sysman/PROG.html
++//
++// Level Zero Sysman is a system resource management library which can detect GPU memory usage for Intel GPU.
++
++#include "ggml-impl.h"
++#include <filesystem>
++#include <mutex>
++
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#define LOAD_SYMBOL(handle, sym) GetProcAddress((HMODULE)handle, sym)
++#define UNLOAD_LIBRARY(handle) FreeLibrary((HMODULE)handle)
++#else // _WIN32
++#include <dlfcn.h>
++#include <unistd.h>
++#define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
++#define UNLOAD_LIBRARY(handle) dlclose(handle)
++#endif
++
++namespace fs = std::filesystem;
++
++static std::mutex ggml_l0_sysman_lock;
++
++#define ZE_MAX_DEVICE_UUID_SIZE 16
++
++// Minimal definitions to avoid including zes_api.h
++typedef enum _ze_result_t
++{
++    ZE_RESULT_SUCCESS = 0,                                                  ///< [Core] success
++    ZE_RESULT_NOT_READY = 1,                                                ///< [Core] synchronization primitive not signaled
++    ZE_RESULT_ERROR_DEVICE_LOST = 0x70000001,                               ///< [Core] device hung, reset, was removed, or driver update occurred
++    ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY = 0x70000002,                        ///< [Core] insufficient host memory to satisfy call
++    ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY = 0x70000003,                      ///< [Core] insufficient device memory to satisfy call
++    ZE_RESULT_ERROR_MODULE_BUILD_FAILURE = 0x70000004,                      ///< [Core] error occurred when building module, see build log for details
++    ZE_RESULT_ERROR_MODULE_LINK_FAILURE = 0x70000005,                       ///< [Core] error occurred when linking modules, see build log for details
++    ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET = 0x70000006,                     ///< [Core] device requires a reset
++    ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE = 0x70000007,                 ///< [Core] device currently in low power state
++    ZE_RESULT_EXP_ERROR_DEVICE_IS_NOT_VERTEX = 0x7ff00001,                  ///< [Core, Experimental] device is not represented by a fabric vertex
++    ZE_RESULT_EXP_ERROR_VERTEX_IS_NOT_DEVICE = 0x7ff00002,                  ///< [Core, Experimental] fabric vertex does not represent a device
++    ZE_RESULT_EXP_ERROR_REMOTE_DEVICE = 0x7ff00003,                         ///< [Core, Experimental] fabric vertex represents a remote device or
++                                                                            ///< subdevice
++    ZE_RESULT_EXP_ERROR_OPERANDS_INCOMPATIBLE = 0x7ff00004,                 ///< [Core, Experimental] operands of comparison are not compatible
++    ZE_RESULT_EXP_RTAS_BUILD_RETRY = 0x7ff00005,                            ///< [Core, Experimental] ray tracing acceleration structure build
++                                                                            ///< operation failed due to insufficient resources, retry with a larger
++                                                                            ///< acceleration structure buffer allocation
++    ZE_RESULT_EXP_RTAS_BUILD_DEFERRED = 0x7ff00006,                         ///< [Core, Experimental] ray tracing acceleration structure build
++                                                                            ///< operation deferred to parallel operation join
++    ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS = 0x70010000,                  ///< [Sysman] access denied due to permission level
++    ZE_RESULT_ERROR_NOT_AVAILABLE = 0x70010001,                             ///< [Sysman] resource already in use and simultaneous access not allowed
++                                                                            ///< or resource was removed
++    ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE = 0x70020000,                    ///< [Common] external required dependency is unavailable or missing
++    ZE_RESULT_WARNING_DROPPED_DATA = 0x70020001,                            ///< [Tools] data may have been dropped
++    ZE_RESULT_ERROR_UNINITIALIZED = 0x78000001,                             ///< [Validation] driver is not initialized
++    ZE_RESULT_ERROR_UNSUPPORTED_VERSION = 0x78000002,                       ///< [Validation] generic error code for unsupported versions
++    ZE_RESULT_ERROR_UNSUPPORTED_FEATURE = 0x78000003,                       ///< [Validation] generic error code for unsupported features
++    ZE_RESULT_ERROR_INVALID_ARGUMENT = 0x78000004,                          ///< [Validation] generic error code for invalid arguments
++    ZE_RESULT_ERROR_INVALID_NULL_HANDLE = 0x78000005,                       ///< [Validation] handle argument is not valid
++    ZE_RESULT_ERROR_HANDLE_OBJECT_IN_USE = 0x78000006,                      ///< [Validation] object pointed to by handle still in-use by device
++    ZE_RESULT_ERROR_INVALID_NULL_POINTER = 0x78000007,                      ///< [Validation] pointer argument may not be nullptr
++    ZE_RESULT_ERROR_INVALID_SIZE = 0x78000008,                              ///< [Validation] size argument is invalid (e.g., must not be zero)
++    ZE_RESULT_ERROR_UNSUPPORTED_SIZE = 0x78000009,                          ///< [Validation] size argument is not supported by the device (e.g., too
++                                                                            ///< large)
++    ZE_RESULT_ERROR_UNSUPPORTED_ALIGNMENT = 0x7800000a,                     ///< [Validation] alignment argument is not supported by the device (e.g.,
++                                                                            ///< too small)
++    ZE_RESULT_ERROR_INVALID_SYNCHRONIZATION_OBJECT = 0x7800000b,            ///< [Validation] synchronization object in invalid state
++    ZE_RESULT_ERROR_INVALID_ENUMERATION = 0x7800000c,                       ///< [Validation] enumerator argument is not valid
++    ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION = 0x7800000d,                   ///< [Validation] enumerator argument is not supported by the device
++    ZE_RESULT_ERROR_UNSUPPORTED_IMAGE_FORMAT = 0x7800000e,                  ///< [Validation] image format is not supported by the device
++    ZE_RESULT_ERROR_INVALID_NATIVE_BINARY = 0x7800000f,                     ///< [Validation] native binary is not supported by the device
++    ZE_RESULT_ERROR_INVALID_GLOBAL_NAME = 0x78000010,                       ///< [Validation] global variable is not found in the module
++    ZE_RESULT_ERROR_INVALID_KERNEL_NAME = 0x78000011,                       ///< [Validation] kernel name is not found in the module
++    ZE_RESULT_ERROR_INVALID_FUNCTION_NAME = 0x78000012,                     ///< [Validation] function name is not found in the module
++    ZE_RESULT_ERROR_INVALID_GROUP_SIZE_DIMENSION = 0x78000013,              ///< [Validation] group size dimension is not valid for the kernel or
++                                                                            ///< device
++    ZE_RESULT_ERROR_INVALID_GLOBAL_WIDTH_DIMENSION = 0x78000014,            ///< [Validation] global width dimension is not valid for the kernel or
++                                                                            ///< device
++    ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_INDEX = 0x78000015,             ///< [Validation] kernel argument index is not valid for kernel
++    ZE_RESULT_ERROR_INVALID_KERNEL_ARGUMENT_SIZE = 0x78000016,              ///< [Validation] kernel argument size does not match kernel
++    ZE_RESULT_ERROR_INVALID_KERNEL_ATTRIBUTE_VALUE = 0x78000017,            ///< [Validation] value of kernel attribute is not valid for the kernel or
++                                                                            ///< device
++    ZE_RESULT_ERROR_INVALID_MODULE_UNLINKED = 0x78000018,                   ///< [Validation] module with imports needs to be linked before kernels can
++                                                                            ///< be created from it.
++    ZE_RESULT_ERROR_INVALID_COMMAND_LIST_TYPE = 0x78000019,                 ///< [Validation] command list type does not match command queue type
++    ZE_RESULT_ERROR_OVERLAPPING_REGIONS = 0x7800001a,                       ///< [Validation] copy operations do not support overlapping regions of
++                                                                            ///< memory
++    ZE_RESULT_WARNING_ACTION_REQUIRED = 0x7800001b,                         ///< [Sysman] an action is required to complete the desired operation
++    ZE_RESULT_ERROR_INVALID_KERNEL_HANDLE = 0x7800001c,                     ///< [Core, Validation] kernel handle is invalid for the operation
++    ZE_RESULT_EXT_RTAS_BUILD_RETRY = 0x7800001d,                            ///< [Core, Extension] ray tracing acceleration structure build operation
++                                                                            ///< failed due to insufficient resources, retry with a larger acceleration
++                                                                            ///< structure buffer allocation
++    ZE_RESULT_EXT_RTAS_BUILD_DEFERRED = 0x7800001e,                         ///< [Core, Extension] ray tracing acceleration structure build operation
++                                                                            ///< deferred to parallel operation join
++    ZE_RESULT_EXT_ERROR_OPERANDS_INCOMPATIBLE = 0x7800001f,                 ///< [Core, Extension] operands of comparison are not compatible
++    ZE_RESULT_ERROR_SURVIVABILITY_MODE_DETECTED = 0x78000020,               ///< [Sysman] device is in survivability mode, firmware update needed
++    ZE_RESULT_ERROR_UNKNOWN = 0x7ffffffe,                                   ///< [Core] unknown or internal error
++    ZE_RESULT_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZE_RESULT_* ENUMs
++} ze_result_t;
++
++typedef uint8_t ze_bool_t;
++typedef struct _zes_driver_handle_t *zes_driver_handle_t;
++typedef struct _zes_device_handle_t *zes_device_handle_t;
++typedef struct _zes_mem_handle_t *zes_mem_handle_t;
++
++typedef enum _zes_structure_type_t {
++  ZES_STRUCTURE_TYPE_DEVICE_PROPERTIES = 0x1,
++  ZES_STRUCTURE_TYPE_MEM_PROPERTIES = 0xb,
++  ZES_STRUCTURE_TYPE_MEM_STATE = 0x1e,
++  ZES_STRUCTURE_TYPE_DEVICE_EXT_PROPERTIES = 0x2d,
++  ZES_STRUCTURE_TYPE_FORCE_UINT32 = 0x7fffffff
++} zes_structure_type_t;
++
++typedef enum _zes_mem_health_t {
++  ZES_MEM_HEALTH_FORCE_UINT32 = 0x7fffffff
++} zes_mem_health_t;
++
++typedef struct _zes_uuid_t {
++  uint8_t id[ZE_MAX_DEVICE_UUID_SIZE];
++} zes_uuid_t;
++
++typedef struct _zes_mem_state_t {
++  zes_structure_type_t stype;
++  const void *pNext;
++  zes_mem_health_t health;
++  uint64_t free;
++  uint64_t size;
++} zes_mem_state_t;
++
++
++struct {
++  void *handle;
++
++  ze_result_t (*zesInit)(int);
++  ze_result_t (*zesDriverGet)(uint32_t *pCount, zes_driver_handle_t *phDrivers);
++  ze_result_t (*zesDriverGetDeviceByUuidExp)(zes_driver_handle_t hDriver, zes_uuid_t uuid,
++                                             zes_device_handle_t *hDevice, ze_bool_t *onSubdevice, uint32_t *subdeviceId);
++  ze_result_t (*zesDeviceGet)(zes_driver_handle_t hDriver, uint32_t *pCount,
++                              zes_device_handle_t *phDevices);
++  ze_result_t (*zesDeviceEnumMemoryModules)(zes_device_handle_t hDevice,
++                                            uint32_t *pCount,
++                                            zes_mem_handle_t *phMemory);
++  ze_result_t (*zesMemoryGetState)(zes_mem_handle_t hMemory,
++                                   zes_mem_state_t *pState);
++
++} l0_sysman { 
++    nullptr, nullptr, nullptr, nullptr, nullptr,
++    nullptr, nullptr
++};
++
++extern "C" {
++
++int ggml_l0_sysman_init() {
++    std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
++    if (l0_sysman.handle != nullptr) {
++        // Already initialized
++        return ZE_RESULT_SUCCESS;
++    }
++#ifdef _WIN32
++    DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
++    SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
++    const auto libFilePath = fs::path("ze_loader.dll");
++    fs::path libPath = fs::path("\\Windows") / fs::path("System32") / libFilePath;
++    l0_sysman.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
++    if (l0_sysman.handle == nullptr) {
++        return ZE_RESULT_ERROR_NOT_AVAILABLE;
++    }
++#else
++    fs::path libFilePath = "libze_loader.so.1"; // On a non-WSL2 system, it should be in the path
++    l0_sysman.handle = (void*)dlopen(libFilePath.c_str(), RTLD_LAZY);
++    if (l0_sysman.handle == nullptr) {
++        GGML_LOG_INFO("%s unable to load libze_loader: %s\n", __func__, dlerror());
++        return ZE_RESULT_ERROR_NOT_AVAILABLE;
++    }
++#endif
++
++    l0_sysman.zesInit = (ze_result_t(*)(int)) LOAD_SYMBOL(l0_sysman.handle, "zesInit");
++    l0_sysman.zesDriverGet = (ze_result_t(*)(uint32_t*, zes_driver_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDriverGet");
++    l0_sysman.zesDriverGetDeviceByUuidExp = (ze_result_t(*)(zes_driver_handle_t, zes_uuid_t, zes_device_handle_t*, ze_bool_t*, uint32_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDriverGetDeviceByUuidExp");
++    l0_sysman.zesDeviceGet = (ze_result_t(*)(zes_driver_handle_t, uint32_t*, zes_device_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceGet");
++    l0_sysman.zesDeviceEnumMemoryModules = (ze_result_t(*)(zes_device_handle_t, uint32_t*, zes_mem_handle_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesDeviceEnumMemoryModules");
++    l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetState");
++    if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || l0_sysman.zesDriverGetDeviceByUuidExp == nullptr || 
++        l0_sysman.zesDeviceGet == nullptr || l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetState == nullptr) {
++        GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, libFilePath.c_str());
++        UNLOAD_LIBRARY(l0_sysman.handle);
++        l0_sysman.handle = nullptr;
++        return ZE_RESULT_ERROR_NOT_AVAILABLE;
++    }
++
++#ifdef _WIN32
++    SetErrorMode(old_mode);
++#endif
++
++    auto ret = l0_sysman.zesInit(0);
++    if (ret != ZE_RESULT_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
++        UNLOAD_LIBRARY(l0_sysman.handle);
++        l0_sysman.handle = nullptr;
++        return ret;
++    }
++    return ZE_RESULT_SUCCESS;
++}
++
++void ggml_l0_sysman_release() {
++    std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
++    if (l0_sysman.handle == nullptr) {
++        // Already free
++        return;
++    }
++    UNLOAD_LIBRARY(l0_sysman.handle);
++    l0_sysman.handle = nullptr;
++}
++
++static void convert_to_uuid_array(zes_uuid_t& uuid_out, const char* input) {
++    // Skip the "GPU-" prefix
++    const char* ptr = input + 4;
++    int uuidIndex = 0;
++
++    while (*ptr && uuidIndex < 16) {
++        // Skip dashes
++        if (*ptr == '-') {
++            ++ptr;
++            continue;
++        }
++
++        // Convert two hex characters to one byte
++        char hexByte[3] = { ptr[0], ptr[1], '\0' };
++        uuid_out.id[uuidIndex++] = static_cast<uint8_t>(strtoul(hexByte, nullptr, 16));
++        ptr += 2;
++    }
++}
++
++int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *total) {
++    // Expected format: "GPU-" + 36 characters (UUID with dashes)
++    if (strncmp(uuid, "GPU-", 4) != 0 || strlen(uuid) != 40) {
++        GGML_LOG_INFO("%s: Received unsupported UUID format %s\n", __func__, uuid);
++        return ZE_RESULT_ERROR_INVALID_ARGUMENT;
++    }
++
++    std::lock_guard<std::mutex> lock(ggml_l0_sysman_lock);
++    if (l0_sysman.handle == nullptr) {
++        GGML_LOG_INFO("%s: Level Zero Sysman was not initialized\n", __func__);
++        return ZE_RESULT_ERROR_INVALID_NULL_POINTER;
++    }
++
++    uint32_t driverCount = 0;
++    auto ret = l0_sysman.zesDriverGet(&driverCount, nullptr);
++    if (ret != ZE_RESULT_SUCCESS) {
++        GGML_LOG_INFO("%s: Failed running zesDriverGet: %d\n", __func__, ret);
++        UNLOAD_LIBRARY(l0_sysman.handle);
++        l0_sysman.handle = nullptr;
++        return ret;
++    }
++
++    std::vector<zes_driver_handle_t> allDrivers(driverCount);
++    ret = l0_sysman.zesDriverGet(&driverCount, allDrivers.data());
++    if (ret != ZE_RESULT_SUCCESS) {
++        GGML_LOG_INFO("%s: Failed running zesDriverGet: %d\n", __func__, ret);
++        UNLOAD_LIBRARY(l0_sysman.handle);
++        l0_sysman.handle = nullptr;
++        return ret;
++    }
++
++    // Iterate through devices per driver to find the matching device
++    for (uint32_t i=0; i<driverCount; i++) {
++        const auto& driver = allDrivers[i];
++        // Get the number of devices for this driver
++        uint32_t deviceCount = 0;
++        ret = l0_sysman.zesDeviceGet(driver, &deviceCount, nullptr);
++        if (ret != ZE_RESULT_SUCCESS) {
++            GGML_LOG_INFO("%s: Failed running zesDeviceGet: %d\n", __func__, ret);
++            UNLOAD_LIBRARY(l0_sysman.handle);
++            l0_sysman.handle = nullptr;
++            return ret;
++        }
++        if (deviceCount == 0) {
++            GGML_LOG_DEBUG("No device found for this driver\n");
++            continue;
++        }
++
++        // Setup UUID for target device and search for it
++        zes_device_handle_t device = {};
++        ze_bool_t onSubDevice = false;
++        uint32_t subDeviceId = 0;
++        // Drop "GPU" and "-" from UUID string and copy
++        zes_uuid_t ze_uuid = {};
++        convert_to_uuid_array(ze_uuid, uuid);
++
++        ret = l0_sysman.zesDriverGetDeviceByUuidExp(driver, ze_uuid, &device, &onSubDevice, &subDeviceId);
++        if (ret != ZE_RESULT_SUCCESS) {
++            if (ret == ZE_RESULT_ERROR_INVALID_ARGUMENT) {
++                // We get this error when we couldn't find the specified UUID device.
++                // Skip this driver and go next
++                continue;
++            } else {
++                // All other errors should abort
++                GGML_LOG_INFO("%s: Failed running zesDriverGetDeviceByUuidExp: %d\n", __func__, ret);
++                UNLOAD_LIBRARY(l0_sysman.handle);
++                l0_sysman.handle = nullptr;
++                return ret;
++            }
++        }
++        // Get the number of memory modules.
++        // Typically this will be 1 (haven't seen a GPU other than 1 yet)
++        uint32_t memModuleCount = 0;
++        ret = l0_sysman.zesDeviceEnumMemoryModules(device, &memModuleCount, nullptr);
++        if (ret != ZE_RESULT_SUCCESS) {
++            GGML_LOG_INFO("%s: Failed running zesDeviceEnumMemoryModules: %d\n", __func__, ret);
++            UNLOAD_LIBRARY(l0_sysman.handle);
++            l0_sysman.handle = nullptr;
++            return ret;
++        }
++
++        if (memModuleCount <= 0) {
++            // No memory module found. Driver maybe too old?
++            // Skipping the device so we can fallback to other methods
++            continue;
++        }
++
++        std::vector<zes_mem_handle_t> memHandles(memModuleCount);
++        ret = l0_sysman.zesDeviceEnumMemoryModules(device, &memModuleCount, memHandles.data());
++        if (ret != ZE_RESULT_SUCCESS) {
++            GGML_LOG_INFO("%s: Failed running zesDeviceEnumMemoryModules: %d\n", __func__, ret);
++            UNLOAD_LIBRARY(l0_sysman.handle);
++            l0_sysman.handle = nullptr;
++            return ret;
++        }
++        size_t freeMemory = 0;
++        size_t totalMemory = 0;
++        for (uint32_t j = 0; j < memModuleCount; ++j) {
++            auto memory = memHandles[j];
++
++            zes_mem_state_t memState = {};
++            memState.stype = ZES_STRUCTURE_TYPE_MEM_STATE;
++            ret = l0_sysman.zesMemoryGetState(memory, &memState);
++            if (ret != ZE_RESULT_SUCCESS) {
++                GGML_LOG_INFO("%s: Failed running zesMemoryGetState: %d\n", __func__, ret);
++                UNLOAD_LIBRARY(l0_sysman.handle);
++                l0_sysman.handle = nullptr;
++                return ret;
++            }
++
++            // Sum the values from all memory modules on a single device.
++            // At the moment we haven't seen a device with multiple memory modules so this logic hasn't been tested
++            freeMemory += memState.free;
++            totalMemory += memState.size;
++        }
++
++        if (freeMemory || totalMemory) {
++            // We were able to get values from the memory modules.
++            // Write to output and exit
++            *free = freeMemory;
++            *total = totalMemory;
++            return ZE_RESULT_SUCCESS;
++        }
++        // If we didn't get any values keep iterating
++    }
++
++    // If we reach here we return an error since we couldn't find a sufficient device
++    return ZE_RESULT_ERROR_NOT_AVAILABLE;
++}
++
++} // extern "C"
+\ No newline at end of file
