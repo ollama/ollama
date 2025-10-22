@@ -472,6 +472,14 @@ func TestGenerateChat(t *testing.T) {
 			t.Error("expected tool calls, got nil")
 		}
 
+		gotToolCall := resp.Message.ToolCalls[0]
+		if gotToolCall.ID == "" {
+			t.Error("expected tool call ID to be populated")
+		}
+		if !strings.HasPrefix(gotToolCall.ID, "call_") {
+			t.Errorf("expected tool call ID to have call_ prefix, got %q", gotToolCall.ID)
+		}
+
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
@@ -482,7 +490,8 @@ func TestGenerateChat(t *testing.T) {
 			},
 		}
 
-		if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall); diff != "" {
+		expectedToolCall.ID = gotToolCall.ID
+		if diff := cmp.Diff(gotToolCall, expectedToolCall); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -587,6 +596,17 @@ func TestGenerateChat(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			if len(resp.Message.ToolCalls) > 0 {
+				for _, call := range resp.Message.ToolCalls {
+					if call.ID == "" {
+						t.Fatal("expected streaming tool call to have an ID")
+					}
+					if !strings.HasPrefix(call.ID, "call_") {
+						t.Fatalf("expected streaming tool call ID to have call_ prefix, got %q", call.ID)
+					}
+				}
+			}
+
 			if resp.Done {
 				if len(resp.Message.ToolCalls) != 1 {
 					t.Errorf("expected 1 tool call in final response, got %d", len(resp.Message.ToolCalls))
@@ -605,6 +625,14 @@ func TestGenerateChat(t *testing.T) {
 			},
 		}
 
+		if finalToolCall.ID == "" {
+			t.Fatal("expected final tool call to have an ID")
+		}
+		if !strings.HasPrefix(finalToolCall.ID, "call_") {
+			t.Fatalf("expected final tool call ID to have call_ prefix, got %q", finalToolCall.ID)
+		}
+
+		expectedToolCall.ID = finalToolCall.ID
 		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
