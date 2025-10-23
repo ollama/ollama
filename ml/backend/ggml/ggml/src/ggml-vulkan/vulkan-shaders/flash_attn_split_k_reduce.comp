@@ -91,7 +91,7 @@ void main() {
         L = L*ms + vs;
     }
 
-    L = 1.0 / L;
+    L = (L == 0.0) ? 0.0 : 1.0 / L;
 
     // D dimension is split across workgroups in the y dimension
     uint d = tid + gl_WorkGroupID.y * BLOCK_SIZE;
