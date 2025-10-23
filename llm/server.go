@@ -766,15 +766,12 @@ nextOperation:
 				// Memory allocation failed even though we created a layout that we thought should
 				// fit in available memory. This could happen if either our free memory reports
 				// are incorrect or if available memory is changing between layout and allocation
-				// time. Apply an exponential backoff to try to find the real amount of available
-				// space.
+				// time. Apply a backoff to try to find the real amount of available space.
 				if backoff > 1 {
 					slog.Warn("memory layout cannot be allocated", "memory", resp.Memory)
 					return nil, errors.New("memory layout cannot be allocated")
-				} else if backoff == 0 {
-					backoff = 0.01
 				} else {
-					backoff *= 2
+					backoff += 0.1
 				}
 
 				slog.Info("model layout did not fit, applying backoff", "backoff", fmt.Sprintf("%.2f", backoff))
