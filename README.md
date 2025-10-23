@@ -226,6 +226,14 @@ ollama ps
 ollama stop llama3.2
 ```
 
+### Generate embeddings from the CLI
+
+```shell
+ollama embed nomic-embed-text
+```
+
+Type a message at the prompt to receive its embedding. For scripted workflows, you can pipe text into the same command if needed.
+
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
