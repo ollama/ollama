@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -668,9 +669,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
-	tokenCounts := make([]int, len(input))
+	var totalTokens int
+	var mu sync.Mutex
 	for i, text := range input {
-		i, text := i, text // capture loop variables
 		g.Go(func() error {
 			embedding, tokenCount, err := r.Embedding(c.Request.Context(), text, truncate)
 			if err != nil {
@@ -682,7 +683,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
 			embeddings[i] = embedding
-			tokenCounts[i] = tokenCount
+			mu.Lock()
+			totalTokens += tokenCount
+			mu.Unlock()
 			return nil
 		})
 	}
@@ -690,12 +693,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	if err := g.Wait(); err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
-	}
-
-	// Sum up token counts from all inputs
-	var totalTokens int
-	for _, count := range tokenCounts {
-		totalTokens += count
 	}
 
 	resp := api.EmbedResponse{
