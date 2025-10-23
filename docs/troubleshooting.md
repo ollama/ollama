@@ -36,6 +36,15 @@ $env:OLLAMA_DEBUG="1"
 
 Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
+## Logging Levels
+
+Set which logging level to use with the `OLLAMA_DEBUG` environment variable.
+```
+OLLAMA_DEBUG= or OLLAMA_DEBUG=0 or OLLAMA_DEBUG=false: unset or empty or falsy values sets default INFO level
+OLLAMA_DEBUG=1 or OLLAMA_DEBUG=true: set DEBUG level
+OLLAMA_DEBUG=2: set TRACE level. Includes chat completetion requests
+```
+
 ## LLM libraries
 
 Ollama includes multiple LLM libraries compiled for different GPU libraries and versions. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library.
