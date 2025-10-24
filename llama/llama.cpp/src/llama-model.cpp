@@ -17899,6 +17899,7 @@ struct llm_build_plamo2 : public llm_graph_context_mamba {
         // final norm
         cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
         cb(cur, "result_norm", -1);
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);
