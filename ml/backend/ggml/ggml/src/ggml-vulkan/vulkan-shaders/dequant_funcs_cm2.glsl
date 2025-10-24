@@ -1,6 +1,18 @@
 
 #include "types.glsl"
 
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer decodeBufF32 {
+   vec4 block;
+};
+
+float16_t dequantFuncF32(const in decodeBufF32 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
+{
+    const vec4 v = bl.block;
+    const uint idx = coordInBlock[1];
+    const f16vec4 vf16 = f16vec4(v);
+    return vf16[idx];
+}
+
 layout(buffer_reference, std430, buffer_reference_align = 2) buffer decodeBufQ4_0 {
    block_q4_0_packed16 block;
 };
@@ -717,4 +729,6 @@ float16_t dequantFuncMXFP4(const in decodeBufMXFP4 bl, const in uint blockCoords
 #define dequantFuncA dequantFuncIQ4_NL
 #elif defined(DATA_A_MXFP4)
 #define dequantFuncA dequantFuncMXFP4
+#elif defined(DATA_A_F32)
+#define dequantFuncA dequantFuncF32
 #endif

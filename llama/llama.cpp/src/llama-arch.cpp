@@ -5,6 +5,7 @@
 #include <map>
 
 static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+    { LLM_ARCH_CLIP,             "clip"             }, // dummy, only used by llama-quantize
     { LLM_ARCH_LLAMA,            "llama"            },
     { LLM_ARCH_LLAMA4,           "llama4"           },
     { LLM_ARCH_DECI,             "deci"             },
@@ -277,6 +278,10 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
 };
 
 static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_NAMES = {
+    {
+        LLM_ARCH_CLIP,
+        {},
+    },
     {
         LLM_ARCH_LLAMA,
         {

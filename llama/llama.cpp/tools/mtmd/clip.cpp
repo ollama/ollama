@@ -2234,15 +2234,27 @@ struct clip_model_loader {
         // projector type
         std::string proj_type;
         {
+            // default key
             get_string(KEY_PROJ_TYPE, proj_type, false);
-            if (!proj_type.empty()) {
-                model.proj_type = clip_projector_type_from_string(proj_type);
+
+            // for models with mixed modalities
+            if (proj_type.empty()) {
+                if (modality == CLIP_MODALITY_VISION) {
+                    get_string(KEY_VISION_PROJ_TYPE, proj_type, false);
+                } else if (modality == CLIP_MODALITY_AUDIO) {
+                    get_string(KEY_AUDIO_PROJ_TYPE, proj_type, false);
+                } else {
+                    GGML_ABORT("unknown modality");
+                }
             }
+
+            model.proj_type = clip_projector_type_from_string(proj_type);
+
             if (model.proj_type == PROJECTOR_TYPE_UNKNOWN) {
                 throw std::runtime_error(string_format("%s: unknown projector type: %s\n", __func__, proj_type.c_str()));
             }
 
-            // correct arch for multimodal models
+            // correct arch for multimodal models (legacy method)
             if (model.proj_type == PROJECTOR_TYPE_QWEN25O) {
                 model.proj_type = modality == CLIP_MODALITY_VISION
                                     ? PROJECTOR_TYPE_QWEN25VL
