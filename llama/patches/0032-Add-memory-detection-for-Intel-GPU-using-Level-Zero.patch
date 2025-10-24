@@ -1,18 +1,18 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Masato Nakasaka <masato.nakasaka@intel.com>
-Date: Wed, 22 Oct 2025 18:00:50 +0900
+From: "Nakasaka, Masato" <masato.nakasaka@intel.com>
+Date: Fri, 24 Oct 2025 11:20:41 +0900
 Subject: [PATCH] Add memory detection for Intel GPU using Level Zero
 
 ---
  ggml/src/CMakeLists.txt              |   1 +
  ggml/src/ggml-impl.h                 |   3 +
  ggml/src/ggml-vulkan/ggml-vulkan.cpp |  34 ++-
- ggml/src/mem_l0_sysman.cpp           | 369 +++++++++++++++++++++++++++
- 4 files changed, 399 insertions(+), 8 deletions(-)
+ ggml/src/mem_l0_sysman.cpp           | 372 +++++++++++++++++++++++++++
+ 4 files changed, 402 insertions(+), 8 deletions(-)
  create mode 100644 ggml/src/mem_l0_sysman.cpp
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index aefe43bd..97833ff1 100644
+index aefe43bdd..97833ff17 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -211,6 +211,7 @@ add_library(ggml-base
@@ -24,7 +24,7 @@ index aefe43bd..97833ff1 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index 80597b6e..0a5d18ae 100644
+index 80597b6ea..0a5d18ae0 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
 @@ -645,6 +645,9 @@ GGML_API void ggml_nvml_release();
@@ -38,7 +38,7 @@ index 80597b6e..0a5d18ae 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 564bc4a7..998f0cfd 100644
+index 564bc4a7c..998f0cfdd 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -12450,11 +12450,11 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
@@ -99,10 +99,10 @@ index 564bc4a7..998f0cfd 100644
  
 diff --git a/ggml/src/mem_l0_sysman.cpp b/ggml/src/mem_l0_sysman.cpp
 new file mode 100644
-index 00000000..de43e7ce
+index 000000000..70ffba59f
 --- /dev/null
 +++ b/ggml/src/mem_l0_sysman.cpp
-@@ -0,0 +1,369 @@
+@@ -0,0 +1,372 @@
 +// oneAPI Level Zero Sysman
 +//
 +// https://github.com/oneapi-src/level-zero
@@ -273,13 +273,14 @@ index 00000000..de43e7ce
 +    fs::path libPath = fs::path("\\Windows") / fs::path("System32") / libFilePath;
 +    l0_sysman.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
 +    if (l0_sysman.handle == nullptr) {
++        GGML_LOG_DEBUG("%s: Unable to load %s\n", __func__, libPath.c_str());
 +        return ZE_RESULT_ERROR_NOT_AVAILABLE;
 +    }
 +#else
 +    fs::path libFilePath = "libze_loader.so.1"; // On a non-WSL2 system, it should be in the path
 +    l0_sysman.handle = (void*)dlopen(libFilePath.c_str(), RTLD_LAZY);
 +    if (l0_sysman.handle == nullptr) {
-+        GGML_LOG_INFO("%s unable to load libze_loader: %s\n", __func__, dlerror());
++        GGML_LOG_INFO("%s: Unable to load libze_loader: %s\n", __func__, dlerror());
 +        return ZE_RESULT_ERROR_NOT_AVAILABLE;
 +    }
 +#endif
@@ -292,7 +293,7 @@ index 00000000..de43e7ce
 +    l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetState");
 +    if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || l0_sysman.zesDriverGetDeviceByUuidExp == nullptr || 
 +        l0_sysman.zesDeviceGet == nullptr || l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetState == nullptr) {
-+        GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, libFilePath.c_str());
++        GGML_LOG_INFO("%s: Unable to locate required symbols in %s\n", __func__, libFilePath.c_str());
 +        UNLOAD_LIBRARY(l0_sysman.handle);
 +        l0_sysman.handle = nullptr;
 +        return ZE_RESULT_ERROR_NOT_AVAILABLE;
@@ -304,7 +305,7 @@ index 00000000..de43e7ce
 +
 +    auto ret = l0_sysman.zesInit(0);
 +    if (ret != ZE_RESULT_SUCCESS) {
-+        GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
++        GGML_LOG_INFO("%s: Unable to initialize Level Zero Sysman: %d\n", __func__, ret);
 +        UNLOAD_LIBRARY(l0_sysman.handle);
 +        l0_sysman.handle = nullptr;
 +        return ret;
@@ -385,7 +386,7 @@ index 00000000..de43e7ce
 +            return ret;
 +        }
 +        if (deviceCount == 0) {
-+            GGML_LOG_DEBUG("No device found for this driver\n");
++            GGML_LOG_DEBUG("%s: No device found for this driver\n", __func__);
 +            continue;
 +        }
 +
@@ -402,6 +403,7 @@ index 00000000..de43e7ce
 +            if (ret == ZE_RESULT_ERROR_INVALID_ARGUMENT) {
 +                // We get this error when we couldn't find the specified UUID device.
 +                // Skip this driver and go next
++                GGML_LOG_DEBUG("%s: Could not find device %s in driver %d\n", __func__, uuid, i);
 +                continue;
 +            } else {
 +                // All other errors should abort
@@ -423,8 +425,9 @@ index 00000000..de43e7ce
 +        }
 +
 +        if (memModuleCount <= 0) {
-+            // No memory module found. Driver maybe too old?
++            // No memory module found. Driver maybe too old (iGPU enumeration requires recent drivers).
 +            // Skipping the device so we can fallback to other methods
++            GGML_LOG_DEBUG("%s: No memory module detected in device %s\n", __func__, uuid);
 +            continue;
 +        }
 +
