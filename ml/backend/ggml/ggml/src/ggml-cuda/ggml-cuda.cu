@@ -2967,18 +2967,15 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
 #endif
 
     //TODO: remove special case once ggml_can_fuse can handle empty nodes
-    std::initializer_list<enum ggml_op> topk_moe_ops           = ggml_cuda_topk_moe_ops(false);
-    std::initializer_list<enum ggml_op> topk_moe_ops_with_norm = ggml_cuda_topk_moe_ops(true);
+    std::initializer_list<enum ggml_op> topk_moe_ops =
+        ggml_cuda_topk_moe_ops(/*with_norm*/ false, /*delayed_softmax=*/false);
+    std::initializer_list<enum ggml_op> topk_moe_ops_with_norm =
+        ggml_cuda_topk_moe_ops(/*with_norm=*/true, /*delayed_softmax=*/false);
+    std::initializer_list<enum ggml_op> topk_moe_ops_delayed_softmax =
+        ggml_cuda_topk_moe_ops(/*with_norm=*/false, /*delayed_softmax=*/true);
 
-    if (ops.size() == topk_moe_ops_with_norm.size() && std::equal(ops.begin(), ops.end(), topk_moe_ops_with_norm.begin())) {
-
-        if (node_idx + topk_moe_ops_with_norm.size() > (size_t)cgraph->n_nodes) {
-            return false;
-        }
-
-        for (size_t i = 0; i < topk_moe_ops_with_norm.size(); i++) {
-            if (cgraph->nodes[node_idx + i]->op != topk_moe_ops_with_norm.begin()[i]) return false;
-        }
+    if (ops.size() == topk_moe_ops_with_norm.size() &&
+        ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3, node_idx + 8 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx];
         ggml_tensor * weights = cgraph->nodes[node_idx+8];
 
@@ -2987,18 +2984,20 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
         }
     }
 
-    if (ops.size() == topk_moe_ops.size() && std::equal(ops.begin(), ops.end(), topk_moe_ops.begin())) {
-
-        if (node_idx + topk_moe_ops.size() > (size_t)cgraph->n_nodes) {
-            return false;
-        }
-
-        for (size_t i = 0; i < topk_moe_ops.size(); i++) {
-            if (cgraph->nodes[node_idx + i]->op != topk_moe_ops.begin()[i]) return false;
-        }
-
+    if (ops.size() == topk_moe_ops.size() &&
+        ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3, node_idx + 4 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx];
         ggml_tensor * weights = cgraph->nodes[node_idx+4];
+        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+            return true;
+        }
+    }
+
+    if (ops.size() == topk_moe_ops_delayed_softmax.size() &&
+        ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 2, node_idx + 5 })) {
+        ggml_tensor * softmax = cgraph->nodes[node_idx + 4];
+        ggml_tensor * weights = cgraph->nodes[node_idx + 5];
+
         if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
             return true;
         }
@@ -3103,7 +3102,8 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
                     if (ggml_cuda_can_fuse(cgraph, i, ggml_cuda_topk_moe_ops(/*with norm*/ true), {})) {
                         ggml_tensor * weights = cgraph->nodes[i+8];
                         ggml_tensor * selected_experts = cgraph->nodes[i+3];
-                        ggml_cuda_op_topk_moe(*cuda_ctx, node, weights, selected_experts, /*with norm*/ true);
+                        ggml_cuda_op_topk_moe(*cuda_ctx, node->src[0], weights, selected_experts, /*with norm*/ true,
+                                              /*delayed softmax*/ false);
                         i += 8;
                         continue;
                     }
@@ -3111,8 +3111,20 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
                     if (ggml_cuda_can_fuse(cgraph, i, ggml_cuda_topk_moe_ops(/*with norm*/ false), {})) {
                         ggml_tensor * weights = cgraph->nodes[i+4];
                         ggml_tensor * selected_experts = cgraph->nodes[i+3];
-                        ggml_cuda_op_topk_moe(*cuda_ctx, node, weights, selected_experts, /*with norm*/ false);
+                        ggml_cuda_op_topk_moe(*cuda_ctx, node->src[0], weights, selected_experts, /*with norm*/ false,
+                                              /*delayed softmax*/ false);
                         i += 4;
+                        continue;
+                    }
+
+                    if (ggml_cuda_can_fuse(cgraph, i,
+                                           ggml_cuda_topk_moe_ops(/*with norm*/ false, /*delayed softmax*/ true), {})) {
+                        ggml_tensor * weights = cgraph->nodes[i + 5];
+                        ggml_tensor * ids     = cgraph->nodes[i + 1];
+
+                        ggml_cuda_op_topk_moe(*cuda_ctx, node->src[0], weights, ids, /*with norm*/ false,
+                                              /*delayed_softmax*/ true);
+                        i += 5;
                         continue;
                     }
 
