@@ -28,7 +28,7 @@ Co-authored-by: Johannes Gäßler <johannesg@5d6.de>
  1 file changed, 9 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 6a278b5e9..87941f872 100644
+index b075a18be..d62f412d6 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -340,6 +340,15 @@ static ggml_cuda_device_info ggml_cuda_init() {

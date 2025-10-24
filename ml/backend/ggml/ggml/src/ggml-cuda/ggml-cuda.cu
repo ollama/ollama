@@ -3513,9 +3513,6 @@ struct ggml_backend_cuda_device_context {
     int driver_major;
     int driver_minor;
     int integrated;
-    int pciBusID;
-    int pciDeviceID;
-    int pciDomainID;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -3539,9 +3536,9 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
 
 #if defined(GGML_USE_HIP)
     if (ggml_hip_mgmt_init() == 0) {
-        int status = ggml_hip_get_device_memory(ctx->pciBusID, ctx->pciDeviceID, free, total);
+        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total);
         if (status == 0) {
-            GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
             ggml_hip_mgmt_release();
             return;
         }
@@ -3551,7 +3548,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
     if (ggml_nvml_init() == 0) {
         int status = ggml_nvml_get_device_memory(ctx->id.c_str(), free, total);
         if (status == 0) {
-            GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->id.c_str(), *free, *total);
             ggml_nvml_release();
             return;
         }
@@ -3591,9 +3588,6 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
     props->driver_major = ctx->driver_major;
     props->driver_minor = ctx->driver_minor;
     props->integrated = ctx->integrated;
-    props->pci_bus_id = ctx->pciBusID;
-    props->pci_device_id = ctx->pciDeviceID;
-    props->pci_domain_id = ctx->pciDomainID;
     props->library = GGML_CUDA_NAME;
 
     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
@@ -4182,9 +4176,6 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 dev_ctx->driver_major = driverVersion / 1000;
                 dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
                 dev_ctx->integrated = prop.integrated;
-                dev_ctx->pciBusID = prop.pciBusID;
-                dev_ctx->pciDeviceID = prop.pciDeviceID;
-                dev_ctx->pciDomainID = prop.pciDomainID;
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,
                     /* .reg     = */ &reg,

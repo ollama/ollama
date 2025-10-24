@@ -391,6 +391,10 @@ func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 	if a.PCIID != b.PCIID {
 		return UniqueDevice
 	}
+	// If PCIID is empty, we have to use ID + library for uniqueness
+	if a.PCIID == "" && a.Library == b.Library && a.ID != b.ID {
+		return UniqueDevice
+	}
 	if a.Library == b.Library {
 		return SameBackendDevice
 	}
@@ -454,13 +458,13 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	var envVar string
 	switch d.Library {
 	case "ROCm":
+		// ROCm must be filtered as it can crash the runner on unsupported devices
 		envVar = "ROCR_VISIBLE_DEVICES"
 		if runtime.GOOS != "linux" {
 			envVar = "HIP_VISIBLE_DEVICES"
 		}
-	case "Vulkan":
-		envVar = "GGML_VK_VISIBLE_DEVICES"
 	default:
+		// CUDA and Vulkan are not filtered via env var, but via scheduling decisions
 		return
 	}
 	v, existing := env[envVar]

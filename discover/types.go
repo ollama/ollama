@@ -3,6 +3,7 @@ package discover
 import (
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -26,6 +27,7 @@ type CPU struct {
 }
 
 func LogDetails(devices []ml.DeviceInfo) {
+	sort.Sort(sort.Reverse(ml.ByFreeMemory(devices))) // Report devices in order of scheduling preference
 	for _, dev := range devices {
 		var libs []string
 		for _, dir := range dev.LibraryPath {
@@ -39,6 +41,7 @@ func LogDetails(devices []ml.DeviceInfo) {
 		}
 		slog.Info("inference compute",
 			"id", dev.ID,
+			"filtered_id", dev.FilteredID,
 			"library", dev.Library,
 			"compute", dev.Compute(),
 			"name", dev.Name,
