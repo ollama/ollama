@@ -320,7 +320,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         }
 
         if (memModuleCount <= 0) {
-            // No memory module found. Driver maybe too old or level zero is not installed from driver installer.
+            // No memory module found. Driver maybe too old (iGPU enumeration requires recent drivers).
             // Skipping the device so we can fallback to other methods
             GGML_LOG_DEBUG("%s: No memory module detected in device %s\n", __func__, uuid);
             continue;
