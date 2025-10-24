@@ -265,6 +265,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			return nil
 		}
 
+		var contentType = "application/json; charset=utf-8"
+		if req.Stream != nil && *req.Stream == true {
+			contentType = "application/x-ndjson"
+		}
+		c.Header("Content-Type", contentType)
+
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Generate(c, &req, fn)
 		if err != nil {
@@ -1907,6 +1913,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			c.Writer.Flush()
 			return nil
 		}
+
+		var contentType = "application/json; charset=utf-8"
+		if req.Stream != nil && *req.Stream == true {
+			contentType = "application/x-ndjson"
+		}
+		c.Header("Content-Type", contentType)
 
 		client := api.NewClient(remoteURL, http.DefaultClient)
 		err = client.Chat(c, &req, fn)
