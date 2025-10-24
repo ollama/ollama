@@ -21,9 +21,10 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -670,7 +671,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
 	var totalTokens int
-	var mu sync.Mutex
 	for i, text := range input {
 		g.Go(func() error {
 			embedding, tokenCount, err := r.Embedding(c.Request.Context(), text, truncate)
@@ -683,15 +683,18 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
 			embeddings[i] = embedding
-			mu.Lock()
-			totalTokens += tokenCount
-			mu.Unlock()
+			atomic.AddUint64((*uint64)(unsafe.Pointer(&totalTokens)), uint64(tokenCount))
 			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		errMsg := strings.TrimSpace(err.Error())
+		if strings.Contains(errMsg, "input length exceeds the context length") {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+		}
 		return
 	}
 

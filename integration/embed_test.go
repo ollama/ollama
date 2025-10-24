@@ -301,7 +301,7 @@ func embedTestHelper(ctx context.Context, client *api.Client, t *testing.T, req 
 	return client.Embed(ctx, &req)
 }
 
-func TestEmbedTruncationRefactor(t *testing.T) {
+func TestEmbedTruncation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
