@@ -174,9 +174,6 @@ extern "C" {
         int compute_major;
         int compute_minor;
         int integrated;
-        int pci_bus_id;
-        int pci_device_id;
-        int pci_domain_id;
         const char *library;
         // number with which the devices are accessed (Vulkan)
         const char *numeric_id;

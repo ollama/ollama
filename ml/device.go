@@ -391,6 +391,10 @@ func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 	if a.PCIID != b.PCIID {
 		return UniqueDevice
 	}
+	// If PCIID is empty, we have to use ID + library for uniqueness
+	if a.PCIID == "" && a.Library == b.Library && a.ID != b.ID {
+		return UniqueDevice
+	}
 	if a.Library == b.Library {
 		return SameBackendDevice
 	}

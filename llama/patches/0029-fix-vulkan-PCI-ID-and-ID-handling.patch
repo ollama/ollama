@@ -1,0 +1,236 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Fri, 24 Oct 2025 15:21:14 -0700
+Subject: [PATCH] fix vulkan PCI ID and ID handling
+
+---
+ ggml/include/ggml-backend.h          |  3 ---
+ ggml/src/ggml-cuda/ggml-cuda.cu      | 15 +++------------
+ ggml/src/ggml-impl.h                 |  2 +-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 27 +++++++++++++--------------
+ ggml/src/mem_hip.cpp                 | 20 ++++++++++++--------
+ 5 files changed, 29 insertions(+), 38 deletions(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 094fc3c82..809835243 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -174,9 +174,6 @@ extern "C" {
+         int compute_major;
+         int compute_minor;
+         int integrated;
+-        int pci_bus_id;
+-        int pci_device_id;
+-        int pci_domain_id;
+         const char *library;
+         // number with which the devices are accessed (Vulkan)
+         const char *numeric_id;
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 816597d2f..b075a18be 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -3504,9 +3504,6 @@ struct ggml_backend_cuda_device_context {
+     int driver_major;
+     int driver_minor;
+     int integrated;
+-    int pciBusID;
+-    int pciDeviceID;
+-    int pciDomainID;
+ };
+ 
+ static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
+@@ -3530,9 +3527,9 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
+ 
+ #if defined(GGML_USE_HIP)
+     if (ggml_hip_mgmt_init() == 0) {
+-        int status = ggml_hip_get_device_memory(ctx->pciBusID, ctx->pciDeviceID, free, total);
++        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total);
+         if (status == 0) {
+-            GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++            GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
+             ggml_hip_mgmt_release();
+             return;
+         }
+@@ -3542,7 +3539,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
+     if (ggml_nvml_init() == 0) {
+         int status = ggml_nvml_get_device_memory(ctx->id.c_str(), free, total);
+         if (status == 0) {
+-            GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++            GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->id.c_str(), *free, *total);
+             ggml_nvml_release();
+             return;
+         }
+@@ -3582,9 +3579,6 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+     props->driver_major = ctx->driver_major;
+     props->driver_minor = ctx->driver_minor;
+     props->integrated = ctx->integrated;
+-    props->pci_bus_id = ctx->pciBusID;
+-    props->pci_device_id = ctx->pciDeviceID;
+-    props->pci_domain_id = ctx->pciDomainID;
+     props->library = GGML_CUDA_NAME;
+ 
+     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
+@@ -4173,9 +4167,6 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 dev_ctx->driver_major = driverVersion / 1000;
+                 dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
+                 dev_ctx->integrated = prop.integrated;
+-                dev_ctx->pciBusID = prop.pciBusID;
+-                dev_ctx->pciDeviceID = prop.pciDeviceID;
+-                dev_ctx->pciDomainID = prop.pciDomainID;
+                 ggml_backend_dev_t dev = new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_cuda_device_interface,
+                     /* .reg     = */ &reg,
+diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
+index 80597b6ea..b63edd0c1 100644
+--- a/ggml/src/ggml-impl.h
++++ b/ggml/src/ggml-impl.h
+@@ -643,7 +643,7 @@ GGML_API int ggml_nvml_init();
+ GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
+ GGML_API void ggml_nvml_release();
+ GGML_API int ggml_hip_mgmt_init();
+-GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
++GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total);
+ GGML_API void ggml_hip_mgmt_release();
+ 
+ #ifdef __cplusplus
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 564bc4a7c..46989370e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -12435,9 +12435,6 @@ struct ggml_backend_vk_device_context {
+     int minor;
+     int driver_major;
+     int driver_minor;
+-    int pci_bus_id;
+-    int pci_device_id;
+-    int pci_domain_id;
+ };
+ 
+ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
+@@ -12456,9 +12453,9 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+         switch (props2.properties.vendorID) {
+         case VK_VENDOR_ID_AMD:
+             if (ggml_hip_mgmt_init() == 0) {
+-                int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
++                int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total);
+                 if (status == 0) {
+-                    GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                    GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
+                     ggml_hip_mgmt_release();
+                     return;
+                 }
+@@ -12469,7 +12466,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+             if (ggml_nvml_init() == 0) {
+                 int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
+                 if (status == 0) {
+-                    GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                    GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->uuid.c_str(), *free, *total);
+                     ggml_nvml_release();
+                     return;
+                 }
+@@ -12545,8 +12542,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+         }
+     }
+ 
++    vk::PhysicalDeviceProperties2 props2;
+     if (!ext_support) {
+-        return "";
++        device.getProperties2(&props2);
++        if (props2.properties.vendorID != VK_VENDOR_ID_AMD) {
++            return "";
++        }
++        // AMD doesn't claim to support PCI ID, but actually does, so try anyway and check for non-zero
+     }
+ 
+     vk::PhysicalDeviceProperties2 props = {};
+@@ -12563,6 +12565,9 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+ 
+     char pci_bus_id[16] = {};
+     snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
++    if (pci_domain == 0 && pci_bus == 0 && pci_device == 0 && pci_function == 0) {
++        return "";
++    }
+ 
+     return std::string(pci_bus_id);
+ }
+@@ -12636,9 +12641,6 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+     props->driver_major = ctx->driver_major;
+     props->driver_minor = ctx->driver_minor;
+     props->integrated = ctx->is_integrated_gpu;
+-    props->pci_bus_id = ctx->pci_bus_id;
+-    props->pci_device_id = ctx->pci_device_id;
+-    props->pci_domain_id = ctx->pci_domain_id;
+     props->library = GGML_VK_NAME;
+     props->numeric_id = ctx->id.empty() ? nullptr : ctx->id.c_str();
+ }
+@@ -13110,10 +13112,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+                     }
+                 }
+                 ctx->uuid = oss.str();
+-                ctx->pci_bus_id = pci_bus_props.pciBus;
+-                ctx->pci_device_id = pci_bus_props.pciDevice;
+-                ctx->pci_domain_id = pci_bus_props.pciDomain;
+-                ctx->id = std::to_string(i);
++                ctx->id = std::to_string(dev_idx); // dev_idx represents the global vulkan ID regardless of filtering
+                 ctx->major = 0;
+                 ctx->minor = 0;
+                 // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
+diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
+index 8ef19b8cf..22f0b4c24 100644
+--- a/ggml/src/mem_hip.cpp
++++ b/ggml/src/mem_hip.cpp
+@@ -331,7 +331,7 @@ void ggml_hip_mgmt_release() {
+     if (gpus != NULL) gpus->pVtbl->Release(gpus); \
+     if (gpu != NULL) gpu->pVtbl->Release(gpu)
+ 
+-int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
++int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+     std::lock_guard<std::mutex> lock(ggml_adlx_lock);
+     if (adlx.handle == NULL) {
+         GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
+@@ -343,9 +343,13 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free,
+     IADLXGPU* gpu = NULL;
+     IADLXGPUMetrics *gpuMetrics = NULL;
+     ADLX_RESULT status;
+-    // The "UniqueID" exposed in ADLX is the PCI Bus and Device IDs 
+-    adlx_int target = (pci_bus_id << 8) | (pci_device_id & 0xff);
+ 
++    uint32_t pci_domain, pci_bus, pci_device, pci_function;
++    if (sscanf(id, "%04x:%02x:%02x.%x", &pci_domain, &pci_bus, &pci_device, &pci_function) != 4) {
++        // TODO - parse other formats?
++        GGML_LOG_DEBUG("%s device ID was not a PCI ID %s\n", __func__, id);
++        return ADLX_NOT_FOUND;
++    }
+     status = adlx.sys->pVtbl->GetPerformanceMonitoringServices(adlx.sys, &perfMonitoringServices);
+     if (ADLX_FAILED(status)) {
+         GGML_LOG_INFO("%s GetPerformanceMonitoringServices failed %d\n", __func__, status);
+@@ -368,16 +372,16 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free,
+             GGML_LOG_INFO("%s %d] At_GPUList failed %d\n", __func__, crt, status);
+             continue;
+         }
+-        adlx_int id;
+-        status = gpu->pVtbl->UniqueId(gpu, &id);
++        adlx_int uniqueID;
++        status = gpu->pVtbl->UniqueId(gpu, &uniqueID);
+         if (ADLX_FAILED(status)) {
+             GGML_LOG_INFO("%s %d] UniqueId lookup failed %d\n", __func__, crt, status);
+             gpu->pVtbl->Release(gpu);
+             gpu = NULL;
+             continue;
+         }
+-        if (id != target) {
+-            GGML_LOG_DEBUG("%s %d] GPU UniqueId: %x does not match target %02x %02x\n", __func__, crt, id, pci_bus_id, pci_device_id);
++        if ((((uniqueID >> 8) & 0xff) != pci_bus) || ((uniqueID & 0xff) != pci_device)) {
++            // GGML_LOG_DEBUG("%s %d] GPU id: %s does not match target %02x:%02x\n", __func__, crt, id, uniqueID >> 8, uniqueID & 0xff);
+             gpu->pVtbl->Release(gpu);
+             gpu = NULL;
+             continue;
+@@ -440,7 +444,7 @@ int ggml_hip_mgmt_init() {
+     return -1;
+ }
+ void ggml_hip_mgmt_release() {}
+-int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
++int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+     return -1;
+ }
+ 
