@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestGenerateDebugRenderOnly(t *testing.T) {
@@ -37,9 +37,9 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getCpuFn:        getCpuFn,
+			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -230,9 +230,9 @@ func TestChatDebugRenderOnly(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getCpuFn:        getCpuFn,
+			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{

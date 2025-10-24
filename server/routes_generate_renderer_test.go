@@ -12,9 +12,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 )
 
 // TestGenerateWithBuiltinRenderer tests that api/generate uses built-in renderers
@@ -42,9 +42,9 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getCpuFn:        getCpuFn,
+			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
@@ -226,9 +226,9 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getCpuFn:        getCpuFn,
+			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
