@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +17,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 )
 
 type mockRunner struct {
@@ -46,10 +48,90 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(_ discover.GpuInfoList, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
+}
+
+func TestGenerateChatRemote(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("Expected path '/api/chat', got %s", r.URL.Path)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		resp := api.ChatResponse{
+			Model:      "test",
+			Done:       true,
+			DoneReason: "load",
+		}
+		if err := json.NewEncoder(w).Encode(&resp); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer rs.Close()
+
+	p, err := url.Parse(rs.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OLLAMA_REMOTES", p.Hostname())
+	s := Server{}
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "test-cloud",
+		RemoteHost: rs.URL,
+		From:       "test",
+		Info: map[string]any{
+			"capabilities": []string{"completion", "thinking"},
+		},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("missing messages", func(t *testing.T) {
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-cloud",
+		})
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		var actual api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&actual); err != nil {
+			t.Fatal(err)
+		}
+
+		if actual.Model != "test-cloud" {
+			t.Errorf("expected model test-cloud, got %s", actual.Model)
+		}
+
+		if actual.RemoteModel != "test" {
+			t.Errorf("expected remote model test, got %s", actual.RemoteModel)
+		}
+
+		if actual.RemoteHost != rs.URL {
+			t.Errorf("expected remote host '%s', got %s", rs.URL, actual.RemoteHost)
+		}
+
+		if !actual.Done {
+			t.Errorf("expected done true, got false")
+		}
+
+		if actual.DoneReason != "load" {
+			t.Errorf("expected done reason load, got %s", actual.DoneReason)
+		}
+	})
 }
 
 func TestGenerateChat(t *testing.T) {
@@ -75,9 +157,9 @@ func TestGenerateChat(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getCpuFn:        getCpuFn,
+			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -686,9 +768,9 @@ func TestGenerate(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getCpuFn:        getCpuFn,
+			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -1111,9 +1193,9 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				loaded:          make(map[string]*runnerRef),
 				newServerFn:     newMockServer(mock),
 				getGpuFn:        getGpuFn,
-				getCpuFn:        getCpuFn,
+				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					time.Sleep(time.Millisecond)
 					req.successCh <- &runnerRef{llama: mock}
 					return false

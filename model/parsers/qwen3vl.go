@@ -181,9 +181,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			split := strings.SplitN(p.buffer.String(), thinkingCloseTag, 2)
 			// before := split[0]
 			before := strings.TrimRightFunc(split[0], unicode.IsSpace)
-			if len(before) == 0 {
-				slog.Warn("qwen tool call closing tag found but no content before it")
-			}
 			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
 			if len(before) > 0 {
 				events = append(events, qwenEventThinkingContent{content: before})
