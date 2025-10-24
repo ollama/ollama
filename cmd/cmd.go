@@ -446,19 +446,17 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
-		if len(info.Messages) > 0 {
-			if err := loadOrUnloadModel(cmd, &opts); err != nil {
-				var sErr api.AuthorizationError
-				if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+		if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
 
-					if sErr.SigninURL != "" {
-						fmt.Printf(ConnectInstructions, sErr.SigninURL)
-					}
-					return nil
+				if sErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, sErr.SigninURL)
 				}
-				return err
+				return nil
 			}
+			return err
 		}
 
 		for _, msg := range info.Messages {
