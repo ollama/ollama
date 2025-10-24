@@ -168,13 +168,14 @@ int ggml_l0_sysman_init() {
     fs::path libPath = fs::path("\\Windows") / fs::path("System32") / libFilePath;
     l0_sysman.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
     if (l0_sysman.handle == nullptr) {
+        GGML_LOG_DEBUG("%s: Unable to load %s\n", __func__, libPath.c_str());
         return ZE_RESULT_ERROR_NOT_AVAILABLE;
     }
 #else
     fs::path libFilePath = "libze_loader.so.1"; // On a non-WSL2 system, it should be in the path
     l0_sysman.handle = (void*)dlopen(libFilePath.c_str(), RTLD_LAZY);
     if (l0_sysman.handle == nullptr) {
-        GGML_LOG_INFO("%s unable to load libze_loader: %s\n", __func__, dlerror());
+        GGML_LOG_INFO("%s: Unable to load libze_loader: %s\n", __func__, dlerror());
         return ZE_RESULT_ERROR_NOT_AVAILABLE;
     }
 #endif
@@ -187,7 +188,7 @@ int ggml_l0_sysman_init() {
     l0_sysman.zesMemoryGetState = (ze_result_t(*)(zes_mem_handle_t, zes_mem_state_t*)) LOAD_SYMBOL(l0_sysman.handle, "zesMemoryGetState");
     if (l0_sysman.zesInit == nullptr || l0_sysman.zesDriverGet == nullptr || l0_sysman.zesDriverGetDeviceByUuidExp == nullptr || 
         l0_sysman.zesDeviceGet == nullptr || l0_sysman.zesDeviceEnumMemoryModules == nullptr || l0_sysman.zesMemoryGetState == nullptr) {
-        GGML_LOG_INFO("%s unable to locate required symbols in %s", __func__, libFilePath.c_str());
+        GGML_LOG_INFO("%s: Unable to locate required symbols in %s\n", __func__, libFilePath.c_str());
         UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
         return ZE_RESULT_ERROR_NOT_AVAILABLE;
@@ -199,7 +200,7 @@ int ggml_l0_sysman_init() {
 
     auto ret = l0_sysman.zesInit(0);
     if (ret != ZE_RESULT_SUCCESS) {
-        GGML_LOG_INFO("%s unable to initialize Level Zero Sysman: %d\n", __func__, ret);
+        GGML_LOG_INFO("%s: Unable to initialize Level Zero Sysman: %d\n", __func__, ret);
         UNLOAD_LIBRARY(l0_sysman.handle);
         l0_sysman.handle = nullptr;
         return ret;
@@ -280,7 +281,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             return ret;
         }
         if (deviceCount == 0) {
-            GGML_LOG_DEBUG("No device found for this driver\n");
+            GGML_LOG_DEBUG("%s: No device found for this driver\n", __func__);
             continue;
         }
 
@@ -297,6 +298,7 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
             if (ret == ZE_RESULT_ERROR_INVALID_ARGUMENT) {
                 // We get this error when we couldn't find the specified UUID device.
                 // Skip this driver and go next
+                GGML_LOG_DEBUG("%s: Could not find device %s in driver %d\n", __func__, uuid, i);
                 continue;
             } else {
                 // All other errors should abort
@@ -318,8 +320,9 @@ int ggml_l0_sysman_get_device_memory(const char *uuid, size_t *free, size_t *tot
         }
 
         if (memModuleCount <= 0) {
-            // No memory module found. Driver maybe too old?
+            // No memory module found. Driver maybe too old or level zero is not installed from driver installer.
             // Skipping the device so we can fallback to other methods
+            GGML_LOG_DEBUG("%s: No memory module detected in device %s\n", __func__, uuid);
             continue;
         }
 
