@@ -96,8 +96,6 @@ static bool is_pow2(uint32_t x) { return x > 1 && (x & (x-1)) == 0; }
 
 #define GGML_VK_MAX_NODES 8192
 
-#define MAX_VK_BUFFERS 256
-
 #define VK_CHECK(err, msg)                                          \
     do {                                                            \
         vk::Result err_ = (err);                                    \
@@ -1311,7 +1309,6 @@ struct ggml_vk_garbage_collector {
     std::vector<vk_semaphore> tl_semaphores;
     std::vector<vk_semaphore> semaphores;
     std::vector<vk::Event> events;
-    std::vector<vk_buffer> temp_buffers;
     std::vector<vk_context> contexts;
 };
 
@@ -1481,8 +1478,6 @@ struct ggml_backend_vk_context {
     // These are checked before writing to the buffer (and call ggml_vk_sync_buffers if set),
     // and set to true after the buffer contents are consumed.
     bool prealloc_x_need_sync, prealloc_y_need_sync, prealloc_split_k_need_sync;
-
-    vk_buffer buffer_pool[MAX_VK_BUFFERS];
 
     vk_context_ref compute_ctx;
     vk_context_ref transfer_ctx;
@@ -5147,71 +5142,6 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
     }
 
     return ctx->device->pipeline_dequant_mul_mat_vec_id_f32[a_type];
-}
-
-static vk_buffer ggml_vk_pool_malloc(ggml_backend_vk_context * ctx, size_t size) {
-    VK_LOG_DEBUG("ggml_vk_pool_malloc(" << size << ")");
-    VK_LOG_MEMORY("ggml_vk_pool_malloc");
-
-    int best_i = -1;
-    size_t best_size = std::numeric_limits<size_t>::max(); //smallest unused buffer that fits our needs
-    int worst_i = -1;
-    size_t worst_size = 0; //largest unused buffer seen so far
-    for (int i = 0; i < MAX_VK_BUFFERS; ++i) {
-        vk_buffer &b = ctx->buffer_pool[i];
-        if (b != nullptr && b->size >= size && b->size < best_size) {
-            best_i = i;
-            best_size = b->size;
-        }
-        if (b != nullptr && b->size > worst_size) {
-            worst_i = i;
-            worst_size = b->size;
-        }
-    }
-    if(best_i != -1) {
-        //found the smallest buffer that fits our needs
-        vk_buffer b = ctx->buffer_pool[best_i];
-        ctx->buffer_pool[best_i].reset();
-        return b;
-    }
-    if(worst_i != -1) {
-        //no buffer that fits our needs, resize largest one to save memory
-        vk_buffer& b = ctx->buffer_pool[worst_i];
-        ggml_vk_destroy_buffer(b);
-    }
-
-    return ggml_vk_create_buffer_device(ctx->device, size);
-}
-
-static void ggml_vk_pool_free(ggml_backend_vk_context * ctx, vk_buffer& buffer) {
-    VK_LOG_DEBUG("ggml_vk_pool_free(" << buffer->size << ")");
-    for (int i = 0; i < MAX_VK_BUFFERS; ++i) {
-        vk_buffer& b = ctx->buffer_pool[i];
-        if (b == nullptr) {
-            b = buffer;
-            return;
-        }
-    }
-    std::cerr << "ggml_vulkan: WARNING: vk buffer pool full, increase MAX_VK_BUFFERS" << std::endl;
-    ggml_vk_destroy_buffer(buffer);
-}
-
-// Returns an available temporary buffer that may only be used temporarily, it will be reused
-static vk_buffer ggml_vk_create_buffer_temp(ggml_backend_vk_context * ctx, size_t size) {
-    // Try to find existing temp buffer with enough capacity
-    for (auto& buffer : ctx->gc.temp_buffers) {
-        if (buffer->size >= size) {
-            return buffer;
-        }
-    }
-
-    VK_LOG_MEMORY("ggml_vk_create_buffer_temp(" << size << ")");
-
-    // Otherwise create new buffer
-    vk_buffer buf = ggml_vk_pool_malloc(ctx, size);
-    ctx->gc.temp_buffers.push_back(buf);
-
-    return buf;
 }
 
 static void * ggml_vk_host_malloc(vk_device& device, size_t size) {
@@ -11794,10 +11724,6 @@ static bool ggml_vk_compute_forward(ggml_backend_vk_context * ctx, ggml_cgraph *
 // Clean up after graph processing is done
 static void ggml_vk_graph_cleanup(ggml_backend_vk_context * ctx) {
     VK_LOG_DEBUG("ggml_vk_graph_cleanup()");
-    for (auto& buffer : ctx->gc.temp_buffers) {
-        ggml_vk_pool_free(ctx, buffer);
-    }
-    ctx->gc.temp_buffers.clear();
     ctx->prealloc_y_last_pipeline_used = {};
 
     ctx->unsynced_nodes_written.clear();
@@ -11839,10 +11765,6 @@ static void ggml_vk_cleanup(ggml_backend_vk_context * ctx) {
     ggml_vk_destroy_buffer(ctx->prealloc_y);
     ggml_vk_destroy_buffer(ctx->prealloc_split_k);
     ctx->prealloc_y_last_pipeline_used = nullptr;
-
-    for (auto& buffer : ctx->buffer_pool) {
-        ggml_vk_destroy_buffer(buffer);
-    }
 
     ctx->prealloc_size_x = 0;
     ctx->prealloc_size_y = 0;
