@@ -151,7 +151,7 @@ index aa3a65f87..ee303bd58 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 7420a3176..099054b57 100644
+index 2a83d6627..54621ea39 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -1890,6 +1890,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
@@ -377,7 +377,7 @@ index 7420a3176..099054b57 100644
  // ref: https://github.com/facebookresearch/chameleon
  // based on the original build_llama() function, changes:
  //   * qk-norm
-@@ -20094,6 +20296,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -20096,6 +20298,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
              {
                  llm = std::make_unique<llm_build_chameleon>(*this, params);
              } break;
@@ -388,7 +388,7 @@ index 7420a3176..099054b57 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params);
-@@ -20329,6 +20535,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+@@ -20331,6 +20537,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_GRANITE_HYBRID:
          case LLM_ARCH_CHAMELEON:
