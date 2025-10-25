@@ -1635,7 +1635,10 @@ func (s *llmServer) Embedding(ctx context.Context, input string, truncate bool) 
 
 	if resp.StatusCode >= 400 {
 		log.Printf("llm embedding error: %s", body)
-		return nil, 0, fmt.Errorf("%s", body)
+		return nil, 0, api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: string(body),
+		}
 	}
 
 	var e EmbeddingResponse

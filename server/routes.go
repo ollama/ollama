@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -670,7 +669,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
-	var totalTokens int
+	var totalTokens uint64
 	for i, text := range input {
 		g.Go(func() error {
 			embedding, tokenCount, err := r.Embedding(c.Request.Context(), text, truncate)
@@ -683,17 +682,17 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
 			embeddings[i] = embedding
-			atomic.AddUint64((*uint64)(unsafe.Pointer(&totalTokens)), uint64(tokenCount))
+			atomic.AddUint64(&totalTokens, uint64(tokenCount))
 			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		errMsg := strings.TrimSpace(err.Error())
-		if strings.Contains(errMsg, "input length exceeds the context length") {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		var serr api.StatusError
+		if errors.As(err, &serr) {
+			c.AbortWithStatusJSON(serr.StatusCode, gin.H{"error": strings.TrimSpace(serr.ErrorMessage)})
 		} else {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		}
 		return
 	}
@@ -703,7 +702,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: totalTokens,
+		PromptEvalCount: int(totalTokens),
 	}
 	c.JSON(http.StatusOK, resp)
 }
