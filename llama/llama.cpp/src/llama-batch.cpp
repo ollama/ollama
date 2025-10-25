@@ -221,12 +221,11 @@ bool llama_batch_allocr::init(
             /*.n_seq_id     =*/ batch.n_seq_id,
             /*.seq_id       =*/ batch.seq_id,
             /*.seq_id_unq   =*/ this->seq_id_unq.data(),
-            /*.seq_idx      =*/ this->seq_idx.data(),
-            /*.output       =*/ batch.logits,
-            /*.data         =*/ {},
-        };
-
-        ubatch_print(ubatch, debug);
+        /*.seq_idx      =*/ this->seq_idx.data(),
+        /*.output       =*/ batch.logits,
+        /*.kv_position_of_token=*/ {},
+        /*.data         =*/ {},
+    };        ubatch_print(ubatch, debug);
 
         LLAMA_LOG_DEBUG("%s:   seq       = [\n", __func__);
         for (int s0 = 0; s0 < (int) seq_pos.size(); ++s0) {
@@ -256,36 +255,38 @@ bool llama_batch_allocr::init(
             continue;
         }
 
-        const llama_pos p0 = memory ? memory->seq_pos_max(s) : -1;
-
-        if (p0 >= 0) {
-            bool ok = true;
-
-            if (batch.token) {
-                if (seq_pos_min(s) != p0 + 1) {
-                    ok = false;
-                }
-            } else {
-                assert(batch.embd);
-
-                // for embeddings (typically used as vision input), we allow them to have repeating positions
-                // ref: https://github.com/ggml-org/llama.cpp/issues/13694#issuecomment-2983871762
-                if (seq_pos_min(s) != p0 && seq_pos_min(s) != p0 + 1) {
-                    ok = false;
-                }
-            }
-
-            if (!ok) {
-                LLAMA_LOG_ERROR(
-                        "%s: the tokens of sequence %d in the input batch have inconsistent sequence positions:\n"
-                        " - the last position stored in the memory module of the context (i.e. the KV cache) for sequence %d is X = %d\n"
-                        " - the tokens for sequence %d in the input batch have a starting position of Y = %d\n"
-                        " it is required that the sequence positions remain consecutive: Y = X + 1\n",
-                        __func__, s, s, p0, s, seq_pos_min(s));
-
-                return false;
-            }
-        }
+        //@fmayran: these checks don't make sense with models using position encoding such as Qwen VL, because the position stored in the KV cache can jump around (it is not even always increasing).
+        //it is not enough to let them be repeating. Within an image embedding, arbitrary jumps are expected.
+        //const llama_pos p0 = memory ? memory->seq_pos_max(s) : -1;
+        //
+        //if (p0 >= 0) {
+        //    bool ok = true;
+        //
+        //    if (batch.token) {
+        //        if (seq_pos_min(s) != p0 + 1) {
+        //            ok = false;
+        //        }
+        //    } else {
+        //        assert(batch.embd);
+        //
+        //        // for embeddings (typically used as vision input), we allow them to have repeating positions
+        //        // ref: https://github.com/ggml-org/llama.cpp/issues/13694#issuecomment-2983871762
+        //        if (seq_pos_min(s) != p0 && seq_pos_min(s) != p0 + 1) {
+        //            ok = false;
+        //        }
+        //    }
+        //
+        //    if (!ok) {
+        //        LLAMA_LOG_ERROR(
+        //                "%s: the tokens of sequence %d in the input batch have inconsistent sequence positions:\n"
+        //                " - the last position stored in the memory module of the context (i.e. the KV cache) for sequence %d is X = %d\n"
+        //                " - the tokens for sequence %d in the input batch have a starting position of Y = %d\n"
+        //                " it is required that the sequence positions remain consecutive: Y = X + 1\n",
+        //                __func__, s, s, p0, s, seq_pos_min(s));
+        //
+        //        return false;
+        //    }
+        //}
 
         if (seq_pos_max(s) - seq_pos_min(s) + 1 > (int) seq_pos[s].size()) {
             LLAMA_LOG_ERROR("%s: sequence %d positions are not continuous\n", __func__, s);
@@ -369,14 +370,15 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
 
     auto udata = std::make_shared<llama_ubatch::data_t>();
 
-    udata->token     .resize(n_tokens);
-    udata->embd      .clear();
-    udata->pos       .resize(n_tokens);
-    udata->n_seq_id  .resize(n_tokens);
-    udata->seq_id    .resize(n_tokens);
-    udata->seq_id_unq.resize(0);
-    udata->seq_idx   .resize(LLAMA_MAX_SEQ, -1);
-    udata->output    .resize(n_tokens);
+    udata->token               .resize(n_tokens);
+    udata->embd                .clear();
+    udata->pos                 .resize(n_tokens);
+    udata->n_seq_id            .resize(n_tokens);
+    udata->seq_id              .resize(n_tokens);
+    udata->seq_id_unq          .resize(0);
+    udata->seq_idx             .resize(LLAMA_MAX_SEQ, -1);
+    udata->output              .resize(n_tokens);
+    udata->kv_position_of_token.resize(n_tokens, -1);
 
     for (uint32_t s = 0; s < n_seqs; ++s) {
         udata->seq_idx[s] = s;
@@ -384,21 +386,22 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
     }
 
     llama_ubatch res {
-        /*.b_equal_seqs =*/ true,
-        /*.n_tokens     =*/ n_tokens,
-        /*.n_seq_tokens =*/ n_seq_tokens,
-        /*.n_seqs       =*/ n_seqs,
-        /*.n_seqs_unq   =*/ n_seqs,
+        /*.b_equal_seqs =*/        true,
+        /*.n_tokens     =*/        n_tokens,
+        /*.n_seq_tokens =*/        n_seq_tokens,
+        /*.n_seqs       =*/        n_seqs,
+        /*.n_seqs_unq   =*/        n_seqs,
 
-        /*.token        =*/ udata->token.data(),
-        /*.embd         =*/ nullptr,
-        /*.pos          =*/ udata->pos.data(),
-        /*.n_seq_id     =*/ udata->n_seq_id.data(),
-        /*.seq_id       =*/ udata->seq_id.data(),
-        /*.seq_id_unq   =*/ udata->seq_id_unq.data(),
-        /*.seq_idx      =*/ udata->seq_idx.data(),
-        /*.output       =*/ udata->output.data(),
-        /*.data         =*/ std::move(udata),
+        /*.token        =*/        udata->token.data(),
+        /*.embd         =*/        nullptr,
+        /*.pos          =*/        udata->pos.data(),
+        /*.n_seq_id     =*/        udata->n_seq_id.data(),
+        /*.seq_id       =*/        udata->seq_id.data(),
+        /*.seq_id_unq   =*/        udata->seq_id_unq.data(),
+        /*.seq_idx      =*/        udata->seq_idx.data(),
+        /*.output       =*/        udata->output.data(),
+        /*.kv_position_of_token=*/ udata->kv_position_of_token.data(),
+        /*.data         =*/        std::move(udata),
     };
 
     return res;
@@ -660,14 +663,15 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
     const int64_t n_embd_all = batch.embd ? (int64_t) n_tokens*n_embd : 0;
     const int64_t n_pos_all  =              (int64_t) n_tokens*n_pos_cur;
 
-    udata->token     .resize(n_tokens);
-    udata->embd      .resize(n_embd_all);
-    udata->pos       .resize(n_pos_all);
-    udata->n_seq_id  .resize(n_tokens);
-    udata->seq_id    .resize(n_tokens);
-    udata->seq_id_unq.resize(0);
-    udata->seq_idx   .resize(LLAMA_MAX_SEQ, -1);
-    udata->output    .resize(n_tokens);
+    udata->token               .resize(n_tokens);
+    udata->embd                .resize(n_embd_all);
+    udata->pos                 .resize(n_pos_all);
+    udata->n_seq_id            .resize(n_tokens);
+    udata->seq_id              .resize(n_tokens);
+    udata->seq_id_unq          .resize(0);
+    udata->seq_idx             .resize(LLAMA_MAX_SEQ, -1);
+    udata->output              .resize(n_tokens);
+    udata->kv_position_of_token.resize(n_tokens, -1);
 
     seq_set_t seq_set_unq;
 
@@ -705,21 +709,22 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
     }
 
     llama_ubatch res {
-        /*.b_equal_seqs =*/ equal_seqs,
-        /*.n_tokens     =*/ n_tokens,
-        /*.n_seq_tokens =*/ n_tokens/n_seqs,
-        /*.n_seqs       =*/ n_seqs,
-        /*.n_seqs_unq   =*/ (uint32_t) udata->seq_id_unq.size(),
+        /*.b_equal_seqs =*/        equal_seqs,
+        /*.n_tokens     =*/        n_tokens,
+        /*.n_seq_tokens =*/        n_tokens/n_seqs,
+        /*.n_seqs       =*/        n_seqs,
+        /*.n_seqs_unq   =*/        (uint32_t) udata->seq_id_unq.size(),
 
-        /*.token        =*/ batch.token ? udata->token.data() : nullptr,
-        /*.embd         =*/ batch.embd ? udata->embd.data() : nullptr,
-        /*.pos          =*/ udata->pos.data(),
-        /*.n_seq_id     =*/ udata->n_seq_id.data(),
-        /*.seq_id       =*/ udata->seq_id.data(),
-        /*.seq_id_unq   =*/ udata->seq_id_unq.data(),
-        /*.seq_idx      =*/ udata->seq_idx.data(),
-        /*.output       =*/ udata->output.data(),
-        /*.data         =*/ std::move(udata),
+        /*.token        =*/        batch.token ? udata->token.data() : nullptr,
+        /*.embd         =*/        batch.embd ? udata->embd.data() : nullptr,
+        /*.pos          =*/        udata->pos.data(),
+        /*.n_seq_id     =*/        udata->n_seq_id.data(),
+        /*.seq_id       =*/        udata->seq_id.data(),
+        /*.seq_id_unq   =*/        udata->seq_id_unq.data(),
+        /*.seq_idx      =*/        udata->seq_idx.data(),
+        /*.output       =*/        udata->output.data(),
+        /*.kv_position_of_token=*/ udata->kv_position_of_token.data(),
+        /*.data         =*/        std::move(udata),
     };
 
     if (debug > 0) {

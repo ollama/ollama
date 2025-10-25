@@ -30,15 +30,16 @@ struct llama_ubatch {
     // seq_idx:    indices of the unique sequence ids in the ubatch in [0, n_seqs_unq)
     //             used for extracting sequence pooled embeddings
 
-    //                          // size               | idx | val
-    llama_token  *  token;      // [n_tokens]         | i   | id, token
-    float        *  embd;       // [n_embd, n_tokens] | i   | embd
-    llama_pos    *  pos;        // [n_tokens]         | i   | pos
-    int32_t      *  n_seq_id;   // [n_tokens]         | i   | -
-    llama_seq_id ** seq_id;     // [n_tokens]         | s   | s0, s1, seq_id
-    llama_seq_id *  seq_id_unq; // [n_seqs_unq]       | s   | seq_id
-    int32_t      *  seq_idx;    // [LLAMA_MAX_SEQ]    | -   | seq_idx
-    int8_t       *  output;     // [n_tokens]         | i   | -
+    //                                      // size               | idx | val
+    llama_token  *  token;                  // [n_tokens]         | i   | id, token
+    float        *  embd;                   // [n_embd, n_tokens] | i   | embd
+    llama_pos    *  pos;                    // [n_tokens]         | i   | pos
+    int32_t      *  n_seq_id;               // [n_tokens]         | i   | -
+    llama_seq_id ** seq_id;                 // [n_tokens]         | s   | s0, s1, seq_id
+    llama_seq_id *  seq_id_unq;             // [n_seqs_unq]       | s   | seq_id
+    int32_t      *  seq_idx;                // [LLAMA_MAX_SEQ]    | -   | seq_idx
+    int8_t       *  output;                 // [n_tokens]         | i   | -
+    int32_t      *  kv_position_of_token;   // [n_tokens]         | i   | kv position where the token was inserted
 
     struct data_t {
         std::vector<llama_token>    token;
@@ -49,6 +50,7 @@ struct llama_ubatch {
         std::vector<llama_seq_id>   seq_id_unq;
         std::vector<int32_t>        seq_idx;
         std::vector<int8_t>         output;
+        std::vector<int32_t>        kv_position_of_token;//when pushed to the kv cache, where is the token pushed (used for causal masking)
     };
 
     // the llama_ubatch pointers above point to this data if set. otherwise - points to non-owning data

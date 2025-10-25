@@ -895,6 +895,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
             }
 
             cells.pos_set(idx, ubatch.pos[i]);
+            ubatch.kv_position_of_token[i] = (int32_t)idx;//set the position in the kv cache as a property for this token (needed for proper causal masking)
 
             for (int32_t s = 0; s < ubatch.n_seq_id[i]; s++) {
                 cells.seq_add(idx, ubatch.seq_id[i][s]);
@@ -1215,6 +1216,12 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
 
     std::fill(data, data + ggml_nelements(dst), -INFINITY);
 
+    std::vector<int32_t> map_kv_to_batch(n_kv, -1);//for each token in the cache, either (-1) or the position in the current ubatch
+    for (uint32_t i = 0; i < n_tokens; ++i)//invert the batch -> kv position map into a kv -> batch position map
+    {
+        if (ubatch->kv_position_of_token[i] != -1)
+            map_kv_to_batch[ubatch->kv_position_of_token[i]] = i;
+    }
     // Use only the previous KV cells of the correct sequence for each token of the ubatch.
     // It's assumed that if a token in the batch has multiple sequences, they are equivalent.
     // Example with a cache of 10 tokens, 2 tokens populated in cache and 3 tokens in batch:
@@ -1254,8 +1261,10 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
                     const llama_pos p0 = cells.pos_get(j);
 
                     // mask future tokens
-                    if (causal_attn && p0 > p1) {
-                        continue;
+                    if (causal_attn)
+                    {
+                        if (map_kv_to_batch[j] != -1 && map_kv_to_batch[j] > (int32_t)i)//if the kv cache token is in the current batch AND its position in the batch is higher than i
+                            continue;
                     }
 
                     // apply SWA if any
