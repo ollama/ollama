@@ -709,13 +709,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-
-		// TODO (jmorganca): this should be provided by the server via the
-		// request options and truncated here in the runner, instead of relying on
-		// the server's truncate logic
-		truncate: true,
+		truncate:  req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -758,7 +758,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	embedding := <-seq.embedding
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding:       embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
