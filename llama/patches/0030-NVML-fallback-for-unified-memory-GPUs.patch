@@ -8,7 +8,7 @@ Subject: [PATCH] NVML fallback for unified memory GPUs
  1 file changed, 68 insertions(+), 3 deletions(-)
 
 diff --git a/ggml/src/mem_nvml.cpp b/ggml/src/mem_nvml.cpp
-index c9073cef..f473a2a2 100644
+index c9073cef0..f473a2a2c 100644
 --- a/ggml/src/mem_nvml.cpp
 +++ b/ggml/src/mem_nvml.cpp
 @@ -13,6 +13,7 @@
