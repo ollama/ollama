@@ -172,6 +172,12 @@ type Tensor interface {
 	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
 	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
 
+	// XIELU is the extended IELU activation function used in Apertus models.
+	// It applies different linear transformations based on input sign:
+	//   - For x > 0: output = x * alphaP
+	//   - For x ≤ 0: output = alphaN * (exp(x/beta) - 1) * beta
+	XIELU(ctx Context, alphaN, alphaP, beta, eps float32) Tensor
+
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
