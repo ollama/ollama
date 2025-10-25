@@ -13,7 +13,7 @@ checks.
  1 file changed, 17 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 4e4daf943..350270af7 100644
+index cc201afff..974982710 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -2697,8 +2697,19 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
@@ -49,5 +49,3 @@ index 4e4daf943..350270af7 100644
              (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
              (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
              strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
--- 
-2.43.0

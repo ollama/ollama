@@ -9,13 +9,13 @@ Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
  1 file changed, 37 insertions(+)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 061cd078..adea7783 100644
+index 6b16445de..069cde097 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -11588,6 +11588,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
+@@ -11883,6 +11883,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
      snprintf(description, description_size, "%s", props.deviceName.data());
  }
-
+ 
 +static std::string ggml_vk_get_device_id(int device) {
 +    ggml_vk_instance_init();
 +
@@ -40,12 +40,12 @@ index 061cd078..adea7783 100644
 +}
 +
  // backend interface
-
+ 
  #define UNUSED GGML_UNUSED
-@@ -12394,6 +12417,12 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+@@ -12830,6 +12853,12 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
      ggml_vk_get_device_description(dev_idx, description, description_size);
  }
-
+ 
 +std::string ggml_backend_vk_get_device_id(int device) {
 +    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
 +    int dev_idx = vk_instance.device_indices[device];
@@ -55,18 +55,18 @@ index 061cd078..adea7783 100644
  void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
      GGML_ASSERT(device < (int) vk_instance.device_indices.size());
      GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
-@@ -12481,6 +12510,7 @@ struct ggml_backend_vk_device_context {
+@@ -12917,6 +12946,7 @@ struct ggml_backend_vk_device_context {
      std::string description;
      bool is_integrated_gpu;
      std::string pci_bus_id;
 +    std::string id;
  };
-
+ 
  static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
-@@ -12493,6 +12523,11 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+@@ -12929,6 +12959,11 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
      return ctx->description.c_str();
  }
-
+ 
 +static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
 +    ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
 +    return ctx->id.c_str();
@@ -75,15 +75,15 @@ index 061cd078..adea7783 100644
  static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
      ggml_backend_vk_get_device_memory(ctx->device, free, total);
-@@ -12519,6 +12554,7 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
-
+@@ -12955,6 +12990,7 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+ 
      props->name        = ggml_backend_vk_device_get_name(dev);
      props->description = ggml_backend_vk_device_get_description(dev);
 +    props->id          = ggml_backend_vk_device_get_id(dev);
      props->type        = ggml_backend_vk_device_get_type(dev);
      props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
      ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
-@@ -12965,6 +13001,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -13443,6 +13479,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                  ctx->description = desc;
                  ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
                  ctx->pci_bus_id = ggml_backend_vk_get_device_pci_id(i);
@@ -91,5 +91,3 @@ index 061cd078..adea7783 100644
                  devices.push_back(new ggml_backend_device {
                      /* .iface   = */ ggml_backend_vk_device_i,
                      /* .reg     = */ reg,
--- 
-2.51.0

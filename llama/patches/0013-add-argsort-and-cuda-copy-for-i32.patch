@@ -349,5 +349,3 @@ index 2c2f01415..50b8071de 100644
  
  kernel void kernel_leaky_relu_f32(
          constant     ggml_metal_kargs_leaky_relu & args,
--- 
-2.43.0

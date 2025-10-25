@@ -54,7 +54,7 @@ index f9a6587f1..03f359ae9 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 1b100095c..8b3a5210b 100644
+index 5c08939d1..a36e26413 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -261,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -161,7 +161,7 @@ index 1b100095c..8b3a5210b 100644
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
      bool events = false;
-@@ -4079,6 +4141,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -4082,6 +4144,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
@@ -169,7 +169,7 @@ index 1b100095c..8b3a5210b 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -4094,6 +4157,17 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -4097,6 +4160,17 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
  
@@ -919,6 +919,3 @@ index 000000000..c9073cef0
 +
 +}
 \ No newline at end of file
--- 
-2.43.0
-
