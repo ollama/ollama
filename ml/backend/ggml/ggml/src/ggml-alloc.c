@@ -603,6 +603,26 @@ static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor 
     return t->data != NULL || ggml_gallocr_hash_get(galloc, t)->allocated;
 }
 
+// free the extra space at the end if the new tensor is smaller
+static void ggml_gallocr_free_extra_space(ggml_gallocr_t galloc, struct ggml_tensor * node, struct ggml_tensor * parent) {
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+    struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent);
+
+    size_t parent_size = ggml_backend_buft_get_alloc_size(galloc->bufts[p_hn->buffer_id], parent);
+    size_t node_size = ggml_backend_buft_get_alloc_size(galloc->bufts[hn->buffer_id], node);
+
+    GGML_ASSERT(parent_size >= node_size);
+
+    if (parent_size > node_size) {
+        struct ggml_dyn_tallocr * p_alloc = galloc->buf_tallocs[p_hn->buffer_id];
+        struct buffer_address p_addr = p_hn->addr;
+        p_addr.offset += node_size;
+        size_t extra_size = parent_size - node_size;
+        AT_PRINTF("freeing extra %zu bytes from parent %s for %s\n", extra_size, parent->name, node->name);
+        ggml_dyn_tallocr_free_tensor(p_alloc, p_addr, extra_size, parent);
+    }
+}
+
 static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node, int buffer_id) {
     GGML_ASSERT(buffer_id >= 0);
     struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
@@ -648,6 +668,7 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                             hn->addr = p_hn->addr;
                             p_hn->allocated = false; // avoid freeing the parent
                             view_src_hn->allocated = false;
+                            ggml_gallocr_free_extra_space(galloc, node, view_src);
                             return;
                         }
                     } else {
@@ -655,6 +676,7 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                         hn->buffer_id = p_hn->buffer_id;
                         hn->addr = p_hn->addr;
                         p_hn->allocated = false; // avoid freeing the parent
+                        ggml_gallocr_free_extra_space(galloc, node, parent);
                         return;
                     }
                 }

@@ -123,7 +123,7 @@ private:
     uint32_t n_seq_max;
     uint32_t n_outputs;
 
-    std::array<llama_seq_id, 1> seq_id_0 = { 0 }; // default sequence id
+    std::array<llama_seq_id, 1> seq_id_0 = {{ 0 }}; // default sequence id
 
     std::vector<llama_pos>      pos;
     std::vector<int32_t>        n_seq_id;
