@@ -933,6 +933,81 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) imageEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.model.(model.MultimodalProcessor); !ok {
+		http.Error(w, "this model does not support image embeddings", http.StatusNotImplemented)
+		return
+	}
+
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
+		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
+		return
+	}
+
+	var req struct {
+		Image llm.ImageData `json:"image"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad request: %s", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	images := []llm.ImageData{req.Image}
+	prompt := fmt.Sprintf("[img-%d]", req.Image.ID)
+
+	seq, err := s.NewSequence(prompt, images, NewSequenceParams{
+		embedding: true,
+		truncate:  true,
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting image embedding request due to client closing the connection")
+		} else {
+			http.Error(w, fmt.Sprintf("failed to acquire semaphore: %v", err), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	s.mu.Lock()
+	found := false
+	for i, sq := range s.seqs {
+		if sq == nil {
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, false)
+			if err != nil {
+				s.mu.Unlock()
+				s.seqsSem.Release(1)
+				http.Error(w, fmt.Sprintf("failed to load cache: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			s.seqs[i] = seq
+			s.cond.Signal()
+			found = true
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if !found {
+		s.seqsSem.Release(1)
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
+		Embedding: <-seq.embedding,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
 func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
@@ -946,7 +1021,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
+	seq, err := s.NewSequence(req.Content, req.Images, NewSequenceParams{
 		embedding: true,
 
 		// TODO (jmorganca): this should be provided by the server via the
@@ -1364,6 +1439,7 @@ func Execute(args []string) error {
 	mux.HandleFunc("GET /info", server.info)
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("POST /embedding", server.embeddings)
+	mux.HandleFunc("POST /image-embedding", server.imageEmbeddings)
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
 
