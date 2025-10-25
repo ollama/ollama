@@ -7,12 +7,12 @@ Subject: [PATCH] add argsort and cuda copy for i32
  ggml/src/ggml-cpu/ops.cpp            |  43 +++++++++++
  ggml/src/ggml-cuda/argsort.cu        | 102 ++++++++++++++++++++++++++-
  ggml/src/ggml-cuda/cpy-utils.cuh     |   6 ++
- ggml/src/ggml-cuda/cpy.cu            |  43 +++++++++++
+ ggml/src/ggml-cuda/cpy.cu            |  42 +++++++++++
  ggml/src/ggml-metal/ggml-metal.metal |  64 +++++++++++++++++
- 5 files changed, 256 insertions(+), 2 deletions(-)
+ 5 files changed, 255 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index b52f0f84..902fdad6 100644
+index b52f0f847..902fdad69 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -7889,6 +7889,45 @@ static void ggml_compute_forward_argsort_f32(
@@ -73,10 +73,10 @@ index b52f0f84..902fdad6 100644
              {
                  GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
-index 607ded85..53b02634 100644
+index 6e7b90d42..8ec6a97b6 100644
 --- a/ggml/src/ggml-cuda/argsort.cu
 +++ b/ggml/src/ggml-cuda/argsort.cu
-@@ -85,13 +85,107 @@ static void argsort_f32_i32_cuda(const float * x, int * dst, const int ncols, co
+@@ -168,13 +168,107 @@ static void argsort_f32_i32_cuda_bitonic(const float *   x,
      }
  }
  
@@ -185,19 +185,21 @@ index 607ded85..53b02634 100644
      GGML_ASSERT( dst->type == GGML_TYPE_I32);
      GGML_ASSERT(ggml_is_contiguous(src0));
  
-@@ -100,5 +194,9 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
- 
-     enum ggml_sort_order order = (enum ggml_sort_order) dst->op_params[0];
- 
--    argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
-+    if (src0->type == GGML_TYPE_I32) {
-+        argsort_i32_i32_cuda((const int32_t *)src0_d, (int *)dst_d, ncols, nrows, order, stream);
-+    } else {
-+        argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
-+    }
- }
+@@ -192,7 +286,11 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+         ggml_cuda_pool & pool = ctx.pool();
+         argsort_f32_i32_cuda_cub(pool, src0_d, (int *) dst_d, ncols, nrows, order, stream);
+     } else {
+-        argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
++		if (src0->type == GGML_TYPE_I32) {
++        	argsort_i32_i32_cuda((const int32_t *)src0_d, (int *)dst_d, ncols, nrows, order, stream);
++    	} else {
++        	argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
++    	}
+     }
+ #else
+     argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
 diff --git a/ggml/src/ggml-cuda/cpy-utils.cuh b/ggml/src/ggml-cuda/cpy-utils.cuh
-index e621cb98..597c0c8b 100644
+index e621cb981..597c0c8b3 100644
 --- a/ggml/src/ggml-cuda/cpy-utils.cuh
 +++ b/ggml/src/ggml-cuda/cpy-utils.cuh
 @@ -215,3 +215,9 @@ template<typename src_t, typename dst_t>
@@ -211,7 +213,7 @@ index e621cb98..597c0c8b 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index 12d5bf77..02559bc9 100644
+index 12d5bf776..33a29f361 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
 @@ -251,6 +251,46 @@ static void ggml_cpy_f32_iq4_nl_cuda(
@@ -261,7 +263,7 @@ index 12d5bf77..02559bc9 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -332,6 +373,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -332,6 +372,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
          ggml_cpy_flt_cuda<half, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
      } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
          ggml_cpy_flt_cuda<half, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
@@ -271,7 +273,7 @@ index 12d5bf77..02559bc9 100644
          ggml_cpy_flt_cuda<nv_bfloat16, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
      } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F16) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 2c2f0141..50b8071d 100644
+index 2c2f01415..50b8071de 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -4467,8 +4467,72 @@ kernel void kernel_argsort_f32_i32(
@@ -347,5 +349,5 @@ index 2c2f0141..50b8071d 100644
  
  kernel void kernel_leaky_relu_f32(
          constant     ggml_metal_kargs_leaky_relu & args,
---
-2.51.1
+-- 
+2.43.0

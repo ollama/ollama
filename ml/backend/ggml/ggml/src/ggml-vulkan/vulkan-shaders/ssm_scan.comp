@@ -1,6 +1,9 @@
 #version 450
 
 #extension GL_EXT_control_flow_attributes : require
+#if USE_SUBGROUP_ADD
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#endif
 
 #include "types.glsl"
 
@@ -84,35 +87,47 @@ void main() {
         }
 
         barrier();
-        for (uint w = D_STATE; w > SUBGROUP_SIZE; w >>= 1) {
-            [[unroll]] for (uint j = 0; j < ((w >> 1) * SPLIT_H + D_STATE - 1) / D_STATE; j++) {
-                const uint k = (tid % (w >> 1)) +
-                              (D_STATE * (tid / (w >> 1))) +
-                              j * D_STATE * (D_STATE / (w >> 1));
-                if (k < SPLIT_H * D_STATE && (k + (w >> 1)) < SPLIT_H * D_STATE) {
-                    stateC[k] += stateC[k + (w >> 1)];
+        [[unroll]]
+        for (uint w = D_STATE / 2; w >= SUBGROUP_SIZE; w >>= 1) {
+            [[unroll]] for (uint j = 0; j < (w * SPLIT_H + D_STATE - 1) / D_STATE; j++) {
+                const uint k = (tid % w) + (D_STATE * (tid / w)) + j * D_STATE * (D_STATE / w);
+                if (k < SPLIT_H * D_STATE && (k + w) < SPLIT_H * D_STATE) {
+                    stateC[k] += stateC[k + w];
                 }
             }
             barrier();
         }
 
-        [[unroll]] for (uint j = 0; j <= SPLIT_H / (D_STATE / SUBGROUP_SIZE); j++) {
+        [[unroll]] for (uint j = 0; j < max(1, SPLIT_H / (D_STATE / SUBGROUP_SIZE)); j++) {
             const uint idx = (tid % SUBGROUP_SIZE) +
                             D_STATE * (tid / SUBGROUP_SIZE) +
                             j * D_STATE * (D_STATE / SUBGROUP_SIZE);
+            const uint max_idx = SUBGROUP_SIZE - 1 +
+                            D_STATE * ((D_STATE - 1) / SUBGROUP_SIZE) +
+                            j * D_STATE * (D_STATE / SUBGROUP_SIZE);
 
-            uint lane = tid % SUBGROUP_SIZE;
-
-            [[unroll]] for (uint offset = SUBGROUP_SIZE / 2; offset > 0; offset >>= 1) {
-                if (idx + offset < SPLIT_H * D_STATE) {
-                    stateC[idx] += stateC[idx + offset];
+            if (idx < SPLIT_H * D_STATE ||
+                max_idx < SPLIT_H * D_STATE) {
+                float sc;
+#if USE_SUBGROUP_ADD
+                sc = stateC[idx];
+                sc = subgroupAdd(sc);
+#else
+                [[unroll]] for (uint offset = SUBGROUP_SIZE / 2; offset > 0; offset >>= 1) {
+                    if (idx + offset < SPLIT_H * D_STATE) {
+                        stateC[idx] += stateC[idx + offset];
+                    }
+                    barrier();
                 }
-                barrier();
-            }
+                if (tid % SUBGROUP_SIZE == 0) {
+                    sc = stateC[idx];
+                }
+#endif
 
-            if (idx < SPLIT_H * D_STATE && tid % SUBGROUP_SIZE == 0) {
-                const uint k = tid / SUBGROUP_SIZE + j * (D_STATE / SUBGROUP_SIZE);
-                d[y_base_idx + i * stride_y + k] = stateC[idx];
+                if (tid % SUBGROUP_SIZE == 0) {
+                    const uint k = tid / SUBGROUP_SIZE + j * (D_STATE / SUBGROUP_SIZE);
+                    d[y_base_idx + i * stride_y + k] = sc;
+                }
             }
         }
 
