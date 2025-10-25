@@ -1,0 +1,20 @@
+# Dockerfile.devfull - Entorno interactivo de desarrollo (NO producción)
+# Incluye toolchain para recompilar binario linux (Go + C/C++ + cmake + clang + ninja)
+# Uso: docker build -f Z_Iosu/docker/Dockerfile.devfull -t ollama-devfull .
+# Luego: docker run -it --rm -v ${PWD}:/src -w /src ollama-devfull bash
+
+FROM golang:1.24-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang cmake ninja-build git pkg-config ca-certificates openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+
+# Usuario no root opcional (comentado por simplicidad)
+# RUN useradd -m dev && chown -R dev /go && chown -R dev /usr/local
+# USER dev
+
+WORKDIR /src
+
+# Entrar en shell interactivo
+ENTRYPOINT ["bash"]

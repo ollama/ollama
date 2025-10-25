@@ -1,0 +1,14 @@
+# SNAPSHOT FUNCIONA - Dockerfile.dev
+# Fecha: 2025-09-05
+FROM golang:1.24-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=auto
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    (go build -o /ollama-dev ./cmd/ollama || go build -o /ollama-dev .)
+
+FROM scratch AS artifact
+COPY --from=build /ollama-dev /ollama-dev

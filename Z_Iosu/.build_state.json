@@ -1,0 +1,25 @@
+{
+    "LastBuild":  "2025-10-21T00:32:22.7635276-05:00",
+    "Components":  {
+                       "App":  {
+                                   "LastModified":  "2025-10-20T21:09:34.7777121-05:00",
+                                   "FileCount":  57
+                               },
+                       "CUDA":  {
+                                    "LastModified":  "2025-10-20T21:08:33.5242926-05:00",
+                                    "FileCount":  214
+                                },
+                       "Ollama":  {
+                                      "LastModified":  "2025-10-21T00:28:46.0067408-05:00",
+                                      "FileCount":  454
+                                  },
+                       "CPU":  {
+                                   "LastModified":  "2025-10-20T21:13:09.7524556-05:00",
+                                   "FileCount":  222
+                               },
+                       "Vulkan":  {
+                                      "LastModified":  "2025-10-20T21:11:18.1539263-05:00",
+                                      "FileCount":  121
+                                  }
+                   }
+}

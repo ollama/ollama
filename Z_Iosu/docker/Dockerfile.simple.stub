@@ -1,0 +1,5 @@
+# Dockerfile.simple.stub
+# Copia del stub eliminado de la raíz. Mantener sólo como referencia histórica.
+FROM scratch
+LABEL deprecated.dockerfile.simple="Use Z_Iosu/docker/Dockerfile.simple"
+CMD ["/bin/true"]

@@ -1,0 +1,5 @@
+$env:VERSION = "0.12.59"; $env:CGO_ENABLED="1"; $llvmPath = (Resolve-Path "C:\llvm-mingw-ucrt\llvm-mingw-*").Path; $env:PATH = "$llvmPath\bin;$env:PATH"; $env:CC = "$llvmPath\bin\gcc.exe"; $env:CXX = "$llvmPath\bin\g++.exe"; go build -v -a -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$env:VERSION -X=github.com/ollama/ollama/server.mode=release" .
+
+$env:VERSION = "0.12.59"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildApp buildInstaller
+
+ $env:VERSION = "0.12.59"; $env:CGO_ENABLED="1"; $llvmPath = (Resolve-Path "C:\llvm-mingw-ucrt\llvm-mingw-*").Path; $env:PATH = "$llvmPath\bin;$env:PATH"; $env:CC = "$llvmPath\bin\gcc.exe"; $env:CXX = "$llvmPath\bin\g++.exe"; go build -v -a -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$env:VERSION -X=github.com/ollama/ollama/server.mode=release" .

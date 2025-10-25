@@ -1,0 +1,43 @@
+FROM ubuntu:22.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Etc/UTC \
+    GO_VERSION=1.22.5 \
+    WIN_BUILDER_USER=builder
+
+SHELL ["/bin/bash","-eo","pipefail","-c"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget git curl unzip xz-utils \
+    build-essential pkg-config \
+    mingw-w64 clang cmake ninja-build ccache \
+    wine wine64 winbind innoextract \
+    python3 patchelf file \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar Go (tar oficial)
+RUN wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz \
+    && rm go${GO_VERSION}.linux-amd64.tar.gz \
+    && ln -s /usr/local/go/bin/go /usr/local/bin/go
+
+ENV PATH=/usr/local/go/bin:$PATH GOPATH=/go
+
+# Extraer Inno Setup (modo no interactivo con innoextract)
+ARG INNO_VERSION=6.3.3
+RUN wget -q -O /tmp/innosetup.exe https://files.jrsoftware.org/is/6/innosetup-${INNO_VERSION}.exe \
+    && innoextract -q -d /opt/inno /tmp/innosetup.exe \
+    && rm /tmp/innosetup.exe \
+    && ln -s /opt/inno/app/ISCC.exe /usr/local/bin/ISCC.exe
+
+# Usuario no root para build (wine prefiere usuario normal)
+RUN useradd -m ${WIN_BUILDER_USER}
+USER ${WIN_BUILDER_USER}
+WORKDIR /workspace
+
+# Script de build
+COPY --chown=${WIN_BUILDER_USER}:${WIN_BUILDER_USER} Z_Iosu/docker/winbuilder/build-win.sh /usr/local/bin/build-win.sh
+RUN chmod +x /usr/local/bin/build-win.sh
+
+ENTRYPOINT ["/usr/local/bin/build-win.sh"]
+CMD ["--help"]

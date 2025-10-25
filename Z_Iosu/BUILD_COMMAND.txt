@@ -1,0 +1,74 @@
+# COMANDO COMPLETO DE COMPILACIÓN - Ollama 0.12.51 (test-llamacpp-bump)
+# ============================================================================
+# Branch: test-llamacpp-bump (v0.12.5 merged)
+# Versión: 0.12.51
+# Compilador: llvm-mingw-20240619-ucrt-x86_64 (clang 18.1.8)
+# ============================================================================
+
+# COMANDO ÚNICO (recomendado):
+# -----------------------------------------------------------------------------
+powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_v0.12.51.ps1
+
+# RESULTADO:
+#   - dist\OllamaSetup.exe (420 MB) - Instalador completo
+#   - dist\windows-amd64-app.exe (6.81 MB) - App de bandeja
+#   - dist\windows-amd64\ollama.exe (36.5 MB) - CLI principal
+#   - 11 DLLs (8 CPU + 3 CUDA 13)
+
+# TIEMPO ESTIMADO: ~20 minutos (con RAM disk y optimizaciones)
+# ============================================================================
+
+# COMPILACIÓN POR PASOS (troubleshooting):
+# -----------------------------------------------------------------------------
+
+# 1. Solo bibliotecas CPU
+$env:VERSION = "0.12.41"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildCPU
+
+# 2. Solo CUDA 12 (reusa CUDA 13)
+$env:VERSION = "0.12.41"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildCUDA12
+
+# 3. Solo CUDA 13
+$env:VERSION = "0.12.41"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildCUDA13
+
+# 4. Solo ollama.exe (CLI)
+$env:VERSION = "0.12.41"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildOllama
+
+# 5. Solo app de bandeja
+$env:VERSION = "0.12.41"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildApp
+
+# 6. Solo instalador (requiere pasos anteriores)
+$env:VERSION = "0.12.41"; powershell -ExecutionPolicy Bypass -File Z_Iosu\scripts\build_windows.ps1 buildInstaller
+
+# ============================================================================
+
+# LIMPIAR BUILD ANTERIOR:
+# -----------------------------------------------------------------------------
+Remove-Item -Recurse -Force "build","dist" -ErrorAction SilentlyContinue
+go clean -cache
+
+# ============================================================================
+
+# VERIFICAR RESULTADO:
+# -----------------------------------------------------------------------------
+Get-ChildItem "dist" -Recurse -Include "*.exe","*.dll" | Select-Object FullName, @{N="Size (MB)";E={[math]::Round($_.Length/1MB, 2)}}
+
+# Probar versión
+.\dist\windows-amd64\ollama.exe --version
+# Debe mostrar: ollama version is 0.12.41
+
+# ============================================================================
+
+# INSTALAR Y PROBAR:
+# -----------------------------------------------------------------------------
+# Ejecutar instalador
+.\dist\OllamaSetup.exe
+
+# Después de instalar
+ollama serve                # Iniciar servidor
+ollama run llama3.2        # Probar modelo
+
+# ============================================================================
+# Para más detalles, ver:
+#   - Z_Iosu/OJO.md - Guía completa
+#   - Z_Iosu/QUICK_BUILD.md - Referencia rápida
+# ============================================================================

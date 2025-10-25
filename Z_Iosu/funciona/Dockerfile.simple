@@ -1,0 +1,25 @@
+# SNAPSHOT FUNCIONA - Dockerfile.simple
+# Copia congelada del Dockerfile.simple que confirmaste que funciona.
+# Fecha: 2025-09-05
+
+ARG BASE_TAG=0.11.10
+FROM ollama/ollama:${BASE_TAG}
+
+ENV OLLAMA_HOST=0.0.0.0:11434 \
+  OLLAMA_MAX_LOADED_MODELS=2 \
+  OLLAMA_KEEP_ALIVE=5m \
+  OLLAMA_FLASH_ATTENTION=1 \
+  OLLAMA_KV_CACHE_TYPE=q4_0 \
+  OLLAMA_NEW_ESTIMATES=1 \
+  OLLAMA_CONTEXT_LENGTH=16384 \
+  OLLAMA_DEBUG=2 \
+  OLLAMA_MODELS=/models \
+  GIN_MODE=release
+
+COPY Z_Iosu/docker/overlay/ /opt/ollama-overlay/
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
+  CMD wget -qO- http://127.0.0.1:11434/ || exit 1
+
+# Build snapshot:
+# docker build -f Z_Iosu/funciona/Dockerfile.simple -t ollama:0.11.10-funciona .
