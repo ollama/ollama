@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -430,6 +431,86 @@ func TestEmbedTruncation(t *testing.T) {
 		if batchRes.PromptEvalCount < expectedCount-2 || batchRes.PromptEvalCount > expectedCount+2 {
 			t.Fatalf("expected ~%d tokens (3 × %d), got %d",
 				expectedCount, baseRes.PromptEvalCount, batchRes.PromptEvalCount)
+		}
+	})
+}
+
+// TestEmbedStatusCode tests that errors from the embedding endpoint
+// properly preserve their HTTP status codes when returned to the client.
+// This test specifically checks the error handling path in EmbedHandler
+// where api.StatusError errors should maintain their original status code.
+func TestEmbedStatusCode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	// Pull the model if needed
+	if err := PullIfMissing(ctx, client, "all-minilm"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("truncation error status code", func(t *testing.T) {
+		truncFalse := false
+		longInput := strings.Repeat("word ", 100)
+
+		req := api.EmbedRequest{
+			Model:    "all-minilm",
+			Input:    longInput,
+			Truncate: &truncFalse,
+			Options:  map[string]any{"num_ctx": 10},
+		}
+
+		_, err := embedTestHelper(ctx, client, t, req)
+		if err == nil {
+			t.Fatal("expected error when truncate=false with long input")
+		}
+
+		// Check that it's a StatusError with the correct status code
+		var statusErr api.StatusError
+		if !errors.As(err, &statusErr) {
+			t.Fatalf("expected api.StatusError, got %T: %v", err, err)
+		}
+
+		// The error should be a 4xx client error (likely 400 Bad Request)
+		// not a 500 Internal Server Error
+		if statusErr.StatusCode < 400 || statusErr.StatusCode >= 500 {
+			t.Errorf("expected 4xx status code, got %d", statusErr.StatusCode)
+		}
+
+		// Verify the error message is meaningful
+		if !strings.Contains(err.Error(), "context length") {
+			t.Errorf("expected error message to mention context length, got: %v", err)
+		}
+	})
+
+	t.Run("batch truncation error status code", func(t *testing.T) {
+		truncFalse := false
+		req := api.EmbedRequest{
+			Model: "all-minilm",
+			Input: []string{
+				"short input",
+				strings.Repeat("very long input ", 100),
+				"another short input",
+			},
+			Truncate: &truncFalse,
+			Options:  map[string]any{"num_ctx": 10},
+		}
+
+		_, err := embedTestHelper(ctx, client, t, req)
+		if err == nil {
+			t.Fatal("expected error when one input exceeds context with truncate=false")
+		}
+
+		// Check that it's a StatusError with the correct status code
+		var statusErr api.StatusError
+		if !errors.As(err, &statusErr) {
+			t.Fatalf("expected api.StatusError, got %T: %v", err, err)
+		}
+
+		// The error should be a 4xx client error, not a 500 Internal Server Error
+		if statusErr.StatusCode < 400 || statusErr.StatusCode >= 500 {
+			t.Errorf("expected 4xx status code, got %d", statusErr.StatusCode)
 		}
 	})
 }
