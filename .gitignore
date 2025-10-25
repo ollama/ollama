@@ -15,3 +15,12 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
+*.gguf
+logs/prueba2
+logs/prueba1
+logs/funciona
+logs/prueba3
+logs/crash
+.ccache/
+
+
