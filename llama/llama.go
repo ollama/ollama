@@ -117,7 +117,11 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_seq_max = C.uint(numSeqMax)
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
-	params.embeddings = C.bool(true)
+	if params.pooling_type > 0 {
+		params.embeddings = C.bool(true)
+	} else {
+		params.embeddings = C.bool(false)
+	}
 	if flashAttention {
 		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
 	} else {
