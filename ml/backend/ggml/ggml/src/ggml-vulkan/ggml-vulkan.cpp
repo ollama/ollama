@@ -4733,7 +4733,14 @@ static void ggml_vk_instance_init() {
                         vk::PhysicalDeviceIDProperties old_id;
                         old_props.pNext = &old_id;
                         devices[k].getProperties2(&old_props);
-                        return std::equal(std::begin(old_id.deviceUUID), std::end(old_id.deviceUUID), std::begin(new_id.deviceUUID));
+
+                        bool equals = std::equal(std::begin(old_id.deviceUUID), std::end(old_id.deviceUUID), std::begin(new_id.deviceUUID));
+                        equals = equals || (
+                            old_id.deviceLUIDValid && new_id.deviceLUIDValid &&
+                            std::equal(std::begin(old_id.deviceLUID), std::end(old_id.deviceLUID), std::begin(new_id.deviceLUID))
+                        );
+
+                        return equals;
                     }
                 );
                 if (old_device == vk_instance.device_indices.end()) {
@@ -4771,6 +4778,7 @@ static void ggml_vk_instance_init() {
 #endif
                             break;
                     }
+                    driver_priorities[vk::DriverId::eMesaDozen] = 100;
 
                     if (driver_priorities.count(old_driver.driverID)) {
                         old_priority = driver_priorities[old_driver.driverID];
