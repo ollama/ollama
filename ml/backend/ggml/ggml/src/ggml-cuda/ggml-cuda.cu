@@ -2775,30 +2775,18 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
 
 #ifdef USE_CUDA_GRAPH
 static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
-    bool use_cuda_graph) {
+    int batch_size, bool use_cuda_graph) {
 
     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
     cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
 
-    // This fix was added in llama.cpp and Ollama in parallel, but with
-    // different tensor names.
-    // llama.cpp: https://github.com/ggml-org/llama.cpp/pull/14741
-    // ollama: https://github.com/ollama/ollama/pull/11525
-
-    const std::string gemma3n_per_layer_proj_src1_name_ollama = " (reshaped)";
-    const std::string gemma3n_node_name_ollama                = "node_";
-
     const std::string gemma3n_per_layer_proj_src0_name = "inp_per_layer_selected";
     const std::string gemma3n_per_layer_proj_src1_name = "per_layer_proj";
-
-    const std::string ffn_moe_bias_suffix = "_exps.bias";
-
     const std::string ffn_moe_gate_bias_prefix = "ffn_moe_gate_biased";
     const std::string ffn_moe_up_bias_prefix = "ffn_moe_up_biased";
     const std::string ffn_moe_down_bias_prefix = "ffn_moe_down_biased";
     const std::string nemotron_h_block_out_prefix = "nemotron_h_block_out";
     const std::string mamba2_y_add_d_prefix = "mamba2_y_add_d";
-
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor * node = cgraph->nodes[i];
@@ -2821,30 +2809,34 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
 #endif
         }
 
-        if (node->op == GGML_OP_ADD &&
-            node->src[1] && node->src[1]->ne[1] > 1 &&
-            // ollama
-            // workarounds to exclude Gemma3n's `project_per_layer_input` operation from the batch-size heuristic, specific to ollama's implementation of gemma3n
-            // number of layers is different for per_layer_proj between gemma3n:2b and gemma3n:4b, which is why we don't check that value here
-            !(node->ne[0] == 256 && node->ne[2] == 1 && node->ne[3] == 1 && node->src[0] ? std::string(node->src[0]->name).find(gemma3n_node_name_ollama) != std::string::npos : false && node->src[1] ? node->src[1]->name == gemma3n_per_layer_proj_src1_name_ollama : false) &&
-            node->src[1] ? std::string(node->src[1]->name).find(ffn_moe_bias_suffix) == std::string::npos : false &&
-            // upstream
-            (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
-            (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
-            strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
-            strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
-            strncmp(node->name, ffn_moe_down_bias_prefix.c_str(), ffn_moe_down_bias_prefix.size()) != 0 &&
-            strncmp(node->name, nemotron_h_block_out_prefix.c_str(), nemotron_h_block_out_prefix.size()) != 0 &&
-            strncmp(node->name, mamba2_y_add_d_prefix.c_str(), mamba2_y_add_d_prefix.size()) != 0) {
-            // disable CUDA graphs for batch size > 1 for now while excluding the matrix-matrix addition as part of Gemma3n's `project_per_layer_input` operation
-            // by means of matching node names. See
-            // https://github.com/ggml-org/llama.cpp/blob/f9a31eea06a859e34cecb88b4d020c7f03d86cc4/src/llama-model.cpp#L10199-L10241 and
-            // https://github.com/huggingface/transformers/blob/bda75b4011239d065de84aa3e744b67ebfa7b245/src/transformers/models/gemma3n/modeling_gemma3n.py#L1773,
-            // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
-            use_cuda_graph = false;
+        // If we have an explicit batch size hint then we don't need to use the tensor name heuristics
+        if (batch_size >= 0) {
+            if (batch_size > 1) {
+                use_cuda_graph = false;
 #ifndef NDEBUG
-            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
+                GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%d]\n", __func__, batch_size);
 #endif
+            }
+        } else {
+            if (node->op == GGML_OP_ADD &&
+                node->src[1] && node->src[1]->ne[1] > 1 &&
+                (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
+                (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
+                strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
+                strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
+                strncmp(node->name, ffn_moe_down_bias_prefix.c_str(), ffn_moe_down_bias_prefix.size()) != 0 &&
+                strncmp(node->name, nemotron_h_block_out_prefix.c_str(), nemotron_h_block_out_prefix.size()) != 0 &&
+                strncmp(node->name, mamba2_y_add_d_prefix.c_str(), mamba2_y_add_d_prefix.size()) != 0) {
+                // disable CUDA graphs for batch size > 1 for now while excluding the matrix-matrix addition as part of Gemma3n's `project_per_layer_input` operation
+                // by means of matching node names. See
+                // https://github.com/ggml-org/llama.cpp/blob/f9a31eea06a859e34cecb88b4d020c7f03d86cc4/src/llama-model.cpp#L10199-L10241 and
+                // https://github.com/huggingface/transformers/blob/bda75b4011239d065de84aa3e744b67ebfa7b245/src/transformers/models/gemma3n/modeling_gemma3n.py#L1773,
+                // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
+                use_cuda_graph = false;
+#ifndef NDEBUG
+                GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
+#endif
+            }
         }
 
         if (node->op == GGML_OP_CPY) {
@@ -3247,7 +3239,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
     }
 }
 
-static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
     cuda_ctx->pool_set_alloc(true);
 
@@ -3286,7 +3278,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
     if (use_cuda_graph) {
         cuda_graph_update_required = is_cuda_graph_update_required(cuda_ctx, cgraph);
 
-        use_cuda_graph = check_node_graph_compatibility_and_refresh_copy_ops(cuda_ctx, cgraph, use_cuda_graph);
+        use_cuda_graph = check_node_graph_compatibility_and_refresh_copy_ops(cuda_ctx, cgraph, batch_size, use_cuda_graph);
 
         // Disable CUDA graphs (from the next token) if the use-case is demanding too many consecutive graph updates.
         if (use_cuda_graph && cuda_graph_update_required) {

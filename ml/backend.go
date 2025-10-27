@@ -106,6 +106,11 @@ type Context interface {
 	Arange(start, stop, step float32, dtype DType) Tensor
 
 	Forward(...Tensor) Context
+
+	// SetBatchSize provides a hint on the batch size to optimize processing
+	// Uses heuristics if not set
+	SetBatchSize(int)
+
 	Compute(...Tensor)
 	ComputeWithNotify(func(), ...Tensor) // notify callback once compute has begun
 

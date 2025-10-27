@@ -386,7 +386,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		C.int(len(schedBackends)),
 		C.size_t(maxGraphNodes),
 		C._Bool(false),
-		C._Bool(false),
+		C._Bool(true),
 		C._Bool(params.AllocMemory),
 	)
 
@@ -749,6 +749,9 @@ type Context struct {
 	ctx   *C.struct_ggml_context
 	graph *C.struct_ggml_cgraph
 
+	// batchSize is a hint to optimize processing
+	batchSize int
+
 	// buft is the buffer type used for new tensors
 	buft C.ggml_backend_buffer_type_t
 
@@ -805,6 +808,10 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	return c
 }
 
+func (c *Context) SetBatchSize(batchSize int) {
+	c.batchSize = batchSize
+}
+
 func (c *Context) Compute(tensors ...ml.Tensor) {
 	c.ComputeWithNotify(nil, tensors...)
 }
@@ -815,6 +822,11 @@ func (c *Context) ComputeWithNotify(cb func(), tensors ...ml.Tensor) {
 	if cb != nil {
 		go cb()
 	}
+
+	if c.batchSize > 0 {
+		C.ggml_backend_sched_set_batch_size(c.b.sched, C.int(c.batchSize))
+	}
+
 	if status := C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph); status != C.GGML_STATUS_SUCCESS {
 		panic(fmt.Errorf("error computing ggml graph: %v", status))
 	}
@@ -836,6 +848,10 @@ func (c *Context) ComputeWithNotify(cb func(), tensors ...ml.Tensor) {
 }
 
 func (c *Context) Reserve() {
+	if c.batchSize > 0 {
+		C.ggml_backend_sched_set_batch_size(c.b.sched, C.int(c.batchSize))
+	}
+
 	reserved := C.ggml_backend_sched_reserve(c.b.sched, c.graph)
 
 	slog.Debug("compute graph", "nodes", C.ggml_graph_n_nodes(c.graph), "splits", C.ggml_backend_sched_get_n_splits(c.b.sched))
