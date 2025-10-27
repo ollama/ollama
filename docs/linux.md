@@ -60,7 +60,7 @@ sudo tar -C /usr -xzf ollama-linux-arm64.tgz
 Create a user and group for Ollama:
 
 ```shell
-sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+sudo useradd -r -s /bin/false -U -m -d /var/lib/ollama ollama
 sudo usermod -a -G ollama $(whoami)
 ```
 
@@ -187,7 +187,7 @@ sudo rm $(which ollama)
 Remove the downloaded models and Ollama service user and group:
 
 ```shell
-sudo rm -r /usr/share/ollama
+sudo rm -r /var/lib/ollama
 sudo userdel ollama
 sudo groupdel ollama
 ```
