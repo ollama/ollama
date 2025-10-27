@@ -1049,3 +1049,16 @@ struct ggml_backend_cuda_context {
         return pools[device]->alloc_size();
     }
 };
+
+struct ggml_cuda_mm_fusion_args_host {
+    const ggml_tensor * x_bias = nullptr;
+    const ggml_tensor * gate = nullptr;
+    const ggml_tensor * gate_bias = nullptr;
+    ggml_glu_op glu_op;
+};
+struct ggml_cuda_mm_fusion_args_device {
+    const void * x_bias = nullptr;
+    const void * gate = nullptr;
+    const void * gate_bias = nullptr;
+    ggml_glu_op glu_op;
+};

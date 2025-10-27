@@ -213,10 +213,10 @@ index e621cb981..597c0c8b3 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index 12d5bf776..33a29f361 100644
+index c5821acbd..3d4ea7312 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -251,6 +251,46 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -275,6 +275,46 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
@@ -263,10 +263,10 @@ index 12d5bf776..33a29f361 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -332,6 +372,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
-         ggml_cpy_flt_cuda<half, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
-     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
-         ggml_cpy_flt_cuda<half, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+@@ -374,6 +414,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+         } else {
+             ggml_cpy_flt_cuda<half, float>          (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+         }
 +    } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_I32) {
 +        ggml_cpy_i32_i32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
      } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_BF16) {
@@ -349,3 +349,6 @@ index 2c2f01415..50b8071de 100644
  
  kernel void kernel_leaky_relu_f32(
          constant     ggml_metal_kargs_leaky_relu & args,
+-- 
+2.43.0
+

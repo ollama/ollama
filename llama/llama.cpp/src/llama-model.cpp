@@ -6412,6 +6412,8 @@ void llama_model::print_info() const {
         LLAMA_LOG_INFO("%s: n_ff             = %s\n",     __func__, print_f([&](uint32_t il) { return hparams.n_ff(il); }, hparams.n_layer).c_str());
         LLAMA_LOG_INFO("%s: n_expert         = %u\n",     __func__, hparams.n_expert);
         LLAMA_LOG_INFO("%s: n_expert_used    = %u\n",     __func__, hparams.n_expert_used);
+        LLAMA_LOG_INFO("%s: n_expert_groups  = %d\n",     __func__, hparams.n_expert_groups);
+        LLAMA_LOG_INFO("%s: n_group_used     = %d\n",     __func__, hparams.n_group_used);
         LLAMA_LOG_INFO("%s: causal attn      = %d\n",     __func__, hparams.causal_attn);
         LLAMA_LOG_INFO("%s: pooling type     = %d\n",     __func__, hparams.pooling_type);
         LLAMA_LOG_INFO("%s: rope type        = %d\n",     __func__, hparams.rope_type);
@@ -6512,8 +6514,6 @@ void llama_model::print_info() const {
         LLAMA_LOG_INFO("%s: n_ff_exp             = %d\n",     __func__, hparams.n_ff_exp);
         LLAMA_LOG_INFO("%s: n_ff_shexp           = %d\n",     __func__, hparams.n_ff_shexp);
         LLAMA_LOG_INFO("%s: n_expert_shared      = %d\n",     __func__, hparams.n_expert_shared);
-        LLAMA_LOG_INFO("%s: n_expert_groups      = %d\n",     __func__, hparams.n_expert_groups);
-        LLAMA_LOG_INFO("%s: n_group_used         = %d\n",     __func__, hparams.n_group_used);
         LLAMA_LOG_INFO("%s: expert_weights_scale = %.1f\n",   __func__, hparams.expert_weights_scale);
         LLAMA_LOG_INFO("%s: expert_weights_norm  = %d\n",     __func__, hparams.expert_weights_norm);
         LLAMA_LOG_INFO("%s: expert_gating_func   = %s\n",     __func__, llama_expert_gating_func_name((llama_expert_gating_func_type) hparams.expert_gating_func));
@@ -19541,6 +19541,7 @@ struct llm_build_smallthinker : public llm_graph_context{
 
         cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
         cb(cur, "result_norm", -1);
+        res->t_embd = cur;
 
         // lm_head
         cur = build_lora_mm(model.output, cur);

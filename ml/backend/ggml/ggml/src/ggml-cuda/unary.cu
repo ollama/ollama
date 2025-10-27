@@ -18,10 +18,7 @@ static __device__ __forceinline__ float op_step(float x) {
 }
 
 static __device__ __forceinline__ float op_gelu(float x) {
-    const float GELU_COEF_A    = 0.044715f;
-    const float SQRT_2_OVER_PI = 0.79788456080286535587989211986876f;
-
-    return 0.5f*x*(1.0f + tanhf(SQRT_2_OVER_PI*x*(1.0f + GELU_COEF_A*x*x)));
+    return ggml_cuda_op_gelu_single(x);
 }
 
 static __device__ __forceinline__ float op_gelu_erf(float x) {
@@ -37,7 +34,7 @@ static __device__ __forceinline__ float op_gelu_quick(float x) {
 }
 
 static __device__ __forceinline__ float op_silu(float x) {
-    return x / (1.0f + expf(-x));
+    return ggml_cuda_op_silu_single(x);
 }
 
 static __device__ __forceinline__ float op_tanh(float x) {
@@ -317,13 +314,8 @@ static __global__ void swiglu_oai_kernel(const T * x, const T * g, T * dst, cons
 
     float xi = x[j0];
     float gi = g[j1];
-    xi = fminf(xi, limit);
-    gi = fmaxf(fminf(gi, limit), -limit);
 
-    float out_glu = xi / (1.0f + expf(-xi * alpha));
-    out_glu = out_glu * (1.0f + gi);
-
-    dst[i] = out_glu;
+    dst[i] = ggml_cuda_op_swiglu_oai_single(xi, gi, alpha, limit);
 }
 
 template <typename T>

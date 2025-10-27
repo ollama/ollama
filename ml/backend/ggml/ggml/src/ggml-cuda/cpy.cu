@@ -113,6 +113,30 @@ static __global__ void cpy_q_f32(const char * cx, char * cdst, const int ne,
 }
 
 template<typename src_t, typename dst_t>
+static __global__ void cpy_flt_contiguous(const char * cx, char * cdst, const int64_t ne) {
+    const int64_t i = blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= ne) {
+        return;
+    }
+
+    const src_t * x = (const src_t *) cx;
+    dst_t *     dst = (dst_t *) cdst;
+
+    dst[i] = ggml_cuda_cast<dst_t>(x[i]);
+}
+
+template<typename src_t, typename dst_t>
+static void ggml_cpy_flt_contiguous_cuda(
+    const char * cx, char * cdst, const int64_t ne,
+cudaStream_t stream) {
+
+    const int64_t num_blocks = (ne + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
+    cpy_flt_contiguous<src_t, dst_t><<<num_blocks, CUDA_CPY_BLOCK_SIZE, 0, stream>>>
+        (cx, cdst, ne);
+}
+
+template<typename src_t, typename dst_t>
 static void ggml_cpy_flt_cuda(
     const char * cx, char * cdst, const int ne,
     const int ne00, const int ne01, const int ne02, const int nb00, const int nb01, const int nb02,
@@ -325,7 +349,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
     char * src0_ddc = (char *) src0->data;
     char * src1_ddc = (char *) src1->data;
 
-    if (src0->type == src1->type && ggml_is_contiguous(src0) && ggml_is_contiguous(src1)) {
+    const bool contiguous_srcs = ggml_is_contiguous(src0) && ggml_is_contiguous(src1);
+
+    if (src0->type == src1->type && contiguous_srcs) {
         GGML_ASSERT(ggml_nbytes(src0) == ggml_nbytes(src1));
 #if defined(GGML_USE_MUSA) && defined(GGML_MUSA_MUDNN_COPY)
         if (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16) {
@@ -336,11 +362,19 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
             CUDA_CHECK(cudaMemcpyAsync(src1_ddc, src0_ddc, ggml_nbytes(src0), cudaMemcpyDeviceToDevice, main_stream));
         }
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) {
-        ggml_cpy_flt_cuda<float, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        ggml_cpy_flt_cuda<float, float>           (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_BF16) {
-        ggml_cpy_flt_cuda<float, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<float, nv_bfloat16> (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<float, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F16) {
-        ggml_cpy_flt_cuda<float, half> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<float, half>        (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<float, half>        (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_Q8_0) {
         ggml_cpy_f32_q8_0_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_Q8_0 && src1->type == GGML_TYPE_F32) {
@@ -367,23 +401,47 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
     } else if (src0->type == GGML_TYPE_Q5_1 && src1->type == GGML_TYPE_F32) {
         ggml_cpy_q5_1_f32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F16) {
-        ggml_cpy_flt_cuda<half, half> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        ggml_cpy_flt_cuda<half, half>               (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_BF16) {
-        ggml_cpy_flt_cuda<half, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<half, nv_bfloat16>  (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<half, nv_bfloat16>    (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
-        ggml_cpy_flt_cuda<half, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<half, float>        (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<half, float>          (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_I32) {
         ggml_cpy_i32_i32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_BF16) {
         ggml_cpy_flt_cuda<nv_bfloat16, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F16) {
-        ggml_cpy_flt_cuda<nv_bfloat16, half> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<nv_bfloat16, half>  (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<nv_bfloat16, half>    (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F32) {
-        ggml_cpy_flt_cuda<nv_bfloat16, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<nv_bfloat16, float> (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<nv_bfloat16, float>   (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_I32) {
-        ggml_cpy_flt_cuda<float, int32_t> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<float, int32_t>     (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<float, int32_t>       (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_F32) {
-        ggml_cpy_flt_cuda<int32_t, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        if (contiguous_srcs) {
+            ggml_cpy_flt_contiguous_cuda<int32_t, float>     (src0_ddc, src1_ddc, ne, main_stream);
+        } else {
+            ggml_cpy_flt_cuda<int32_t, float>       (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+        }
     } else {
         GGML_ABORT("%s: unsupported type combination (%s to %s)\n", __func__,
                 ggml_type_name(src0->type), ggml_type_name(src1->type));
