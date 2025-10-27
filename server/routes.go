@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -659,7 +660,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -672,61 +673,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, _, err := getModelData(m.ModelPath, false)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	var count int
-	for i, s := range input {
-		tokens, err := r.Tokenize(c.Request.Context(), s)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
-		if len(tokens) > ctxLen {
-			if !truncate {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input exceeds maximum context length"})
-				return
-			}
-
-			if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
-				ctxLen--
-			}
-
-			if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
-				ctxLen--
-			}
-
-			slog.Info("", "ctxLen", ctxLen, "tokenCount", len(tokens))
-			if ctxLen <= 0 {
-				// return error if the truncated input would be empty or just special tokens
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input after truncation exceeds maximum context length"})
-				return
-			}
-
-			tokens = tokens[:ctxLen]
-
-			s, err = r.Detokenize(c.Request.Context(), tokens)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-		}
-
-		count += len(tokens)
-
-		input[i] = s
-	}
-
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
+	var totalTokens uint64
 	for i, text := range input {
 		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
+			embedding, tokenCount, err := r.Embedding(c.Request.Context(), text, truncate)
 			if err != nil {
 				return err
 			}
@@ -736,12 +688,18 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
 			embeddings[i] = embedding
+			atomic.AddUint64(&totalTokens, uint64(tokenCount))
 			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		var serr api.StatusError
+		if errors.As(err, &serr) {
+			c.AbortWithStatusJSON(serr.StatusCode, gin.H{"error": strings.TrimSpace(serr.ErrorMessage)})
+		} else {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		}
 		return
 	}
 
@@ -750,7 +708,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: count,
+		PromptEvalCount: int(totalTokens),
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -796,7 +754,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt, true)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
