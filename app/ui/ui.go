@@ -32,7 +32,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-//go:generate go get github.com/tkrajina/typescriptify-golang-structs/typescriptify@latest
 //go:generate tscriptify -package=github.com/ollama/ollama/app/ui/responses -target=./app/codegen/gotypes.gen.ts responses/types.go
 //go:generate npm --prefix ./app run build
 
