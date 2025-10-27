@@ -27,6 +27,25 @@ require() {
     echo $MISSING
 }
 
+check_gpu() {
+    # Look for devices based on vendor ID for NVIDIA and AMD
+    # TODO find a good mechanism to filter out unsupported AMD iGPUs
+    case $1 in
+        lspci)
+            case $2 in
+                nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
+                amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+            esac ;;
+        lshw)
+            case $2 in
+                nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+                amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+            esac ;;
+        nvidia-smi) available nvidia-smi || return 1 ;;
+    esac
+}
+
+
 [ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
 
 ARCH=$(uname -m)
@@ -78,31 +97,73 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-status "Downloading Linux ${ARCH} bundle"
-curl --fail --show-error --location --progress-bar \
-    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
-    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+# Check for new split bundle, or older style
+if curl -I -L -f -s -o /dev/null "https://ollama.com/download/ollama-linux-${ARCH}-cpu.tgz${VER_PARAM}"; then
+    DISCRETE=1
+else
+    DISCRETE=0
+fi
+if [ $DISCRETE -eq 1 ] ; then
+    status "Downloading Linux ${ARCH} CPU bundle"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/ollama-linux-${ARCH}-cpu.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+else
+    status "Downloading Linux ${ARCH} bundle"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+fi
+
+# Conditionally download driver specific bundles
+gpu_bundle_download() {
+    if [ $DISCRETE -eq 1 ] && available nvidia-smi; then
+        # Check for NVIDIA JetPack systems with additional downloads
+        if [ -f /etc/nv_tegra_release ] ; then
+            if grep R36 /etc/nv_tegra_release > /dev/null ; then
+                status "Downloading JetPack 6 components"
+                curl --fail --show-error --location --progress-bar \
+                    "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
+                    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+            elif grep R35 /etc/nv_tegra_release > /dev/null ; then
+                status "Downloading JetPack 5 components"
+                curl --fail --show-error --location --progress-bar \
+                    "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
+                    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+            elif [ -n "$(nvidia-smi | grep -o "CUDA Version: 13\.[0-9]*")" ]; then
+                status "Downloading Linux ${ARCH} CUDA v13 bundle"
+                curl --fail --show-error --location --progress-bar \
+                    "https://ollama.com/download/ollama-linux-${ARCH}-cuda-v13.tgz${VER_PARAM}" | \
+                    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+            else
+                warning "Unsupported JetPack version detected.  GPU may not be supported"
+            fi
+        elif [ -n "$(nvidia-smi | grep -o "CUDA Version: 13\.[0-9]*")" ]; then
+            status "Downloading Linux ${ARCH} CUDA v13 bundle"
+            curl --fail --show-error --location --progress-bar \
+                "https://ollama.com/download/ollama-linux-${ARCH}-cuda-v13.tgz${VER_PARAM}" | \
+                $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        elif [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+            status "Downloading Linux ${ARCH} CUDA v12 bundle"
+            curl --fail --show-error --location --progress-bar \
+                "https://ollama.com/download/ollama-linux-${ARCH}-cuda-v12.tgz${VER_PARAM}" | \
+                $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        fi
+    fi
+
+    if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+        status "Downloading Linux ${ARCH} ROCm bundle"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    fi
+}
+
+gpu_bundle_download
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
     $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
-fi
-
-# Check for NVIDIA JetPack systems with additional downloads
-if [ -f /etc/nv_tegra_release ] ; then
-    if grep R36 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
-    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
-    else
-        warning "Unsupported JetPack version detected.  GPU may not be supported"
-    fi
 fi
 
 install_success() {
@@ -110,8 +171,6 @@ install_success() {
     status 'Install complete. Run "ollama" from the command line.'
 }
 trap install_success EXIT
-
-# Everything from this point onwards is optional.
 
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
@@ -193,23 +252,6 @@ if ! available lspci && ! available lshw; then
     exit 0
 fi
 
-check_gpu() {
-    # Look for devices based on vendor ID for NVIDIA and AMD
-    case $1 in
-        lspci)
-            case $2 in
-                nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
-                amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
-            esac ;;
-        lshw)
-            case $2 in
-                nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
-                amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
-            esac ;;
-        nvidia-smi) available nvidia-smi || return 1 ;;
-    esac
-}
-
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
     exit 0
@@ -218,17 +260,6 @@ fi
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
     warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
-    exit 0
-fi
-
-if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    status "Downloading Linux ROCm ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
-        "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
-
-    install_success
-    status "AMD GPU ready."
     exit 0
 fi
 
@@ -334,6 +365,8 @@ if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\
         *) exit ;;
     esac
 fi
+
+gpu_bundle_download
 
 if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
     KERNEL_RELEASE="$(uname -r)"
