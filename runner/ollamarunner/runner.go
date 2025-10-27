@@ -598,6 +598,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
 	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
+	nextBatch.ctx.SetBatchSize(len(batchInputs))
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -1108,6 +1109,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 		return err
 	}
 
+	ctx.SetBatchSize(batchSize)
 	ctx.Forward(t).Reserve()
 
 	return nil
