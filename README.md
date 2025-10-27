@@ -229,10 +229,15 @@ ollama stop llama3.2
 ### Generate embeddings from the CLI
 
 ```shell
-ollama embed nomic-embed-text
+ollama embed nomic-embed-text "Your text to embed"
 ```
 
-Type a message at the prompt to receive its embedding. For scripted workflows, you can pipe text into the same command if needed.
+You can also pipe text for scripted workflows:
+
+```shell
+echo "Your text to embed" | ollama embed nomic-embed-text
+```
+
 
 ### Start Ollama
 

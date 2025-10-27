@@ -391,12 +391,11 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
 
-	cmd.SetIn(bytes.NewBufferString("hello world\n"))
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 
-	if err := EmbedHandler(cmd, []string{"test-model"}); err != nil {
+	if err := EmbedHandler(cmd, []string{"test-model", "hello", "world"}); err != nil {
 		t.Fatalf("EmbedHandler returned error: %v", err)
 	}
 
@@ -468,12 +467,12 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 		t.Fatalf("failed to set keepalive flag: %v", err)
 	}
 
-	cmd.SetIn(bytes.NewBufferString("json input\n"))
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 
-	if err := EmbedHandler(cmd, []string{"test-model"}); err != nil {
+	// Test with command line arguments and flags
+	if err := EmbedHandler(cmd, []string{"test-model", "json", "input"}); err != nil {
 		t.Fatalf("EmbedHandler returned error: %v", err)
 	}
 
@@ -501,6 +500,66 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 	}
 }
 
+func TestEmbedHandlerPipedInput(t *testing.T) {
+	reqCh := make(chan api.EmbedRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		var req api.EmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		reqCh <- req
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+			Model:      "test-model",
+			Embeddings: [][]float32{{0.5, 0.6}},
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+
+	// Simulate piped input
+	cmd.SetIn(bytes.NewBufferString("piped text"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	// Test with piped input and additional command line arguments
+	if err := EmbedHandler(cmd, []string{"test-model", "additional", "args"}); err != nil {
+		t.Fatalf("EmbedHandler returned error: %v", err)
+	}
+
+	select {
+	case req := <-reqCh:
+		inputText, _ := req.Input.(string)
+		// Should combine piped input with command line args
+		if diff := cmp.Diff("piped text additional args", inputText); diff != "" {
+			t.Errorf("unexpected input (-want +got):\n%s", diff)
+		}
+	default:
+		t.Fatal("server did not receive embed request")
+	}
+
+	expectOutput := "0.5 0.6\n"
+	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
 func TestEmbedHandlerNoInput(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
@@ -516,10 +575,10 @@ func TestEmbedHandlerNoInput(t *testing.T) {
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
 
-	cmd.SetIn(bytes.NewBuffer(nil))
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 
+	// Test with no input arguments (only model name)
 	err := EmbedHandler(cmd, []string{"test-model"})
 	if err == nil || !strings.Contains(err.Error(), "no input provided") {
 		t.Fatalf("expected error about missing input, got %v", err)

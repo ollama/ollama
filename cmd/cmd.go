@@ -371,105 +371,66 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 
-	embedOnce := func(inputText string) error {
-		inputText = strings.TrimRight(inputText, "\r\n")
-		if strings.TrimSpace(inputText) == "" {
-			return nil
-		}
+	// Get all arguments after model name as input text
+	inputParts := args[1:]
 
-		req := &api.EmbedRequest{
-			Model: model,
-			Input: inputText,
-		}
-		if keepAlive != nil {
-			req.KeepAlive = keepAlive
-		}
-		if truncateSpecified {
-			req.Truncate = &truncateValue
-		}
-		if dimensions > 0 {
-			req.Dimensions = dimensions
-		}
-
-		resp, err := client.Embed(cmd.Context(), req)
+	// Check if input is piped in
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		in, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return err
 		}
-
-		switch formatValue {
-		case "json":
-			encoder := json.NewEncoder(out)
-			encoder.SetIndent("", "  ")
-			return encoder.Encode(resp)
-		default:
-			for _, embedding := range resp.Embeddings {
-				var b strings.Builder
-				for i, val := range embedding {
-					if i > 0 {
-						b.WriteByte(' ')
-					}
-					b.WriteString(strconv.FormatFloat(float64(val), 'g', -1, 32))
-				}
-				fmt.Fprintln(out, b.String())
-			}
-		}
-
-		return nil
-	}
-
-	in := cmd.InOrStdin()
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		scanner, err := readline.New(readline.Prompt{
-			Prompt:      ">>> ",
-			Placeholder: "Send a message",
-		})
-		if err != nil {
-			return err
-		}
-
-		if envconfig.NoHistory() {
-			scanner.HistoryDisable()
-		}
-
-		fmt.Print(readline.StartBracketedPaste)
-		defer fmt.Printf(readline.EndBracketedPaste)
-
-		for {
-			line, readErr := scanner.Readline()
-			switch {
-			case errors.Is(readErr, io.EOF):
-				fmt.Println()
-				return nil
-			case errors.Is(readErr, readline.ErrInterrupt):
-				if line == "" {
-					fmt.Println("\nUse Ctrl + d to exit.")
-				}
-				scanner.Prompt.UseAlt = false
-				continue
-			case readErr != nil:
-				return readErr
-			}
-
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-
-			if err := embedOnce(line); err != nil {
-				return err
-			}
+		if len(in) > 0 {
+			inputParts = append([]string{string(in)}, inputParts...)
 		}
 	}
 
-	inputBytes, err := io.ReadAll(in)
-	if err != nil {
-		return err
-	}
-	inputText := strings.TrimRight(string(inputBytes), "\r\n")
-	if strings.TrimSpace(inputText) == "" {
+	// Join all input parts into one string
+	inputText := strings.Join(inputParts, " ")
+	inputText = strings.TrimSpace(inputText)
+
+	if inputText == "" {
 		return errors.New("no input provided to embed")
 	}
 
-	return embedOnce(inputText)
+	req := &api.EmbedRequest{
+		Model: model,
+		Input: inputText,
+	}
+	if keepAlive != nil {
+		req.KeepAlive = keepAlive
+	}
+	if truncateSpecified {
+		req.Truncate = &truncateValue
+	}
+	if dimensions > 0 {
+		req.Dimensions = dimensions
+	}
+
+	resp, err := client.Embed(cmd.Context(), req)
+	if err != nil {
+		return err
+	}
+
+	switch formatValue {
+	case "json":
+		encoder := json.NewEncoder(out)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	default:
+		for _, embedding := range resp.Embeddings {
+			var b strings.Builder
+			for i, val := range embedding {
+				if i > 0 {
+					b.WriteByte(' ')
+				}
+				b.WriteString(strconv.FormatFloat(float64(val), 'g', -1, 32))
+			}
+			fmt.Fprintln(out, b.String())
+		}
+	}
+
+	return nil
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
@@ -1836,13 +1797,14 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
 	embedCmd := &cobra.Command{
-		Use:   "embed MODEL",
+		Use:   "embed MODEL [TEXT...]",
 		Short: "Generate embeddings from a model",
 		Long: "Generate embeddings for text input using an Ollama model. " +
-			"Run the command and enter messages interactively, or pipe text via stdin for scripted use.",
-		Example: strings.TrimSpace(`  ollama embed nomic-embed-text
-	ollama embed nomic-embed-text --format json`),
-		Args:    cobra.ExactArgs(1),
+			"Provide text as arguments or pipe text via stdin for scripted use.",
+		Example: strings.TrimSpace(`  ollama embed nomic-embed-text "Hello world"
+	ollama embed nomic-embed-text --format json "Hello world"
+	echo "Hello world" | ollama embed nomic-embed-text`),
+		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    EmbedHandler,
 	}
