@@ -161,11 +161,12 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 				}
 
 				testCases := []struct {
+					name    string
 					prompt  string
 					anyResp []string
 				}{
-					{blueSkyPrompt, blueSkyExpected},
-					{maxPrompt, []string{"shakespeare", "oppression", "sorrows", "gutenberg", "child", "license", "sonnet", "melancholy", "love", "sorrow", "beauty"}},
+					{"blue_sky", blueSkyPrompt, blueSkyExpected},
+					{"max", maxPrompt, []string{"shakespeare", "oppression", "sorrows", "gutenberg", "child", "license", "sonnet", "melancholy", "love", "sorrow", "beauty"}},
 				}
 				var gpuPercent int
 				for _, tc := range testCases {
@@ -259,25 +260,20 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 							}
 						}
 					}
-					// Round the logged prompt count for comparisons across versions/configurations which can vary slightly
-					fmt.Fprintf(os.Stderr, "MODEL_PERF_HEADER:%s,%s,%s,%s,%s,%s,%s\n",
-						"MODEL",
-						"CONTEXT",
-						"GPU PERCENT",
-						"APPROX PROMPT COUNT",
-						"LOAD TIME",
-						"PROMPT EVAL TPS",
-						"EVAL TPS",
-					)
-					fmt.Fprintf(os.Stderr, "MODEL_PERF_DATA:%s,%d,%d,%d,%0.2f,%0.2f,%0.2f\n",
-						model,
-						numCtx,
-						gpuPercent,
-						(resp.PromptEvalCount/10)*10,
-						float64(resp.LoadDuration)/1000000000.0,
-						float64(resp.PromptEvalCount)/(float64(resp.PromptEvalDuration)/1000000000.0),
-						float64(resp.EvalCount)/(float64(resp.EvalDuration)/1000000000.0),
-					)
+					prefillTimePerToken := float64(resp.PromptEvalDuration.Nanoseconds()) / float64(resp.PromptEvalCount)
+					prefillTokensPerSec := float64(resp.PromptEvalCount) / (float64(resp.PromptEvalDuration.Nanoseconds()) + 1e-12) * 1e9
+					fmt.Fprintf(os.Stderr, "BenchmarkModel/name=%s-%s/%d/step=%s %d %.2f ns/token %.2f token/sec\n",
+						model, tc.name, numCtx, "prefill", resp.PromptEvalCount, prefillTimePerToken, prefillTokensPerSec)
+
+					evalTimePerToken := float64(resp.EvalDuration.Nanoseconds()) / float64(resp.EvalCount)
+					evalTokensPerSec := float64(resp.EvalCount) / (float64(resp.EvalDuration.Nanoseconds()) + 1e-12) * 1e9
+					fmt.Fprintf(os.Stderr, "BenchmarkModel/name=%s-%s/%d/step=%s %d %.2f ns/token %.2f token/sec\n",
+						model, tc.name, numCtx, "generate", resp.EvalCount, evalTimePerToken, evalTokensPerSec)
+
+					fmt.Fprintf(os.Stderr, "BenchmarkMode/name=%s-%s/%d 1 %d ns/request\n",
+						model, tc.name, numCtx, resp.TotalDuration.Nanoseconds())
+					fmt.Fprintf(os.Stderr, "BenchmarkMode/name=%s-%s/%d/step=%s 1 %d ns/request\n",
+						model, tc.name, numCtx, "load", resp.LoadDuration.Nanoseconds())
 				}
 			}
 		})
