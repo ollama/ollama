@@ -1,4 +1,6 @@
-# Linux
+---
+title: Linux
+---
 
 ## Install
 
@@ -10,15 +12,16 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## Manual install
 
-> [!NOTE]
-> If you are upgrading from a prior version, you **MUST** remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
+<Note>
+  If you are upgrading from a prior version, you should remove the old libraries
+  with `sudo rm -rf /usr/lib/ollama` first.
+</Note>
 
 Download and extract the package:
 
 ```shell
-curl -LO https://ollama.com/download/ollama-linux-amd64.tgz
-sudo rm -rf /usr/lib/ollama
-sudo tar -C /usr -xzf ollama-linux-amd64.tgz
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz \
+    | sudo tar zx -C /usr
 ```
 
 Start Ollama:
@@ -35,15 +38,11 @@ ollama -v
 
 ### AMD GPU install
 
-If you have an AMD GPU, **also** download and extract the additional ROCm package:
-
-> [!IMPORTANT]
-> The ROCm tgz contains only AMD dependent libraries.  You must extract **both** `ollama-linux-amd64.tgz` and `ollama-linux-amd64-rocm.tgz` into the same location.
-
+If you have an AMD GPU, also download and extract the additional ROCm package:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-amd64-rocm.tgz -o ollama-linux-amd64-rocm.tgz
-sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tgz \
+    | sudo tar zx -C /usr
 ```
 
 ### ARM64 install
@@ -51,8 +50,8 @@ sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
 Download and extract the ARM64-specific package:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-arm64.tgz -o ollama-linux-arm64.tgz
-sudo tar -C /usr -xzf ollama-linux-arm64.tgz
+curl -fsSL https://ollama.com/download/ollama-linux-arm64.tgz \
+    | sudo tar zx -C /usr
 ```
 
 ### Adding Ollama as a startup service (recommended)
@@ -113,12 +112,13 @@ sudo systemctl start ollama
 sudo systemctl status ollama
 ```
 
-> [!NOTE]
-> While AMD has contributed the `amdgpu` driver upstream to the official linux
-> kernel source, the version is older and may not support all ROCm features. We
-> recommend you install the latest driver from
-> [AMD](https://www.amd.com/en/support/download/linux-drivers.html) for best support
-> of your Radeon GPU.
+<Note>
+  While AMD has contributed the `amdgpu` driver upstream to the official linux
+  kernel source, the version is older and may not support all ROCm features. We
+  recommend you install the latest driver from
+  https://www.amd.com/en/support/linux-drivers for best support of your Radeon
+  GPU.
+</Note>
 
 ## Customizing
 
@@ -146,8 +146,8 @@ curl -fsSL https://ollama.com/install.sh | sh
 Or by re-downloading Ollama:
 
 ```shell
-curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
-sudo tar -C /usr -xzf ollama-linux-amd64.tgz
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz \
+    | sudo tar zx -C /usr
 ```
 
 ## Installing specific versions
@@ -178,6 +178,12 @@ sudo systemctl disable ollama
 sudo rm /etc/systemd/system/ollama.service
 ```
 
+Remove ollama libraries from your lib directory (either `/usr/local/lib`, `/usr/lib`, or `/lib`):
+
+```shell
+sudo rm -r $(which ollama | tr 'bin' 'lib')
+```
+
 Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr/bin`, or `/bin`):
 
 ```shell
@@ -187,13 +193,7 @@ sudo rm $(which ollama)
 Remove the downloaded models and Ollama service user and group:
 
 ```shell
-sudo rm -r /usr/share/ollama
 sudo userdel ollama
 sudo groupdel ollama
-```
-
-Remove installed libraries:
-
-```shell
-sudo rm -rf /usr/local/lib/ollama
+sudo rm -r /usr/share/ollama
 ```
