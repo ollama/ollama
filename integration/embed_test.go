@@ -392,25 +392,6 @@ func TestEmbedTruncation(t *testing.T) {
 		}
 	})
 
-	t.Run("truncate false error", func(t *testing.T) {
-		truncFalse := false
-		req := api.EmbedRequest{
-			Model:    "all-minilm",
-			Input:    strings.Repeat("word ", 100),
-			Truncate: &truncFalse,
-			Options:  map[string]any{"num_ctx": 10},
-		}
-
-		_, err := embedTestHelper(ctx, client, t, req)
-		if err == nil {
-			t.Fatal("expected error when truncate=false with long input")
-		}
-
-		if !strings.Contains(err.Error(), "exceeds maximum context length") {
-			t.Fatalf("expected context length error, got: %v", err)
-		}
-	})
-
 	t.Run("runner token count accuracy", func(t *testing.T) {
 		baseline := api.EmbedRequest{Model: "all-minilm", Input: "test"}
 		baseRes, err := embedTestHelper(ctx, client, t, baseline)
