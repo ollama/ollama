@@ -2,7 +2,6 @@ package gemma3
 
 import (
 	"github.com/ollama/ollama/fs"
-	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/ml/nn/pooling"
@@ -52,11 +51,6 @@ func newEmbedModel(c fs.Config) (model.Model, error) {
 		TextModel:   newTextModel(c),
 		poolingType: pooling.Type(c.Uint("pooling_type", 0)),
 	}
-
-	m.Cache = kvcache.NewWrapperCache(
-		kvcache.NewSWACache(int32(c.Uint("attention.sliding_window")), m.Shift),
-		kvcache.NewCausalCache(m.Shift),
-	)
 
 	return m, nil
 }
