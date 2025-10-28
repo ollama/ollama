@@ -226,6 +226,30 @@ ollama ps
 ollama stop llama3.2
 ```
 
+### Speak to a model
+
+This feature was contributed by [Atul Sahu](https://github.com/atulenv).
+
+The `speak` command allows you to talk to a model and hear its response. It uses speech-to-text to transcribe your voice and then sends the text to the model. The model's response is then converted to speech.
+
+To use the `speak` command, you need to install a few dependencies:
+
+*   **PortAudio:** A cross-platform audio I/O library.
+    *   On macOS, you can install it with `brew install portaudio`.
+    *   On Debian/Ubuntu, use `sudo apt-get install portaudio19-dev`.
+*   **eSpeak:** A text-to-speech synthesizer.
+    *   On macOS, you can install it with `brew install espeak`.
+    *   On Debian/Ubuntu, use `sudo apt-get install espeak`.
+*   **Whisper Model:** A pre-trained `whisper.cpp` model for speech-to-text.
+    1.  Download a model from [huggingface.co/ggerganov/whisper.cpp/tree/main](https://huggingface.co/ggerganov/whisper.cpp/tree/main) (e.g., `ggml-base.en.bin`).
+    2.  Place the model file in the same directory where you run the `ollama` command.
+
+Once you have installed the dependencies, you can use the `speak` command:
+
+```shell
+ollama speak <model-name>
+```
+
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.

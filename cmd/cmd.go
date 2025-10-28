@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,11 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/go-audio/audio"
+	"github.com/go-audio/wav"
+	"github.com/gordonklaus/portaudio"
+	"github.com/mutablelogic/go-whisper/whisper"
 
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
@@ -1609,6 +1615,161 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func speakHandler(cmd *cobra.Command, args []string) error {
+	fmt.Println("This command requires PortAudio, a cross-platform audio I/O library.")
+	fmt.Println("Please install it on your system (e.g., 'brew install portaudio' on macOS, 'sudo apt-get install portaudio19-dev' on Debian/Ubuntu).")
+
+	if err := portaudio.Initialize(); err != nil {
+		return err
+	}
+	defer portaudio.Terminate()
+
+	inChannels := 1
+	outChannels := 0
+	sampleRate := 16000 // Whisper.cpp works best with 16kHz sample rate
+	// framesPerBuffer := make([]int16, 64)
+	// Calculate buffer size for 5 seconds of audio
+	bufferSize := 5 * sampleRate
+	recordedData := make([]int16, 0, bufferSize)
+	done := make(chan struct{})
+
+	stream, err := portaudio.OpenDefaultStream(inChannels, outChannels, float64(sampleRate), 1024, func(in []int16) {
+		recordedData = append(recordedData, in...)
+		if len(recordedData) >= bufferSize {
+			close(done)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	if err := stream.Start(); err != nil {
+		return err
+	}
+
+	fmt.Println("Recording for 5 seconds...")
+	<-done
+
+	if err := stream.Stop(); err != nil {
+		return err
+	}
+
+	// Create a new WAV file
+	f, err := os.Create("output.wav")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Create a new WAV encoder
+	encoder := wav.NewEncoder(f, sampleRate, 16, 1, 1)
+
+	// Convert []int16 to []int
+	intData := make([]int, len(recordedData))
+	for i, val := range recordedData {
+		intData[i] = int(val)
+	}
+
+	// Create a new audio.IntBuffer from the recorded frames
+	audioBuf := &audio.IntBuffer{
+		Format: &audio.Format{
+			NumChannels: 1,
+			SampleRate:  sampleRate,
+		},
+		Data: intData,
+	}
+
+	// Write the audio buffer to the WAV file
+	if err := encoder.Write(audioBuf); err != nil {
+		return err
+	}
+
+	fmt.Println("Recording saved to output.wav")
+
+	// TODO: Implement speech-to-text using the recorded audio.
+	transcribedText, err := transcribeAudio("output.wav")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Transcribed text: %s\n", transcribedText)
+
+	opts := runOptions{
+		Model:       args[0],
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]any{},
+		ShowConnect: true,
+		Messages:    []api.Message{{Role: "user", Content: transcribedText}},
+	}
+
+	assistant, err := chat(cmd, opts)
+	if err != nil {
+		return err
+	}
+
+	if assistant != nil {
+		if err := speakText(assistant.Content); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func transcribeAudio(filename string) (string, error) {
+	// This function uses the 'go-whisper' library to transcribe audio.
+	// Please download a whisper model (e.g., 'ggml-base.en.bin') and place it in the current directory.
+	// You can download models from https://huggingface.co/ggerganov/whisper.cpp/tree/main
+	modelPath := "ggml-base.en.bin"
+
+	// Create a new whisper model
+	model, err := whisper.New(modelPath)
+	if err != nil {
+		return "", err
+	}
+	defer model.Close()
+
+	// Open the audio file
+	f, err := os.Open(filename)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	// Decode the audio file
+	decoder := wav.NewDecoder(f)
+	buf, err := decoder.FullPCMBuffer()
+	if err != nil {
+		return "", err
+	}
+
+	// Convert the audio buffer to the format whisper expects
+	data := make([]float32, len(buf.Data))
+	for i, val := range buf.Data {
+		data[i] = float32(val) / 32768.0
+	}
+
+	// Transcribe the audio
+	segments, err := model.Transcribe(data, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var result string
+	for _, segment := range segments {
+		result += segment.Text
+	}
+
+	return result, nil
+}
+
+func speakText(text string) error {
+	// This function uses the 'espeak' command-line tool to convert text to speech.
+	// Please make sure 'espeak' is installed on your system.
+	cmd := exec.Command("espeak", text)
+	return cmd.Run()
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1664,12 +1825,36 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
 	runCmd := &cobra.Command{
-		Use:     "run MODEL [PROMPT]",
-		Short:   "Run a model",
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    RunHandler,
-	}
+    Use:   "run MODEL [PROMPT]",
+    Short: "Run a model with an optional prompt",
+    Long:  "Run a local model by name. If PROMPT is omitted, input is read from stdin.",
+    Example: `
+  # Simple one-liner
+  ollama run llama3.2 "Write a 2-line poem about Bengaluru."
+
+  # Read a prompt from a file
+  ollama run llama3.2 "$(cat prompt.txt)"
+
+  # Multiline via heredoc
+  ollama run llama3.2 <<'EOF'
+  Summarize this repository in 3 bullets.
+  EOF
+
+  # Pipe from another command
+  cat README.md | ollama run llama3.2
+    `,
+    Args: func(cmd *cobra.Command, args []string) error {
+      if len(args) < 1 {
+        // Actionable, friendly hint
+        return fmt.Errorf("missing MODEL.\n\nTry:\n  %s\n  %s\n",
+          `ollama run llama3.2 "hello world"`,
+          `echo "summarize this" | ollama run llama3.2`,
+        )
+      }
+      return nil
+    },
+    RunE: RunHandler, // keep your existing handler hook
+}
 
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
@@ -1762,6 +1947,13 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	speakCmd := &cobra.Command{
+		Use:   "speak MODEL",
+		Short: "Speak to a model",
+		Args:  cobra.ExactArgs(1),
+		RunE:  speakHandler,
+	}
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1832,6 +2024,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		speakCmd,
 		runnerCmd,
 	)
 
