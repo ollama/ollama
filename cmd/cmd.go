@@ -374,9 +374,17 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 	// Get all arguments after model name as input text
 	inputParts := args[1:]
 
-	// Check if input is piped in
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
+	stdin := cmd.InOrStdin()
+	if f, ok := stdin.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
+		in, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		if len(in) > 0 {
+			inputParts = append([]string{string(in)}, inputParts...)
+		}
+	} else if !ok {
+		in, err := io.ReadAll(stdin)
 		if err != nil {
 			return err
 		}
@@ -385,7 +393,6 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Join all input parts into one string
 	inputText := strings.Join(inputParts, " ")
 	inputText = strings.TrimSpace(inputText)
 
