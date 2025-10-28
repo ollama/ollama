@@ -725,7 +725,9 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		if props.library != nil {
 			info.Library = C.GoString(props.library)
 		}
-		info.PCIID = fmt.Sprintf("%02x:%02x.%x", props.pci_bus_id, props.pci_device_id, props.pci_domain_id)
+		if props.device_id != nil {
+			info.PCIID = C.GoString(props.device_id)
+		}
 		info.LibraryPath = ggml.LibPaths()
 		if props.numeric_id != nil {
 			info.FilteredID = C.GoString(props.numeric_id)

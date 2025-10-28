@@ -117,7 +117,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 		// In the second pass, we more deeply initialize the GPUs to weed out devices that
 		// aren't supported by a given library.  We run this phase in parallel to speed up discovery.
-		slog.Debug("filtering out unsupported or overlapping GPU library combinations", "count", len(devices))
+		slog.Debug("evluating which if any devices to filter out", "initial_count", len(devices))
 		ctx2ndPass, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		var wg sync.WaitGroup
@@ -129,7 +129,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			if devices[i].Library == "Metal" {
 				continue
 			}
-			slog.Debug("verifying GPU is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "pci_id", devices[i].PCIID)
+			slog.Debug("verifying GPU is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "id", devices[i].ID, "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -155,6 +155,12 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					envVar:           id,  // Filter to just this one GPU
 				}
 				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
+					slog.Debug("filtering device which didn't fully initialize",
+						"id", devices[i].ID,
+						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+						"pci_id", devices[i].PCIID,
+						"library", devices[i].Library,
+					)
 					needsDelete[i] = true
 				} else {
 					supportedMu.Lock()
@@ -170,7 +176,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			}(i)
 		}
 		wg.Wait()
-		logutil.Trace("supported GPU library combinations", "supported", supported)
+		logutil.Trace("supported GPU library combinations before filtering", "supported", supported)
 
 		filterOutVulkanThatAreSupportedByOtherGPU(needsDelete)
 
@@ -372,12 +378,13 @@ func filterOutVulkanThatAreSupportedByOtherGPU(needsDelete []bool) {
 			}
 			if devices[j].PCIID == devices[i].PCIID && devices[j].Library != "Vulkan" && !needsDelete[j] {
 				needsDelete[i] = true
-				slog.Debug("dropping Vulkan duplicate by PCI ID",
-					"vulkan_id", devices[i].ID,
-					"vulkan_libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+				slog.Debug("filtering device with duplicate PCI ID",
+					"id", devices[i].ID,
+					"library", devices[i].Library,
+					"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
 					"pci_id", devices[i].PCIID,
-					"kept_library", devices[j].Library,
 					"kept_id", devices[j].ID,
+					"kept_library", devices[j].Library,
 				)
 				break
 			}
@@ -422,6 +429,12 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 			}
 			for dev, i := range byLibDirs[libDir] {
 				if _, found := byLibDirs[newest][dev]; found {
+					slog.Debug("filtering device with overlapping libraries",
+						"id", dev,
+						"library", libDir,
+						"delete_index", i,
+						"kept_library", newest,
+					)
 					needsDelete[i] = true
 				}
 			}
