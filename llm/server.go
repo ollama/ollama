@@ -176,7 +176,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
-	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
+	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache(), NumMoeOffload: opts.NumMoeOffload}
 
 	defaultThreads := systemInfo.ThreadCount
 	if opts.NumThread > 0 {
@@ -439,6 +439,7 @@ type LoadRequest struct {
 	ProjectorPath string
 	MainGPU       int
 	UseMmap       bool
+	NumMoeOffload int
 }
 
 type LoadResponse struct {
