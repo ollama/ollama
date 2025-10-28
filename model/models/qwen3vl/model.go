@@ -159,7 +159,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			outputs = batch.Outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, outputs, m.TextModel.Cache, m.Options)
+		hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, outputs, m.Cache, m.Options)
 		if i < len(deepstackVisualEmbeds) {
 			hiddenStates = hiddenStates.Add(ctx, deepstackVisualEmbeds[i])
 		}

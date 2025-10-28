@@ -144,9 +144,6 @@ func (d *TextLayer) Forward(ctx ml.Context, hiddenStates, cos, sin, outputs ml.T
 }
 
 type TextModel struct {
-	model.Base
-	model.BytePairEncoding
-
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
@@ -205,21 +202,6 @@ func newTextModel(c fs.Config) *TextModel {
 	}
 
 	m := TextModel{
-		BytePairEncoding: model.NewBytePairEncoding(
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				EOS: append(
-					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
-					c.Ints("tokenizer.ggml.eos_token_ids")...,
-				),
-			},
-			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
-		),
 		Layers: layers,
 		Options: &TextOptions{
 			hiddenSize:     int(c.Uint("embedding_length")),
