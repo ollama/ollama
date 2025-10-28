@@ -1231,6 +1231,11 @@ func (t *Tensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+// Mulmat performs matrix multiplication between two tensors.
+// If t has shape [m, p, ...] and t2 has shape [m, n, ...],
+// Mulmat returns a new Tensor with shape [p, n, ...].
+//
+// Note: this is similar to matmul(t2, t.tranpose(-1, -2)) in other libraries.
 func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
