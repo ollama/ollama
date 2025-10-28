@@ -211,7 +211,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 			scales[i] = float32(math.Log(math.Floor(((float64(p)+1.0)/float64(m.attentionFloorScale))+1.0))*m.attentionScale + 1.0)
 		}
 
-		attentionScales = ctx.Input().FromFloatSlice(scales, 1, 1, len(scales))
+		attentionScales = ctx.Input().FromFloats(scales, 1, 1, len(scales))
 	}
 
 	for i, layer := range m.Layers {

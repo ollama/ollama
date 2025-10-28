@@ -110,8 +110,8 @@ func (m *VisionModel) positionalEmbedding(ctx ml.Context, positionIDs ml.Tensor)
 		}
 	}
 
-	h := ctx.Input().FromFloatSlice(frequenciesHeight, maxPatchesPerSide, frequencies/2)
-	w := ctx.Input().FromFloatSlice(frequenciesWidth, maxPatchesPerSide, frequencies/2)
+	h := ctx.Input().FromFloats(frequenciesHeight, maxPatchesPerSide, frequencies/2)
+	w := ctx.Input().FromFloats(frequenciesWidth, maxPatchesPerSide, frequencies/2)
 
 	h = h.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	w = w.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
@@ -144,7 +144,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 		}
 	}
 
-	positionIDs := ctx.Input().FromIntSlice(positions, len(positions))
+	positionIDs := ctx.Input().FromInts(positions, len(positions))
 
 	positionEmbedding := m.positionalEmbedding(ctx, positionIDs)
 	cos, sin := positionEmbedding.Cos(ctx), positionEmbedding.Sin(ctx)

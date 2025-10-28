@@ -98,8 +98,9 @@ func NewBackend(modelPath string, params BackendParams) (Backend, error) {
 type Context interface {
 	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
-	FromFloatSlice(s []float32, shape ...int) Tensor
-	FromIntSlice(s []int32, shape ...int) Tensor
+	FromBytes(dtype DType, s []byte, shape ...int) Tensor
+	FromFloats(s []float32, shape ...int) Tensor
+	FromInts(s []int32, shape ...int) Tensor
 
 	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
 	Arange(start, stop, step float32, dtype DType) Tensor
@@ -136,7 +137,9 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
-	SetValueFromIntSlice(s []int32)
+	FromBytes([]byte)
+	FromFloats([]float32)
+	FromInts([]int32)
 
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor

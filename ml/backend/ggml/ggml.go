@@ -12,6 +12,7 @@ import "C"
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -871,7 +872,7 @@ func pad(length, pad C.size_t) C.size_t {
 	return ((length + pad - 1) / pad) * pad
 }
 
-func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
+func (c *Context) newTensor(dtype ml.DType, shape []int) *Tensor {
 	if c.buft == nil {
 		panic("set Input or Layer before creating tensors")
 	}
@@ -915,7 +916,7 @@ func (c *Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	t := c.newTensor(dtype, shape)
 	if c.b.allocMemory {
-		C.ggml_set_zero(t.(*Tensor).t)
+		C.ggml_set_zero(t.t)
 	}
 	return t
 }
@@ -936,25 +937,34 @@ func checkShape[S ~[]E, E any](s S, shape ...int) {
 	}
 }
 
-func (c *Context) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
-	checkShape(s, shape...)
-
-	t := c.newTensor(ml.DTypeF32, shape)
-
-	if c.b.allocMemory && len(s) > 0 {
-		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+func (c Context) FromBytes(dtype ml.DType, s []uint8, shape ...int) ml.Tensor {
+	// Unchecked to handle quantized types
+	t := c.newTensor(dtype, shape)
+	if c.b.allocMemory {
+		t.FromBytes(s)
 	}
 
 	return t
 }
 
-func (c *Context) FromIntSlice(s []int32, shape ...int) ml.Tensor {
+func (c *Context) FromFloats(s []float32, shape ...int) ml.Tensor {
+	checkShape(s, shape...)
+
+	t := c.newTensor(ml.DTypeF32, shape)
+
+	if c.b.allocMemory {
+		t.FromFloats(s)
+	}
+
+	return t
+}
+
+func (c *Context) FromInts(s []int32, shape ...int) ml.Tensor {
 	checkShape(s, shape...)
 
 	t := c.newTensor(ml.DTypeI32, shape)
-
-	if c.b.allocMemory && len(s) > 0 {
-		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	if c.b.allocMemory {
+		t.FromInts(s)
 	}
 
 	return t
@@ -975,7 +985,7 @@ func (c Context) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
 			arange = append(arange, int32(i))
 		}
 
-		return c.Input().FromIntSlice(arange, len(arange))
+		return c.Input().FromInts(arange, len(arange))
 	default:
 		panic("unsupported dtype for arange")
 	}
@@ -1045,10 +1055,26 @@ func (t *Tensor) Floats() (data []float32) {
 	return
 }
 
-func (t *Tensor) SetValueFromIntSlice(s []int32) {
-	if len(s) > 0 {
-		C.ggml_backend_tensor_set(t.t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.t))
+func tensorSet[S ~[]E, E byte | float32 | int32](t *Tensor, s S) {
+	if len(s) == 0 {
+		return
 	}
+	if int(C.ggml_nbytes(t.t)) != len(s)*binary.Size(s[0]) {
+		panic("data size does not match tensor size")
+	}
+	C.ggml_backend_tensor_set(t.t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.t))
+}
+
+func (t *Tensor) FromBytes(s []byte) {
+	tensorSet(t, s)
+}
+
+func (t *Tensor) FromFloats(s []float32) {
+	tensorSet(t, s)
+}
+
+func (t *Tensor) FromInts(s []int32) {
+	tensorSet(t, s)
 }
 
 func (t *Tensor) DType() ml.DType {
@@ -1621,14 +1647,4 @@ func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 		b: t.b,
 		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
-}
-
-func (c Context) FromBytes(dtype ml.DType, s []uint8, shape ...int) ml.Tensor {
-	// Unchecked to handle quantized types
-	t := c.newTensor(dtype, shape)
-	if c.b.allocMemory && len(s) > 0 {
-		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
-	}
-
-	return t
 }
