@@ -369,22 +369,12 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	out := cmd.OutOrStdout()
-
 	// Get all arguments after model name as input text
 	inputParts := args[1:]
 
-	stdin := cmd.InOrStdin()
-	if f, ok := stdin.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
-		in, err := io.ReadAll(stdin)
-		if err != nil {
-			return err
-		}
-		if len(in) > 0 {
-			inputParts = append([]string{string(in)}, inputParts...)
-		}
-	} else if !ok {
-		in, err := io.ReadAll(stdin)
+	// prepend stdin to the input if provided
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		in, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return err
 		}
@@ -421,7 +411,7 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 
 	switch formatValue {
 	case "json":
-		encoder := json.NewEncoder(out)
+		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(resp)
 	default:
@@ -433,7 +423,7 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 				}
 				b.WriteString(strconv.FormatFloat(float64(val), 'g', -1, 32))
 			}
-			fmt.Fprintln(out, b.String())
+			fmt.Println(b.String())
 		}
 	}
 

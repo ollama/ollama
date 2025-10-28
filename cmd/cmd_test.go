@@ -391,13 +391,25 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
 
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
 
-	if err := EmbedHandler(cmd, []string{"test-model", "hello", "world"}); err != nil {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- EmbedHandler(cmd, []string{"test-model", "hello", "world"})
+	}()
+
+	err := <-errCh
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
 		t.Fatalf("EmbedHandler returned error: %v", err)
 	}
+
+	var out bytes.Buffer
+	io.Copy(&out, r)
 
 	select {
 	case req := <-reqCh:
@@ -467,14 +479,26 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 		t.Fatalf("failed to set keepalive flag: %v", err)
 	}
 
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
 
-	// Test with command line arguments and flags
-	if err := EmbedHandler(cmd, []string{"test-model", "json", "input"}); err != nil {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- EmbedHandler(cmd, []string{"test-model", "json", "input"})
+	}()
+
+	err := <-errCh
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
 		t.Fatalf("EmbedHandler returned error: %v", err)
 	}
+
+	var out bytes.Buffer
+	io.Copy(&out, r)
 
 	select {
 	case req := <-reqCh:
@@ -532,16 +556,34 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
 
-	// Simulate piped input
-	cmd.SetIn(bytes.NewBufferString("piped text"))
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
+	// Capture stdin
+	oldStdin := os.Stdin
+	stdinR, stdinW, _ := os.Pipe()
+	os.Stdin = stdinR
+	stdinW.Write([]byte("piped text"))
+	stdinW.Close()
 
-	// Test with piped input and additional command line arguments
-	if err := EmbedHandler(cmd, []string{"test-model", "additional", "args"}); err != nil {
+	// Capture stdout
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, _ := os.Pipe()
+	os.Stdout = stdoutW
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- EmbedHandler(cmd, []string{"test-model", "additional", "args"})
+	}()
+
+	err := <-errCh
+	stdoutW.Close()
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
+
+	if err != nil {
 		t.Fatalf("EmbedHandler returned error: %v", err)
 	}
+
+	var out bytes.Buffer
+	io.Copy(&out, stdoutR)
 
 	select {
 	case req := <-reqCh:
