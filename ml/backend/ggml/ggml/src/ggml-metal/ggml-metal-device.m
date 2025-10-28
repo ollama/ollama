@@ -572,7 +572,32 @@ ggml_metal_library_t ggml_metal_device_get_library(ggml_metal_device_t dev) {
 void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t * total) {
     if (@available(macOS 10.12, iOS 16.0, *)) {
         *total = dev->mtl_device.recommendedMaxWorkingSetSize;
-        *free  = *total - dev->mtl_device.currentAllocatedSize;
+        // Note: dev->mtl_device.currentAllocatedSize only looks at the current process so we use system free memory instead
+        mach_port_t host_port = mach_host_self();
+        mach_msg_type_number_t host_size = sizeof(vm_statistics64_data_t) / sizeof(integer_t);
+        vm_size_t pagesize;
+        vm_statistics64_data_t vm_stat;
+
+        host_page_size(host_port, &pagesize);
+        if (host_statistics64(host_port, HOST_VM_INFO64, (host_info64_t)&vm_stat, &host_size) != KERN_SUCCESS) {
+            *free = 0;
+            *total = 0;
+            return;
+        }
+        uint64_t used = (uint64_t)vm_stat.active_count * pagesize
+            + (uint64_t)vm_stat.inactive_count * pagesize
+            + (uint64_t)vm_stat.speculative_count * pagesize
+            + (uint64_t)vm_stat.wire_count * pagesize
+            + (uint64_t)vm_stat.compressor_page_count * pagesize
+            - (uint64_t)vm_stat.purgeable_count * pagesize
+            - (uint64_t)vm_stat.external_page_count * pagesize;
+
+        uint64_t free_memory = [NSProcessInfo processInfo].physicalMemory - used;
+        if (free_memory < *total) {
+            *free = free_memory;
+        } else {
+            *free = dev->mtl_device.recommendedMaxWorkingSetSize;
+        }
     } else {
         *free = 0;
         *total = 0;

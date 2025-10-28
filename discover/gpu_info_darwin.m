@@ -26,10 +26,14 @@ uint64_t getFreeMemory() {
   if (host_statistics64(host_port, HOST_VM_INFO64, (host_info64_t)&vm_stat, &host_size) != KERN_SUCCESS) {
     return 0;
   }
+  uint64_t used = (uint64_t)vm_stat.active_count * pagesize
+    + (uint64_t)vm_stat.inactive_count * pagesize
+    + (uint64_t)vm_stat.speculative_count * pagesize
+    + (uint64_t)vm_stat.wire_count * pagesize
+    + (uint64_t)vm_stat.compressor_page_count * pagesize
+    - (uint64_t)vm_stat.purgeable_count * pagesize
+    - (uint64_t)vm_stat.external_page_count * pagesize;
 
-  uint64_t free_memory = (uint64_t)vm_stat.free_count * pagesize;
-  free_memory += (uint64_t)vm_stat.speculative_count * pagesize;
-  free_memory += (uint64_t)vm_stat.inactive_count * pagesize;
-
+  uint64_t free_memory = [NSProcessInfo processInfo].physicalMemory - used;
   return free_memory;
 }
