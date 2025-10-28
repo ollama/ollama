@@ -108,7 +108,10 @@
               "/modelfile",
               "/context-length",
               "/linux",
+              "/macos",
+              "/windows",
               "/docker",
+              "/import",
               "/faq",
               "/gpu",
               "/troubleshooting"
