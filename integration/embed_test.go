@@ -70,73 +70,75 @@ func manhattanDistance[V float32 | float64](v1, v2 []V) V {
 	return sum
 }
 
-func TestCosineDistanceCorrelation(t *testing.T) {
+func TestEmbedCosineDistanceCorrelation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
 	for _, model := range libraryEmbedModels {
-		testCases := []struct {
-			a string
-			b string
-			c string
-		}{
-			{"cat", "kitten", "dog"},
-			{"king", "queen", "baron"},
-			{"paris", "london", "vancouver"},
-			{"The cat is sleeping on the sofa", "A feline is sleeping on the couch", "Quantum physics is complex"},
-			{"I love programming in python", "Coding in python brings me joy", "Pizza is delicious"},
-			{"Machine learning is fascinating", "Artificial intelligence is amazing", "I need to buy groceries"},
-			{"The quick brown fox jumps over the lazy dog", "A fast brown fox leaps over a sleepy dog", "The weather is warm and sunny today"},
-		}
-
-		for _, tc := range testCases {
-			testEmbed := make(map[string][]float32)
-			strs := []string{tc.a, tc.b, tc.c}
-
-			req := api.EmbedRequest{
-				Model:     model,
-				Input:     strs,
-				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+		t.Run(model, func(t *testing.T) {
+			testCases := []struct {
+				a string
+				b string
+				c string
+			}{
+				{"cat", "kitten", "dog"},
+				{"king", "queen", "baron"},
+				{"paris", "london", "vancouver"},
+				{"The cat is sleeping on the sofa", "A feline is sleeping on the couch", "Quantum physics is complex"},
+				{"I love programming in python", "Coding in python brings me joy", "Pizza is delicious"},
+				{"Machine learning is fascinating", "Artificial intelligence is amazing", "I need to buy groceries"},
+				{"The quick brown fox jumps over the lazy dog", "A fast brown fox leaps over a sleepy dog", "The weather is warm and sunny today"},
 			}
 
-			resp, err := embedTestHelper(ctx, client, t, req)
-			if err != nil {
-				t.Fatal(err)
-			}
+			for _, tc := range testCases {
+				testEmbed := make(map[string][]float32)
+				strs := []string{tc.a, tc.b, tc.c}
 
-			for cnt, v := range resp.Embeddings {
-				testEmbed[strs[cnt]] = v
-			}
-
-			// Calculate cosine similarities
-			cosAB := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.b])
-			cosAC := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.c])
-
-			// Calculate distances
-			distAB := euclideanDistance(testEmbed[tc.a], testEmbed[tc.b])
-			distAC := euclideanDistance(testEmbed[tc.a], testEmbed[tc.c])
-
-			manhattanAB := manhattanDistance(testEmbed[tc.a], testEmbed[tc.b])
-			manhattanAC := manhattanDistance(testEmbed[tc.a], testEmbed[tc.c])
-
-			// Consistency check: if cosAB > cosAC, then distances should be smaller
-			if cosAB > cosAC {
-				if distAB >= distAC {
-					t.Errorf("Euclidean distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but distAB=%f >= distAC=%f",
-						model, tc.a, tc.b, tc.c, cosAB, cosAC, distAB, distAC)
+				req := api.EmbedRequest{
+					Model:     model,
+					Input:     strs,
+					KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				}
 
-				if manhattanAB >= manhattanAC {
-					t.Errorf("Manhattan distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but manhattanAB=%f >= manhattanAC=%f",
-						model, tc.a, tc.b, tc.c, cosAB, cosAC, manhattanAB, manhattanAC)
+				resp, err := embedTestHelper(ctx, client, t, req)
+				if err != nil {
+					t.Fatal(err)
 				}
-			} else {
-				t.Errorf("Cosine Similarity inconsistency (%s): cosinSim(%s, %s) < cosinSim(%s, %s)",
-					model, tc.a, tc.b, tc.a, tc.c)
+
+				for cnt, v := range resp.Embeddings {
+					testEmbed[strs[cnt]] = v
+				}
+
+				// Calculate cosine similarities
+				cosAB := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.b])
+				cosAC := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.c])
+
+				// Calculate distances
+				distAB := euclideanDistance(testEmbed[tc.a], testEmbed[tc.b])
+				distAC := euclideanDistance(testEmbed[tc.a], testEmbed[tc.c])
+
+				manhattanAB := manhattanDistance(testEmbed[tc.a], testEmbed[tc.b])
+				manhattanAC := manhattanDistance(testEmbed[tc.a], testEmbed[tc.c])
+
+				// Consistency check: if cosAB > cosAC, then distances should be smaller
+				if cosAB > cosAC {
+					if distAB >= distAC {
+						t.Errorf("Euclidean distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but distAB=%f >= distAC=%f",
+							model, tc.a, tc.b, tc.c, cosAB, cosAC, distAB, distAC)
+					}
+
+					if manhattanAB >= manhattanAC {
+						t.Errorf("Manhattan distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but manhattanAB=%f >= manhattanAC=%f",
+							model, tc.a, tc.b, tc.c, cosAB, cosAC, manhattanAB, manhattanAC)
+					}
+				} else {
+					t.Errorf("Cosine Similarity inconsistency (%s): cosinSim(%s, %s) < cosinSim(%s, %s)",
+						model, tc.a, tc.b, tc.a, tc.c)
+				}
 			}
-		}
+		})
 	}
 }
 
