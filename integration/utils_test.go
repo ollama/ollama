@@ -248,12 +248,14 @@ var (
 		"zephyr",
 	}
 	libraryEmbedModels = []string{
+		"qwen3-embedding",
+		"embeddinggemma",
+		"nomic-embed-text",
 		"all-minilm",
 		"bge-large",
 		"bge-m3",
 		"granite-embedding",
 		"mxbai-embed-large",
-		"nomic-embed-text",
 		"paraphrase-multilingual",
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
