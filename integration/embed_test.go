@@ -85,6 +85,10 @@ func TestCosineDistanceCorrelation(t *testing.T) {
 			{"cat", "kitten", "dog"},
 			{"king", "queen", "baron"},
 			{"paris", "london", "vancouver"},
+			{"The cat is sleeping on the sofa", "A feline is sleeping on the couch", "Quantum physics is complex"},
+			{"I love programming in python", "Coding in python brings me joy", "Pizza is delicious"},
+			{"Machine learning is fascinating", "Artificial intelligence is amazing", "I need to buy groceries"},
+			{"The quick brown fox jumps over the lazy dog", "A fast brown fox leaps over a sleepy dog", "The weather is warm and sunny today"},
 		}
 
 		for _, tc := range testCases {
