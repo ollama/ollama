@@ -381,7 +381,6 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
             continue;
         }
         if ((((uniqueID >> 8) & 0xff) != pci_bus) || ((uniqueID & 0xff) != pci_device)) {
-            // GGML_LOG_DEBUG("%s %d] GPU id: %s does not match target %02x:%02x\n", __func__, crt, id, uniqueID >> 8, uniqueID & 0xff);
             gpu->pVtbl->Release(gpu);
             gpu = NULL;
             continue;

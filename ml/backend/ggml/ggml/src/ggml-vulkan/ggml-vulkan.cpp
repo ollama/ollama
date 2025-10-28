@@ -11599,7 +11599,7 @@ static std::string ggml_vk_get_device_id(int device) {
     const auto& uuid = deviceIDProps.deviceUUID;
     char id[64];
     snprintf(id, sizeof(id),
-        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         uuid[0], uuid[1], uuid[2], uuid[3],
         uuid[4], uuid[5],
         uuid[6], uuid[7],
@@ -13105,7 +13105,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 vk_devices[dev_idx].getProperties2(&props2);
                 std::ostringstream oss;
                 oss << std::hex << std::setfill('0');
-                oss << "GPU-";
                 int byteIdx = 0;
                 for (int i = 0; i < 16; ++i, ++byteIdx) {
                     oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);

@@ -20,10 +20,10 @@ fix vulkan PCI ID and ID handling
  ggml/src/ggml-cuda/vendors/hip.h     |   3 +
  ggml/src/ggml-impl.h                 |   8 +
  ggml/src/ggml-metal/ggml-metal.cpp   |   2 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 213 +++++++++++--
- ggml/src/mem_hip.cpp                 | 453 +++++++++++++++++++++++++++
- ggml/src/mem_nvml.cpp                | 209 ++++++++++++
- 9 files changed, 933 insertions(+), 30 deletions(-)
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 212 +++++++++++--
+ ggml/src/mem_hip.cpp                 | 452 +++++++++++++++++++++++++++
+ ggml/src/mem_nvml.cpp                | 209 +++++++++++++
+ 9 files changed, 931 insertions(+), 30 deletions(-)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
@@ -245,7 +245,7 @@ index f2ff9f322..f356e4a0a 100644
          /* .async                 = */ true,
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ed83236f4..2e82a30a5 100644
+index ed83236f4..0bbcecd01 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -231,6 +231,7 @@ class vk_memory_logger;
@@ -273,7 +273,7 @@ index ed83236f4..2e82a30a5 100644
 +    const auto& uuid = deviceIDProps.deviceUUID;
 +    char id[64];
 +    snprintf(id, sizeof(id),
-+        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 +        uuid[0], uuid[1], uuid[2], uuid[3],
 +        uuid[4], uuid[5],
 +        uuid[6], uuid[7],
@@ -507,7 +507,7 @@ index ed83236f4..2e82a30a5 100644
              for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
                  ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
                  char desc[256];
-@@ -12961,12 +13083,43 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -12961,12 +13083,42 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                  ctx->name = GGML_VK_NAME + std::to_string(i);
                  ctx->description = desc;
                  ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
@@ -534,7 +534,6 @@ index ed83236f4..2e82a30a5 100644
 +                vk_devices[dev_idx].getProperties2(&props2);
 +                std::ostringstream oss;
 +                oss << std::hex << std::setfill('0');
-+                oss << "GPU-";
 +                int byteIdx = 0;
 +                for (int i = 0; i < 16; ++i, ++byteIdx) {
 +                    oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);
@@ -554,10 +553,10 @@ index ed83236f4..2e82a30a5 100644
          }
 diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
 new file mode 100644
-index 000000000..22f0b4c24
+index 000000000..5a7f5d465
 --- /dev/null
 +++ b/ggml/src/mem_hip.cpp
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,452 @@
 +#include "ggml.h"
 +
 +#ifdef _WIN32
@@ -941,7 +940,6 @@ index 000000000..22f0b4c24
 +            continue;
 +        }
 +        if ((((uniqueID >> 8) & 0xff) != pci_bus) || ((uniqueID & 0xff) != pci_device)) {
-+            // GGML_LOG_DEBUG("%s %d] GPU id: %s does not match target %02x:%02x\n", __func__, crt, id, uniqueID >> 8, uniqueID & 0xff);
 +            gpu->pVtbl->Release(gpu);
 +            gpu = NULL;
 +            continue;
