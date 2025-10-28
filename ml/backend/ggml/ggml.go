@@ -1502,6 +1502,13 @@ func (t *Tensor) SILUAlphaLimit(ctx ml.Context, up ml.Tensor, alpha, limit float
 	}
 }
 
+func (t *Tensor) XIELU(ctx ml.Context, alphaN, alphaP, beta, eps float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_xielu(ctx.(*Context).ctx, t.t, C.float(alphaN), C.float(alphaP), C.float(beta), C.float(eps)),
+	}
+}
+
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
