@@ -22,7 +22,7 @@ Get up and running with large language models.
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
+[Manual install instructions](https://docs.ollama.com/linux#manual-install)
 
 ### Docker
 
@@ -110,7 +110,7 @@ Ollama supports importing GGUF models in the Modelfile:
 
 ### Import from Safetensors
 
-See the [guide](docs/import.md) on importing models for more information.
+See the [guide](https://docs.ollama.com/import) on importing models for more information.
 
 ### Customize a prompt
 
@@ -143,7 +143,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+For more information on working with a Modelfile, see the [Modelfile](https://docs.ollama.com/modelfile) documentation.
 
 ## CLI Reference
 
