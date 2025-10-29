@@ -294,25 +294,6 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc
 	})
 }
 
-// PullProgressFunc is a function that [Client.Pull] invokes every time there
-// is progress with a "pull" request sent to the service. If this function
-// returns an error, [Client.Pull] will stop the process and return this error.
-type PullProgressFunc func(ProgressResponse) error
-
-// Pull downloads a model from the ollama library. fn is called each time
-// progress is made on the request and can be used to display a progress bar,
-// etc.
-func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
-		var resp ProgressResponse
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
-
-		return fn(resp)
-	})
-}
-
 // PushProgressFunc is a function that [Client.Push] invokes when progress is
 // made.
 // It's similar to other progress function types like [PullProgressFunc].
@@ -352,15 +333,6 @@ func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgre
 	})
 }
 
-// List lists models that are available locally.
-func (c *Client) List(ctx context.Context) (*ListResponse, error) {
-	var lr ListResponse
-	if err := c.do(ctx, http.MethodGet, "/api/tags", nil, &lr); err != nil {
-		return nil, err
-	}
-	return &lr, nil
-}
-
 // ListRunning lists running models.
 func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	var lr ProcessResponse
@@ -374,14 +346,6 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 // model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
 	if err := c.do(ctx, http.MethodPost, "/api/copy", req, nil); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Delete deletes a model and its data.
-func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
-	if err := c.do(ctx, http.MethodDelete, "/api/delete", req, nil); err != nil {
 		return err
 	}
 	return nil
@@ -427,19 +391,6 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 // expected SHA256 digest of the file, and r represents the file.
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
-}
-
-// Version returns the Ollama server version as a string.
-func (c *Client) Version(ctx context.Context) (string, error) {
-	var version struct {
-		Version string `json:"version"`
-	}
-
-	if err := c.do(ctx, http.MethodGet, "/api/version", nil, &version); err != nil {
-		return "", err
-	}
-
-	return version.Version, nil
 }
 
 // Signout will signout a client for a local ollama server.
