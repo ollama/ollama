@@ -429,19 +429,6 @@ func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) err
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
 }
 
-// Version returns the Ollama server version as a string.
-func (c *Client) Version(ctx context.Context) (string, error) {
-	var version struct {
-		Version string `json:"version"`
-	}
-
-	if err := c.do(ctx, http.MethodGet, "/api/version", nil, &version); err != nil {
-		return "", err
-	}
-
-	return version.Version, nil
-}
-
 // Signout will signout a client for a local ollama server.
 func (c *Client) Signout(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)

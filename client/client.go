@@ -100,10 +100,9 @@ func (c *Client) Delete(ctx context.Context, r api.DeleteRequest) error {
 
 // Version returns the Ollama server version.
 func (c *Client) Version(ctx context.Context) (string, error) {
-	type versionResponse struct {
+	version, err := do[struct {
 		Version string `json:"version"`
-	}
-	version, err := do[versionResponse](c, ctx, "GET", "/api/version", nil)
+	}](c, ctx, "GET", "/api/version", nil)
 	if err != nil {
 		return "", err
 	}

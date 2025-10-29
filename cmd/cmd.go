@@ -35,6 +35,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/client"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -1575,12 +1576,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 }
 
 func versionHandler(cmd *cobra.Command, _ []string) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return
-	}
-
-	serverVersion, err := client.Version(cmd.Context())
+	serverVersion, err := client.New().Version(cmd.Context())
 	if err != nil {
 		fmt.Println("Warning: could not connect to a running Ollama instance")
 	}
