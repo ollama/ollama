@@ -749,7 +749,7 @@ func TestQwen3VLToolCallWhitespaceHandling(t *testing.T) {
 			},
 		},
 		{
-			desc:       "whitespace after tool call NOT trimmed across chunks (with content prefill)",
+			desc:       "whitespace after tool call trimmed across chunks (with content prefill)",
 			prefillMsg: &api.Message{Role: "assistant", Content: "prefill"},
 			steps: []step{
 				{
@@ -764,9 +764,9 @@ func TestQwen3VLToolCallWhitespaceHandling(t *testing.T) {
 					wantEvents: []qwenEvent{},
 				},
 				{
-					input: "after",
+					input: "after \n this is a song",
 					wantEvents: []qwenEvent{
-						qwenEventContent{content: "\n\tafter"},
+						qwenEventContent{content: "after \n this is a song"},
 					},
 				},
 			},

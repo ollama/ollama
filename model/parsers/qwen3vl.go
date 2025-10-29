@@ -17,6 +17,7 @@ const (
 	CollectingContent
 	CollectingToolContent
 	ThinkingDoneEatingWhitespace
+	ToolCallDoneEatingWhitespace
 )
 
 const (
@@ -183,11 +184,11 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
 
-			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+			after := split[1]
 			events = append(events, qwenEventRawToolCall{raw: before})
 			p.buffer.Reset()
 			p.buffer.WriteString(after)
-			p.state = CollectingContent
+			p.state = ToolCallDoneEatingWhitespace
 			return events, true
 		} else {
 			return events, false
@@ -231,6 +232,8 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			return events, false
 		}
 	case ThinkingDoneEatingWhitespace:
+		return p.eatLeadingWhitespaceAndTransitionTo(CollectingContent)
+	case ToolCallDoneEatingWhitespace:
 		return p.eatLeadingWhitespaceAndTransitionTo(CollectingContent)
 	default:
 		panic("unreachable")
