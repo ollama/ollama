@@ -676,33 +676,6 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func DeleteHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	// Unload the model if it's running before deletion
-	opts := &runOptions{
-		Model:     args[0],
-		KeepAlive: &api.Duration{Duration: 0},
-	}
-	if err := loadOrUnloadModel(cmd, opts); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", args[0])
-		}
-	}
-
-	for _, name := range args {
-		req := api.DeleteRequest{Name: name}
-		if err := client.Delete(cmd.Context(), &req); err != nil {
-			return err
-		}
-		fmt.Printf("deleted '%s'\n", name)
-	}
-	return nil
-}
-
 func ShowHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1652,14 +1625,6 @@ func NewCLI() *cobra.Command {
 		RunE:    CopyHandler,
 	}
 
-	deleteCmd := &cobra.Command{
-		Use:     "rm MODEL [MODEL...]",
-		Short:   "Remove a model",
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    DeleteHandler,
-	}
-
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1684,7 +1649,6 @@ func NewCLI() *cobra.Command {
 		pushCmd,
 		psCmd,
 		copyCmd,
-		deleteCmd,
 		serveCmd,
 	} {
 		switch cmd {
@@ -1727,7 +1691,7 @@ func NewCLI() *cobra.Command {
 		cmdList(),
 		psCmd,
 		copyCmd,
-		deleteCmd,
+		cmdRemove(),
 		runnerCmd,
 	)
 
