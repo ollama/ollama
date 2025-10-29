@@ -679,6 +679,38 @@ func TestQwen3VLNonThinkingToolCallWhitespaceHandling(t *testing.T) {
 			},
 		},
 		{
+			desc: "whitespace inside tool call preserves trailing space",
+			steps: []step{
+				{
+					input: "\n \n \n \n \n \n blahhhhhhhhhh blahhhh blahhhh \n\n\n\t\t     <tool_call>   tool content   </tool_call> \n\n\n\n\n\n\n after",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "\n \n \n \n \n \n blahhhhhhhhhh blahhhh blahhhh"},
+						qwenEventRawToolCall{raw: "   tool content   "},
+						qwenEventContent{content: "after"},
+					},
+				},
+			},
+		},
+		{
+			desc: "whitespace inside tool call preserves trailing space",
+			steps: []step{
+				{
+					input: "<tool_call>   tool content   </tool_call>            ",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "   tool content   "},
+					},
+				},
+				{
+					input: "\n \n \n \n \n \n blahhhhhhhhhh blahhhh blahhhh \n\n\n\t\t     <tool_call>   anotha one   </tool_call> \n\n\n\n\n\n\n after \n\n\n\n\n\n blep",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "blahhhhhhhhhh blahhhh blahhhh"},
+						qwenEventRawToolCall{raw: "   anotha one   "},
+						qwenEventContent{content: "after \n\n\n\n\n\n blep"},
+					},
+				},
+			},
+		},
+		{
 			desc: "whitespace between content and tool call",
 			steps: []step{
 				{
