@@ -688,6 +688,52 @@ func TestQwen3VLThinkingWhitespaceHandling(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc: "whitespace inside tool call preserves trailing space",
+			steps: []step{
+				{
+					input: "bruh</think> \n \n \n \n \n \n blahhhhhhhhhh blahhhh blahhhh \n\n\n\t\t     <tool_call>   tool content   </tool_call> \n\n\n\n\n\n\n after",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "bruh"},
+						qwenEventContent{content: "blahhhhhhhhhh blahhhh blahhhh"},
+						qwenEventRawToolCall{raw: "   tool content   "},
+						qwenEventContent{content: "after"},
+					},
+				},
+			},
+		},
+		{
+			desc: "whitespace inside tool call preserves trailing space",
+			steps: []step{
+				{
+					input: "bruh</think>          shdjfhksdhfj  ",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "bruh"},
+						qwenEventContent{content: "shdjfhksdhfj"},
+					},
+				},
+				{
+					input: "another word  ",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "  another word"},
+					},
+				},
+				{
+					input: "<tool_call>   tool content   </tool_call>            ",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "   tool content   "},
+					},
+				},
+				{
+					input: "\n \n \n \n \n \n blahhhhhhhhhh blahhhh blahhhh \n\n\n\t\t     <tool_call>   anotha one   </tool_call> \n\n\n\n\n\n\n after \n\n\n\n\n\n blep",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "blahhhhhhhhhh blahhhh blahhhh"},
+						qwenEventRawToolCall{raw: "   anotha one   "},
+						qwenEventContent{content: "after \n\n\n\n\n\n blep"},
+					},
+				},
+			},
+		},
 	}
 
 	anyOnlies := false
