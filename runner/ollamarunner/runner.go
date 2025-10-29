@@ -999,7 +999,6 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		embedding: true,
 		truncate:  req.Truncate,
 	})
-
 	if err != nil {
 		// Error handling for truncation to prevent segmentation fault
 		if errors.Is(err, errorInputTooLong) {
