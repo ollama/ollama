@@ -111,7 +111,7 @@ type NewSequenceParams struct {
 	truncate   bool
 }
 
-var errorInputTooLong = errors.New("the input length exceeds the context length")
+var errorInputTooLong = errors.New("input exceeds maximum context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -132,6 +132,41 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if int32(len(inputs)) > s.cache.numCtx {
 		discard := int32(len(inputs)) - s.cache.numCtx
+
+		// Adjust for BOS/EOS tokens before truncation (embedding & generation)
+		bos := s.model.Backend().Config().Uint("tokenizer.ggml.bos_token_id")
+		eos := s.model.Backend().Config().Uint("tokenizer.ggml.eos_token_id")
+		addBOS := s.model.Backend().Config().Bool("add_bos_token", true)
+		addEOS := s.model.Backend().Config().Bool("add_eos_token", true)
+
+		ctxLen := int(s.cache.numCtx)
+		tokenCount := len(inputs)
+
+		if tokenCount > ctxLen {
+			if !params.truncate {
+				return nil, errorInputTooLong
+			}
+
+			// Deduct BOS/EOS positions from available context if they’ll be added
+			if tokenCount > 0 {
+				first := inputs[0].Token
+				last := inputs[len(inputs)-1].Token
+
+				if int(first) != int(bos) && addBOS {
+					ctxLen--
+				}
+				if int(last) != int(eos) && addEOS {
+					ctxLen--
+				}
+			}
+
+			if ctxLen <= 0 {
+				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+
+			// Slice down to available length
+			inputs = inputs[:ctxLen]
+		}
 
 		if !params.truncate {
 			return nil, errorInputTooLong
@@ -165,20 +200,48 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			return nil, errors.New("entire prompt removed by truncation")
 		}
 
-		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[promptStart:]...)
+		var newInputs []*input.Input
+		if params.embedding {
+			newLimit := int(s.cache.numCtx)
+			if newLimit > len(inputs) {
+				newLimit = len(inputs)
+			}
+
+			if newLimit <= 0 {
+				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+
+			newInputs = inputs[:newLimit]
+		} else {
+			newInputs = inputs[:params.numKeep]
+			newInputs = append(newInputs, inputs[promptStart:]...)
+		}
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
 	}
 
 	// TODO(jessegross): Ingest cached history for grammar
+	// compute prompt token count excluding BOS/EOS and non-text inputs
+	countPromptTokensExcludingSpecial := func(tp model.TextProcessor, ins []*input.Input) int {
+		count := 0
+		for _, in := range ins {
+			if len(in.Multimodal) > 0 {
+				continue
+			}
+			if tp.Is(in.Token, model.SpecialBOS) || tp.Is(in.Token, model.SpecialEOS) {
+				continue
+			}
+			count++
+		}
+		return count
+	}
 
 	return &Sequence{
 		ctxs:             ctxs,
 		mmStore:          mmStore,
 		inputs:           inputs,
-		numPromptInputs:  len(inputs),
+		numPromptInputs:  countPromptTokensExcludingSpecial(s.model.(model.TextProcessor), inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
@@ -950,6 +1013,10 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		embedding: true,
 		truncate:  req.Truncate,
 	})
+
+	slog.Info("EMBEDDING LOGS LOOK HERE")
+	slog.Info("this is the sequence", "sequence", seq)
+
 	if err != nil {
 		if errors.Is(err, errorInputTooLong) {
 			http.Error(w, err.Error(), http.StatusBadRequest)

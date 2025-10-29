@@ -626,6 +626,29 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		truncate = false
 	}
 
+	// Basic server-side guard: if truncation is enabled and num_ctx <= 1, return an error
+	if truncate && req.Options != nil {
+		if v, ok := req.Options["num_ctx"]; ok {
+			var numCtx int
+			switch t := v.(type) {
+			case float64:
+				numCtx = int(t)
+			case int:
+				numCtx = t
+			case int64:
+				numCtx = int(t)
+			case json.Number:
+				if i, err := t.Int64(); err == nil {
+					numCtx = int(i)
+				}
+			}
+			if numCtx <= 1 {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "input after truncation exceeds maximum context length"})
+				return
+			}
+		}
+	}
+
 	var input []string
 
 	switch i := req.Input.(type) {
@@ -690,10 +713,15 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	if err := g.Wait(); err != nil {
 		var serr api.StatusError
 		if errors.As(err, &serr) {
-			c.AbortWithStatusJSON(serr.StatusCode, gin.H{"error": strings.TrimSpace(serr.ErrorMessage)})
-		} else {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+			c.AbortWithStatusJSON(serr.StatusCode, gin.H{
+				"error": strings.TrimSpace(serr.ErrorMessage),
+			})
+			return
 		}
+
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": strings.TrimSpace(err.Error()),
+		})
 		return
 	}
 

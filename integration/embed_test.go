@@ -233,7 +233,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 			},
 		},
 		{
-			name: "input after truncate error",
+			name: "input after truncate error with context length of 1",
 			request: api.EmbedRequest{
 				Model:    "all-minilm",
 				Input:    "why is the sky blue?",

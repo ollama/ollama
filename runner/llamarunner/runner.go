@@ -101,7 +101,7 @@ type NewSequenceParams struct {
 	truncate       bool
 }
 
-var errorInputTooLong = errors.New("the input length exceeds the context length")
+var errorInputTooLong = errors.New("input exceeds maximum context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -130,8 +130,42 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			return nil, errorInputTooLong
 		}
 
-		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+		// If the original prompt ended with an EOG token, add it back after truncation
+		lastIsEOG := false
+
+		eogToken := 0
+		if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
+			lastIsEOG = true
+			eogToken = inputs[len(inputs)-1].token
+		}
+
+		newInputs := []input{}
+
+		// For embeddings, truncate only at the front and keep first N tokens
+		if params.embedding {
+			newLimit := s.cache.numCtx
+			if s.model.AddBOSToken() {
+				newLimit--
+			}
+
+			if lastIsEOG {
+				newLimit--
+			}
+
+			if newLimit <= 0 {
+				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+
+			newInputs = inputs[:newLimit]
+		} else {
+			// Otherwise, truncate in the middle
+			newInputs = inputs[:params.numKeep]
+			newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+		}
+
+		if lastIsEOG {
+			newInputs = append(newInputs, input{token: eogToken})
+		}
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
@@ -150,9 +184,41 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 	}
 
+	// Compute prompt token count excluding special BOS/EOS and non-text inputs
+	countPromptTokensExcludingSpecial := func(m *llama.Model, ins []input) int {
+		// Count only text tokens
+		count := 0
+		firstTokenIdx := -1
+		lastTokenIdx := -1
+		for i := range ins {
+			if ins[i].embed == nil { // text token
+				if firstTokenIdx == -1 {
+					firstTokenIdx = i
+				}
+				lastTokenIdx = i
+				count++
+			}
+		}
+		if count == 0 {
+			return 0
+		}
+		// subtract BOS if model auto-adds it and the first element is a text token
+		if m.AddBOSToken() && firstTokenIdx >= 0 && ins[firstTokenIdx].embed == nil {
+			count--
+		}
+		// subtract EOS/EOG if the last text token is an end-of-generation token
+		if lastTokenIdx >= 0 && m.TokenIsEog(ins[lastTokenIdx].token) {
+			count--
+		}
+		if count < 0 {
+			return 0
+		}
+		return count
+	}
+
 	return &Sequence{
 		inputs:           inputs,
-		numPromptInputs:  len(inputs),
+		numPromptInputs:  countPromptTokensExcludingSpecial(s.model, inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
