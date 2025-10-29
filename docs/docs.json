@@ -59,6 +59,10 @@
     {
       "source": "/openai",
       "destination": "/api/openai"
+    },
+    {
+      "source": "/api/openai",
+      "destination": "/api/openai-compatibility"
     }
   ],
   "navigation": {
