@@ -139,7 +139,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			eogToken = inputs[len(inputs)-1].token
 		}
 
-		newInputs := []input{}
+		var newInputs []input
 
 		// For embeddings, truncate only at the front and keep first N tokens
 		if params.embedding {
