@@ -142,7 +142,10 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 
 	// This model is much more capable with a larger context, so set that
 	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
+	if !s.lowVRAM && slices.Contains([]string{
+		"gptoss", "gpt-oss",
+		"qwen3vl", "qwen3vlmoe",
+	}, model.Config.ModelFamily) {
 		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 

@@ -214,7 +214,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 		parts = []string{prompt}
 	}
 
-	postTokenize := false
 	for i, part := range parts {
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
@@ -257,11 +256,10 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 			mmStore.addMultimodal(imageEmbeddings)
 
 			inputs = append(inputs, &input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
-			postTokenize = true
 		}
 	}
 
-	if visionModel && postTokenize {
+	if visionModel {
 		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
