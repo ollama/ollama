@@ -201,18 +201,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 
 		var newInputs []*input.Input
-		if params.embedding {
-			newLimit := int(s.cache.numCtx)
-			if newLimit > len(inputs) {
-				newLimit = len(inputs)
-			}
-
-			if newLimit <= 0 {
-				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
-			}
-
-			newInputs = inputs[:newLimit]
-		} else {
+		if !params.embedding {
 			newInputs = inputs[:params.numKeep]
 			newInputs = append(newInputs, inputs[promptStart:]...)
 		}
@@ -222,26 +211,23 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// TODO(jessegross): Ingest cached history for grammar
-	// compute prompt token count excluding BOS/EOS and non-text inputs
-	countPromptTokensExcludingSpecial := func(tp model.TextProcessor, ins []*input.Input) int {
-		count := 0
-		for _, in := range ins {
-			if len(in.Multimodal) > 0 {
-				continue
-			}
-			if tp.Is(in.Token, model.SpecialBOS) || tp.Is(in.Token, model.SpecialEOS) {
-				continue
-			}
-			count++
+	// Compute prompt token count excluding BOS/EOS and non-text inputs
+	promptCount := 0
+	for _, in := range inputs {
+		if len(in.Multimodal) > 0 {
+			continue
 		}
-		return count
+		if s.model.(model.TextProcessor).Is(in.Token, model.SpecialBOS) || s.model.(model.TextProcessor).Is(in.Token, model.SpecialEOS) {
+			continue
+		}
+		promptCount++
 	}
 
 	return &Sequence{
 		ctxs:             ctxs,
 		mmStore:          mmStore,
 		inputs:           inputs,
-		numPromptInputs:  countPromptTokensExcludingSpecial(s.model.(model.TextProcessor), inputs),
+		numPromptInputs:  promptCount,
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
@@ -1014,10 +1000,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		truncate:  req.Truncate,
 	})
 
-	slog.Info("EMBEDDING LOGS LOOK HERE")
-	slog.Info("this is the sequence", "sequence", seq)
-
 	if err != nil {
+		// Error handling for truncation to prevent segmentation fault
 		if errors.Is(err, errorInputTooLong) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

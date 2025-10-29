@@ -185,40 +185,35 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// Compute prompt token count excluding special BOS/EOS and non-text inputs
-	countPromptTokensExcludingSpecial := func(m *llama.Model, ins []input) int {
-		// Count only text tokens
-		count := 0
-		firstTokenIdx := -1
-		lastTokenIdx := -1
-		for i := range ins {
-			if ins[i].embed == nil { // text token
-				if firstTokenIdx == -1 {
-					firstTokenIdx = i
-				}
-				lastTokenIdx = i
-				count++
+	promptCount := 0
+	firstTextIdx := -1
+	lastTextIdx := -1
+	for i := range inputs {
+		if inputs[i].embed == nil {
+			if firstTextIdx == -1 {
+				firstTextIdx = i
 			}
+			lastTextIdx = i
+			promptCount++
 		}
-		if count == 0 {
-			return 0
-		}
+	}
+	if promptCount > 0 {
 		// subtract BOS if model auto-adds it and the first element is a text token
-		if m.AddBOSToken() && firstTokenIdx >= 0 && ins[firstTokenIdx].embed == nil {
-			count--
+		if s.model.AddBOSToken() && firstTextIdx >= 0 {
+			promptCount--
 		}
 		// subtract EOS/EOG if the last text token is an end-of-generation token
-		if lastTokenIdx >= 0 && m.TokenIsEog(ins[lastTokenIdx].token) {
-			count--
+		if lastTextIdx >= 0 && s.model.TokenIsEog(inputs[lastTextIdx].token) {
+			promptCount--
 		}
-		if count < 0 {
-			return 0
+		if promptCount < 0 {
+			promptCount = 0
 		}
-		return count
 	}
 
 	return &Sequence{
 		inputs:           inputs,
-		numPromptInputs:  countPromptTokensExcludingSpecial(s.model, inputs),
+		numPromptInputs:  promptCount,
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
