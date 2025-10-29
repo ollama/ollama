@@ -130,7 +130,7 @@
           {
             "group": "API Reference",
             "pages": [
-              "/api/index",
+              "/api",
               "/api/authentication",
               "/api/streaming",
               "/api/usage",
