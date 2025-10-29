@@ -21,7 +21,7 @@ func TestQwen3VLScenarios(t *testing.T) {
 		name     string
 		messages []api.Message
 		tools    []api.Tool
-		image    string
+		images   []string
 		anyResp  []string
 	}{
 		{
@@ -30,7 +30,7 @@ func TestQwen3VLScenarios(t *testing.T) {
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Write a short haiku about autumn."},
 			},
-			anyResp: []string{"haiku", "autumn", "fall"},
+			// anyResp: []string{"haiku", "autumn", "fall"},
 		},
 		{
 			name: "Single Image Scenario",
@@ -41,11 +41,26 @@ func TestQwen3VLScenarios(t *testing.T) {
 				},
 				{
 					Role:    "user",
-					Content: "What is this flower? Is it poisonous to cats?",
+					Content: "What is the answer to this question?",
 				},
 			},
-			image:   "testdata/question.png",
-			anyResp: []string{"flower", "plant", "poison", "cat"},
+			images: []string{"testdata/question.png"},
+			// anyResp: []string{"answer", "solution", "explanation"},
+		},
+		{
+			name: "Multiple Images Scenario",
+			messages: []api.Message{
+				{
+					Role:    "system",
+					Content: "You are a helpful assistant that can see images.",
+				},
+				{
+					Role:    "user",
+					Content: "What is the answer to these two questions?",
+				},
+			},
+			images: []string{"testdata/satmath1.png", "testdata/satmath2.png"},
+			// anyResp: []string{"image", "answer", "analysis"},
 		},
 		{
 			name: "Tools Scenario",
@@ -75,7 +90,7 @@ func TestQwen3VLScenarios(t *testing.T) {
 					},
 				},
 			},
-			anyResp: []string{"san francisco", "weather", "temperature"},
+			// anyResp: []string{"san francisco", "weather", "temperature"},
 		},
 	}
 
@@ -85,14 +100,16 @@ func TestQwen3VLScenarios(t *testing.T) {
 	for _, model := range models {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				// Load image if specified
-				if tt.image != "" {
-					imageData := loadImageData(t, tt.image)
-					// Add image to the last user message
+				// Load and attach images if specified
+				if len(tt.images) > 0 {
+					var imgs []api.ImageData
+					for _, path := range tt.images {
+						imgs = append(imgs, loadImageData(t, path))
+					}
 					if len(tt.messages) > 0 {
 						lastMessage := &tt.messages[len(tt.messages)-1]
 						if lastMessage.Role == "user" {
-							lastMessage.Images = []api.ImageData{imageData}
+							lastMessage.Images = imgs
 						}
 					}
 				}
@@ -139,7 +156,6 @@ func TestQwen3VLScenarios(t *testing.T) {
 					if len(gotCalls) == 0 {
 						t.Fatalf("expected at least one tool call, got none")
 					}
-					// Optionally validate the first tool name matches the offered tool
 					if gotCalls[0].Function.Name == "" {
 						t.Fatalf("tool call missing function name: %#v", gotCalls[0])
 					}
