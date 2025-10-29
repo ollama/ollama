@@ -15,7 +15,6 @@ import (
 const (
 	CollectingThinkingContent qwenParserState = iota
 	CollectingContent
-	ToolStartedEatingWhitespace
 	CollectingToolContent
 	ThinkingDoneEatingWhitespace
 )
@@ -144,15 +143,11 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	case CollectingContent:
 		if strings.Contains(p.buffer.String(), toolOpenTag) {
 			// events = emitContentBeforeTag(p, events, toolOpenTag)
-			before, after := splitAtTag(p, toolOpenTag, false)
+			before, _ := splitAtTag(p, toolOpenTag, false)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
-			if after != "" {
-				p.state = ToolStartedEatingWhitespace
-			} else {
-				p.state = CollectingToolContent
-			}
+			p.state = CollectingToolContent
 			return events, true
 		} else if overlapLen := overlap(p.buffer.String(), toolOpenTag); overlapLen > 0 {
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
@@ -180,8 +175,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			}
 			return events, false
 		}
-	case ToolStartedEatingWhitespace:
-		return p.eatLeadingWhitespaceAndTransitionTo(CollectingToolContent)
 	case CollectingToolContent:
 		if strings.Contains(p.buffer.String(), toolCloseTag) {
 			split := strings.SplitN(p.buffer.String(), toolCloseTag, 2)
