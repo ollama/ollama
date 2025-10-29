@@ -58,7 +58,7 @@
   "redirects": [
     {
       "source": "/openai",
-      "destination": "/api/openai"
+      "destination": "/api/openai-compatibility"
     },
     {
       "source": "/api/openai",
@@ -130,7 +130,7 @@
           {
             "group": "API Reference",
             "pages": [
-              "/api",
+              "/api/index",
               "/api/authentication",
               "/api/streaming",
               "/api/usage",
