@@ -352,15 +352,6 @@ func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgre
 	})
 }
 
-// List lists models that are available locally.
-func (c *Client) List(ctx context.Context) (*ListResponse, error) {
-	var lr ListResponse
-	if err := c.do(ctx, http.MethodGet, "/api/tags", nil, &lr); err != nil {
-		return nil, err
-	}
-	return &lr, nil
-}
-
 // ListRunning lists running models.
 func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	var lr ProcessResponse

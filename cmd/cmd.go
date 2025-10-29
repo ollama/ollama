@@ -620,46 +620,6 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	models, err := client.List(cmd.Context())
-	if err != nil {
-		return err
-	}
-
-	var data [][]string
-
-	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
-			var size string
-			if m.RemoteModel != "" {
-				size = "-"
-			} else {
-				size = format.HumanBytes(m.Size)
-			}
-
-			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
-		}
-	}
-
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetHeaderLine(false)
-	table.SetBorder(false)
-	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("    ")
-	table.AppendBulk(data)
-	table.Render()
-
-	return nil
-}
-
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1728,14 +1688,6 @@ func NewCLI() *cobra.Command {
 		RunE:    SignoutHandler,
 	}
 
-	listCmd := &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
-		Short:   "List models",
-		PreRunE: checkServerHeartbeat,
-		RunE:    ListHandler,
-	}
-
 	psCmd := &cobra.Command{
 		Use:     "ps",
 		Short:   "List running models",
@@ -1781,7 +1733,6 @@ func NewCLI() *cobra.Command {
 		stopCmd,
 		pullCmd,
 		pushCmd,
-		listCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,
@@ -1824,7 +1775,7 @@ func NewCLI() *cobra.Command {
 		pushCmd,
 		signinCmd,
 		signoutCmd,
-		listCmd,
+		cmdList(),
 		psCmd,
 		copyCmd,
 		deleteCmd,

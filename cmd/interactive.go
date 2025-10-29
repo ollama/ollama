@@ -186,7 +186,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
-			if err := ListHandler(cmd, args[1:]); err != nil {
+			if err := listHandler(cmd, args[1:]); err != nil {
 				return err
 			}
 		case strings.HasPrefix(line, "/load"):
