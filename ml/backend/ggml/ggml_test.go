@@ -305,3 +305,73 @@ func TestMulmat(t *testing.T) {
 		})
 	}
 }
+
+func TestPermute(t *testing.T) {
+	cases := []struct {
+		name  string
+		input func(ml.Context) ml.Tensor
+		shape []int
+		want  func(ml.Context) ml.Tensor
+	}{
+		{
+			name: "transpose",
+			input: func(ctx ml.Context) ml.Tensor {
+				return ctx.Arange(0, 3*2, 1, ml.DTypeF32).Reshape(ctx, 3, 2)
+			},
+			shape: []int{1, 0, 2, 3},
+			want: func(ctx ml.Context) ml.Tensor {
+				return ctx.FromFloats([]float32{
+					0, 3,
+					1, 4,
+					2, 5,
+				}, 2, 3)
+			},
+		},
+		{
+			name: "transpose fill dims",
+			input: func(ctx ml.Context) ml.Tensor {
+				return ctx.Arange(0, 3*2, 1, ml.DTypeF32).Reshape(ctx, 3, 2)
+			},
+			shape: []int{1, 0},
+			want: func(ctx ml.Context) ml.Tensor {
+				return ctx.FromFloats([]float32{
+					0, 3,
+					1, 4,
+					2, 5,
+				}, 2, 3)
+			},
+		},
+		{
+			name: "permute 3d",
+			input: func(ctx ml.Context) ml.Tensor {
+				return ctx.Arange(0, 5*3*2, 1, ml.DTypeF32).Reshape(ctx, 2, 3, 5)
+			},
+			shape: []int{2, 0, 1, 3},
+			want: func(ctx ml.Context) ml.Tensor {
+				return ctx.FromFloats([]float32{
+					0, 2, 4,
+					6, 8, 10,
+					12, 14, 16,
+					18, 20, 22,
+					24, 26, 28,
+
+					1, 3, 5,
+					7, 9, 11,
+					13, 15, 17,
+					19, 21, 23,
+					25, 27, 29,
+				}, 3, 5, 2)
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := setup(t)
+			got := tt.input(ctx).Permute(ctx, tt.shape...).Contiguous(ctx)
+			if diff := cmp.Diff(tt.want(ctx), got, EquateTensors(ctx)); diff != "" {
+				t.Errorf("Permute() result mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
