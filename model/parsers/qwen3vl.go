@@ -17,7 +17,6 @@ const (
 	CollectingContent
 	ToolStartedEatingWhitespace
 	CollectingToolContent
-	// ThinkingStartedEatingWhitespace
 	ThinkingDoneEatingWhitespace
 )
 
@@ -238,8 +237,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			}
 			return events, false
 		}
-	// case ThinkingStartedEatingWhitespace:
-	// 	return p.eatLeadingWhitespaceAndTransitionTo(CollectingThinkingContent)
 	case ThinkingDoneEatingWhitespace:
 		return p.eatLeadingWhitespaceAndTransitionTo(CollectingContent)
 	default:
