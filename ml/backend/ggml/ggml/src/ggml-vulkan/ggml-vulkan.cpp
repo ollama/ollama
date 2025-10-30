@@ -11609,27 +11609,6 @@ static std::string ggml_vk_get_device_id(int device) {
     return std::string(id);
 }
 
-static std::string ggml_vk_get_device_luid(int device) {
-    // DXCore and DXGI libraries can query LUIDs on Windows
-    ggml_vk_instance_init();
-
-    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
-
-    vk::PhysicalDeviceProperties2 props;
-    vk::PhysicalDeviceIDProperties deviceIDProps;
-    props.pNext = &deviceIDProps;
-    devices[device].getProperties2(&props);
-
-    const auto& luid = deviceIDProps.deviceLUID;
-    char luid_str[32]; // "0x" + 16 hex digits + null terminator = 19 chars
-    snprintf(luid_str, sizeof(luid_str), // high part + low part
-        "0x%02x%02x%02x%02x%02x%02x%02x%02x",
-        luid[7], luid[6], luid[5], luid[4],
-        luid[3], luid[2], luid[1], luid[0]
-    );
-    return std::string(luid_str);
-}
-
 // backend interface
 
 #define UNUSED GGML_UNUSED
@@ -12442,12 +12421,6 @@ std::string ggml_backend_vk_get_device_id(int device) {
     return ggml_vk_get_device_id(dev_idx);
 }
 
-std::string ggml_backend_vk_get_device_luid(int device) {
-    GGML_ASSERT(device < (int) vk_instance.device_indices.size());
-    int dev_idx = vk_instance.device_indices[device];
-    return ggml_vk_get_device_luid(dev_idx);
-}
-
 //////////////////////////
 
 struct ggml_backend_vk_device_context {
@@ -13131,14 +13104,11 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
                 ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->id = ggml_backend_vk_get_device_id(i);
-                ctx->luid = ggml_backend_vk_get_device_luid(i);
-                GGML_LOG_DEBUG("Vulkan device %d: %s, luid: %s\n", i, ctx->name.c_str(), ctx->luid.c_str());
                 devices.push_back(new ggml_backend_device {
                     /* .iface   = */ ggml_backend_vk_device_i,
                     /* .reg     = */ reg,
                     /* .context = */ ctx,
                 });
-
                 // Gather additional information about the device
                 int dev_idx = vk_instance.device_indices[i];
                 vk::PhysicalDeviceProperties props1;
@@ -13162,6 +13132,15 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                     }
                 }
                 ctx->uuid = oss.str();
+                const auto& luid = device_id_props.deviceLUID;
+                char luid_str[32]; // "0x" + 16 hex digits + null terminator = 19 chars
+                snprintf(luid_str, sizeof(luid_str), // high part + low part
+                    "0x%02x%02x%02x%02x%02x%02x%02x%02x",
+                    luid[7], luid[6], luid[5], luid[4],
+                    luid[3], luid[2], luid[1], luid[0]
+                );
+                ctx->luid = std::string(luid_str);
+                GGML_LOG_DEBUG("Vulkan device %d: %s, luid: %s\n", i, ctx->name.c_str(), ctx->luid.c_str());
                 ctx->pci_bus_id = pci_bus_props.pciBus;
                 ctx->pci_device_id = pci_bus_props.pciDevice;
                 ctx->pci_domain_id = pci_bus_props.pciDomain;
