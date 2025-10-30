@@ -96,8 +96,8 @@ func TestAllMiniLMEmbed(t *testing.T) {
 		t.Fatalf("expected %v, got %v (similarity: %f)", expected[0:5], res.Embeddings[0][0:5], sim)
 	}
 
-	if res.PromptEvalCount != 6 {
-		t.Fatalf("expected 6 prompt tokens, got %d", res.PromptEvalCount)
+	if res.PromptEvalCount != 8 {
+		t.Fatalf("expected 8 prompt tokens, got %d", res.PromptEvalCount)
 	}
 }
 
@@ -143,8 +143,8 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 		t.Fatalf("expected %v, got %v (similarity: %f)", expected[1][0:5], res.Embeddings[1][0:5], sim)
 	}
 
-	if res.PromptEvalCount != 12 {
-		t.Fatalf("expected 12 prompt tokens, got %d", res.PromptEvalCount)
+	if res.PromptEvalCount != 16 {
+		t.Fatalf("expected 16 prompt tokens, got %d", res.PromptEvalCount)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 	cases := []struct {
 		name    string
 		request api.EmbedRequest
-		check   func(*api.EmbedResponse, error)
+		check   func(*testing.T, *api.EmbedResponse, error)
 	}{
 		{
 			name: "target truncation",
@@ -175,7 +175,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Model: "all-minilm",
 				Input: "why",
 			},
-			check: func(got *api.EmbedResponse, err error) {
+			check: func(t *testing.T, got *api.EmbedResponse, err error) {
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -192,10 +192,11 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Input:   "why is the sky blue?",
 				Options: map[string]any{"num_ctx": 3},
 			},
-			check: func(got *api.EmbedResponse, err error) {
+			check: func(t *testing.T, got *api.EmbedResponse, err error) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Logf("PromptEvalCount: want=%d got=%d", want.PromptEvalCount, got.PromptEvalCount)
 				if diff := cmp.Diff(want.Embeddings[0], got.Embeddings[0]); diff != "" {
 					t.Errorf("embedding mismatch (-want +got):\n%s", diff)
 				}
@@ -209,10 +210,11 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Truncate: &truncTrue,
 				Options:  map[string]any{"num_ctx": 3},
 			},
-			check: func(got *api.EmbedResponse, err error) {
+			check: func(t *testing.T, got *api.EmbedResponse, err error) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Logf("PromptEvalCount: want=%d got=%d", want.PromptEvalCount, got.PromptEvalCount)
 				if diff := cmp.Diff(want.Embeddings[0], got.Embeddings[0]); diff != "" {
 					t.Errorf("embedding mismatch (-want +got):\n%s", diff)
 				}
@@ -226,7 +228,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Truncate: &truncFalse,
 				Options:  map[string]any{"num_ctx": 3},
 			},
-			check: func(res *api.EmbedResponse, err error) {
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
 				if err.Error() != "input exceeds maximum context length" {
 					t.Fatalf("expected truncation error, got: %v", err)
 				}
@@ -240,7 +242,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Truncate: &truncTrue,
 				Options:  map[string]any{"num_ctx": 1},
 			},
-			check: func(res *api.EmbedResponse, err error) {
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
 				if err.Error() != "input after truncation exceeds maximum context length" {
 					t.Fatalf("expected truncation error, got: %v", err)
 				}
@@ -254,7 +256,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Truncate: &truncTrue,
 				Options:  map[string]any{"num_ctx": 0},
 			},
-			check: func(res *api.EmbedResponse, err error) {
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
 				if err.Error() != "input after truncation exceeds maximum context length" {
 					t.Fatalf("expected truncation error, got: %v", err)
 				}
@@ -267,7 +269,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Input:   "why is the sky blue? Why is the sky blue? hi there my",
 				Options: map[string]any{"num_ctx": 16},
 			},
-			check: func(res *api.EmbedResponse, err error) {
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -277,7 +279,8 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 
 	for _, req := range cases {
 		t.Run(req.name, func(t *testing.T) {
-			req.check(embedTestHelper(ctx, client, t, req.request))
+			resp, err := embedTestHelper(ctx, client, t, req.request)
+			req.check(t, resp, err)
 		})
 	}
 }

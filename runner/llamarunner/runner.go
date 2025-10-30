@@ -132,17 +132,21 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			return nil, errorInputTooLong
 		}
 
-		// If the original prompt ended with an EOG token, add it back after truncation
-		lastIsEOG := false
-
 		var newInputs []input
 
-		eogToken := 0
-		if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
-			eogToken = inputs[len(inputs)-1].token
-		}
-
+		// TODO: EOG token handling should be moved to tokenizer
 		if params.embedding {
+
+			// If the original prompt ended with an EOG token, add it back after truncation
+			lastIsEOG := false
+
+			eogToken := 0
+
+			if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
+				eogToken = inputs[len(inputs)-1].token
+			}
+
+			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
 			newLimit := s.cache.numCtx - 1
 
 			if s.model.TokenIsEog(inputs[len(inputs)-1].token) && !s.model.TokenIsEog(inputs[newLimit-1].token) {
@@ -183,32 +187,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 	}
 
-	// Compute prompt token count excluding special BOS/EOS and non-text inputs
-	promptCount := 0
-	firstTextIdx := -1
-	lastTextIdx := -1
-	for i := range inputs {
-		if inputs[i].embed == nil {
-			if firstTextIdx == -1 {
-				firstTextIdx = i
-			}
-			lastTextIdx = i
-			promptCount++
-		}
-	}
-	if promptCount > 0 {
-		// subtract BOS if model auto-adds it and the first element is a text token
-		if s.model.AddBOSToken() && firstTextIdx >= 0 {
-			promptCount--
-		}
-		// subtract EOS/EOG if the last text token is an end-of-generation token
-		if lastTextIdx >= 0 && s.model.TokenIsEog(inputs[lastTextIdx].token) {
-			promptCount--
-		}
-		if promptCount < 0 {
-			promptCount = 0
-		}
-	}
+	promptCount := len(inputs)
 
 	return &Sequence{
 		inputs:           inputs,

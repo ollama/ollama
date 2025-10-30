@@ -138,15 +138,21 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		discard := int32(len(inputs)) - s.cache.numCtx
 
 		var newInputs []*input.Input
-		var lastIsEOG bool
-
-		// Track if last token is EOG
-		eogToken := int32(0)
-		if len(inputs) > 0 && s.model.(model.TextProcessor).Is(inputs[len(inputs)-1].Token, model.SpecialEOS) {
-			eogToken = inputs[len(inputs)-1].Token
-		}
 
 		if params.embedding {
+
+			var lastIsEOG bool
+
+			eogToken := int32(0)
+			if len(inputs) > 0 {
+				if textProcessor, ok := s.model.(model.TextProcessor); ok {
+					lastToken := inputs[len(inputs)-1]
+					if textProcessor.Is(lastToken.Token, model.SpecialEOS) {
+						eogToken = lastToken.Token
+					}
+				}
+			}
+
 			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
 			newLimit := s.cache.numCtx - 1
 
@@ -204,32 +210,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// TODO(jessegross): Ingest cached history for grammar
-	// Compute prompt token count excluding special BOS/EOS and non-text inputs
-	promptCount := 0
-	firstTextIdx := -1
-	lastTextIdx := -1
-	for i := range inputs {
-		if len(inputs[i].Multimodal) == 0 {
-			if firstTextIdx == -1 {
-				firstTextIdx = i
-			}
-			lastTextIdx = i
-			promptCount++
-		}
-	}
-	if promptCount > 0 {
-		// subtract BOS if model auto-adds it and the first element is a text token
-		if s.model.Backend().Config().Bool("add_bos_token", true) && firstTextIdx >= 0 {
-			promptCount--
-		}
-		// subtract EOS/EOG if the last text token is an end-of-generation token
-		if lastTextIdx >= 0 && s.model.(model.TextProcessor).Is(inputs[lastTextIdx].Token, model.SpecialEOS) {
-			promptCount--
-		}
-		if promptCount < 0 {
-			promptCount = 0
-		}
-	}
+	promptCount := len(inputs)
 
 	return &Sequence{
 		ctxs:             ctxs,
