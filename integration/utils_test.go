@@ -260,6 +260,22 @@ var (
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
 	}
+	libraryToolsModels = []string{
+		"qwen3-vl",
+		"gpt-oss:20b",
+		"gpt-oss:120b",
+		"qwen3",
+		"llama3.1",
+		"llama3.2",
+		"mistral",
+		"qwen2.5",
+		"qwen2",
+		"mistral-nemo",
+		"mistral-small",
+		"mixtral:8x22b",
+		"qwq",
+		"granite3.3",
+	}
 
 	blueSkyPrompt   = "why is the sky blue? Be brief but factual in your reply"
 	blueSkyExpected = []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength", "interact"}
