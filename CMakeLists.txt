@@ -14,6 +14,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+
+set(CMAKE_SYSTEM_NAME Linux)
+
+if (GGML_TSAVORITE AND ${GGML_TSAVORITE_TARGET} STREQUAL fpga)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+# Set cross-compilers
+set(CMAKE_C_COMPILER /proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-gcc)
+set(CMAKE_CXX_COMPILER /proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-g++)
+
+# Set paths for finding libraries and includes
+set(CMAKE_FIND_ROOT_PATH /proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/)
+endif()
+
 set(GGML_BUILD ON)
 set(GGML_SHARED ON)
 set(GGML_CCACHE ON)
@@ -51,6 +64,56 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu/amx)
+if (GGML_TSAVORITE)
+    if  (NOT DEFINED GGML_TSAVORITE_TARGET)
+        set(GGML_TSAVORITE_TARGET "posix")
+    endif()
+    if (NOT ${GGML_TSAVORITE_TARGET} STREQUAL fpga)
+        set(GGML_TSAVORITE_TARGET "posix")
+    endif()
+
+    if (NOT DEFINED MLIR_COMPILER_DIR)
+        if (NOT DEFINED $ENV{MLIR_SDK_VERSION})
+            set (MLIR_COMPILER_DIR /proj/rel/sw/sdk-r.0.2.0/compiler)
+            message("MLIR_SDK_VERSION not set defaulting to ${MLIR_COMPILER_DIR}")
+        else()
+            set (MLIR_COMPILER_DIR $ENV{MLIR_SDK_VERSION}/compiler)
+        endif()
+    endif()
+
+    if (NOT DEFINED RUNTIME_DIR)
+        if (NOT DEFINED $ENV{MLIR_SDK_VERSION})
+            set (RUNTIME_DIR /proj/rel/sw/sdk-r.0.2.0/${GGML_TSAVORITE_TARGET}/runtime)
+            message("MLIR_SDK_VERSION not set defaulting to ${RUNTIME_DIR}")
+        else()
+            set (RUNTIME_DIR $ENV{MLIR_SDK_VERSION}/${GGML_TSAVORITE_TARGET}/runtime)
+        endif()
+    endif()
+
+    if (NOT DEFINED GGML_TSI_KERNEL_DIR)
+       set (GGML_TSI_KERNEL_DIR ${CMAKE_SOURCE_DIR}/ggml-tsi-kernel/${GGML_TSAVORITE_TARGET})
+    endif()
+
+
+    if (${GGML_TSAVORITE_TARGET} STREQUAL fpga)
+        set(CMAKE_CROSSCOMPILING ON)
+        set(ARCH_FLAGS -march=armv8-a)
+        file(GLOB TLIBS  "${RUNTIME_DIR}/lib/*.so" "${GGML_TSI_KERNEL_DIR}/host/*.o" "${RUNTIME_DIR}/../utils/lib/TsavRTShimCAPI.cpp.o")
+        message("Setting target as fpga")
+    elseif (${GGML_TSAVORITE_TARGET} STREQUAL "posix")
+        file(GLOB TLIBS  "${RUNTIME_DIR}/lib/*.so" "${GGML_TSI_KERNEL_DIR}/host/*.o" "${MLIR_COMPILER_DIR}/lib/libFFMDeviceShim.so" "${MLIR_COMPILER_DIR}/lib/libTsavRTPosixShimCAPI.so")
+        message("Setting target as posix for tsavorite")
+    endif()
+
+    set(GGML_TSAVORITE_TARGET "${GGML_TSAVORITE_TARGET}" CACHE STRING "Target for tsavorite")
+    set (TSAVORITE_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/ggml/src/ggml-tsavorite/include)
+
+    include_directories(${TSAVORITE_INCLUDE_DIR})
+    include_directories(${MLIR_COMPILER_DIR}/include/runtime/shim)
+    include_directories(${RUNTIME_DIR}/include)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-tsavorite/include)
+    message("tsavorite backend is enabled")
+endif()
 
 add_compile_definitions(NDEBUG GGML_VERSION=0x0 GGML_COMMIT=0x0)
 
@@ -58,6 +121,7 @@ set(GGML_CPU ON)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 set_property(TARGET ggml PROPERTY EXCLUDE_FROM_ALL TRUE)
 
+if (NOT GGML_TSAVORITE AND ${GGML_TSAVORITE_TARGET} STREQUAL fpga)
 get_target_property(CPU_VARIANTS ggml-cpu MANUALLY_ADDED_DEPENDENCIES)
 if(NOT CPU_VARIANTS)
     set(CPU_VARIANTS "ggml-cpu")
@@ -70,6 +134,7 @@ install(TARGETS ggml-base ${CPU_VARIANTS}
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
 )
+endif()
 
 check_language(CUDA)
 if(CMAKE_CUDA_COMPILER)

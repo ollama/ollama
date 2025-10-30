@@ -1,0 +1,3752 @@
+diff --git a/common/json-schema-to-grammar.cpp b/common/json-schema-to-grammar.cpp
+index dd9b51a9..d88f4320 100644
+--- a/common/json-schema-to-grammar.cpp
++++ b/common/json-schema-to-grammar.cpp
+@@ -308,7 +308,7 @@ private:
+     friend std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options);
+     std::function<json(const std::string &)> _fetch_json;
+     bool _dotall;
+-    std::map<std::string, std::string> _rules;
++    std::unordered_map<std::string, std::string> _rules;
+     std::unordered_map<std::string, json> _refs;
+     std::unordered_set<std::string> _refs_being_resolved;
+     std::vector<std::string> _errors;
+diff --git a/ggml/include/ggml-alloc.h b/ggml/include/ggml-alloc.h
+index 2cb150fd..7ab3f019 100644
+--- a/ggml/include/ggml-alloc.h
++++ b/ggml/include/ggml-alloc.h
+@@ -65,6 +65,7 @@ GGML_API bool ggml_gallocr_reserve_n(
+ GGML_API bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph);
+ 
+ GGML_API size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id);
++GGML_API size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id);
+ 
+ // Utils
+ // Create a buffer and allocate all the tensors in a ggml_context
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index f1b74078..094fc3c8 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -158,6 +158,7 @@ extern "C" {
+         const char * description;
+         // device free memory in bytes
+         size_t memory_free;
++        const char * id;
+         // device total memory in bytes
+         size_t memory_total;
+         // device type
+@@ -168,6 +169,17 @@ extern "C" {
+         const char * device_id;
+         // device capabilities
+         struct ggml_backend_dev_caps caps;
++        int driver_major;
++        int driver_minor;
++        int compute_major;
++        int compute_minor;
++        int integrated;
++        int pci_bus_id;
++        int pci_device_id;
++        int pci_domain_id;
++        const char *library;
++        // number with which the devices are accessed (Vulkan)
++        const char *numeric_id;
+     };
+ 
+     GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
+@@ -177,6 +189,7 @@ extern "C" {
+     GGML_API void                          ggml_backend_dev_get_props(ggml_backend_dev_t device, struct ggml_backend_dev_props * props);
+     GGML_API ggml_backend_reg_t            ggml_backend_dev_backend_reg(ggml_backend_dev_t device);
+     GGML_API ggml_backend_t                ggml_backend_dev_init(ggml_backend_dev_t device, const char * params);
++    GGML_API void                          ggml_backend_dev_reset(ggml_backend_dev_t device);
+     GGML_API ggml_backend_buffer_type_t    ggml_backend_dev_buffer_type(ggml_backend_dev_t device);
+     GGML_API ggml_backend_buffer_type_t    ggml_backend_dev_host_buffer_type(ggml_backend_dev_t device);
+     GGML_API ggml_backend_buffer_t         ggml_backend_dev_buffer_from_host_ptr(ggml_backend_dev_t device, void * ptr, size_t size, size_t max_tensor_size);
+@@ -304,6 +317,7 @@ extern "C" {
+ 
+     // Initialize a backend scheduler, backends with low index are given priority over backends with high index
+     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
++    GGML_API ggml_backend_sched_t ggml_backend_sched_new_ext(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload, bool alloc_buffers);
+     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
+ 
+     // Initialize backend buffers from a measure graph
+@@ -318,6 +332,7 @@ extern "C" {
+ 
+     GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);
+     GGML_API size_t                     ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
++    GGML_API size_t                     ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
+ 
+     GGML_API void                 ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend);
+     GGML_API ggml_backend_t       ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node);
+diff --git a/ggml/include/gguf.h b/ggml/include/gguf.h
+index 79ee2020..3efb22f0 100644
+--- a/ggml/include/gguf.h
++++ b/ggml/include/gguf.h
+@@ -114,6 +114,7 @@ extern "C" {
+     // get raw pointer to the first element of the array with the given key_id
+     // for bool arrays, note that they are always stored as int8 on all platforms (usually this makes no difference)
+     GGML_API const void * gguf_get_arr_data(const struct gguf_context * ctx, int64_t key_id);
++    GGML_API size_t       gguf_get_arr_data_n(const struct gguf_context * ctx, int64_t key_id);
+ 
+     // get ith C string from array with given key_id
+     GGML_API const char * gguf_get_arr_str (const struct gguf_context * ctx, int64_t key_id, size_t i);
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 31d321bc..30f2958b 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -209,6 +209,8 @@ add_library(ggml-base
+             ggml-threading.h
+             ggml-quants.c
+             ggml-quants.h
++            mem_hip.cpp
++            mem_nvml.cpp
+             gguf.cpp)
+ 
+ target_include_directories(ggml-base PRIVATE .)
+@@ -291,8 +293,8 @@ function(ggml_add_cpu_backend_variant tag_name)
+         foreach (feat NATIVE
+                       SSE42
+                       AVX AVX2 BMI2 AVX_VNNI FMA F16C
+-                      AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16
+-                      AMX_TILE AMX_INT8 AMX_BF16)
++                      AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
++		      #AMX_TILE AMX_INT8 AMX_BF16)
+             set(GGML_${feat} OFF)
+         endforeach()
+ 
+@@ -314,6 +316,7 @@ function(ggml_add_cpu_backend_variant tag_name)
+     endif()
+ 
+     ggml_add_cpu_backend_variant_impl(${tag_name})
++    add_dependencies(ggml-cpu ggml-cpu-${tag_name})
+ endfunction()
+ 
+ ggml_add_backend(CPU)
+@@ -324,6 +327,7 @@ if (GGML_CPU_ALL_VARIANTS)
+     elseif (GGML_CPU_ARM_ARCH)
+         message(FATAL_ERROR "Cannot use both GGML_CPU_ARM_ARCH and GGML_CPU_ALL_VARIANTS")
+     endif()
++    add_custom_target(ggml-cpu)
+     if (GGML_SYSTEM_ARCH STREQUAL "x86")
+         ggml_add_cpu_backend_variant(x64)
+         ggml_add_cpu_backend_variant(sse42        SSE42)
+@@ -331,11 +335,7 @@ if (GGML_CPU_ALL_VARIANTS)
+         ggml_add_cpu_backend_variant(haswell      SSE42 AVX F16C AVX2 BMI2 FMA)
+         ggml_add_cpu_backend_variant(skylakex     SSE42 AVX F16C AVX2 BMI2 FMA AVX512)
+         ggml_add_cpu_backend_variant(icelake      SSE42 AVX F16C AVX2 BMI2 FMA AVX512 AVX512_VBMI AVX512_VNNI)
+-        ggml_add_cpu_backend_variant(alderlake    SSE42 AVX F16C AVX2 BMI2 FMA AVX_VNNI)
+-        if (NOT MSVC)
+-            # MSVC doesn't support AMX
+-            ggml_add_cpu_backend_variant(sapphirerapids SSE42 AVX F16C AVX2 BMI2 FMA AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
+-        endif()
++	#ggml_add_cpu_backend_variant(alderlake    SSE42 AVX F16C AVX2 BMI2 FMA AVX_VNNI)
+     elseif(GGML_SYSTEM_ARCH STREQUAL "ARM")
+         if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+             # Many of these features are optional so we build versions with popular
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index 91aff205..bde0059a 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -493,6 +493,7 @@ struct node_alloc {
+ struct ggml_gallocr {
+     ggml_backend_buffer_type_t * bufts; // [n_buffers]
+     struct vbuffer ** buffers; // [n_buffers]
++    size_t *buffer_sizes; // [n_buffers]
+     struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
+     int n_buffers;
+ 
+@@ -516,6 +517,9 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
+     galloc->buffers = calloc(n_bufs, sizeof(struct vbuffer *));
+     GGML_ASSERT(galloc->buffers != NULL);
+ 
++    galloc->buffer_sizes = calloc(n_bufs, sizeof(size_t));
++    GGML_ASSERT(galloc->buffer_sizes != NULL);
++
+     galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
+     GGML_ASSERT(galloc->buf_tallocs != NULL);
+ 
+@@ -583,6 +587,7 @@ void ggml_gallocr_free(ggml_gallocr_t galloc) {
+     ggml_hash_set_free(&galloc->hash_set);
+     free(galloc->hash_values);
+     free(galloc->bufts);
++    free(galloc->buffer_sizes);
+     free(galloc->buffers);
+     free(galloc->buf_tallocs);
+     free(galloc->node_allocs);
+@@ -898,6 +903,8 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
+         }
+     }
+ 
++    bool success = true;
++
+     // reallocate buffers if needed
+     for (int i = 0; i < galloc->n_buffers; i++) {
+         // if the buffer type is used multiple times, we reuse the same buffer
+@@ -927,14 +934,19 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
+ 
+             ggml_vbuffer_free(galloc->buffers[i]);
+             galloc->buffers[i] = ggml_vbuffer_alloc(galloc->bufts[i], galloc->buf_tallocs[i], GGML_BACKEND_BUFFER_USAGE_COMPUTE);
+-            if (galloc->buffers[i] == NULL) {
++            if (galloc->buffers[i]) {
++                galloc->buffer_sizes[i] = ggml_vbuffer_size(galloc->buffers[i]);
++            } else {
+                 GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), new_size);
+-                return false;
++                galloc->buffer_sizes[i] = new_size;
++                success = false;
+             }
++        } else {
++            galloc->buffer_sizes[i] = ggml_vbuffer_size(galloc->buffers[i]);
+         }
+     }
+ 
+-    return true;
++    return success;
+ }
+ 
+ bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
+@@ -1089,6 +1101,22 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
+     return ggml_vbuffer_size(galloc->buffers[buffer_id]);
+ }
+ 
++size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
++    GGML_ASSERT(buffer_id >= 0 && buffer_id < galloc->n_buffers);
++
++    for (int i = 0; i < buffer_id; i++) {
++        if (galloc->buf_tallocs[i] == galloc->buf_tallocs[buffer_id]) {
++            // This buffer is the same as a previous one due to the same buffer type being used multiple times
++            // (See above.) However, we need a different check because multiple buffers might be NULL in our
++            // case and we still want to know the attempted size.
++
++            return 0;
++        }
++    }
++
++    return galloc->buffer_sizes[buffer_id];
++}
++
+ // utils
+ 
+ static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buffers) {
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index 6792ba98..43c91d9f 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -26,12 +26,17 @@ extern "C" {
+         size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
+         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
+         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
++
++        // (optional) returns a dummy buffer that is equivalent to one created by alloc_buffer but without actually being backed
++        // by memory
++        ggml_backend_buffer_t (*noalloc_buffer)(ggml_backend_buffer_type_t buft, size_t size);
+     };
+ 
+     struct ggml_backend_buffer_type {
+         struct ggml_backend_buffer_type_i  iface;
+         ggml_backend_dev_t device;
+         void * context;
++        bool no_alloc;
+     };
+ 
+     //
+@@ -63,6 +68,7 @@ extern "C" {
+         void * context;
+         size_t size;
+         enum ggml_backend_buffer_usage usage;
++        bool no_alloc;
+     };
+ 
+     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
+@@ -117,6 +123,16 @@ extern "C" {
+ 
+         // (optional) sort/optimize the nodes in the graph
+         void                      (*graph_optimize)    (ggml_backend_t backend, struct ggml_cgraph * cgraph);
++
++        // (optional) reserves intermediate buffers needed for the compution
++        // if alloc is true, memory is actually allocated, otherwise the required amount is just returned by buffer_size
++        enum ggml_status          (*graph_reserve)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, bool alloc);
++
++        // (optional) returns the memory needed after calling graph_reserve
++        size_t                    (*buffer_size)       (ggml_backend_t backend);
++
++        // (optional) frees memory from intermediate buffers that was allocated either by graph_compute or graph_reserve
++        void                      (*reset)             (ggml_backend_t backend);
+     };
+ 
+     struct ggml_backend {
+@@ -179,6 +195,10 @@ extern "C" {
+         ggml_backend_event_t (*event_new)         (ggml_backend_dev_t dev);
+         void                 (*event_free)        (ggml_backend_dev_t dev, ggml_backend_event_t event);
+         void                 (*event_synchronize) (ggml_backend_dev_t dev, ggml_backend_event_t event);
++
++        // (optional) reset device, clearing existing allocations and context
++        // the caller must ensure that there are no outstanding buffers, as these will become invalid
++        void (*reset)(ggml_backend_dev_t dev);
+     };
+ 
+     struct ggml_backend_device {
+diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
+index bcae0901..c88fa972 100644
+--- a/ggml/src/ggml-backend-reg.cpp
++++ b/ggml/src/ggml-backend-reg.cpp
+@@ -126,6 +126,18 @@ static dl_handle * dl_load_library(const fs::path & path) {
+     SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
+ 
+     HMODULE handle = LoadLibraryW(path.wstring().c_str());
++    if (!handle) {
++        DWORD error_code = GetLastError();
++        std::string msg;
++        LPSTR lpMsgBuf = NULL;
++        DWORD bufLen = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
++                                      NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&lpMsgBuf, 0, NULL);
++        if (bufLen) {
++            msg = lpMsgBuf;
++            LocalFree(lpMsgBuf);
++            GGML_LOG_INFO("%s unable to load library %s: %s\n", __func__, path_str(path).c_str(), msg.c_str());
++        }
++    }
+ 
+     SetErrorMode(old_mode);
+ 
+@@ -183,7 +195,7 @@ struct ggml_backend_reg_entry {
+ 
+ struct ggml_backend_registry {
+     std::vector<ggml_backend_reg_entry> backends;
+-    std::vector<ggml_backend_dev_t> devices;
++    std::vector<std::pair<ggml_backend_dev_t, int>> devices;
+ 
+     ggml_backend_registry() {
+ #ifdef GGML_USE_CUDA
+@@ -239,7 +251,7 @@ struct ggml_backend_registry {
+         }
+     }
+ 
+-    void register_backend(ggml_backend_reg_t reg, dl_handle_ptr handle = nullptr) {
++    void register_backend(ggml_backend_reg_t reg, int score = -1, dl_handle_ptr handle = nullptr) {
+         if (!reg) {
+             return;
+         }
+@@ -250,15 +262,20 @@ struct ggml_backend_registry {
+ #endif
+         backends.push_back({ reg, std::move(handle) });
+         for (size_t i = 0; i < ggml_backend_reg_dev_count(reg); i++) {
+-            register_device(ggml_backend_reg_dev_get(reg, i));
++            register_device(ggml_backend_reg_dev_get(reg, i), score);
+         }
+     }
+ 
+-    void register_device(ggml_backend_dev_t device) {
++    void register_device(ggml_backend_dev_t device, int score = -1) {
+ #ifndef NDEBUG
+         GGML_LOG_DEBUG("%s: registered device %s (%s)\n", __func__, ggml_backend_dev_name(device), ggml_backend_dev_description(device));
+ #endif
+-        devices.push_back(device);
++        devices.push_back({device, score});
++        std::stable_sort(devices.begin(), devices.end(),
++            [](const auto & a, const auto & b) {
++                return a.second > b.second;
++            }
++        );
+     }
+ 
+     ggml_backend_reg_t load_backend(const fs::path & path, bool silent) {
+@@ -302,7 +319,7 @@ struct ggml_backend_registry {
+ 
+         GGML_LOG_INFO("%s: loaded %s backend from %s\n", __func__, ggml_backend_reg_name(reg), path_str(path).c_str());
+ 
+-        register_backend(reg, std::move(handle));
++        register_backend(reg, score_fn ? score_fn() : -1, std::move(handle));
+ 
+         return reg;
+     }
+@@ -325,7 +342,7 @@ struct ggml_backend_registry {
+         // remove devices
+         devices.erase(
+             std::remove_if(devices.begin(), devices.end(),
+-                            [reg](ggml_backend_dev_t dev) { return ggml_backend_dev_backend_reg(dev) == reg; }),
++                            [reg](std::pair<ggml_backend_dev_t, int> dev) { return ggml_backend_dev_backend_reg(dev.first) == reg; }),
+             devices.end());
+ 
+         // remove backend
+@@ -383,7 +400,7 @@ size_t ggml_backend_dev_count() {
+ 
+ ggml_backend_dev_t ggml_backend_dev_get(size_t index) {
+     GGML_ASSERT(index < ggml_backend_dev_count());
+-    return get_reg().devices[index];
++    return get_reg().devices[index].first;
+ }
+ 
+ ggml_backend_dev_t ggml_backend_dev_by_name(const char * name) {
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index d7d71c51..260ccba9 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -45,6 +45,19 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t
+         return ggml_backend_buffer_init(buft, {}, NULL, 0);
+     }
+ 
++    if (buft->no_alloc) {
++        ggml_backend_buffer_t buf;
++
++        if (buft->iface.noalloc_buffer != NULL) {
++            buf = buft->iface.noalloc_buffer(buft, size);
++        } else {
++            buf = ggml_backend_buffer_init(buft, {}, NULL, size);
++        }
++
++        buf->no_alloc = true;
++        return buf;
++    }
++
+     GGML_ASSERT(buft);
+     return buft->iface.alloc_buffer(buft, size);
+ }
+@@ -99,7 +112,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
+         /* .buft      = */ buft,
+         /* .context   = */ context,
+         /* .size      = */ size,
+-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
++        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY,
++        /* .no_alloc  = */ false
+     };
+ 
+     return buffer;
+@@ -117,7 +131,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
+     if (buffer->iface.free_buffer != NULL) {
+         buffer->iface.free_buffer(buffer);
+     }
+-    delete buffer;
+ }
+ 
+ size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
+@@ -132,6 +145,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
+         return NULL;
+     }
+ 
++    // If we aren't allocating memory, return a placeholder non-NULL pointer
++    // that meets alignment requirements
++    if (buffer->no_alloc) {
++        return (void *)ggml_backend_buffer_get_alignment(buffer);
++    }
++
+     void * base = buffer->iface.get_base(buffer);
+ 
+     GGML_ASSERT(base != NULL && "backend buffer base cannot be NULL");
+@@ -511,6 +530,14 @@ ggml_backend_t ggml_backend_dev_init(ggml_backend_dev_t device, const char * par
+     return device->iface.init_backend(device, params);
+ }
+ 
++void ggml_backend_dev_reset(ggml_backend_dev_t device) {
++    if (device->iface.reset == NULL) {
++        return;
++    }
++
++    device->iface.reset(device);
++}
++
+ ggml_backend_buffer_type_t ggml_backend_dev_buffer_type(ggml_backend_dev_t device) {
+     GGML_ASSERT(device);
+     return device->iface.get_buffer_type(device);
+@@ -590,6 +617,7 @@ static void ggml_backend_multi_buffer_free_buffer(ggml_backend_buffer_t buffer)
+ 
+     free(ctx->buffers);
+     free(ctx);
++    delete buffer;
+ }
+ 
+ static void ggml_backend_multi_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
+@@ -727,6 +755,12 @@ struct ggml_backend_sched {
+     bool op_offload;
+ 
+     int debug;
++
++    // allocate buffers on attached ggml_backend_buffer_type_t's and during reservation
++    // if false, dummy buffers are used for faster memory sizing calculations
++    // the scheduler needs to be recreated with allocated buffers before it can be used
++    // for computation
++    bool alloc_buffers;
+ };
+ 
+ #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
+@@ -1612,6 +1646,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+         size_t graph_size,
+         bool parallel,
+         bool op_offload) {
++            return ggml_backend_sched_new_ext(backends, bufts, n_backends, graph_size, parallel, op_offload, true);
++        }
++
++ggml_backend_sched_t ggml_backend_sched_new_ext(
++        ggml_backend_t * backends,
++        ggml_backend_buffer_type_t * bufts,
++        int n_backends,
++        size_t graph_size,
++        bool parallel,
++        bool op_offload,
++        bool alloc_buffers) {
+     GGML_ASSERT(n_backends > 0);
+     GGML_ASSERT(n_backends <= GGML_SCHED_MAX_BACKENDS);
+     GGML_ASSERT(ggml_backend_dev_type(ggml_backend_get_device(backends[n_backends - 1])) == GGML_BACKEND_DEVICE_TYPE_CPU);
+@@ -1653,10 +1698,13 @@ ggml_backend_sched_t ggml_backend_sched_new(
+                 sched->events[b][c] = ggml_backend_event_new(backends[b]->device);
+             }
+         }
++
++        sched->bufts[b]->no_alloc = !alloc_buffers;
+     }
+ 
+     sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
+     sched->op_offload = op_offload;
++    sched->alloc_buffers = alloc_buffers;
+ 
+     ggml_backend_sched_reset(sched);
+ 
+@@ -1671,6 +1719,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+         for (int c = 0; c < sched->n_copies; c++) {
+             ggml_backend_event_free(sched->events[b][c]);
+         }
++
++        if (sched->backends[b]->iface.reset != NULL) {
++            sched->backends[b]->iface.reset(sched->backends[b]);
++        }
+     }
+     ggml_gallocr_free(sched->galloc);
+     ggml_free(sched->ctx);
+@@ -1714,6 +1766,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
+         return false;
+     }
+ 
++    if (!ggml_gallocr_alloc_graph(sched->galloc, &sched->graph)) {
++        return false;
++    }
++
++    struct ggml_backend_sched_split * splits = sched->splits;
++    for (int i = 0; i < sched->n_splits; i++) {
++        struct ggml_backend_sched_split * split = &splits[i];
++        int split_backend_id = split->backend_id;
++        ggml_backend_t split_backend = sched->backends[split_backend_id];
++
++        if (split_backend->iface.graph_reserve != NULL) {
++            enum ggml_status ec = split_backend->iface.graph_reserve(split_backend, &split->graph, sched->alloc_buffers);
++            if (ec != GGML_STATUS_SUCCESS) {
++                return false;
++            }
++        }
++    }
++
+     ggml_backend_sched_reset(sched);
+ 
+     return true;
+@@ -1815,6 +1885,19 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
+     return ggml_gallocr_get_buffer_size(sched->galloc, backend_index);
+ }
+ 
++size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend) {
++    int backend_index = ggml_backend_sched_backend_id(sched, backend);
++    GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
++
++    size_t size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
++
++    if (backend->iface.buffer_size != NULL) {
++        size += backend->iface.buffer_size(backend);
++    }
++
++    return size;
++}
++
+ void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
+     GGML_ASSERT(sched);
+     int backend_index = ggml_backend_sched_backend_id(sched, backend);
+@@ -2081,6 +2164,11 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
+ static void ggml_backend_cpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     GGML_ASSERT(buffer);
+     ggml_aligned_free(buffer->context, buffer->size);
++    delete buffer;
++}
++
++static void ggml_backend_cpu_ptr_buffer_free_buffer(ggml_backend_buffer_t buffer) {
++    delete buffer;
+ }
+ 
+ static void ggml_backend_cpu_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+@@ -2133,7 +2221,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
+ };
+ 
+ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_from_ptr_i = {
+-    /* .free_buffer     = */ NULL, // ptr is not owned by the buffer, so it does not need to be freed
++    /* .free_buffer     = */ ggml_backend_cpu_ptr_buffer_free_buffer, // ptr is not owned by the buffer but need to free the buffer itself
+     /* .get_base        = */ ggml_backend_cpu_buffer_get_base,
+     /* .init_tensor     = */ NULL, // no initialization required
+     /* .memset_tensor   = */ ggml_backend_cpu_buffer_memset_tensor,
+diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
+index 5b888cdd..2a9ff7f6 100644
+--- a/ggml/src/ggml-blas/ggml-blas.cpp
++++ b/ggml/src/ggml-blas/ggml-blas.cpp
+@@ -506,6 +506,11 @@ static const struct ggml_backend_reg_i ggml_backend_blas_reg_i = {
+ };
+ 
+ ggml_backend_reg_t ggml_backend_blas_reg(void) {
++    // MacOS prior to v14 does not include cblas_sgemm - disable this backend if it isn't available
++    if (&cblas_sgemm == NULL) {
++        GGML_LOG_INFO("Disabling ggml-blas backend on old MacOS version\n");
++        return NULL;
++    }
+     static struct ggml_backend_reg ggml_backend_blas_reg = {
+         /* .api_version = */ GGML_BACKEND_API_VERSION,
+         /* .iface       = */ ggml_backend_blas_reg_i,
+diff --git a/ggml/src/ggml-cann/ggml-cann.cpp b/ggml/src/ggml-cann/ggml-cann.cpp
+index 8bd5449f..01e2df61 100644
+--- a/ggml/src/ggml-cann/ggml-cann.cpp
++++ b/ggml/src/ggml-cann/ggml-cann.cpp
+@@ -820,6 +820,7 @@ static bool ggml_backend_buffer_is_cann(ggml_backend_buffer_t buffer) {
+ static void ggml_backend_cann_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cann_buffer_context * ctx = (ggml_backend_cann_buffer_context *) buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ /**
+@@ -1560,6 +1561,7 @@ static const char * ggml_backend_cann_host_buffer_name(ggml_backend_buffer_t buf
+  */
+ static void ggml_backend_cann_host_buffer_free(ggml_backend_buffer_t buffer) {
+     ACL_CHECK(aclrtFreeHost(buffer->context));
++    delete buffer;
+ }
+ 
+ /**
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 97a61152..f7b69079 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -15,6 +15,10 @@
+ #include "ops.h"
+ #include "ggml.h"
+ 
++#ifdef OLLAMA_DEBUG
++#include "ollama-debug.h"
++#endif
++
+ #if defined(_MSC_VER) || defined(__MINGW32__)
+ #include <malloc.h> // using malloc.h with MSC/MINGW
+ #elif !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
+@@ -2439,7 +2443,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
+         // Newer Windows 11 versions aggresively park (offline) CPU cores and often place
+         // all our threads onto the first 4 cores which results in terrible performance with
+         // n_threads > 4
+-        #if _WIN32_WINNT >= 0x0602
++        #if (_WIN32_WINNT >= 0x0602) && !defined(__GNUC__)
+         THREAD_POWER_THROTTLING_STATE t;
+         ZeroMemory(&t, sizeof(t));
+         t.Version     = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+@@ -2904,6 +2908,11 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+             node->perf_time_us += (INT64_MAX - t_start + t_end + 1);
+         }
+ #endif /* GGML_PERF-related flags */
++
++#ifdef OLLAMA_DEBUG
++        ollama_debug(node, true);
++#endif
++
+         if (state->ith == 0 && cplan->abort_callback &&
+                 cplan->abort_callback(cplan->abort_callback_data)) {
+             atomic_store_explicit(&tp->abort, node_n + 1, memory_order_relaxed);
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index b52f0f84..8567951a 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -7889,6 +7889,45 @@ static void ggml_compute_forward_argsort_f32(
+     }
+ }
+ 
++static void ggml_compute_forward_argsort_i32(
++    const ggml_compute_params * params,
++    ggml_tensor * dst) {
++
++    const ggml_tensor * src0 = dst->src[0];
++
++    GGML_TENSOR_UNARY_OP_LOCALS
++
++    GGML_ASSERT(nb0 == sizeof(int32_t));
++
++    const int ith = params->ith;
++    const int nth = params->nth;
++
++    const int64_t nr = ggml_nrows(src0);
++
++    ggml_sort_order order = (ggml_sort_order) ggml_get_op_params_i32(dst, 0);
++
++    for (int64_t i = ith; i < nr; i += nth) {
++        int32_t * dst_data = (int32_t *)((char *) dst->data + i*nb1);
++        const int32_t * src_data = (int32_t *)((char *) src0->data + i*nb01);
++
++        for (int64_t j = 0; j < ne0; j++) {
++            dst_data[j] = j;
++        }
++
++        // C doesn't have a functional sort, so we do a bubble sort instead
++        for (int64_t j = 0; j < ne0; j++) {
++            for (int64_t k = j + 1; k < ne0; k++) {
++                if ((order == GGML_SORT_ORDER_ASC  && src_data[dst_data[j]] > src_data[dst_data[k]]) ||
++                    (order == GGML_SORT_ORDER_DESC && src_data[dst_data[j]] < src_data[dst_data[k]])) {
++                    int32_t tmp = dst_data[j];
++                    dst_data[j] = dst_data[k];
++                    dst_data[k] = tmp;
++                }
++            }
++        }
++    }
++}
++
+ void ggml_compute_forward_argsort(
+     const ggml_compute_params * params,
+     ggml_tensor * dst) {
+@@ -7900,6 +7939,10 @@ void ggml_compute_forward_argsort(
+             {
+                 ggml_compute_forward_argsort_f32(params, dst);
+             } break;
++        case GGML_TYPE_I32:
++            {
++               ggml_compute_forward_argsort_i32(params, dst);
++            } break;
+         default:
+             {
+                 GGML_ABORT("fatal error");
+diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
+index 6e7b90d4..5de3eb03 100644
+--- a/ggml/src/ggml-cuda/argsort.cu
++++ b/ggml/src/ggml-cuda/argsort.cu
+@@ -168,13 +168,105 @@ static void argsort_f32_i32_cuda_bitonic(const float *   x,
+     }
+ }
+ 
++template<ggml_sort_order order>
++static __global__ void k_argsort_i32_i32(const int32_t * x, int * dst, const int ncols, const int ncols_pad) {
++    extern __shared__ int shared_mem[];
++    int * indices = shared_mem;
++
++    const int tid = threadIdx.x;
++    const int row = blockIdx.y;
++
++    // Initialize all indices, handling the case where threads < ncols_pad
++    for (int i = tid; i < ncols_pad; i += blockDim.x) {
++        indices[i] = i < ncols ? i : 0; // Use 0 for padding indices
++    }
++    __syncthreads();
++
++    // Bitonic sort
++    for (int k = 2; k <= ncols_pad; k *= 2) {
++        for (int j = k/2; j > 0; j /= 2) {
++            for (int i = tid; i < ncols_pad; i += blockDim.x) {
++                const int ij = i ^ j;
++                if (ij > i) {
++                    // Only compare values within the actual data range
++                    if (i < ncols && ij < ncols) {
++                        if ((i & k) == 0) {
++                            if (order == GGML_SORT_ORDER_ASC) {
++                                if (x[row * ncols + indices[i]] > x[row * ncols + indices[ij]]) {
++                                    int tmp = indices[i];
++                                    indices[i] = indices[ij];
++                                    indices[ij] = tmp;
++                                }
++                            } else {
++                                if (x[row * ncols + indices[i]] < x[row * ncols + indices[ij]]) {
++                                    int tmp = indices[i];
++                                    indices[i] = indices[ij];
++                                    indices[ij] = tmp;
++                                }
++                            }
++                        } else {
++                            if (order == GGML_SORT_ORDER_ASC) {
++                                if (x[row * ncols + indices[i]] < x[row * ncols + indices[ij]]) {
++                                    int tmp = indices[i];
++                                    indices[i] = indices[ij];
++                                    indices[ij] = tmp;
++                                }
++                            } else {
++                                if (x[row * ncols + indices[i]] > x[row * ncols + indices[ij]]) {
++                                    int tmp = indices[i];
++                                    indices[i] = indices[ij];
++                                    indices[ij] = tmp;
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++            __syncthreads();
++        }
++    }
++
++    // Write sorted indices to output, only threads handling valid data
++    for (int i = tid; i < ncols; i += blockDim.x) {
++        dst[row * ncols + i] = indices[i];
++    }
++}
++
++static void argsort_i32_i32_cuda(const int32_t * x, int * dst, const int ncols, const int nrows, ggml_sort_order order, cudaStream_t stream) {
++    // Bitonic sort requires ncols to be power of 2
++    const int ncols_pad = next_power_of_2(ncols);
++
++    // Ensure thread count doesn't exceed maximum (typically 1024)
++    const int max_threads = 1024;  // This is the typical max for most GPUs
++    const int threads_per_block = ncols_pad > max_threads ? max_threads : ncols_pad;
++
++    const dim3 block_dims(threads_per_block, 1, 1);
++    const dim3 block_nums(1, nrows, 1);
++    const size_t shared_mem = ncols_pad * sizeof(int);
++
++    // Check if shared memory size is within limits
++    const size_t max_shared_mem = ggml_cuda_info().devices[ggml_cuda_get_device()].smpb;
++
++    // Instead of logging an error, use GGML_ASSERT with a descriptive message
++    GGML_ASSERT(shared_mem <= max_shared_mem && "argsort: required shared memory exceeds device limit");
++
++    // Launch kernels with the updated thread configuration
++    if (order == GGML_SORT_ORDER_ASC) {
++        k_argsort_i32_i32<GGML_SORT_ORDER_ASC><<<block_nums, block_dims, shared_mem, stream>>>(x, dst, ncols, ncols_pad);
++    } else if (order == GGML_SORT_ORDER_DESC) {
++        k_argsort_i32_i32<GGML_SORT_ORDER_DESC><<<block_nums, block_dims, shared_mem, stream>>>(x, dst, ncols, ncols_pad);
++    } else {
++        GGML_ABORT("fatal error");
++    }
++}
++
+ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+     const ggml_tensor * src0 = dst->src[0];
+     const float * src0_d = (const float *)src0->data;
+     float * dst_d = (float *)dst->data;
+     cudaStream_t stream = ctx.stream();
+ 
+-    GGML_ASSERT(src0->type == GGML_TYPE_F32);
++    GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_I32);
+     GGML_ASSERT( dst->type == GGML_TYPE_I32);
+     GGML_ASSERT(ggml_is_contiguous(src0));
+ 
+@@ -195,6 +287,10 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+         argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
+     }
+ #else
+-    argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
++    if (src0->type == GGML_TYPE_I32) {
++        argsort_i32_i32_cuda((const int32_t *)src0_d, (int *)dst_d, ncols, nrows, order, stream);
++    } else {
++        argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
++    }
+ #endif
+ }
+diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
+index 1af23588..492d8102 100644
+--- a/ggml/src/ggml-cuda/common.cuh
++++ b/ggml/src/ggml-cuda/common.cuh
+@@ -35,6 +35,31 @@
+ #include "vendors/cuda.h"
+ #endif // defined(GGML_USE_HIP)
+ 
++extern bool reserving_graph;
++
++// If we are reserving the graph, pointers might be invalid and will fail if cudaMemcpyAsync tries to validate them.
++// However, since we don't actually expect a result, we don't need to actually do the memcpy.
++static cudaError_t cudaMemcpyAsyncReserve ( void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
++    if (!reserving_graph) {
++        return cudaMemcpyAsync(dst, src, count, kind, stream);
++    } else {
++        return cudaSuccess;
++    }
++}
++
++static cudaError_t cudaMemcpy2DAsyncReserve ( void* dst, size_t dpitch, const void* src, size_t spitch, size_t width, size_t height, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
++    if (!reserving_graph) {
++        return cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, kind, stream);
++    } else {
++        return cudaSuccess;
++    }
++}
++
++#undef cudaMemcpyAsync
++#define cudaMemcpyAsync cudaMemcpyAsyncReserve
++#undef cudaMemcpy2DAsync
++#define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
++
+ #define STRINGIZE_IMPL(...) #__VA_ARGS__
+ #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
+ 
+@@ -856,6 +881,9 @@ struct ggml_cuda_pool {
+ 
+     virtual void * alloc(size_t size, size_t * actual_size) = 0;
+     virtual void free(void * ptr, size_t size) = 0;
++
++    virtual bool alloc_memory() = 0;
++    virtual size_t alloc_size() = 0;
+ };
+ 
+ template<typename T>
+@@ -992,11 +1020,11 @@ struct ggml_backend_cuda_context {
+     // pool
+     std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES];
+ 
+-    static std::unique_ptr<ggml_cuda_pool> new_pool_for_device(int device);
++    static std::unique_ptr<ggml_cuda_pool> new_pool_for_device(int device, bool alloc);
+ 
+     ggml_cuda_pool & pool(int device) {
+         if (pools[device] == nullptr) {
+-            pools[device] = new_pool_for_device(device);
++            pools[device] = new_pool_for_device(device, true);
+         }
+         return *pools[device];
+     }
+@@ -1004,6 +1032,22 @@ struct ggml_backend_cuda_context {
+     ggml_cuda_pool & pool() {
+         return pool(device);
+     }
++
++    void pool_set_alloc(bool alloc) {
++        GGML_ASSERT(pools[device] == nullptr || pools[device]->alloc_memory() == alloc);
++
++        if (pools[device] == nullptr) {
++            pools[device] = new_pool_for_device(device, alloc);
++        }
++    }
++
++    size_t pool_get_alloc_size() {
++        if (pools[device] == nullptr) {
++            return 0;
++        }
++
++        return pools[device]->alloc_size();
++    }
+ };
+ 
+ struct ggml_cuda_mm_fusion_args_host {
+diff --git a/ggml/src/ggml-cuda/cpy-utils.cuh b/ggml/src/ggml-cuda/cpy-utils.cuh
+index e621cb98..81654d54 100644
+--- a/ggml/src/ggml-cuda/cpy-utils.cuh
++++ b/ggml/src/ggml-cuda/cpy-utils.cuh
+@@ -215,3 +215,10 @@ template<typename src_t, typename dst_t>
+ static __device__ void cpy_1_flt(const char * cxi, char * cdsti) {
+     *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);
+ }
++
++static __device__ void cpy_1_i32_i32(const char * cxi, char * cdsti) {
++    const int32_t * src = (const int32_t *)cxi;
++    int32_t * dst = (int32_t *)cdsti;
++    *dst = *src;
++}
++
+diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
+index c5821acb..4cf56afb 100644
+--- a/ggml/src/ggml-cuda/cpy.cu
++++ b/ggml/src/ggml-cuda/cpy.cu
+@@ -275,6 +275,46 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+         (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
+ }
+ 
++template <cpy_kernel_t cpy_1>
++static __global__ void cpy_i32_i32(
++    const char *cx, char *cdst, const int ne,
++    const int ne00, const int ne01, const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
++    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11, const int nb12, const int nb13,
++    cudaStream_t stream, char ** cdst_indirect, int & graph_cpynode_index) {
++
++    const int64_t i = blockDim.x * blockIdx.x + threadIdx.x;
++
++    if (i >= ne) {
++        return;
++    }
++
++    const int64_t i03 = i / (ne00 * ne01 * ne02);
++    const int64_t i02 = (i - i03 * ne00 * ne01 * ne02) / (ne00 * ne01);
++    const int64_t i01 = (i - i03 * ne00 * ne01 * ne02 - i02 * ne01 * ne00) / ne00;
++    const int64_t i00 = i - i03 * ne00 * ne01 * ne02 - i02 * ne01 * ne00 - i01 * ne00;
++    const int64_t x_offset = i00 * nb00 + i01 * nb01 + i02 * nb02 + i03 * nb03;
++
++    const int64_t i13 = i / (ne10 * ne11 * ne12);
++    const int64_t i12 = (i - i13 * ne10 * ne11 * ne12) / (ne10 * ne11);
++    const int64_t i11 = (i - i13 * ne10 * ne11 * ne12 - i12 * ne10 * ne11) / ne10;
++    const int64_t i10 = i - i13 * ne10 * ne11 * ne12 - i12 * ne10 * ne11 - i11 * ne10;
++    const int64_t dst_offset = i10 * nb10 + i11 * nb11 + i12 * nb12 + i13 * nb13;
++
++    char * cdst_ptr = (cdst_indirect != nullptr) ? cdst_indirect[graph_cpynode_index] : cdst;
++    cpy_1(cx + x_offset, cdst_ptr + dst_offset);
++}
++
++static void ggml_cpy_i32_i32_cuda(
++    const char * cx, char * cdst, const int ne,
++    const int ne00, const int ne01, const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
++    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11, const int nb12, const int nb13,
++    cudaStream_t stream, char ** cdst_indirect, int graph_cpynode_index) {
++
++    const int num_blocks = (ne + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
++    cpy_i32_i32<cpy_1_i32_i32><<<num_blocks, CUDA_CPY_BLOCK_SIZE, 0, stream>>>
++        (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, stream, cdst_indirect, graph_cpynode_index);
++}
++
+ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
+     const int64_t ne = ggml_nelements(src0);
+     GGML_ASSERT(ne == ggml_nelements(src1));
+@@ -323,6 +363,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+         }
+     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) {
+         ggml_cpy_flt_cuda<float, float>           (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
++    } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_I32) {
++        ggml_cpy_i32_i32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
+     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_BF16) {
+         if (contiguous_srcs) {
+             ggml_cpy_flt_contiguous_cuda<float, nv_bfloat16> (src0_ddc, src1_ddc, ne, main_stream);
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 94ab1ec0..a6c99117 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -107,6 +107,11 @@ int ggml_cuda_get_device() {
+     return id;
+ }
+ 
++void ggml_cuda_reset_device(int device) {
++    ggml_cuda_set_device(device);
++    CUDA_CHECK(cudaDeviceReset());
++}
++
+ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
+     ggml_cuda_set_device(device);
+     cudaError_t err;
+@@ -183,6 +188,51 @@ static int ggml_cuda_parse_id(char devName[]) {
+ }
+ #endif // defined(GGML_USE_HIP)
+ 
++static std::string ggml_cuda_parse_uuid(cudaDeviceProp prop, int device_num) {
++    char id[64];
++
++#if !defined(GGML_USE_HIP)
++    snprintf(id, sizeof(id),
++        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++        (unsigned char)prop.uuid.bytes[0],
++        (unsigned char)prop.uuid.bytes[1],
++        (unsigned char)prop.uuid.bytes[2],
++        (unsigned char)prop.uuid.bytes[3],
++        (unsigned char)prop.uuid.bytes[4],
++        (unsigned char)prop.uuid.bytes[5],
++        (unsigned char)prop.uuid.bytes[6],
++        (unsigned char)prop.uuid.bytes[7],
++        (unsigned char)prop.uuid.bytes[8],
++        (unsigned char)prop.uuid.bytes[9],
++        (unsigned char)prop.uuid.bytes[10],
++        (unsigned char)prop.uuid.bytes[11],
++        (unsigned char)prop.uuid.bytes[12],
++        (unsigned char)prop.uuid.bytes[13],
++        (unsigned char)prop.uuid.bytes[14],
++        (unsigned char)prop.uuid.bytes[15]
++        );
++#else
++#ifdef _WIN32
++        snprintf(id, sizeof(id), "%d", device_num);
++#else
++    try {
++        std::string uuid = std::string(prop.uuid.bytes, 16);
++
++        size_t pos = 0;
++        unsigned long long v = stoull(uuid, &pos, 16);
++        if (v == 0 || pos != uuid.size() || (!uuid.empty() && uuid[0] == '-'))
++            throw std::invalid_argument("invalid uuid");
++
++        snprintf(id, sizeof(id), "GPU-%016llx", v);
++    } catch (const std::exception &e) {
++        snprintf(id, sizeof(id), "%d", device_num);
++    }
++#endif
++#endif
++
++    return id;
++}
++
+ static ggml_cuda_device_info ggml_cuda_init() {
+     ggml_cuda_device_info info = {};
+ 
+@@ -211,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
+     for (int id = 0; id < info.device_count; ++id) {
+         int device_vmm = 0;
+ 
++#if defined(GGML_USE_HIP)
++        if (std::getenv("GGML_CUDA_INIT") != NULL) {
++            GGML_LOG_INFO("%s: initializing rocBLAS on device %d\n", __func__, id);
++            CUDA_CHECK(cudaSetDevice(id));
++            // rocblas_initialize will SIGABRT if the GPU isn't supported
++            rocblas_initialize();
++            GGML_LOG_INFO("%s: rocBLAS initialized on device %d\n", __func__, id);
++        }
++#endif
++
+ #if defined(GGML_USE_VMM)
+         CUdevice device;
+         CU_CHECK(cuDeviceGet(&device, id));
+@@ -249,22 +309,29 @@ static ggml_cuda_device_info ggml_cuda_init() {
+                 info.devices[id].cc += prop.minor * 0x10;
+             }
+         }
+-        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d\n",
++        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d, ID: %s\n",
+                       id, prop.name, prop.gcnArchName, info.devices[id].cc & 0xffff,
+-                      device_vmm ? "yes" : "no", prop.warpSize);
++                      device_vmm ? "yes" : "no", prop.warpSize, ggml_cuda_parse_uuid(prop, id).c_str());
+ #elif defined(GGML_USE_MUSA)
+         // FIXME: Ensure compatibility with varying warp sizes across different MUSA archs.
+         info.devices[id].warp_size = 32;
+         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
+         info.devices[id].cc = GGML_CUDA_CC_OFFSET_MTHREADS + prop.major * 0x100;
+         info.devices[id].cc += prop.minor * 0x10;
+-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
+-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
++        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
++                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
++                        ggml_cuda_parse_uuid(prop, id).c_str());
+ #else
+         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
+         info.devices[id].cc = 100*prop.major + 10*prop.minor;
+-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
+-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
++#ifdef __CUDA_ARCH_LIST__
++        if (std::getenv("GGML_CUDA_INIT") != NULL) {
++            GGML_ASSERT(ggml_cuda_has_arch(info.devices[id].cc) && "ggml was not compiled with support for this arch");
++        }
++#endif // defined(__CUDA_ARCH_LIST__)
++	GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
++                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
++                        ggml_cuda_parse_uuid(prop, id).c_str());
+         std::string device_name(prop.name);
+         if (device_name == "NVIDIA GeForce MX450") {
+             turing_devices_without_mma.push_back({ id, device_name });
+@@ -312,6 +379,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
+ 
+ // #define DEBUG_CUDA_MALLOC
+ 
++#define CUDA_ALIGNMENT 128
++
+ // buffer pool for cuda (legacy)
+ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+     static const int MAX_BUFFERS = 256;
+@@ -324,9 +393,12 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+ 
+     ggml_cuda_buffer buffer_pool[MAX_BUFFERS] = {};
+     size_t pool_size = 0;
++    bool allocate = true;
++    size_t last_alloc = 0;
+ 
+-    explicit ggml_cuda_pool_leg(int device) :
+-        device(device) {
++    explicit ggml_cuda_pool_leg(int device, bool alloc) :
++        device(device),
++        allocate(alloc) {
+     }
+ 
+     ~ggml_cuda_pool_leg() {
+@@ -334,7 +406,9 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+         for (int i = 0; i < MAX_BUFFERS; ++i) {
+             ggml_cuda_buffer & b = buffer_pool[i];
+             if (b.ptr != nullptr) {
+-                CUDA_CHECK(cudaFree(b.ptr));
++                if (allocate) {
++                    CUDA_CHECK(cudaFree(b.ptr));
++                }
+                 pool_size -= b.size;
+             }
+         }
+@@ -382,8 +456,15 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+         void * ptr;
+         size_t look_ahead_size = (size_t) (1.05 * size);
+         look_ahead_size = 256 * ((look_ahead_size + 255)/256);
+-        ggml_cuda_set_device(device);
+-        CUDA_CHECK(ggml_cuda_device_malloc(&ptr, look_ahead_size, device));
++        if (allocate) {
++            ggml_cuda_set_device(device);
++            if (ggml_cuda_device_malloc(&ptr, look_ahead_size, device) != cudaSuccess) {
++                    last_alloc = look_ahead_size;
++                    throw std::bad_alloc();
++            }
++        } else {
++            ptr = (void *)CUDA_ALIGNMENT;
++        }
+         *actual_size = look_ahead_size;
+         pool_size += look_ahead_size;
+ #ifdef DEBUG_CUDA_MALLOC
+@@ -403,10 +484,20 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+             }
+         }
+         GGML_LOG_DEBUG(GGML_CUDA_NAME " buffer pool full, increase MAX_CUDA_BUFFERS\n");
+-        ggml_cuda_set_device(device);
+-        CUDA_CHECK(cudaFree(ptr));
++        if (allocate) {
++            ggml_cuda_set_device(device);
++            CUDA_CHECK(cudaFree(ptr));
++        }
+         pool_size -= size;
+     }
++
++    bool alloc_memory() override {
++        return allocate;
++    }
++
++    size_t alloc_size() override {
++        return pool_size + last_alloc;
++    }
+ };
+ 
+ // pool with virtual memory
+@@ -418,18 +509,24 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+     CUdeviceptr pool_addr = 0;
+     size_t pool_used = 0;
+     size_t pool_size = 0;
++    bool allocate = true;
++    size_t last_alloc = 0;
+     size_t granularity;
+ #if defined(GGML_USE_HIP)
+     std::vector<std::pair<CUdeviceptr, size_t>> mappings;
+ #endif
+ 
+-    explicit ggml_cuda_pool_vmm(int device) :
++    explicit ggml_cuda_pool_vmm(int device, bool alloc) :
+         device(device),
+-        granularity(ggml_cuda_info().devices[device].vmm_granularity) {
++        granularity(ggml_cuda_info().devices[device].vmm_granularity),
++        allocate(alloc) {
++        if (!allocate) {
++            pool_addr = (CUdeviceptr)CUDA_ALIGNMENT;
++        }
+     }
+ 
+     ~ggml_cuda_pool_vmm() {
+-        if (pool_addr != 0) {
++        if (pool_addr != 0 && allocate) {
+ #if defined(GGML_USE_HIP)
+             // Workaround for https://github.com/ROCm/ROCR-Runtime/issues/285
+             for (std::pair<CUdeviceptr, size_t> & mapping : mappings) {
+@@ -456,35 +553,49 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+ 
+             GGML_ASSERT(pool_size + reserve_size <= CUDA_POOL_VMM_MAX_SIZE);
+ 
+-            // allocate more physical memory
+-            CUmemAllocationProp prop = {};
+-            prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+-            prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+-            prop.location.id = device;
+-            CUmemGenericAllocationHandle handle;
+-            CU_CHECK(cuMemCreate(&handle, reserve_size, &prop, 0));
+-
+-            // reserve virtual address space (if not already reserved)
+-            if (pool_addr == 0) {
+-                CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
+-            }
++            if (allocate) {
++                // allocate more physical memory
++                CUmemAllocationProp prop = {};
++                prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
++                prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
++                prop.location.id = device;
++                CUmemGenericAllocationHandle handle;
++                if (cuMemCreate(&handle, reserve_size, &prop, 0) != CUDA_SUCCESS) {
++                    last_alloc = reserve_size;
++                    throw std::bad_alloc();
++                }
+ 
+-            // map at the end of the pool
+-            CUdeviceptr start_ptr = (CUdeviceptr)((char *)(pool_addr) + pool_size);
+-            CU_CHECK(cuMemMap(start_ptr, reserve_size, 0, handle, 0));
+-#if defined(GGML_USE_HIP)
+-            mappings.push_back({start_ptr, reserve_size});
+-#endif
++                // reserve virtual address space (if not already reserved)
++                if (pool_addr == 0) {
++                    CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
++                }
+ 
+-            // the memory allocation handle is no longer needed after mapping
+-            CU_CHECK(cuMemRelease(handle));
++                // map at the end of the pool
++                CUdeviceptr start_ptr = (CUdeviceptr)((char *)(pool_addr) + pool_size);
++                if (cuMemMap(start_ptr, reserve_size, 0, handle, 0) != CUDA_SUCCESS) {
++                    last_alloc = reserve_size;
++                    CU_CHECK(cuMemRelease(handle));
++                    throw std::bad_alloc();
++                }
+ 
+-            // set access
+-            CUmemAccessDesc access = {};
+-            access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+-            access.location.id = device;
+-            access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+-            CU_CHECK(cuMemSetAccess((CUdeviceptr)((char *)(pool_addr) + pool_size), reserve_size, &access, 1));
++                // the memory allocation handle is no longer needed after mapping
++                CU_CHECK(cuMemRelease(handle));
++
++                // set access
++                CUmemAccessDesc access = {};
++                access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
++                access.location.id = device;
++                access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
++                if (cuMemSetAccess((CUdeviceptr)((char *)(pool_addr) + pool_size), reserve_size, &access, 1) != CUDA_SUCCESS) {
++                    CU_CHECK(cuMemUnmap(start_ptr, reserve_size));
++                    last_alloc = reserve_size;
++                    throw std::bad_alloc();
++                }
++
++    #if defined(GGML_USE_HIP)
++                mappings.push_back({start_ptr, reserve_size});
++    #endif
++            }
+ 
+             // add to the pool
+             pool_size += reserve_size;
+@@ -517,16 +628,24 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+         // all deallocations must be in reverse order of the allocations
+         GGML_ASSERT(ptr == (void *) ((char *)(pool_addr) + pool_used));
+     }
++
++    bool alloc_memory() override {
++        return allocate;
++    }
++
++    size_t alloc_size() override {
++        return pool_size + last_alloc;
++    }
+ };
+ #endif // defined(GGML_USE_VMM)
+ 
+-std::unique_ptr<ggml_cuda_pool> ggml_backend_cuda_context::new_pool_for_device(int device) {
++std::unique_ptr<ggml_cuda_pool> ggml_backend_cuda_context::new_pool_for_device(int device, bool alloc) {
+ #if defined(GGML_USE_VMM)
+     if (ggml_cuda_info().devices[device].vmm) {
+-        return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_vmm(device));
++        return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_vmm(device, alloc));
+     }
+ #endif // defined(GGML_USE_VMM)
+-    return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_leg(device));
++    return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_leg(device, alloc));
+ }
+ 
+ // destroying a cuBLAS handle while a graph is being captured in a different thread can result in a CUDA error
+@@ -576,6 +695,7 @@ struct ggml_backend_cuda_buffer_context {
+ static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
+@@ -709,11 +829,20 @@ static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_bac
+ }
+ 
+ static size_t ggml_backend_cuda_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
+-    return 128;
++    return CUDA_ALIGNMENT;
+ 
+     GGML_UNUSED(buft);
+ }
+ 
++static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_noalloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
++    ggml_backend_cuda_buffer_type_context * buft_ctx = (ggml_backend_cuda_buffer_type_context *)buft->context;
++
++    void * dev_ptr = (void *)ggml_backend_cuda_buffer_type_get_alignment(buft);
++    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr);
++
++    return ggml_backend_buffer_init(buft, {}, ctx, size);
++}
++
+ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
+     size_t size = ggml_nbytes(tensor);
+     int64_t ne0 = tensor->ne[0];
+@@ -737,6 +866,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface
+     /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
+     /* .get_alloc_size   = */ ggml_backend_cuda_buffer_type_get_alloc_size,
+     /* .is_host          = */ NULL,
++    /* .noalloc_buffer   = */ ggml_backend_cuda_buffer_type_noalloc_buffer,
+ };
+ 
+ ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
+@@ -831,6 +961,7 @@ struct ggml_backend_cuda_split_buffer_context {
+ static void ggml_backend_cuda_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_split_buffer_context * ctx = (ggml_backend_cuda_split_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_cuda_split_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -1112,6 +1243,7 @@ static bool ggml_backend_buft_is_cuda_host(ggml_backend_buffer_type_t buft) {
+ 
+ static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     CUDA_CHECK(cudaFreeHost(buffer->context));
++    delete buffer;
+ }
+ 
+ static void * ggml_cuda_host_malloc(size_t size) {
+@@ -2794,9 +2926,19 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+     bool use_cuda_graph) {
+ 
+     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
++    // This fix was added in llama.cpp and Ollama in parallel, but with
++    // different tensor names.
++    // llama.cpp: https://github.com/ggml-org/llama.cpp/pull/14741
++    // ollama: https://github.com/ollama/ollama/pull/11525
++
++    const std::string gemma3n_per_layer_proj_src1_name_ollama = " (reshaped)";
++    const std::string gemma3n_node_name_ollama                = "node_";
+ 
+     const std::string gemma3n_per_layer_proj_src0_name = "inp_per_layer_selected";
+     const std::string gemma3n_per_layer_proj_src1_name = "per_layer_proj";
++
++    const std::string ffn_moe_bias_suffix = "_exps.bias";
++
+     const std::string ffn_moe_gate_bias_prefix = "ffn_moe_gate_biased";
+     const std::string ffn_moe_up_bias_prefix = "ffn_moe_up_biased";
+     const std::string ffn_moe_down_bias_prefix = "ffn_moe_down_biased";
+@@ -2826,7 +2968,13 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+ 
+         if (node->op == GGML_OP_ADD &&
+             node->src[1] && node->src[1]->ne[1] > 1 &&
+-            (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
++            // ollama
++            // workarounds to exclude Gemma3n's `project_per_layer_input` operation from the batch-size heuristic, specific to ollama's implementation of gemma3n
++            // number of layers is different for per_layer_proj between gemma3n:2b and gemma3n:4b, which is why we don't check that value here
++            !(node->ne[0] == 256 && node->ne[2] == 1 && node->ne[3] == 1 && node->src[0] ? std::string(node->src[0]->name).find(gemma3n_node_name_ollama) != std::string::npos : false && node->src[1] ? node->src[1]->name == gemma3n_per_layer_proj_src1_name_ollama : false) &&
++            node->src[1] ? std::string(node->src[1]->name).find(ffn_moe_bias_suffix) == std::string::npos : false &&
++            // upstream
++	    (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
+             (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
+             strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
+             strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
+@@ -3106,6 +3254,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx,
+ 
+ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
+     bool & graph_evaluated_or_captured, bool & use_cuda_graph, bool & cuda_graph_update_required) {
++
+     // flag used to determine whether it is an integrated_gpu
+     const bool integrated = ggml_cuda_info().devices[cuda_ctx->device].integrated;
+ 
+@@ -3121,6 +3270,11 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+                     continue;
+                 }
+ 
++                // When reserving, we are forcing CUDA graphs but this operation is not graph-safe so we need to skip it
++                if (reserving_graph && node->op == GGML_OP_MUL_MAT_ID && node->ne[2] != 1) {
++                    continue;
++                }
++
+                 static bool disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
+                 if (!disable_fusion) {
+ 
+@@ -3439,6 +3593,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+ 
+ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
++    cuda_ctx->pool_set_alloc(true);
+ 
+     ggml_cuda_set_device(cuda_ctx->device);
+ 
+@@ -3514,6 +3669,71 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+     return GGML_STATUS_SUCCESS;
+ }
+ 
++// This is used to skip operations that are not graph safe during the reservation process.
++bool reserving_graph = false;
++
++static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, ggml_cgraph * cgraph, bool alloc) {
++    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
++    cuda_ctx->pool_set_alloc(alloc);
++
++    #ifdef USE_CUDA_GRAPH
++    if (cuda_ctx->cuda_graph == nullptr) {
++        cuda_ctx->cuda_graph.reset(new ggml_cuda_graph());
++    }
++    #endif
++
++    ggml_cuda_set_device(cuda_ctx->device);
++
++    {
++        std::lock_guard<std::mutex> lock(ggml_cuda_lock);
++        ggml_cuda_lock_counter.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    reserving_graph = true;
++
++    // Create CuBLAS handles early to avoid synchronous allocations during graph capture.
++    cuda_ctx->cublas_handle();
++
++    CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), cudaStreamCaptureModeRelaxed));
++
++    enum ggml_status result = GGML_STATUS_SUCCESS;
++
++    try {
++        bool use_cuda_graph = false;
++        bool cuda_graph_update_required = false;
++        bool graph_evaluated_or_captured = false;
++
++        evaluate_and_capture_cuda_graph(cuda_ctx, cgraph, graph_evaluated_or_captured, use_cuda_graph, cuda_graph_update_required);
++    } catch (const std::exception &e) {
++        result = GGML_STATUS_FAILED;
++    }
++
++    cudaGraph_t graph;
++    CUDA_CHECK(cudaStreamEndCapture(cuda_ctx->stream(), &graph));
++    CUDA_CHECK(cudaGraphDestroy(graph));
++
++    reserving_graph = false;
++
++    {
++        std::lock_guard<std::mutex> lock(ggml_cuda_lock);
++        if (ggml_cuda_lock_counter.fetch_sub(1, std::memory_order_relaxed) == 1) {
++            ggml_cuda_lock_cv.notify_all();
++        }
++    }
++
++    return result;
++}
++
++static size_t ggml_backend_cuda_buffer_size(ggml_backend_t backend) {
++    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
++    return ctx->pool_get_alloc_size();
++}
++
++static void ggml_backend_cuda_reset(ggml_backend_t backend) {
++    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
++    ctx->pools[ctx->device] = NULL;
++}
++
+ static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+ 
+@@ -3554,6 +3774,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+     /* .event_record            = */ ggml_backend_cuda_event_record,
+     /* .event_wait              = */ ggml_backend_cuda_event_wait,
+     /* .graph_optimize          = */ NULL,
++    /* .graph_reserve           = */ ggml_backend_cuda_graph_reserve,
++    /* .buffer_size             = */ ggml_backend_cuda_buffer_size,
++    /* .reset                   = */ ggml_backend_cuda_reset,
+ };
+ 
+ static ggml_guid_t ggml_backend_cuda_guid() {
+@@ -3624,6 +3847,15 @@ struct ggml_backend_cuda_device_context {
+     std::string name;
+     std::string description;
+     std::string pci_bus_id;
++    std::string id;
++    int major;
++    int minor;
++    int driver_major;
++    int driver_minor;
++    int integrated;
++    int pciBusID;
++    int pciDeviceID;
++    int pciDomainID;
+ };
+ 
+ static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
+@@ -3636,9 +3868,36 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t
+     return ctx->description.c_str();
+ }
+ 
++static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
++    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
++    return ctx->id.c_str();
++}
++
+ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
+     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+     ggml_cuda_set_device(ctx->device);
++
++#if defined(GGML_USE_HIP)
++    if (ggml_hip_mgmt_init() == 0) {
++        int status = ggml_hip_get_device_memory(ctx->pciBusID, ctx->pciDeviceID, free, total);
++        if (status == 0) {
++            GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++            ggml_hip_mgmt_release();
++            return;
++        }
++        ggml_hip_mgmt_release();
++    }
++#else
++    if (ggml_nvml_init() == 0) {
++        int status = ggml_nvml_get_device_memory(ctx->id.c_str(), free, total);
++        if (status == 0) {
++            GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++            ggml_nvml_release();
++            return;
++        }
++        ggml_nvml_release();
++    }
++#endif
+     CUDA_CHECK(cudaMemGetInfo(free, total));
+ }
+ 
+@@ -3647,14 +3906,37 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+     return GGML_BACKEND_DEVICE_TYPE_GPU;
+ }
+ 
++#define GGML_HIP_NAME "HIP"
++
+ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+ 
+     props->name        = ggml_backend_cuda_device_get_name(dev);
+     props->description = ggml_backend_cuda_device_get_description(dev);
++    props->id          = ggml_backend_cuda_device_get_id(dev);
+     props->type        = ggml_backend_cuda_device_get_type(dev);
+     props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
+-    ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
++
++    // Memory reporting is disabled to avoid allocation of a CUDA primary context (~300 MB per device).
++    // If you need the memory data, call ggml_backend_dev_memory() explicitly.
++    props->memory_total = props->memory_free = 0;
++
++#if defined(GGML_USE_HIP)
++    int cc = ggml_cuda_info().devices[ctx->device].cc - GGML_CUDA_CC_OFFSET_AMD;
++    props->compute_major = cc / 0x100;
++    props->compute_minor = cc - (props->compute_major * 0x100);
++#else
++    props->compute_major = ctx->major;
++    props->compute_minor = ctx->minor;
++#endif
++    props->driver_major = ctx->driver_major;
++    props->driver_minor = ctx->driver_minor;
++    props->integrated = ctx->integrated;
++    props->pci_bus_id = ctx->pciBusID;
++    props->pci_device_id = ctx->pciDeviceID;
++    props->pci_domain_id = ctx->pciDomainID;
++    props->library = GGML_CUDA_NAME;
++
+ 
+     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
+ #ifdef GGML_CUDA_NO_PEER_COPY
+@@ -4091,6 +4373,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
+     CUDA_CHECK(cudaEventSynchronize((cudaEvent_t)event->context));
+ }
+ 
++static void ggml_backend_cuda_device_reset(ggml_backend_dev_t dev) {
++    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
++    ggml_cuda_reset_device(ctx->device);
++}
++
+ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+     /* .get_name                = */ ggml_backend_cuda_device_get_name,
+     /* .get_description         = */ ggml_backend_cuda_device_get_description,
+@@ -4107,6 +4394,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+     /* .event_new               = */ ggml_backend_cuda_device_event_new,
+     /* .event_free              = */ ggml_backend_cuda_device_event_free,
+     /* .event_synchronize       = */ ggml_backend_cuda_device_event_synchronize,
++    /* .reset                   = */ ggml_backend_cuda_device_reset,
+ };
+ 
+ // backend reg
+@@ -4216,6 +4504,8 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+         std::lock_guard<std::mutex> lock(mutex);
+         if (!initialized) {
+             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
++            int driverVersion = 0;
++            CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
+ 
+             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
+                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
+@@ -4225,11 +4515,21 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 cudaDeviceProp prop;
+                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
+                 dev_ctx->description = prop.name;
++                dev_ctx->id = ggml_cuda_parse_uuid(prop, i);
+ 
+                 char pci_bus_id[16] = {};
+                 snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
+                 dev_ctx->pci_bus_id = pci_bus_id;
+ 
++                dev_ctx->major = prop.major;
++                dev_ctx->minor = prop.minor;
++                dev_ctx->driver_major = driverVersion / 1000;
++                dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
++                dev_ctx->integrated = prop.integrated;
++                dev_ctx->pciBusID = prop.pciBusID;
++                dev_ctx->pciDeviceID = prop.pciDeviceID;
++                dev_ctx->pciDomainID = prop.pciDomainID;
++
+                 ggml_backend_dev_t dev = new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_cuda_device_interface,
+                     /* .reg     = */ &reg,
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index 890c1036..2f9ef2dc 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -5,6 +5,8 @@
+ #include <hipblas/hipblas.h>
+ #include <hip/hip_fp16.h>
+ #include <hip/hip_bf16.h>
++// for rocblas_initialize()
++#include "rocblas/rocblas.h"
+ 
+ #if defined(GGML_HIP_ROCWMMA_FATTN)
+ #include <rocwmma/rocwmma-version.hpp>
+@@ -45,7 +47,9 @@
+ #define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
+ #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
+ #define cudaDeviceProp hipDeviceProp_t
++#define cudaDeviceReset hipDeviceReset
+ #define cudaDeviceSynchronize hipDeviceSynchronize
++#define cudaDriverGetVersion hipDriverGetVersion
+ #define cudaError_t hipError_t
+ #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
+ #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
+diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
+index 89b1a449..8201e513 100644
+--- a/ggml/src/ggml-impl.h
++++ b/ggml/src/ggml-impl.h
+@@ -677,6 +677,13 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
+ 
+     return ggml_can_fuse_subgraph_ext(cgraph, idxs, count, ops, outputs, num_outputs);
+ }
++// Management libraries for fetching more accurate free VRAM data
++GGML_API int ggml_nvml_init();
++GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
++GGML_API void ggml_nvml_release();
++GGML_API int ggml_hip_mgmt_init();
++GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
++GGML_API void ggml_hip_mgmt_release();
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+index 052efb7a..b47dc787 100644
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -125,7 +125,12 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
+ 
+     res->d_queue = dispatch_queue_create("ggml-metal", DISPATCH_QUEUE_CONCURRENT);
+ 
+-    res->use_bfloat      = props_dev->has_bfloat;
++    if (@available(macOS 14.0, *)) {
++        res->use_bfloat = props_dev->has_bfloat;
++    } else {
++        res->use_bfloat = false;
++    }
++
+     res->use_fusion      = getenv("GGML_METAL_FUSION_DISABLE") == nil;
+     res->use_concurrency = getenv("GGML_METAL_CONCURRENCY_DISABLE") == nil;
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index 7afc881f..f356e4a0 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -25,6 +25,7 @@ static void ggml_backend_metal_buffer_shared_free_buffer(ggml_backend_buffer_t b
+     GGML_ASSERT(ggml_metal_buffer_is_shared(ctx));
+ 
+     ggml_metal_buffer_free(ctx);
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_metal_buffer_shared_get_base(ggml_backend_buffer_t buffer) {
+@@ -99,6 +100,7 @@ static void ggml_backend_metal_buffer_private_free_buffer(ggml_backend_buffer_t
+     GGML_ASSERT(!ggml_metal_buffer_is_shared(ctx));
+ 
+     ggml_metal_buffer_free(ctx);
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_metal_buffer_private_get_base(ggml_backend_buffer_t buffer) {
+@@ -533,13 +535,16 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+     GGML_UNUSED(dev);
+ }
+ 
++#define GGML_METAL_NAME "Metal"
+ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_metal_device_get_name(dev);
+     props->description = ggml_backend_metal_device_get_description(dev);
++    props->id          = "0";
+     props->type        = ggml_backend_metal_device_get_type(dev);
+ 
+     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+ 
++    props->library = GGML_METAL_NAME;
+     props->caps = {
+         /* .async                 = */ true,
+         /* .host_buffer           = */ false,
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index 2c2f0141..50b8071d 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -4467,8 +4467,72 @@ kernel void kernel_argsort_f32_i32(
+     }
+ }
+ 
++typedef void (i32_argsort_t)(
++        constant   ggml_metal_kargs_argsort & args,
++        device  const int32_t * x,
++        device        int32_t * dst,
++        threadgroup   int32_t * shared_values [[threadgroup(0)]],
++        uint3 tgpig[[threadgroup_position_in_grid]],
++        uint3 tpitg[[thread_position_in_threadgroup]]);
++
++template<ggml_sort_order order>
++kernel void kernel_argsort_i32_i32(
++        constant   ggml_metal_kargs_argsort & args,
++        device const int32_t * x,
++        device       int32_t * dst,
++        threadgroup int32_t  * shared_values [[threadgroup(0)]],
++        uint3 tgpig[[threadgroup_position_in_grid]],
++        uint3 tpitg[[thread_position_in_threadgroup]]) {
++    // bitonic sort
++    int col = tpitg[0];
++    int row = tgpig[1];
++
++    if (col >= args.ncols_pad) return;
++
++    device const int32_t * x_row   = x + row * args.ncols;
++    threadgroup int32_t  * dst_row = shared_values;
++
++    // initialize indices
++    dst_row[col] = col;
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int k = 2; k <= args.ncols_pad; k *= 2) {
++        for (int j = k / 2; j > 0; j /= 2) {
++            int ixj = col ^ j;
++            if (ixj > col) {
++                if ((col & k) == 0) {
++                    if (dst_row[col] >= args.ncols ||
++                        (dst_row[ixj] < args.ncols && (order == GGML_SORT_ORDER_ASC ?
++                            x_row[dst_row[col]] > x_row[dst_row[ixj]] :
++                            x_row[dst_row[col]] < x_row[dst_row[ixj]]))
++                    ) {
++                        SWAP(dst_row[col], dst_row[ixj]);
++                    }
++                } else {
++                    if (dst_row[ixj] >= args.ncols ||
++                        (dst_row[col] < args.ncols && (order == GGML_SORT_ORDER_ASC ?
++                            x_row[dst_row[col]] < x_row[dst_row[ixj]] :
++                            x_row[dst_row[col]] > x_row[dst_row[ixj]]))
++                    ) {
++                        SWAP(dst_row[col], dst_row[ixj]);
++                    }
++                }
++            }
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++        }
++    }
++
++    // copy the result to dst without the padding
++    if (col < args.ncols) {
++        dst[row * args.ncols + col] = dst_row[col];
++    }
++}
++
+ template [[host_name("kernel_argsort_f32_i32_asc")]]  kernel argsort_t kernel_argsort_f32_i32<GGML_SORT_ORDER_ASC>;
+ template [[host_name("kernel_argsort_f32_i32_desc")]] kernel argsort_t kernel_argsort_f32_i32<GGML_SORT_ORDER_DESC>;
++template [[host_name("kernel_argsort_i32_i32_asc")]] kernel i32_argsort_t kernel_argsort_i32_i32<GGML_SORT_ORDER_ASC>;
++template [[host_name("kernel_argsort_i32_i32_desc")]] kernel i32_argsort_t kernel_argsort_i32_i32<GGML_SORT_ORDER_DESC>;
+ 
+ kernel void kernel_leaky_relu_f32(
+         constant     ggml_metal_kargs_leaky_relu & args,
+diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
+index db33a4ab..c42ee26e 100644
+--- a/ggml/src/ggml-opencl/ggml-opencl.cpp
++++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
+@@ -3266,6 +3266,7 @@ struct ggml_backend_opencl_buffer_context {
+ static void ggml_backend_opencl_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_opencl_buffer_context * ctx = (ggml_backend_opencl_buffer_context *) buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_opencl_buffer_get_base(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index a38df5a9..fd07e4a2 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -528,6 +528,7 @@ static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     bool status = send_rpc_cmd(ctx->sock, RPC_CMD_FREE_BUFFER, &request, sizeof(request), nullptr, 0);
+     RPC_STATUS_ASSERT(status);
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
+index 62d0ecd9..02e50a55 100644
+--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
+@@ -353,6 +353,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
+     ggml_sycl_set_device(ctx->device);
+ 
+     delete ctx;
++    delete buffer;
+ }
+ catch (sycl::exception const &exc) {
+   std::cerr << exc.what() << "Exception caught at file:" << __FILE__
+@@ -814,6 +815,7 @@ struct ggml_backend_sycl_split_buffer_context {
+ static void ggml_backend_sycl_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_sycl_split_buffer_context * ctx = (ggml_backend_sycl_split_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -1156,6 +1158,7 @@ static const char * ggml_backend_sycl_host_buffer_type_name(ggml_backend_buffer_
+ 
+ static void ggml_backend_sycl_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_sycl_host_free(buffer->context);
++    delete buffer;
+ }
+ 
+ static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index b783f780..ce72912a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -11813,6 +11813,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
+     snprintf(description, description_size, "%s", props.deviceName.data());
+ }
+ 
++static std::string ggml_vk_get_device_id(int device) {
++    ggml_vk_instance_init();
++
++    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
++
++    vk::PhysicalDeviceProperties2 props;
++    vk::PhysicalDeviceIDProperties deviceIDProps;
++    props.pNext = &deviceIDProps;
++    devices[device].getProperties2(&props);
++
++    const auto& uuid = deviceIDProps.deviceUUID;
++    char id[64];
++    snprintf(id, sizeof(id),
++        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++        uuid[0], uuid[1], uuid[2], uuid[3],
++        uuid[4], uuid[5],
++        uuid[6], uuid[7],
++        uuid[8], uuid[9],
++        uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
++    );
++    return std::string(id);
++}
++
+ // backend interface
+ 
+ #define UNUSED GGML_UNUSED
+@@ -11828,6 +11851,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
+     ggml_vk_destroy_buffer(ctx->dev_buffer);
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -11971,6 +11995,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
+ static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
+     ggml_vk_host_free(vk_instance.devices[0], buffer->context);
++    delete buffer;
+ }
+ 
+ static ggml_backend_buffer_t ggml_backend_vk_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+@@ -12758,31 +12783,105 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+     ggml_vk_get_device_description(dev_idx, description, description_size);
+ }
+ 
+-void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
++std::string ggml_backend_vk_get_device_id(int device) {
+     GGML_ASSERT(device < (int) vk_instance.device_indices.size());
+-    GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
++    int dev_idx = vk_instance.device_indices[device];
++    return ggml_vk_get_device_id(dev_idx);
++}
+ 
+-    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
+-    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
+-    vk::PhysicalDeviceMemoryProperties2 memprops = {};
+-    bool membudget_supported = vk_instance.device_supports_membudget[device];
++//////////////////////////
+ 
+-    if (membudget_supported) {
+-        memprops.pNext = &budgetprops;
++struct ggml_backend_vk_device_context {
++    size_t device;
++    std::string name;
++    std::string description;
++    bool is_integrated_gpu;
++    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
++    std::string pci_id;
++    std::string id;
++    std::string uuid;
++    int major;
++    int minor;
++    int driver_major;
++    int driver_minor;
++    int pci_bus_id;
++    int pci_device_id;
++    int pci_domain_id;
++};
++
++void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
++    GGML_ASSERT(ctx->device < (int) vk_instance.device_indices.size());
++    GGML_ASSERT(ctx->device < (int) vk_instance.device_supports_membudget.size());
++
++    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[ctx->device]];
++
++    vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
++    vk::PhysicalDeviceProperties2 props2;
++    vkdev.getProperties2(&props2);
++
++    if (!ctx->is_integrated_gpu)
++    {
++        // Use vendor specific management libraries for best VRAM reporting if available
++        switch (props2.properties.vendorID) {
++        case VK_VENDOR_ID_AMD:
++            if (ggml_hip_mgmt_init() == 0) {
++                int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
++                if (status == 0) {
++                    GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                    ggml_hip_mgmt_release();
++                    return;
++                }
++                ggml_hip_mgmt_release();
++            }
++            break;
++        case VK_VENDOR_ID_NVIDIA:
++            if (ggml_nvml_init() == 0) {
++                int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
++                if (status == 0) {
++                    GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
++                    ggml_nvml_release();
++                    return;
++                }
++                ggml_nvml_release();
++            }
++            break;
++        }
+     }
+-    vkdev.getMemoryProperties2(&memprops);
++    // else fallback to memory budget if supported
+ 
+-    for (uint32_t i = 0; i < memprops.memoryProperties.memoryHeapCount; ++i) {
+-        const vk::MemoryHeap & heap = memprops.memoryProperties.memoryHeaps[i];
++    *total = 0;
++    *free = 0;
++    vk::PhysicalDeviceMemoryBudgetPropertiesEXT mem_budget_props;
++    vk::PhysicalDeviceMemoryProperties2 memprops2;
++    memprops2.pNext = &mem_budget_props;
++    vkdev.getMemoryProperties2(&memprops2);
++    for (int i = 0; i < memprops2.memoryProperties.memoryHeapCount; i++) {
++        if (memprops2.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
++            *total += memprops2.memoryProperties.memoryHeaps[i].size;
++        } else if (ctx->is_integrated_gpu) {
++            // Include shared memory on iGPUs
++            *total += memprops2.memoryProperties.memoryHeaps[i].size;
++        }
++    }
++    for (int i = 0; i < memprops2.memoryProperties.memoryHeapCount; i++) {
++        if (memprops2.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
++            *free += mem_budget_props.heapBudget[i];
++        } else if (ctx->is_integrated_gpu) {
++            *free += mem_budget_props.heapBudget[i];
++        }
++    }
++    if (*total > 0 && *free > 0) {
++        return;
++    } else if (*total > 0) {
++        *free = *total;
++        return;
++    }
+ 
++    // else just report the physical memory
++    for (const vk::MemoryHeap& heap : memprops2.memoryProperties.memoryHeaps) {
+         if (heap.flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+             *total = heap.size;
+-
+-            if (membudget_supported && i < budgetprops.heapUsage.size()) {
+-                *free = budgetprops.heapBudget[i] - budgetprops.heapUsage[i];
+-            } else {
+-                *free = heap.size;
+-            }
++            *free = heap.size;
+             break;
+         }
+     }
+@@ -12837,15 +12936,17 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+     return std::string(pci_bus_id);
+ }
+ 
+-//////////////////////////
+-
+-struct ggml_backend_vk_device_context {
+-    size_t device;
+-    std::string name;
+-    std::string description;
+-    bool is_integrated_gpu;
+-    std::string pci_bus_id;
+-};
++static bool ggml_backend_vk_parse_pci_bus_id(const std::string & id, int *domain, int *bus, int *device) {
++    if (id.empty()) return false;
++    unsigned int d = 0, b = 0, dev = 0, func = 0;
++    // Expected format: dddd:bb:dd.f (all hex)
++    int n = sscanf(id.c_str(), "%4x:%2x:%2x.%1x", &d, &b, &dev, &func);
++    if (n < 4) return false;
++    if (domain) *domain = (int) d;
++    if (bus) *bus = (int) b;
++    if (device) *device = (int) dev;
++    return true;
++}
+ 
+ static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
+@@ -12857,9 +12958,14 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+     return ctx->description.c_str();
+ }
+ 
++static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
++    ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
++    return ctx->id.c_str();
++}
++
+ static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
+-    ggml_backend_vk_get_device_memory(ctx->device, free, total);
++    ggml_backend_vk_get_device_memory(ctx, free, total);
+ }
+ 
+ static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
+@@ -12883,8 +12989,9 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+ 
+     props->name        = ggml_backend_vk_device_get_name(dev);
+     props->description = ggml_backend_vk_device_get_description(dev);
++    props->id          = ggml_backend_vk_device_get_id(dev);
+     props->type        = ggml_backend_vk_device_get_type(dev);
+-    props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
++    props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
+     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
+     props->caps = {
+         /* .async                 = */ false,
+@@ -12892,6 +12999,17 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+         /* .buffer_from_host_ptr  = */ false,
+         /* .events                = */ false,
+     };
++
++    props->compute_major = ctx->major;
++    props->compute_minor = ctx->minor;
++    props->driver_major = ctx->driver_major;
++    props->driver_minor = ctx->driver_minor;
++    props->integrated = ctx->is_integrated_gpu;
++    props->pci_bus_id = ctx->pci_bus_id;
++    props->pci_device_id = ctx->pci_device_id;
++    props->pci_domain_id = ctx->pci_domain_id;
++    props->library = GGML_VK_NAME;
++    props->numeric_id = ctx->id.empty() ? nullptr : ctx->id.c_str();
+ }
+ 
+ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
+@@ -13362,6 +13480,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+         static std::mutex mutex;
+         std::lock_guard<std::mutex> lock(mutex);
+         if (!initialized) {
++            std::vector<vk::PhysicalDevice> vk_devices = vk_instance.instance.enumeratePhysicalDevices();
++
+             for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
+                 ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
+                 char desc[256];
+@@ -13370,12 +13490,46 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+                 ctx->name = GGML_VK_NAME + std::to_string(i);
+                 ctx->description = desc;
+                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
+-                ctx->pci_bus_id = ggml_backend_vk_get_device_pci_id(i);
++                ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
++                ctx->id = ggml_backend_vk_get_device_id(i);
+                 devices.push_back(new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_vk_device_i,
+                     /* .reg     = */ reg,
+                     /* .context = */ ctx,
+                 });
++
++                // Gather additional information about the device
++                int dev_idx = vk_instance.device_indices[i];
++                vk::PhysicalDeviceProperties props1;
++                vk_devices[dev_idx].getProperties(&props1);
++                vk::PhysicalDeviceProperties2 props2;
++                vk::PhysicalDeviceIDProperties device_id_props;
++                vk::PhysicalDevicePCIBusInfoPropertiesEXT  pci_bus_props;
++                vk::PhysicalDeviceDriverProperties driver_props;
++                props2.pNext = &device_id_props;
++                device_id_props.pNext = &pci_bus_props;
++                pci_bus_props.pNext = &driver_props;
++                vk_devices[dev_idx].getProperties2(&props2);
++                std::ostringstream oss;
++                oss << std::hex << std::setfill('0');
++                oss << "GPU-";
++                int byteIdx = 0;
++                for (int i = 0; i < 16; ++i, ++byteIdx) {
++                    oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);
++                    if (byteIdx == 3 || byteIdx == 5 || byteIdx == 7 || byteIdx == 9) {
++                        oss << '-';
++                    }
++                }
++                ctx->uuid = oss.str();
++                ctx->pci_bus_id = pci_bus_props.pciBus;
++                ctx->pci_device_id = pci_bus_props.pciDevice;
++                ctx->pci_domain_id = pci_bus_props.pciDomain;
++                ctx->id = std::to_string(i);
++                ctx->major = 0;
++                ctx->minor = 0;
++                // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
++                ctx->driver_major = 0;
++                ctx->driver_minor = 0;
+             }
+             initialized = true;
+         }
+diff --git a/ggml/src/ggml.cpp b/ggml/src/ggml.cpp
+index 0d388d45..f5bcb446 100644
+--- a/ggml/src/ggml.cpp
++++ b/ggml/src/ggml.cpp
+@@ -19,8 +19,12 @@ static bool ggml_uncaught_exception_init = []{
+         return false;
+     }
+     const auto prev{std::get_terminate()};
+-    GGML_ASSERT(prev != ggml_uncaught_exception);
+-    previous_terminate_handler = prev;
++    // GGML_ASSERT(prev != ggml_uncaught_exception);
++    if (prev != ggml_uncaught_exception) {
++        previous_terminate_handler = prev;
++    } else {
++        GGML_LOG_WARN("%s double registration of ggml_uncaught_exception\n", __func__);
++    }
+     std::set_terminate(ggml_uncaught_exception);
+     return true;
+ }();
+diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
+index 8cc4ef1c..d950dbdf 100644
+--- a/ggml/src/gguf.cpp
++++ b/ggml/src/gguf.cpp
+@@ -805,10 +805,14 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
+ 
+ const void * gguf_get_arr_data(const struct gguf_context * ctx, int64_t key_id) {
+     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
+-    GGML_ASSERT(ctx->kv[key_id].get_type() != GGUF_TYPE_STRING);
+     return ctx->kv[key_id].data.data();
+ }
+ 
++size_t gguf_get_arr_data_n(const struct gguf_context * ctx, int64_t key_id) {
++    GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
++    return ctx->kv[key_id].data.size();
++}
++
+ const char * gguf_get_arr_str(const struct gguf_context * ctx, int64_t key_id, size_t i) {
+     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
+     GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_STRING);
+@@ -902,7 +906,6 @@ const char * gguf_get_val_str(const struct gguf_context * ctx, int64_t key_id) {
+ const void * gguf_get_val_data(const struct gguf_context * ctx, int64_t key_id) {
+     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
+     GGML_ASSERT(ctx->kv[key_id].get_ne() == 1);
+-    GGML_ASSERT(ctx->kv[key_id].get_type() != GGUF_TYPE_STRING);
+     return ctx->kv[key_id].data.data();
+ }
+ 
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index 8ca769c5..ab262ec0 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -82,6 +82,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_GRANITE_MOE,      "granitemoe"       },
+     { LLM_ARCH_GRANITE_HYBRID,   "granitehybrid"    },
+     { LLM_ARCH_CHAMELEON,        "chameleon"        },
++    { LLM_ARCH_SOLAR,            "solar"            },
+     { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
+     { LLM_ARCH_PLM,              "plm"              },
+     { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
+@@ -183,6 +184,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     { LLM_KV_ATTENTION_SCALE,                        "%s.attention.scale"                        },
+     { LLM_KV_ATTENTION_OUTPUT_SCALE,                 "%s.attention.output_scale"                 },
+     { LLM_KV_ATTENTION_TEMPERATURE_LENGTH,           "%s.attention.temperature_length"           },
++    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,        "%s.attention.block_skip_connection"        },
+     { LLM_KV_ATTENTION_KEY_LENGTH_MLA,               "%s.attention.key_length_mla"               },
+     { LLM_KV_ATTENTION_VALUE_LENGTH_MLA,             "%s.attention.value_length_mla"             },
+ 
+@@ -1901,6 +1903,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
+             { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
+         },
+     },
++    {
++        LLM_ARCH_SOLAR,
++        {
++            { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
++            { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
++            { LLM_TENSOR_OUTPUT,          "output" },
++            { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
++            { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
++            { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
++            { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
++            { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
++            { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
++            { LLM_TENSOR_FFN_GATE,        "blk.%d.ffn_gate" },
++            { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
++            { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
++            { LLM_TENSOR_BSKCN_TV,        "bskcn_tv" },
++        },
++    },
+     {
+         LLM_ARCH_WAVTOKENIZER_DEC,
+         {
+@@ -2469,6 +2489,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_LAUREL_POST_NORM,           {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     // this tensor is loaded for T5, but never used
+     {LLM_TENSOR_DEC_CROSS_ATTN_REL_B,       {LLM_TENSOR_LAYER_REPEATING, GGML_OP_NONE}},
++    {LLM_TENSOR_BSKCN_TV,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_CONV1D,                     {LLM_TENSOR_LAYER_INPUT,     GGML_OP_IM2COL}},
+     {LLM_TENSOR_POS_NET_NORM,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_POS_NET_NORM1,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index dea725c1..ea2b4ffb 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -86,6 +86,7 @@ enum llm_arch {
+     LLM_ARCH_GRANITE_MOE,
+     LLM_ARCH_GRANITE_HYBRID,
+     LLM_ARCH_CHAMELEON,
++    LLM_ARCH_SOLAR,
+     LLM_ARCH_WAVTOKENIZER_DEC,
+     LLM_ARCH_PLM,
+     LLM_ARCH_BAILINGMOE,
+@@ -187,6 +188,7 @@ enum llm_kv {
+     LLM_KV_ATTENTION_SCALE,
+     LLM_KV_ATTENTION_OUTPUT_SCALE,
+     LLM_KV_ATTENTION_TEMPERATURE_LENGTH,
++    LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,
+     LLM_KV_ATTENTION_KEY_LENGTH_MLA,
+     LLM_KV_ATTENTION_VALUE_LENGTH_MLA,
+ 
+@@ -436,6 +438,7 @@ enum llm_tensor {
+     LLM_TENSOR_ENC_OUTPUT_NORM,
+     LLM_TENSOR_CLS,
+     LLM_TENSOR_CLS_OUT,
++    LLM_TENSOR_BSKCN_TV,
+     LLM_TENSOR_CONV1D,
+     LLM_TENSOR_CONVNEXT_DW,
+     LLM_TENSOR_CONVNEXT_NORM,
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index b1ed58d8..dafca12d 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -974,8 +974,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
+     const int64_t n_vocab = vocab.n_tokens();
+     const int64_t n_embd  = hparams.n_embd;
+ 
+-    // when computing embeddings, all tokens are output
+-    const bool output_all = cparams.embeddings;
++    const bool output_all = false;
+ 
+     if (!balloc->init(batch_inp, vocab, memory.get(), n_embd, cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max, output_all)) {
+         LLAMA_LOG_ERROR("%s: failed to initialize batch\n", __func__);
+diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
+index bed706bb..b51cee09 100644
+--- a/src/llama-grammar.cpp
++++ b/src/llama-grammar.cpp
+@@ -907,6 +907,7 @@ llama_grammar_candidates llama_grammar_reject_candidates_for_stack(
+ 
+ struct llama_grammar * llama_grammar_init_impl(
+         const struct llama_vocab * vocab,
++        const struct ollama_vocab * ollama_vocab,
+         const llama_grammar_element ** rules,
+         size_t n_rules,
+         size_t start_rule_index) {
+@@ -962,6 +963,7 @@ struct llama_grammar * llama_grammar_init_impl(
+     // then the pointers would be invalidated when the local vec_rules goes out of scope.
+     return new llama_grammar {
+         vocab,
++        ollama_vocab,
+         std::move(vec_rules),
+         std::move(stacks),
+         /* .partial_utf8 = */     {},
+@@ -975,6 +977,7 @@ struct llama_grammar * llama_grammar_init_impl(
+ 
+ struct llama_grammar * llama_grammar_init_impl(
+         const struct llama_vocab * vocab,
++        const struct ollama_vocab * ollama_vocab,
+                       const char * grammar_str,
+                       const char * grammar_root,
+                               bool lazy,
+@@ -1067,6 +1070,7 @@ struct llama_grammar * llama_grammar_init_impl(
+     // then the pointers would be invalidated when the local vec_rules goes out of scope.
+     return new llama_grammar {
+         vocab,
++        ollama_vocab,
+         std::move(vec_rules),
+         std::move(stacks),
+         /* .partial_utf8 = */     {},
+@@ -1089,6 +1093,7 @@ void llama_grammar_free_impl(struct llama_grammar * grammar) {
+ struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & grammar) {
+     auto * result = new llama_grammar {
+         grammar.vocab,
++        grammar.o_vocab,
+         grammar.rules,
+         grammar.stacks,
+         grammar.partial_utf8,
+@@ -1116,7 +1121,6 @@ struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & gra
+ }
+ 
+ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_data_array * cur_p) {
+-    GGML_ASSERT(grammar.vocab != nullptr);
+ 
+     if (grammar.awaiting_trigger) {
+         return;
+@@ -1138,9 +1142,13 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
+ 
+     for (size_t i = 0; i < cur_p->size; ++i) {
+         const llama_token id      = cur_p->data[i].id;
+-        const std::string & piece = grammar.vocab->token_to_piece(id);
++        const std::string piece = grammar.o_vocab ?
++            grammar.o_vocab->token_to_piece(id) :
++            grammar.vocab->token_to_piece(id);
+ 
+-        if (grammar.vocab->is_eog(id)) {
++        const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(id) : grammar.vocab->is_eog(id);
++
++        if (is_eog) {
+             if (!allow_eog) {
+                 cur_p->data[i].logit = -INFINITY;
+             }
+@@ -1159,9 +1167,10 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
+ }
+ 
+ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
+-    GGML_ASSERT(grammar.vocab != nullptr);
+ 
+-    const auto & piece = grammar.vocab->token_to_piece(token);
++    const std::string piece = grammar.o_vocab ?
++        grammar.o_vocab->token_to_piece(token) :
++        grammar.vocab->token_to_piece(token);
+ 
+     if (grammar.awaiting_trigger) {
+         if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
+@@ -1201,13 +1210,14 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
+         }
+     }
+ 
+-    if (grammar.vocab->is_eog(token)) {
++    const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(token) : grammar.vocab->is_eog(token);
++    if (is_eog) {
+         for (const auto & stack : grammar.stacks) {
+             if (stack.empty()) {
+                 return;
+             }
+         }
+-        GGML_ABORT("fatal error");
++        GGML_ABORT("grammar error: end of grammar token received but grammar stack is not empty");
+     }
+ 
+     llama_grammar_accept_str(grammar, piece);
+@@ -1227,3 +1237,28 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string
+         throw std::runtime_error("Unexpected empty grammar stack after accepting piece: " + piece);
+     }
+ }
++
++
++const std::string & ollama_vocab::token_to_piece(const uint32_t token) const {
++    try {
++        return token_to_piece_map.at(token);
++    } catch (const std::out_of_range&) {
++        throw std::runtime_error("Token not found in vocabulary: " + std::to_string(token));
++    }
++}
++
++void ollama_vocab::add_token_pieces(const uint32_t* tokens, size_t n_tokens, const char** pieces) {
++    for (size_t i = 0; i < n_tokens; i++) {
++        token_to_piece_map[tokens[i]] = pieces[i];
++    }
++}
++
++bool ollama_vocab::is_eog(const uint32_t token) const {
++    return special_eog_ids.count(token) > 0;
++}
++
++void ollama_vocab::set_eog_tokens(const uint32_t* tokens, size_t n_tokens) {
++    for (size_t i = 0; i < n_tokens; i++) {
++        special_eog_ids.insert(tokens[i]);
++    }
++}
+diff --git a/src/llama-grammar.h b/src/llama-grammar.h
+index f8c291de..2a3a62db 100644
+--- a/src/llama-grammar.h
++++ b/src/llama-grammar.h
+@@ -6,8 +6,19 @@
+ #include <regex>
+ #include <string>
+ #include <vector>
++#include <set>
+ 
+ struct llama_vocab;
++struct ollama_vocab {
++    std::map<uint32_t, std::string> token_to_piece_map;
++    std::set<uint32_t> special_eog_ids;
++
++    const std::string & token_to_piece(const uint32_t token) const;
++    void add_token_pieces(const uint32_t* tokens, size_t n_tokens, const char** pieces);
++    void set_eog_tokens(const uint32_t* tokens, size_t n_tokens);
++    bool is_eog(const uint32_t token) const;
++
++};
+ 
+ // grammar element type
+ enum llama_gretype {
+@@ -114,6 +125,7 @@ struct llama_grammar_trigger_pattern {
+ struct llama_grammar {
+     // note: allow null vocab for testing (not great)
+     const llama_vocab * vocab;
++    const ollama_vocab * o_vocab;
+ 
+     const llama_grammar_rules  rules;  // TODO: shared ptr
+           llama_grammar_stacks stacks;
+@@ -141,12 +153,14 @@ struct llama_grammar {
+ // note: needed for tests (not great)
+ struct llama_grammar * llama_grammar_init_impl(
+         const struct llama_vocab * vocab,
++        const struct ollama_vocab * ollama_vocab,
+         const llama_grammar_element ** rules,
+         size_t n_rules,
+         size_t start_rule_index);
+ 
+ struct llama_grammar * llama_grammar_init_impl(
+         const struct llama_vocab * vocab,
++        const struct ollama_vocab * ollama_vocab,
+                       const char * grammar_str,
+                       const char * grammar_root,
+                               bool lazy,
+diff --git a/src/llama-hparams.cpp b/src/llama-hparams.cpp
+index db65d69e..b6bf6bbf 100644
+--- a/src/llama-hparams.cpp
++++ b/src/llama-hparams.cpp
+@@ -151,6 +151,14 @@ uint32_t llama_hparams::n_pos_per_embd() const {
+     return rope_type == LLAMA_ROPE_TYPE_MROPE ? 4 : 1;
+ }
+ 
++bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
++    if (il < n_layer) {
++        return n_bskcn_arr[n][il] > 0;
++    }
++
++    GGML_ABORT("fatal error");
++}
++
+ bool llama_hparams::is_swa(uint32_t il) const {
+     if (il < n_layer) {
+         return swa_layers[il];
+diff --git a/src/llama-hparams.h b/src/llama-hparams.h
+index 6fcf91b7..24569a25 100644
+--- a/src/llama-hparams.h
++++ b/src/llama-hparams.h
+@@ -64,6 +64,8 @@ struct llama_hparams {
+     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
+     std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
+ 
++    std::array<std::array<uint32_t, LLAMA_MAX_LAYERS>, 4> n_bskcn_arr = {};
++
+     uint32_t n_layer_dense_lead = 0;
+     uint32_t n_lora_q           = 0;
+     uint32_t n_lora_kv          = 0;
+@@ -250,6 +252,9 @@ struct llama_hparams {
+ 
+     uint32_t n_pos_per_embd() const;
+ 
++    // Block skip connection
++    bool n_bskcn(uint32_t n, uint32_t il) const;
++
+     bool is_swa(uint32_t il) const;
+ 
+     bool has_kv(uint32_t il) const;
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index aa3a65f8..ee303bd5 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -466,7 +466,7 @@ namespace GGUFMeta {
+     template bool llama_model_loader::get_key_or_arr<std::array<int, 4>>(enum llm_kv kid, std::array<int, 4> & result, uint32_t n, bool required);
+     template bool llama_model_loader::get_key_or_arr<std::array<uint32_t, 512>>(enum llm_kv kid, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+     template bool llama_model_loader::get_key_or_arr<std::array<float, 512>>(enum llm_kv kid, std::array<float, 512> & result, uint32_t n, bool required);
+-
++    template bool llama_model_loader::get_key_or_arr<uint32_t>(const std::string & key, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+ 
+ llama_model_loader::llama_model_loader(
+         const std::string & fname,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index b88ff51f..5c521101 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1890,6 +1890,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+                     default: type = LLM_TYPE_UNKNOWN;
+                }
+             } break;
++        case LLM_ARCH_SOLAR:
++            {
++                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
++                for (size_t i = 0; i < hparams.n_bskcn_arr.max_size(); ++i) {
++                    auto & bskcn = hparams.n_bskcn_arr[i];
++                    bskcn.fill(0);
++                    auto kv = LLM_KV(arch);
++                    ml.get_key_or_arr(format((kv(LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION) + ".%d").c_str(), i), bskcn, hparams.n_layer, false);
++                }
++
++                switch (hparams.n_layer) {
++                    case 64: type = LLM_TYPE_22B; break;
++                    default: type = LLM_TYPE_UNKNOWN;
++                }
++            } break;
+         case LLM_ARCH_WAVTOKENIZER_DEC:
+             {
+                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS,    hparams.f_norm_eps);
+@@ -5224,6 +5239,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+ 
+                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+ 
++                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
++                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
++                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
++                    }
++                } break;
++            case LLM_ARCH_SOLAR:
++                {
++                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++
++                    // output
++                    {
++                        output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
++                        output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_NOT_REQUIRED);
++                    }
++
++                    for (int i = 0; i < n_layer; ++i) {
++                        auto & layer = layers[i];
++
++                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
++
++                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
++                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
++                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
++                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
++
++                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
++
++                        layer.bskcn_tv = create_tensor(tn(LLM_TENSOR_BSKCN_TV, "weight", i), {2}, llama_model_loader::TENSOR_NOT_REQUIRED | (i != 0 ? llama_model_loader::TENSOR_DUPLICATED : 0));
+                         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                         layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                         layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+@@ -16515,6 +16558,165 @@ struct llm_build_granite_hybrid : public llm_graph_context_mamba {
+     }
+ };
+ 
++struct llm_build_solar : public llm_graph_context {
++    llm_build_solar(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
++        const int64_t n_embd_head = hparams.n_embd_head_v;
++        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
++        GGML_ASSERT(n_embd_head == hparams.n_rot);
++
++        struct ggml_tensor * cur;
++        struct ggml_tensor * inpL;
++
++        inpL = build_inp_embd(model.tok_embd);
++
++        // inp_pos - contains the positions
++        struct ggml_tensor * inp_pos = build_inp_pos();
++
++        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
++        auto * inp_attn = build_attn_inp_kv();
++
++        const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
++
++        struct ggml_tensor * bskcn_1;
++        struct ggml_tensor * bskcn_2;
++
++        for (int il = 0; il < n_layer; ++il) {
++            struct ggml_tensor * inpSA = inpL;
++
++            if (hparams.n_bskcn(0, il)) {
++                bskcn_1 = inpSA;
++            }
++
++            if (hparams.n_bskcn(1, il)) {
++                bskcn_2 = inpSA;
++            }
++
++            if (hparams.n_bskcn(2, il)) {
++                inpSA = ggml_add(
++                   ctx0,
++                   ggml_mul(ctx0, bskcn_1, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, 0)),
++                   ggml_mul(ctx0, inpSA, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, ggml_element_size(model.layers[il].bskcn_tv))));
++            }
++
++            if (hparams.n_bskcn(3, il)) {
++                inpSA = ggml_add(
++                   ctx0,
++                   ggml_mul(ctx0, bskcn_2, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, 0)),
++                   ggml_mul(ctx0, inpSA, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, ggml_element_size(model.layers[il].bskcn_tv))));
++            }
++
++            // norm
++            cur = build_norm(inpL,
++                    model.layers[il].attn_norm, NULL,
++                    LLM_NORM_RMS, il);
++            cb(cur, "attn_norm", il);
++
++            // self-attention
++            {
++                // rope freq factors for llama3; may return nullptr for llama2 and other models
++                ggml_tensor * rope_factors = model.get_rope_factors(cparams, il);
++
++                // compute Q and K and RoPE them
++                ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
++                cb(Qcur, "Qcur", il);
++                if (model.layers[il].bq) {
++                    Qcur = ggml_add(ctx0, Qcur, model.layers[il].bq);
++                    cb(Qcur, "Qcur", il);
++                }
++
++                ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
++                cb(Kcur, "Kcur", il);
++                if (model.layers[il].bk) {
++                    Kcur = ggml_add(ctx0, Kcur, model.layers[il].bk);
++                    cb(Kcur, "Kcur", il);
++                }
++
++                ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
++                cb(Vcur, "Vcur", il);
++                if (model.layers[il].bv) {
++                    Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
++                    cb(Vcur, "Vcur", il);
++                }
++
++                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
++                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++
++                Qcur = ggml_rope_ext(
++                        ctx0, Qcur, inp_pos, rope_factors,
++                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
++                        ext_factor, attn_factor, beta_fast, beta_slow
++                        );
++
++                Kcur = ggml_rope_ext(
++                        ctx0, Kcur, inp_pos, rope_factors,
++                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
++                        ext_factor, attn_factor, beta_fast, beta_slow
++                        );
++
++                cb(Qcur, "Qcur", il);
++                cb(Kcur, "Kcur", il);
++                cb(Vcur, "Vcur", il);
++
++                cur = build_attn(inp_attn,
++                        model.layers[il].wo, model.layers[il].bo,
++                        Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
++                cb(cur, "attn_out", il);
++            }
++
++            if (il == n_layer - 1) {
++                // skip computing output for unused tokens
++                ggml_tensor * inp_out_ids = build_inp_out_ids();
++                cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
++                inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
++            }
++
++            ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
++            cb(ffn_inp, "ffn_inp", il);
++
++            // feed-forward network
++            cur = build_norm(ffn_inp,
++                    model.layers[il].ffn_norm, NULL,
++                    LLM_NORM_RMS, il);
++            cb(cur, "ffn_norm", il);
++
++            cur = build_ffn(cur,
++                    model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
++                    model.layers[il].ffn_gate, model.layers[il].ffn_gate_b, NULL,
++                    model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
++                    NULL,
++                    LLM_FFN_SILU, LLM_FFN_PAR, il);
++            cb(cur, "ffn_out", il);
++
++            cur = ggml_add(ctx0, cur, ffn_inp);
++            cb(cur, "ffn_out", il);
++
++            cur = build_cvec(cur, il);
++            cb(cur, "l_out", il);
++
++            // input for next layer
++            inpL = cur;
++        }
++
++        cur = inpL;
++
++        cur = build_norm(cur,
++                model.output_norm, NULL,
++                LLM_NORM_RMS, -1);
++
++        cb(cur, "result_norm", -1);
++        res->t_embd = cur;
++
++        // lm_head
++        cur = build_lora_mm(model.output, cur);
++
++        cb(cur, "result_output", -1);
++        res->t_logits = cur;
++
++        ggml_build_forward_expand(gf, cur);
++    }
++};
++
+ // ref: https://github.com/facebookresearch/chameleon
+ // based on the original build_llama() function, changes:
+ //   * qk-norm
+@@ -20097,6 +20299,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+             {
+                 llm = std::make_unique<llm_build_chameleon>(*this, params);
+             } break;
++        case LLM_ARCH_SOLAR:
++            {
++                llm = std::make_unique<llm_build_solar>(*this, params);
++            } break;
+         case LLM_ARCH_WAVTOKENIZER_DEC:
+             {
+                 llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params);
+@@ -20332,6 +20538,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_GRANITE_MOE:
+         case LLM_ARCH_GRANITE_HYBRID:
+         case LLM_ARCH_CHAMELEON:
++        case LLM_ARCH_SOLAR:
+         case LLM_ARCH_BAILINGMOE:
+         case LLM_ARCH_NEO_BERT:
+         case LLM_ARCH_SMOLLM3:
+diff --git a/src/llama-model.h b/src/llama-model.h
+index 248f8541..4a7924aa 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -76,6 +76,7 @@ enum llm_type {
+     LLM_TYPE_15B,
+     LLM_TYPE_16B,
+     LLM_TYPE_20B,
++    LLM_TYPE_22B,
+     LLM_TYPE_27B,
+     LLM_TYPE_30B,
+     LLM_TYPE_32B,
+@@ -390,6 +391,8 @@ struct llama_layer {
+     struct ggml_tensor * ffn_act_beta    = nullptr;
+     struct ggml_tensor * ffn_act_eps     = nullptr;
+ 
++    struct ggml_tensor * bskcn_tv = nullptr;
++
+     struct llama_layer_posnet posnet;
+ 
+     struct llama_layer_convnext convnext;
+diff --git a/src/llama-sampling.cpp b/src/llama-sampling.cpp
+index 44aeb57f..6f8ce22e 100644
+--- a/src/llama-sampling.cpp
++++ b/src/llama-sampling.cpp
+@@ -1563,7 +1563,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
+         trigger_patterns_c.push_back(trigger_pattern.pattern.c_str());
+     }
+ 
+-    auto * grammar_new = llama_grammar_init_impl(ctx->grammar->vocab, ctx->grammar_str.c_str(), ctx->grammar_root.c_str(),
++    auto * grammar_new = llama_grammar_init_impl(ctx->grammar->vocab, nullptr, ctx->grammar_str.c_str(), ctx->grammar_root.c_str(),
+                                                  ctx->grammar->lazy, trigger_patterns_c.data(), trigger_patterns_c.size(),
+                                                  ctx->grammar->trigger_tokens.data(), ctx->grammar->trigger_tokens.size());
+ 
+@@ -1645,7 +1645,7 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
+             /* .vocab        = */ vocab,
+             /* .grammar_str  = */ grammar_str,
+             /* .grammar_root = */ grammar_root,
+-            /* .grammar      = */ llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens),
++            /* .grammar      = */ llama_grammar_init_impl(vocab, nullptr, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens),
+         };
+         if (!ctx->grammar) {
+             delete ctx;
+diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
+index 639fecbd..31f49801 100644
+--- a/src/llama-vocab.cpp
++++ b/src/llama-vocab.cpp
+@@ -299,7 +299,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
+             case LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM:
+                 regex_exprs = {
+                     "[\r\n]",
+-                    "\\s?[A-Za-zµÀ-ÖØ-öø-ƺƼ-ƿǄ-ʓʕ-ʯͰ-ͳͶͷͻ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-ՖႠ-ჅᎠ-Ᏽᏸ-ᏽᲐ-ᲺᲽ-Ჿᴀ-ᴫᵫ-ᵷᵹ-ᶚḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℴℹℼ-ℿⅅ-ⅉⅎↃↄⰀ-ⱻⱾ-ⳤⳫ-ⳮⳲⳳꙀ-ꙭꚀ-ꚛꜢ-ꝯꝱ-ꞇꞋ-ꞎꭰ-ꮿﬀ-ﬆﬓ-ﬗＡ-Ｚａ-ｚ𐐀-𐑏𐒰-𐓓𐓘-𐓻𐲀-𐲲𐳀-𐳲𑢠-𑣟𞤀-𞥃]+",
++                    "\\s?[A-Za-zµÀ-ÖØ-öø-ƺƼ-ƿǄ-ʓʕ-ʯͰ-ͳͶͷͻ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-ՖႠ-ჅᎠ-Ᏽᏸ-ᏽᲐ-ᲺᲽ-Ჿᴀ-ᴫᵫ-ᵷᵹ-ᶚḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℴℹℼ-ℿⅅ-ⅉⅎↃↄⰀ-ⱻⱾ-ⳤⳫ-ⳮⳲⳳꙀ-ꙭꚀ-ꚛꜢ-ꝯꝱ-ꞇꞋ-ꞎꭰ-ꮿﬀ-ﬆﬓ-ﬗＡ-Ｚａ-ｚ\U00010400-\U0001044f𐒰-𐓓𐓘-𐓻𐲀-𐲲𐳀-𐳲𑢠-𑣟𞤀-𞥃]+",
+                     "\\s?[!-/:-~！-／：-～‘-‟　-。]+",
+                     "\\s+$",
+                     "[一-龥ࠀ-一가-퟿]+",
+@@ -1768,9 +1768,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+             const int precompiled_charsmap_keyidx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP).c_str());
+             if (precompiled_charsmap_keyidx != -1) {
+                 const gguf_type pc_type = gguf_get_arr_type(ctx, precompiled_charsmap_keyidx);
+-                GGML_ASSERT(pc_type == GGUF_TYPE_INT8 || pc_type == GGUF_TYPE_UINT8);
+-
+-                const size_t n_precompiled_charsmap = gguf_get_arr_n(ctx, precompiled_charsmap_keyidx);
++                const size_t n_precompiled_charsmap = gguf_get_arr_data_n(ctx, precompiled_charsmap_keyidx);
+                 const char * pc = (const char *) gguf_get_arr_data(ctx, precompiled_charsmap_keyidx);
+                 precompiled_charsmap.assign(pc, pc + n_precompiled_charsmap);
+ #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+@@ -1812,16 +1810,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+         if (type == LLAMA_VOCAB_TYPE_BPE) {
+             add_space_prefix = false;
+             clean_spaces = true;
+-            if (tokenizer_pre.empty()) {
+-                LLAMA_LOG_WARN("%s: missing pre-tokenizer type, using: 'default'\n", __func__);
+-                LLAMA_LOG_WARN("%s:                                             \n", __func__);
+-                LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
+-                LLAMA_LOG_WARN("%s: GENERATION QUALITY WILL BE DEGRADED!        \n", __func__);
+-                LLAMA_LOG_WARN("%s: CONSIDER REGENERATING THE MODEL             \n", __func__);
+-                LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
+-                LLAMA_LOG_WARN("%s:                                             \n", __func__);
+-                pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+-            } else if (tokenizer_pre == "default") {
++            if (tokenizer_pre == "default") {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+             } else if (
+                     tokenizer_pre == "llama3"   ||
+@@ -1993,7 +1982,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_GROK_2;
+                 clean_spaces = false;
+             } else {
+-                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
++                LLAMA_LOG_WARN("%s: missing or unrecognized pre-tokenizer type, using: 'default'\n", __func__);
++                pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+             }
+         } else if (type == LLAMA_VOCAB_TYPE_SPM) {
+             pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+diff --git a/src/llama.cpp b/src/llama.cpp
+index ab2e9868..74c49e65 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -270,10 +270,12 @@ static struct llama_model * llama_model_load_from_file_impl(
+     for (auto * dev : model->devices) {
+         ggml_backend_dev_props props;
+         ggml_backend_dev_get_props(dev, &props);
++        size_t memory_free, memory_total;
++        ggml_backend_dev_memory(dev, &memory_free, &memory_total);
+         LLAMA_LOG_INFO("%s: using device %s (%s) (%s) - %zu MiB free\n", __func__,
+                 ggml_backend_dev_name(dev), ggml_backend_dev_description(dev),
+                 props.device_id ? props.device_id : "unknown id",
+-                props.memory_free/1024/1024);
++                memory_free/1024/1024);
+     }
+ 
+     const int status = llama_model_load(path_model, splits, *model, params);
+diff --git a/src/unicode.cpp b/src/unicode.cpp
+index 65f36651..ce336a22 100644
+--- a/src/unicode.cpp
++++ b/src/unicode.cpp
+@@ -2,6 +2,11 @@
+ #define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+ #endif
+ 
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#endif
++
+ #include "unicode.h"
+ #include "unicode-data.h"
+ 
+@@ -200,6 +205,21 @@ static std::unordered_map<std::string, uint8_t> unicode_utf8_to_byte_map() {
+ }
+ 
+ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
++#ifdef _WIN32
++    int wlen = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, NULL, 0);
++    if (!wlen) {
++        throw std::invalid_argument("failed to convert regex");
++    }
++    wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
++    wlen = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, wbuf, wlen);
++    if (!wlen) {
++        free(wbuf);
++        throw std::invalid_argument("failed to convert regex");
++    }
++    std::wstring ret = std::wstring(wbuf);
++    free(wbuf);
++    return ret;
++#else
+ #if defined(__clang__)
+     // disable C++17 deprecation warning for std::codecvt_utf8
+ #    pragma clang diagnostic push
+@@ -218,6 +238,7 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
+ #endif
+ 
+     return conv.from_bytes(s);
++#endif
+ }
+ 
+ static std::vector<std::string> unicode_byte_encoding_process(const std::vector<std::string> & bpe_words) {
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index f2abf885..c984e628 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -28,6 +28,19 @@
+ #include <numeric>
+ #include <functional>
+ 
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++    #define NOMINMAX
++#endif
++#include <windows.h>
++#if __GLIBCXX__
++#include <cstdio>
++#include <ext/stdio_filebuf.h>
++#include <fcntl.h>
++#endif
++#endif
++
+ struct clip_logger_state g_logger_state = {GGML_LOG_LEVEL_CONT, clip_log_callback_default, NULL};
+ 
+ enum ffn_op_type {
+@@ -2774,7 +2787,29 @@ struct clip_model_loader {
+         {
+             std::vector<uint8_t> read_buf;
+ 
++#ifdef _WIN32
++            int wlen = MultiByteToWideChar(CP_UTF8, 0, fname.c_str(), -1, NULL, 0);
++            if (!wlen) {
++                throw std::runtime_error(string_format("%s: failed to convert filename to wide string\n", __func__));
++            }
++            wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
++            wlen = MultiByteToWideChar(CP_UTF8, 0, fname.c_str(), -1, wbuf, wlen);
++            if (!wlen) {
++                free(wbuf);
++                throw std::runtime_error(string_format("%s: failed to convert filename to wide string\n", __func__));
++            }
++#if __GLIBCXX__
++            int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
++            __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
++            std::istream fin(&buffer);
++#else // MSVC
++            // unused in our current build
++            auto fin = std::ifstream(wbuf, std::ios::binary);
++#endif
++            free(wbuf);
++#else
+             auto fin = std::ifstream(fname, std::ios::binary);
++#endif
+             if (!fin) {
+                 throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
+             }
+@@ -2801,7 +2836,11 @@ struct clip_model_loader {
+                     ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+                 }
+             }
++#if defined(_WIN32) && defined(__GLIBCXX__)
++            close(fd);
++#else
+             fin.close();
++#endif
+ 
+             LOG_DBG("%s: loaded %zu tensors from %s\n", __func__, tensors_to_load.size(), fname.c_str());
+         }
+diff --git a/tools/mtmd/mtmd-audio.cpp b/tools/mtmd/mtmd-audio.cpp
+index 4d053895..84bdc277 100644
+--- a/tools/mtmd/mtmd-audio.cpp
++++ b/tools/mtmd/mtmd-audio.cpp
+@@ -1,6 +1,6 @@
++#define _USE_MATH_DEFINES // for M_PI
+ #include "mtmd-audio.h"
+ 
+-#define _USE_MATH_DEFINES // for M_PI
+ #include <cmath>
+ #include <cstdint>
+ #include <cstring>
+diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
+index 4d487581..35a0d25e 100644
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -79,6 +79,16 @@ enum mtmd_slice_tmpl {
+     MTMD_SLICE_TMPL_IDEFICS3,
+ };
+ 
++mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {
++    return new mtmd_input_text{text, add_special, parse_special};
++}
++
++void mtmd_input_text_free(mtmd_input_text* input_text) {
++    if (input_text) {
++        delete input_text;
++    }
++}
++
+ const char * mtmd_default_marker() {
+     return "<__media__>";
+ }
+diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
+index f4ea07d3..cf287224 100644
+--- a/tools/mtmd/mtmd.h
++++ b/tools/mtmd/mtmd.h
+@@ -75,6 +75,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
+ typedef struct mtmd_input_chunks mtmd_input_chunks;
+ typedef struct mtmd_input_text   mtmd_input_text;
+ 
++MTMD_API mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special);
++MTMD_API void mtmd_input_text_free(mtmd_input_text* input_text);
++
+ struct mtmd_context_params {
+     bool use_gpu;
+     bool print_timings;
+diff --git a/ggml/src/mem_nvml.cpp b/ggml/src/mem_nvml.cpp
+new file mode 100644
+index 00000000..c9073cef
+--- /dev/null
++++ b/ggml/src/mem_nvml.cpp
+@@ -0,0 +1,209 @@
++// NVIDIA Management Library (NVML)
++//
++// https://developer.nvidia.com/management-library-nvml
++//
++// This library provides accurate VRAM reporting for NVIDIA GPUs, particularly
++// on Windows, where the cuda library provides inaccurate VRAM usage metrics. The
++// runtime DLL is installed with every driver on Windows, and most Linux
++// systems, and the headers are included in the standard CUDA SDK install.  As
++// such, we can include the header here to simplify the code.
++
++
++#include "ggml-impl.h"
++#include <filesystem>
++#include <mutex>
++#include <array>
++
++#ifdef _WIN32
++#    define WIN32_LEAN_AND_MEAN
++#    ifndef NOMINMAX
++#        define NOMINMAX
++#    endif
++#    include <windows.h>
++#else
++#    include <dlfcn.h>
++#    include <unistd.h>
++#endif
++
++namespace fs = std::filesystem;
++
++// Minimal definitions to avoid including the nvml.h header
++typedef enum nvmlReturn_enum
++{
++    // cppcheck-suppress *
++    NVML_SUCCESS = 0,                          //!< The operation was successful
++    NVML_ERROR_UNINITIALIZED = 1,              //!< NVML was not first initialized with nvmlInit()
++    NVML_ERROR_INVALID_ARGUMENT = 2,           //!< A supplied argument is invalid
++    NVML_ERROR_NOT_SUPPORTED = 3,              //!< The requested operation is not available on target device
++    NVML_ERROR_NO_PERMISSION = 4,              //!< The current user does not have permission for operation
++    NVML_ERROR_ALREADY_INITIALIZED = 5,        //!< Deprecated: Multiple initializations are now allowed through ref counting
++    NVML_ERROR_NOT_FOUND = 6,                  //!< A query to find an object was unsuccessful
++    NVML_ERROR_INSUFFICIENT_SIZE = 7,          //!< An input argument is not large enough
++    NVML_ERROR_INSUFFICIENT_POWER = 8,         //!< A device's external power cables are not properly attached
++    NVML_ERROR_DRIVER_NOT_LOADED = 9,          //!< NVIDIA driver is not loaded
++    NVML_ERROR_TIMEOUT = 10,                   //!< User provided timeout passed
++    NVML_ERROR_IRQ_ISSUE = 11,                 //!< NVIDIA Kernel detected an interrupt issue with a GPU
++    NVML_ERROR_LIBRARY_NOT_FOUND = 12,         //!< NVML Shared Library couldn't be found or loaded
++    NVML_ERROR_FUNCTION_NOT_FOUND = 13,        //!< Local version of NVML doesn't implement this function
++    NVML_ERROR_CORRUPTED_INFOROM = 14,         //!< infoROM is corrupted
++    NVML_ERROR_GPU_IS_LOST = 15,               //!< The GPU has fallen off the bus or has otherwise become inaccessible
++    NVML_ERROR_RESET_REQUIRED = 16,            //!< The GPU requires a reset before it can be used again
++    NVML_ERROR_OPERATING_SYSTEM = 17,          //!< The GPU control device has been blocked by the operating system/cgroups
++    NVML_ERROR_LIB_RM_VERSION_MISMATCH = 18,   //!< RM detects a driver/library version mismatch
++    NVML_ERROR_IN_USE = 19,                    //!< An operation cannot be performed because the GPU is currently in use
++    NVML_ERROR_MEMORY = 20,                    //!< Insufficient memory
++    NVML_ERROR_NO_DATA = 21,                   //!< No data
++    NVML_ERROR_VGPU_ECC_NOT_SUPPORTED = 22,    //!< The requested vgpu operation is not available on target device, becasue ECC is enabled
++    NVML_ERROR_INSUFFICIENT_RESOURCES = 23,    //!< Ran out of critical resources, other than memory
++    NVML_ERROR_FREQ_NOT_SUPPORTED = 24,        //!< Ran out of critical resources, other than memory
++    NVML_ERROR_ARGUMENT_VERSION_MISMATCH = 25, //!< The provided version is invalid/unsupported
++    NVML_ERROR_DEPRECATED  = 26,               //!< The requested functionality has been deprecated
++    NVML_ERROR_NOT_READY = 27,                 //!< The system is not ready for the request
++    NVML_ERROR_GPU_NOT_FOUND = 28,             //!< No GPUs were found
++    NVML_ERROR_INVALID_STATE = 29,             //!< Resource not in correct state to perform requested operation
++    NVML_ERROR_UNKNOWN = 999                   //!< An internal driver error occurred
++} nvmlReturn_t;
++typedef struct nvmlDevice_st* nvmlDevice_t;
++typedef struct nvmlMemory_st
++{
++    unsigned long long total;        //!< Total physical device memory (in bytes)
++    unsigned long long free;         //!< Unallocated device memory (in bytes)
++    unsigned long long used;         //!< Sum of Reserved and Allocated device memory (in bytes).
++                                     //!< Note that the driver/GPU always sets aside a small amount of memory for bookkeeping
++} nvmlMemory_t;
++// end nvml.h definitions
++
++struct {
++  void *handle;
++  nvmlReturn_t (*nvmlInit_v2)(void);
++  nvmlReturn_t (*nvmlShutdown)(void);
++  nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
++  nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
++  const char * (*nvmlErrorString)(nvmlReturn_t result);
++} nvml { NULL, NULL, NULL, NULL, NULL };
++static std::mutex ggml_nvml_lock;
++
++extern "C" {
++
++int ggml_nvml_init() {
++    std::lock_guard<std::mutex> lock(ggml_nvml_lock);
++    if (nvml.handle != NULL) {
++        // Already initialized
++        return 0;
++    }
++#ifdef _WIN32
++    DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
++    SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
++    fs::path libPath[2];
++    const char * programDir = std::getenv("ProgramW6432");
++    if (programDir == NULL) {
++        libPath[0] = fs::path("Program Files") / fs::path("NVIDIA Corporation") / fs::path("NVSMI") / fs::path("NVML.dll");
++    } else {
++        libPath[0] = fs::path(programDir) / fs::path("NVIDIA Corporation") / fs::path("NVSMI") / fs::path("NVML.dll");
++    }
++    libPath[1] = fs::path("\\Windows") / fs::path("System32") / fs::path("NVML.dll");
++
++    for (int i = 0; i < 2; i++) {
++        nvml.handle = (void*)LoadLibraryW(libPath[i].wstring().c_str());
++        if (nvml.handle != NULL) {
++            break;
++        }
++    }
++    if (nvml.handle == NULL) {
++        return NVML_ERROR_NOT_FOUND;
++    }
++
++    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlInit_v2");
++    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlShutdown");
++    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetHandleByUUID");
++    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) GetProcAddress((HMODULE)(nvml.handle), "nvmlErrorString");
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlErrorString == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in NVML.dll", __func__);
++        FreeLibrary((HMODULE)(nvml.handle));
++        nvml.handle = NULL;
++        return NVML_ERROR_NOT_FOUND;
++    }
++
++    SetErrorMode(old_mode);
++
++    nvmlReturn_t status = nvml.nvmlInit_v2();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++        FreeLibrary((HMODULE)(nvml.handle));
++        nvml.handle = NULL;
++        return status;
++    }
++#else
++    constexpr std::array<const char*, 2> libPaths = {
++        "/usr/lib/wsl/lib/libnvidia-ml.so.1", // Favor WSL2 path if present
++        "libnvidia-ml.so.1" // On a non-WSL2 system, it should be in the path
++    };
++    for (const char* path : libPaths) {
++        nvml.handle = dlopen(path, RTLD_LAZY);
++        if (nvml.handle) break;
++    }
++    if (nvml.handle == NULL) {
++        GGML_LOG_INFO("%s unable to load libnvidia-ml: %s\n", __func__, dlerror());
++        return NVML_ERROR_NOT_FOUND;
++    }
++    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlInit_v2");
++    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlShutdown");
++    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) dlsym(nvml.handle, "nvmlDeviceGetHandleByUUID");
++    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) dlsym(nvml.handle, "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) dlsym(nvml.handle, "nvmlErrorString");
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in libnvidia-ml.so", __func__);
++        dlclose(nvml.handle);
++        nvml.handle = NULL;
++        return NVML_ERROR_NOT_FOUND;
++    }
++    nvmlReturn_t status = nvml.nvmlInit_v2();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++        dlclose(nvml.handle);
++        nvml.handle = NULL;
++        return status;
++    }
++#endif
++    return NVML_SUCCESS;
++}
++
++void ggml_nvml_release() {
++    std::lock_guard<std::mutex> lock(ggml_nvml_lock);
++    if (nvml.handle == NULL) {
++        // Already free
++        return;
++    }
++    nvmlReturn_enum status = nvml.nvmlShutdown();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s failed to shutdown NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++    }
++#ifdef _WIN32
++    FreeLibrary((HMODULE)(nvml.handle));
++#else
++    dlclose(nvml.handle);
++#endif
++    nvml.handle = NULL;
++}
++
++int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
++    std::lock_guard<std::mutex> lock(ggml_nvml_lock);
++    if (nvml.handle == NULL) {
++        return NVML_ERROR_UNINITIALIZED;
++    }
++    nvmlDevice_t device;
++    auto status = nvml.nvmlDeviceGetHandleByUUID(uuid, &device);
++    if (status != NVML_SUCCESS) {
++        return status;
++    }
++    nvmlMemory_t memInfo = {0};
++    status = nvml.nvmlDeviceGetMemoryInfo(device, &memInfo);
++    if (status == NVML_SUCCESS) {
++        *free = memInfo.free;
++        *total = memInfo.total;
++    }
++    return status;
++}
++
++}
++
+diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
+new file mode 100644
+index 00000000..8ef19b8c
+--- /dev/null
++++ b/ggml/src/mem_hip.cpp
+@@ -0,0 +1,449 @@
++#include "ggml.h"
++
++#ifdef _WIN32
++// AMD Device Library eXtra (ADLX)
++//
++// https://github.com/GPUOpen-LibrariesAndSDKs/ADLX
++//
++// This Windows-only library provides accurate VRAM reporting for AMD GPUs.
++// The runtime DLL is installed with every AMD Driver on Windows, however
++// the SDK isn't a part of the HIP SDK packaging.  As such, we avoid including
++// the headers from the SDK to simplify building from source.
++//
++// ADLX relies heavily on function pointer tables.
++// Only the minimal set of types are defined below to facilitate
++// finding the target AMD GPU(s) and querying their current VRAM usage
++// Unused function parameters are commented out to avoid unnecessary type
++// definitions.
++
++#include "ggml-impl.h"
++#include <filesystem>
++#include <mutex>
++
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++#  define NOMINMAX
++#endif
++#include <windows.h>
++
++namespace fs = std::filesystem;
++
++#include <stdio.h>
++#include <stdint.h>
++
++// Begin minimal ADLX definitions - derived from tag v1.0 (Dec 2022)
++typedef     uint64_t            adlx_uint64;
++typedef     uint32_t            adlx_uint32;
++typedef     int32_t             adlx_int32;
++typedef     adlx_int32          adlx_int;
++typedef     adlx_uint32         adlx_uint;
++typedef     long                adlx_long;
++typedef     uint8_t             adlx_uint8;
++typedef enum
++{
++    ADLX_OK = 0,                    /**< @ENG_START_DOX This result indicates success. @ENG_END_DOX */
++    ADLX_ALREADY_ENABLED,           /**< @ENG_START_DOX This result indicates that the asked action is already enabled. @ENG_END_DOX */
++    ADLX_ALREADY_INITIALIZED,       /**< @ENG_START_DOX This result indicates that ADLX has a unspecified type of initialization. @ENG_END_DOX */
++    ADLX_FAIL,                      /**< @ENG_START_DOX This result indicates an unspecified failure. @ENG_END_DOX */
++    ADLX_INVALID_ARGS,              /**< @ENG_START_DOX This result indicates that the arguments are invalid. @ENG_END_DOX */
++    ADLX_BAD_VER,                   /**< @ENG_START_DOX This result indicates that the asked version is incompatible with the current version. @ENG_END_DOX */
++    ADLX_UNKNOWN_INTERFACE,         /**< @ENG_START_DOX This result indicates that an unknown interface was asked. @ENG_END_DOX */
++    ADLX_TERMINATED,                /**< @ENG_START_DOX This result indicates that the calls were made in an interface after ADLX was terminated. @ENG_END_DOX */
++    ADLX_ADL_INIT_ERROR,            /**< @ENG_START_DOX This result indicates that the ADL initialization failed. @ENG_END_DOX */
++    ADLX_NOT_FOUND,                 /**< @ENG_START_DOX This result indicates that the item is not found. @ENG_END_DOX */
++    ADLX_INVALID_OBJECT,            /**< @ENG_START_DOX This result indicates that the method was called into an invalid object. @ENG_END_DOX */
++    ADLX_ORPHAN_OBJECTS,            /**< @ENG_START_DOX This result indicates that ADLX was terminated with outstanding ADLX objects. Any interface obtained from ADLX points to invalid memory and calls in their methods will result in unexpected behavior. @ENG_END_DOX */
++    ADLX_NOT_SUPPORTED,             /**< @ENG_START_DOX This result indicates that the asked feature is not supported. @ENG_END_DOX */
++    ADLX_PENDING_OPERATION,         /**< @ENG_START_DOX This result indicates a failure due to an operation currently in progress. @ENG_END_DOX */
++    ADLX_GPU_INACTIVE               /**< @ENG_START_DOX This result indicates that the GPU is inactive. @ENG_END_DOX */
++} ADLX_RESULT;
++#define ADLX_SUCCEEDED(x) (ADLX_OK == (x) || ADLX_ALREADY_ENABLED == (x) || ADLX_ALREADY_INITIALIZED == (x))
++#define ADLX_FAILED(x) (ADLX_OK != (x)  && ADLX_ALREADY_ENABLED != (x) && ADLX_ALREADY_INITIALIZED != (x))
++#define ADLX_VER_MAJOR       1
++#define ADLX_VER_MINOR       0
++#define ADLX_VER_RELEASE     5
++#define ADLX_VER_BUILD_NUM   30
++#define ADLX_MAKE_FULL_VER(VERSION_MAJOR, VERSION_MINOR, VERSION_RELEASE, VERSION_BUILD_NUM)    ( ((adlx_uint64)(VERSION_MAJOR) << 48ull) | ((adlx_uint64)(VERSION_MINOR) << 32ull) | ((adlx_uint64)(VERSION_RELEASE) << 16ull)  | (adlx_uint64)(VERSION_BUILD_NUM))
++#define ADLX_FULL_VERSION ADLX_MAKE_FULL_VER(ADLX_VER_MAJOR, ADLX_VER_MINOR, ADLX_VER_RELEASE, ADLX_VER_BUILD_NUM)
++#define ADLX_CORE_LINK          __declspec(dllexport)
++#define ADLX_STD_CALL           __stdcall
++#define ADLX_CDECL_CALL         __cdecl
++#define ADLX_FAST_CALL          __fastcall
++#define ADLX_INLINE              __inline
++#define ADLX_FORCEINLINE         __forceinline
++#define ADLX_NO_VTABLE          __declspec(novtable)
++
++#if defined(__cplusplus)
++typedef     bool                adlx_bool;
++#else
++typedef     adlx_uint8           adlx_bool;
++#define     true                1
++#define     false               0
++#endif
++
++typedef struct IADLXSystem IADLXSystem;
++typedef struct IADLXGPUList IADLXGPUList;
++typedef struct IADLXGPU IADLXGPU;
++typedef struct IADLXInterface IADLXInterface;
++typedef struct IADLXPerformanceMonitoringServices IADLXPerformanceMonitoringServices;
++typedef struct IADLXGPUMetrics IADLXGPUMetrics;
++typedef struct IADLXGPUMetricsSupport IADLXGPUMetricsSupport;
++
++typedef struct IADLXSystemVtbl
++{
++    // IADLXSystem interface
++    ADLX_RESULT (ADLX_STD_CALL *GetHybridGraphicsType)(/* IADLXSystem* pThis, ADLX_HG_TYPE* hgType */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUs)(IADLXSystem* pThis, IADLXGPUList** ppGPUs); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXSystem* pThis, const wchar_t* interfaceId, void** ppInterface */);
++    ADLX_RESULT (ADLX_STD_CALL *GetDisplaysServices)(/* IADLXSystem* pThis, IADLXDisplayServices** ppDispServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetDesktopsServices)(/* IADLXSystem* pThis, IADLXDesktopServices** ppDeskServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUsChangedHandling)(/* IADLXSystem* pThis, IADLXGPUsChangedHandling** ppGPUsChangedHandling */);
++    ADLX_RESULT (ADLX_STD_CALL *EnableLog)(/* IADLXSystem* pThis, ADLX_LOG_DESTINATION mode, ADLX_LOG_SEVERITY severity, IADLXLog* pLogger, const wchar_t* fileName */);
++    ADLX_RESULT (ADLX_STD_CALL *Get3DSettingsServices)(/* IADLXSystem* pThis, IADLX3DSettingsServices** pp3DSettingsServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUTuningServices)(/* IADLXSystem* pThis, IADLXGPUTuningServices** ppGPUTuningServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetPerformanceMonitoringServices)(IADLXSystem* pThis, IADLXPerformanceMonitoringServices** ppPerformanceMonitoringServices); // Used
++    ADLX_RESULT (ADLX_STD_CALL *TotalSystemRAM)(/* IADLXSystem* pThis, adlx_uint* ramMB */);
++    ADLX_RESULT (ADLX_STD_CALL *GetI2C)(/* IADLXSystem* pThis, IADLXGPU* pGPU, IADLXI2C** ppI2C */);
++} IADLXSystemVtbl;
++struct IADLXSystem { const IADLXSystemVtbl *pVtbl; };
++
++typedef struct IADLXGPUVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXGPU* pThis */);
++    adlx_long (ADLX_STD_CALL *Release)(IADLXGPU* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXGPU* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXGPU
++    ADLX_RESULT (ADLX_STD_CALL *VendorId)(/* IADLXGPU* pThis, const char** vendorId */);
++    ADLX_RESULT (ADLX_STD_CALL *ASICFamilyType)(/* IADLXGPU* pThis, ADLX_ASIC_FAMILY_TYPE* asicFamilyType */);
++    ADLX_RESULT (ADLX_STD_CALL *Type)(/* IADLXGPU* pThis, ADLX_GPU_TYPE* gpuType */);
++    ADLX_RESULT (ADLX_STD_CALL *IsExternal)(/* IADLXGPU* pThis, adlx_bool* isExternal */);
++    ADLX_RESULT (ADLX_STD_CALL *Name)(/* IADLXGPU* pThis, const char** gpuName */);
++    ADLX_RESULT (ADLX_STD_CALL *DriverPath)(/* IADLXGPU* pThis, const char** driverPath */);
++    ADLX_RESULT (ADLX_STD_CALL *PNPString)(/* IADLXGPU* pThis, const char** pnpString */);
++    ADLX_RESULT (ADLX_STD_CALL *HasDesktops)(/* IADLXGPU* pThis, adlx_bool* hasDesktops */);
++    ADLX_RESULT (ADLX_STD_CALL *TotalVRAM)(IADLXGPU* pThis, adlx_uint* vramMB); // Used
++    ADLX_RESULT (ADLX_STD_CALL *VRAMType)(/* IADLXGPU* pThis, const char** type */);
++    ADLX_RESULT (ADLX_STD_CALL *BIOSInfo)(/* IADLXGPU* pThis, const char** partNumber, const char** version, const char** date */);
++    ADLX_RESULT (ADLX_STD_CALL *DeviceId)(/* IADLXGPU* pThis, const char** deviceId */);
++    ADLX_RESULT (ADLX_STD_CALL *RevisionId)(/* IADLXGPU* pThis, const char** revisionId */);
++    ADLX_RESULT (ADLX_STD_CALL *SubSystemId)(/* IADLXGPU* pThis, const char** subSystemId */);
++    ADLX_RESULT (ADLX_STD_CALL *SubSystemVendorId)(/* IADLXGPU* pThis, const char** subSystemVendorId */);
++    ADLX_RESULT (ADLX_STD_CALL *UniqueId)(IADLXGPU* pThis, adlx_int* uniqueId); // Used
++} IADLXGPUVtbl;
++struct IADLXGPU { const IADLXGPUVtbl *pVtbl; };
++
++typedef struct IADLXGPUListVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXGPUList* pThis */);
++    adlx_long (ADLX_STD_CALL *Release)(IADLXGPUList* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXGPUList* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXList
++    adlx_uint (ADLX_STD_CALL *Size)(/* IADLXGPUList* pThis */);
++    adlx_uint8 (ADLX_STD_CALL *Empty)(/* IADLXGPUList* pThis */);
++    adlx_uint (ADLX_STD_CALL *Begin)(IADLXGPUList* pThis); // Used
++    adlx_uint (ADLX_STD_CALL *End)(IADLXGPUList* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *At)(/* IADLXGPUList* pThis, const adlx_uint location, IADLXInterface** ppItem */);
++    ADLX_RESULT (ADLX_STD_CALL *Clear)(/* IADLXGPUList* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *Remove_Back)(/* IADLXGPUList* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *Add_Back)(/* IADLXGPUList* pThis, IADLXInterface* pItem */);
++
++    //IADLXGPUList
++    ADLX_RESULT (ADLX_STD_CALL *At_GPUList)(IADLXGPUList* pThis, const adlx_uint location, IADLXGPU** ppItem); // Used
++    ADLX_RESULT (ADLX_STD_CALL *Add_Back_GPUList)(/* IADLXGPUList* pThis, IADLXGPU* pItem */);
++
++} IADLXGPUListVtbl;
++struct IADLXGPUList { const IADLXGPUListVtbl *pVtbl; };
++
++typedef struct IADLXPerformanceMonitoringServicesVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXPerformanceMonitoringServices* pThis */);
++    adlx_long (ADLX_STD_CALL *Release)(IADLXPerformanceMonitoringServices* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXPerformanceMonitoringServices* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXPerformanceMonitoringServices
++    ADLX_RESULT (ADLX_STD_CALL *GetSamplingIntervalRange)(/* IADLXPerformanceMonitoringServices* pThis, ADLX_IntRange* range */);
++    ADLX_RESULT (ADLX_STD_CALL *SetSamplingInterval)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int intervalMs */);
++    ADLX_RESULT (ADLX_STD_CALL *GetSamplingInterval)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* intervalMs */);
++    ADLX_RESULT (ADLX_STD_CALL *GetMaxPerformanceMetricsHistorySizeRange)(/* IADLXPerformanceMonitoringServices* pThis, ADLX_IntRange* range */);
++    ADLX_RESULT (ADLX_STD_CALL *SetMaxPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int sizeSec */);
++    ADLX_RESULT (ADLX_STD_CALL *GetMaxPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* sizeSec */);
++    ADLX_RESULT (ADLX_STD_CALL *ClearPerformanceMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* sizeSec */);
++    ADLX_RESULT (ADLX_STD_CALL *StartPerformanceMetricsTracking)(/* IADLXPerformanceMonitoringServices* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *StopPerformanceMetricsTracking)(/* IADLXPerformanceMonitoringServices* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *GetAllMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXAllMetricsList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, adlx_int startMs, adlx_int stopMs, IADLXGPUMetricsList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetSystemMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXSystemMetricsList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetFPSHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXFPSList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentAllMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXAllMetrics** ppMetrics */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetrics** ppMetrics); // Used
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentSystemMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXSystemMetrics** ppMetrics */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentFPS)(/* IADLXPerformanceMonitoringServices* pThis, IADLXFPS** ppMetrics */);
++    ADLX_RESULT (ADLX_STD_CALL *GetSupportedGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetricsSupport** ppMetricsSupported); // Used
++    ADLX_RESULT (ADLX_STD_CALL *GetSupportedSystemMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXSystemMetricsSupport** ppMetricsSupported */);
++}IADLXPerformanceMonitoringServicesVtbl;
++struct IADLXPerformanceMonitoringServices { const IADLXPerformanceMonitoringServicesVtbl *pVtbl; };
++
++typedef struct IADLXGPUMetricsSupportVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL* Acquire)(/* IADLXGPUMetricsSupport* pThis */);
++    adlx_long (ADLX_STD_CALL* Release)(IADLXGPUMetricsSupport* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL* QueryInterface)(/* IADLXGPUMetricsSupport* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXGPUMetricsSupport
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUUsage)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUClockSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVRAMClockSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUTemperature)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUHotspotTemperature)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUPower)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUTotalBoardPower)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUFanSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVRAM)(IADLXGPUMetricsSupport* pThis, adlx_bool* supported); // Used
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVoltage)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUUsageRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUClockSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUVRAMClockSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUTemperatureRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUHotspotTemperatureRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUPowerRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUFanSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUVRAMRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUVoltageRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUTotalBoardPowerRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++} IADLXGPUMetricsSupportVtbl;
++struct IADLXGPUMetricsSupport { const IADLXGPUMetricsSupportVtbl *pVtbl; };
++
++typedef struct IADLXGPUMetricsVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL* Acquire)(/* IADLXGPUMetrics* pThis */);
++    adlx_long (ADLX_STD_CALL* Release)(IADLXGPUMetrics* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL* QueryInterface)(/* IADLXGPUMetrics* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXGPUMetrics
++    ADLX_RESULT (ADLX_STD_CALL* TimeStamp)(/* IADLXGPUMetrics* pThis, adlx_int64* ms */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUUsage)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUClockSpeed)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUVRAMClockSpeed)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUTemperature)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUHotspotTemperature)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUPower)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUTotalBoardPower)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUFanSpeed)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUVRAM)(IADLXGPUMetrics* pThis, adlx_int* data); // Used
++    ADLX_RESULT (ADLX_STD_CALL* GPUVoltage)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++} IADLXGPUMetricsVtbl;
++struct IADLXGPUMetrics { const IADLXGPUMetricsVtbl *pVtbl; };
++
++struct {
++  void *handle;
++  ADLX_RESULT (*ADLXInitialize)(adlx_uint64 version, IADLXSystem** ppSystem);
++  ADLX_RESULT (*ADLXInitializeWithIncompatibleDriver)(adlx_uint64 version, IADLXSystem** ppSystem);
++  ADLX_RESULT (*ADLXQueryVersion)(const char** version);
++  ADLX_RESULT (*ADLXTerminate)();
++  IADLXSystem *sys;
++} adlx { NULL, NULL, NULL, NULL, NULL, NULL };
++static std::mutex ggml_adlx_lock;
++
++extern "C" {
++
++int ggml_hip_mgmt_init() {
++    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
++    if (adlx.handle != NULL) {
++        // Already initialized
++        return 0;
++    }
++    DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
++    SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
++    fs::path libPath = fs::path("\\Windows") / fs::path("System32") / fs::path("amdadlx64.dll");
++
++    adlx.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
++    if (adlx.handle == NULL) {
++        return ADLX_NOT_FOUND;
++    }
++
++    adlx.ADLXInitialize = (ADLX_RESULT (*)(adlx_uint64 version, IADLXSystem **ppSystem)) GetProcAddress((HMODULE)(adlx.handle), "ADLXInitialize");
++    adlx.ADLXInitializeWithIncompatibleDriver = (ADLX_RESULT (*)(adlx_uint64 version, IADLXSystem **ppSystem)) GetProcAddress((HMODULE)(adlx.handle), "ADLXInitializeWithIncompatibleDriver");
++    adlx.ADLXTerminate = (ADLX_RESULT (*)()) GetProcAddress((HMODULE)(adlx.handle), "ADLXTerminate");
++    adlx.ADLXQueryVersion = (ADLX_RESULT (*)(const char **version)) GetProcAddress((HMODULE)(adlx.handle), "ADLXQueryVersion");
++    if (adlx.ADLXInitialize == NULL || adlx.ADLXInitializeWithIncompatibleDriver == NULL || adlx.ADLXTerminate == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in amdadlx64.dll, falling back to hip free memory reporting", __func__);
++        FreeLibrary((HMODULE)(adlx.handle));
++        adlx.handle = NULL;
++        return ADLX_NOT_FOUND;
++    }
++
++    SetErrorMode(old_mode);
++
++    // Aid in troubleshooting...
++    if (adlx.ADLXQueryVersion != NULL) {
++        const char *version = NULL;
++        ADLX_RESULT status = adlx.ADLXQueryVersion(&version);
++        if (ADLX_SUCCEEDED(status)) {
++            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);  
++        }
++    }
++
++    ADLX_RESULT status = adlx.ADLXInitialize(ADLX_FULL_VERSION, &adlx.sys);
++    if (ADLX_FAILED(status)) {
++        // GGML_LOG_DEBUG("%s failed to initialize ADLX error=%d - attempting with incompatible driver...\n", __func__, status);
++        // Try with the incompatible driver
++        status = adlx.ADLXInitializeWithIncompatibleDriver(ADLX_FULL_VERSION, &adlx.sys);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s failed to initialize ADLX error=%d\n", __func__, status);
++            FreeLibrary((HMODULE)(adlx.handle));
++            adlx.handle = NULL;
++            adlx.sys = NULL;
++            return status;
++        }
++        // GGML_LOG_DEBUG("%s initialized ADLX with incpomatible driver\n", __func__);
++    }
++    return ADLX_OK;
++}
++
++void ggml_hip_mgmt_release() {
++    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
++    if (adlx.handle == NULL) {
++        // Already free
++        return;
++    }
++    ADLX_RESULT status = adlx.ADLXTerminate();
++    if (ADLX_FAILED(status)) {
++        GGML_LOG_INFO("%s failed to terminate Adlx %d\n", __func__, status);
++        // Unload anyway...
++    }
++    FreeLibrary((HMODULE)(adlx.handle));
++    adlx.handle = NULL;
++}
++
++#define adlx_gdm_cleanup \
++    if (gpuMetricsSupport != NULL) gpuMetricsSupport->pVtbl->Release(gpuMetricsSupport); \
++    if (gpuMetrics != NULL) gpuMetrics->pVtbl->Release(gpuMetrics); \
++    if (perfMonitoringServices != NULL) perfMonitoringServices->pVtbl->Release(perfMonitoringServices); \
++    if (gpus != NULL) gpus->pVtbl->Release(gpus); \
++    if (gpu != NULL) gpu->pVtbl->Release(gpu)
++
++int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
++    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
++    if (adlx.handle == NULL) {
++        GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
++        return ADLX_ADL_INIT_ERROR;
++    }
++    IADLXGPUMetricsSupport *gpuMetricsSupport = NULL;
++    IADLXPerformanceMonitoringServices *perfMonitoringServices = NULL;
++    IADLXGPUList* gpus = NULL;
++    IADLXGPU* gpu = NULL;
++    IADLXGPUMetrics *gpuMetrics = NULL;
++    ADLX_RESULT status;
++    // The "UniqueID" exposed in ADLX is the PCI Bus and Device IDs 
++    adlx_int target = (pci_bus_id << 8) | (pci_device_id & 0xff);
++
++    status = adlx.sys->pVtbl->GetPerformanceMonitoringServices(adlx.sys, &perfMonitoringServices);
++    if (ADLX_FAILED(status)) {
++        GGML_LOG_INFO("%s GetPerformanceMonitoringServices failed %d\n", __func__, status);
++        return status;
++    }
++
++    status = adlx.sys->pVtbl->GetGPUs(adlx.sys, &gpus);
++    if (ADLX_FAILED(status)) {
++        GGML_LOG_INFO("%s GetGPUs failed %d\n", __func__, status);
++        adlx_gdm_cleanup;
++        return status;
++    }
++
++    // Get GPU list
++    for (adlx_uint crt = gpus->pVtbl->Begin(gpus); crt != gpus->pVtbl->End(gpus); ++crt)
++    {
++        status = gpus->pVtbl->At_GPUList(gpus, crt, &gpu);
++        if (ADLX_FAILED(status))
++        {
++            GGML_LOG_INFO("%s %d] At_GPUList failed %d\n", __func__, crt, status);
++            continue;
++        }
++        adlx_int id;
++        status = gpu->pVtbl->UniqueId(gpu, &id);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s %d] UniqueId lookup failed %d\n", __func__, crt, status);
++            gpu->pVtbl->Release(gpu);
++            gpu = NULL;
++            continue;
++        }
++        if (id != target) {
++            GGML_LOG_DEBUG("%s %d] GPU UniqueId: %x does not match target %02x %02x\n", __func__, crt, id, pci_bus_id, pci_device_id);
++            gpu->pVtbl->Release(gpu);
++            gpu = NULL;
++            continue;
++        }
++        // Any failures at this point should cause a fall-back to other APIs
++        status = perfMonitoringServices->pVtbl->GetSupportedGPUMetrics(perfMonitoringServices, gpu, &gpuMetricsSupport);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s GetSupportedGPUMetrics failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++        status = perfMonitoringServices->pVtbl->GetCurrentGPUMetrics(perfMonitoringServices, gpu, &gpuMetrics);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s GetCurrentGPUMetrics failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++
++        adlx_bool supported = false;
++        status = gpuMetricsSupport->pVtbl->IsSupportedGPUVRAM(gpuMetricsSupport, &supported);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s IsSupportedGPUVRAM failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++        
++        adlx_uint totalVRAM = 0;
++        status = gpu->pVtbl->TotalVRAM(gpu, &totalVRAM);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s TotalVRAM failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++
++        adlx_int usedVRAM = 0;
++        status = gpuMetrics->pVtbl->GPUVRAM(gpuMetrics, &usedVRAM);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s GPUVRAM failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++        *total = size_t(totalVRAM) * 1024 * 1024;
++        *free = size_t(totalVRAM-usedVRAM) * 1024 * 1024;
++
++        adlx_gdm_cleanup;
++        return ADLX_OK;
++    }
++    adlx_gdm_cleanup;
++    return ADLX_NOT_FOUND;
++}
++
++} // extern "C"
++
++#else // #ifdef _WIN32
++
++extern "C" {
++
++// TODO Linux implementation of accurate VRAM reporting
++int ggml_hip_mgmt_init() {
++    return -1;
++}
++void ggml_hip_mgmt_release() {}
++int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
++    return -1;
++}
++
++} // extern "C"
++
++#endif // #ifdef _WIN32
+\ No newline at end of file
