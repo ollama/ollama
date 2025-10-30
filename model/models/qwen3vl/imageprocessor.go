@@ -83,6 +83,8 @@ type Grid struct {
 }
 
 func (p *ImageProcessor) ProcessImage(ctx ml.Context, img image.Image) (ml.Tensor, *Grid, error) {
+	img = imageproc.Composite(img)
+
 	origWidth := img.Bounds().Dx()
 	origHeight := img.Bounds().Dy()
 
