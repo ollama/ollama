@@ -651,7 +651,7 @@ std::unique_ptr<ggml_cuda_pool> ggml_backend_cuda_context::new_pool_for_device(i
 
 static std::mutex ggml_cuda_lock;
 static std::condition_variable ggml_cuda_lock_cv;
-static std::atomic<int> ggml_cuda_lock_counter;
+static std::atomic<int> ggml_cuda_lock_counter(0);
 
 ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     std::unique_lock<std::mutex> lock(ggml_cuda_lock);
