@@ -23,8 +23,7 @@ func TestQwen3VLNonStreaming(t *testing.T) {
 }
 
 func runQwen3VLTests(t *testing.T, stream bool) {
-	models := []string{"qwen3vl-odc-dev"} // , "qwen3vl-thinking-odc-dev", "qwen3-vl:8b"}
-
+	models := []string{"qwen3-vl:235b-cloud", "qwen3-vl:235b-instruct-cloud"}
 	tests := []struct {
 		name     string
 		messages []api.Message
