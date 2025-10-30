@@ -406,9 +406,7 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
         for (int i = 0; i < MAX_BUFFERS; ++i) {
             ggml_cuda_buffer & b = buffer_pool[i];
             if (b.ptr != nullptr) {
-                if (allocate) {
-                    CUDA_CHECK(cudaFree(b.ptr));
-                }
+                CUDA_CHECK(cudaFree(b.ptr));
                 pool_size -= b.size;
             }
         }
