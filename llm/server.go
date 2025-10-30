@@ -339,8 +339,23 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	cmd = exec.Command(exe, params...)
 
 	cmd.Env = os.Environ()
-	cmd.Stdout = out
-	cmd.Stderr = out
+
+	if out != nil {
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to spawn server stdout pipe: %w", err)
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
+		}
+		go func() {
+			io.Copy(out, stdout) //nolint:errcheck
+		}()
+		go func() {
+			io.Copy(out, stderr) //nolint:errcheck
+		}()
+	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
 
 	// Always filter down the set of GPUs in case there are any unsupported devices that might crash
