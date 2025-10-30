@@ -198,6 +198,8 @@ type Tensor interface {
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
 
+	Slice(ctx Context, dim, low, high, step int) Tensor
+
 	TopK(ctx Context, k int) Tensor
 	Argsort(ctx Context) Tensor
 	Mean(ctx Context) Tensor

@@ -1742,3 +1742,39 @@ func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
 }
+
+// Slice returns a view of the tensor sliced along dim from low to high in step steps.
+func (t *Tensor) Slice(ctx ml.Context, dim int, low, high, step int) ml.Tensor {
+	if dim < 0 || dim >= C.GGML_MAX_DIMS {
+		panic("invalid dimension")
+	} else if low < 0 || high > t.Dim(dim) || low >= high || step < 1 {
+		panic("invalid slice parameters")
+	}
+
+	if dim == 0 && step > 1 {
+		// dim=0,step>1 is a special case so handle it here first
+		return t.View(ctx,
+			low*t.Stride(0), 1,
+			step*t.Stride(0), (high-low+1)/step,
+			t.Stride(1), t.Dim(1),
+			// preserve dim 3 by merging it into dim 2
+			t.Stride(2), t.Dim(2)*t.Dim(3),
+		).Contiguous(ctx, (high-low+1)/step, t.Dim(1), t.Dim(2), t.Dim(3))
+	}
+
+	args := []int{
+		low * t.Stride(dim), t.Dim(0),
+		t.Stride(1), t.Dim(1),
+		t.Stride(2), t.Dim(2),
+		t.Stride(3), t.Dim(3),
+	}
+
+	if step == 1 {
+		args[dim*2+1] = high - low
+		return t.View(ctx, args[0], args[1:]...)
+	} else {
+		args[dim*2] = step * t.Stride(dim)
+		args[dim*2+1] = (high - low + 1) / step
+		return t.View(ctx, args[0], args[1:]...)
+	}
+}
