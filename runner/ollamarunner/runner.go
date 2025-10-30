@@ -131,77 +131,70 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if int32(len(inputs)) > s.cache.numCtx {
-		discard := int32(len(inputs)) - s.cache.numCtx
-
-		// Adjust for BOS/EOS tokens before truncation (embedding & generation)
-		bos := s.model.Backend().Config().Uint("tokenizer.ggml.bos_token_id")
-		eos := s.model.Backend().Config().Uint("tokenizer.ggml.eos_token_id")
-		addBOS := s.model.Backend().Config().Bool("add_bos_token", true)
-		addEOS := s.model.Backend().Config().Bool("add_eos_token", true)
-
-		ctxLen := int(s.cache.numCtx)
-		tokenCount := len(inputs)
-
-		if tokenCount > ctxLen {
-			if !params.truncate {
-				return nil, errorInputTooLong
-			}
-
-			// Deduct BOS/EOS positions from available context if they’ll be added
-			if tokenCount > 0 {
-				first := inputs[0].Token
-				last := inputs[len(inputs)-1].Token
-
-				if int(first) != int(bos) && addBOS {
-					ctxLen--
-				}
-				if int(last) != int(eos) && addEOS {
-					ctxLen--
-				}
-			}
-
-			if ctxLen <= 0 {
-				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
-			}
-
-			// Slice down to available length
-			inputs = inputs[:ctxLen]
-		}
-
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
 
-		promptStart := params.numKeep + discard
-
-		// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
-		sameBatch := 0
-		for i, inp := range inputs {
-			if sameBatch > 0 {
-				sameBatch--
-
-				if promptStart == int32(i) {
-					promptStart++
-				}
-			} else if promptStart == int32(i) {
-				break
-			}
-
-			if inp.SameBatch != 0 {
-				if int32(i) < params.numKeep {
-					return nil, fmt.Errorf("SameBatch may not be specified within numKeep (index: %v numKeep: %v SameBatch: %v)", i, params.numKeep, inp.SameBatch)
-				}
-
-				sameBatch = inp.SameBatch
-			}
-		}
-
-		if promptStart >= int32(len(inputs)) {
-			return nil, errors.New("entire prompt removed by truncation")
-		}
+		discard := int32(len(inputs)) - s.cache.numCtx
 
 		var newInputs []*input.Input
-		if !params.embedding {
+		var lastIsEOG bool
+
+		// Track if last token is EOG
+		eogToken := int32(0)
+		if len(inputs) > 0 && s.model.(model.TextProcessor).Is(inputs[len(inputs)-1].Token, model.SpecialEOS) {
+			eogToken = inputs[len(inputs)-1].Token
+		}
+
+		if params.embedding {
+			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
+			newLimit := s.cache.numCtx - 1
+
+			if s.model.(model.TextProcessor).Is(inputs[len(inputs)-1].Token, model.SpecialEOS) && !s.model.(model.TextProcessor).Is(inputs[newLimit-1].Token, model.SpecialEOS) {
+				lastIsEOG = true
+				newLimit--
+			}
+
+			if newLimit <= 0 {
+				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+
+			newInputs = inputs[:newLimit]
+
+			if lastIsEOG {
+				newInputs = append(newInputs, &input.Input{Token: eogToken})
+			}
+
+		} else {
+			// Otherwise, truncate in the middle
+			promptStart := params.numKeep + discard
+
+			// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
+			sameBatch := 0
+			for i, inp := range inputs {
+				if sameBatch > 0 {
+					sameBatch--
+
+					if promptStart == int32(i) {
+						promptStart++
+					}
+				} else if promptStart == int32(i) {
+					break
+				}
+
+				if inp.SameBatch != 0 {
+					if int32(i) < params.numKeep {
+						return nil, fmt.Errorf("SameBatch may not be specified within numKeep (index: %v numKeep: %v SameBatch: %v)", i, params.numKeep, inp.SameBatch)
+					}
+
+					sameBatch = inp.SameBatch
+				}
+			}
+
+			if promptStart >= int32(len(inputs)) {
+				return nil, errors.New("entire prompt removed by truncation")
+			}
+
 			newInputs = inputs[:params.numKeep]
 			newInputs = append(newInputs, inputs[promptStart:]...)
 		}
@@ -211,16 +204,31 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// TODO(jessegross): Ingest cached history for grammar
-	// Compute prompt token count excluding BOS/EOS and non-text inputs
+	// Compute prompt token count excluding special BOS/EOS and non-text inputs
 	promptCount := 0
-	for _, in := range inputs {
-		if len(in.Multimodal) > 0 {
-			continue
+	firstTextIdx := -1
+	lastTextIdx := -1
+	for i := range inputs {
+		if len(inputs[i].Multimodal) == 0 {
+			if firstTextIdx == -1 {
+				firstTextIdx = i
+			}
+			lastTextIdx = i
+			promptCount++
 		}
-		if s.model.(model.TextProcessor).Is(in.Token, model.SpecialBOS) || s.model.(model.TextProcessor).Is(in.Token, model.SpecialEOS) {
-			continue
+	}
+	if promptCount > 0 {
+		// subtract BOS if model auto-adds it and the first element is a text token
+		if s.model.Backend().Config().Bool("add_bos_token", true) && firstTextIdx >= 0 {
+			promptCount--
 		}
-		promptCount++
+		// subtract EOS/EOG if the last text token is an end-of-generation token
+		if lastTextIdx >= 0 && s.model.(model.TextProcessor).Is(inputs[lastTextIdx].Token, model.SpecialEOS) {
+			promptCount--
+		}
+		if promptCount < 0 {
+			promptCount = 0
+		}
 	}
 
 	return &Sequence{

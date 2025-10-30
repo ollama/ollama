@@ -126,6 +126,8 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if len(inputs) > s.cache.numCtx {
 		discard := len(inputs) - s.cache.numCtx
+
+		// If truncation is not enabled, return an error
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
@@ -133,22 +135,18 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		// If the original prompt ended with an EOG token, add it back after truncation
 		lastIsEOG := false
 
+		var newInputs []input
+
 		eogToken := 0
 		if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
-			lastIsEOG = true
 			eogToken = inputs[len(inputs)-1].token
 		}
 
-		var newInputs []input
-
-		// For embeddings, truncate only at the front and keep first N tokens
 		if params.embedding {
-			newLimit := s.cache.numCtx
-			if s.model.AddBOSToken() {
-				newLimit--
-			}
+			newLimit := s.cache.numCtx - 1
 
-			if lastIsEOG {
+			if s.model.TokenIsEog(inputs[len(inputs)-1].token) && !s.model.TokenIsEog(inputs[newLimit-1].token) {
+				lastIsEOG = true
 				newLimit--
 			}
 
@@ -157,14 +155,15 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			}
 
 			newInputs = inputs[:newLimit]
+
+			if lastIsEOG {
+				newInputs = append(newInputs, input{token: eogToken})
+			}
+
 		} else {
 			// Otherwise, truncate in the middle
 			newInputs = inputs[:params.numKeep]
 			newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
-		}
-
-		if lastIsEOG {
-			newInputs = append(newInputs, input{token: eogToken})
 		}
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
