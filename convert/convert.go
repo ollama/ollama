@@ -206,6 +206,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &commandrModel{}
 	case "GptOssForCausalLM":
 		conv = &gptossModel{}
+	case "MiniCPM3ForCausalLM":
+		conv = &minicpm3Model{}
 	default:
 		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
