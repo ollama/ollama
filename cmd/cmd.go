@@ -280,6 +280,13 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		return err
 	}
 
+	if info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model}); err != nil {
+		return err
+	} else if info.RemoteHost != "" {
+		// Cloud model, no need to load/unload
+		return nil
+	}
+
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
 		KeepAlive: opts.KeepAlive,
@@ -720,23 +727,21 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Unload the model if it's running before deletion
-	opts := &runOptions{
-		Model:     args[0],
-		KeepAlive: &api.Duration{Duration: 0},
-	}
-	if err := loadOrUnloadModel(cmd, opts); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", args[0])
+	for _, arg := range args {
+		// Unload the model if it's running before deletion
+		if err := loadOrUnloadModel(cmd, &runOptions{
+			Model:     args[0],
+			KeepAlive: &api.Duration{Duration: 0},
+		}); err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+				fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", args[0])
+			}
 		}
-	}
 
-	for _, name := range args {
-		req := api.DeleteRequest{Name: name}
-		if err := client.Delete(cmd.Context(), &req); err != nil {
+		if err := client.Delete(cmd.Context(), &api.DeleteRequest{Name: arg}); err != nil {
 			return err
 		}
-		fmt.Printf("deleted '%s'\n", name)
+		fmt.Printf("deleted '%s'\n", arg)
 	}
 	return nil
 }
