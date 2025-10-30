@@ -6,7 +6,7 @@ cd llama/vendor
 echo 'updating submodule'
 git submodule update --recursive --init
 cd ggml-tsi-kernel/
-module load tsi4 gcc/13.3.0
+module load gcc/13.3.0
 export MLIR_SDK_VERSION=/proj/rel/sw/sdk-r.0.2.0
 echo 'creating python virtual env'
 /proj/local/Python-3.10.12/bin/python3 -m venv blob-creation
@@ -148,3 +148,26 @@ then
 
     echo "Symlinks updated to point to $(basename "$LATEST_FULL_PATH")"
 fi
+
+RELEASE_DIR="ollama-arm64-release"
+TARBALL="ollama-arm64-release.tar.gz"
+
+# Build Go binary for ARM64
+echo "Building Go binary for ARM64..."
+export CGO_ENABLED=1
+GOARCH=arm64 GOOS=linux go build -o ollama .
+
+# Prepare release directory
+echo "Preparing release directory..."
+rm -rf $RELEASE_DIR
+mkdir -p $RELEASE_DIR/bin
+cp ollama $RELEASE_DIR/bin/
+cp -r lib $RELEASE_DIR/ 2>/dev/null || echo "No lib directory to copy"
+cp README.md $RELEASE_DIR/ 2>/dev/null || echo "No README.md to copy"
+cp tsi-ggml-ollama*.tz $RELEASE_DIR/ 2>/dev/null || echo "No tsi-ggml-ollama*.tz to copy"
+
+# Create tarball
+echo "Creating tarball..."
+tar -czvf $TARBALL $RELEASE_DIR
+
+echo "ARM64 tarbundle created: $TARBALL"
