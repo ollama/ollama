@@ -1231,6 +1231,11 @@ func (t *Tensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+// Mulmat performs matrix multiplication between two tensors.
+// If t has shape [m, p, ...] and t2 has shape [m, n, ...],
+// Mulmat returns a new Tensor with shape [p, n, ...].
+//
+// Note: this is similar to matmul(t2, t.tranpose(-1, -2)) in other libraries.
 func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1303,14 +1308,21 @@ func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
-	if len(shape) != 4 {
-		panic("expected 4 dimensions")
+// Permute permutes t according to order. Permute panics if the number of dimensions
+// in order does not match the number of dimensions in t.
+func (t *Tensor) Permute(ctx ml.Context, order ...int) ml.Tensor {
+	if len(order) != len(t.Shape()) && len(order) != 4 {
+		panic("invalid number of dimensions for permute")
+	}
+
+	// ggml_permute requires 4 dimensions so fill in the rest
+	for i := len(order); i < 4; i++ {
+		order = append(order, i)
 	}
 
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_permute(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
+		t: C.ggml_permute(ctx.(*Context).ctx, t.t, C.int(order[0]), C.int(order[1]), C.int(order[2]), C.int(order[3])),
 	}
 }
 
