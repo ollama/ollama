@@ -335,11 +335,14 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 
+			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
+			devFilter := ml.GetVisibleDevicesEnv(devices)
+
 			for dir := range libDirs {
-				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, nil)
+				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, devFilter)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.DeviceID == devices[i].DeviceID {
+						if u.DeviceID == devices[i].DeviceID && u.PCIID == devices[i].PCIID {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
