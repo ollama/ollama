@@ -140,7 +140,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		var newInputs []*input.Input
 
 		if params.embedding {
-
 			var lastIsEOG bool
 
 			eogToken := int32(0)
@@ -170,7 +169,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			if lastIsEOG {
 				newInputs = append(newInputs, &input.Input{Token: eogToken})
 			}
-
 		} else {
 			// Otherwise, truncate in the middle
 			promptStart := params.numKeep + discard

@@ -136,7 +136,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 		// TODO: EOG token handling should be moved to tokenizer
 		if params.embedding {
-
 			// If the original prompt ended with an EOG token, add it back after truncation
 			lastIsEOG := false
 
@@ -163,7 +162,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			if lastIsEOG {
 				newInputs = append(newInputs, input{token: eogToken})
 			}
-
 		} else {
 			// Otherwise, truncate in the middle
 			newInputs = inputs[:params.numKeep]
