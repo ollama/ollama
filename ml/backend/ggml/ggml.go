@@ -378,7 +378,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
+	maxGraphNodes := max(1024, len(meta.Tensors().Items())*8)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
