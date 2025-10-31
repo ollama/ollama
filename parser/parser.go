@@ -617,43 +617,42 @@ func isValidCommand(cmd string) bool {
 	}
 }
 
-func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
-	if filepath.IsAbs(path) || strings.HasPrefix(path, "\\") || strings.HasPrefix(path, "/") {
-		return filepath.Abs(path)
-	} else if strings.HasPrefix(path, "~") {
-		var homeDir string
-
-		if path == "~" || strings.HasPrefix(path, "~/") {
-			// Current user's home directory
-			currentUser, err := currentUserFunc()
-			if err != nil {
-				return "", fmt.Errorf("failed to get current user: %w", err)
-			}
-			homeDir = currentUser.HomeDir
-			path = strings.TrimPrefix(path, "~")
-		} else {
-			// Specific user's home directory
-			parts := strings.SplitN(path[1:], "/", 2)
-			userInfo, err := lookupUserFunc(parts[0])
-			if err != nil {
-				return "", fmt.Errorf("failed to find user '%s': %w", parts[0], err)
-			}
-			homeDir = userInfo.HomeDir
-			if len(parts) > 1 {
-				path = "/" + parts[1]
-			} else {
-				path = ""
-			}
-		}
-
-		path = filepath.Join(homeDir, path)
-	} else {
-		path = filepath.Join(relativeDir, path)
+func expandPath(path, dir string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
 	}
 
-	return filepath.Abs(path)
-}
+	path, found := strings.CutPrefix(path, "~")
+	if !found {
+		// make path relative to dir
+		if !filepath.IsAbs(dir) {
+			// if dir is relative, make it absolute relative to cwd
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			dir = filepath.Join(cwd, dir)
+		}
+		path = filepath.Join(dir, path)
+	} else if filepath.IsLocal(path) {
+		// ~<user>/...
+		// make path relative to specified user's home
+		split := strings.SplitN(path, "/", 2)
+		u, err := user.Lookup(split[0])
+		if err != nil {
+			return "", err
+		}
+		split[0] = u.HomeDir
+		path = filepath.Join(split...)
+	} else {
+		// ~ or ~/...
+		// make path relative to current user's home
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, path)
+	}
 
-func expandPath(path, relativeDir string) (string, error) {
-	return expandPathImpl(path, relativeDir, user.Current, user.Lookup)
+	return filepath.Clean(path), nil
 }
