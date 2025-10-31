@@ -7,7 +7,7 @@ By default, these tests are disabled so `go test ./...` will exercise only unit 
 
 The integration tests have 2 modes of operating.
 
-1. By default, they will start the server on a random port, run the tests, and then shutdown the server.
+1. By default, on Unix systems, they will start the server on a random port, run the tests, and then shutdown the server.  On Windows you must ALWAYS run the server on OLLAMA_HOST for the tests to work.
 2. If `OLLAMA_TEST_EXISTING` is set to a non-empty string, the tests will run against an existing running server, which can be remote based on your `OLLAMA_HOST` environment variable
 
 > [!IMPORTANT]

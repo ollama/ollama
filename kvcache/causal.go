@@ -40,11 +40,6 @@ type Causal struct {
 
 	// ** current forward pass **
 
-	// curReserve indicates that this forward pass is only for
-	// memory reservation and we should not update our metadata
-	// based on it.
-	curReserve bool
-
 	// the active layer for Get and Put
 	curLayer int
 
@@ -206,13 +201,12 @@ func (c *Causal) Close() {
 }
 
 func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
-	c.curReserve = reserve
 	c.curBatchSize = len(batch.Positions)
 	c.curSequences = batch.Sequences
 	c.curPositions = batch.Positions
 	c.opts.Except = nil
 
-	if !c.curReserve {
+	if !reserve {
 		c.updateSlidingWindow()
 
 		var err error
@@ -379,10 +373,6 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 
 	length := c.curCellRange.max - c.curCellRange.min + 1
 
-	if c.curReserve {
-		return ctx.Input().Empty(c.config.MaskDType, length, batchSize)
-	}
-
 	mask := make([]float32, batchSize*length)
 
 	for i := range c.curBatchSize {
@@ -403,7 +393,7 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 		mask[i] = float32(math.Inf(-1))
 	}
 
-	maskTensor := ctx.Input().FromFloatSlice(mask, length, batchSize)
+	maskTensor := ctx.Input().FromFloats(mask, length, batchSize)
 
 	if c.config.MaskDType != ml.DTypeF32 {
 		maskTensor = maskTensor.Cast(ctx, c.config.MaskDType)
@@ -735,7 +725,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 		offsets = offsets[batchFirst : batchLast+1]
 
 		ctx := c.backend.NewContext()
-		kShift := ctx.Input().FromIntSlice(offsets, len(offsets))
+		kShift := ctx.Input().FromInts(offsets, len(offsets))
 
 		for i, key := range c.keys {
 			if key == nil {

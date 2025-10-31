@@ -6523,15 +6523,11 @@ kernel void kernel_rope_multi(
             const int sec_w012  = args.sect_0 + args.sect_1 + args.sect_2; // end of section 2
             const int sector    = ic % sect_dims;
 
-            float theta_base;
-            if (sector < args.sect_0) {
-                theta_base = (float) pos[i2];
-            } else if (sector < sec_w01) {
+            float theta_base = (float) pos[i2];
+            if (sector % 3 == 1 && sector < 1 + 3 * args.sect_1) {
                 theta_base = (float) pos[i2 + args.ne02];
-            } else if (sector < sec_w012) {
+            } else if (sector % 3 == 2 && sector < 2 + 3 * args.sect_2) {
                 theta_base = (float) pos[i2 + args.ne02 * 2];
-            } else {
-                theta_base = (float) pos[i2 + args.ne02 * 3];
             }
             // end of mrope
 
