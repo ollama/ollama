@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"slices"
 	"strings"
@@ -229,20 +228,11 @@ func ToUsage(r api.ChatResponse) Usage {
 	}
 }
 
-func toolCallId() string {
-	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return "call_" + strings.ToLower(string(b))
-}
-
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
 func ToToolCalls(tc []api.ToolCall) []ToolCall {
 	toolCalls := make([]ToolCall, len(tc))
 	for i, tc := range tc {
-		toolCalls[i].ID = toolCallId()
+		toolCalls[i].ID = tc.ID
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
 		toolCalls[i].Index = tc.Function.Index
