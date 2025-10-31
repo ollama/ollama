@@ -53,7 +53,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		if eval, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = eval
 		}
-		files, err := filepath.Glob(filepath.Join(LibOllamaPath, "*", "*ggml-*"))
+		files, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "*", "*ggml-*"))
 		if err != nil {
 			slog.Debug("unable to lookup runner library directories", "error", err)
 		}
@@ -64,7 +64,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		// Our current packaging model places ggml-hip in the main directory
 		// but keeps rocm in an isolated directory.  We have to add it to
 		// the [LD_LIBRARY_]PATH so ggml-hip will load properly
-		rocmDir = filepath.Join(LibOllamaPath, "rocm")
+		rocmDir = filepath.Join(ml.LibOllamaPath, "rocm")
 		if _, err := os.Stat(rocmDir); err != nil {
 			rocmDir = ""
 		}
@@ -95,9 +95,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				}
 			}
 			if dir == "" {
-				dirs = []string{LibOllamaPath}
+				dirs = []string{ml.LibOllamaPath}
 			} else {
-				dirs = []string{LibOllamaPath, dir}
+				dirs = []string{ml.LibOllamaPath, dir}
 			}
 
 			// ROCm can take a long time on some systems, so give it more time before giving up
@@ -249,7 +249,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		libDirs = make(map[string]struct{})
 		for _, dev := range devices {
 			dir := dev.LibraryPath[len(dev.LibraryPath)-1]
-			if dir != LibOllamaPath {
+			if dir != ml.LibOllamaPath {
 				libDirs[dir] = struct{}{}
 			}
 		}
@@ -339,7 +339,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			devFilter := ml.GetVisibleDevicesEnv(devices)
 
 			for dir := range libDirs {
-				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, devFilter)
+				updatedDevices := bootstrapDevices(ctx, []string{ml.LibOllamaPath, dir}, devFilter)
 				for _, u := range updatedDevices {
 					for i := range devices {
 						if u.DeviceID == devices[i].DeviceID && u.PCIID == devices[i].PCIID {

@@ -1,4 +1,4 @@
-package discover
+package ml
 
 import (
 	"os"

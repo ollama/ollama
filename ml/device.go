@@ -361,7 +361,7 @@ func ByLibrary(l []DeviceInfo) [][]DeviceInfo {
 }
 
 func LibraryPaths(l []DeviceInfo) []string {
-	var gpuLibs []string
+	gpuLibs := []string{LibOllamaPath}
 	for _, gpu := range l {
 		for _, dir := range gpu.LibraryPath {
 			needed := true
