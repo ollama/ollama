@@ -1780,3 +1780,28 @@ func (t *Tensor) Slice(ctx ml.Context, dim int, low, high, step int) ml.Tensor {
 		return t.View(ctx, args[0], args[1:]...)
 	}
 }
+
+// Chunk the tensor into chunk sized tensors along dim. Each sub-tensor is a view of
+// the original.
+func (t *Tensor) Chunk(ctx ml.Context, dim, chunk int) []ml.Tensor {
+	sections := make([]int, 0, t.Dim(dim)/chunk+1)
+	for rest := t.Dim(dim); rest > 0; rest -= chunk {
+		sections = append(sections, min(chunk, rest))
+	}
+	return t.ChunkSections(ctx, dim, sections...)
+}
+
+// ChunkSections split the tensor into section sized tensors along dim. Each sub-tensor is a
+// view of the original. The size of the dim must equal the sum of sections.
+func (t *Tensor) ChunkSections(ctx ml.Context, dim int, sections ...int) []ml.Tensor {
+	var offset int
+	s := make([]ml.Tensor, len(sections))
+	for i, section := range sections {
+		s[i] = t.Slice(ctx, dim, offset, offset+section, 1)
+		offset += section
+	}
+	if offset != t.Dim(dim) {
+		panic("sections do not sum to tensor dimension")
+	}
+	return s
+}
