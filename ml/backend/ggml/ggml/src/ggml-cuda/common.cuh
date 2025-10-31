@@ -55,10 +55,20 @@ static cudaError_t cudaMemcpy2DAsyncReserve ( void* dst, size_t dpitch, const vo
     }
 }
 
+static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t count, cudaStream_t stream = 0 ) {
+    if (!reserving_graph) {
+        return cudaMemsetAsync(devPtr, value, count, stream);
+    } else {
+        return cudaSuccess;
+    }
+}
+
 #undef cudaMemcpyAsync
 #define cudaMemcpyAsync cudaMemcpyAsyncReserve
 #undef cudaMemcpy2DAsync
 #define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
+#undef cudaMemsetAsync
+#define cudaMemsetAsync cudaMemsetAsyncReserve
 
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
 #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
