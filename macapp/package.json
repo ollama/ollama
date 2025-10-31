@@ -44,7 +44,7 @@
     "chmodr": "^1.2.0",
     "copy-webpack-plugin": "^11.0.0",
     "css-loader": "^6.8.1",
-    "electron": "25.9.2",
+    "electron": "39.0.0",
     "eslint": "^8.43.0",
     "eslint-plugin-import": "^2.27.5",
     "fork-ts-checker-webpack-plugin": "^7.3.0",
@@ -62,7 +62,7 @@
     "url-loader": "^4.1.1",
     "webpack": "^5.88.0",
     "webpack-cli": "^5.1.4",
-    "webpack-dev-server": "^4.15.1"
+    "webpack-dev-server": "^5.2.1"
   },
   "dependencies": {
     "@electron/remote": "^2.0.10",
