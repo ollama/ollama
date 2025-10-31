@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -13,13 +15,14 @@ import (
 
 // First run of this scenario on a target system will take a long time to download
 // ~1.5TB of models.  Set a sufficiently large -timeout for your network speed
-func TestLibraryModelsGenerate(t *testing.T) {
+func TestLibraryModelsChat(t *testing.T) {
 	softTimeout, hardTimeout := getTimeouts(t)
 	slog.Info("Setting timeouts", "soft", softTimeout, "hard", hardTimeout)
 	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	targetArch := os.Getenv("OLLAMA_TEST_ARCHITECTURE")
 
 	chatModels := libraryChatModels
 	for _, model := range chatModels {
@@ -30,28 +33,43 @@ func TestLibraryModelsGenerate(t *testing.T) {
 			if err := PullIfMissing(ctx, client, model); err != nil {
 				t.Fatalf("pull failed %s", err)
 			}
-			req := api.GenerateRequest{
-				Model:     model,
-				Prompt:    "why is the sky blue?",
+			if targetArch != "" {
+				resp, err := client.Show(ctx, &api.ShowRequest{Name: model})
+				if err != nil {
+					t.Fatalf("unable to show model: %s", err)
+				}
+				arch := resp.ModelInfo["general.architecture"].(string)
+				if arch != targetArch {
+					t.Skip(fmt.Sprintf("Skipping %s architecture %s != %s", model, arch, targetArch))
+				}
+			}
+			req := api.ChatRequest{
+				Model: model,
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: blueSkyPrompt,
+					},
+				},
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"temperature": 0.1,
 					"seed":        123,
 				},
 			}
-			anyResp := []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength"}
+			anyResp := blueSkyExpected
 			// Special cases
 			if model == "duckdb-nsql" {
 				anyResp = []string{"select", "from"}
 			} else if model == "granite3-guardian" || model == "shieldgemma" || model == "llama-guard3" || model == "bespoke-minicheck" {
 				anyResp = []string{"yes", "no", "safe", "unsafe"}
-			} else if model == "openthinker" || model == "nexusraven" {
+			} else if model == "openthinker" {
 				anyResp = []string{"plugin", "im_sep", "components", "function call"}
 			} else if model == "starcoder" || model == "starcoder2" || model == "magicoder" || model == "deepseek-coder" {
-				req.Prompt = "def fibonacci():"
+				req.Messages[0].Content = "def fibonacci():"
 				anyResp = []string{"f(n)", "sequence", "n-1", "main()", "__main__", "while"}
 			}
-			DoGenerate(ctx, t, client, req, anyResp, 120*time.Second, 30*time.Second)
+			DoChat(ctx, t, client, req, anyResp, 120*time.Second, 30*time.Second)
 		})
 	}
 }

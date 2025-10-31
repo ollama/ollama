@@ -16,6 +16,7 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=OLLAMA_FAST_BUILD \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
+    --build-arg=PARALLEL \
     --build-arg=AMDGPU_TARGETS"
 
 echo "Building Ollama"
