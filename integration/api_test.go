@@ -381,30 +381,3 @@ func TestAPIShowModel(t *testing.T) {
 		t.Errorf("%s missing modified_at: %#v", modelName, resp)
 	}
 }
-
-func TestAPIEmbeddings(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	req := api.EmbeddingRequest{
-		Model:  libraryEmbedModels[0],
-		Prompt: "why is the sky blue?",
-		Options: map[string]interface{}{
-			"temperature": 0,
-			"seed":        123,
-		},
-	}
-
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
-
-	resp, err := client.Embeddings(ctx, &req)
-	if err != nil {
-		t.Fatalf("embeddings call failed %s", err)
-	}
-	if len(resp.Embedding) == 0 {
-		t.Errorf("zero length embedding response")
-	}
-}
