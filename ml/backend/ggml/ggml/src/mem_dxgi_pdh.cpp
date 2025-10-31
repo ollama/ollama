@@ -135,14 +135,10 @@ static bool get_gpu_memory_usage(GpuInfo& gpu) {
             return false;
     }
 
-    // Sample data multiple times
-    constexpr int sampleCount = 3;
-    for (int i = 0; i < sampleCount; ++i) {
-        if (dll_functions.PdhCollectQueryData(query) != ERROR_SUCCESS) {
+    // Sample the data
+    if (dll_functions.PdhCollectQueryData(query) != ERROR_SUCCESS) {
             dll_functions.PdhCloseQuery(query);
             return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     // Read final values
