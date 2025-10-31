@@ -199,6 +199,8 @@ type Tensor interface {
 	Duplicate(ctx Context) Tensor
 
 	Slice(ctx Context, dim, low, high, step int) Tensor
+	Chunk(ctx Context, dim int, size int) []Tensor
+	ChunkSections(ctx Context, dim int, sections ...int) []Tensor
 
 	TopK(ctx Context, k int) Tensor
 	Argsort(ctx Context) Tensor
