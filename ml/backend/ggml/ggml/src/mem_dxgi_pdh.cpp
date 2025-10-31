@@ -23,7 +23,7 @@ static std::mutex ggml_dxgi_pdh_lock;
 Struct to keep track of GPU adapter information at runtime
 */
 struct GpuInfo {
-    std::wstring name; // debug field
+    std::wstring description; // debug field
     LUID luid;
     std::wstring pdhInstance;
     double dedicatedTotal = 0.0;
@@ -99,7 +99,7 @@ static std::vector<GpuInfo> get_dxgi_gpu_infos() {
             // Get all the GPU adapter info
             GpuInfo info;
             fetch_dxgi_adapter_desc1(desc, &info);
-            info.name = std::wstring(desc.Description);
+            info.description = std::wstring(desc.Description);
             info.luid = desc.AdapterLuid;
             info.pdhInstance = generate_pdh_instance_name_from_luid(desc.AdapterLuid);
             infos.push_back(info);
@@ -265,13 +265,13 @@ extern "C" {
         // Calculate the free memory based on whether it's an integrated or discrete GPU
         if (is_integrated_gpu) {
             // IGPU free = SharedTotal - SharedUsage
-            GGML_LOG_DEBUG("Integrated GPU with LUID %s detected. Shared Total: %.2f bytes (%.2f GB), Shared Usage: %.2f bytes (%.2f GB), Dedicated Total: %.2f bytes (%.2f GB), Dedicated Usage: %.2f bytes (%.2f GB)\n", luid, targetGpu->sharedTotal, b_to_gb(targetGpu->sharedTotal), targetGpu->sharedUsage, b_to_gb(targetGpu->sharedUsage), targetGpu->dedicatedTotal, b_to_gb(targetGpu->dedicatedTotal), targetGpu->dedicatedUsage, b_to_gb(targetGpu->dedicatedUsage));
+            GGML_LOG_DEBUG("Integrated GPU (%ls) with LUID %s detected. Shared Total: %.2f bytes (%.2f GB), Shared Usage: %.2f bytes (%.2f GB), Dedicated Total: %.2f bytes (%.2f GB), Dedicated Usage: %.2f bytes (%.2f GB)\n", targetGpu->description.c_str(), luid, targetGpu->sharedTotal, b_to_gb(targetGpu->sharedTotal), targetGpu->sharedUsage, b_to_gb(targetGpu->sharedUsage), targetGpu->dedicatedTotal, b_to_gb(targetGpu->dedicatedTotal), targetGpu->dedicatedUsage, b_to_gb(targetGpu->dedicatedUsage));
             *free = (targetGpu->sharedTotal - targetGpu->sharedUsage) + (targetGpu->dedicatedTotal - targetGpu->dedicatedUsage); // Some IGPUs also have dedicated memory, which can be used along with the IGPU's shared memory
             *total = targetGpu->sharedTotal + targetGpu->dedicatedTotal;
         }
         else {
             // DGPU free = DedicatedTotal - DedicatedUsage
-            GGML_LOG_DEBUG("Discrete GPU with LUID %s detected. Dedicated Total: %.2f bytes (%.2f GB), Dedicated Usage: %.2f bytes (%.2f GB)\n", luid, targetGpu->dedicatedTotal, b_to_gb(targetGpu->dedicatedTotal), targetGpu->dedicatedUsage, b_to_gb(targetGpu->dedicatedUsage));
+            GGML_LOG_DEBUG("Discrete GPU (%ls) with LUID %s detected. Dedicated Total: %.2f bytes (%.2f GB), Dedicated Usage: %.2f bytes (%.2f GB)\n", targetGpu->description.c_str(), luid, targetGpu->dedicatedTotal, b_to_gb(targetGpu->dedicatedTotal), targetGpu->dedicatedUsage, b_to_gb(targetGpu->dedicatedUsage));
             *free = targetGpu->dedicatedTotal - targetGpu->dedicatedUsage;
             *total = targetGpu->dedicatedTotal;
         }

@@ -12434,11 +12434,8 @@ struct ggml_backend_vk_device_context {
     std::string pci_id;
     std::string id;
     std::string uuid;
-<<<<<<< HEAD
     std::string luid;
-=======
     std::string numeric_id;
->>>>>>> main
     int major;
     int minor;
     int driver_major;
