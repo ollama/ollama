@@ -231,6 +231,7 @@ class vk_memory_logger;
 #endif
 class vk_perf_logger;
 static void ggml_vk_destroy_buffer(vk_buffer& buf);
+static std::string ggml_vk_get_device_id(int device);
 
 static constexpr uint32_t mul_mat_vec_max_cols = 8;
 static constexpr uint32_t p021_max_gqa_ratio = 8;
@@ -11598,7 +11599,7 @@ static std::string ggml_vk_get_device_id(int device) {
     const auto& uuid = deviceIDProps.deviceUUID;
     char id[64];
     snprintf(id, sizeof(id),
-        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         uuid[0], uuid[1], uuid[2], uuid[3],
         uuid[4], uuid[5],
         uuid[6], uuid[7],
@@ -12038,7 +12039,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
     return num_adds;
 }
 
-static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
 
@@ -12234,6 +12235,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     return GGML_STATUS_SUCCESS;
 
     UNUSED(backend);
+    UNUSED(batch_size);
 }
 
 // Sort the graph for improved parallelism.
@@ -12431,13 +12433,11 @@ struct ggml_backend_vk_device_context {
     std::string pci_id;
     std::string id;
     std::string uuid;
+    std::string numeric_id;
     int major;
     int minor;
     int driver_major;
     int driver_minor;
-    int pci_bus_id;
-    int pci_device_id;
-    int pci_domain_id;
 };
 
 void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
@@ -12456,9 +12456,9 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
         switch (props2.properties.vendorID) {
         case VK_VENDOR_ID_AMD:
             if (ggml_hip_mgmt_init() == 0) {
-                int status = ggml_hip_get_device_memory(ctx->pci_bus_id, ctx->pci_device_id, free, total);
+                int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total);
                 if (status == 0) {
-                    GGML_LOG_DEBUG("%s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                    GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
                     ggml_hip_mgmt_release();
                     return;
                 }
@@ -12469,7 +12469,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
             if (ggml_nvml_init() == 0) {
                 int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
                 if (status == 0) {
-                    GGML_LOG_DEBUG("%s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+                    GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->uuid.c_str(), *free, *total);
                     ggml_nvml_release();
                     return;
                 }
@@ -12545,8 +12545,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
         }
     }
 
+    vk::PhysicalDeviceProperties2 props2;
     if (!ext_support) {
-        return "";
+        device.getProperties2(&props2);
+        if (props2.properties.vendorID != VK_VENDOR_ID_AMD) {
+            return "";
+        }
+        // AMD doesn't claim to support PCI ID, but actually does, so try anyway and check for non-zero
     }
 
     vk::PhysicalDeviceProperties2 props = {};
@@ -12563,6 +12568,9 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
 
     char pci_bus_id[16] = {};
     snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
+    if (pci_domain == 0 && pci_bus == 0 && pci_device == 0 && pci_function == 0) {
+        return "";
+    }
 
     return std::string(pci_bus_id);
 }
@@ -12636,11 +12644,8 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->driver_major = ctx->driver_major;
     props->driver_minor = ctx->driver_minor;
     props->integrated = ctx->is_integrated_gpu;
-    props->pci_bus_id = ctx->pci_bus_id;
-    props->pci_device_id = ctx->pci_device_id;
-    props->pci_domain_id = ctx->pci_domain_id;
     props->library = GGML_VK_NAME;
-    props->numeric_id = ctx->id.empty() ? nullptr : ctx->id.c_str();
+    props->numeric_id = ctx->numeric_id.c_str();
 }
 
 static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
@@ -13101,7 +13106,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 vk_devices[dev_idx].getProperties2(&props2);
                 std::ostringstream oss;
                 oss << std::hex << std::setfill('0');
-                oss << "GPU-";
                 int byteIdx = 0;
                 for (int i = 0; i < 16; ++i, ++byteIdx) {
                     oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);
@@ -13110,15 +13114,12 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                     }
                 }
                 ctx->uuid = oss.str();
-                ctx->pci_bus_id = pci_bus_props.pciBus;
-                ctx->pci_device_id = pci_bus_props.pciDevice;
-                ctx->pci_domain_id = pci_bus_props.pciDomain;
-                ctx->id = std::to_string(i);
                 ctx->major = 0;
                 ctx->minor = 0;
                 // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
                 ctx->driver_major = 0;
                 ctx->driver_minor = 0;
+                ctx->numeric_id = std::to_string(i);
             }
             initialized = true;
         }

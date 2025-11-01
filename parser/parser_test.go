@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -799,7 +800,10 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	}
 	defer f.Close()
 
-	if err := ggml.WriteGGUF(f, kv, ti); err != nil {
+	base := map[string]any{"general.architecture": "test"}
+	maps.Copy(base, kv)
+
+	if err := ggml.WriteGGUF(f, base, ti); err != nil {
 		t.Fatal(err)
 	}
 	// Calculate sha256 of file

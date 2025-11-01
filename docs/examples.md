@@ -12,9 +12,3 @@ Ollama JavaScript examples at [ollama-js/examples](https://github.com/ollama/oll
 
 ## OpenAI compatibility examples
 Ollama OpenAI compatibility examples at [ollama/examples/openai](../docs/openai.md)
-
-
-## Community examples
-
-- [LangChain Ollama Python](https://python.langchain.com/docs/integrations/chat/ollama/)
-- [LangChain Ollama JS](https://js.langchain.com/docs/integrations/chat/ollama/)

@@ -4,13 +4,8 @@ package discover
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +18,7 @@ import (
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
@@ -36,7 +32,7 @@ var (
 	bootstrapped bool
 )
 
-func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.DeviceInfo {
+func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
 	deviceMu.Lock()
 	defer deviceMu.Unlock()
 	startDiscovery := time.Now()
@@ -57,7 +53,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		if eval, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = eval
 		}
-		files, err := filepath.Glob(filepath.Join(LibOllamaPath, "*", "*ggml-*"))
+		files, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "*", "*ggml-*"))
 		if err != nil {
 			slog.Debug("unable to lookup runner library directories", "error", err)
 		}
@@ -68,7 +64,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// Our current packaging model places ggml-hip in the main directory
 		// but keeps rocm in an isolated directory.  We have to add it to
 		// the [LD_LIBRARY_]PATH so ggml-hip will load properly
-		rocmDir = filepath.Join(LibOllamaPath, "rocm")
+		rocmDir = filepath.Join(ml.LibOllamaPath, "rocm")
 		if _, err := os.Stat(rocmDir); err != nil {
 			rocmDir = ""
 		}
@@ -88,6 +84,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		// times concurrently leading to memory contention
 		// TODO refactor so we group the lib dirs and do serial per version, but parallel for different libs
 		for dir := range libDirs {
+			bootstrapTimeout := 30 * time.Second
 			var dirs []string
 			if dir != "" {
 				if requested != "" && filepath.Base(dir) != requested {
@@ -98,15 +95,20 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 				}
 			}
 			if dir == "" {
-				dirs = []string{LibOllamaPath}
+				dirs = []string{ml.LibOllamaPath}
 			} else {
-				dirs = []string{LibOllamaPath, dir}
+				dirs = []string{ml.LibOllamaPath, dir}
+			}
+
+			// ROCm can take a long time on some systems, so give it more time before giving up
+			if dir != "" && strings.Contains(filepath.Base(dir), "rocm") {
+				bootstrapTimeout = 60 * time.Second
 			}
 			// Typically bootstrapping takes < 1s, but on some systems, with devices
 			// in low power/idle mode, initialization can take multiple seconds.  We
 			// set a long timeout just for bootstrap discovery to reduce the chance
 			// of giving up too quickly
-			ctx1stPass, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ctx1stPass, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 			defer cancel()
 
 			// For this pass, we retain duplicates in case any are incompatible with some libraries
@@ -115,7 +117,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 
 		// In the second pass, we more deeply initialize the GPUs to weed out devices that
 		// aren't supported by a given library.  We run this phase in parallel to speed up discovery.
-		slog.Debug("filtering out unsupported or overlapping GPU library combinations", "count", len(devices))
+		slog.Debug("evluating which if any devices to filter out", "initial_count", len(devices))
 		ctx2ndPass, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		var wg sync.WaitGroup
@@ -127,7 +129,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			if devices[i].Library == "Metal" {
 				continue
 			}
-			slog.Debug("verifying GPU is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "pci_id", devices[i].PCIID)
+			slog.Debug("verifying GPU is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "id", devices[i].ID, "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -148,11 +150,17 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 					slog.Error("Unknown Library:" + devices[i].Library)
 				}
 
-				extraEnvs := []string{
-					"GGML_CUDA_INIT=1", // force deep initialization to trigger crash on unsupported GPUs
-					envVar + "=" + id,  // Filter to just this one GPU
+				extraEnvs := map[string]string{
+					"GGML_CUDA_INIT": "1", // force deep initialization to trigger crash on unsupported GPUs
+					envVar:           id,  // Filter to just this one GPU
 				}
 				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
+					slog.Debug("filtering device which didn't fully initialize",
+						"id", devices[i].ID,
+						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+						"pci_id", devices[i].PCIID,
+						"library", devices[i].Library,
+					)
 					needsDelete[i] = true
 				} else {
 					supportedMu.Lock()
@@ -168,7 +176,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			}(i)
 		}
 		wg.Wait()
-		logutil.Trace("supported GPU library combinations", "supported", supported)
+		logutil.Trace("supported GPU library combinations before filtering", "supported", supported)
 
 		filterOutVulkanThatAreSupportedByOtherGPU(needsDelete)
 
@@ -241,7 +249,7 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 		libDirs = make(map[string]struct{})
 		for _, dev := range devices {
 			dir := dev.LibraryPath[len(dev.LibraryPath)-1]
-			if dir != LibOllamaPath {
+			if dir != ml.LibOllamaPath {
 				libDirs[dir] = struct{}{}
 			}
 		}
@@ -327,11 +335,14 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 
+			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
+			devFilter := ml.GetVisibleDevicesEnv(devices)
+
 			for dir := range libDirs {
-				updatedDevices := bootstrapDevices(ctx, []string{LibOllamaPath, dir}, nil)
+				updatedDevices := bootstrapDevices(ctx, []string{ml.LibOllamaPath, dir}, devFilter)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.DeviceID == devices[i].DeviceID {
+						if u.DeviceID == devices[i].DeviceID && u.PCIID == devices[i].PCIID {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
@@ -370,12 +381,13 @@ func filterOutVulkanThatAreSupportedByOtherGPU(needsDelete []bool) {
 			}
 			if devices[j].PCIID == devices[i].PCIID && devices[j].Library != "Vulkan" && !needsDelete[j] {
 				needsDelete[i] = true
-				slog.Debug("dropping Vulkan duplicate by PCI ID",
-					"vulkan_id", devices[i].ID,
-					"vulkan_libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+				slog.Debug("filtering device with duplicate PCI ID",
+					"id", devices[i].ID,
+					"library", devices[i].Library,
+					"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
 					"pci_id", devices[i].PCIID,
-					"kept_library", devices[j].Library,
 					"kept_id", devices[j].ID,
+					"kept_library", devices[j].Library,
 				)
 				break
 			}
@@ -420,6 +432,12 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 			}
 			for dev, i := range byLibDirs[libDir] {
 				if _, found := byLibDirs[newest][dev]; found {
+					slog.Debug("filtering device with overlapping libraries",
+						"id", dev,
+						"library", libDir,
+						"delete_index", i,
+						"kept_library", newest,
+					)
 					needsDelete[i] = true
 				}
 			}
@@ -443,100 +461,35 @@ func (r *bootstrapRunner) HasExited() bool {
 	return false
 }
 
-func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []string) []ml.DeviceInfo {
-	// TODO DRY out with llm/server.go
-	slog.Debug("spawning runner with", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
+func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
+	var out io.Writer
+	if envconfig.LogLevel() == logutil.LevelTrace {
+		out = os.Stderr
+	}
 	start := time.Now()
 	defer func() {
 		slog.Debug("bootstrap discovery took", "duration", time.Since(start), "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
 	}()
-	port := 0
-	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-		var l *net.TCPListener
-		if l, err = net.ListenTCP("tcp", a); err == nil {
-			port = l.Addr().(*net.TCPAddr).Port
-			l.Close()
-		}
-	}
-	if port == 0 {
-		slog.Debug("ResolveTCPAddr failed, using random port")
-		port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-	}
-	params := []string{"runner", "--ollama-engine", "--port", strconv.Itoa(port)}
-	var pathEnv string
-	switch runtime.GOOS {
-	case "windows":
-		pathEnv = "PATH"
-	case "darwin":
-		pathEnv = "DYLD_LIBRARY_PATH"
-	default:
-		pathEnv = "LD_LIBRARY_PATH"
-	}
-	libraryPaths := append([]string{LibOllamaPath}, ollamaLibDirs...)
-	if rocmDir != "" {
-		libraryPaths = append(libraryPaths, rocmDir)
-	}
-	// Note: we always put our dependency paths first
-	// since these are the exact version we compiled/linked against
-	if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-		libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
-	}
 
-	cmd := exec.Command(exe, params...)
-	cmd.Env = os.Environ()
-	if envconfig.LogLevel() == logutil.LevelTrace {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-
-	// cmd.SysProcAttr = llm.LlamaServerSysProcAttr // circular dependency - bring back once refactored
-	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-	pathNeeded := true
-	ollamaPathNeeded := true
-	extraDone := make([]bool, len(extraEnvs))
-	for i := range cmd.Env {
-		cmp := strings.SplitN(cmd.Env[i], "=", 2)
-		if strings.EqualFold(cmp[0], pathEnv) {
-			cmd.Env[i] = pathEnv + "=" + pathEnvVal
-			pathNeeded = false
-		} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
-			cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(ollamaLibDirs, string(filepath.ListSeparator))
-			ollamaPathNeeded = false
-		} else {
-			for j := range extraEnvs {
-				if extraDone[j] {
-					continue
-				}
-				extra := strings.SplitN(extraEnvs[j], "=", 2)
-				if cmp[0] == extra[0] {
-					cmd.Env[i] = extraEnvs[j]
-					extraDone[j] = true
-				}
-			}
-		}
-	}
-	if pathNeeded {
-		cmd.Env = append(cmd.Env, pathEnv+"="+pathEnvVal)
-	}
-	if ollamaPathNeeded {
-		cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ollamaLibDirs, string(filepath.ListSeparator)))
-	}
-	for i := range extraDone {
-		if !extraDone[i] {
-			cmd.Env = append(cmd.Env, extraEnvs[i])
-		}
-	}
-	logutil.Trace("starting runner for device discovery", "env", cmd.Env, "cmd", cmd)
-	if err := cmd.Start(); err != nil {
-		slog.Warn("unable to start discovery subprocess", "cmd", cmd, "error", err)
+	logutil.Trace("starting runner for device discovery", "libDirs", ollamaLibDirs, "extraEnvs", extraEnvs)
+	cmd, port, err := llm.StartRunner(
+		true, // ollama engine
+		"",   // no model
+		ollamaLibDirs,
+		out,
+		extraEnvs,
+	)
+	if err != nil {
+		slog.Debug("failed to start runner to discovery GPUs", "error", err)
 		return nil
 	}
+
 	go func() {
 		cmd.Wait() // exit status ignored
 	}()
 
 	defer cmd.Process.Kill()
-	devices, err := GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
+	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
 	if err != nil {
 		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
 			// Expected during bootstrapping while we filter out unsupported AMD GPUs
@@ -548,53 +501,4 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs []s
 	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
 
 	return devices
-}
-
-func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceInfo, error) {
-	var moreDevices []ml.DeviceInfo
-	port := runner.GetPort()
-	tick := time.Tick(10 * time.Millisecond)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("failed to finish discovery before timeout")
-		case <-tick:
-			r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/info", port), nil)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create request: %w", err)
-			}
-			r.Header.Set("Content-Type", "application/json")
-
-			resp, err := http.DefaultClient.Do(r)
-			if err != nil {
-				// slog.Warn("failed to send request", "error", err)
-				if runner.HasExited() {
-					return nil, fmt.Errorf("runner crashed")
-				}
-				continue
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusNotFound {
-				// old runner, fall back to bootstrapping model
-				return nil, fmt.Errorf("llamarunner free vram reporting not supported")
-			}
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				slog.Warn("failed to read response", "error", err)
-				continue
-			}
-			if resp.StatusCode != 200 {
-				logutil.Trace("runner failed to discover free VRAM", "status", resp.StatusCode, "response", body)
-				return nil, fmt.Errorf("runner error: %s", string(body))
-			}
-
-			if err := json.Unmarshal(body, &moreDevices); err != nil {
-				slog.Warn("unmarshal encode response", "error", err)
-				continue
-			}
-			return moreDevices, nil
-		}
-	}
 }

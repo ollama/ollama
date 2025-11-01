@@ -98,7 +98,7 @@ extern "C" {
 
     GGML_API enum ggml_status ggml_backend_graph_plan_compute (ggml_backend_t backend, ggml_backend_graph_plan_t plan);
     GGML_API enum ggml_status ggml_backend_graph_compute      (ggml_backend_t backend, struct ggml_cgraph * cgraph);
-    GGML_API enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph);
+    GGML_API enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
 
     // NOTE: will be removed, use device version instead
     GGML_API bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op);
@@ -174,9 +174,6 @@ extern "C" {
         int compute_major;
         int compute_minor;
         int integrated;
-        int pci_bus_id;
-        int pci_device_id;
-        int pci_domain_id;
         const char *library;
         // number with which the devices are accessed (Vulkan)
         const char *numeric_id;
@@ -319,6 +316,9 @@ extern "C" {
     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
     GGML_API ggml_backend_sched_t ggml_backend_sched_new_ext(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload, bool alloc_buffers);
     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
+
+    // Provide a hint on the batch size to optimize processing (uses heuristics if unset)
+    GGML_API void                 ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size);
 
     // Initialize backend buffers from a measure graph
     GGML_API bool                 ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph); // returns success

@@ -142,7 +142,10 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 
 	// This model is much more capable with a larger context, so set that
 	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
+	if !s.lowVRAM && slices.Contains([]string{
+		"gptoss", "gpt-oss",
+		"qwen3vl", "qwen3vlmoe",
+	}, model.Config.ModelFamily) {
 		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
@@ -288,6 +291,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		contentType := "application/json; charset=utf-8"
+		if req.Stream != nil && *req.Stream {
+			contentType = "application/x-ndjson"
+		}
+		c.Header("Content-Type", contentType)
 
 		return
 	}
@@ -1874,10 +1883,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			req.Options = map[string]any{}
 		}
 
-		msgs := append(m.Messages, req.Messages...)
-		if req.Messages[0].Role != "system" && m.System != "" {
-			msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+		var msgs []api.Message
+		if len(req.Messages) > 0 {
+			msgs = append(m.Messages, req.Messages...)
+			if req.Messages[0].Role != "system" && m.System != "" {
+				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+			}
 		}
+
 		msgs = filterThinkTags(msgs, m)
 		req.Messages = msgs
 
@@ -1927,6 +1940,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		contentType := "application/json; charset=utf-8"
+		if req.Stream != nil && *req.Stream {
+			contentType = "application/x-ndjson"
+		}
+		c.Header("Content-Type", contentType)
 
 		return
 	}

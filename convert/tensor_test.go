@@ -432,7 +432,7 @@ func TestSplitDim(t *testing.T) {
 		t.Run("split with transpose", func(t *testing.T) {
 			next, stop := iter.Pull(splitDim(&r, 1,
 				split{Replacer: strings.NewReplacer("a", "x")},
-				split{Replacer: strings.NewReplacer("b", "y"), fn: func(tt tensor.Tensor) (tensor.Tensor, error) {
+				split{Replacer: strings.NewReplacer("b", "y"), afterFunc: func(tt tensor.Tensor) (tensor.Tensor, error) {
 					return tensor.Transpose(tt, 1, 0)
 				}},
 			))

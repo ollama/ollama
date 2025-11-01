@@ -31,18 +31,12 @@ void main() {
     const int sec_w = p.sections[1] + p.sections[0];
     const uint sector = (i0 / 2) % sect_dims;
 
-    float theta_base = 0.0;
-    if (sector < p.sections[0]) {
-        theta_base = data_pos[channel_x]*pow(p.theta_scale, i0/2.0f);
-    }
-    else if (sector >= p.sections[0] && sector < sec_w) {
+    float theta_base = data_pos[channel_x]*pow(p.theta_scale, i0/2.0f);
+    if (sector % 3 == 1 && sector < 1 + 3 * p.sections[1]) {
         theta_base = data_pos[channel_x + ne2 * 1]*pow(p.theta_scale, i0/2.0f);
     }
-    else if (sector >= sec_w && sector < sec_w + p.sections[2]) {
+    else if (sector % 3 == 2 && sector < 2 + 3 * p.sections[2]) {
         theta_base = data_pos[channel_x + ne2 * 2]*pow(p.theta_scale, i0/2.0f);
-    }
-    else if (sector >= sec_w + p.sections[2]) {
-        theta_base = data_pos[channel_x + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
     }
 
     const float freq_factor = p.has_ff != 0 ? data_ff[i0/2] : 1.0f;
