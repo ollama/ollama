@@ -122,6 +122,11 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'Vulkan' -DOLLAMA_RUNNER_DIR="vulkan" \
         && cmake --build --parallel --preset 'Vulkan' \
         && cmake --install build --component Vulkan --strip --parallel 8 
+# Install Intel oneAPI Level Zero runtime
+# https://dgpu-docs.intel.com/driver/installation-lts2.html
+RUN rpm --import https://repositories.intel.com/gpu/intel-graphics.key \
+    && dnf config-manager --add-repo https://repositories.intel.com/gpu/rhel/8.10/lts/2523/unified/intel-gpu-8.10.repo \
+    && dnf install -y level-zero intel-level-zero-gpu intel-gmmlib
 
 
 FROM base AS build
@@ -143,6 +148,12 @@ FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
+# Copy over minimal Intel oneAPI Level Zero runtime libraries to run Level Zero Sysman
+COPY --from=vulkan /usr/lib64/libze_loader.so.1 /lib/ollama/level_zero/
+COPY --from=vulkan /usr/lib64/libze_intel_gpu.so.1 /lib/ollama/level_zero/
+COPY --from=vulkan /usr/lib64/libigdgmm.so.12 /lib/ollama/level_zero/
+COPY --from=vulkan /usr/lib64/libze_tracing_layer.so.1 /lib/ollama/level_zero/
+COPY --from=vulkan /usr/lib64/libze_validation_layer.so.1 /lib/ollama/level_zero/
 
 FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
@@ -192,7 +203,7 @@ RUN apt-get update \
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/lib/ollama/level_zero/
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
