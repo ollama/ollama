@@ -82,11 +82,12 @@ func AllowedOrigins() (origins []string) {
 	return origins
 }
 
-// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
-// Default is $HOME/.ollama/models
+// Models returns the primary path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
+// For multiple paths, use ModelPaths() instead. Default is $HOME/.ollama/models
 func Models() string {
-	if s := Var("OLLAMA_MODELS"); s != "" {
-		return s
+	paths := ModelPaths()
+	if len(paths) > 0 {
+		return paths[0]
 	}
 
 	home, err := os.UserHomeDir()
@@ -95,6 +96,46 @@ func Models() string {
 	}
 
 	return filepath.Join(home, ".ollama", "models")
+}
+
+// ModelPaths returns a list of paths to model directories. Paths can be configured via the OLLAMA_MODELS environment variable,
+// using colon-separated paths (similar to PATH). The first path is considered the primary path for storing new models.
+// Default is $HOME/.ollama/models
+func ModelPaths() []string {
+	if s := Var("OLLAMA_MODELS"); s != "" {
+		// Split by colon (Unix-style) or semicolon (Windows-style)
+		separator := ":"
+		if runtime.GOOS == "windows" {
+			separator = ";"
+		}
+		paths := strings.Split(s, separator)
+
+		// Clean and validate each path
+		var validPaths []string
+		for _, path := range paths {
+			path = strings.TrimSpace(path)
+			if path != "" {
+				// Convert to absolute path
+				if absPath, err := filepath.Abs(path); err == nil {
+					validPaths = append(validPaths, absPath)
+				} else {
+					validPaths = append(validPaths, path)
+				}
+			}
+		}
+
+		if len(validPaths) > 0 {
+			return validPaths
+		}
+	}
+
+	// Default fallback
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return []string{filepath.Join(home, ".ollama", "models")}
 }
 
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
@@ -283,7 +324,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
+		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path(s) to the models directory (colon-separated for multiple paths)"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
@@ -331,4 +372,46 @@ func Values() map[string]string {
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+}
+
+// ValidateModelPaths checks if all configured model paths exist and are accessible
+func ValidateModelPaths() error {
+	paths := ModelPaths()
+	var errors []string
+
+	for _, path := range paths {
+		if info, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				// Try to create the directory
+				if err := os.MkdirAll(path, 0o755); err != nil {
+					errors = append(errors, fmt.Sprintf("cannot create model path %s: %v", path, err))
+				}
+			} else {
+				errors = append(errors, fmt.Sprintf("cannot access model path %s: %v", path, err))
+			}
+		} else if !info.IsDir() {
+			errors = append(errors, fmt.Sprintf("model path %s is not a directory", path))
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("model path validation failed: %s", strings.Join(errors, "; "))
+	}
+
+	return nil
+}
+
+// PrimaryModelPath returns the first (primary) model path where new models should be stored
+func PrimaryModelPath() string {
+	paths := ModelPaths()
+	if len(paths) > 0 {
+		return paths[0]
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return filepath.Join(home, ".ollama", "models")
 }
