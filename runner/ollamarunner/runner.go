@@ -111,7 +111,7 @@ type NewSequenceParams struct {
 	truncate   bool
 }
 
-var errorInputTooLong = errors.New("the input length exceeds the context length")
+var errorInputTooLong = errors.New("input exceeds maximum context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -131,54 +131,90 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if int32(len(inputs)) > s.cache.numCtx {
-		discard := int32(len(inputs)) - s.cache.numCtx
-
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
 
-		promptStart := params.numKeep + discard
+		discard := int32(len(inputs)) - s.cache.numCtx
 
-		// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
-		sameBatch := 0
-		for i, inp := range inputs {
-			if sameBatch > 0 {
-				sameBatch--
+		var newInputs []*input.Input
 
-				if promptStart == int32(i) {
-					promptStart++
+		if params.embedding {
+			var lastIsEOG bool
+
+			eogToken := int32(0)
+			if len(inputs) > 0 {
+				if textProcessor, ok := s.model.(model.TextProcessor); ok {
+					lastToken := inputs[len(inputs)-1]
+					if textProcessor.Is(lastToken.Token, model.SpecialEOS) {
+						eogToken = lastToken.Token
+					}
 				}
-			} else if promptStart == int32(i) {
-				break
 			}
 
-			if inp.SameBatch != 0 {
-				if int32(i) < params.numKeep {
-					return nil, fmt.Errorf("SameBatch may not be specified within numKeep (index: %v numKeep: %v SameBatch: %v)", i, params.numKeep, inp.SameBatch)
+			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
+			newLimit := s.cache.numCtx - 1
+
+			if s.model.(model.TextProcessor).Is(inputs[len(inputs)-1].Token, model.SpecialEOS) && !s.model.(model.TextProcessor).Is(inputs[newLimit-1].Token, model.SpecialEOS) {
+				lastIsEOG = true
+				newLimit--
+			}
+
+			if newLimit <= 0 {
+				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+
+			newInputs = inputs[:newLimit]
+
+			if lastIsEOG {
+				newInputs = append(newInputs, &input.Input{Token: eogToken})
+			}
+		} else {
+			// Otherwise, truncate in the middle
+			promptStart := params.numKeep + discard
+
+			// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
+			sameBatch := 0
+			for i, inp := range inputs {
+				if sameBatch > 0 {
+					sameBatch--
+
+					if promptStart == int32(i) {
+						promptStart++
+					}
+				} else if promptStart == int32(i) {
+					break
 				}
 
-				sameBatch = inp.SameBatch
+				if inp.SameBatch != 0 {
+					if int32(i) < params.numKeep {
+						return nil, fmt.Errorf("SameBatch may not be specified within numKeep (index: %v numKeep: %v SameBatch: %v)", i, params.numKeep, inp.SameBatch)
+					}
+
+					sameBatch = inp.SameBatch
+				}
 			}
-		}
 
-		if promptStart >= int32(len(inputs)) {
-			return nil, errors.New("entire prompt removed by truncation")
-		}
+			if promptStart >= int32(len(inputs)) {
+				return nil, errors.New("entire prompt removed by truncation")
+			}
 
-		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[promptStart:]...)
+			newInputs = inputs[:params.numKeep]
+			newInputs = append(newInputs, inputs[promptStart:]...)
+		}
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
 	}
 
 	// TODO(jessegross): Ingest cached history for grammar
+	promptCount := len(inputs)
 
 	return &Sequence{
 		ctxs:             ctxs,
 		mmStore:          mmStore,
 		inputs:           inputs,
-		numPromptInputs:  len(inputs),
+		numPromptInputs:  promptCount,
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
@@ -947,13 +983,14 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-
-		// TODO (jmorganca): this should be provided by the server via the
-		// request options and truncated here in the runner, instead of relying on
-		// the server's truncate logic
-		truncate: true,
+		truncate:  req.Truncate,
 	})
 	if err != nil {
+		// Error handling for truncation to prevent segmentation fault
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -994,7 +1031,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: <-seq.embedding,
+		Embedding:       <-seq.embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}

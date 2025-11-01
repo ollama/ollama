@@ -101,7 +101,7 @@ type NewSequenceParams struct {
 	truncate       bool
 }
 
-var errorInputTooLong = errors.New("the input length exceeds the context length")
+var errorInputTooLong = errors.New("input exceeds maximum context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -126,12 +126,47 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	if len(inputs) > s.cache.numCtx {
 		discard := len(inputs) - s.cache.numCtx
+
+		// If truncation is not enabled, return an error
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
 
-		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+		var newInputs []input
+
+		// TODO: EOG token handling should be moved to tokenizer
+		if params.embedding {
+			// If the original prompt ended with an EOG token, add it back after truncation
+			lastIsEOG := false
+
+			eogToken := 0
+
+			if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
+				eogToken = inputs[len(inputs)-1].token
+			}
+
+			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
+			newLimit := s.cache.numCtx - 1
+
+			if s.model.TokenIsEog(inputs[len(inputs)-1].token) && !s.model.TokenIsEog(inputs[newLimit-1].token) {
+				lastIsEOG = true
+				newLimit--
+			}
+
+			if newLimit <= 0 {
+				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+
+			newInputs = inputs[:newLimit]
+
+			if lastIsEOG {
+				newInputs = append(newInputs, input{token: eogToken})
+			}
+		} else {
+			// Otherwise, truncate in the middle
+			newInputs = inputs[:params.numKeep]
+			newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+		}
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
@@ -150,9 +185,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 	}
 
+	promptCount := len(inputs)
+
 	return &Sequence{
 		inputs:           inputs,
-		numPromptInputs:  len(inputs),
+		numPromptInputs:  promptCount,
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
@@ -709,13 +746,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-
-		// TODO (jmorganca): this should be provided by the server via the
-		// request options and truncated here in the runner, instead of relying on
-		// the server's truncate logic
-		truncate: true,
+		truncate:  req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -758,7 +795,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	embedding := <-seq.embedding
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding:       embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
