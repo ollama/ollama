@@ -217,6 +217,19 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	return embeddings
 }
 
+// GetLogitsIth gets the logits for the ith token
+func (c *Context) GetLogitsIth(i int) []float32 {
+	logits := unsafe.Pointer(C.llama_get_logits_ith(c.c, C.int32_t(i)))
+	if logits == nil {
+		return nil
+	}
+
+	vocabSize := c.Model().NumVocab()
+	result := make([]float32, vocabSize)
+	_ = copy(result, unsafe.Slice((*float32)(logits), vocabSize))
+	return result
+}
+
 type ModelParams struct {
 	NumGpuLayers int
 	MainGpu      int

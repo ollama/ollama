@@ -499,14 +499,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
+		var allLogprobs []api.LogprobInfo
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:   prompt,
-			Images:   images,
-			Format:   req.Format,
-			Options:  opts,
-			Shift:    req.Shift == nil || *req.Shift,
-			Truncate: req.Truncate == nil || *req.Truncate,
+			Prompt:      prompt,
+			Images:      images,
+			Format:      req.Format,
+			Options:     opts,
+			Shift:       req.Shift == nil || *req.Shift,
+			Truncate:    req.Truncate == nil || *req.Truncate,
+			Logprobs:    req.Logprobs != nil && *req.Logprobs,
+			TopLogprobs: req.TopLogprobs,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -519,6 +522,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
 				},
+				Logprobs: cr.Logprobs,
 			}
 
 			if builtinParser != nil {
@@ -542,7 +546,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				ch <- gin.H{"error": err.Error()}
 			}
 
+			// Accumulate logprobs from each chunk
+			if len(cr.Logprobs) > 0 {
+				allLogprobs = append(allLogprobs, cr.Logprobs...)
+			}
+
 			if cr.Done {
+				// Set the accumulated logprobs on the final response
+				res.Logprobs = allLogprobs
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -2076,6 +2087,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		for {
 			var tb strings.Builder
+			var allLogprobs []api.LogprobInfo
 
 			currentFormat := req.Format
 			// structured outputs via double request is enabled when:
@@ -2094,12 +2106,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:   prompt,
-				Images:   images,
-				Format:   currentFormat,
-				Options:  opts,
-				Shift:    req.Shift == nil || *req.Shift,
-				Truncate: truncate,
+				Prompt:      prompt,
+				Images:      images,
+				Format:      currentFormat,
+				Options:     opts,
+				Shift:       req.Shift == nil || *req.Shift,
+				Truncate:    truncate,
+				Logprobs:    req.Logprobs != nil && *req.Logprobs,
+				TopLogprobs: req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,
@@ -2112,8 +2126,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
 					},
+					Logprobs: r.Logprobs,
 				}
+
+				// Accumulate logprobs from each chunk
+				if len(r.Logprobs) > 0 {
+					allLogprobs = append(allLogprobs, r.Logprobs...)
+				}
+
 				if r.Done {
+					// Set the accumulated logprobs on the final response
+					res.Logprobs = allLogprobs
 					res.DoneReason = r.DoneReason.String()
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
