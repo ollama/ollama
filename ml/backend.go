@@ -173,6 +173,7 @@ type Tensor interface {
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
+	QuickGELU(ctx Context, up ...Tensor) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
@@ -207,6 +208,8 @@ type Tensor interface {
 	Stddev(ctx Context) Tensor
 	Sqr(ctx Context) Tensor
 	Sqrt(ctx Context) Tensor
+
+	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -371,4 +374,11 @@ const (
 	DTypeQ40
 	DTypeI32
 	DTypeMXFP4
+)
+
+type SamplingMode int
+
+const (
+	SamplingModeNearest SamplingMode = iota
+	SamplingModeBilinear
 )
