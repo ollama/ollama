@@ -7,6 +7,7 @@ layout (push_constant) uniform parameter
     uint nb00; uint nb01; uint nb02; uint nb03;
     uint ne10; uint ne11; uint ne12; uint ne13;
     float sf0; float sf1; float sf2; float sf3;
+    float pixel_offset;
 } p;
 
 #include "types.glsl"
@@ -19,7 +20,6 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 // from ggml.h: enum ggml_scale_mode, enum ggml_scale_flag
 #define NEAREST  0
 #define BILINEAR 1
-#define ALIGN_CORNERS (1 << 8)
 
 layout (constant_id = 0) const uint scale_mode = 0;
 
@@ -52,21 +52,11 @@ float fetch_bilinear(ivec2 c0, ivec2 c1, vec2 d, uint i12, uint i13) {
 float interpolate_bilinear(uint i10, uint i11, uint i12, uint i13) {
     const ivec2 ne0 = ivec2(p.ne00, p.ne01);
 
-    const vec2 c = (vec2(i10, i11) + 0.5) / vec2(p.sf0, p.sf1) - 0.5;
+    const vec2 c = (vec2(i10, i11) + p.pixel_offset) / vec2(p.sf0, p.sf1) - p.pixel_offset;
     const vec2 c0f = floor(c);
     const vec2 d = c - c0f;
     const ivec2 c0 = max(ivec2(c0f), 0);
     const ivec2 c1 = min(ivec2(c0f + 1), ne0 - 1);
-
-    return fetch_bilinear(c0, c1, d, i12, i13);
-}
-
-float interpolate_bilinear_align_corners(uint i10, uint i11, uint i12, uint i13) {
-    const vec2 c = vec2(i10, i11) / vec2(p.sf0, p.sf1);
-    const vec2 c0f = floor(c);
-    const vec2 d = c - c0f;
-    const ivec2 c0 = ivec2(c0f);
-    const ivec2 c1 = c0 + 1;
 
     return fetch_bilinear(c0, c1, d, i12, i13);
 }
@@ -90,9 +80,6 @@ void main() {
             break;
         case BILINEAR:
             result = interpolate_bilinear(i10, i11, i12, i13);
-            break;
-        case BILINEAR | ALIGN_CORNERS:
-            result = interpolate_bilinear_align_corners(i10, i11, i12, i13);
             break;
     }
 

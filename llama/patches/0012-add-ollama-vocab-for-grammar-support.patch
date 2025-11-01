@@ -10,7 +10,7 @@ Subject: [PATCH] add ollama vocab for grammar support
  3 files changed, 58 insertions(+), 9 deletions(-)
 
 diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
-index bed706bb..b51cee09 100644
+index bed706bb2..b51cee090 100644
 --- a/src/llama-grammar.cpp
 +++ b/src/llama-grammar.cpp
 @@ -907,6 +907,7 @@ llama_grammar_candidates llama_grammar_reject_candidates_for_stack(
@@ -137,7 +137,7 @@ index bed706bb..b51cee09 100644
 +    }
 +}
 diff --git a/src/llama-grammar.h b/src/llama-grammar.h
-index f8c291de..2a3a62db 100644
+index f8c291de9..2a3a62db3 100644
 --- a/src/llama-grammar.h
 +++ b/src/llama-grammar.h
 @@ -6,8 +6,19 @@
@@ -184,7 +184,7 @@ index f8c291de..2a3a62db 100644
                        const char * grammar_root,
                                bool lazy,
 diff --git a/src/llama-sampling.cpp b/src/llama-sampling.cpp
-index 55d2e355..da34526b 100644
+index 55d2e355f..da34526b1 100644
 --- a/src/llama-sampling.cpp
 +++ b/src/llama-sampling.cpp
 @@ -1563,7 +1563,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {

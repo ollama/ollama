@@ -1615,13 +1615,8 @@ static void ggml_compute_forward_mul_mat_id(
             chunk_size = 64;
         }
 
-#if defined(__aarch64__)
-        // disable for ARM
-        const bool disable_chunking = true;
-#else
         // disable for NUMA
         const bool disable_chunking = ggml_is_numa();
-#endif // defined(__aarch64__)
 
         int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
         int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
@@ -2186,6 +2181,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 case GGML_UNARY_OP_HARDSWISH:
                 case GGML_UNARY_OP_HARDSIGMOID:
                 case GGML_UNARY_OP_EXP:
+                case GGML_UNARY_OP_FLOOR:
+                case GGML_UNARY_OP_CEIL:
+                case GGML_UNARY_OP_ROUND:
+                case GGML_UNARY_OP_TRUNC:
                     {
                         n_tasks = 1;
                     } break;
@@ -3569,13 +3568,17 @@ void ggml_cpu_init(void) {
 #ifdef GGML_USE_OPENMP
             //if (!getenv("OMP_WAIT_POLICY")) {
             //    // set the wait policy to active, so that OpenMP threads don't sleep
-            //    putenv("OMP_WAIT_POLICY=active");
+            //    setenv("OMP_WAIT_POLICY", "active", 0)
             //}
 
             if (!getenv("KMP_BLOCKTIME")) {
                 // set the time to wait before sleeping a thread
                 // this is less aggressive than setting the wait policy to active, but should achieve similar results in most cases
-                putenv("KMP_BLOCKTIME=200"); // 200ms
+#ifdef _WIN32
+                _putenv_s("KMP_BLOCKTIME", "200"); // 200ms
+#else
+                setenv("KMP_BLOCKTIME", "200", 0); // 200ms
+#endif
             }
 #endif
         }

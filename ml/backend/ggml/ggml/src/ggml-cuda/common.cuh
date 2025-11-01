@@ -259,6 +259,11 @@ static const char * cu_get_error_str(CUresult err) {
 #define AMD_MFMA_AVAILABLE
 #endif // defined(GGML_USE_HIP) && defined(CDNA) && !defined(GGML_HIP_NO_MMQ_MFMA)
 
+// The Volta instructions are in principle available on Turing or newer but they are effectively unusable:
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#define VOLTA_MMA_AVAILABLE
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+
 #if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
 #define TURING_MMA_AVAILABLE
 #endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
@@ -313,7 +318,10 @@ static bool amd_mfma_available(const int cc) {
 #endif //!defined(GGML_HIP_NO_MMQ_MFMA)
 }
 
-// Volta technically had FP16 tensor cores but they work very differently compared to Turing and later.
+static bool volta_mma_available(const int cc) {
+    return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_VOLTA;
+}
+
 static bool turing_mma_available(const int cc) {
     return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_TURING;
 }
@@ -660,8 +668,11 @@ static __device__ __forceinline__ float ggml_cuda_e8m0_to_fp32(uint8_t x) {
 // and a shift:
 //
 // n/d = (mulhi(n, mp) + n) >> L;
-static const uint3 init_fastdiv_values(uint32_t d) {
-    GGML_ASSERT(d != 0);
+static const uint3 init_fastdiv_values(uint64_t d_64) {
+    GGML_ASSERT(d_64 != 0);
+    GGML_ASSERT(d_64 <= std::numeric_limits<uint32_t>::max());
+
+    uint32_t d = (uint32_t)d_64;
 
     // compute L = ceil(log2(d));
     uint32_t L = 0;
@@ -982,13 +993,6 @@ struct ggml_cuda_graph {
     bool disable_due_to_failed_graph_capture = false;
     int number_consecutive_updates = 0;
     std::vector<ggml_graph_node_properties> ggml_graph_properties;
-    bool use_cpy_indirection = false;
-    std::vector<char *> cpy_dest_ptrs;
-    char ** dest_ptrs_d;
-    int dest_ptrs_size = 0;
-    // Index to allow each cpy kernel to be aware of it's position within the graph
-    // relative to other cpy nodes.
-    int graph_cpynode_index = -1;
 #endif
 };
 
@@ -1065,4 +1069,17 @@ struct ggml_backend_cuda_context {
 
         return pools[device]->alloc_size();
     }
+};
+
+struct ggml_cuda_mm_fusion_args_host {
+    const ggml_tensor * x_bias = nullptr;
+    const ggml_tensor * gate = nullptr;
+    const ggml_tensor * gate_bias = nullptr;
+    ggml_glu_op glu_op;
+};
+struct ggml_cuda_mm_fusion_args_device {
+    const void * x_bias = nullptr;
+    const void * gate = nullptr;
+    const void * gate_bias = nullptr;
+    ggml_glu_op glu_op;
 };

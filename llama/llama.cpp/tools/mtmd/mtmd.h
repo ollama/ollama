@@ -156,7 +156,7 @@ MTMD_API const mtmd_image_tokens *  mtmd_input_chunk_get_tokens_image(const mtmd
 MTMD_API size_t                     mtmd_input_chunk_get_n_tokens    (const mtmd_input_chunk * chunk);
 // returns nullptr for ID on text chunk
 MTMD_API const char *               mtmd_input_chunk_get_id          (const mtmd_input_chunk * chunk);
-// number of temporal positions (always 1 for M-RoPE, n_tokens otherwise)
+// number of temporal positions (equals to max(t,h,w) for M-RoPE; equals to n_tokens otherwise)
 MTMD_API llama_pos                  mtmd_input_chunk_get_n_pos       (const mtmd_input_chunk * chunk);
 
 // in case you want to use custom logic to handle the chunk (i.e. KV cache management)
@@ -174,7 +174,7 @@ MTMD_API size_t       mtmd_image_tokens_get_n_tokens(const mtmd_image_tokens * i
 MTMD_API size_t       mtmd_image_tokens_get_nx      (const mtmd_image_tokens * image_tokens);
 MTMD_API size_t       mtmd_image_tokens_get_ny      (const mtmd_image_tokens * image_tokens);
 MTMD_API const char * mtmd_image_tokens_get_id      (const mtmd_image_tokens * image_tokens); // TODO: deprecate
-// number of temporal positions (always 1 for M-RoPE, n_tokens otherwise)
+// number of temporal positions (equals to max(t,h,w) for M-RoPE; equals to n_tokens otherwise)
 MTMD_API llama_pos    mtmd_image_tokens_get_n_pos   (const mtmd_image_tokens * image_tokens); // TODO: deprecate
 
 // tokenize an input text prompt and a list of bitmaps (images/audio)

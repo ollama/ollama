@@ -653,7 +653,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 gguf_set_val_f32(ctx_out.get(), o.key, o.val_f64);
             } else if (o.tag == LLAMA_KV_OVERRIDE_TYPE_INT) {
                 // Setting type to UINT32. See https://github.com/ggml-org/llama.cpp/pull/14182 for context
-                gguf_set_val_u32(ctx_out.get(), o.key, (uint32_t)abs(o.val_i64));
+                gguf_set_val_u32(ctx_out.get(), o.key, (uint32_t)std::abs(o.val_i64));
             } else if (o.tag == LLAMA_KV_OVERRIDE_TYPE_BOOL) {
                 gguf_set_val_bool(ctx_out.get(), o.key, o.val_bool);
             } else if (o.tag == LLAMA_KV_OVERRIDE_TYPE_STR) {
@@ -701,6 +701,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         });
     }
 
+    bool is_clip_model = false;
     for (const auto * it : tensors) {
         const struct ggml_tensor * tensor = it->tensor;
 
@@ -714,12 +715,14 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         } else if (name == LLM_TN(model.arch)(LLM_TENSOR_OUTPUT, "weight")) {
             qs.has_output = true;
         }
+
+        is_clip_model |= name.rfind("mm.", 0) == 0; // check the "mm." prefix
     }
 
     qs.n_ffn_down = qs.n_ffn_gate = qs.n_ffn_up = (int)model.hparams.n_layer;
 
     // sanity checks for models that have attention layers
-    if (qs.n_attention_wv != 0)
+    if (qs.n_attention_wv != 0 && !is_clip_model)
     {
         const auto & n_head_kv_iter = model.hparams.n_head_kv_arr.begin();
         // attention layers have a non-zero number of kv heads
@@ -880,6 +883,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
         // do not quantize relative position bias (T5)
         quantize &= name.find("attn_rel_b.weight") == std::string::npos;
+
+        // do not quantize specific multimodal tensors
+        quantize &= name.find(".position_embd.") == std::string::npos;
 
         ggml_type new_type;
         void * new_data;

@@ -41,9 +41,9 @@ static std::string build_repetition(const std::string & item_rule, int min_items
     return result;
 }
 
-static void _build_min_max_int(int min_value, int max_value, std::stringstream & out, int decimals_left = 16, bool top_level = true) {
-    auto has_min = min_value != std::numeric_limits<int>::min();
-    auto has_max = max_value != std::numeric_limits<int>::max();
+static void _build_min_max_int(int64_t min_value, int64_t max_value, std::stringstream & out, int decimals_left = 16, bool top_level = true) {
+    auto has_min = min_value != std::numeric_limits<int64_t>::min();
+    auto has_max = max_value != std::numeric_limits<int64_t>::max();
 
     auto digit_range = [&](char from, char to) {
         out << "[";
@@ -159,7 +159,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
     if (has_min) {
         if (min_value < 0) {
             out << "\"-\" (";
-            _build_min_max_int(std::numeric_limits<int>::min(), -min_value, out, decimals_left, /* top_level= */ false);
+            _build_min_max_int(std::numeric_limits<int64_t>::min(), -min_value, out, decimals_left, /* top_level= */ false);
             out << ") | [0] | [1-9] ";
             more_digits(0, decimals_left - 1);
         } else if (min_value == 0) {
@@ -194,7 +194,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
             }
             digit_range(c, c);
             out << " (";
-            _build_min_max_int(std::stoi(min_s.substr(1)), std::numeric_limits<int>::max(), out, less_decimals, /* top_level= */ false);
+            _build_min_max_int(std::stoll(min_s.substr(1)), std::numeric_limits<int64_t>::max(), out, less_decimals, /* top_level= */ false);
             out << ")";
             if (c < '9') {
                 out << " | ";
@@ -216,7 +216,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
             _build_min_max_int(0, max_value, out, decimals_left, /* top_level= */ true);
         } else {
             out << "\"-\" (";
-            _build_min_max_int(-max_value, std::numeric_limits<int>::max(), out, decimals_left, /* top_level= */ false);
+            _build_min_max_int(-max_value, std::numeric_limits<int64_t>::max(), out, decimals_left, /* top_level= */ false);
             out << ")";
         }
         return;
@@ -601,7 +601,10 @@ private:
     }
 
     std::string _resolve_ref(const std::string & ref) {
-        std::string ref_name = ref.substr(ref.find_last_of('/') + 1);
+        auto it = ref.find('#');
+        std::string ref_fragment = it != std::string::npos ? ref.substr(it + 1) : ref;
+        static const std::regex nonalphanumeric_regex(R"([^a-zA-Z0-9-]+)");
+        std::string ref_name = "ref" + std::regex_replace(ref_fragment, nonalphanumeric_regex, "-");
         if (_rules.find(ref_name) == _rules.end() && _refs_being_resolved.find(ref) == _refs_being_resolved.end()) {
             _refs_being_resolved.insert(ref);
             json resolved = _refs[ref];
@@ -774,11 +777,24 @@ public:
                         std::vector<std::string> tokens = string_split(pointer, "/");
                         for (size_t i = 1; i < tokens.size(); ++i) {
                             std::string sel = tokens[i];
-                            if (target.is_null() || !target.contains(sel)) {
+                            if (target.is_object() && target.contains(sel)) {
+                                target = target[sel];
+                            } else if (target.is_array()) {
+                                size_t sel_index;
+                                try {
+                                    sel_index = std::stoul(sel);
+                                } catch (const std::invalid_argument & e) {
+                                    sel_index = target.size();
+                                }
+                                if (sel_index >= target.size()) {
+                                    _errors.push_back("Error resolving ref " + ref + ": " + sel + " not in " + target.dump());
+                                    return;
+                                }
+                                target = target[sel_index];
+                            } else {
                                 _errors.push_back("Error resolving ref " + ref + ": " + sel + " not in " + target.dump());
                                 return;
                             }
-                            target = target[sel];
                         }
                         _refs[ref] = target;
                     }
@@ -925,17 +941,17 @@ public:
             int max_len = schema.contains("maxLength") ? schema["maxLength"].get<int>() : std::numeric_limits<int>::max();
             return _add_rule(rule_name, "\"\\\"\" " + build_repetition(char_rule, min_len, max_len) + " \"\\\"\" space");
         } else if (schema_type == "integer" && (schema.contains("minimum") || schema.contains("exclusiveMinimum") || schema.contains("maximum") || schema.contains("exclusiveMaximum"))) {
-            int min_value = std::numeric_limits<int>::min();
-            int max_value = std::numeric_limits<int>::max();
+            int64_t min_value = std::numeric_limits<int64_t>::min();
+            int64_t max_value = std::numeric_limits<int64_t>::max();
             if (schema.contains("minimum")) {
-                min_value = schema["minimum"].get<int>();
+                min_value = schema["minimum"].get<int64_t>();
             } else if (schema.contains("exclusiveMinimum")) {
-                min_value = schema["exclusiveMinimum"].get<int>() + 1;
+                min_value = schema["exclusiveMinimum"].get<int64_t>() + 1;
             }
             if (schema.contains("maximum")) {
-                max_value = schema["maximum"].get<int>();
+                max_value = schema["maximum"].get<int64_t>();
             } else if (schema.contains("exclusiveMaximum")) {
-                max_value = schema["exclusiveMaximum"].get<int>() - 1;
+                max_value = schema["exclusiveMaximum"].get<int64_t>() - 1;
             }
             std::stringstream out;
             out << "(";

@@ -126,8 +126,8 @@ void ggml_cuda_op_upscale(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     } else if (mode == GGML_SCALE_MODE_BILINEAR) {
         float pixel_offset = 0.5f;
         if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
-            sf0          = (float)(dst->ne[0] - 1) / (src0->ne[0] - 1);
-            sf1          = (float)(dst->ne[1] - 1) / (src0->ne[1] - 1);
+            sf0          = dst->ne[0] > 1 && src0->ne[0] > 1 ? (float)(dst->ne[0] - 1) / (src0->ne[0] - 1) : sf0;
+            sf1          = dst->ne[1] > 1 && src0->ne[1] > 1 ? (float)(dst->ne[1] - 1) / (src0->ne[1] - 1) : sf1;
             pixel_offset = 0.0f;
         }
         upscale_f32_bilinear_cuda(src0_d, dst_d, src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],

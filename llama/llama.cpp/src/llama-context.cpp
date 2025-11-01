@@ -268,9 +268,7 @@ llama_context::llama_context(
         if (pipeline_parallel) {
             LLAMA_LOG_INFO("%s: pipeline parallelism enabled (n_copies=%d)\n", __func__, ggml_backend_sched_get_n_copies(sched.get()));
         }
-    }
 
-    if (!hparams.vocab_only) {
         llama_memory_context_ptr mctx;
         if (memory) {
             LLAMA_LOG_DEBUG("%s: reserving full memory module\n", __func__);
@@ -343,7 +341,14 @@ llama_context::llama_context(
         {
             auto * gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get());
             if (!gf) {
-                throw std::runtime_error("failed to allocate compute pp buffers");
+                if (pipeline_parallel) {
+                    LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
+                    sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, false, cparams.op_offload));
+                    gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get());
+                }
+                if (!gf) {
+                    throw std::runtime_error("failed to allocate compute pp buffers");
+                }
             }
 
             n_splits_pp = ggml_backend_sched_get_n_splits(sched.get());
@@ -2345,7 +2350,8 @@ llama_context * llama_init_from_model(
         return nullptr;
     }
 
-    if (params.pooling_type != model->hparams.pooling_type) {
+    if (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED &&
+        params.pooling_type != model->hparams.pooling_type) {
         //user-specified pooling-type is different from the model default
         LLAMA_LOG_WARN("%s: model default pooling_type is [%d], but [%d] was specified\n", __func__,
                        model->hparams.pooling_type, params.pooling_type);

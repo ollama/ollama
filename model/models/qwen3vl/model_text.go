@@ -37,7 +37,7 @@ func (o TextOptions) headDim() int {
 
 func (o TextOptions) applyRotaryPositionalEmbedding(ctx ml.Context, t, p ml.Tensor) ml.Tensor {
 	return fast.RoPE(ctx, t, p, o.headDim(), o.ropeBase, 1/float32(math.Sqrt(float64(o.ropeScale))),
-		rope.WithMRoPESections(o.mropeSections),
+		rope.WithInterleaveMRoPE(o.mropeSections),
 	)
 }
 

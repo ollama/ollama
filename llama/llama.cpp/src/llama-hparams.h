@@ -74,6 +74,8 @@ struct llama_hparams {
     uint32_t n_ff_chexp         = 0;
     uint32_t n_expert_shared    = 0;
     uint32_t n_norm_groups      = 0;
+    uint32_t n_expert_groups    = 0;
+    uint32_t n_group_used       = 0;
     uint32_t n_group_experts    = 0;
 
     float    expert_group_scale   = 0.05f;
@@ -182,6 +184,9 @@ struct llama_hparams {
     std::array<float, LLAMA_MAX_LAYERS> xielu_alpha_p;
     std::array<float, LLAMA_MAX_LAYERS> xielu_beta;
     std::array<float, LLAMA_MAX_LAYERS> xielu_eps;
+
+    // qwen3vl deepstack
+    uint32_t n_deepstack_layers = 0;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141

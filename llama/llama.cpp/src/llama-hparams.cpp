@@ -148,7 +148,7 @@ bool llama_hparams::is_recurrent(uint32_t il) const {
 }
 
 uint32_t llama_hparams::n_pos_per_embd() const {
-    return rope_type == LLAMA_ROPE_TYPE_MROPE ? 4 : 1;
+    return rope_type == LLAMA_ROPE_TYPE_MROPE || rope_type == LLAMA_ROPE_TYPE_IMROPE ? 4 : 1;
 }
 
 bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
