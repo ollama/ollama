@@ -40,22 +40,29 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
+type ChoiceLogprobs struct {
+	Content []api.LogprobInfo `json:"content"`
+}
+
 type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason *string `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Message      Message         `json:"message"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type ChunkChoice struct {
-	Index        int     `json:"index"`
-	Delta        Message `json:"delta"`
-	FinishReason *string `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Delta        Message         `json:"delta"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type CompleteChunkChoice struct {
-	Text         string  `json:"text"`
-	Index        int     `json:"index"`
-	FinishReason *string `json:"finish_reason"`
+	Text         string          `json:"text"`
+	Index        int             `json:"index"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type Usage struct {
@@ -104,6 +111,8 @@ type ChatCompletionRequest struct {
 	Tools            []api.Tool      `json:"tools"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
+	Logprobs         *bool           `json:"logprobs"`
+	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
 }
 
@@ -142,6 +151,8 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	Logprobs         *int           `json:"logprobs"` // OpenAI uses int where 0-5 is the range
+	Echo             bool           `json:"echo"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
 }
 
@@ -251,6 +262,12 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 // ToChatCompletion converts an api.ChatResponse to ChatCompletion
 func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
+
+	var logprobs *ChoiceLogprobs
+	if len(r.Logprobs) > 0 {
+		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+	}
+
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -269,6 +286,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: logprobs,
 		}}, Usage: ToUsage(r),
 		DebugInfo: r.DebugInfo,
 	}
@@ -277,6 +295,12 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 // ToChunk converts an api.ChatResponse to ChatCompletionChunk
 func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
+
+	var logprobs *ChoiceLogprobs
+	if len(r.Logprobs) > 0 {
+		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+	}
+
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -295,6 +319,7 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: logprobs,
 		}},
 	}
 }
@@ -609,6 +634,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Stream:          &r.Stream,
 		Tools:           r.Tools,
 		Think:           think,
+		Logprobs:        r.Logprobs,
+		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }
@@ -684,12 +711,25 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["top_p"] = 1.0
 	}
 
+	var logprobs *bool
+	var topLogprobs int
+	if r.Logprobs != nil && *r.Logprobs > 0 {
+		enabled := true
+		logprobs = &enabled
+		topLogprobs = *r.Logprobs
+		if topLogprobs > 20 {
+			topLogprobs = 20 // OpenAI maximum
+		}
+	}
+
 	return api.GenerateRequest{
 		Model:           r.Model,
 		Prompt:          r.Prompt,
 		Options:         options,
 		Stream:          &r.Stream,
 		Suffix:          r.Suffix,
+		Logprobs:        logprobs,
+		TopLogprobs:     topLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }

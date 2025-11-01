@@ -11,12 +11,14 @@ import (
 	"image"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +43,12 @@ import (
 	_ "github.com/ollama/ollama/model/models"
 )
 
+// sequenceResponse contains a piece of generated text along with optional logprobs
+type sequenceResponse struct {
+	content  string
+	logprobs []api.LogprobInfo
+}
+
 type Sequence struct {
 	// ctxs are used for allocating tensors that last the lifetime of the sequence, such as
 	// multimodal embeddings
@@ -61,11 +69,14 @@ type Sequence struct {
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
 
+	// logprobs for tokens that haven't been returned yet
+	pendingLogprobs []api.LogprobInfo
+
 	// input cache being used by this sequence
 	cache *InputCacheSlot
 
 	// channel to send responses over
-	responses chan string
+	responses chan sequenceResponse
 
 	// channel to stop decoding (such as if the remote connection is closed)
 	quit chan bool
@@ -93,6 +104,10 @@ type Sequence struct {
 
 	doneReason llm.DoneReason
 
+	// logprobs configuration
+	logprobs    bool
+	topLogprobs int
+
 	// Metrics
 	startedAt, lastUpdatedAt time.Time
 	processingDuration       time.Duration
@@ -102,13 +117,15 @@ type Sequence struct {
 }
 
 type NewSequenceParams struct {
-	numPredict int
-	stop       []string
-	numKeep    int32
-	sampler    sample.Sampler
-	embedding  bool
-	shift      bool
-	truncate   bool
+	numPredict  int
+	stop        []string
+	numKeep     int32
+	sampler     sample.Sampler
+	embedding   bool
+	shift       bool
+	truncate    bool
+	logprobs    bool
+	topLogprobs int
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
@@ -181,7 +198,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		numPromptInputs:  len(inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
-		responses:        make(chan string, 100),
+		responses:        make(chan sequenceResponse, 100),
 		quit:             make(chan bool, 1),
 		embedding:        make(chan []float32, 1),
 		sampler:          params.sampler,
@@ -189,7 +206,83 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		stop:             params.stop,
 		numKeep:          params.numKeep,
 		shift:            params.shift,
+		logprobs:         params.logprobs,
+		topLogprobs:      params.topLogprobs,
 	}, nil
+}
+
+// calculateLogprobs converts raw logits to log probabilities and finds top K tokens
+func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []api.LogprobInfo {
+	if len(logits) == 0 {
+		return nil
+	}
+
+	// Step 1: Convert logits to log probabilities using numerically stable softmax
+	// Find maximum logit for numerical stability
+	maxLogit := logits[0]
+	for _, logit := range logits[1:] {
+		if logit > maxLogit {
+			maxLogit = logit
+		}
+	}
+
+	// Compute sum of exp(logit - max) for normalization
+	var sumExp float64
+	for _, logit := range logits {
+		sumExp += math.Exp(float64(logit - maxLogit))
+	}
+	logSumExp := float32(math.Log(sumExp))
+
+	// Compute log probabilities
+	logProbs := make([]float32, len(logits))
+	for i, logit := range logits {
+		logProbs[i] = (logit - maxLogit) - logSumExp
+	}
+
+	// Step 2: Get selected token's information
+	selectedLogprob := logProbs[selectedToken]
+	selectedText, _ := textProcessor.Decode([]int32{selectedToken})
+
+	result := api.LogprobInfo{
+		Token:   selectedText,
+		Logprob: float64(selectedLogprob),
+	}
+
+	// Step 3: If topK requested, find the top K tokens
+	if topK > 0 {
+		// Create pairs of (token_id, logprob) for sorting
+		type tokenLogprobPair struct {
+			tokenID int32
+			logprob float32
+		}
+
+		pairs := make([]tokenLogprobPair, len(logProbs))
+		for i, lp := range logProbs {
+			pairs[i] = tokenLogprobPair{
+				tokenID: int32(i),
+				logprob: lp,
+			}
+		}
+
+		// Sort by logprob descending (highest probability first)
+		sort.Slice(pairs, func(i, j int) bool {
+			return pairs[i].logprob > pairs[j].logprob
+		})
+
+		// Take top K
+		k := min(topK, len(pairs))
+		topLogprobs := make([]api.TokenLogprob, k)
+		for i := 0; i < k; i++ {
+			tokenText, _ := textProcessor.Decode([]int32{pairs[i].tokenID})
+			topLogprobs[i] = api.TokenLogprob{
+				Token:   tokenText,
+				Logprob: float64(pairs[i].logprob),
+			}
+		}
+		result.TopLogprobs = topLogprobs
+	}
+
+	return []api.LogprobInfo{result}
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -371,7 +464,9 @@ func (s *Server) allNil() bool {
 
 func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
+	logprobs := seq.pendingLogprobs
 	seq.pendingResponses = []string{}
+	seq.pendingLogprobs = []api.LogprobInfo{}
 
 	// Check if there are any partial UTF-8 characters remaining.
 	// We already check and queue as we are generating but some may
@@ -388,7 +483,7 @@ func flushPending(seq *Sequence) bool {
 	}
 
 	select {
-	case seq.responses <- joined:
+	case seq.responses <- sequenceResponse{content: joined, logprobs: logprobs}:
 		return true
 	case <-seq.quit:
 		return false
@@ -729,12 +824,19 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		// sample a token
 		vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)
 		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
-		token, err := seq.sampler.Sample(outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize])
+		logits := outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize]
+		token, err := seq.sampler.Sample(logits)
 		if err != nil {
 			panic("failed to sample token")
 		}
 
 		nextBatchTokens[i].Token = token
+
+		// Calculate logprobs if requested
+		if seq.logprobs {
+			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(model.TextProcessor))
+			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
+		}
 
 		// if it's an end of sequence token, break
 		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
@@ -845,13 +947,15 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
-		numPredict: req.Options.NumPredict,
-		stop:       req.Options.Stop,
-		numKeep:    int32(req.Options.NumKeep),
-		sampler:    sampler,
-		embedding:  false,
-		shift:      req.Shift,
-		truncate:   req.Truncate,
+		numPredict:  req.Options.NumPredict,
+		stop:        req.Options.Stop,
+		numKeep:     int32(req.Options.NumKeep),
+		sampler:     sampler,
+		embedding:   false,
+		shift:       req.Shift,
+		truncate:    req.Truncate,
+		logprobs:    req.Logprobs,
+		topLogprobs: req.TopLogprobs,
 	})
 	if err != nil {
 		if errors.Is(err, errorInputTooLong) {
@@ -903,10 +1007,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			close(seq.quit)
 			return
-		case content, ok := <-seq.responses:
+		case resp, ok := <-seq.responses:
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content: content,
+					Content:  resp.content,
+					Logprobs: resp.logprobs,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
