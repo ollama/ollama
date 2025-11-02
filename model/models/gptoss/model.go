@@ -30,9 +30,9 @@ type Transformer struct {
 // Forward implements model.Model.
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
-	one := ctx.Input().FromFloatSlice([]float32{1}, 1)
+	one := ctx.Input().FromFloats([]float32{1}, 1)
 	for i, block := range m.TransformerBlocks {
 		m.Cache.SetLayer(i)
 		if c, ok := m.Cache.(*kvcache.WrapperCache); ok {
@@ -41,8 +41,8 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 		}
 
 		var outputs ml.Tensor
-		if len(batch.Outputs) > 0 && i == len(m.TransformerBlocks)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+		if i == len(m.TransformerBlocks)-1 {
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, one, m.Cache, &m.Options)
@@ -210,7 +210,7 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *
 		up = mlp.Up.Forward(ctx, hiddenStates, selectedExperts)
 	}
 
-	hiddenStates = gate.SwiGLU(ctx, up, 1.702, 7)
+	hiddenStates = gate.SILUAlphaLimit(ctx, up, 1.702, 7)
 
 	experts := mlp.Down.Forward(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)
@@ -227,17 +227,6 @@ func New(c fs.Config) (model.Model, error) {
 	m := Transformer{
 		TransformerBlocks: make([]TransformerBlock, c.Uint("block_count")),
 		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer",
-				strings.Join([]string{
-					`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
-					`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
-					`\p{N}{1,3}`,
-					` ?[^\s\p{L}\p{N}]+[\r\n/]*`,
-					`\s*[\r\n]+`,
-					`\s+(?!\S)`,
-					`\s+`,
-				}, "|"),
-			),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -250,6 +239,15 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			strings.Join([]string{
+				`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
+				`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
+				`\p{N}{1,3}`,
+				` ?[^\s\p{L}\p{N}]+[\r\n/]*`,
+				`\s*[\r\n]+`,
+				`\s+(?!\S)`,
+				`\s+`,
+			}, "|"),
 		),
 		Options: Options{
 			hiddenSize:            int(c.Uint("embedding_length")),

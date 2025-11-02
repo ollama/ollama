@@ -33,276 +33,230 @@ typedef void (* fattn_kernel_t)(
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
                             const int32_t nb31, const int32_t nb32, const int64_t nb33);
 
-typedef half (*vec_dot_KQ_f16_t)(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
-typedef float (*vec_dot_KQ_f32_t)(
+typedef float (*vec_dot_KQ_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
 
-template<typename T, int D, int warp_size>
-static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q4_0(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
-
-    const block_q4_0 * K_q4_0 = (const block_q4_0 *) K_c;
-    GGML_UNUSED(Q_v);
-
-    T sum = 0.0f;
-
-#pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += warp_size) {
-        const int k_KQ = k_KQ_0 + threadIdx.x;
-
-        const int ib    = k_KQ /  QI8_1;
-        const int iqs4  = k_KQ %  QI4_0;
-        const int shift = k_KQ & (QI8_1/2);
-
-        const int v = (get_int_b2(K_q4_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-        const int u = Q_q8[k_KQ_0/warp_size];
-
-        const int sumi = ggml_cuda_dp4a(v, u, 0);
-
-#ifdef FP16_AVAILABLE
-        if (std::is_same<T, half>::value) {
-            const half2  * Q_ds = (const half2  *) Q_ds_v;
-
-            const half2 sum2 = __half2half2(K_q4_0[ib].d) * Q_ds[k_KQ_0/warp_size];
-            sum += (T) (((half) sumi)*__low2half(sum2) - __high2half(sum2) /* *8/QI8_1 == 1 */);
-        } else
-#endif // FP16_AVAILABLE
-        {
-            const float2 * Q_ds = (const float2 *) Q_ds_v;
-
-            sum += (T) (__half2float(K_q4_0[ib].d) * (sumi*Q_ds[k_KQ_0/warp_size].x - (8/QI8_1)*Q_ds[k_KQ_0/warp_size].y));
-        }
-    }
-
-    return sum;
-}
-
-template<typename T, int D, int warp_size>
-static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q4_1(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
-
-    const block_q4_1 * K_q4_1 = (const block_q4_1 *) K_c;
-    GGML_UNUSED(Q_v);
-
-    T sum = 0.0f;
-
-#pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += warp_size) {
-        const int k_KQ = k_KQ_0 + threadIdx.x;
-
-        const int ib    = k_KQ /  QI8_1;
-        const int iqs4  = k_KQ %  QI4_1;
-        const int shift = k_KQ & (QI8_1/2);
-
-        const int v = (get_int_b4(K_q4_1[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-        const int u = Q_q8[k_KQ_0/warp_size];
-
-        const int sumi = ggml_cuda_dp4a(v, u, 0);
-
-#ifdef FP16_AVAILABLE
-        if (std::is_same<T, half>::value) {
-            const half2  * Q_ds = (const half2  *) Q_ds_v;
-
-            const half2 d4d8_m4s8 = K_q4_1[ib].dm * Q_ds[k_KQ_0/warp_size];
-            const half2 sumid4d8_m4s8scaled = d4d8_m4s8 * make_half2(sumi, 1.0f/QI8_1);
-            sum += (T) (__low2half(sumid4d8_m4s8scaled) + __high2half(sumid4d8_m4s8scaled));
-        } else
-#endif // FP16_AVAILABLE
-        {
-            const float2 * Q_ds = (const float2 *) Q_ds_v;
-
-            const float sumid4d8   =  __low2float(K_q4_1[ib].dm)*Q_ds[k_KQ_0/warp_size].x * sumi;
-            const float m4s8scaled = __high2float(K_q4_1[ib].dm)*Q_ds[k_KQ_0/warp_size].y / QI8_1;
-
-            sum += (T) (sumid4d8 + m4s8scaled);
-        }
-    }
-
-    return sum;
-}
-
-template<typename T, int D, int warp_size>
-static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q5_0(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
-
-    const block_q5_0 * K_q5_0 = (const block_q5_0 *) K_c;
-    GGML_UNUSED(Q_v);
-
-    T sum = 0.0f;
-
-#pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += warp_size) {
-        const int k_KQ = k_KQ_0 + threadIdx.x;
-
-        const int ib    = k_KQ /  QI8_1;
-        const int iqs4  = k_KQ %  QI5_0;
-        const int iqs8  = k_KQ %  QI8_1;
-        const int shift = k_KQ & (QI8_1/2);
-
-        int v = (get_int_b2(K_q5_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-        const int vh = get_int_b2(K_q5_0[ib].qh, 0) >> (iqs8 * QI5_0);
-        v |= (vh <<  4) & 0x00000010; // 0 ->  4
-        v |= (vh << 11) & 0x00001000; // 1 -> 12
-        v |= (vh << 18) & 0x00100000; // 2 -> 20
-        v |= (vh << 25) & 0x10000000; // 3 -> 28
-
-        const int u = Q_q8[k_KQ_0/warp_size];
-
-        const int sumi = ggml_cuda_dp4a(v, u, 0);
-
-#ifdef FP16_AVAILABLE
-        if (std::is_same<T, half>::value) {
-            const half2  * Q_ds = (const half2  *) Q_ds_v;
-
-            const half2 sum2 = __half2half2(K_q5_0[ib].d) * Q_ds[k_KQ_0/warp_size];
-            sum += (T) (((half) sumi)*__low2half(sum2) - __high2half(sum2)*__float2half(2.0f)) /* *16/QI8_1 == 2 */;
-        } else
-#endif // FP16_AVAILABLE
-        {
-            const float2 * Q_ds = (const float2 *) Q_ds_v;
-
-            sum += (T) (__half2float(K_q5_0[ib].d) * (sumi*Q_ds[k_KQ_0/warp_size].x - (16/QI8_1)*Q_ds[k_KQ_0/warp_size].y));
-        }
-    }
-
-    return sum;
-}
-
-template<typename T, int D, int warp_size>
-static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q5_1(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
-
-    const block_q5_1 * K_q5_1 = (const block_q5_1 *) K_c;
-    GGML_UNUSED(Q_v);
-
-    T sum = 0.0f;
-
-#pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += warp_size) {
-        const int k_KQ = k_KQ_0 + threadIdx.x;
-
-        const int ib    = k_KQ /  QI8_1;
-        const int iqs4  = k_KQ %  QI5_1;
-        const int iqs8  = k_KQ %  QI8_1;
-        const int shift = k_KQ & (QI8_1/2);
-
-        int v = (get_int_b2(K_q5_1[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-        const int vh = get_int_b2(K_q5_1[ib].qh, 0) >> (iqs8 * QI5_1);
-        v |= (vh <<  4) & 0x00000010; // 0 ->  4
-        v |= (vh << 11) & 0x00001000; // 1 -> 12
-        v |= (vh << 18) & 0x00100000; // 2 -> 20
-        v |= (vh << 25) & 0x10000000; // 3 -> 28
-
-        const int u = Q_q8[k_KQ_0/warp_size];
-
-        const int sumi = ggml_cuda_dp4a(v, u, 0);
-
-#ifdef FP16_AVAILABLE
-        if (std::is_same<T, half>::value) {
-            const half2  * Q_ds = (const half2  *) Q_ds_v;
-
-            const half2 d5d8_m5s8 = K_q5_1[ib].dm * Q_ds[k_KQ_0/warp_size];
-            const half2 sumid5d8_m5s8scaled = d5d8_m5s8 * make_half2(sumi, 1.0f/QI8_1);
-            sum += (T) (__low2half(sumid5d8_m5s8scaled) + __high2half(sumid5d8_m5s8scaled));
-        } else
-#endif // FP16_AVAILABLE
-        {
-            const float2 * Q_ds = (const float2 *) Q_ds_v;
-
-            const float sumid5d8   =  __low2float(K_q5_1[ib].dm)*Q_ds[k_KQ_0/warp_size].x * sumi;
-            const float m5s8scaled = __high2float(K_q5_1[ib].dm)*Q_ds[k_KQ_0/warp_size].y / QI8_1;
-
-            sum += (T) (sumid5d8 + m5s8scaled);
-        }
-    }
-
-    return sum;
-}
-
-template <typename T, int D, int warp_size>
-static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q8_0(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
-
-    const block_q8_0 * K_q8_0 = (const block_q8_0 *) K_c;
-    GGML_UNUSED(Q_v);
-
-    T sum = 0.0f;
-
-#pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += warp_size) {
-        const int k_KQ = k_KQ_0 + threadIdx.x;
-
-        const int ib  = k_KQ / QI8_0;
-        const int iqs = k_KQ % QI8_0;
-
-        const int v = get_int_b2(K_q8_0[ib].qs, iqs);
-
-        T Q_d;
-        if (std::is_same<T, half>::value) {
-            const half2  * Q_ds = (const half2  *) Q_ds_v;
-            Q_d = __low2half(Q_ds[k_KQ_0/warp_size]);
-        } else {
-            const float2 * Q_ds = (const float2 *) Q_ds_v;
-            Q_d = Q_ds[k_KQ_0/warp_size].x;
-        }
-
-        sum += vec_dot_q8_0_q8_1_impl<T, 1>(&v, &Q_q8[k_KQ_0/warp_size], K_q8_0[ib].d, Q_d);
-    }
-
-    return sum;
-}
-
-template <typename T, int D, int warp_size>
-static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_f16(
+template <int D, int nthreads>
+static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds_v) {
 
     const half2 * K_h2 = (const half2 *) K_c;
     GGML_UNUSED(Q_q8);
     GGML_UNUSED(Q_ds_v);
 
-#ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        const half2 * Q_h2 = (const half2 *) Q_v;
-
-        half2 sum2 = make_half2(0.0f, 0.0f);
-
-#pragma unroll
-        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += warp_size) {
-            const int k_KQ = k_KQ_0 + threadIdx.x;
-
-            const half2 K_ik = K_h2[k_KQ];
-            sum2 += K_ik * Q_h2[k_KQ_0/warp_size];
-        }
-
-        return __low2half(sum2) + __high2half(sum2);
-    }
-#endif // FP16_AVAILABLE
-
-    const float2 * Q_f2 = (const float2 *) Q_v;
+    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_ne = cpy_nb / 4;
 
     float sum = 0.0f;
 
 #pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += warp_size) {
-        const int k_KQ = k_KQ_0 + threadIdx.x;
-
-        const half2 K_ik = K_h2[k_KQ];
-        sum +=  __low2float(K_ik) * Q_f2[k_KQ_0/warp_size].x;
-        sum += __high2float(K_ik) * Q_f2[k_KQ_0/warp_size].y;
+    for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
+        half2 tmp[cpy_ne];
+        ggml_cuda_memcpy_1<sizeof(tmp)>(tmp, K_h2 + k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne);
+#pragma unroll
+        for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
+#ifdef FAST_FP16_AVAILABLE
+            ggml_cuda_mad(sum,                tmp[k_KQ_1] , ((const half2  *) Q_v)[k_KQ_0/nthreads + k_KQ_1]);
+#else
+            ggml_cuda_mad(sum, __half22float2(tmp[k_KQ_1]), ((const float2 *) Q_v)[k_KQ_0/nthreads + k_KQ_1]);
+#endif // FP16_AVAILABLE
+        }
     }
 
     return sum;
 }
 
-template <typename Tds>
+template<int D, int nthreads>
+static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q4_0(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
+
+    const block_q4_0 * K_q4_0 = (const block_q4_0 *) K_c;
+    GGML_UNUSED(Q_v);
+
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += nthreads) {
+        const int k_KQ = k_KQ_0 + (nthreads == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads);
+
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI4_0;
+        const int shift = k_KQ & (QI8_1/2);
+
+        int v;
+        ggml_cuda_memcpy_1<sizeof(int), 2>(&v, K_q4_0[ib].qs + sizeof(int)*iqs4);
+        v = (v >> shift) & 0x0F0F0F0F;
+        const int u = Q_q8[k_KQ_0/nthreads];
+
+        const int sumi = ggml_cuda_dp4a(v, u, 0);
+
+        const float2 Q_ds = ((const float2 *) Q_ds_v)[k_KQ_0/nthreads];
+        sum += __half2float(K_q4_0[ib].d) * (sumi*Q_ds.x - (8/QI8_1)*Q_ds.y);
+    }
+
+    return sum;
+}
+
+template<int D, int nthreads>
+static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q4_1(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
+
+    const block_q4_1 * K_q4_1 = (const block_q4_1 *) K_c;
+    GGML_UNUSED(Q_v);
+
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += nthreads) {
+        const int k_KQ = k_KQ_0 + (nthreads == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads);
+
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI4_1;
+        const int shift = k_KQ & (QI8_1/2);
+
+        int v;
+        ggml_cuda_memcpy_1<sizeof(int)>(&v, K_q4_1[ib].qs + sizeof(int)*iqs4);
+        v = (v >> shift) & 0x0F0F0F0F;
+        const int u = Q_q8[k_KQ_0/nthreads];
+
+        const int sumi = ggml_cuda_dp4a(v, u, 0);
+
+        const float2 K_dm = __half22float2(K_q4_1[ib].dm);
+        const float2 Q_ds = ((const float2 *) Q_ds_v)[k_KQ_0/nthreads];
+
+        sum += K_dm.x*Q_ds.x*sumi + K_dm.y*Q_ds.y/QI8_1;
+    }
+
+    return sum;
+}
+
+template<int D, int nthreads>
+static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q5_0(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
+
+    const block_q5_0 * K_q5_0 = (const block_q5_0 *) K_c;
+    GGML_UNUSED(Q_v);
+
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += nthreads) {
+        const int k_KQ = k_KQ_0 + (nthreads == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads);
+
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI5_0;
+        const int iqs8  = k_KQ %  QI8_1;
+        const int shift = k_KQ & (QI8_1/2);
+
+        int v;
+        ggml_cuda_memcpy_1<sizeof(int), 2>(&v, K_q5_0[ib].qs + sizeof(int)*iqs4);
+        v = (v >> shift) & 0x0F0F0F0F;
+
+        {
+            int vh;
+            ggml_cuda_memcpy_1<sizeof(int), 2>(&vh, K_q5_0[ib].qh);
+            vh >>= iqs8 * QI5_0;
+
+            v |= (vh <<  4) & 0x00000010; // 0 ->  4
+            v |= (vh << 11) & 0x00001000; // 1 -> 12
+            v |= (vh << 18) & 0x00100000; // 2 -> 20
+            v |= (vh << 25) & 0x10000000; // 3 -> 28
+        }
+
+        const int u = Q_q8[k_KQ_0/nthreads];
+
+        const int sumi = ggml_cuda_dp4a(v, u, 0);
+
+        const float2 Q_ds = ((const float2 *) Q_ds_v)[k_KQ_0/nthreads];
+
+        sum += __half2float(K_q5_0[ib].d) * (sumi*Q_ds.x - (16/QI8_1)*Q_ds.y);
+    }
+
+    return sum;
+}
+
+template<int D, int nthreads>
+static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q5_1(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
+
+    const block_q5_1 * K_q5_1 = (const block_q5_1 *) K_c;
+    GGML_UNUSED(Q_v);
+
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += nthreads) {
+        const int k_KQ = k_KQ_0 + (nthreads == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads);
+
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI5_1;
+        const int iqs8  = k_KQ %  QI8_1;
+        const int shift = k_KQ & (QI8_1/2);
+
+        int v;
+        ggml_cuda_memcpy_1<sizeof(int)>(&v, K_q5_1[ib].qs + sizeof(int)*iqs4);
+        v = (v >> shift) & 0x0F0F0F0F;
+
+        {
+            int vh;
+            ggml_cuda_memcpy_1<sizeof(int)>(&vh, K_q5_1[ib].qh);
+            vh >>= iqs8 * QI5_0;
+
+            v |= (vh <<  4) & 0x00000010; // 0 ->  4
+            v |= (vh << 11) & 0x00001000; // 1 -> 12
+            v |= (vh << 18) & 0x00100000; // 2 -> 20
+            v |= (vh << 25) & 0x10000000; // 3 -> 28
+        }
+
+        const int u = Q_q8[k_KQ_0/nthreads];
+
+        const int sumi = ggml_cuda_dp4a(v, u, 0);
+
+        const float2 K_dm = __half22float2(K_q5_1[ib].dm);
+        const float2 Q_ds = ((const float2 *) Q_ds_v)[k_KQ_0/nthreads];
+
+        sum += K_dm.x*Q_ds.x*sumi + K_dm.y*Q_ds.y/QI8_1;
+    }
+
+    return sum;
+}
+
+template <int D, int nthreads>
+static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q8_0(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
+
+    const block_q8_0 * K_q8_0 = (const block_q8_0 *) K_c;
+    GGML_UNUSED(Q_v);
+
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < int(D/sizeof(int)); k_KQ_0 += nthreads) {
+        const int k_KQ = k_KQ_0 + (nthreads == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads);
+
+        const int ib  = k_KQ / QI8_0;
+        const int iqs = k_KQ % QI8_0;
+
+        int v;
+        ggml_cuda_memcpy_1<sizeof(v), 2>(&v, K_q8_0[ib].qs + 4*iqs);
+
+        const float2 * Q_ds = (const float2 *) Q_ds_v;
+        const float Q_d = Q_ds[k_KQ_0/nthreads].x;
+
+        sum += vec_dot_q8_0_q8_1_impl<float, 1>(&v, &Q_q8[k_KQ_0/nthreads], K_q8_0[ib].d, Q_d);
+    }
+
+    return sum;
+}
+
+template <typename Tds, int ni>
 static __device__ __forceinline__ void quantize_q8_1_to_shared(
     const float * __restrict__ x, const float scale, int * __restrict__ yq32, void * __restrict__ yds) {
 
     float vals[sizeof(int)] = {0.0f};
 #pragma unroll
     for (int l = 0; l < int(sizeof(int)); ++l) {
-        vals[l] = scale * x[4*threadIdx.x + l];
+        vals[l] = (ni == WARP_SIZE || threadIdx.x < ni) ? scale * x[4*threadIdx.x + l] : 0.0f;
     }
 
     float amax = fabsf(vals[0]);
@@ -330,7 +284,7 @@ static __device__ __forceinline__ void quantize_q8_1_to_shared(
     }
 
     yq32[threadIdx.x] = q32;
-    if (threadIdx.x % QI8_1 == 0) {
+    if (threadIdx.x % QI8_1 == 0 && (ni == WARP_SIZE || threadIdx.x < ni)) {
         if (std::is_same<Tds, half2>::value) {
             ((half2  *) yds)[threadIdx.x/QI8_1] =  make_half2(d, sum);
         } else {
@@ -339,167 +293,276 @@ static __device__ __forceinline__ void quantize_q8_1_to_shared(
     }
 }
 
-typedef half  (*dequantize_1_f16_t)(const void *, const int64_t);
-typedef float (*dequantize_1_f32_t)(const void *, const int64_t);
+typedef void (*dequantize_V_t)(const void *, void *, const int64_t);
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_q4_0(const void * __restrict__ vx, const int64_t i) {
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_f16(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
+    if constexpr (std::is_same_v<T, half>) {
+        ggml_cuda_memcpy_1<ne*sizeof(half)>(dst, (const half *) vx + i0);
+    } else if constexpr (std::is_same_v<T, float>) {
+        static_assert(ne % 2 == 0, "bad ne");
+        half2 tmp[ne/2];
+        ggml_cuda_memcpy_1<ne*sizeof(half)>(tmp, (const half *) vx + i0);
+        float2 * dst_f2 = (float2 *) dst;
+#pragma unroll
+        for (int l = 0; l < ne/2; ++l) {
+            dst_f2[l] = __half22float2(tmp[l]);
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "unsupported type");
+    }
+}
+
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_q4_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_q4_0 * x = (const block_q4_0 *) vx;
 
-    const int64_t ib    =  i          /  QK4_0;
-    const int     iqs   =  i          % (QK4_0/2);
-    const int     shift = (i % QK4_0) / (QK4_0/2);
+    const int64_t ib    =  i0          /  QK4_0;
+    const int     iqs   =  i0          % (QK4_0/2);
+    const int     shift = (i0 % QK4_0) / (QK4_0/2);
 
-    const T   d  = x[ib].d;
-    const int q0 = x[ib].qs[iqs];
-    const int q  = ((q0 >> (4*shift)) & 0x0F) - 8;
+    int q;
+    static_assert(ne == 2 || ne == 4, "bad ne");
+    ggml_cuda_memcpy_1<ne, 2>(&q, x[ib].qs + iqs);
+    q >>= 4*shift;
+    q &= 0x0F0F0F0F;
+    q = __vsubss4(q, 0x08080808);
+
+    const int8_t * q8 = (const int8_t *) &q;
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        return ((half) d)*((half) q);
-    }
-#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, half>) {
+        const half2 d = __half2half2(x[ib].d);
 
-    return ((float) d)*((float) q);
+#pragma unroll
+        for (int l0 = 0; l0 < ne; l0 += 2) {
+            ((half2 *) dst)[l0/2] = d * make_half2(q8[l0 + 0], q8[l0 + 1]);
+        }
+    } else
+#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, float>) {
+        const float d = x[ib].d;
+
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            ((float *) dst)[l] = d * q8[l];
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "bad type");
+    }
 }
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_q4_1(const void * __restrict__ vx, const int64_t i) {
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_q4_1(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_q4_1 * x = (const block_q4_1 *) vx;
 
-    const int64_t ib    =  i          /  QK4_1;
-    const int     iqs   =  i          % (QK4_1/2);
-    const int     shift = (i % QK4_1) / (QK4_1/2);
+    const int64_t ib    =  i0          /  QK4_1;
+    const int     iqs   =  i0          % (QK4_1/2);
+    const int     shift = (i0 % QK4_1) / (QK4_1/2);
 
-    const half2 dm = x[ib].dm;
-    const int   q0 = x[ib].qs[iqs];
-    const int   q  = ((q0 >> (4*shift)) & 0x0F);
+    int q;
+    static_assert(ne == 2 || ne == 4, "bad ne");
+    ggml_cuda_memcpy_1<ne>(&q, x[ib].qs + iqs);
+    q >>= 4*shift;
+    q &= 0x0F0F0F0F;
+
+    const int8_t * q8 = (const int8_t *) &q;
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        return __low2half(dm)*((half) q) + __high2half(dm);
-    }
-#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, half>) {
+        const half2 dm = x[ib].dm;
+        const half2 d  = __half2half2( __low2half(dm));
+        const half2 m  = __half2half2(__high2half(dm));
 
-    return __low2float(dm)*((float) q) + __high2float(dm);
+#pragma unroll
+        for (int l0 = 0; l0 < ne; l0 += 2) {
+            ((half2 *) dst)[l0/2] = d * make_half2(q8[l0 + 0], q8[l0 + 1]) + m;
+        }
+    } else
+#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, float>) {
+        const float2 dm = __half22float2(x[ib].dm);
+
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            ((float *) dst)[l] = dm.x * q8[l] + dm.y;
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "bad type");
+    }
 }
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_q5_0(const void * __restrict__ vx, const int64_t i) {
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_q5_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_q5_0 * x = (const block_q5_0 *) vx;
 
-    const int64_t ib    =  i          /  QK5_0;
-    const int     idq   =  i          %  QK5_0;
-    const int     iqs   =  i          % (QK5_0/2);
-    const int     shift = (i % QK5_0) / (QK5_0/2);
+    const int64_t ib    =  i0          /  QK5_0;
+    const int     idq   =  i0          %  QK5_0;
+    const int     iqs   =  i0          % (QK5_0/2);
+    const int     shift = (i0 % QK5_0) / (QK5_0/2);
 
-    const T   d   = x[ib].d;
-    const int ql0 = x[ib].qs[iqs];
-    const int qh0 = get_int_b2(x[ib].qh, 0);
-    const int ql  = ((ql0 >> (4*shift)) & 0x0F);
-    const int qh  = ((qh0 >> idq) << 4) & 0x10;
-    const int q   = (ql | qh) - 16;
+    int q;
+    static_assert(ne == 2 || ne == 4, "bad ne");
+    ggml_cuda_memcpy_1<ne, 2>(&q, x[ib].qs + iqs);
+    q >>= 4*shift;
+    q &= 0x0F0F0F0F;
+
+    {
+        int qh;
+        ggml_cuda_memcpy_1<ne, 2>(&qh, x[ib].qh);
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            q |= ((qh >> (idq + l)) & 0x00000001) << (8*l + 4);
+        }
+    }
+
+    q = __vsubss4(q, 0x10101010);
+
+    const int8_t * q8 = (const int8_t *) &q;
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        return ((half) d)*((half) q);
-    }
-#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, half>) {
+        const half2 d = __half2half2(x[ib].d);
 
-    return ((float) d)*((float) q);
+#pragma unroll
+        for (int l0 = 0; l0 < ne; l0 += 2) {
+            ((half2 *) dst)[l0/2] = d * make_half2(q8[l0 + 0], q8[l0 + 1]);
+        }
+    } else
+#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, float>) {
+        const float d = x[ib].d;
+
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            ((float *) dst)[l] = d * q8[l];
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "bad type");
+    }
 }
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_q5_1(const void * __restrict__ vx, const int64_t i) {
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_q5_1(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_q5_1 * x = (const block_q5_1 *) vx;
 
-    const int64_t ib    =  i          /  QK5_1;
-    const int     idq   =  i          %  QK5_1;
-    const int     iqs   =  i          % (QK5_1/2);
-    const int     shift = (i % QK5_1) / (QK5_1/2);
+    const int64_t ib    =  i0          /  QK5_1;
+    const int     idq   =  i0          %  QK5_1;
+    const int     iqs   =  i0          % (QK5_1/2);
+    const int     shift = (i0 % QK5_1) / (QK5_1/2);
 
-    const half2 dm  = x[ib].dm;
-    const int   ql0 = x[ib].qs[iqs];
-    const int   qh0 = get_int_b4(x[ib].qh, 0);
-    const int   ql  = ((ql0 >> (4*shift)) & 0x0F);
-    const int   qh  = ((qh0 >> idq) << 4) & 0x10;
-    const int   q   = (ql | qh);
+    int q;
+    static_assert(ne == 2 || ne == 4, "bad ne");
+    ggml_cuda_memcpy_1<ne>(&q, x[ib].qs + iqs);
+    q >>= 4*shift;
+    q &= 0x0F0F0F0F;
+
+    {
+        int qh;
+        ggml_cuda_memcpy_1<ne>(&qh, x[ib].qh);
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            q |= ((qh >> (idq + l)) & 0x00000001) << (8*l + 4);
+        }
+    }
+
+    const int8_t * q8 = (const int8_t *) &q;
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        return __low2half(dm)*((half) q) + __high2half(dm);
-    }
-#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, half>) {
+        const half2 dm = x[ib].dm;
+        const half2 d  = __half2half2( __low2half(dm));
+        const half2 m  = __half2half2(__high2half(dm));
 
-    return __low2float(dm)*((float) q) + __high2float(dm);
+#pragma unroll
+        for (int l0 = 0; l0 < ne; l0 += 2) {
+            ((half2 *) dst)[l0/2] = d * make_half2(q8[l0 + 0], q8[l0 + 1]) + m;
+        }
+    } else
+#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, float>) {
+        const float2 dm = __half22float2(x[ib].dm);
+
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            ((float *) dst)[l] = dm.x * q8[l] + dm.y;
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "bad type");
+    }
 }
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_q8_0(const void * __restrict__ vx, const int64_t i) {
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_q8_0 * x = (const block_q8_0 *) vx;
 
-    const int64_t ib  = i / QK8_0;
-    const int     iqs = i % QK8_0;
+    const int64_t ib  = i0 / QK8_0;
+    const int     iqs = i0 % QK8_0;
 
-    const T   d = x[ib].d;
-    const int q = x[ib].qs[iqs];
+    static_assert(ne % 2 == 0, "bad ne");
+    int8_t qs[ne];
+    ggml_cuda_memcpy_1<ne, 2>(qs, x[ib].qs + iqs);
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        return ((half) d)*((half) q);
-    }
+    if constexpr (std::is_same<T, half>::value) {
+        const half2 d = __half2half2(x[ib].d);
+
+#pragma unroll
+        for (int l0 = 0; l0 < ne; l0 += 2) {
+            ((half2 *) dst)[l0/2] = d * make_half2(qs[l0 + 0], qs[l0 + 1]);
+        }
+    } else
 #endif // FP16_AVAILABLE
+    if constexpr (std::is_same<T, float>::value) {
+        const float d = x[ib].d;
 
-    return ((float) d)*((float) q);
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            ((float *) dst)[l] = d * qs[l];
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "unsupported type");
+    }
 }
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_f16(const void * __restrict__ vx, const int64_t i) {
-    const half * x = (const half *) vx;
-
-    return x[i];
+template <ggml_type type_K, int D, int nthreads>
+constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ() {
+    if constexpr (type_K == GGML_TYPE_F16) {
+        return vec_dot_fattn_vec_KQ_f16<D, nthreads>;
+    } else if constexpr (type_K == GGML_TYPE_Q4_0) {
+        return vec_dot_fattn_vec_KQ_q4_0<D, nthreads>;
+    } else if constexpr (type_K == GGML_TYPE_Q4_1) {
+        return vec_dot_fattn_vec_KQ_q4_1<D, nthreads>;
+    } else if constexpr (type_K == GGML_TYPE_Q5_0) {
+        return vec_dot_fattn_vec_KQ_q5_0<D, nthreads>;
+    } else if constexpr (type_K == GGML_TYPE_Q5_1) {
+        return vec_dot_fattn_vec_KQ_q5_1<D, nthreads>;
+    } else if constexpr (type_K == GGML_TYPE_Q8_0) {
+        return vec_dot_fattn_vec_KQ_q8_0<D, nthreads>;
+    } else {
+        static_assert(type_K == -1, "bad type");
+        return nullptr;
+    }
 }
 
-template <int D, int warp_size = WARP_SIZE>
-constexpr __device__ vec_dot_KQ_f16_t get_vec_dot_KQ_f16(ggml_type type_K) {
-    return type_K == GGML_TYPE_Q4_0 ? vec_dot_fattn_vec_KQ_q4_0<half, D, warp_size> :
-        type_K == GGML_TYPE_Q4_1 ? vec_dot_fattn_vec_KQ_q4_1<half, D, warp_size> :
-        type_K == GGML_TYPE_Q5_0 ? vec_dot_fattn_vec_KQ_q5_0<half, D, warp_size> :
-        type_K == GGML_TYPE_Q5_1 ? vec_dot_fattn_vec_KQ_q5_1<half, D, warp_size> :
-        type_K == GGML_TYPE_Q8_0 ? vec_dot_fattn_vec_KQ_q8_0<half, D, warp_size> :
-        type_K == GGML_TYPE_F16 ? vec_dot_fattn_vec_KQ_f16<half, D, warp_size> :
-        nullptr;
-}
-
-template <int D, int warp_size = WARP_SIZE>
-constexpr __device__ vec_dot_KQ_f32_t get_vec_dot_KQ_f32(ggml_type type_K) {
-    return type_K == GGML_TYPE_Q4_0 ? vec_dot_fattn_vec_KQ_q4_0<float, D, warp_size> :
-        type_K == GGML_TYPE_Q4_1 ? vec_dot_fattn_vec_KQ_q4_1<float, D, warp_size> :
-        type_K == GGML_TYPE_Q5_0 ? vec_dot_fattn_vec_KQ_q5_0<float, D, warp_size> :
-        type_K == GGML_TYPE_Q5_1 ? vec_dot_fattn_vec_KQ_q5_1<float, D, warp_size> :
-        type_K == GGML_TYPE_Q8_0 ? vec_dot_fattn_vec_KQ_q8_0<float, D, warp_size> :
-        type_K == GGML_TYPE_F16 ? vec_dot_fattn_vec_KQ_f16<float, D, warp_size> :
-        nullptr;
-}
-
-constexpr __device__ dequantize_1_f16_t get_dequantize_1_f16(ggml_type type_V) {
-    return type_V == GGML_TYPE_Q4_0 ? dequantize_1_q4_0<half> :
-        type_V == GGML_TYPE_Q4_1 ? dequantize_1_q4_1<half> :
-        type_V == GGML_TYPE_Q5_0 ? dequantize_1_q5_0<half> :
-        type_V == GGML_TYPE_Q5_1 ? dequantize_1_q5_1<half> :
-        type_V == GGML_TYPE_Q8_0 ? dequantize_1_q8_0<half> :
-        type_V == GGML_TYPE_F16 ? dequantize_1_f16<half> :
-        nullptr;
-}
-
-constexpr __device__ dequantize_1_f32_t get_dequantize_1_f32(ggml_type type_V) {
-    return type_V == GGML_TYPE_Q4_0 ? dequantize_1_q4_0<float> :
-        type_V == GGML_TYPE_Q4_1 ? dequantize_1_q4_1<float> :
-        type_V == GGML_TYPE_Q5_0 ? dequantize_1_q5_0<float> :
-        type_V == GGML_TYPE_Q5_1 ? dequantize_1_q5_1<float> :
-        type_V == GGML_TYPE_Q8_0 ? dequantize_1_q8_0<float> :
-        type_V == GGML_TYPE_F16 ? dequantize_1_f16<float> :
-        nullptr;
+template <ggml_type type_V, typename T, int ne>
+constexpr __device__ dequantize_V_t get_dequantize_V() {
+    if constexpr (type_V == GGML_TYPE_F16) {
+        return dequantize_V_f16<T, ne>;
+    } else if constexpr (type_V == GGML_TYPE_Q4_0) {
+        return dequantize_V_q4_0<T, ne>;
+    } else if constexpr (type_V == GGML_TYPE_Q4_1) {
+        return dequantize_V_q4_1<T, ne>;
+    } else if constexpr (type_V == GGML_TYPE_Q5_0) {
+        return dequantize_V_q5_0<T, ne>;
+    } else if constexpr (type_V == GGML_TYPE_Q5_1) {
+        return dequantize_V_q5_1<T, ne>;
+    } else if constexpr (type_V == GGML_TYPE_Q8_0) {
+        return dequantize_V_q8_0<T, ne>;
+    } else {
+        static_assert(type_V == -1, "bad type");
+        return nullptr;
+    }
 }
 
 template <int ncols1>
@@ -539,10 +602,14 @@ static __global__ void flash_attn_mask_to_KV_max(
         all_inf = warp_reduce_all(all_inf);
 
         if (!all_inf) {
-            KV_max_sj += FATTN_KQ_STRIDE;
             break;
         }
     }
+
+    // If the break in the loop was not triggered, KV_max_sj is now -FATTN_KQ_STRIDE.
+    // If the break was triggered it's the lower edge of the tile with the first non-masked values.
+    // In either case, walk back the decrementation by FATTN_KQ_STRIDE.
+    KV_max_sj += FATTN_KQ_STRIDE;
 
     if (threadIdx.x != 0) {
         return;
@@ -643,9 +710,7 @@ static __global__ void flash_attn_stream_k_fixup(
 }
 
 template<int D> // D == head size
-#if !defined(GGML_USE_HIP)
 __launch_bounds__(D, 1)
-#endif // !(defined(GGML_USE_HIP)
 static __global__ void flash_attn_combine_results(
         const float  * __restrict__ VKQ_parts,
         const float2 * __restrict__ VKQ_meta,
@@ -688,38 +753,13 @@ static __global__ void flash_attn_combine_results(
     float VKQ_numerator   = 0.0f;
     float VKQ_denominator = 0.0f;
     for (int l = 0; l < parallel_blocks; ++l) {
-        const float diff = meta[l].x - kqmax;
-        float KQ_max_scale = expf(diff);
-        const uint32_t ftz_mask = 0xFFFFFFFF * (diff > SOFTMAX_FTZ_THRESHOLD);
-        *((uint32_t *) &KQ_max_scale) &= ftz_mask;
+        const float KQ_max_scale = expf(meta[l].x - kqmax);
 
         VKQ_numerator   += KQ_max_scale * VKQ_parts[l*D + tid];
         VKQ_denominator += KQ_max_scale * meta[l].y;
     }
 
     dst[tid] = VKQ_numerator / VKQ_denominator;
-}
-
-[[noreturn]]
-static void on_no_fattn_vec_case(const int D) {
-    if (D == 64) {
-        fprintf(stderr, "Unsupported KV type combination for head_size 64.\n");
-        fprintf(stderr, "By default only f16 KV cache is supported.\n");
-        fprintf(stderr, "Compile with GGML_CUDA_FA_ALL_QUANTS for V cache quantization support.\n");
-        GGML_ABORT("fatal error");
-    } else if (D == 128) {
-        fprintf(stderr, "Unsupported KV type combination for head_size 128.\n");
-        fprintf(stderr, "Supported combinations:\n");
-        fprintf(stderr, "  - K == q4_0, V == q4_0,  4.50 BPV\n");
-        fprintf(stderr, "  - K == q8_0, V == q8_0,  8.50 BPV\n");
-        fprintf(stderr, "  - K == f16,  V == f16,  16.00 BPV\n");
-        fprintf(stderr, "Compile with GGML_CUDA_FA_ALL_QUANTS for all combinations of q4_0, q4_1, q5_0, q5_1, q8_0, and f16.\n");
-        GGML_ABORT("fatal error");
-    } else {
-        fprintf(stderr, "Unsupported KV type combination for head_size %d.\n", D);
-        fprintf(stderr, "Only f16 is supported.\n");
-        GGML_ABORT("fatal error");
-    }
 }
 
 template <int DV, int ncols1, int ncols2>
@@ -752,8 +792,6 @@ void launch_fattn(
     GGML_ASSERT(!mask || mask->type == GGML_TYPE_F16);
     GGML_ASSERT(!mask || mask->ne[1] >= GGML_PAD(Q->ne[1], 16) &&
         "the Flash-Attention CUDA kernel requires the mask to be padded to 16 and at least n_queries big");
-
-    GGML_ASSERT(K->ne[1] % FATTN_KQ_STRIDE == 0 && "Incorrect KV cache padding.");
 
     ggml_cuda_pool & pool = ctx.pool();
     cudaStream_t main_stream = ctx.stream();
@@ -838,7 +876,7 @@ void launch_fattn(
     // Optional optimization where the mask is scanned to determine whether part of the calculation can be skipped.
     // Only worth the overhead if there is at lease one FATTN_KQ_STRIDE x FATTN_KQ_STRIDE square to be skipped or
     //     multiple sequences of possibly different lengths.
-    if (mask && (Q->ne[1] >= 1024 || Q->ne[3] > 1)) {
+    if (mask && K->ne[1] % FATTN_KQ_STRIDE == 0 && (Q->ne[1] >= 1024 || Q->ne[3] > 1)) {
         const int s31 = mask->nb[1] / sizeof(half2);
         const int s33 = mask->nb[3] / sizeof(half2);
 
@@ -854,11 +892,10 @@ void launch_fattn(
         CUDA_CHECK(cudaGetLastError());
     }
 
-    int parallel_blocks = 1;
-
     const dim3 block_dim(warp_size, nwarps, 1);
     int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
+    int parallel_blocks = max_blocks_per_sm;
 
     dim3 blocks_num;
     if (stream_k) {
@@ -877,11 +914,7 @@ void launch_fattn(
 
         dst_tmp_meta.alloc(blocks_num.x*ncols * (2*2 + DV) * sizeof(float));
     } else {
-        GGML_ASSERT(K->ne[1] % KQ_row_granularity == 0);
-        const int ntiles_KQ = K->ne[1] / KQ_row_granularity; // Max. number of parallel blocks limited by tensor size.
-
-        // parallel_blocks should be at least large enough to achieve max. occupancy for a single wave:
-        parallel_blocks = std::max((nsm * max_blocks_per_sm) / ntiles_total, 1);
+        const int ntiles_KQ = (K->ne[1] + KQ_row_granularity - 1) / KQ_row_granularity; // Max. number of parallel blocks limited by tensor size.
 
         // parallel_blocks must not be larger than what the tensor size allows:
         parallel_blocks = std::min(parallel_blocks, ntiles_KQ);
@@ -897,7 +930,7 @@ void launch_fattn(
             const int efficiency_percent = 100 * nblocks_total / (nwaves*blocks_per_wave);
 
             // Stop trying configurations with more waves if we already have good efficiency to avoid excessive overhead.
-            if (efficiency_percent_best >= 90 && nwaves > nwaves_best) {
+            if (efficiency_percent_best >= 95 && nwaves > nwaves_best) {
                 break;
             }
 
@@ -910,7 +943,7 @@ void launch_fattn(
 
         blocks_num.x = ntiles_x;
         blocks_num.y = parallel_blocks;
-        blocks_num.z = Q->ne[2]*Q->ne[3];
+        blocks_num.z = (Q->ne[2]/ncols2)*Q->ne[3];
 
         if (parallel_blocks > 1) {
             dst_tmp.alloc(parallel_blocks*ggml_nelements(KQV));

@@ -126,7 +126,15 @@ func TestRoutes(t *testing.T) {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		if err := createModel(r, modelName, baseLayers, fn); err != nil {
+		config := &ConfigV2{
+			OS:           "linux",
+			Architecture: "amd64",
+			RootFS: RootFS{
+				Type: "layers",
+			},
+		}
+
+		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
 	}

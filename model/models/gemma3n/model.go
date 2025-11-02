@@ -10,7 +10,7 @@ import (
 
 type Model struct {
 	model.Base
-	model.SentencePieceModel
+	model.SentencePiece
 
 	*TextModel
 }
@@ -23,7 +23,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 func New(c fs.Config) (model.Model, error) {
 	m := Model{
 		TextModel: newTextModel(c),
-		SentencePieceModel: model.NewSentencePieceModel(
+		SentencePiece: model.NewSentencePiece(
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),

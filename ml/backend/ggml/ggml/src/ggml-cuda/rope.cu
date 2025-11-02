@@ -151,18 +151,12 @@ static __global__ void rope_multi(
     const int sec_w = sections.v[1] + sections.v[0];
     const int sector = (i0 / 2) % sect_dims;
 
-    float theta_base = 0.0;
-    if (sector < sections.v[0]) {
-        theta_base = pos[channel_x]*powf(theta_scale, i0/2.0f);
-    }
-    else if (sector >= sections.v[0] && sector < sec_w) {
+    float theta_base = pos[channel_x]*powf(theta_scale, i0/2.0f);
+    if (sector % 3 == 1 && sector < 1 + 3 * sections.v[1]) {
         theta_base = pos[channel_x + ne2 * 1]*powf(theta_scale, i0/2.0f);
     }
-    else if (sector >= sec_w && sector < sec_w + sections.v[2]) {
+    else if (sector % 3 == 2 && sector < 2 + 3 * sections.v[2]) {
         theta_base = pos[channel_x + ne2 * 2]*powf(theta_scale, i0/2.0f);
-    }
-    else if (sector >= sec_w + sections.v[2]) {
-        theta_base = pos[channel_x + ne2 * 3]*powf(theta_scale, i0/2.0f);
     }
 
     const float freq_factor = has_ff ? freq_factors[i0/2] : 1.0f;

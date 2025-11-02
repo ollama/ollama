@@ -10,8 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
@@ -53,11 +54,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 
 	// Simple CPU scenario
-	gpus := []discover.GpuInfo{
-		{
-			Library: "cpu",
-		},
-	}
+	gpus := []ml.DeviceInfo{}
 	projectors := []string{}
 	opts := api.DefaultOptions()
 	t.Run("cpu", func(t *testing.T) {
@@ -74,15 +71,17 @@ func TestEstimateGPULayers(t *testing.T) {
 	memoryLayerOutput := uint64(4)
 
 	// Dual CUDA scenario with asymmetry
-	gpuMinimumMemory := uint64(2048)
-	gpus = []discover.GpuInfo{
+	gpuMinimumMemory := uint64(457 * format.MebiByte)
+	gpus = []ml.DeviceInfo{
 		{
-			Library:       "cuda",
-			MinimumMemory: gpuMinimumMemory,
+			DeviceID: ml.DeviceID{
+				Library: "CUDA",
+			},
 		},
 		{
-			Library:       "cuda",
-			MinimumMemory: gpuMinimumMemory,
+			DeviceID: ml.DeviceID{
+				Library: "CUDA",
+			},
 		},
 	}
 	// Nested array: GPU0 layer space, GPU1 layer space, expected gpu0, expected gpu1
