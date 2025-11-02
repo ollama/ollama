@@ -91,7 +91,7 @@ if (GGML_TSAVORITE)
     endif()
 
     if (NOT DEFINED GGML_TSI_KERNEL_DIR)
-       set (GGML_TSI_KERNEL_DIR ${CMAKE_SOURCE_DIR}/ggml-tsi-kernel/${GGML_TSAVORITE_TARGET})
+       set (GGML_TSI_KERNEL_DIR ${CMAKE_SOURCE_DIR}/llama/vendor/ggml-tsi-kernel/${GGML_TSAVORITE_TARGET})
     endif()
 
 
@@ -121,6 +121,9 @@ set(GGML_CPU ON)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 set_property(TARGET ggml PROPERTY EXCLUDE_FROM_ALL TRUE)
 
+if (GGML_TSAVORITE AND ${GGML_TSAVORITE_TARGET} STREQUAL fpga)
+    add_definitions(-DGGML_USE_TSAVORITE)
+endif()
 if (NOT GGML_TSAVORITE AND ${GGML_TSAVORITE_TARGET} STREQUAL fpga)
 get_target_property(CPU_VARIANTS ggml-cpu MANUALLY_ADDED_DEPENDENCIES)
 if(NOT CPU_VARIANTS)
