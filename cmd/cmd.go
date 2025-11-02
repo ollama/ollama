@@ -322,6 +322,114 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func EmbedHandler(cmd *cobra.Command, args []string) error {
+	model := args[0]
+
+	formatValue, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
+	formatValue = strings.ToLower(formatValue)
+	if formatValue == "" {
+		formatValue = "plain"
+	}
+	if formatValue != "plain" && formatValue != "json" {
+		return fmt.Errorf("invalid format %q (supported: plain, json)", formatValue)
+	}
+
+	keepAliveFlag, err := cmd.Flags().GetString("keepalive")
+	if err != nil {
+		return err
+	}
+	var keepAlive *api.Duration
+	if keepAliveFlag != "" {
+		d, err := time.ParseDuration(keepAliveFlag)
+		if err != nil {
+			return err
+		}
+		keepAlive = &api.Duration{Duration: d}
+	}
+
+	truncateSpecified := cmd.Flags().Changed("truncate")
+	truncateValue, err := cmd.Flags().GetBool("truncate")
+	if err != nil {
+		return err
+	}
+
+	dimensions, err := cmd.Flags().GetInt("dimensions")
+	if err != nil {
+		return err
+	}
+	if dimensions < 0 {
+		return fmt.Errorf("dimensions must be non-negative")
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	// Get all arguments after model name as input text
+	inputParts := args[1:]
+
+	// prepend stdin to the input if provided
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		in, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+		if len(in) > 0 {
+			inputParts = append([]string{string(in)}, inputParts...)
+		}
+	}
+
+	inputText := strings.Join(inputParts, " ")
+	inputText = strings.TrimSpace(inputText)
+
+	if inputText == "" {
+		return errors.New("no input provided to embed")
+	}
+
+	req := &api.EmbedRequest{
+		Model: model,
+		Input: inputText,
+	}
+	if keepAlive != nil {
+		req.KeepAlive = keepAlive
+	}
+	if truncateSpecified {
+		req.Truncate = &truncateValue
+	}
+	if dimensions > 0 {
+		req.Dimensions = dimensions
+	}
+
+	resp, err := client.Embed(cmd.Context(), req)
+	if err != nil {
+		return err
+	}
+
+	switch formatValue {
+	case "json":
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	default:
+		for _, embedding := range resp.Embeddings {
+			var b strings.Builder
+			for i, val := range embedding {
+				if i > 0 {
+					b.WriteByte(' ')
+				}
+				b.WriteString(strconv.FormatFloat(float64(val), 'g', -1, 32))
+			}
+			fmt.Println(b.String())
+		}
+	}
+
+	return nil
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -1685,6 +1793,24 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
+	embedCmd := &cobra.Command{
+		Use:   "embed MODEL [TEXT...]",
+		Short: "Generate embeddings from a model",
+		Long: "Generate embeddings for text input using an Ollama model. " +
+			"Provide text as arguments or pipe text via stdin for scripted use.",
+		Example: strings.TrimSpace(`  ollama embed nomic-embed-text "Hello world"
+	ollama embed nomic-embed-text --format json "Hello world"
+	echo "Hello world" | ollama embed nomic-embed-text`),
+		Args:    cobra.MinimumNArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    EmbedHandler,
+	}
+
+	embedCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
+	embedCmd.Flags().Bool("truncate", false, "Truncate input that exceeds the model's context length")
+	embedCmd.Flags().Int("dimensions", 0, "Truncate the output embedding to the specified dimensions")
+	embedCmd.Flags().String("format", "", "Response format (plain or json)")
+
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -1787,6 +1913,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		embedCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -1828,6 +1955,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		embedCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
