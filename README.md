@@ -546,6 +546,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [any-agent](https://github.com/mozilla-ai/any-agent) (A single interface to use and evaluate different agent frameworks by [mozilla.ai](https://www.mozilla.ai/))
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) (Data-driven multi-agent orchestration framework) with [example](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama)
 - [achatbot-go](https://github.com/ai-bot-pro/achatbot-go) a multimodal(text/audio/image) chatbot.
+- [Ollama Bash Lib](https://github.com/attogram/ollama-bash-lib) - A Bash Library for Ollama. Run LLM prompts straight from your shell, and more
 
 ### Mobile
 
