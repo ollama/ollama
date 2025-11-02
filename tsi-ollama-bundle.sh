@@ -33,8 +33,6 @@ cd ../posix-kernel/
 cd ../..
 echo "$(pwd)"
 
-./tsi-pkg-build.sh
-
 #Change directory to top level ollama
 
 cd ../../
@@ -44,37 +42,37 @@ cd ../../
 echo 'building llama.cp, ggml for tsavorite  and other binary for posix'
 if [ "$(echo "$1" | tr '[:upper:]' '[:lower:]')" = "release" ];
 then
-  cmake -B build-posix -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=posix -DCMAKE_C_FLAGS="-DGGML_PERF_RELEASE -DGGML_TARGET_POSIX"   -DCMAKE_CXX_FLAGS="-DGGML_PERF_RELEASE -DGGML_TARGET_POSIX"
+  cmake -B build-posix -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=posix -DCMAKE_C_FLAGS="-DGGML_PERF_RELEASE -DGGML_TARGET_POSIX -DGGML_TSAVORITE" -DCMAKE_CXX_FLAGS="-DGGML_PERF_RELEASE -DGGML_TARGET_POSIX -DGGML_TSAVORITE"
 elif [ "$(echo "$1" | tr '[:upper:]' '[:lower:]')" = "debug" ]; then
-  cmake -B build-posix -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=posix -DCMAKE_C_FLAGS="-DGGML_PERF_DETAIL -DGGML_TARGET_POSIX"   -DCMAKE_CXX_FLAGS="-DGGML_PERF_DETAIL -DGGML_TARGET_POSIX"
+  cmake -B build-posix -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=posix -DCMAKE_C_FLAGS="-DGGML_PERF_DETAIL -DGGML_TARGET_POSIX -DGGML_TSAVORITE" -DCMAKE_CXX_FLAGS="-DGGML_PERF_DETAIL -DGGML_TARGET_POSIX -DGGML_TSAVORITE"
 else
-  cmake -B build-posix -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=posix -DCMAKE_C_FLAGS="-DGGML_PERF -DGGML_TARGET_POSIX"   -DCMAKE_CXX_FLAGS="-DGGML_PERF -DGGML_TARGET_POSIX"
+  cmake -B build-posix -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=posix -DCMAKE_C_FLAGS="-DGGML_PERF -DGGML_TARGET_POSIX -DGGML_TSAVORITE" -DCMAKE_CXX_FLAGS="-DGGML_PERF -DGGML_TARGET_POSIX -DGGML_TSAVORITE"
 fi
 
 cmake --build build-posix --config Release
 
 # Fix GLIBC compatibility for TSI binaries
-echo 'fixing GLIBC compatibility for TSI binaries'
+#echo 'fixing GLIBC compatibility for TSI binaries'
 
 # Fix simple-backend-tsi
-mkdir -p build-posix/bin/
-mv llama/vendor/build-posix/bin/simple-backend-tsi build-posix/bin/simple-backend-tsi-original
-cat > build-posix/bin/simple-backend-tsi << 'EOL'
+#mkdir -p build-posix/bin/
+#mv llama/vendor/build-posix/bin/simple-backend-tsi build-posix/bin/simple-backend-tsi-original
+#cat > build-posix/bin/simple-backend-tsi << 'EOL'
 #!/bin/bash
-export LD_LIBRARY_PATH="/proj/local/gcc-13.3.0/lib64:$LD_LIBRARY_PATH"
-exec "$(dirname "$0")/simple-backend-tsi-original" "$@"
-EOL
-chmod +x build-posix/bin/simple-backend-tsi
+#export LD_LIBRARY_PATH="/proj/local/gcc-13.3.0/lib64:$LD_LIBRARY_PATH"
+#exec "$(dirname "$0")/simple-backend-tsi-original" "$@"
+#EOL
+#chmod +x build-posix/bin/simple-backend-tsi
 
 # Fix llama-cli
-mkdir -p build-posix/bin/
-mv llama/vendor/build-posix/bin/llama-cli build-posix/bin/llama-cli-original
-cat > build-posix/bin/llama-cli << 'EOL'
+#mkdir -p build-posix/bin/
+#mv llama/vendor/build-posix/bin/llama-cli build-posix/bin/llama-cli-original
+#cat > build-posix/bin/llama-cli << 'EOL'
 #!/bin/bash
-export LD_LIBRARY_PATH="/proj/local/gcc-13.3.0/lib64:$LD_LIBRARY_PATH"
-exec "$(dirname "$0")/llama-cli-original" "$@"
-EOL
-chmod +x build-posix/bin/llama-cli
+#export LD_LIBRARY_PATH="/proj/local/gcc-13.3.0/lib64:$LD_LIBRARY_PATH"
+#exec "$(dirname "$0")/llama-cli-original" "$@"
+#EOL
+#chmod +x build-posix/bin/llama-cli
 
 #Compile for fpga with build-fpga as a target folder
 
@@ -84,11 +82,11 @@ export CXX="/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-g
 
 if [ "$(echo "$1" | tr '[:upper:]' '[:lower:]')" = "release" ];
 then
-  cmake -B build-fpga -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=fpga -DCMAKE_C_FLAGS="-DGGML_PERF_RELEASE"   -DCMAKE_CXX_FLAGS="-DGGML_PERF_RELEASE"
+ cmake -B build-fpga -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=fpga -DCMAKE_C_FLAGS="-DGGML_PERF_RELEASE -DGGML_TARGET_FPGA -DGGML_TSAVORITE" -DCMAKE_CXX_FLAGS="-DGGML_PERF_RELEASE -DGGML_TARGET_FPGA -DGGML_TSAVORITE" -DCURL_INCLUDE_DIR=/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/include  -DCURL_LIBRARY=/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/lib/libcurl.so
 elif [ "$(echo "$1" | tr '[:upper:]' '[:lower:]')" = "debug" ]; then
-  cmake -B build-fpga -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=fpga -DCMAKE_C_FLAGS="-DGGML_PERF_DETAIL"   -DCMAKE_CXX_FLAGS="-DGGML_PERF_DETAIL"
+  cmake -B build-fpga -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=fpga -DCMAKE_C_FLAGS="-DGGML_PERF_DETAIL -DGGML_TARGET_FPGA -DGGML_TSAVORITE" -DCMAKE_CXX_FLAGS="-DGGML_PERF_DETAIL -DGGML_TARGET_FPGA -DGGML_TSAVORITE" -DCURL_INCLUDE_DIR=/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/include  -DCURL_LIBRARY=/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/lib/libcurl.so
 else
-  cmake -B build-fpga -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=fpga -DCMAKE_C_FLAGS="-DGGML_PERF"   -DCMAKE_CXX_FLAGS="-DGGML_PERF"
+  cmake -B build-fpga -DGGML_TSAVORITE=ON -DGGML_TSAVORITE_TARGET=fpga -DCMAKE_C_FLAGS="-DGGML_PERF -DGGML_TARGET_FPGA -DGGML_TSAVORITE" -DCMAKE_CXX_FLAGS="-DGGML_PERF -DGGML_TARGET_FPGA -DGGML_TSAVORITE" -DCURL_INCLUDE_DIR=/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/include  -DCURL_LIBRARY=/proj/rel/sw/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/lib/libcurl.so
 fi
 
 cmake --build build-fpga --config Release
@@ -125,12 +123,6 @@ done
 EOL
 chmod +x ${TSI_GGML_BUNDLE_INSTALL_DIR}/ggml.sh
 cp ${GGML_TSI_INSTALL_DIR}/fpga/blobs ${TSI_GGML_BUNDLE_INSTALL_DIR}/ -r
-cp llama/vendor/build-fpga/bin/llama-cli ${TSI_GGML_BUNDLE_INSTALL_DIR}/
-cp llama/vendor/build-fpga/bin/libggml*.so ${TSI_GGML_BUNDLE_INSTALL_DIR}/
-cp llama/vendor/build-fpga/bin/libllama*.so ${TSI_GGML_BUNDLE_INSTALL_DIR}/
-cp llama/vendor/build-fpga/bin/simple-backend-tsi ${TSI_GGML_BUNDLE_INSTALL_DIR}/
-
-tar -cvzf ${TSI_GGML_BUNDLE_INSTALL_DIR}-ollama-${TSI_GGML_VERSION}.tz ${TSI_GGML_BUNDLE_INSTALL_DIR}/*
 
 if [ "$(echo "$1" | tr '[:upper:]' '[:lower:]')" = "release" ];
 then
@@ -162,10 +154,15 @@ GOARCH=arm64 GOOS=linux go build -o ollama .
 echo "Preparing release directory..."
 rm -rf $RELEASE_DIR
 mkdir -p $RELEASE_DIR/bin
+mkdir -p $RELEASE_DIR/lib
 cp ollama $RELEASE_DIR/bin/
+cp llama/vendor/ggml-tsi-kernel/fpga/blobs ${RELEASE_DIR}/ -r
+cp build-fpga/lib/ollama/libggml-*.so ${RELEASE_DIR}/bin
+cp build-fpga/lib/ollama/libggml-*.so ${RELEASE_DIR}/lib
+
 cp -r lib $RELEASE_DIR/ 2>/dev/null || echo "No lib directory to copy"
 cp README.md $RELEASE_DIR/ 2>/dev/null || echo "No README.md to copy"
-cp tsi-ggml-ollama*.tz $RELEASE_DIR/ 2>/dev/null || echo "No tsi-ggml-ollama*.tz to copy"
+cp -r tsi-ggml $RELEASE_DIR/ 2>/dev/null || echo "No tsi-ggml-ollama*.tz to copy"
 
 # Create tarball
 echo "Creating tarball..."
