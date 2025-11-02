@@ -1238,7 +1238,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		s.closeModel()
 
 		params := ml.BackendParams{
-			AllocMemory:    req.Operation != llm.LoadOperationFit,
+			AllocMemory:    true,//req.Operation != llm.LoadOperationFit,
 			NumThreads:     req.NumThreads,
 			GPULayers:      req.GPULayers,
 			FlashAttention: req.FlashAttention,
