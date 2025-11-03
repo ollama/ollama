@@ -1,5 +1,7 @@
 // DXGI and PDH Performance Counters Library
 // This Windows-only (10/11) library provides accurate VRAM reporting
+#include "ggml.h"
+#include "ggml-impl.h"
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -7,7 +9,6 @@
 #        define NOMINMAX
 #    endif
 #include <windows.h>
-#include "ggml-impl.h"
 #include <pdh.h>
 #include <dxgi1_2.h>
 #include <sstream>
