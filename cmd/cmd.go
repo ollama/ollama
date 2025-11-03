@@ -284,6 +284,14 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		return err
 	} else if info.RemoteHost != "" {
 		// Cloud model, no need to load/unload
+		if opts.ShowConnect {
+			p.StopAndClear()
+			if strings.HasPrefix(info.RemoteHost, "https://ollama.com") {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", info.RemoteModel)
+			} else {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", info.RemoteModel, info.RemoteHost)
+			}
+		}
 		return nil
 	}
 
@@ -296,14 +304,6 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	}
 
 	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
-		if r.RemoteModel != "" && opts.ShowConnect {
-			p.StopAndClear()
-			if strings.HasPrefix(r.RemoteHost, "https://ollama.com") {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", r.RemoteModel)
-			} else {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", r.RemoteModel, r.RemoteHost)
-			}
-		}
 		return nil
 	})
 }
