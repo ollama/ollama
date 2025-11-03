@@ -1370,6 +1370,7 @@ func Execute(args []string) error {
 	defer listener.Close()
 
 	mux := http.NewServeMux()
+	// TODO: support embeddings
 	mux.HandleFunc("GET /info", server.info)
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("POST /embedding", server.embeddings)
