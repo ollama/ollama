@@ -41,7 +41,7 @@ type Message struct {
 }
 
 type ChoiceLogprobs struct {
-	Content []api.LogprobInfo `json:"content"`
+	Content []api.Logprob `json:"content"`
 }
 
 type Choice struct {
@@ -634,7 +634,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Stream:          &r.Stream,
 		Tools:           r.Tools,
 		Think:           think,
-		Logprobs:        r.Logprobs,
+		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
@@ -711,15 +711,11 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	var logprobs *bool
+	var logprobs bool
 	var topLogprobs int
 	if r.Logprobs != nil && *r.Logprobs > 0 {
-		enabled := true
-		logprobs = &enabled
+		logprobs = true
 		topLogprobs = *r.Logprobs
-		if topLogprobs > 20 {
-			topLogprobs = 20 // OpenAI maximum
-		}
 	}
 
 	return api.GenerateRequest{

@@ -119,7 +119,7 @@ type GenerateRequest struct {
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 
 	// Logprobs specifies whether to return log probabilities of the output tokens.
-	Logprobs *bool `json:"logprobs,omitempty"`
+	Logprobs bool `json:"logprobs,omitempty"`
 
 	// TopLogprobs is the number of most likely tokens to return at each token position,
 	// each with an associated log probability. Only applies when Logprobs is true.
@@ -169,7 +169,7 @@ type ChatRequest struct {
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 
 	// Logprobs specifies whether to return log probabilities of the output tokens.
-	Logprobs *bool `json:"logprobs,omitempty"`
+	Logprobs bool `json:"logprobs,omitempty"`
 
 	// TopLogprobs is the number of most likely tokens to return at each token position,
 	// each with an associated log probability. Only applies when Logprobs is true.
@@ -368,13 +368,9 @@ type TokenLogprob struct {
 	Logprob float64 `json:"logprob"`
 }
 
-// LogprobInfo contains log probability information for a generated token.
-type LogprobInfo struct {
-	// Token is the text representation of the generated token.
-	Token string `json:"token"`
-
-	// Logprob is the log probability of the generated token.
-	Logprob float64 `json:"logprob"`
+// Logprob contains log probability information for a generated token.
+type Logprob struct {
+	TokenLogprob
 
 	// TopLogprobs contains the most likely tokens and their log probabilities
 	// at this position, if requested via TopLogprobs parameter.
@@ -409,7 +405,7 @@ type ChatResponse struct {
 
 	// Logprobs contains log probability information for the generated tokens,
 	// if requested via the Logprobs parameter.
-	Logprobs []LogprobInfo `json:"logprobs,omitempty"`
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 
 	Metrics
 }
@@ -722,7 +718,7 @@ type GenerateResponse struct {
 
 	// Logprobs contains log probability information for the generated tokens,
 	// if requested via the Logprobs parameter.
-	Logprobs []LogprobInfo `json:"logprobs,omitempty"`
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 }
 
 // ModelDetails provides details about a model.

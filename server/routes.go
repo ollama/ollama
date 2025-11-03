@@ -183,6 +183,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		// Ideally this is "invalid model name" but we're keeping with
@@ -209,6 +214,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
@@ -500,7 +510,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
-		var allLogprobs []api.LogprobInfo
+		var allLogprobs []api.Logprob
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:      prompt,
@@ -509,7 +519,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Options:     opts,
 			Shift:       req.Shift == nil || *req.Shift,
 			Truncate:    req.Truncate == nil || *req.Truncate,
-			Logprobs:    req.Logprobs != nil && *req.Logprobs,
+			Logprobs:    req.Logprobs,
 			TopLogprobs: req.TopLogprobs,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
@@ -523,7 +533,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
 				},
-				Logprobs: cr.Logprobs,
+				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
 
 			if builtinParser != nil {
@@ -549,7 +559,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			// Accumulate logprobs from each chunk
 			if len(cr.Logprobs) > 0 {
-				allLogprobs = append(allLogprobs, cr.Logprobs...)
+				allLogprobs = append(allLogprobs, toAPILogprobs(cr.Logprobs)...)
 			}
 
 			if cr.Done {
@@ -1845,6 +1855,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
@@ -1867,6 +1882,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
@@ -2097,7 +2117,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		for {
 			var tb strings.Builder
-			var allLogprobs []api.LogprobInfo
+			var allLogprobs []api.Logprob
 
 			currentFormat := req.Format
 			// structured outputs via double request is enabled when:
@@ -2122,7 +2142,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Options:     opts,
 				Shift:       req.Shift == nil || *req.Shift,
 				Truncate:    truncate,
-				Logprobs:    req.Logprobs != nil && *req.Logprobs,
+				Logprobs:    req.Logprobs,
 				TopLogprobs: req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
@@ -2136,12 +2156,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
 					},
-					Logprobs: r.Logprobs,
+					Logprobs: toAPILogprobs(r.Logprobs),
 				}
 
 				// Accumulate logprobs from each chunk
 				if len(r.Logprobs) > 0 {
-					allLogprobs = append(allLogprobs, r.Logprobs...)
+					allLogprobs = append(allLogprobs, toAPILogprobs(r.Logprobs)...)
 				}
 
 				if r.Done {

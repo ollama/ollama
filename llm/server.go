@@ -1393,6 +1393,18 @@ func (d DoneReason) String() string {
 	}
 }
 
+// TokenLogprob represents log probability information for a single token alternative.
+type TokenLogprob struct {
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+}
+
+// Logprob contains log probability information for a generated token.
+type Logprob struct {
+	TokenLogprob
+	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
+}
+
 type CompletionResponse struct {
 	Content            string        `json:"content"`
 	DoneReason         DoneReason    `json:"done_reason"`
@@ -1403,7 +1415,7 @@ type CompletionResponse struct {
 	EvalDuration       time.Duration `json:"eval_duration"`
 
 	// Logprobs contains log probability information if requested
-	Logprobs []api.LogprobInfo `json:"logprobs,omitempty"`
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {

@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,10 +28,10 @@ import (
 	"github.com/ollama/ollama/runner/common"
 )
 
-// sequenceResponse contains a piece of generated text along with optional logprobs
-type sequenceResponse struct {
+// response contains a piece of generated text along with optional logprobs
+type response struct {
 	content  string
-	logprobs []api.LogprobInfo
+	logprobs []common.Logprob
 }
 
 // input is an element of the prompt to process, either
@@ -62,13 +60,13 @@ type Sequence struct {
 	pendingResponses []string
 
 	// logprobs for tokens that haven't been returned yet
-	pendingLogprobs []api.LogprobInfo
+	pendingLogprobs []common.Logprob
 
 	// input cache being used by this sequence
 	cache *InputCacheSlot
 
 	// channel to send responses over
-	responses chan sequenceResponse
+	responses chan response
 
 	// channel to stop decoding (such as if the remote connection is closed)
 	quit chan bool
@@ -172,7 +170,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		numPromptInputs:  len(inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
-		responses:        make(chan sequenceResponse, 100),
+		responses:        make(chan response, 100),
 		quit:             make(chan bool, 1),
 		embedding:        make(chan []float32, 1),
 		samplingCtx:      sc,
@@ -185,69 +183,18 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}, nil
 }
 
-// calculateLogprobs converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []api.LogprobInfo {
-	if len(logits) == 0 {
-		return nil
-	}
+// llamaTokenDecoder adapts llama.Model to common.TokenDecoder interface
+type llamaTokenDecoder struct {
+	model *llama.Model
+}
 
-	// Step 1: Convert logits to log probabilities using numerically stable softmax
-	maxLogit := logits[0]
-	for _, logit := range logits[1:] {
-		if logit > maxLogit {
-			maxLogit = logit
-		}
-	}
+func (d *llamaTokenDecoder) DecodeToken(tokenID int) string {
+	return d.model.TokenToPiece(tokenID)
+}
 
-	var sumExp float64
-	for _, logit := range logits {
-		sumExp += math.Exp(float64(logit - maxLogit))
-	}
-	logSumExp := float32(math.Log(sumExp))
-
-	logProbs := make([]float32, len(logits))
-	for i, logit := range logits {
-		logProbs[i] = (logit - maxLogit) - logSumExp
-	}
-
-	// Step 2: Get selected token's information
-	selectedLogprob := logProbs[selectedToken]
-	selectedText := model.TokenToPiece(selectedToken)
-
-	result := api.LogprobInfo{
-		Token:   selectedText,
-		Logprob: float64(selectedLogprob),
-	}
-
-	// Step 3: If topK requested, find the top K tokens
-	if topK > 0 {
-		type tokenLogprobPair struct {
-			tokenID int
-			logprob float32
-		}
-
-		pairs := make([]tokenLogprobPair, len(logProbs))
-		for i, lp := range logProbs {
-			pairs[i] = tokenLogprobPair{tokenID: i, logprob: lp}
-		}
-
-		sort.Slice(pairs, func(i, j int) bool {
-			return pairs[i].logprob > pairs[j].logprob
-		})
-
-		k := min(topK, len(pairs))
-		topLogprobs := make([]api.TokenLogprob, k)
-		for i := 0; i < k; i++ {
-			tokenText := model.TokenToPiece(pairs[i].tokenID)
-			topLogprobs[i] = api.TokenLogprob{
-				Token:   tokenText,
-				Logprob: float64(pairs[i].logprob),
-			}
-		}
-		result.TopLogprobs = topLogprobs
-	}
-
-	return []api.LogprobInfo{result}
+// calculateLogprobsLlama converts raw logits to log probabilities and finds top K tokens
+func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []common.Logprob {
+	return common.CalculateLogprobs(logits, selectedToken, topK, &llamaTokenDecoder{model: model})
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -380,7 +327,7 @@ func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
 	logprobs := seq.pendingLogprobs
 	seq.pendingResponses = []string{}
-	seq.pendingLogprobs = []api.LogprobInfo{}
+	seq.pendingLogprobs = []common.Logprob{}
 
 	// Check if there are any partial UTF-8 characters remaining.
 	// We already check and queue as we are generating but some may
@@ -397,7 +344,7 @@ func flushPending(seq *Sequence) bool {
 	}
 
 	select {
-	case seq.responses <- sequenceResponse{content: joined, logprobs: logprobs}:
+	case seq.responses <- response{content: joined, logprobs: logprobs}:
 		return true
 	case <-seq.quit:
 		return false
@@ -770,7 +717,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					Content:  resp.content,
-					Logprobs: resp.logprobs,
+					Logprobs: common.ToLLMLogprobs(resp.logprobs),
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
