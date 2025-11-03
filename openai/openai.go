@@ -151,8 +151,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
-	Logprobs         *int           `json:"logprobs"` // OpenAI uses int where 0-5 is the range
-	Echo             bool           `json:"echo"`
+	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
 }
 
