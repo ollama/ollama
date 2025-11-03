@@ -1035,73 +1035,100 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Check if parallel flag exists before accessing it
+	// This is needed because PullHandler can be called from RunHandler
+	// which doesn't have the parallel flag defined
+	parallel := false
+	if cmd.Flags().Lookup("parallel") != nil {
+		parallel, err = cmd.Flags().GetBool("parallel")
+		if err != nil {
+			return err
+		}
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
+	// Process each model sequentially
+	for i, modelName := range args {
+		if i > 0 {
+			fmt.Printf("\n") // Add spacing between models
+		}
+		
+		fmt.Printf("pulling %s...\n", modelName)
+		
+		p := progress.NewProgress(os.Stderr)
+		
+		bars := make(map[string]*progress.Bar)
+		var status string
+		var spinner *progress.Spinner
 
-	bars := make(map[string]*progress.Bar)
-
-	var status string
-	var spinner *progress.Spinner
-
-	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != "" {
-			if resp.Completed == 0 {
-				// This is the initial status update for the
-				// layer, which the server sends before
-				// beginning the download, for clients to
-				// compute total size and prepare for
-				// downloads, if needed.
-				//
-				// Skipping this here to avoid showing a 0%
-				// progress bar, which *should* clue the user
-				// into the fact that many things are being
-				// downloaded and that the current active
-				// download is not that last. However, in rare
-				// cases it seems to be triggering to some, and
-				// it isn't worth explaining, so just ignore
-				// and regress to the old UI that keeps giving
-				// you the "But wait, there is more!" after
-				// each "100% done" bar, which is "better."
-				return nil
-			}
-
-			if spinner != nil {
-				spinner.Stop()
-			}
-
-			bar, ok := bars[resp.Digest]
-			if !ok {
-				name, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
-				name = strings.TrimSpace(name)
-				if isDigest {
-					name = name[:min(12, len(name))]
+		fn := func(resp api.ProgressResponse) error {
+			if resp.Digest != "" {
+				if resp.Completed == 0 {
+					// This is the initial status update for the
+					// layer, which the server sends before
+					// beginning the download, for clients to
+					// compute total size and prepare for
+					// downloads, if needed.
+					//
+					// Skipping this here to avoid showing a 0%
+					// progress bar, which *should* clue the user
+					// into the fact that many things are being
+					// downloaded and that the current active
+					// download is not that last. However, in rare
+					// cases it seems to be triggering to some, and
+					// it isn't worth explaining, so just ignore
+					// and regress to the old UI that keeps giving
+					// you the "But wait, there is more!" after
+					// each "100% done" bar, which is "better."
+					return nil
 				}
-				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
-				bars[resp.Digest] = bar
-				p.Add(resp.Digest, bar)
+
+				if spinner != nil {
+					spinner.Stop()
+				}
+
+				bar, ok := bars[resp.Digest]
+				if !ok {
+					name, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
+					name = strings.TrimSpace(name)
+					if isDigest {
+						name = name[:min(12, len(name))]
+					}
+					bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
+					bars[resp.Digest] = bar
+					p.Add(resp.Digest, bar)
+				}
+
+				bar.Set(resp.Completed)
+			} else if status != resp.Status {
+				if spinner != nil {
+					spinner.Stop()
+				}
+
+				status = resp.Status
+				spinner = progress.NewSpinner(status)
+				p.Add(status, spinner)
 			}
 
-			bar.Set(resp.Completed)
-		} else if status != resp.Status {
-			if spinner != nil {
-				spinner.Stop()
-			}
-
-			status = resp.Status
-			spinner = progress.NewSpinner(status)
-			p.Add(status, spinner)
+			return nil
 		}
 
-		return nil
+		request := api.PullRequest{Name: modelName, Insecure: insecure}
+		err := client.Pull(cmd.Context(), &request, fn)
+		p.Stop()
+		
+		if err != nil {
+			return fmt.Errorf("failed to pull %s: %w", modelName, err)
+		}
+		
+		fmt.Printf("success\n")
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	return nil
 }
 
 type generateContextKey string
@@ -1702,9 +1729,9 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
+		Use:     "pull MODEL [MODEL...]",
 		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}

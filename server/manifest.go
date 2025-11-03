@@ -65,15 +65,14 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, model.Unqualified(n)
 	}
 
-	manifests, err := GetManifestPath()
+	// Try to find manifest in any of the model paths
+	manifestPath, err := FindManifestPath(n)
 	if err != nil {
 		return nil, err
 	}
 
-	p := filepath.Join(manifests, n.Filepath())
-
 	var m Manifest
-	f, err := os.Open(p)
+	f, err := os.Open(manifestPath)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +88,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, err
 	}
 
-	m.filepath = p
+	m.filepath = manifestPath
 	m.fi = fi
 	m.digest = hex.EncodeToString(sha256sum.Sum(nil))
 
@@ -124,53 +123,70 @@ func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 }
 
 func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
-	manifests, err := GetManifestPath()
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO(mxyng): use something less brittle
-	matches, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*"))
+	manifestPaths, err := GetManifestPaths()
 	if err != nil {
 		return nil, err
 	}
 
 	ms := make(map[model.Name]*Manifest)
-	for _, match := range matches {
-		fi, err := os.Stat(match)
+	
+	// Search through all manifest directories
+	for _, manifestDir := range manifestPaths {
+		// TODO(mxyng): use something less brittle
+		matches, err := filepath.Glob(filepath.Join(manifestDir, "*", "*", "*", "*"))
 		if err != nil {
-			return nil, err
+			if !continueOnError {
+				return nil, err
+			}
+			slog.Warn("failed to glob manifests", "path", manifestDir, "error", err)
+			continue
 		}
 
-		if !fi.IsDir() {
-			rel, err := filepath.Rel(manifests, match)
+		for _, match := range matches {
+			fi, err := os.Stat(match)
 			if err != nil {
 				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", match, err)
+					return nil, err
 				}
-				slog.Warn("bad filepath", "path", match, "error", err)
+				slog.Warn("failed to stat manifest", "path", match, "error", err)
 				continue
 			}
 
-			n := model.ParseNameFromFilepath(rel)
-			if !n.IsValid() {
-				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", rel, err)
+			if !fi.IsDir() {
+				rel, err := filepath.Rel(manifestDir, match)
+				if err != nil {
+					if !continueOnError {
+						return nil, fmt.Errorf("%s %w", match, err)
+					}
+					slog.Warn("bad filepath", "path", match, "error", err)
+					continue
 				}
-				slog.Warn("bad manifest name", "path", rel)
-				continue
-			}
 
-			m, err := ParseNamedManifest(n)
-			if err != nil {
-				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", n, err)
+				n := model.ParseNameFromFilepath(rel)
+				if !n.IsValid() {
+					if !continueOnError {
+						return nil, fmt.Errorf("%s %w", rel, err)
+					}
+					slog.Warn("bad manifest name", "path", rel)
+					continue
 				}
-				slog.Warn("bad manifest", "name", n, "error", err)
-				continue
-			}
 
-			ms[n] = m
+				// Skip if we already found this model in a higher priority path
+				if _, exists := ms[n]; exists {
+					continue
+				}
+
+				m, err := ParseNamedManifest(n)
+				if err != nil {
+					if !continueOnError {
+						return nil, fmt.Errorf("%s %w", n, err)
+					}
+					slog.Warn("bad manifest", "name", n, "error", err)
+					continue
+				}
+
+				ms[n] = m
+			}
 		}
 	}
 
