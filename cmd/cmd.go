@@ -325,18 +325,6 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 func EmbedHandler(cmd *cobra.Command, args []string) error {
 	model := args[0]
 
-	formatValue, err := cmd.Flags().GetString("format")
-	if err != nil {
-		return err
-	}
-	formatValue = strings.ToLower(formatValue)
-	if formatValue == "" {
-		formatValue = "plain"
-	}
-	if formatValue != "plain" && formatValue != "json" {
-		return fmt.Errorf("invalid format %q (supported: plain, json)", formatValue)
-	}
-
 	keepAliveFlag, err := cmd.Flags().GetString("keepalive")
 	if err != nil {
 		return err
@@ -409,22 +397,12 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch formatValue {
-	case "json":
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-	default:
-		for _, embedding := range resp.Embeddings {
-			var b strings.Builder
-			for i, val := range embedding {
-				if i > 0 {
-					b.WriteByte(' ')
-				}
-				b.WriteString(strconv.FormatFloat(float64(val), 'g', -1, 32))
-			}
-			fmt.Println(b.String())
+	for _, embedding := range resp.Embeddings {
+		output, err := json.Marshal(embedding)
+		if err != nil {
+			return err
 		}
+		fmt.Println(string(output))
 	}
 
 	return nil
@@ -1799,7 +1777,6 @@ func NewCLI() *cobra.Command {
 		Long: "Generate embeddings for text input using an Ollama model. " +
 			"Provide text as arguments or pipe text via stdin for scripted use.",
 		Example: strings.TrimSpace(`  ollama embed nomic-embed-text "Hello world"
-	ollama embed nomic-embed-text --format json "Hello world"
 	echo "Hello world" | ollama embed nomic-embed-text`),
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
@@ -1809,7 +1786,6 @@ func NewCLI() *cobra.Command {
 	embedCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	embedCmd.Flags().Bool("truncate", false, "Truncate input that exceeds the model's context length")
 	embedCmd.Flags().Int("dimensions", 0, "Truncate the output embedding to the specified dimensions")
-	embedCmd.Flags().String("format", "", "Response format (plain or json)")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
