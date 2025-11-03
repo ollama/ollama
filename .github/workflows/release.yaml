@@ -312,13 +312,13 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            target: archive_novulkan
+            target: archive
           - os: linux
             arch: amd64
             target: rocm
           - os: linux
             arch: arm64
-            target: archive_novulkan
+            target: archive
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -374,14 +374,12 @@ jobs:
         include:
           - os: linux
             arch: arm64
-            target: novulkan
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
           - os: linux
             arch: amd64
-            target: novulkan
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
@@ -394,14 +392,6 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
-          - os: linux
-            arch: amd64
-            suffix: '-vulkan'
-            target: default
-            build-args: |
-              CGO_CFLAGS
-              CGO_CXXFLAGS
-              GOFLAGS
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -419,7 +409,6 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
-          target: ${{ matrix.preset }}
           build-args: ${{ matrix.build-args }}
           outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
