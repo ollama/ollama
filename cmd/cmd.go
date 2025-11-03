@@ -1779,7 +1779,7 @@ func NewCLI() *cobra.Command {
 		Long: "Generate embeddings for text input using an Ollama model. " +
 			"Provide text as arguments or pipe text via stdin for scripted use.",
 		Example: strings.TrimSpace(`  ollama embed embeddinggemma "Hello world"
-	echo "Hello world" | ollama embed embeddinggemma`),
+  echo "Hello world" | ollama embed embeddinggemma`),
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    EmbedHandler,
