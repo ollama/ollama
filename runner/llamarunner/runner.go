@@ -136,10 +136,8 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 		// TODO: EOG token handling should be moved to tokenizer
 		if params.embedding {
-			// If the original prompt ended with an EOG token, add it back after truncation
-			lastIsEOG := false
-
-			eogToken := 0
+			// make sure to end the truncated sequence with the eog token if one was originally provided
+			eogToken := -1
 
 			if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
 				eogToken = inputs[len(inputs)-1].token
@@ -148,19 +146,14 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
 			newLimit := s.cache.numCtx - 1
 
-			if s.model.TokenIsEog(inputs[len(inputs)-1].token) && !s.model.TokenIsEog(inputs[newLimit-1].token) {
-				lastIsEOG = true
-				newLimit--
-			}
-
 			if newLimit <= 0 {
 				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
 			}
 
 			newInputs = inputs[:newLimit]
 
-			if lastIsEOG {
-				newInputs = append(newInputs, input{token: eogToken})
+			if eogToken >= 0 {
+				newInputs[len(newInputs)-1] = input{token: eogToken}
 			}
 		} else {
 			// Otherwise, truncate in the middle
