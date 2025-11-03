@@ -25,6 +25,18 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
+### Generate embeddings
+
+```
+ollama embed embeddinggemma "Hello world"
+```
+
+Output is space-separated floats by default. Use `--format json` for structured output with metadata.
+
+```
+echo "Hello world" | ollama embed nomic-embed-text --format json
+```
+
 ### Download a model
 
 ```
