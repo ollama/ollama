@@ -1,7 +1,6 @@
 package model
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	_ "image/jpeg"
@@ -19,12 +18,18 @@ import (
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/kvcache"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
 )
 
-var ErrNoVisionModel = errors.New("this model is missing data required for image input")
+var (
+	ErrNoVisionModel        = errors.New("this model is missing data required for image input")
+	ErrUnsupportedModel     = errors.New("model not supported")
+	ErrUnsupportedTokenizer = errors.New("tokenizer not supported")
+)
 
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
@@ -39,12 +44,13 @@ type MultimodalProcessor interface {
 	// EncodeMultimodal processes a single input (such as an image) and
 	// generates an output (typically an embedding) that can be used by the model.
 	//
-	// The return value is most typically an ml.Tensor, however, different
-	// type are possible, such as an object containing a tensor plus
-	// additional metadata, a slice of tensors or even just the original input.
+	// The return value is one or more tensors, each with optional model-specific
+	// opaque metadata. Typically, the tensors might be views into an embedding
+	// with each view representing a chunk of data that can be processed independently
+	// in different batches.
 	//
 	// The result may be cached by the runner.
-	EncodeMultimodal(ml.Context, []byte) (any, error)
+	EncodeMultimodal(ml.Context, []byte) ([]input.Multimodal, error)
 
 	// PostTokenize is called after tokenization to allow the model to edit the
 	// input stream to correctly arrange multimodal elements.
@@ -62,7 +68,7 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize([]input.Input) ([]input.Input, error)
+	PostTokenize([]*input.Input) ([]*input.Input, error)
 }
 
 // Base implements the common fields and methods for all models
@@ -96,31 +102,18 @@ func Register(name string, f func(fs.Config) (Model, error)) {
 }
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
-func New(ctx context.Context, modelPath string, params ml.BackendParams) (Model, error) {
-	r, err := os.Open(modelPath)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	b, err := ml.NewBackend(ctx, r, params)
+func New(modelPath string, params ml.BackendParams) (Model, error) {
+	b, err := ml.NewBackend(modelPath, params)
 	if err != nil {
 		return nil, err
 	}
 
-	arch := b.Config().Architecture()
-	f, ok := models[arch]
-	if !ok {
-		return nil, fmt.Errorf("unsupported model architecture %q", arch)
-	}
-
-	m, err := f(b.Config())
+	m, err := modelForArch(b.Config())
 	if err != nil {
 		return nil, err
 	}
 
 	base := Base{b: b, config: m.Config()}
-
 	v := reflect.ValueOf(m)
 	v.Elem().Set(populateFields(base, v.Elem()))
 	return m, nil
@@ -132,28 +125,36 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 	defer r.Close()
-	meta, _, err := fsggml.Decode(r, -1)
-	if err != nil {
-		return nil, err
-	}
-	return getTextProcessor(meta.KV())
-}
 
-func getTextProcessor(kv fsggml.KV) (TextProcessor, error) {
-	arch := kv.Architecture()
-	f, ok := models[arch]
-	if !ok {
-		return nil, fmt.Errorf("unsupported model architecture %q", arch)
-	}
-	m, err := f(kv)
+	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
+
+	m, err := modelForArch(meta.KV())
+	if err != nil {
+		return nil, err
+	}
+
 	tp, ok := m.(TextProcessor)
 	if !ok {
-		return nil, fmt.Errorf("%v is not a TextProcessor", m)
+		return nil, ErrUnsupportedTokenizer
 	}
 	return tp, nil
+}
+
+func modelForArch(c fs.Config) (Model, error) {
+	arch := c.Architecture()
+	if pooling.Type(c.Uint("pooling_type")) != pooling.TypeNone {
+		arch = arch + "_embed"
+	}
+
+	f, ok := models[arch]
+	if !ok {
+		return nil, ErrUnsupportedModel
+	}
+
+	return f(c)
 }
 
 func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
@@ -171,38 +172,47 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 			// make a copy
 			tagsCopy := tags
 			if tag := t.Field(i).Tag.Get("gguf"); tag != "" {
-				tagsCopy = append(tagsCopy, ParseTags(tag))
+				tagsCopy = append(tagsCopy, parseTag(tag))
 			}
 
 			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
 				vv.Set(reflect.ValueOf(base))
 			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
-				var fn func([]Tag) [][]string
-				fn = func(tags []Tag) (values [][]string) {
-					if len(tags) < 1 {
-						return nil
-					}
-
-					values = [][]string{{tags[0].Name}}
-					for _, alt := range tags[0].Alternate {
-						values = append(values, []string{alt})
-					}
-
-					for i, value := range values {
-						for _, rest := range fn(tags[1:]) {
-							value = append(value, rest...)
+				var fn func([]Tag, string, string) [][]string
+				fn = func(tags []Tag, prefix, suffix string) (fullNames [][]string) {
+					if len(tags) > 0 {
+						var names []string
+						if tags[0].name != "" {
+							for _, n := range append([]string{tags[0].name}, tags[0].alternatives...) {
+								names = append(names, prefix+n+suffix)
+							}
 						}
-
-						values[i] = value
+						childNames := fn(tags[1:], tags[0].prefix, tags[0].suffix)
+						if len(names) == 0 {
+							// current tag has no name, use child names only
+							fullNames = append(fullNames, childNames...)
+						} else if len(childNames) == 0 {
+							// current tag has names but no children, create branches for each name
+							for _, name := range names {
+								fullNames = append(fullNames, []string{name})
+							}
+						} else {
+							// merge each name with each child
+							for _, name := range names {
+								for _, childName := range childNames {
+									fullNames = append(fullNames, append([]string{name}, childName...))
+								}
+							}
+						}
 					}
 
-					return values
+					return fullNames
 				}
 
-				names := fn(tagsCopy)
+				names := fn(tagsCopy, "", "")
 				for _, name := range names {
 					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
-						slog.Debug("found tensor", "", tensor)
+						logutil.Trace("found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}
@@ -213,9 +223,9 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				for i := range vv.Len() {
 					vvv := vv.Index(i)
 					if vvv.Kind() == reflect.Pointer || vvv.Kind() == reflect.Interface {
-						setPointer(base, vvv, append(tagsCopy, Tag{Name: strconv.Itoa(i)}))
+						setPointer(base, vvv, append(tagsCopy, Tag{name: strconv.Itoa(i)}))
 					} else {
-						vvv.Set(populateFields(base, vvv, append(tagsCopy, Tag{Name: strconv.Itoa(i)})...))
+						vvv.Set(populateFields(base, vvv, append(tagsCopy, Tag{name: strconv.Itoa(i)})...))
 					}
 				}
 			}
@@ -243,7 +253,7 @@ func setPointer(base Base, v reflect.Value, tags []Tag) {
 		vv = vv.Elem()
 	}
 
-	vv = vv.Elem()
+	vv = reflect.Indirect(vv)
 	if v.IsNil() {
 		vv = reflect.New(v.Type().Elem()).Elem()
 	}
@@ -254,18 +264,31 @@ func setPointer(base Base, v reflect.Value, tags []Tag) {
 }
 
 type Tag struct {
-	Name      string
-	Alternate []string
+	name,
+	// prefix and suffix are applied to child tags
+	prefix,
+	suffix string
+	alternatives []string
 }
 
-func ParseTags(s string) (tag Tag) {
+func parseTag(s string) (tag Tag) {
 	parts := strings.Split(s, ",")
 	if len(parts) > 0 {
-		tag.Name = parts[0]
+		tag.name = parts[0]
 
 		for _, part := range parts[1:] {
-			if value, ok := strings.CutPrefix(part, "alt:"); ok {
-				tag.Alternate = append(tag.Alternate, value)
+			if value, ok := strings.CutPrefix(part, "alt:"); ok && tag.name == "" {
+				// elevate alternative to primary if no primary given
+				tag.name = value
+				slog.Warn("gguf tag has alt: but no primary name", "tag", s)
+			} else if ok {
+				tag.alternatives = append(tag.alternatives, value)
+			}
+			if value, ok := strings.CutPrefix(part, "pre:"); ok {
+				tag.prefix = value
+			}
+			if value, ok := strings.CutPrefix(part, "suf:"); ok {
+				tag.suffix = value
 			}
 		}
 	}
@@ -282,19 +305,13 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Tensor, error) {
+func Forward(ctx ml.Context, m Model, batch input.Batch) (ml.Tensor, error) {
 	if len(batch.Positions) != len(batch.Sequences) {
 		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
 	}
 
 	if len(batch.Positions) < 1 {
 		return nil, errors.New("batch size cannot be less than 1")
-	}
-
-	var err error
-	batch.Inputs, err = ctx.Input().FromIntSlice(inputs, len(inputs))
-	if err != nil {
-		return nil, err
 	}
 
 	cache := m.Config().Cache
@@ -310,7 +327,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 		return nil, err
 	}
 
-	ctx.Forward(t).Compute(t)
+	ctx.Forward(t)
 
 	return t, nil
 }

@@ -27,7 +27,6 @@ function checkEnv() {
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
     # Locate CUDA versions
-    # Note: this assumes every version found will be built
     $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
     if ($cudaList.length -eq 0) {
         $d=(get-command -ea 'silentlycontinue' nvcc).path
@@ -79,65 +78,126 @@ function checkEnv() {
 }
 
 
-function buildOllama() {
+function buildCPU() {
     mkdir -Force -path "${script:DIST_DIR}\"
     if ($script:ARCH -ne "arm64") {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-        & cmake --fresh --preset CPU --install-prefix $script:DIST_DIR
+        & cmake -B build\cpu --preset CPU --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build --preset CPU  --config Release --parallel $script:JOBS
+        & cmake --build build\cpu --target ggml-cpu --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --install build --component CPU --strip
+        & cmake --install build\cpu --component CPU --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
+}
 
+function buildCUDA11() {
+    # CUDA v11 claims to be compatible with MSVC 2022, but the latest updates are no longer compatible
+    # 19.40 is the last compiler version that works, but recent udpates are 19.43
+    # So this pins to MSVC 2019 for best compatibility
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
         if ("$script:CUDA_DIRS".Contains("v11")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
-            $env:CUDAToolkit_ROOT=$hashEnv[$v11]
-            write-host "Building CUDA v11 backend libraries"
-            # Note: cuda v11 requires msvc 2019 so force the older generator
-            # to avoid 2022 (or newer) from being used as the default
-            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            write-host "Building CUDA v11 backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake -B build\cuda_v11 --preset "CUDA 11" -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v11"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
+            & cmake --build build\cuda_v11 --target ggml-cuda --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
+            & cmake --install build\cuda_v11 --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-        if ("$script:CUDA_DIRS".Contains("v12")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
-            $env:CUDAToolkit_ROOT=$hashEnv[$v12]
-            write-host "Building CUDA v12 backend libraries"
-            & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
+    }
+}
+
+function buildCUDA12() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v12.8")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12_8")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            write-host "Building CUDA v12 backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake -B build\cuda_v12 --preset "CUDA 12" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v12"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
+            & cmake --build build\cuda_v12 --target ggml-cuda --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
+            & cmake --install build\cuda_v12 --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
+    }
+}
+
+function buildCUDA13() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v13")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V13")) { $x=$hashEnv[$_]; if (test-path -literalpath "$x\bin\nvcc.exe" ) { $cuda=$x}  }}
+            $env:CUDAToolkit_ROOT=$cuda
+            write-host "Building CUDA v13 backend libraries $cuda"
+            & cmake -B build\cuda_v13 --preset "CUDA 13" -T cuda="$cuda" --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="cuda_v13"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build build\cuda_v13 --target ggml-cuda --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build\cuda_v13 --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+    }
+}
+
+function buildROCm() {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
         if ($env:HIP_PATH) {
             write-host "Building ROCm backend libraries"
             if (-Not (get-command -ErrorAction silent ninja)) {
-                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe) | split-path -parent
+                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-            & cmake --fresh --preset "ROCm 6" -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ --install-prefix $script:DIST_DIR
+            & cmake --fresh -B build\rocm --preset "ROCm 6" -G Ninja -DOLLAMA_RUNNER_DIR="rocm" `
+                -DCMAKE_C_COMPILER=clang `
+                -DCMAKE_CXX_COMPILER=clang++ `
+                -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+                --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
             $env:CMAKE_PREFIX_PATH=""
-            & cmake --build --preset "ROCm"  --config Release --parallel $script:JOBS
+            & cmake --build build\rocm --target ggml-hip --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "HIP" --strip
+            & cmake --install build\rocm --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            Remove-Item -Path $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         }
     }
+}
+
+function buildVulkan(){
+    if ($env:VULKAN_SDK) {
+        write-host "Building Vulkan backend libraries"
+        & cmake --fresh --preset Vulkan --install-prefix $script:DIST_DIR -DOLLAMA_RUNNER_DIR="vulkan"
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build --preset Vulkan  --config Release --parallel $script:JOBS
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build --component Vulkan --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
+}
+
+function buildOllama() {
+    mkdir -Force -path "${script:DIST_DIR}\"
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -232,7 +292,7 @@ function distZip() {
         write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
         Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
         if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-rocm") {
-            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
+            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama\rocm"
         }
     }
 
@@ -245,6 +305,11 @@ function distZip() {
 checkEnv
 try {
     if ($($args.count) -eq 0) {
+        buildCPU
+        buildCUDA12
+        buildCUDA13
+        buildROCm
+        buildVulkan
         buildOllama
         buildApp
         gatherDependencies

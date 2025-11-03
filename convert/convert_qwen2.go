@@ -15,6 +15,7 @@ type qwen2Model struct {
 		Type                          string     `json:"type"`
 		Factor                        ropeFactor `json:"factor"`
 		OriginalMaxPositionEmbeddings uint32     `json:"original_max_position_embeddings"`
+		MropeSection                  []int32    `json:"mrope_section"`
 	} `json:"rope_scaling"`
 	RMSNormEPS float32 `json:"rms_norm_eps"`
 }
@@ -39,16 +40,18 @@ func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
 	case "yarn":
 		kv["qwen2.rope.scaling.type"] = q.RopeScaling.Type
 		kv["qwen2.rope.scaling.factor"] = q.RopeScaling.Factor
+	case "mrope", "default":
+		kv["qwen2.rope.mrope_section"] = q.RopeScaling.MropeSection
 	default:
 		panic("unknown rope scaling type")
 	}
 	return kv
 }
 
-func (q *qwen2Model) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (q *qwen2Model) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 	for _, t := range ts {
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

@@ -9,66 +9,84 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationLlava(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		Model:  "llava:7b",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]any{
-			"seed":        42,
-			"temperature": 0.0,
+func TestVisionModels(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
+	type testCase struct {
+		model string
+	}
+	testCases := []testCase{
+		{
+			model: "qwen2.5vl",
 		},
-		Images: []api.ImageData{
-			image,
+		{
+			model: "llama3.2-vision",
+		},
+		{
+			model: "gemma3",
+		},
+		{
+			model: "qwen3-vl:8b",
+		},
+		{
+			// Qwen 3 VL mixture of experts
+			model: "qwen3-vl:30b",
 		},
 	}
 
-	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
-	resp := "the ollam"
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// llava models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
-}
+	for _, v := range testCases {
+		t.Run(v.model, func(t *testing.T) {
+			image, err := base64.StdEncoding.DecodeString(imageEncoding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := api.ChatRequest{
+				Model: v.model,
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "what does the text in this image say?",
+						Images: []api.ImageData{
+							image,
+						},
+					},
+				},
+				Stream: &stream,
+				Options: map[string]any{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			client, _, cleanup := InitServerConnection(ctx, t)
 
-func TestIntegrationMllama(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		// TODO fix up once we publish the final image
-		Model:  "x/llama3.2-vision",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]any{
-			"seed":        42,
-			"temperature": 0.0,
-		},
-		Images: []api.ImageData{
-			image,
-		},
+			// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+			resp := "the ollam"
+			defer cleanup()
+			if err := PullIfMissing(ctx, client, req.Model); err != nil {
+				t.Fatal(err)
+			}
+			// Preload to skip if we're less than 80% on GPU to avoid extremely slow tests
+			err = client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
+			if err != nil {
+				t.Fatalf("failed to load model %s: %s", req.Model, err)
+			}
+			skipIfNotGPULoaded(ctx, t, client, req.Model, 80)
+
+			// llava models on CPU can be quite slow to start
+			DoChat(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
+		})
 	}
-
-	resp := "the ollamas"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// mllama models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
 }
 
 func TestIntegrationSplitBatch(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := api.GenerateRequest{
 		Model: "gemma3:4b",
 		// Fill up a chunk of the batch so the image will partially spill over into the next one
@@ -90,7 +108,9 @@ func TestIntegrationSplitBatch(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatal(err)
+	}
 	// llava models on CPU can be quite slow to start,
 	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
 }

@@ -11,15 +11,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"math"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"golang.org/x/exp/maps"
-
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -48,7 +47,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
 	}
 	t.Cleanup(func() { r.Close() })
 
-	m, _, err := ggml.Decode(r, math.MaxInt)
+	m, err := ggml.Decode(r, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,15 +130,14 @@ func TestConvertModel(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer expectFile.Close()
 
 			var expect map[string]string
 			if err := json.NewDecoder(expectFile).Decode(&expect); err != nil {
 				t.Fatal(err)
 			}
 
-			keys := maps.Keys(expect)
-			slices.Sort(keys)
-			for _, k := range keys {
+			for _, k := range slices.Sorted(maps.Keys(expect)) {
 				if v, ok := actual[k]; !ok {
 					t.Errorf("missing %s", k)
 				} else if v != expect[k] {
@@ -332,7 +330,7 @@ func TestConvertAdapter(t *testing.T) {
 			}
 			defer r.Close()
 
-			m, _, err := ggml.Decode(r, math.MaxInt)
+			m, err := ggml.Decode(r, -1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -342,15 +340,8 @@ func TestConvertAdapter(t *testing.T) {
 			}
 
 			actual := generateResultsJSON(t, r, m.KV(), m.Tensors())
-
-			keys := maps.Keys(c.Expected)
-			slices.Sort(keys)
-			for _, k := range keys {
-				if v, ok := actual[k]; !ok {
-					t.Errorf("missing %s", k)
-				} else if v != c.Expected[k] {
-					t.Errorf("unexpected %s: want %s, got %s", k, c.Expected[k], v)
-				}
+			if diff := cmp.Diff(c.Expected, actual); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

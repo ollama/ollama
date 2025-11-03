@@ -20,9 +20,6 @@ extern "C"
         float penalty_repeat;
         float penalty_freq;
         float penalty_present;
-        int32_t mirostat;
-        float mirostat_tau;
-        float mirostat_eta;
         uint32_t seed;
         char *grammar;
     };
@@ -35,8 +32,12 @@ extern "C"
 
     int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
 
-    struct llama_vocab * llama_load_vocab_from_file(const char * fname);
-    void llama_free_vocab(struct llama_vocab * vocab);
+
+    struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens);
+    void grammar_free(struct llama_grammar *g);
+    void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
+    void grammar_accept(struct llama_grammar *g, llama_token id);
+
 
 #ifdef __cplusplus
 }

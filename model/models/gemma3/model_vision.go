@@ -92,16 +92,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	positions := make([]int32, numPatches)
-	for i := range positions {
-		positions[i] = int32(i)
-	}
-
-	positionIDs, err := ctx.Input().FromIntSlice(positions, len(positions))
-	if err != nil {
-		panic(err)
-	}
-
+	positionIDs := ctx.Arange(0, float32(numPatches), 1, ml.DTypeI32)
 	hiddenState = hiddenState.Add(ctx, m.PositionEmbedding.Forward(ctx, positionIDs))
 
 	for _, layer := range m.Layers {

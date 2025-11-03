@@ -19,7 +19,7 @@ struct ggml_tallocr {
 };
 
 GGML_API struct ggml_tallocr ggml_tallocr_new(ggml_backend_buffer_t buffer);
-GGML_API void                ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor);
+GGML_API enum ggml_status    ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor);
 
 // Graph allocator
 /*
@@ -65,6 +65,7 @@ GGML_API bool ggml_gallocr_reserve_n(
 GGML_API bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph);
 
 GGML_API size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id);
+GGML_API size_t ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id);
 
 // Utils
 // Create a buffer and allocate all the tensors in a ggml_context

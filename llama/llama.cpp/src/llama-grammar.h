@@ -3,10 +3,22 @@
 #include "llama.h"
 
 #include <map>
+#include <regex>
 #include <string>
 #include <vector>
+#include <set>
 
 struct llama_vocab;
+struct ollama_vocab {
+    std::map<uint32_t, std::string> token_to_piece_map;
+    std::set<uint32_t> special_eog_ids;
+
+    const std::string & token_to_piece(const uint32_t token) const;
+    void add_token_pieces(const uint32_t* tokens, size_t n_tokens, const char** pieces);
+    void set_eog_tokens(const uint32_t* tokens, size_t n_tokens);
+    bool is_eog(const uint32_t token) const;
+
+};
 
 // grammar element type
 enum llama_gretype {
@@ -105,9 +117,15 @@ struct llama_grammar_parser {
     void print(FILE * file);
 };
 
+struct llama_grammar_trigger_pattern {
+    std::string pattern;
+    std::regex  regex;
+};
+
 struct llama_grammar {
     // note: allow null vocab for testing (not great)
     const llama_vocab * vocab;
+    const ollama_vocab * o_vocab;
 
     const llama_grammar_rules  rules;  // TODO: shared ptr
           llama_grammar_stacks stacks;
@@ -122,7 +140,10 @@ struct llama_grammar {
     bool                     awaiting_trigger = false; // Initialized to true for lazy grammars only
     std::string              trigger_buffer;           // Output buffered by lazy grammar. Will be cleared once trigger is found.
     std::vector<llama_token> trigger_tokens;           // Tokens that trigger a lazy grammar, or tokens to force printing of (even if special).
-    std::vector<std::string> trigger_words;
+    std::vector<llama_grammar_trigger_pattern>
+                             trigger_patterns;         // Regular expressions that trigger a lazy grammar. Must be a full match of the entire generated
+                                                       // string, and the grammar will be given the string from the first match group onwards.
+
 };
 
 //
@@ -132,17 +153,19 @@ struct llama_grammar {
 // note: needed for tests (not great)
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
+        const struct ollama_vocab * ollama_vocab,
         const llama_grammar_element ** rules,
         size_t n_rules,
         size_t start_rule_index);
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
+        const struct ollama_vocab * ollama_vocab,
                       const char * grammar_str,
                       const char * grammar_root,
                               bool lazy,
-                     const char ** trigger_words,
-                            size_t num_trigger_words,
+                     const char ** trigger_patterns,
+                            size_t num_trigger_patterns,
                const llama_token * trigger_tokens,
                             size_t num_trigger_tokens);
 

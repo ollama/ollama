@@ -50,20 +50,18 @@ static __global__ void rope_norm(
 
     const int row_dst = blockDim.x*blockIdx.x + threadIdx.x;
 
-    if (i0 >= n_dims) {
-        const int i = row_dst*ne0 + i0;
-
-        dst[i + 0] = x[i + 0];
-        dst[i + 1] = x[i + 1];
-
-        return;
-    }
-
     const int row_x     = row_dst % ne1;
     const int channel_x = row_dst / ne1;
 
     const int idst = row_dst*ne0 + i0;
     const int ix   = channel_x*s2 + row_x*s1 + i0;
+
+    if (i0 >= n_dims) {
+        dst[idst + 0] = x[ix + 0];
+        dst[idst + 1] = x[ix + 1];
+
+        return;
+    }
 
     const float theta_base = pos[channel_x]*powf(theta_scale, i0/2.0f);
 
@@ -94,20 +92,18 @@ static __global__ void rope_neox(
 
     const int row_dst = blockDim.x*blockIdx.x + threadIdx.x;
 
-    if (i0 >= n_dims) {
-        const int i = row_dst*ne0 + i0;
-
-        dst[i + 0] = x[i + 0];
-        dst[i + 1] = x[i + 1];
-
-        return;
-    }
-
     const int row_x     = row_dst % ne1;
     const int channel_x = row_dst / ne1;
 
     const int idst = row_dst*ne0 + i0/2;
     const int ix   = channel_x*s2 + row_x*s1 + i0/2;
+
+    if (i0 >= n_dims) {
+        dst[idst + i0/2 + 0] = x[ix + i0/2 + 0];
+        dst[idst + i0/2 + 1] = x[ix + i0/2 + 1];
+
+        return;
+    }
 
     const float theta_base = pos[channel_x]*powf(theta_scale, i0/2.0f);
 
@@ -138,37 +134,29 @@ static __global__ void rope_multi(
 
     const int row_dst = blockDim.x*blockIdx.x + threadIdx.x;
 
-    if (i0 >= n_dims) {
-        const int i = row_dst*ne0 + i0;
-
-        dst[i + 0] = x[i + 0];
-        dst[i + 1] = x[i + 1];
-
-        return;
-    }
-
     const int row_x     = row_dst % ne1;
     const int channel_x = row_dst / ne1;
 
     const int idst = row_dst*ne0 + i0/2;
     const int ix   = channel_x*s2 + row_x*s1 + i0/2;
 
+    if (i0 >= n_dims) {
+        dst[idst + i0/2 + 0] = x[ix + i0/2 + 0];
+        dst[idst + i0/2 + 1] = x[ix + i0/2 + 1];
+
+        return;
+    }
+
     const int sect_dims = sections.v[0] + sections.v[1] + sections.v[2] + sections.v[3];
     const int sec_w = sections.v[1] + sections.v[0];
     const int sector = (i0 / 2) % sect_dims;
 
-    float theta_base = 0.0;
-    if (sector < sections.v[0]) {
-        theta_base = pos[channel_x]*powf(theta_scale, i0/2.0f);
-    }
-    else if (sector >= sections.v[0] && sector < sec_w) {
+    float theta_base = pos[channel_x]*powf(theta_scale, i0/2.0f);
+    if (sector % 3 == 1 && sector < 1 + 3 * sections.v[1]) {
         theta_base = pos[channel_x + ne2 * 1]*powf(theta_scale, i0/2.0f);
     }
-    else if (sector >= sec_w && sector < sec_w + sections.v[2]) {
+    else if (sector % 3 == 2 && sector < 2 + 3 * sections.v[2]) {
         theta_base = pos[channel_x + ne2 * 2]*powf(theta_scale, i0/2.0f);
-    }
-    else if (sector >= sec_w + sections.v[2]) {
-        theta_base = pos[channel_x + ne2 * 3]*powf(theta_scale, i0/2.0f);
     }
 
     const float freq_factor = has_ff ? freq_factors[i0/2] : 1.0f;

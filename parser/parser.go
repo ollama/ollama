@@ -39,7 +39,17 @@ func (f Modelfile) String() string {
 	return sb.String()
 }
 
-var deprecatedParameters = []string{"penalize_newline"}
+var deprecatedParameters = []string{
+	"penalize_newline",
+	"low_vram",
+	"f16_kv",
+	"logits_all",
+	"vocab_only",
+	"use_mlock",
+	"mirostat",
+	"mirostat_tau",
+	"mirostat_eta",
+}
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
 func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error) {
@@ -90,6 +100,10 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			req.System = c.Args
 		case "license":
 			licenses = append(licenses, c.Args)
+		case "renderer":
+			req.Renderer = c.Args
+		case "parser":
+			req.Parser = c.Args
 		case "message":
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
@@ -139,9 +153,27 @@ func fileDigestMap(path string) (map[string]string, error) {
 
 	var files []string
 	if fi.IsDir() {
-		files, err = filesForModel(path)
+		fs, err := filesForModel(path)
 		if err != nil {
 			return nil, err
+		}
+
+		for _, f := range fs {
+			f, err := filepath.EvalSymlinks(f)
+			if err != nil {
+				return nil, err
+			}
+
+			rel, err := filepath.Rel(path, f)
+			if err != nil {
+				return nil, err
+			}
+
+			if !filepath.IsLocal(rel) {
+				return nil, fmt.Errorf("insecure path: %s", rel)
+			}
+
+			files = append(files, f)
 		}
 	} else {
 		files = []string{path}
@@ -215,11 +247,11 @@ func filesForModel(path string) ([]string, error) {
 			return nil, err
 		}
 
-		for _, safetensor := range matches {
-			if ct, err := detectContentType(safetensor); err != nil {
+		for _, match := range matches {
+			if ct, err := detectContentType(match); err != nil {
 				return nil, err
-			} else if ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
+			} else if len(contentType) > 0 && ct != contentType {
+				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
 			}
 		}
 
@@ -227,7 +259,8 @@ func filesForModel(path string) ([]string, error) {
 	}
 
 	var files []string
-	if st, _ := glob(filepath.Join(path, "*.safetensors"), "application/octet-stream"); len(st) > 0 {
+	// some safetensors files do not properly match "application/octet-stream", so skip checking their contentType
+	if st, _ := glob(filepath.Join(path, "*.safetensors"), ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
@@ -264,13 +297,18 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
-	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-		// tokenizer.model might be a unresolved git lfs reference; error if it is
-		files = append(files, tks...)
-	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
-		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
-		files = append(files, tks...)
+	// only include tokenizer.model is tokenizer.json is not present
+	if !slices.ContainsFunc(files, func(s string) bool {
+		return slices.Contains(strings.Split(s, string(os.PathSeparator)), "tokenizer.json")
+	}) {
+		if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+			// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
+			// tokenizer.model might be a unresolved git lfs reference; error if it is
+			files = append(files, tks...)
+		} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+			// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
+			files = append(files, tks...)
+		}
 	}
 
 	return files, nil
@@ -286,7 +324,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter":
+	case "license", "template", "system", "adapter", "renderer", "parser":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -312,7 +350,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", or \"message\"")
 )
 
 type ParserError struct {
@@ -572,7 +610,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "parameter", "message":
+	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message":
 		return true
 	default:
 		return false

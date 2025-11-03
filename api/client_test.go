@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,6 +90,16 @@ func TestClientStream(t *testing.T) {
 			wantErr: "mid-stream error",
 		},
 		{
+			name: "http status error takes precedence over general error",
+			responses: []any{
+				testError{
+					message:    "custom error message",
+					statusCode: http.StatusInternalServerError,
+				},
+			},
+			wantErr: "500",
+		},
+		{
 			name: "successful stream completion",
 			responses: []any{
 				ChatResponse{Message: Message{Content: "chunk 1"}},
@@ -137,7 +146,7 @@ func TestClientStream(t *testing.T) {
 			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
 
 			var receivedChunks []ChatResponse
-			err := client.stream(context.Background(), http.MethodPost, "/v1/chat", nil, func(chunk []byte) error {
+			err := client.stream(t.Context(), http.MethodPost, "/v1/chat", nil, func(chunk []byte) error {
 				var resp ChatResponse
 				if err := json.Unmarshal(chunk, &resp); err != nil {
 					return fmt.Errorf("failed to unmarshal chunk: %w", err)
@@ -223,7 +232,7 @@ func TestClientDo(t *testing.T) {
 				ID      string `json:"id"`
 				Success bool   `json:"success"`
 			}
-			err := client.do(context.Background(), http.MethodPost, "/v1/messages", nil, &resp)
+			err := client.do(t.Context(), http.MethodPost, "/v1/messages", nil, &resp)
 
 			if tc.wantErr != "" {
 				if err == nil {

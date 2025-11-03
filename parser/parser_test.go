@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -196,6 +197,34 @@ BADCOMMAND param1 value1
 	if !errors.As(err, &parserError) {
 		t.Errorf("unexpected error: expected: %s, actual: %s", parserError.Error(), err.Error())
 	}
+}
+
+func TestParseFileRenderer(t *testing.T) {
+	input := `
+FROM foo
+RENDERER renderer1
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "renderer", Args: "renderer1"}}, modelfile.Commands)
+}
+
+func TestParseFileParser(t *testing.T) {
+	input := `
+FROM foo
+PARSER parser1
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "parser", Args: "parser1"}}, modelfile.Commands)
 }
 
 func TestParseFileMessages(t *testing.T) {
@@ -478,11 +507,7 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gqa 1":                    {"num_gqa", "1"},
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
-		"low_vram true":                {"low_vram", "true"},
-		"logits_all true":              {"logits_all", "true"},
-		"vocab_only true":              {"vocab_only", "true"},
 		"use_mmap true":                {"use_mmap", "true"},
-		"use_mlock true":               {"use_mlock", "true"},
 		"num_thread 1":                 {"num_thread", "1"},
 		"num_keep 1":                   {"num_keep", "1"},
 		"seed 1":                       {"seed", "1"},
@@ -496,9 +521,6 @@ func TestParseFileParameters(t *testing.T) {
 		"repeat_penalty 1.0":           {"repeat_penalty", "1.0"},
 		"presence_penalty 1.0":         {"presence_penalty", "1.0"},
 		"frequency_penalty 1.0":        {"frequency_penalty", "1.0"},
-		"mirostat 1":                   {"mirostat", "1"},
-		"mirostat_tau 1.0":             {"mirostat_tau", "1.0"},
-		"mirostat_eta 1.0":             {"mirostat_eta", "1.0"},
 		"penalize_newline true":        {"penalize_newline", "true"},
 		"stop ### User:":               {"stop", "### User:"},
 		"stop ### User: ":              {"stop", "### User:"},
@@ -769,7 +791,7 @@ func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, string) {
+func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
@@ -778,7 +800,10 @@ func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, s
 	}
 	defer f.Close()
 
-	if err := ggml.WriteGGUF(f, kv, ti); err != nil {
+	base := map[string]any{"general.architecture": "test"}
+	maps.Copy(base, kv)
+
+	if err := ggml.WriteGGUF(f, base, ti); err != nil {
 		t.Fatal(err)
 	}
 	// Calculate sha256 of file
