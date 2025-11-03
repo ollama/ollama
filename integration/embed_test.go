@@ -306,9 +306,12 @@ func embedTestHelper(ctx context.Context, client *api.Client, t *testing.T, req 
 }
 
 func TestEmbedTruncation(t *testing.T) {
-	// Using adaptive soft/hard timeouts to avoid a single global 2m context
-	softTimeout, hardTimeout := getTimeouts(t)
-	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
+	// Use test deadline if set, otherwise default to 2 minutes
+	timeout := 2 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		timeout = time.Until(deadline) - 10*time.Second // Reserve 10s buffer
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -316,8 +319,9 @@ func TestEmbedTruncation(t *testing.T) {
 	for _, model := range libraryEmbedModels {
 		model := model
 		t.Run(model, func(t *testing.T) {
-			if time.Since(started) > softTimeout {
-				t.Skip("skipping remaining tests to avoid excessive runtime")
+			// Check if we're running out of time (reserve 20s for current model)
+			if deadline, ok := t.Deadline(); ok && time.Until(deadline) < 20*time.Second {
+				t.Skip("skipping remaining tests to avoid timeout")
 			}
 
 			// Give each model its own budget to account for first-time pulls/loads
@@ -378,8 +382,12 @@ func TestEmbedTruncation(t *testing.T) {
 // This test specifically checks the error handling path in EmbedHandler
 // where api.StatusError errors should maintain their original status code.
 func TestEmbedStatusCode(t *testing.T) {
-	softTimeout, hardTimeout := getTimeouts(t)
-	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
+	// Use test deadline if set, otherwise default to 2 minutes
+	timeout := 2 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		timeout = time.Until(deadline) - 10*time.Second // Reserve 10s buffer
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -387,8 +395,9 @@ func TestEmbedStatusCode(t *testing.T) {
 	for _, model := range libraryEmbedModels {
 		model := model
 		t.Run(model, func(t *testing.T) {
-			if time.Since(started) > softTimeout {
-				t.Skip("skipping remaining tests to avoid excessive runtime")
+			// Check if we're running out of time (reserve 20s for current model)
+			if deadline, ok := t.Deadline(); ok && time.Until(deadline) < 20*time.Second {
+				t.Skip("skipping remaining tests to avoid timeout")
 			}
 
 			mctx, mcancel := context.WithTimeout(ctx, 3*time.Minute)

@@ -135,42 +135,31 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			return nil, errorInputTooLong
 		}
 
-		discard := int32(len(inputs)) - s.cache.numCtx
-
 		var newInputs []*input.Input
 
 		if params.embedding {
-			var lastIsEOG bool
-
-			eogToken := int32(0)
-			if len(inputs) > 0 {
-				if textProcessor, ok := s.model.(model.TextProcessor); ok {
-					lastToken := inputs[len(inputs)-1]
-					if textProcessor.Is(lastToken.Token, model.SpecialEOS) {
-						eogToken = lastToken.Token
-					}
-				}
-			}
-
 			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
 			newLimit := s.cache.numCtx - 1
-
-			if s.model.(model.TextProcessor).Is(inputs[len(inputs)-1].Token, model.SpecialEOS) && !s.model.(model.TextProcessor).Is(inputs[newLimit-1].Token, model.SpecialEOS) {
-				lastIsEOG = true
-				newLimit--
-			}
 
 			if newLimit <= 0 {
 				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
 			}
 
-			newInputs = inputs[:newLimit]
-
-			if lastIsEOG {
-				newInputs = append(newInputs, &input.Input{Token: eogToken})
+			// Get the EOS token from the original input
+			eogToken := int32(0)
+			if textProcessor, ok := s.model.(model.TextProcessor); ok {
+				lastToken := inputs[len(inputs)-1]
+				if textProcessor.Is(lastToken.Token, model.SpecialEOS) {
+					eogToken = lastToken.Token
+				}
 			}
+
+			// Truncate and always end with EOS
+			newInputs = inputs[:newLimit-1]
+			newInputs = append(newInputs, &input.Input{Token: eogToken})
 		} else {
 			// Otherwise, truncate in the middle
+			discard := int32(len(inputs)) - s.cache.numCtx
 			promptStart := params.numKeep + discard
 
 			// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
@@ -208,13 +197,12 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	// TODO(jessegross): Ingest cached history for grammar
-	promptCount := len(inputs)
 
 	return &Sequence{
 		ctxs:             ctxs,
 		mmStore:          mmStore,
 		inputs:           inputs,
-		numPromptInputs:  promptCount,
+		numPromptInputs:  len(inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),
