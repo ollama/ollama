@@ -16,9 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	runningInstaller string
-)
+var runningInstaller string
 
 type OSVERSIONINFOEXW struct {
 	dwOSVersionInfoSize uint32
@@ -147,7 +145,7 @@ func DoUpgrade(interactive bool) error {
 	// If this becomes looping a problem, we may need to look for failures
 	// in the upgrade log in DoPostUpgradeCleanup and then not download
 	// the same version again.
-	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0666)
+	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0o666)
 	if err != nil {
 		slog.Warn("unable to create marker file", "file", UpgradeMarkerFile, "error", err)
 	}
@@ -172,7 +170,7 @@ func DoPostUpgradeCleanup() error {
 	if err != nil {
 		slog.Debug("failed to remove running installer on first attempt, backgrounding...", "installer", runningInstaller, "error", err)
 		go func() {
-			for _ = range 10 {
+			for range 10 {
 				time.Sleep(5 * time.Second)
 				if err := os.Remove(runningInstaller); err == nil {
 					slog.Debug("installer cleaned up")

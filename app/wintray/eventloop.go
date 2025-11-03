@@ -68,7 +68,6 @@ func (t *winTray) TrayRun() {
 // WindowProc callback function that processes messages sent to a window.
 // https://msdn.microsoft.com/en-us/library/windows/desktop/ms633573(v=vs.85).aspx
 func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam uintptr) (lResult uintptr) {
-
 	// slog.Debug("XXX in winTray.wndProc", "message", fmt.Sprintf("0x%x", message), "wParam", fmt.Sprintf("0x%x", wParam), "lParam", fmt.Sprintf("0x%x", lParam))
 	switch message {
 	case WM_COMMAND:

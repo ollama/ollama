@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 package server
 
 import (
@@ -326,6 +328,7 @@ func GetInferenceComputer(ctx context.Context) ([]InferenceCompute, error) {
 			time.Sleep(time.Second)
 			continue
 		}
+		defer file.Close()
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := scanner.Text()

@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 package main
 
 import (
@@ -24,7 +26,6 @@ import (
 var (
 	u32                  = windows.NewLazySystemDLL("User32.dll")
 	pBringWindowToTop    = u32.NewProc("BringWindowToTop")
-	pSetWindowLong       = u32.NewProc("SetWindowLongA")
 	pShowWindow          = u32.NewProc("ShowWindow")
 	pSendMessage         = u32.NewProc("SendMessageA")
 	pGetSystemMetrics    = u32.NewProc("GetSystemMetrics")
@@ -35,7 +36,6 @@ var (
 	pIsIconic            = u32.NewProc("IsIconic")
 
 	appPath         = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Ollama")
-	appDataPath     = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama")
 	appLogPath      = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "app.log")
 	startupShortcut = filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Ollama.lnk")
 	ollamaPath      string
@@ -93,6 +93,7 @@ var app = &appCallbacks{}
 func (ac *appCallbacks) UIRun(path string) {
 	wv.Run(path)
 }
+
 func (*appCallbacks) UIShow() {
 	if wv.webview != nil {
 		showWindow(wv.webview.Window())
@@ -100,18 +101,21 @@ func (*appCallbacks) UIShow() {
 		wv.Run("/")
 	}
 }
+
 func (*appCallbacks) UITerminate() {
 	wv.Terminate()
 }
+
 func (*appCallbacks) UIRunning() bool {
 	return wv.IsRunning()
 }
+
 func (app *appCallbacks) Quit() {
 	app.t.Quit()
 	wv.Terminate()
 }
 
-// TODO - reconcile with above for consitency between mac/windows
+// TODO - reconcile with above for consistency between mac/windows
 func quit() {
 	wv.Terminate()
 }
@@ -263,7 +267,6 @@ func sendUIRequestMessage(path string) {
 }
 
 func LaunchNewApp() {
-
 }
 
 func logStartup() {

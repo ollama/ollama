@@ -14,8 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var pidFile = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "ollama.pid")
-var serverLogPath = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "server.log")
+var (
+	pidFile       = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "ollama.pid")
+	serverLogPath = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "server.log")
+)
 
 func commandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, arg...)
@@ -111,7 +113,7 @@ func reapServers() error {
 	if err != nil {
 		// No ollama processes found
 		slog.Debug("no ollama processes found")
-		return nil
+		return nil //nolint:nilerr
 	}
 
 	lines := strings.Split(string(output), "\n")

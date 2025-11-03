@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 // package ui implements a chat interface for Ollama
 package ui
 
@@ -31,6 +33,7 @@ import (
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
+	_ "github.com/tkrajina/typescriptify-golang-structs/typescriptify"
 )
 
 //go:generate tscriptify -package=github.com/ollama/ollama/app/ui/responses -target=./app/codegen/gotypes.gen.ts responses/types.go
@@ -119,11 +122,11 @@ func (s *Server) ollamaProxy() http.Handler {
 	if ollamaHost == "" {
 		ollamaHost = "http://127.0.0.1:11434"
 	}
-	
+
 	if !strings.HasPrefix(ollamaHost, "http://") && !strings.HasPrefix(ollamaHost, "https://") {
 		ollamaHost = "http://" + ollamaHost
 	}
-	
+
 	target, err := url.Parse(ollamaHost)
 	if err != nil {
 		s.log().Error("failed to parse OLLAMA_HOST", "error", err, "host", ollamaHost)
@@ -131,23 +134,23 @@ func (s *Server) ollamaProxy() http.Handler {
 			http.Error(w, "failed to configure proxy", http.StatusInternalServerError)
 		})
 	}
-	
+
 	s.log().Info("configuring ollama proxy", "target", target.String())
-	
+
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	
+
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.Host = target.Host
 		s.log().Debug("proxying request", "method", req.Method, "path", req.URL.Path, "target", target.Host)
 	}
-	
+
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		s.log().Error("proxy error", "error", err, "path", r.URL.Path, "target", target.String())
 		http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
 	}
-	
+
 	return proxy
 }
 
@@ -256,12 +259,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
-	
+
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
 	mux.Handle("GET /api/tags", ollamaProxy)
 	mux.Handle("POST /api/show", ollamaProxy)
-	
+
 	mux.Handle("GET /api/v1/me", handle(s.me))
 	mux.Handle("POST /api/v1/disconnect", handle(s.disconnect))
 	mux.Handle("GET /api/v1/connect", handle(s.connectURL))

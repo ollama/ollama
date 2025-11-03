@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 package main
 
 // #cgo CFLAGS: -x objective-c
