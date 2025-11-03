@@ -78,44 +78,31 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	}
 
 	query = query.Reshape(ctx, query.Dim(0)/opts.numHeads, opts.numHeads, seqLength)
-
-	qPass := query.View(ctx, 0,
-		opts.qkNopeHeadDim, query.Stride(1),
-		query.Dim(1), query.Stride(2),
-		query.Dim(2))
-
-	qRot := query.View(ctx, opts.qkNopeHeadDim*query.Stride(0),
-		opts.qkRopeHeadDim, query.Stride(1),
-		query.Dim(1), query.Stride(2),
-		query.Dim(2))
+	queryChunks := query.ChunkSections(ctx, 0, opts.qkNopeHeadDim, opts.qkRopeHeadDim)
 
 	compressedKV := attn.KVA.Forward(ctx, hiddenStates)
-
-	kPass := compressedKV.View(ctx, 0, opts.kvLoraRank, compressedKV.Stride(1), compressedKV.Dim(1))
-	kRot := compressedKV.View(ctx, opts.kvLoraRank*compressedKV.Stride(0),
-		opts.qkRopeHeadDim, compressedKV.Stride(1),
-		1, compressedKV.Stride(1),
-		compressedKV.Dim(1))
+	kPass := compressedKV.Slice(ctx, 0, 0, opts.kvLoraRank, 1)
+	kRot := compressedKV.View(ctx,
+		opts.kvLoraRank*compressedKV.Stride(0), opts.qkRopeHeadDim,
+		compressedKV.Stride(1), 1,
+		compressedKV.Stride(1), compressedKV.Dim(1),
+	)
 
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
 	kPass = attn.KVB.Forward(ctx, kPass)
 
 	kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
-	kPass = kv.View(ctx, 0, opts.kqNopeHeadDim, kv.Stride(1), kv.Dim(1), kv.Stride(2), kv.Dim(2))
-	value := kv.View(ctx, opts.kqNopeHeadDim*kv.Stride(0),
-		opts.vHeadDim, kv.Stride(1),
-		kv.Dim(1), kv.Stride(2),
-		kv.Dim(2)).Contiguous(ctx)
+	kvChunks := kv.ChunkSections(ctx, 0, opts.kqNopeHeadDim, opts.vHeadDim)
 
-	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	qRot := fast.RoPE(ctx, queryChunks[1], positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 
-	kRot = kRot.Repeat(ctx, 1, qPass.Dim(1))
+	kRot = kRot.Repeat(ctx, 1, queryChunks[0].Dim(1))
 
-	query = qRot.Concat(ctx, qPass, 0)
-	key := kRot.Concat(ctx, kPass, 0)
+	query = qRot.Concat(ctx, queryChunks[0], 0)
+	key := kRot.Concat(ctx, kvChunks[0], 0)
 
-	attention := nn.Attention(ctx, query, key, value, opts.kqScale, cache)
+	attention := nn.Attention(ctx, query, key, kvChunks[1], opts.kqScale, cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
 	return attn.Output.Forward(ctx, attention)
 }
@@ -142,6 +129,7 @@ func (moe *sparse) Moe(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml
 
 	experts := moe.Down.Weight.MulmatID(ctx, hiddenStates, topKIndices)
 	experts = experts.Mul(ctx, topKWeights)
+
 	nextStates := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
 	for i := 1; i < opts.numExpertsUsed; i++ {
 		nextStates = nextStates.Add(ctx, experts.View(ctx, i*experts.Stride(1), experts.Dim(0), experts.Stride(2), experts.Dim(2)))
