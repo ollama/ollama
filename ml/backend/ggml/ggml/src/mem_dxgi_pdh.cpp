@@ -180,6 +180,7 @@ extern "C" {
             if (pdh != NULL) {
                 FreeLibrary((HMODULE)(pdh));
             }
+            SetErrorMode(old_mode);
             return ERROR_DLL_NOT_FOUND;
         }
         else {
@@ -196,6 +197,8 @@ extern "C" {
         dll_functions.PdhGetFormattedCounterValue = (PDH_STATUS (*)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhGetFormattedCounterValue");
         dll_functions.PdhCloseQuery = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCloseQuery");
     
+        SetErrorMode(old_mode); // set old mode before any return
+
         // Check if any function pointers are NULL (not found)
         if (dll_functions.CreateDXGIFactory1 == NULL || dll_functions.PdhOpenQueryW == NULL || dll_functions.PdhAddCounterW == NULL || dll_functions.PdhCollectQueryData == NULL || dll_functions.PdhGetFormattedCounterValue == NULL || dll_functions.PdhCloseQuery == NULL) {
             GGML_LOG_INFO("%s unable to locate required symbols in either dxgi.dll or pdh.dll", __func__);
@@ -205,8 +208,6 @@ extern "C" {
             dll_functions.pdh_dll_handle = NULL;
             return ERROR_PROC_NOT_FOUND;
         }
-        
-        SetErrorMode(old_mode);
     
         // No other initializations needed, successfully loaded the libraries and functions!
         return ERROR_SUCCESS;
