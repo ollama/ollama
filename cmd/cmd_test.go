@@ -386,7 +386,6 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
-	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
@@ -427,7 +426,7 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 		t.Fatal("server did not receive embed request")
 	}
 
-	expectOutput := "0.1 0.2\n"
+	expectOutput := "[0.1,0.2]\n"
 	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
@@ -461,14 +460,10 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
-	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
 
-	if err := cmd.Flags().Set("format", "json"); err != nil {
-		t.Fatalf("failed to set format flag: %v", err)
-	}
 	if err := cmd.Flags().Set("truncate", "true"); err != nil {
 		t.Fatalf("failed to set truncate flag: %v", err)
 	}
@@ -515,11 +510,11 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 		t.Fatal("server did not receive embed request")
 	}
 
-	var resp api.EmbedResponse
-	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+	var embedding []float32
+	if err := json.Unmarshal(out.Bytes(), &embedding); err != nil {
 		t.Fatalf("failed to decode json output: %v", err)
 	}
-	if diff := cmp.Diff(float32(0.3), resp.Embeddings[0][0]); diff != "" {
+	if diff := cmp.Diff([]float32{0.3, 0.4}, embedding); diff != "" {
 		t.Errorf("unexpected embedding response (-want +got):\n%s", diff)
 	}
 }
@@ -551,7 +546,6 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
-	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
@@ -596,7 +590,7 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 		t.Fatal("server did not receive embed request")
 	}
 
-	expectOutput := "0.5 0.6\n"
+	expectOutput := "[0.5,0.6]\n"
 	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
@@ -612,7 +606,6 @@ func TestEmbedHandlerNoInput(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
-	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")

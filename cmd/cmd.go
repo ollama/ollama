@@ -397,13 +397,15 @@ func EmbedHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	for _, embedding := range resp.Embeddings {
-		output, err := json.Marshal(embedding)
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(output))
+	if len(resp.Embeddings) == 0 {
+		return errors.New("no embeddings returned")
 	}
+
+	output, err := json.Marshal(resp.Embeddings[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(output))
 
 	return nil
 }
@@ -1776,8 +1778,8 @@ func NewCLI() *cobra.Command {
 		Short: "Generate embeddings from a model",
 		Long: "Generate embeddings for text input using an Ollama model. " +
 			"Provide text as arguments or pipe text via stdin for scripted use.",
-		Example: strings.TrimSpace(`  ollama embed nomic-embed-text "Hello world"
-	echo "Hello world" | ollama embed nomic-embed-text`),
+		Example: strings.TrimSpace(`  ollama embed embeddinggemma "Hello world"
+	echo "Hello world" | ollama embed embeddinggemma`),
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    EmbedHandler,
