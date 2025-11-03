@@ -12466,15 +12466,19 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
         ggml_dxgi_pdh_release();
     }
 
-    // Use vendor specific management libraries for best VRAM reporting if available
-    switch (props2.properties.vendorID) {
+    if (!ctx->is_integrated_gpu) 
+    {
+        // Use vendor specific management libraries for best VRAM reporting if available
+        switch (props2.properties.vendorID) {
         case VK_VENDOR_ID_AMD:
             if (ggml_hip_mgmt_init() == 0) {
                 int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total);
                 if (status == 0) {
                     GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
                     ggml_hip_mgmt_release();
+                    return;
                 }
+                ggml_hip_mgmt_release();
             }
             break;
         case VK_VENDOR_ID_NVIDIA:
@@ -12483,9 +12487,12 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
                 if (status == 0) {
                     GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->uuid.c_str(), *free, *total);
                     ggml_nvml_release();
+                    return;
                 }
+                ggml_nvml_release();
             }
             break;
+        }
     }
 
     // else fallback to memory budget if supported
