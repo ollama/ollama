@@ -12435,7 +12435,6 @@ struct ggml_backend_vk_device_context {
     std::string id;
     std::string uuid;
     std::string luid;
-    std::string numeric_id;
     int major;
     int minor;
     int driver_major;
@@ -12661,7 +12660,6 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->driver_minor = ctx->driver_minor;
     props->integrated = ctx->is_integrated_gpu;
     props->library = GGML_VK_NAME;
-    props->numeric_id = ctx->numeric_id.c_str();
 }
 
 static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
@@ -13142,7 +13140,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
                 ctx->driver_major = 0;
                 ctx->driver_minor = 0;
-                ctx->numeric_id = std::to_string(i);
             }
             initialized = true;
         }

@@ -730,10 +730,6 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 			info.PCIID = C.GoString(props.device_id)
 		}
 		info.LibraryPath = ggml.LibPaths()
-		if props.numeric_id != nil {
-			info.FilteredID = C.GoString(props.numeric_id)
-		}
-
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
 		info.TotalMemory = (uint64)(props.memory_total)
 		info.FreeMemory = (uint64)(props.memory_free)

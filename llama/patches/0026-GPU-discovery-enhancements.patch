@@ -14,24 +14,24 @@ Vulkan PCI and Memory
 
 fix vulkan PCI ID and ID handling
 ---
- ggml/include/ggml-backend.h          |   8 +
+ ggml/include/ggml-backend.h          |   6 +
  ggml/src/CMakeLists.txt              |   2 +
  ggml/src/ggml-cuda/ggml-cuda.cu      |  65 ++++
  ggml/src/ggml-cuda/vendors/hip.h     |   3 +
  ggml/src/ggml-impl.h                 |   8 +
  ggml/src/ggml-metal/ggml-metal.cpp   |   2 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 212 +++++++++++--
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 209 +++++++++++--
  ggml/src/mem_hip.cpp                 | 452 +++++++++++++++++++++++++++
  ggml/src/mem_nvml.cpp                | 209 +++++++++++++
- 9 files changed, 931 insertions(+), 30 deletions(-)
+ 9 files changed, 926 insertions(+), 30 deletions(-)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index ba181d09d..809835243 100644
+index 69223c488..6510e0cba 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
-@@ -169,6 +169,14 @@ extern "C" {
+@@ -169,6 +169,12 @@ extern "C" {
          const char * device_id;
          // device capabilities
          struct ggml_backend_dev_caps caps;
@@ -41,8 +41,6 @@ index ba181d09d..809835243 100644
 +        int compute_minor;
 +        int integrated;
 +        const char *library;
-+        // number with which the devices are accessed (Vulkan)
-+        const char *numeric_id;
      };
  
      GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
@@ -60,7 +58,7 @@ index 0609c6503..aefe43bdd 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 87c6c34a4..b075a18be 100644
+index 5787e8cd5..d232bf828 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -261,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -92,7 +90,7 @@ index 87c6c34a4..b075a18be 100644
          GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
                          id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
                          ggml_cuda_parse_uuid(prop, id).c_str());
-@@ -3484,6 +3499,11 @@ struct ggml_backend_cuda_device_context {
+@@ -3476,6 +3491,11 @@ struct ggml_backend_cuda_device_context {
      std::string description;
      std::string pci_bus_id;
      std::string id;
@@ -104,7 +102,7 @@ index 87c6c34a4..b075a18be 100644
  };
  
  static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
-@@ -3504,6 +3524,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
+@@ -3496,6 +3516,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
  static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
      ggml_cuda_set_device(ctx->device);
@@ -133,7 +131,7 @@ index 87c6c34a4..b075a18be 100644
      CUDA_CHECK(cudaMemGetInfo(free, total));
  }
  
-@@ -3512,6 +3554,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+@@ -3504,6 +3546,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
      return GGML_BACKEND_DEVICE_TYPE_GPU;
  }
  
@@ -141,7 +139,7 @@ index 87c6c34a4..b075a18be 100644
  static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
  
-@@ -3525,6 +3568,19 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+@@ -3517,6 +3560,19 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
      // If you need the memory data, call ggml_backend_dev_memory() explicitly.
      props->memory_total = props->memory_free = 0;
  
@@ -161,7 +159,7 @@ index 87c6c34a4..b075a18be 100644
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
      bool events = false;
-@@ -4087,6 +4143,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -4079,6 +4135,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
@@ -169,7 +167,7 @@ index 87c6c34a4..b075a18be 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -4102,6 +4159,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -4094,6 +4151,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
  
@@ -225,10 +223,10 @@ index d0fb3bcca..b63edd0c1 100644
  }
  #endif
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index f2ff9f322..f356e4a0a 100644
+index 05ff6a5a6..032dee76d 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -535,6 +535,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+@@ -537,6 +537,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
      GGML_UNUSED(dev);
  }
  
@@ -236,7 +234,7 @@ index f2ff9f322..f356e4a0a 100644
  static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      props->name        = ggml_backend_metal_device_get_name(dev);
      props->description = ggml_backend_metal_device_get_description(dev);
-@@ -543,6 +544,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
+@@ -545,6 +546,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
  
      ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
  
@@ -245,7 +243,7 @@ index f2ff9f322..f356e4a0a 100644
          /* .async                 = */ true,
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ed83236f4..0bbcecd01 100644
+index bd3ece516..7cfb14a54 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -231,6 +231,7 @@ class vk_memory_logger;
@@ -286,7 +284,7 @@ index ed83236f4..0bbcecd01 100644
  // backend interface
  
  #define UNUSED GGML_UNUSED
-@@ -12391,31 +12415,103 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+@@ -12392,31 +12416,102 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
      ggml_vk_get_device_description(dev_idx, description, description_size);
  }
  
@@ -309,7 +307,6 @@ index ed83236f4..0bbcecd01 100644
 +    std::string pci_id;
 +    std::string id;
 +    std::string uuid;
-+    std::string numeric_id;
 +    int major;
 +    int minor;
 +    int driver_major;
@@ -407,7 +404,7 @@ index ed83236f4..0bbcecd01 100644
              break;
          }
      }
-@@ -12448,8 +12544,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+@@ -12449,8 +12544,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
          }
      }
  
@@ -422,7 +419,7 @@ index ed83236f4..0bbcecd01 100644
      }
  
      vk::PhysicalDeviceProperties2 props = {};
-@@ -12466,19 +12567,24 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+@@ -12467,19 +12567,24 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
  
      char pci_bus_id[16] = {};
      snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
@@ -456,7 +453,7 @@ index ed83236f4..0bbcecd01 100644
  
  static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
-@@ -12490,9 +12596,14 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+@@ -12491,9 +12596,14 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
      return ctx->description.c_str();
  }
  
@@ -472,7 +469,7 @@ index ed83236f4..0bbcecd01 100644
  }
  
  static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
-@@ -12516,8 +12627,9 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+@@ -12517,8 +12627,9 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
  
      props->name        = ggml_backend_vk_device_get_name(dev);
      props->description = ggml_backend_vk_device_get_description(dev);
@@ -483,7 +480,7 @@ index ed83236f4..0bbcecd01 100644
      ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
      props->caps = {
          /* .async                 = */ false,
-@@ -12525,6 +12637,14 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+@@ -12526,6 +12637,13 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
          /* .buffer_from_host_ptr  = */ false,
          /* .events                = */ false,
      };
@@ -494,11 +491,10 @@ index ed83236f4..0bbcecd01 100644
 +    props->driver_minor = ctx->driver_minor;
 +    props->integrated = ctx->is_integrated_gpu;
 +    props->library = GGML_VK_NAME;
-+    props->numeric_id = ctx->numeric_id.c_str();
  }
  
  static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
-@@ -12953,6 +13073,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -12954,6 +13072,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
          static std::mutex mutex;
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
@@ -507,7 +503,7 @@ index ed83236f4..0bbcecd01 100644
              for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
                  ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
                  char desc[256];
-@@ -12961,12 +13083,42 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -12962,12 +13082,41 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                  ctx->name = GGML_VK_NAME + std::to_string(i);
                  ctx->description = desc;
                  ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
@@ -547,7 +543,6 @@ index ed83236f4..0bbcecd01 100644
 +                // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
 +                ctx->driver_major = 0;
 +                ctx->driver_minor = 0;
-+                ctx->numeric_id = std::to_string(i);
              }
              initialized = true;
          }

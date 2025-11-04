@@ -257,7 +257,7 @@ type DeviceInfo struct {
 
 	// FilterID is populated with the unfiltered device ID if a numeric ID is used
 	// so the device can be included.
-	FilteredID string `json:"filtered_id,omitempty"`
+	FilterID string `json:"filter_id,omitempty"`
 
 	// Integrated is set true for integrated GPUs, false for Discrete GPUs
 	Integrated bool `json:"integration,omitempty"`
@@ -455,6 +455,35 @@ func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
 	return env
 }
 
+// NeedsInitValidation returns true if the device in question has the potential
+// to crash at inference time and requires deeper validation before we include
+// it in the supported devices list.
+func (d DeviceInfo) NeedsInitValidation() bool {
+	// At this time the only library we know needs a 2nd pass is ROCm since
+	// rocblas will crash on unsupported devices.  We want to find those crashes
+	// during bootstrap discovery so we can eliminate those GPUs before the user
+	// tries to run inference on them
+	return d.Library == "ROCm"
+}
+
+// Set the init validation environment variable
+func (d DeviceInfo) AddInitValidation(env map[string]string) {
+	env["GGML_CUDA_INIT"] = "1" // force deep initialization to trigger crash on unsupported GPUs
+}
+
+// PreferredLibrary returns true if this library is preferred over the other input
+// library
+// Used to filter out Vulkan in favor of CUDA or ROCm
+func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
+	// TODO in the future if we find Vulkan is better than ROCm on some devices
+	// that implementation can live here.
+
+	if d.Library == "CUDA" || d.Library == "ROCm" {
+		return true
+	}
+	return false
+}
+
 func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	var envVar string
 	switch d.Library {
@@ -472,8 +501,8 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	if existing {
 		v = v + ","
 	}
-	if d.FilteredID != "" {
-		v = v + d.FilteredID
+	if d.FilterID != "" {
+		v = v + d.FilterID
 	} else {
 		v = v + d.ID
 	}
