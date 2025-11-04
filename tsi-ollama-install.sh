@@ -78,12 +78,45 @@ status "Downloading Linux ${ARCH} bundle"
 wget "https://github.com/tsisw/ollama/releases/download/v0.12.6-tsi-v0.0.1/ollama-arm64-release.tar.gz" -O ollama-arm64-release.tar.gz && \
     $SUDO tar -xvzf ollama-arm64-release.tar.gz -C "$OLLAMA_INSTALL_DIR"
 
+install_aot_ggml_lib_link() {
+    # Define source directories
+    SOURCE_DIRS=(
+        "$OLLAMA_INSTALL_DIR/ollama-arm64-release/lib"
+        "/usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib"
+    )
+
+    # Loop through each source directory
+    for DIR in "${SOURCE_DIRS[@]}"; do
+        for LIB in "$DIR"/lib*; do
+            if [ -f "$LIB" ]; then
+                BASENAME=$(basename "$LIB")
+                TARGET="/usr/lib/$BASENAME"
+
+                if [ -L "$TARGET" ]; then
+                    echo "Symlink already exists: $TARGET -> $(readlink "$TARGET")"
+                elif [ -e "$TARGET" ]; then
+                    echo "File exists at $TARGET but is not a symlink. Skipping."
+                else
+                    echo "Creating symlink: $TARGET -> $LIB"
+                    $SUDO ln -s "$LIB" "$TARGET"
+                fi
+            fi
+        done
+    done
+}
+
 status "Untarred the Tar bundle ${ARCH} "
 if [ "$OLLAMA_INSTALL_DIR/ollama-arm64-release/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
     $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama-arm64-release/bin/ollama" "$BINDIR/ollama"
     cd $OLLAMA_INSTALL_DIR/ollama-arm64-release/tsi-ggml/                                                                                  
-    $SUDO $OLLAMA_INSTALL_DIR/ollama-arm64-release/tsi-ggml/ggml.sh                                                                        
+    $SUDO $OLLAMA_INSTALL_DIR/ollama-arm64-release/tsi-ggml/ggml.sh
+    # Copy all the libraries to /usr/lib as the symbolic links as well as the environment
+    # varaibles are not working for the libraries when invoked by the service
+    # this needs further troubleshoot.
+    $SUDO cp $OLLAMA_INSTALL_DIR/ollama-arm64-release/lib/lib* /usr/lib/
+    $SUDO cp /usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib/lib* /usr/lib/
+#    install_aot_ggml_lib_link
 fi
 
 install_success() {
@@ -124,7 +157,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
-Environment="LD_LIBRARY_PATH=/usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib/:/usr/local/ollama-arm64-release/tsi-ggml/"
+#Environment="LD_LIBRARY_PATH=/usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib/:/usr/local/ollama-arm64-release/lib/:/usr/local/ollama-arm64-release/bin/"
 [Install]
 WantedBy=default.target
 EOF
