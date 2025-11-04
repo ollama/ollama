@@ -677,7 +677,7 @@ ggml_metal_pipeline_t ggml_metal_library_get_pipeline_mul_mm_id_map0(ggml_metal_
     char name[256];
 
     snprintf(base, 256, "kernel_mul_mm_id_map0_ne20_%d", ne20);
-    snprintf(name, 256, "%s", base);
+    snprintf(name, 256, "%s_ne02=%d", base, ne02);
 
     ggml_metal_pipeline_t res = ggml_metal_library_get_pipeline(lib, name);
     if (res) {

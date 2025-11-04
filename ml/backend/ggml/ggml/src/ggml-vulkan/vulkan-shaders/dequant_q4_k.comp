@@ -20,8 +20,8 @@ void main() {
         const uint is = 2 * il;
         const uint n = 4;
 
-        const FLOAT_TYPE dall = FLOAT_TYPE(data_a[ib].d.x);
-        const FLOAT_TYPE dmin = FLOAT_TYPE(data_a[ib].d.y);
+        const FLOAT_TYPE dall = FLOAT_TYPE(data_a[ib].dm.x);
+        const FLOAT_TYPE dmin = FLOAT_TYPE(data_a[ib].dm.y);
 
         const uint y_idx = ib * QUANT_K + 64 * il + n * ir;
         const uint qs_idx = 32*il + n * ir;
