@@ -16,7 +16,8 @@ import (
 func getTestConfig() (model string, stream bool) {
 	model = os.Getenv("QWEN3VL_MODEL")
 	if model == "" {
-		model = "qwen3-vl:235b-cloud" // default
+		// model = "qwen3-vl:235b-cloud" // default
+		model = "qwen3vl-thinking-odc-dev"
 	}
 
 	streamStr := os.Getenv("QWEN3VL_STREAM")
