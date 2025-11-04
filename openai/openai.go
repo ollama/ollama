@@ -176,6 +176,17 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
+// gemini doesnt't have index
+type InternalToolCall struct {
+	ID       string `json:"id"`
+	Index    *int   `json:"index"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 type Model struct {
 	Id      string `json:"id"`
 	Object  string `json:"object"`
