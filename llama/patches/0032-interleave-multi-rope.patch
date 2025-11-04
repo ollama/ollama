@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Michael Yang <git@mxy.ng>
-Date: Web, 16 Oct 2025 20:37:19 -0700
+Date: Thu, 16 Oct 2025 20:37:19 -0700
 Subject: [PATCH] interleave multi rope
 
 since ollama doesn't use mrope for anything else, change it to mean the
@@ -85,7 +85,7 @@ index 375a0c7fd..9866c96b4 100644
              // end of mrope
  
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/rope_multi.comp b/ggml/src/ggml-vulkan/vulkan-shaders/rope_multi.comp
-index 111286b49..6fc2b42f8 100644
+index 111286b49..633dc20ff 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/rope_multi.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/rope_multi.comp
 @@ -31,19 +31,13 @@ void main() {

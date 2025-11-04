@@ -259,11 +259,6 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 		bootstrapped = true
 	} else {
-		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-			// metal never updates free VRAM
-			return devices
-		}
-
 		slog.Debug("refreshing free memory")
 		updated := make([]bool, len(devices))
 		allDone := func() bool {
