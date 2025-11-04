@@ -71,7 +71,6 @@ type LlamaServer interface {
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Embedding(ctx context.Context, input string, images ...ImageData) ([]float32, error)
-	ImageEmbedding(ctx context.Context, image ImageData) ([]float32, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -1590,64 +1589,6 @@ type EmbeddingResponse struct {
 	Embedding []float32 `json:"embedding"`
 }
 
-func (s *llmServer) ImageEmbedding(ctx context.Context, image ImageData) ([]float32, error) {
-	logutil.Trace("image embedding request", "image", image.ID)
-
-	if err := s.sem.Acquire(ctx, 1); err != nil {
-		if errors.Is(err, context.Canceled) {
-			slog.Info("aborting image embedding request due to client closing the connection")
-		} else {
-			slog.Error("Failed to acquire semaphore", "error", err)
-		}
-		return nil, err
-	}
-	defer s.sem.Release(1)
-
-	// Make sure the server is ready
-	status, err := s.getServerStatusRetry(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status)
-	}
-
-	data, err := json.Marshal(struct {
-		Image ImageData `json:"image"`
-	}{Image: image})
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling image embed data: %w", err)
-	}
-
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/image-embedding", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, fmt.Errorf("error creating image embed request: %w", err)
-	}
-	r.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(r)
-	if err != nil {
-		return nil, fmt.Errorf("do image embedding request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading image embed response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("llm image embedding error: %s", body)
-		return nil, fmt.Errorf("%s", body)
-	}
-
-	var e EmbeddingResponse
-	if err := json.Unmarshal(body, &e); err != nil {
-		return nil, fmt.Errorf("unmarshal image embedding response: %w", err)
-	}
-
-	return e.Embedding, nil
-}
-
 func (s *llmServer) Embedding(ctx context.Context, input string, images ...ImageData) ([]float32, error) {
 	logutil.Trace("embedding request", "input", input)
 
@@ -1669,14 +1610,30 @@ func (s *llmServer) Embedding(ctx context.Context, input string, images ...Image
 		return nil, fmt.Errorf("unexpected server status: %s", status)
 	}
 
-	data, err := json.Marshal(EmbeddingRequest{Content: input, Images: images})
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling embed data: %w", err)
-	}
+	var r *http.Request
+	if input == "" && len(images) > 0 {
+		// image-only embedding
+		data, err := json.Marshal(struct {
+			Image ImageData `json:"image"`
+		}{Image: images[0]})
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling image embed data: %w", err)
+		}
 
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, fmt.Errorf("error creating embed request: %w", err)
+		r, err = http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/image-embedding", s.port), bytes.NewBuffer(data))
+		if err != nil {
+			return nil, fmt.Errorf("error creating image embed request: %w", err)
+		}
+	} else {
+		data, err := json.Marshal(EmbeddingRequest{Content: input, Images: images})
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling embed data: %w", err)
+		}
+
+		r, err = http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
+		if err != nil {
+			return nil, fmt.Errorf("error creating embed request: %w", err)
+		}
 	}
 	r.Header.Set("Content-Type", "application/json")
 
