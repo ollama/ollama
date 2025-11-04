@@ -2189,7 +2189,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					} else if len(toolCalls) > 0 {
 						for i := range toolCalls {
 							toolCalls[i].ID = toolCallId()
-							fmt.Println("toolCallID", toolCalls[i].ID)
 						}
 						res.Message.ToolCalls = toolCalls
 						res.Message.Content = ""
