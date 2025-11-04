@@ -178,11 +178,9 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 	}
 
-	promptCount := len(inputs)
-
 	return &Sequence{
 		inputs:           inputs,
-		numPromptInputs:  promptCount,
+		numPromptInputs:  len(inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 100),

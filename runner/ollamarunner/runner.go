@@ -130,6 +130,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// Ensure that at least 1 input can be discarded during shift
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
+	// Basic runner-side guard: if truncation is enabled and num_ctx <= 1, return an error
+	if params.truncate && s.cache.numCtx <= 1 {
+		return nil, fmt.Errorf("input after truncation exceeds maximum context length")
+	}
+
 	if int32(len(inputs)) > s.cache.numCtx {
 		if !params.truncate {
 			return nil, errorInputTooLong
@@ -146,7 +151,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			}
 
 			// Get the EOS token from the original input
-			eogToken := int32(0)
+			eogToken := int32(-1)
 			if textProcessor, ok := s.model.(model.TextProcessor); ok {
 				lastToken := inputs[len(inputs)-1]
 				if textProcessor.Is(lastToken.Token, model.SpecialEOS) {
