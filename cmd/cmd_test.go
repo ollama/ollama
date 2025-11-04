@@ -355,30 +355,35 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
-func TestEmbedHandlerPlainFormat(t *testing.T) {
+func TestRunEmbeddingModel(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embed" {
-			http.NotFound(w, r)
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "invalid method", http.StatusMethodNotAllowed)
+		if r.URL.Path == "/api/embed" && r.Method == http.MethodPost {
+			var req api.EmbedRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			reqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+				Model:      "test-embedding-model",
+				Embeddings: [][]float32{{0.1, 0.2, 0.3}},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		var req api.EmbedRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		reqCh <- req
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(api.EmbedResponse{
-			Model:      "test-model",
-			Embeddings: [][]float32{{0.1, 0.2}},
-		}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		http.NotFound(w, r)
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
@@ -389,6 +394,12 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -396,7 +407,7 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- EmbedHandler(cmd, []string{"test-model", "hello", "world"})
+		errCh <- RunHandler(cmd, []string{"test-embedding-model", "hello", "world"})
 	}()
 
 	err := <-errCh
@@ -404,7 +415,7 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 	os.Stdout = oldStdout
 
 	if err != nil {
-		t.Fatalf("EmbedHandler returned error: %v", err)
+		t.Fatalf("RunHandler returned error: %v", err)
 	}
 
 	var out bytes.Buffer
@@ -422,37 +433,49 @@ func TestEmbedHandlerPlainFormat(t *testing.T) {
 		if req.KeepAlive != nil {
 			t.Errorf("expected keepalive to be nil, got %v", req.KeepAlive)
 		}
+		if req.Dimensions != 0 {
+			t.Errorf("expected dimensions to be 0, got %d", req.Dimensions)
+		}
 	default:
 		t.Fatal("server did not receive embed request")
 	}
 
-	expectOutput := "[0.1,0.2]\n"
+	expectOutput := "[0.1,0.2,0.3]\n"
 	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
 }
 
-func TestEmbedHandlerJSONFormat(t *testing.T) {
+func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embed" {
-			http.NotFound(w, r)
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		var req api.EmbedRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if r.URL.Path == "/api/embed" && r.Method == http.MethodPost {
+			var req api.EmbedRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			reqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+				Model:        "test-embedding-model",
+				Embeddings:   [][]float32{{0.4, 0.5}},
+				LoadDuration: 5 * time.Millisecond,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		reqCh <- req
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(api.EmbedResponse{
-			Model:        "test-model",
-			Embeddings:   [][]float32{{0.3, 0.4}},
-			LoadDuration: 5 * time.Millisecond,
-		}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		http.NotFound(w, r)
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
@@ -463,25 +486,30 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
 
 	if err := cmd.Flags().Set("truncate", "true"); err != nil {
 		t.Fatalf("failed to set truncate flag: %v", err)
 	}
-	if err := cmd.Flags().Set("dimensions", "4"); err != nil {
+	if err := cmd.Flags().Set("dimensions", "2"); err != nil {
 		t.Fatalf("failed to set dimensions flag: %v", err)
 	}
 	if err := cmd.Flags().Set("keepalive", "5m"); err != nil {
 		t.Fatalf("failed to set keepalive flag: %v", err)
 	}
 
-	// Capture stdout
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- EmbedHandler(cmd, []string{"test-model", "json", "input"})
+		errCh <- RunHandler(cmd, []string{"test-embedding-model", "test", "input"})
 	}()
 
 	err := <-errCh
@@ -489,7 +517,7 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 	os.Stdout = oldStdout
 
 	if err != nil {
-		t.Fatalf("EmbedHandler returned error: %v", err)
+		t.Fatalf("RunHandler returned error: %v", err)
 	}
 
 	var out bytes.Buffer
@@ -497,48 +525,58 @@ func TestEmbedHandlerJSONFormat(t *testing.T) {
 
 	select {
 	case req := <-reqCh:
-		if req.Truncate == nil || !*req.Truncate {
-			t.Fatalf("expected truncate pointer true, got %v", req.Truncate)
+		inputText, _ := req.Input.(string)
+		if diff := cmp.Diff("test input", inputText); diff != "" {
+			t.Errorf("unexpected input (-want +got):\n%s", diff)
 		}
-		if req.Dimensions != 4 {
-			t.Fatalf("expected dimensions 4, got %d", req.Dimensions)
+		if req.Truncate == nil || !*req.Truncate {
+			t.Errorf("expected truncate pointer true, got %v", req.Truncate)
+		}
+		if req.Dimensions != 2 {
+			t.Errorf("expected dimensions 2, got %d", req.Dimensions)
 		}
 		if req.KeepAlive == nil || req.KeepAlive.Duration != 5*time.Minute {
-			t.Fatalf("unexpected keepalive duration: %v", req.KeepAlive)
+			t.Errorf("unexpected keepalive duration: %v", req.KeepAlive)
 		}
 	default:
 		t.Fatal("server did not receive embed request")
 	}
 
-	var embedding []float32
-	if err := json.Unmarshal(out.Bytes(), &embedding); err != nil {
-		t.Fatalf("failed to decode json output: %v", err)
-	}
-	if diff := cmp.Diff([]float32{0.3, 0.4}, embedding); diff != "" {
-		t.Errorf("unexpected embedding response (-want +got):\n%s", diff)
+	expectOutput := "[0.4,0.5]\n"
+	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
 }
 
-func TestEmbedHandlerPipedInput(t *testing.T) {
+func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embed" {
-			http.NotFound(w, r)
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		var req api.EmbedRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if r.URL.Path == "/api/embed" && r.Method == http.MethodPost {
+			var req api.EmbedRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			reqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+				Model:      "test-embedding-model",
+				Embeddings: [][]float32{{0.6, 0.7}},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
-		reqCh <- req
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(api.EmbedResponse{
-			Model:      "test-model",
-			Embeddings: [][]float32{{0.5, 0.6}},
-		}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		http.NotFound(w, r)
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
@@ -549,6 +587,12 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
 
 	// Capture stdin
 	oldStdin := os.Stdin
@@ -564,7 +608,7 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- EmbedHandler(cmd, []string{"test-model", "additional", "args"})
+		errCh <- RunHandler(cmd, []string{"test-embedding-model", "additional", "args"})
 	}()
 
 	err := <-errCh
@@ -573,7 +617,7 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 	os.Stdin = oldStdin
 
 	if err != nil {
-		t.Fatalf("EmbedHandler returned error: %v", err)
+		t.Fatalf("RunHandler returned error: %v", err)
 	}
 
 	var out bytes.Buffer
@@ -590,14 +634,23 @@ func TestEmbedHandlerPipedInput(t *testing.T) {
 		t.Fatal("server did not receive embed request")
 	}
 
-	expectOutput := "[0.5,0.6]\n"
+	expectOutput := "[0.6,0.7]\n"
 	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
 }
 
-func TestEmbedHandlerNoInput(t *testing.T) {
+func TestRunEmbeddingModelNoInput(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
 		http.NotFound(w, r)
 	}))
 
@@ -609,13 +662,19 @@ func TestEmbedHandlerNoInput(t *testing.T) {
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("truncate", false, "")
 	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
 
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 
 	// Test with no input arguments (only model name)
-	err := EmbedHandler(cmd, []string{"test-model"})
-	if err == nil || !strings.Contains(err.Error(), "no input provided") {
+	err := RunHandler(cmd, []string{"test-embedding-model"})
+	if err == nil || !strings.Contains(err.Error(), "embedding models require input text") {
 		t.Fatalf("expected error about missing input, got %v", err)
 	}
 }
