@@ -1618,8 +1618,6 @@ func Serve(ln net.Listener) error {
 		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
 	}
 
-	discover.LogSystemInfo()
-
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
 	// otherwise error out quickly
