@@ -1007,6 +1007,13 @@ nextLayer:
 
 // assignLayers packs the maximum number of layers onto the smallest set of GPUs and comes up with a layer assignment
 func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, requestedLayers int, lastUsedGPU int) (gpuLayers ml.GPULayersList) {
+	// If the user is manually overriding parameters, treat all GPUs equally so they split according to VRAM
+	if requestedLayers >= 0 || envconfig.SchedSpread() {
+		for i := range gpus {
+			gpus[i].Integrated = false
+		}
+	}
+
 	// If we can't fit everything then prefer offloading layers other than the output layer
 	for range 2 {
 		// requestedLayers may be -1 if nothing was requested
@@ -1039,33 +1046,38 @@ func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, reque
 
 // findBestFit binary searches to find the smallest capacity factor that can fit
 // the max number of layers. The capacity factor is multiplied by the free space on
-// each GPU and a small one will force even balancing.
+// each GPU and a small one will force even balancing. Higher performance GPUs are
+// used first.
 func findBestFit(layers []uint64, gpus []ml.DeviceInfo, requestedLayers int, forceRequest bool) (gpuLayers ml.GPULayersList) {
-	var high float32 = 1
-	var low float32 = 0
+	for _, gl := range ml.ByPerformance(gpus) {
+		var high float32 = 1
+		var low float32 = 0
 
-	// If we need to fulfill the requested number of layers, pretend we have almost infinite VRAM
-	if requestedLayers >= 0 && forceRequest {
-		high = 1000
-	}
-
-	bestAssignments := greedyFit(layers, gpus, high, requestedLayers)
-	maxNumGPU := bestAssignments.Sum()
-	if maxNumGPU == 0 {
-		return bestAssignments
-	}
-
-	for high-low > 1e-6 {
-		mid := (low + high) / 2
-		assignments := greedyFit(layers, gpus, mid, requestedLayers)
-		if assignments.Sum() == maxNumGPU {
-			high = mid
-			bestAssignments = assignments
-		} else {
-			low = mid
+		// If we need to fulfill the requested number of layers, pretend we have almost infinite VRAM
+		if requestedLayers >= 0 && forceRequest {
+			high = 1000
 		}
+
+		bestAssignments := greedyFit(layers, gl, high, requestedLayers)
+		maxNumGPU := bestAssignments.Sum()
+
+		for high-low > 1e-6 {
+			mid := (low + high) / 2
+			assignments := greedyFit(layers, gl, mid, requestedLayers)
+			if assignments.Sum() == maxNumGPU {
+				high = mid
+				bestAssignments = assignments
+			} else {
+				low = mid
+			}
+		}
+
+		layers = layers[:len(layers)-bestAssignments.Sum()]
+		requestedLayers -= bestAssignments.Sum()
+		gpuLayers = append(bestAssignments, gpuLayers...)
 	}
-	return bestAssignments
+
+	return gpuLayers
 }
 
 // greedyFit assigns layers incrementally to GPUs, spilling over as each runs out of free space
