@@ -110,17 +110,14 @@ func GetCPUDetails() []CPU {
 		return nil
 	}
 	defer file.Close()
-	cpus, err := linuxCPUDetails(file)
-	if err != nil {
-		return nil, err
-	}
+	cpus := linuxCPUDetails(file)
 	return overwriteThreadCountByLinuxCgroups(cpus)
 }
 
-func overwriteThreadCountByLinuxCgroups(cpus []CPU) ([]CPU, error) {
+func overwriteThreadCountByLinuxCgroups(cpus []CPU) []CPU {
 	file, err := os.Open("/sys/fs/cgroup/cpu.max")
 	if err != nil {
-		return cpus, nil
+		return cpus
 	}
 	defer file.Close()
 
@@ -130,11 +127,13 @@ func overwriteThreadCountByLinuxCgroups(cpus []CPU) ([]CPU, error) {
 		if sl := strings.Split(line, " "); len(sl) == 2 {
 			allowdUs, err := strconv.ParseInt(sl[0], 10, 64)
 			if err != nil {
-				return cpus, nil
+				slog.Warn("failed to parse CPU allowed micro secs", "error", err)
+				return cpus
 			}
 			unitUs, err := strconv.ParseInt(sl[1], 10, 64)
 			if err != nil {
-				return nil, err
+				slog.Warn("failed to parse CPU unit micro secs", "error", err)
+				return cpus
 			}
 
 			threads := int(max(allowdUs/unitUs, 1))
@@ -142,10 +141,10 @@ func overwriteThreadCountByLinuxCgroups(cpus []CPU) ([]CPU, error) {
 			cpu := cpus[0]
 			cpu.CoreCount = threads
 			cpu.ThreadCount = threads
-			return []CPU{cpu}, nil
+			return []CPU{cpu}
 		}
 	}
-	return cpus, nil
+	return cpus
 }
 
 func linuxCPUDetails(file io.Reader) []CPU {
