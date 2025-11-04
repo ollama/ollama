@@ -367,6 +367,28 @@ func (a ByFreeMemory) Less(i, j int) bool {
 	return a[i].FreeMemory < a[j].FreeMemory
 }
 
+// ByPerformance groups devices by similar speed
+func ByPerformance(l []DeviceInfo) [][]DeviceInfo {
+	resp := [][]DeviceInfo{}
+	scores := []bool{}
+	for _, info := range l {
+		found := false
+		requested := info.Integrated
+		for i, score := range scores {
+			if score == requested {
+				resp[i] = append(resp[i], info)
+				found = true
+				break
+			}
+		}
+		if !found {
+			scores = append(scores, requested)
+			resp = append(resp, []DeviceInfo{info})
+		}
+	}
+	return resp
+}
+
 func ByLibrary(l []DeviceInfo) [][]DeviceInfo {
 	resp := [][]DeviceInfo{}
 	libs := []string{}
