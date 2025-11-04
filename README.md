@@ -229,15 +229,14 @@ ollama stop llama3.2
 ### Generate embeddings from the CLI
 
 ```shell
-ollama embed embeddinggemma "Your text to embed"
+ollama run embeddinggemma "Your text to embed"
 ```
 
 You can also pipe text for scripted workflows:
 
 ```shell
-echo "Your text to embed" | ollama embed embeddinggemma
+echo "Your text to embed" | ollama run embeddinggemma
 ```
-
 
 ### Start Ollama
 

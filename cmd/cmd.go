@@ -322,74 +322,18 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func EmbedHandler(cmd *cobra.Command, args []string) error {
-	model := args[0]
-
-	keepAliveFlag, err := cmd.Flags().GetString("keepalive")
-	if err != nil {
-		return err
-	}
-	var keepAlive *api.Duration
-	if keepAliveFlag != "" {
-		d, err := time.ParseDuration(keepAliveFlag)
-		if err != nil {
-			return err
-		}
-		keepAlive = &api.Duration{Duration: d}
-	}
-
-	truncateSpecified := cmd.Flags().Changed("truncate")
-	truncateValue, err := cmd.Flags().GetBool("truncate")
-	if err != nil {
-		return err
-	}
-
-	dimensions, err := cmd.Flags().GetInt("dimensions")
-	if err != nil {
-		return err
-	}
-	if dimensions < 0 {
-		return fmt.Errorf("dimensions must be non-negative")
-	}
-
+func generateEmbedding(cmd *cobra.Command, modelName, input string, keepAlive *api.Duration) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	// Get all arguments after model name as input text
-	inputParts := args[1:]
-
-	// prepend stdin to the input if provided
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-		if len(in) > 0 {
-			inputParts = append([]string{string(in)}, inputParts...)
-		}
-	}
-
-	inputText := strings.Join(inputParts, " ")
-	inputText = strings.TrimSpace(inputText)
-
-	if inputText == "" {
-		return errors.New("no input provided to embed")
-	}
-
 	req := &api.EmbedRequest{
-		Model: model,
-		Input: inputText,
+		Model: modelName,
+		Input: input,
 	}
 	if keepAlive != nil {
 		req.KeepAlive = keepAlive
-	}
-	if truncateSpecified {
-		req.Truncate = &truncateValue
-	}
-	if dimensions > 0 {
-		req.Dimensions = dimensions
 	}
 
 	resp, err := client.Embed(cmd.Context(), req)
@@ -539,6 +483,17 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	opts.ParentModel = info.Details.ParentModel
+
+	// Check if this is an embedding model
+	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
+
+	// If it's an embedding model, handle embedding generation
+	if isEmbeddingModel {
+		if opts.Prompt == "" {
+			return errors.New("embedding models require input text. Usage: ollama run " + name + " \"your text here\"")
+		}
+		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive)
+	}
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -1773,22 +1728,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 
-	embedCmd := &cobra.Command{
-		Use:   "embed MODEL [TEXT...]",
-		Short: "Generate embeddings from a model",
-		Long: "Generate embeddings for text input using an Ollama model. " +
-			"Provide text as arguments or pipe text via stdin for scripted use.",
-		Example: strings.TrimSpace(`  ollama embed embeddinggemma "Hello world"
-  echo "Hello world" | ollama embed embeddinggemma`),
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    EmbedHandler,
-	}
-
-	embedCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
-	embedCmd.Flags().Bool("truncate", false, "Truncate input that exceeds the model's context length")
-	embedCmd.Flags().Int("dimensions", 0, "Truncate the output embedding to the specified dimensions")
-
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -1891,7 +1830,6 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
-		embedCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -1933,7 +1871,6 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
-		embedCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,

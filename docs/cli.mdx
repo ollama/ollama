@@ -28,13 +28,13 @@ ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ### Generate embeddings
 
 ```
-ollama embed embeddinggemma "Hello world"
+ollama run embeddinggemma "Hello world"
 ```
 
 Output is a JSON array:
 
 ```
-echo "Hello world" | ollama embed nomic-embed-text
+echo "Hello world" | ollama run nomic-embed-text
 ```
 
 ### Download a model
