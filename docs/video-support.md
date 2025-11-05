@@ -12,7 +12,8 @@ Video support enables models to analyze and understand video content by:
 ## Supported Models
 
 Currently, the following models support video understanding:
-- **qwen3-vl** - Qwen's 3rd generation vision-language model with native video support
+- **qwen3-vl** - Qwen's 3rd generation vision-language model with native video support (Interleaved-MRoPE position embeddings)
+- **qwen2.5-vl** - Qwen's 2.5 generation vision-language model with video support (standard RoPE position embeddings)
 
 ## Requirements
 
@@ -41,6 +42,13 @@ Send videos as base64-encoded data in the `videos` parameter:
 ```bash
 curl http://localhost:11434/api/generate -d '{
   "model": "qwen3-vl",
+  "prompt": "What is happening in this video?",
+  "videos": ["<base64-encoded-video>"]
+}'
+
+# Or use qwen2.5-vl
+curl http://localhost:11434/api/generate -d '{
+  "model": "qwen2.5-vl",
   "prompt": "What is happening in this video?",
   "videos": ["<base64-encoded-video>"]
 }'
@@ -122,9 +130,11 @@ Videos are processed through the following pipeline:
    - Resized using smart resizing
    - Normalized with ImageNet statistics
 
+Same process could be adapted to allow for simulated video processing with frames in non-video supported vision models but they would lack temporal (time) understanding and yeild unfavourable results.
+
 ### Temporal Processing
 
-Qwen3-VL uses a sophisticated temporal processing approach:
+Temporal processing approach in supported models such as Qwen3-vl:
 
 - **Temporal Patches**: Frames are grouped using `temporalPatchSize=2` (pairs of consecutive frames)
 - **3D Grid Structure**: Tracks dimensions as Temporal × Height × Width
@@ -292,7 +302,7 @@ curl http://localhost:11434/v1/chat/completions \
 
 ## Limitations
 
-1. **Model Support**: Only models specifically trained for video understanding can process videos (e.g., Qwen3-VL)
+1. **Model Support**: Only models specifically trained for video understanding can process videos (e.g., Qwen3-VL, Qwen2.5-VL)
 2. **Frame Extraction**: Requires FFmpeg installation
 3. **Processing Time**: Long videos take more time to process
 4. **Memory**: Videos consume more memory than images
@@ -300,12 +310,13 @@ curl http://localhost:11434/v1/chat/completions \
 
 ## Best Practices
 
-1. **Use MP4 format**: Most compatible and efficient
-2. **Keep videos short**: < 30 seconds for best performance
-3. **Appropriate FPS**: 1 FPS is usually sufficient for understanding
-4. **Clear questions**: Ask specific questions about the video content
-5. **Test locally first**: Verify videos work before deploying
-6. **Monitor resources**: Watch memory usage with long videos
+1. **Choose the right model**: Some models support reasoning and longer video context windows
+2. **Use MP4 format**: Most compatible and efficient
+3. **Keep videos short**: < 30 seconds for best performance (Qwen3-VL can handle longer videos)
+4. **Appropriate FPS**: 1 FPS is usually sufficient for understanding
+5. **Clear questions**: Ask specific questions about the video content
+6. **Test locally first**: Verify videos work before deploying
+7. **Monitor resources**: Watch memory usage with long videos
 
 ## Future Enhancements
 
@@ -314,19 +325,19 @@ Potential future improvements:
 - Video preprocessing (trimming, resizing)
 - Streaming video support
 - Multiple video inputs
-- Enhanced temporal understanding
 - Audio processing support
 
 ## Contributing
 
 To contribute video support improvements:
 1. See `model/imageproc/video.go` for shared utilities
-2. Model-specific processing in `model/models/qwen3vl/`
+2. Model-specific processing in `model/models/qwen3vl/` and `model/models/qwen25vl/`
 3. Tests in `model/imageproc/video_test.go`
 4. Documentation updates welcome!
 
 ## Learn More
 
 - [Qwen3-VL Model Card](https://ollama.com/library/qwen3-vl)
+- [Qwen2.5-VL Model Card](https://ollama.com/library/qwen2.5-vl)
 - [Ollama API Documentation](./api.md)
 - [Multimodal Models](https://ollama.com/search?c=vision)
