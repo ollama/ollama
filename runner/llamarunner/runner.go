@@ -31,7 +31,7 @@ import (
 // response contains a piece of generated text along with optional logprobs
 type response struct {
 	content  string
-	logprobs []common.Logprob
+	logprobs []llm.Logprob
 }
 
 // input is an element of the prompt to process, either
@@ -60,7 +60,7 @@ type Sequence struct {
 	pendingResponses []string
 
 	// logprobs for tokens that haven't been returned yet
-	pendingLogprobs []common.Logprob
+	pendingLogprobs []llm.Logprob
 
 	// input cache being used by this sequence
 	cache *InputCacheSlot
@@ -183,18 +183,9 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}, nil
 }
 
-// llamaTokenDecoder adapts llama.Model to common.TokenDecoder interface
-type llamaTokenDecoder struct {
-	model *llama.Model
-}
-
-func (d *llamaTokenDecoder) DecodeToken(tokenID int) string {
-	return d.model.TokenToPiece(tokenID)
-}
-
 // calculateLogprobsLlama converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []common.Logprob {
-	return common.CalculateLogprobs(logits, selectedToken, topK, &llamaTokenDecoder{model: model})
+func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []llm.Logprob {
+	return common.CalculateLogprobs(logits, selectedToken, topK, model.TokenToPiece)
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -327,7 +318,7 @@ func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
 	logprobs := seq.pendingLogprobs
 	seq.pendingResponses = []string{}
-	seq.pendingLogprobs = []common.Logprob{}
+	seq.pendingLogprobs = []llm.Logprob{}
 
 	// Check if there are any partial UTF-8 characters remaining.
 	// We already check and queue as we are generating but some may
@@ -717,7 +708,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					Content:  resp.content,
-					Logprobs: common.ToLLMLogprobs(resp.logprobs),
+					Logprobs: resp.logprobs,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)

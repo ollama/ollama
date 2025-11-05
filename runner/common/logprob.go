@@ -7,26 +7,12 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-// TokenLogprob represents log probability information for a single token alternative.
-type TokenLogprob struct {
-	Token   string
-	Logprob float64
-}
-
-// Logprob contains log probability information for a generated token.
-type Logprob struct {
-	TokenLogprob
-	TopLogprobs []TokenLogprob
-}
-
-// TokenDecoder is an interface for converting token IDs to text.
-type TokenDecoder interface {
-	DecodeToken(tokenID int) string
-}
+// TokenDecoderFunc is a function that converts token IDs to text.
+type TokenDecoderFunc func(tokenID int) string
 
 // CalculateLogprobs converts raw logits to log probabilities and finds top K tokens.
 // It uses numerically stable softmax to compute log probabilities.
-func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder TokenDecoder) []Logprob {
+func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder TokenDecoderFunc) []llm.Logprob {
 	if len(logits) == 0 {
 		return nil
 	}
@@ -52,10 +38,10 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 
 	// Step 2: Get selected token's information
 	selectedLogprob := logProbs[selectedToken]
-	selectedText := decoder.DecodeToken(selectedToken)
+	selectedText := decoder(selectedToken)
 
-	result := Logprob{
-		TokenLogprob: TokenLogprob{
+	result := llm.Logprob{
+		TokenLogprob: llm.TokenLogprob{
 			Token:   selectedText,
 			Logprob: float64(selectedLogprob),
 		},
@@ -78,10 +64,10 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 		})
 
 		k := min(topK, len(pairs))
-		topLogprobs := make([]TokenLogprob, k)
+		topLogprobs := make([]llm.TokenLogprob, k)
 		for i := range k {
-			tokenText := decoder.DecodeToken(pairs[i].tokenID)
-			topLogprobs[i] = TokenLogprob{
+			tokenText := decoder(pairs[i].tokenID)
+			topLogprobs[i] = llm.TokenLogprob{
 				Token:   tokenText,
 				Logprob: float64(pairs[i].logprob),
 			}
@@ -89,28 +75,5 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 		result.TopLogprobs = topLogprobs
 	}
 
-	return []Logprob{result}
-}
-
-// ToLLMLogprobs converts runner Logprobs to llm.Logprobs
-func ToLLMLogprobs(logprobs []Logprob) []llm.Logprob {
-	result := make([]llm.Logprob, len(logprobs))
-	for i, lp := range logprobs {
-		result[i] = llm.Logprob{
-			TokenLogprob: llm.TokenLogprob{
-				Token:   lp.Token,
-				Logprob: lp.Logprob,
-			},
-		}
-		if len(lp.TopLogprobs) > 0 {
-			result[i].TopLogprobs = make([]llm.TokenLogprob, len(lp.TopLogprobs))
-			for j, tlp := range lp.TopLogprobs {
-				result[i].TopLogprobs[j] = llm.TokenLogprob{
-					Token:   tlp.Token,
-					Logprob: tlp.Logprob,
-				}
-			}
-		}
-	}
-	return result
+	return []llm.Logprob{result}
 }

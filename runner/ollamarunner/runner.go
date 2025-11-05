@@ -44,7 +44,7 @@ import (
 // response contains a piece of generated text along with optional logprobs
 type response struct {
 	content  string
-	logprobs []common.Logprob
+	logprobs []llm.Logprob
 }
 
 type Sequence struct {
@@ -68,7 +68,7 @@ type Sequence struct {
 	pendingResponses []string
 
 	// logprobs for tokens that haven't been returned yet
-	pendingLogprobs []common.Logprob
+	pendingLogprobs []llm.Logprob
 
 	// input cache being used by this sequence
 	cache *InputCacheSlot
@@ -209,19 +209,13 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}, nil
 }
 
-// textProcessorDecoder adapts model.TextProcessor to common.TokenDecoder interface
-type textProcessorDecoder struct {
-	processor model.TextProcessor
-}
-
-func (d *textProcessorDecoder) DecodeToken(tokenID int) string {
-	text, _ := d.processor.Decode([]int32{int32(tokenID)})
-	return text
-}
-
 // calculateLogprobs converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []common.Logprob {
-	return common.CalculateLogprobs(logits, int(selectedToken), topK, &textProcessorDecoder{processor: textProcessor})
+func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []llm.Logprob {
+	decoder := func(tokenID int) string {
+		text, _ := textProcessor.Decode([]int32{int32(tokenID)})
+		return text
+	}
+	return common.CalculateLogprobs(logits, int(selectedToken), topK, decoder)
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -405,7 +399,7 @@ func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
 	logprobs := seq.pendingLogprobs
 	seq.pendingResponses = []string{}
-	seq.pendingLogprobs = []common.Logprob{}
+	seq.pendingLogprobs = []llm.Logprob{}
 
 	// Check if there are any partial UTF-8 characters remaining.
 	// We already check and queue as we are generating but some may
@@ -950,7 +944,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					Content:  resp.content,
-					Logprobs: common.ToLLMLogprobs(resp.logprobs),
+					Logprobs: resp.logprobs,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)

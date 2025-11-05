@@ -2,32 +2,21 @@ package common
 
 import (
 	"math"
-	"reflect"
 	"testing"
-
-	"github.com/ollama/ollama/llm"
 )
 
-// mockTokenDecoder is a simple mock for testing
-type mockTokenDecoder struct {
-	tokens map[int]string
-}
-
-func (m *mockTokenDecoder) DecodeToken(tokenID int) string {
-	if text, ok := m.tokens[tokenID]; ok {
-		return text
-	}
-	return ""
-}
-
 func TestCalculateLogprobs(t *testing.T) {
-	decoder := &mockTokenDecoder{
-		tokens: map[int]string{
-			0: "hello",
-			1: "hi",
-			2: "hey",
-			3: "world",
-		},
+	tokens := map[int]string{
+		0: "hello",
+		1: "hi",
+		2: "hey",
+		3: "world",
+	}
+	decoder := func(tokenID int) string {
+		if text, ok := tokens[tokenID]; ok {
+			return text
+		}
+		return ""
 	}
 
 	tests := []struct {
@@ -82,12 +71,16 @@ func TestCalculateLogprobs(t *testing.T) {
 }
 
 func TestCalculateLogprobsNumericalStability(t *testing.T) {
-	decoder := &mockTokenDecoder{
-		tokens: map[int]string{
-			0: "a",
-			1: "b",
-			2: "c",
-		},
+	tokens := map[int]string{
+		0: "a",
+		1: "b",
+		2: "c",
+	}
+	decoder := func(tokenID int) string {
+		if text, ok := tokens[tokenID]; ok {
+			return text
+		}
+		return ""
 	}
 
 	// Test with very large logits to ensure numerical stability
@@ -115,123 +108,5 @@ func TestCalculateLogprobsNumericalStability(t *testing.T) {
 			t.Errorf("Top logprobs not in descending order: %f > %f",
 				result[0].TopLogprobs[i].Logprob, result[0].TopLogprobs[i-1].Logprob)
 		}
-	}
-}
-
-func TestToLLMLogprobs(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []Logprob
-		expected []llm.Logprob
-	}{
-		{
-			name:     "Empty slice",
-			input:    []Logprob{},
-			expected: []llm.Logprob{},
-		},
-		{
-			name: "Single logprob without top logprobs",
-			input: []Logprob{
-				{
-					TokenLogprob: TokenLogprob{
-						Token:   "hello",
-						Logprob: -0.123,
-					},
-				},
-			},
-			expected: []llm.Logprob{
-				{
-					TokenLogprob: llm.TokenLogprob{
-						Token:   "hello",
-						Logprob: -0.123,
-					},
-				},
-			},
-		},
-		{
-			name: "Single logprob with top logprobs",
-			input: []Logprob{
-				{
-					TokenLogprob: TokenLogprob{
-						Token:   "hello",
-						Logprob: -0.123,
-					},
-					TopLogprobs: []TokenLogprob{
-						{Token: "hello", Logprob: -0.123},
-						{Token: "hi", Logprob: -1.456},
-						{Token: "hey", Logprob: -2.789},
-					},
-				},
-			},
-			expected: []llm.Logprob{
-				{
-					TokenLogprob: llm.TokenLogprob{
-						Token:   "hello",
-						Logprob: -0.123,
-					},
-					TopLogprobs: []llm.TokenLogprob{
-						{Token: "hello", Logprob: -0.123},
-						{Token: "hi", Logprob: -1.456},
-						{Token: "hey", Logprob: -2.789},
-					},
-				},
-			},
-		},
-		{
-			name: "Multiple logprobs",
-			input: []Logprob{
-				{
-					TokenLogprob: TokenLogprob{
-						Token:   "Hello",
-						Logprob: -0.1,
-					},
-					TopLogprobs: []TokenLogprob{
-						{Token: "Hello", Logprob: -0.1},
-						{Token: "Hi", Logprob: -1.2},
-					},
-				},
-				{
-					TokenLogprob: TokenLogprob{
-						Token:   " world",
-						Logprob: -0.2,
-					},
-					TopLogprobs: []TokenLogprob{
-						{Token: " world", Logprob: -0.2},
-						{Token: " there", Logprob: -2.3},
-					},
-				},
-			},
-			expected: []llm.Logprob{
-				{
-					TokenLogprob: llm.TokenLogprob{
-						Token:   "Hello",
-						Logprob: -0.1,
-					},
-					TopLogprobs: []llm.TokenLogprob{
-						{Token: "Hello", Logprob: -0.1},
-						{Token: "Hi", Logprob: -1.2},
-					},
-				},
-				{
-					TokenLogprob: llm.TokenLogprob{
-						Token:   " world",
-						Logprob: -0.2,
-					},
-					TopLogprobs: []llm.TokenLogprob{
-						{Token: " world", Logprob: -0.2},
-						{Token: " there", Logprob: -2.3},
-					},
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ToLLMLogprobs(tt.input)
-			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("ToLLMLogprobs() = %+v, want %+v", result, tt.expected)
-			}
-		})
 	}
 }
