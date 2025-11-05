@@ -175,7 +175,7 @@ func (t Tool) String() string {
 
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
-// of images.
+// of images and videos.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -183,6 +183,7 @@ type Message struct {
 	// original model output when ChatRequest.Think is enabled.
 	Thinking  string      `json:"thinking,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
+	Videos    []ImageData `json:"videos,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 	ToolName  string      `json:"tool_name,omitempty"`
 }
