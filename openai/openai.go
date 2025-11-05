@@ -8,10 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +27,74 @@ import (
 )
 
 var finishReasonToolCalls = "tool_calls"
+
+// extractVideoFrames extracts frames from video data using ffmpeg
+// Returns frames as JPEG image data
+func extractVideoFrames(videoData []byte, fps float64) ([][]byte, error) {
+	// Create temporary directory for video processing
+	tempDir, err := os.MkdirTemp("", "ollama-video-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Write video data to temporary file
+	videoPath := filepath.Join(tempDir, "input.mp4")
+	if err := os.WriteFile(videoPath, videoData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write video file: %w", err)
+	}
+
+	// Extract frames using ffmpeg
+	framePattern := filepath.Join(tempDir, "frame_%04d.jpg")
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-vf", fmt.Sprintf("fps=%.2f", fps),
+		"-vsync", "0",
+		"-q:v", "2",
+		framePattern,
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	// Read extracted frames
+	frameFiles, err := filepath.Glob(filepath.Join(tempDir, "frame_*.jpg"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list frame files: %w", err)
+	}
+
+	if len(frameFiles) == 0 {
+		return nil, fmt.Errorf("no frames extracted from video")
+	}
+
+	// Load frames as image data
+	frames := make([][]byte, 0, len(frameFiles))
+	for _, framePath := range frameFiles {
+		frameData, err := os.ReadFile(framePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read frame %s: %w", framePath, err)
+		}
+
+		// Decode and re-encode to ensure consistent format
+		img, _, err := image.Decode(bytes.NewReader(frameData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode frame %s: %w", framePath, err)
+		}
+
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+			return nil, fmt.Errorf("failed to encode frame: %w", err)
+		}
+
+		frames = append(frames, buf.Bytes())
+	}
+
+	return frames, nil
+}
 
 type Error struct {
 	Message string  `json:"message"`
@@ -575,7 +649,19 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					messages = append(messages, api.Message{Role: msg.Role, Videos: []api.ImageData{vid}})
+					// Extract frames from video (1 FPS = 1 frame per second)
+					frames, err := extractVideoFrames(vid, 1.0)
+					if err != nil {
+						return nil, fmt.Errorf("failed to extract video frames: %w", err)
+					}
+
+					// Add all frames to a single message as images
+					// This preserves temporal ordering for the model
+					frameImages := make([]api.ImageData, len(frames))
+					for i, frame := range frames {
+						frameImages[i] = frame
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Images: frameImages})
 				default:
 					return nil, errors.New("invalid message format")
 				}

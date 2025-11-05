@@ -1,9 +1,15 @@
 package qwen3vl
 
 import (
+	"bytes"
 	"fmt"
 	"image"
+	"image/jpeg"
+	_ "image/png"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -193,4 +199,99 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 	}
 
 	return result, nil
+}
+
+// ExtractVideoFrames extracts frames from video data using ffmpeg
+// Returns a slice of image.Image frames sampled at the specified FPS
+func ExtractVideoFrames(videoData []byte, fps float64) ([]image.Image, error) {
+	// Create temporary directory for video processing
+	tempDir, err := os.MkdirTemp("", "ollama-video-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Write video data to temporary file
+	videoPath := filepath.Join(tempDir, "input.mp4")
+	if err := os.WriteFile(videoPath, videoData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write video file: %w", err)
+	}
+
+	// Extract frames using ffmpeg
+	// -i: input file
+	// -vf fps=X: extract X frames per second
+	// -vsync 0: disable frame synchronization (extract all frames)
+	// -q:v 2: quality (2 is high quality)
+	// output_%04d.jpg: output pattern
+	framePattern := filepath.Join(tempDir, "frame_%04d.jpg")
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-vf", fmt.Sprintf("fps=%.2f", fps),
+		"-vsync", "0",
+		"-q:v", "2",
+		framePattern,
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	// Read extracted frames
+	frameFiles, err := filepath.Glob(filepath.Join(tempDir, "frame_*.jpg"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list frame files: %w", err)
+	}
+
+	if len(frameFiles) == 0 {
+		return nil, fmt.Errorf("no frames extracted from video")
+	}
+
+	// Load frames as images
+	frames := make([]image.Image, 0, len(frameFiles))
+	for _, framePath := range frameFiles {
+		frameData, err := os.ReadFile(framePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read frame %s: %w", framePath, err)
+		}
+
+		img, _, err := image.Decode(bytes.NewReader(frameData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode frame %s: %w", framePath, err)
+		}
+
+		frames = append(frames, img)
+	}
+
+	return frames, nil
+}
+
+// ProcessVideo extracts frames from video and processes them as images
+// Returns a slice of processed frame data
+func (p *ImageProcessor) ProcessVideo(ctx ml.Context, videoData []byte, fps float64) ([][]byte, error) {
+	// Extract frames from video
+	frames, err := ExtractVideoFrames(videoData, fps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract video frames: %w", err)
+	}
+
+	if len(frames) == 0 {
+		return nil, fmt.Errorf("no frames extracted from video")
+	}
+
+	// Convert each frame to image data (same format as regular images)
+	// This allows reusing the existing image processing pipeline
+	frameData := make([][]byte, 0, len(frames))
+	for _, frame := range frames {
+		// Encode frame back to JPEG
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, frame, &jpeg.Options{Quality: 90}); err != nil {
+			return nil, fmt.Errorf("failed to encode frame: %w", err)
+		}
+		frameData = append(frameData, buf.Bytes())
+	}
+
+	return frameData, nil
 }
