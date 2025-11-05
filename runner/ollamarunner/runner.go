@@ -206,7 +206,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 	multimodalProcessor, visionModel := s.model.(model.MultimodalProcessor)
 
 	if visionModel {
-		re := regexp.MustCompile(`\[img-(\d+)\]`)
+		re := regexp.MustCompile(`\[(?:img|video)-(\d+)\]`)
 		parts = re.Split(prompt, -1)
 		matches = re.FindAllStringSubmatch(prompt, -1)
 		mmStore = newMultimodalStore()
