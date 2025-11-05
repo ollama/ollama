@@ -70,7 +70,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, input string, truncate bool) ([]float32, int, error)
+	Embedding(ctx context.Context, input string) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -1581,8 +1581,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 }
 
 type EmbeddingRequest struct {
-	Content  string `json:"content"`
-	Truncate bool   `json:"truncate"`
+	Content string `json:"content"`
 }
 
 type EmbeddingResponse struct {
@@ -1590,7 +1589,7 @@ type EmbeddingResponse struct {
 	PromptEvalCount int       `json:"prompt_eval_count"`
 }
 
-func (s *llmServer) Embedding(ctx context.Context, input string, truncate bool) ([]float32, int, error) {
+func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int, error) {
 	logutil.Trace("embedding request", "input", input)
 
 	if err := s.sem.Acquire(ctx, 1); err != nil {
@@ -1611,7 +1610,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string, truncate bool) 
 		return nil, 0, fmt.Errorf("unexpected server status: %s", status)
 	}
 
-	data, err := json.Marshal(EmbeddingRequest{Content: input, Truncate: truncate})
+	data, err := json.Marshal(EmbeddingRequest{Content: input})
 	if err != nil {
 		return nil, 0, fmt.Errorf("error marshaling embed data: %w", err)
 	}

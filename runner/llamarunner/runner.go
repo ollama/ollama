@@ -103,8 +103,6 @@ type NewSequenceParams struct {
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
 
-var errorEmbeddingTooLong = errors.New("the embedding input length exceeds the context length")
-
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
@@ -132,9 +130,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			return nil, errorInputTooLong
 		}
 
-		if params.embedding {
-			return nil, errorEmbeddingTooLong
-		}
+		// Embeddings and generation both return the same too-long error when truncate is enabled
 
 		newInputs := inputs[:params.numKeep]
 		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
@@ -705,13 +701,9 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-		truncate:  req.Truncate,
+		truncate:  false,
 	})
 	if err != nil {
-		if errors.Is(err, errorEmbeddingTooLong) {
-			http.Error(w, "embedding_input_too_long", http.StatusBadRequest)
-			return
-		}
 		if errors.Is(err, errorInputTooLong) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

@@ -671,7 +671,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	embedWithRetry := func(text string) ([]float32, int, error) {
-		emb, tokCount, err := r.Embedding(ctx, text, false)
+		emb, tokCount, err := r.Embedding(ctx, text)
 		if err == nil {
 			return emb, tokCount, nil
 		}
@@ -709,15 +709,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		if err != nil {
 			return nil, 0, err
 		}
-		return r.Embedding(ctx, truncated, true)
+		return r.Embedding(ctx, truncated)
 	}
 
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
 	var totalTokens uint64
 	for i, text := range input {
-		i := i
-		text := text
 		g.Go(func() error {
 			embedding, tokenCount, err := embedWithRetry(text)
 			if err != nil {
@@ -800,7 +798,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt, true)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
