@@ -29,11 +29,38 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, model.ErrNoVisionModel
 	}
 
+	// Try to decode as an image first
 	img, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
-		return nil, err
+		// If image decode fails, try to process as video
+		frames, videoErr := ExtractVideoFrames(multimodalData, 1.0)
+		if videoErr != nil {
+			// Not an image or video, return original error
+			return nil, err
+		}
+
+		// Process video frames with temporal awareness
+		if len(frames) == 0 {
+			return nil, model.ErrNoVisionModel
+		}
+
+		// Use ProcessVideoFrames for proper temporal processing
+		pixelValues, grid, err := m.ProcessVideoFrames(ctx, frames)
+		if err != nil {
+			return nil, err
+		}
+
+		// Forward through vision model with temporal grid
+		visionOutputs, deepstackVisualEmbeds := m.VisionModel.Forward(ctx, pixelValues, grid)
+		mm := []input.Multimodal{{Tensor: visionOutputs, Data: grid}}
+		for i := range deepstackVisualEmbeds {
+			mm = append(mm, input.Multimodal{Tensor: deepstackVisualEmbeds[i]})
+		}
+
+		return mm, nil
 	}
 
+	// Single image processing
 	pixelValues, grid, err := m.ProcessImage(ctx, img)
 	if err != nil {
 		return nil, err
@@ -137,8 +164,24 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		if grid, ok := mi.Multimodal[0].Data.(*Grid); ok {
 			for i := range visionOutputs.Dim(1) {
 				w := grid.Width / m.spatialMergeSize
-				positionSlice[1][mi.Index+i] += int32(i / w)
-				positionSlice[2][mi.Index+i] += int32(i % w)
+				h := grid.Height / m.spatialMergeSize
+
+				// Handle temporal dimension for videos
+				if grid.Temporal > 1 {
+					// Calculate temporal and spatial indices
+					spatialSize := h * w
+					temporalIdx := i / spatialSize
+					spatialIdx := i % spatialSize
+
+					// Set 4D position: [time, height, width, extra]
+					positionSlice[0][mi.Index+i] = int32(temporalIdx)
+					positionSlice[1][mi.Index+i] += int32(spatialIdx / w)
+					positionSlice[2][mi.Index+i] += int32(spatialIdx % w)
+				} else {
+					// Single image case (no temporal dimension)
+					positionSlice[1][mi.Index+i] += int32(i / w)
+					positionSlice[2][mi.Index+i] += int32(i % w)
+				}
 			}
 		}
 
