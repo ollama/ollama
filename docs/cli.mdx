@@ -25,6 +25,18 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
+### Generate embeddings
+
+```
+ollama run embeddinggemma "Hello world"
+```
+
+Output is a JSON array:
+
+```
+echo "Hello world" | ollama run nomic-embed-text
+```
+
 ### Download a model
 
 ```
