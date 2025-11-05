@@ -221,6 +221,18 @@ jobs:
       - name: Run go generate
         run: go generate ./...
 
+      - name: Install ffmpeg (ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install ffmpeg (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install ffmpeg
+
+      - name: Install ffmpeg (windows)
+        if: startsWith(matrix.os, 'windows')
+        run: choco install -y ffmpeg
+
       - name: go test
         if: always()
         run: go test -count=1 -benchtime=1x ./...
