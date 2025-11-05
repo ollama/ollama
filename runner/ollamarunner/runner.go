@@ -113,6 +113,8 @@ type NewSequenceParams struct {
 
 var errorInputTooLong = errors.New("input exceeds maximum context length")
 
+var errorEmbeddingTooLong = errors.New("the embedding input length exceeds the context length")
+
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
@@ -136,66 +138,45 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 
 	if int32(len(inputs)) > s.cache.numCtx {
+
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
 
-		var newInputs []*input.Input
-
 		if params.embedding {
-			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
-			newLimit := s.cache.numCtx - 1
-
-			if newLimit <= 0 {
-				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
-			}
-
-			// Get the EOS token from the original input
-			eogToken := int32(-1)
-			if textProcessor, ok := s.model.(model.TextProcessor); ok {
-				lastToken := inputs[len(inputs)-1]
-				if textProcessor.Is(lastToken.Token, model.SpecialEOS) {
-					eogToken = lastToken.Token
-				}
-			}
-
-			// Truncate and always end with EOS
-			newInputs = inputs[:newLimit-1]
-			newInputs = append(newInputs, &input.Input{Token: eogToken})
-		} else {
-			// Otherwise, truncate in the middle
-			discard := int32(len(inputs)) - s.cache.numCtx
-			promptStart := params.numKeep + discard
-
-			// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
-			sameBatch := 0
-			for i, inp := range inputs {
-				if sameBatch > 0 {
-					sameBatch--
-
-					if promptStart == int32(i) {
-						promptStart++
-					}
-				} else if promptStart == int32(i) {
-					break
-				}
-
-				if inp.SameBatch != 0 {
-					if int32(i) < params.numKeep {
-						return nil, fmt.Errorf("SameBatch may not be specified within numKeep (index: %v numKeep: %v SameBatch: %v)", i, params.numKeep, inp.SameBatch)
-					}
-
-					sameBatch = inp.SameBatch
-				}
-			}
-
-			if promptStart >= int32(len(inputs)) {
-				return nil, errors.New("entire prompt removed by truncation")
-			}
-
-			newInputs = inputs[:params.numKeep]
-			newInputs = append(newInputs, inputs[promptStart:]...)
+			return nil, errorEmbeddingTooLong
 		}
+
+		discard := int32(len(inputs)) - s.cache.numCtx
+		promptStart := params.numKeep + discard
+
+		sameBatch := 0
+		for i, inp := range inputs {
+			if sameBatch > 0 {
+				sameBatch--
+
+				if promptStart == int32(i) {
+					promptStart++
+				}
+			} else if promptStart == int32(i) {
+				break
+			}
+
+			if inp.SameBatch != 0 {
+				if int32(i) < params.numKeep {
+					return nil, fmt.Errorf("SameBatch may not be specified within numKeep (index: %v numKeep: %v SameBatch: %v)", i, params.numKeep, inp.SameBatch)
+				}
+
+				sameBatch = inp.SameBatch
+			}
+		}
+
+		if promptStart >= int32(len(inputs)) {
+			return nil, errors.New("entire prompt removed by truncation")
+		}
+
+		newInputs := inputs[:params.numKeep]
+		newInputs = append(newInputs, inputs[promptStart:]...)
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
@@ -977,10 +958,14 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-		truncate:  req.Truncate,
+		truncate:  req.Truncate, // always error on over-length; server handles truncation & retry
 	})
 	if err != nil {
 		// Error handling for truncation to prevent segmentation fault
+		if errors.Is(err, errorEmbeddingTooLong) {
+			http.Error(w, "embedding_input_too_long", http.StatusBadRequest)
+			return
+		}
 		if errors.Is(err, errorInputTooLong) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

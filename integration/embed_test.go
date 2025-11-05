@@ -229,7 +229,7 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 				Options:  map[string]any{"num_ctx": 3},
 			},
 			check: func(t *testing.T, res *api.EmbedResponse, err error) {
-				if err.Error() != "input exceeds maximum context length" {
+				if err.Error() != "the input length exceeds the context length" {
 					t.Fatalf("expected truncation error, got: %v", err)
 				}
 			},

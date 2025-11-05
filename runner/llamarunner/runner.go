@@ -101,7 +101,9 @@ type NewSequenceParams struct {
 	truncate       bool
 }
 
-var errorInputTooLong = errors.New("input exceeds maximum context length")
+var errorInputTooLong = errors.New("the input length exceeds the context length")
+
+var errorEmbeddingTooLong = errors.New("the embedding input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
@@ -125,41 +127,18 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if len(inputs) > s.cache.numCtx {
-		discard := len(inputs) - s.cache.numCtx
 
-		// If truncation is not enabled, return an error
+		discard := len(inputs) - s.cache.numCtx
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
 
-		var newInputs []input
-
-		// TODO: EOG token handling should be moved to tokenizer
 		if params.embedding {
-			// make sure to end the truncated sequence with the eog token if one was originally provided
-			eogToken := -1
-
-			if len(inputs) > 0 && s.model.TokenIsEog(inputs[len(inputs)-1].token) {
-				eogToken = inputs[len(inputs)-1].token
-			}
-
-			// If embedding only, truncate to the maximum context length - 1 (to account for BOS token)
-			newLimit := s.cache.numCtx - 1
-
-			if newLimit <= 0 {
-				return nil, fmt.Errorf("input after truncation exceeds maximum context length")
-			}
-
-			newInputs = inputs[:newLimit]
-
-			if eogToken >= 0 {
-				newInputs[len(newInputs)-1] = input{token: eogToken}
-			}
-		} else {
-			// Otherwise, truncate in the middle
-			newInputs = inputs[:params.numKeep]
-			newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+			return nil, errorEmbeddingTooLong
 		}
+
+		newInputs := inputs[:params.numKeep]
+		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
 
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
@@ -730,6 +709,10 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		truncate:  req.Truncate,
 	})
 	if err != nil {
+		if errors.Is(err, errorEmbeddingTooLong) {
+			http.Error(w, "embedding_input_too_long", http.StatusBadRequest)
+			return
+		}
 		if errors.Is(err, errorInputTooLong) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

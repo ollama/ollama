@@ -677,9 +677,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	// Model KV metadata for server-side truncation decisions
+	kvData, _, err := getModelData(m.ModelPath, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -690,12 +697,84 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	isTooLong := func(err error) bool {
+		var serr api.StatusError
+		if !errors.As(err, &serr) {
+			return false
+		}
+		if serr.StatusCode != http.StatusBadRequest {
+			return false
+		}
+		msg := strings.TrimSpace(serr.ErrorMessage)
+
+		if msg == "embedding_input_too_long" {
+			return true
+		}
+
+		if strings.HasPrefix(msg, "{") {
+			var m map[string]any
+			if json.Unmarshal([]byte(msg), &m) == nil {
+				if v, ok := m["error"].(string); ok && v == "embedding_input_too_long" {
+					return true
+				}
+			}
+		}
+		return strings.Contains(msg, "embedding input length exceeds the context length") ||
+			strings.Contains(msg, "the embedding input length exceeds the context length") ||
+			strings.Contains(msg, "input length exceeds the context length") ||
+			strings.Contains(msg, "exceeds maximum context length")
+	}
+
+	embedWithRetry := func(text string) ([]float32, int, error) {
+		emb, tokCount, err := r.Embedding(c.Request.Context(), text, false)
+		if err == nil {
+			return emb, tokCount, nil
+		}
+		if !isTooLong(err) {
+			return nil, 0, err
+		}
+
+		if req.Truncate != nil && !*req.Truncate {
+			return nil, 0, err
+		}
+
+		tokens, tokErr := r.Tokenize(c.Request.Context(), text)
+		if tokErr != nil {
+			return nil, 0, tokErr
+		}
+
+		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
+
+		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
+			ctxLen--
+		}
+		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
+			ctxLen--
+		}
+
+		if ctxLen <= 0 {
+			return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
+		}
+
+		if len(tokens) > ctxLen {
+			tokens = tokens[:ctxLen]
+		}
+
+		truncated, detErr := r.Detokenize(c.Request.Context(), tokens)
+		if detErr != nil {
+			return nil, 0, detErr
+		}
+		return r.Embedding(c.Request.Context(), truncated, true)
+	}
+
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
 	var totalTokens uint64
 	for i, text := range input {
+		i := i
+		text := text
 		g.Go(func() error {
-			embedding, tokenCount, err := r.Embedding(c.Request.Context(), text, truncate)
+			embedding, tokenCount, err := embedWithRetry(text)
 			if err != nil {
 				return err
 			}
