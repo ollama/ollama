@@ -1705,7 +1705,7 @@ func getStringFromMap(m map[string]any, key, defaultValue string) string {
 // isImageAttachment checks if a filename is an image file
 func isImageAttachment(filename string) bool {
 	ext := strings.ToLower(filename)
-	return strings.HasSuffix(ext, ".png") || strings.HasSuffix(ext, ".jpg") || strings.HasSuffix(ext, ".jpeg")
+	return strings.HasSuffix(ext, ".png") || strings.HasSuffix(ext, ".jpg") || strings.HasSuffix(ext, ".jpeg") || strings.HasSuffix(ext, ".webp")
 }
 
 // ptr is a convenience function for &literal

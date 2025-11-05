@@ -282,7 +282,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 					"go", "rs", "swift", "kt", "scala", "sh", "bat", "yaml", "yml", "toml", "ini",
 					"cfg", "conf", "log", "rtf",
 				}
-				imageExts := []string{"png", "jpg", "jpeg"}
+				imageExts := []string{"png", "jpg", "jpeg", "webp"}
 				allowedExts := append(textExts, imageExts...)
 
 				// Use native multiple file selection with extension filtering
