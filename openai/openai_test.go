@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	prefix     = `data:image/jpeg;base64,`
-	testImage  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+	prefix    = `data:image/jpeg;base64,`
+	testImage = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
 func TestFromChatRequest_Basic(t *testing.T) {
