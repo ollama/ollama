@@ -2,7 +2,6 @@ package renderers
 
 import (
 	"encoding/json"
-	"reflect"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -53,19 +52,9 @@ type Qwen3VLRenderer struct {
 	useImgTags bool
 }
 
-// getVideos attempts to extract video data from the message using reflection
-// This is forward-compatible with future api.Message changes that add Videos field
+// getVideos returns video data from the message
 func getVideos(msg api.Message) []api.ImageData {
-	v := reflect.ValueOf(msg)
-	videosField := v.FieldByName("Videos")
-
-	if videosField.IsValid() && !videosField.IsZero() {
-		if videos, ok := videosField.Interface().([]api.ImageData); ok {
-			return videos
-		}
-	}
-
-	return nil
+	return msg.Videos
 }
 
 func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
