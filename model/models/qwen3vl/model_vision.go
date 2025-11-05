@@ -124,49 +124,65 @@ func makeSlice2D[T int32 | float32](n0, n1 int) iter.Seq[[]T] {
 }
 
 func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor, grid *Grid, opts VisionOptions) ml.Tensor {
-	indexSlice := slices.Collect(makeSlice2D[int32](4, grid.Height*grid.Width))
-	weightSlice := slices.Collect(makeSlice2D[float32](4, grid.Height*grid.Width))
+	// Calculate total positions (including temporal dimension for videos)
+	totalPositions := grid.Temporal * grid.Height * grid.Width
+
+	indexSlice := slices.Collect(makeSlice2D[int32](4, totalPositions))
+	weightSlice := slices.Collect(makeSlice2D[float32](4, totalPositions))
 
 	stepHeight := float32(opts.gridPerSide-1) / float32(grid.Height-1)
 	stepWidth := float32(opts.gridPerSide-1) / float32(grid.Width-1)
 
 	var i int
-	for h := range grid.Height {
-		for w := range grid.Width {
-			y, x := float32(h)*stepHeight, float32(w)*stepWidth
+	// Iterate over temporal dimension for videos (for images, temporal=1)
+	for _ = range grid.Temporal {
+		for h := range grid.Height {
+			for w := range grid.Width {
+				y, x := float32(h)*stepHeight, float32(w)*stepWidth
 
-			floorY, floorX := int32(y), int32(x)
-			ceilY, ceilX := min(floorY+1, int32(opts.gridPerSide-1)), min(floorX+1, int32(opts.gridPerSide-1))
+				floorY, floorX := int32(y), int32(x)
+				ceilY, ceilX := min(floorY+1, int32(opts.gridPerSide-1)), min(floorX+1, int32(opts.gridPerSide-1))
 
-			indexSlice[0][i] = floorY*int32(opts.gridPerSide) + floorX
-			indexSlice[1][i] = floorY*int32(opts.gridPerSide) + ceilX
-			indexSlice[2][i] = ceilY*int32(opts.gridPerSide) + floorX
-			indexSlice[3][i] = ceilY*int32(opts.gridPerSide) + ceilX
+				indexSlice[0][i] = floorY*int32(opts.gridPerSide) + floorX
+				indexSlice[1][i] = floorY*int32(opts.gridPerSide) + ceilX
+				indexSlice[2][i] = ceilY*int32(opts.gridPerSide) + floorX
+				indexSlice[3][i] = ceilY*int32(opts.gridPerSide) + ceilX
 
-			weightSlice[0][i] = (1 - (y - float32(floorY))) * (1 - (x - float32(floorX)))
-			weightSlice[1][i] = (1 - (y - float32(floorY))) * (x - float32(floorX))
-			weightSlice[2][i] = (y - float32(floorY)) * (1 - (x - float32(floorX)))
-			weightSlice[3][i] = (y - float32(floorY)) * (x - float32(floorX))
+				weightSlice[0][i] = (1 - (y - float32(floorY))) * (1 - (x - float32(floorX)))
+				weightSlice[1][i] = (1 - (y - float32(floorY))) * (x - float32(floorX))
+				weightSlice[2][i] = (y - float32(floorY)) * (1 - (x - float32(floorX)))
+				weightSlice[3][i] = (y - float32(floorY)) * (x - float32(floorX))
 
-			i++
+				i++
+			}
 		}
 	}
 
-	indices := ctx.Input().FromInts(slices.Concat(indexSlice...), grid.Height*grid.Width*4)
-	weights := ctx.Input().FromFloats(slices.Concat(weightSlice...), 1, grid.Height*grid.Width*4)
+	indices := ctx.Input().FromInts(slices.Concat(indexSlice...), totalPositions*4)
+	weights := ctx.Input().FromFloats(slices.Concat(weightSlice...), 1, totalPositions*4)
 
 	n := hiddenStates.Dim(0)
 	positionEmbeds := m.PositionEmbedding.Forward(ctx, indices)
 	positionEmbeds = positionEmbeds.Mul(ctx, weights)
 	positionEmbeds = positionEmbeds.Reshape(ctx, n, -1, 4)
 
-	positionEmbeds = positionEmbeds.View(ctx, 0, n, positionEmbeds.Stride(1), grid.Height*grid.Width).
-		Add(ctx, positionEmbeds.View(ctx, 1*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), grid.Height*grid.Width)).
-		Add(ctx, positionEmbeds.View(ctx, 2*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), grid.Height*grid.Width)).
-		Add(ctx, positionEmbeds.View(ctx, 3*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), grid.Height*grid.Width))
+	positionEmbeds = positionEmbeds.View(ctx, 0, n, positionEmbeds.Stride(1), totalPositions).
+		Add(ctx, positionEmbeds.View(ctx, 1*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions)).
+		Add(ctx, positionEmbeds.View(ctx, 2*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions)).
+		Add(ctx, positionEmbeds.View(ctx, 3*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions))
 
-	positionEmbeds = positionEmbeds.Reshape(ctx, -1, grid.Width/opts.spatialMergeSize, opts.spatialMergeSize, grid.Height/opts.spatialMergeSize)
-	positionEmbeds = positionEmbeds.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, n, -1)
+	// Reshape and permute, accounting for temporal dimension
+	// For images: temporal=1, apply spatial reordering
+	// For videos: temporal>1, keep flat since patches are already in correct temporal-spatial order
+	if grid.Temporal > 1 {
+		// Videos: position embeddings are already in correct order from temporal loop above
+		// GGML doesn't support 5D tensors, so we keep it at [n, totalPositions]
+		positionEmbeds = positionEmbeds.Contiguous(ctx, n, -1)
+	} else {
+		// Images: apply spatial reordering as before
+		positionEmbeds = positionEmbeds.Reshape(ctx, -1, grid.Width/opts.spatialMergeSize, opts.spatialMergeSize, grid.Height/opts.spatialMergeSize)
+		positionEmbeds = positionEmbeds.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, n, -1)
+	}
 	return hiddenStates.Add(ctx, positionEmbeds)
 }
 
@@ -181,22 +197,34 @@ type VisionModel struct {
 }
 
 func (m *VisionModel) positions(ctx ml.Context, grid *Grid) (_, _ ml.Tensor) {
+	totalPositions := grid.Temporal * grid.Height * grid.Width
+
 	indices := ctx.Input().FromInts(slices.Collect(func(yield func(int32) bool) {
-		for y := range grid.Height {
-			for x := range grid.Width {
-				if !yield(int32(y)) {
-					return
-				}
-				if !yield(int32(x)) {
-					return
+		// For videos, iterate over temporal dimension as well
+		for _ = range grid.Temporal {
+			for y := range grid.Height {
+				for x := range grid.Width {
+					if !yield(int32(y)) {
+						return
+					}
+					if !yield(int32(x)) {
+						return
+					}
 				}
 			}
 		}
-	}), grid.Width*grid.Height*2)
+	}), totalPositions*2)
 
-	indices = indices.Reshape(ctx, -1, grid.Width/m.spatialMergeSize, m.spatialMergeSize, grid.Height/m.spatialMergeSize)
-	indices = indices.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	indices = indices.Reshape(ctx, -1)
+	// For videos, avoid 5D reshape - keep indices flat and reorganize differently
+	if grid.Temporal > 1 {
+		// Videos: keep flat since we have T*H*W positions
+		indices = indices.Contiguous(ctx)
+	} else {
+		// Images: apply spatial reordering as before
+		indices = indices.Reshape(ctx, -1, grid.Width/m.spatialMergeSize, m.spatialMergeSize, grid.Height/m.spatialMergeSize)
+		indices = indices.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+		indices = indices.Reshape(ctx, -1)
+	}
 
 	halfDim := m.headDim() / 2
 	maxGrid := max(grid.Height, grid.Width)
