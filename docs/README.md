@@ -14,6 +14,7 @@
 * [API Reference](https://docs.ollama.com/api)
 * [Modelfile Reference](./modelfile.md)
 * [OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility)
+* [Video Support](./video-support.md)
 
 ### Resources
 

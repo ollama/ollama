@@ -45,6 +45,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
+- `videos`: (optional) a list of base64-encoded videos (for multimodal models such as `qwen3-vl`)
 - `think`: (for thinking models) should the model think before responding?
 
 Advanced parameters (optional):
@@ -325,6 +326,41 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
+#### Request (with videos)
+
+To submit videos to multimodal models such as `qwen3-vl`, provide a list of base64-encoded `videos`. The model will extract and analyze frames from the video:
+
+> **Note**: Video support requires `ffmpeg` to be installed on the system.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "qwen3-vl",
+  "prompt":"What is happening in this video?",
+  "stream": false,
+  "videos": ["<base64-encoded-video>"]
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "qwen3-vl",
+  "created_at": "2024-11-04T15:36:02.583064Z",
+  "response": "The video shows a person walking through a park on a sunny day...",
+  "done": true,
+  "context": [1, 2, 3],
+  "total_duration": 5240123000,
+  "load_duration": 2559292,
+  "prompt_eval_count": 1,
+  "prompt_eval_duration": 3195557000,
+  "eval_count": 52,
+  "eval_duration": 982123000
+}
+```
+
 #### Request (Raw Mode)
 
 In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
@@ -501,6 +537,7 @@ The `message` object has the following fields:
 - `content`: the content of the message
 - `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
+- `videos` (optional): a list of videos to include in the message (for multimodal models such as `qwen3-vl`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
 - `tool_name` (optional): add the name of the tool that was executed to inform the model of the result
 
