@@ -135,7 +135,7 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 
 	var i int
 	// Iterate over temporal dimension for videos (for images, temporal=1)
-	for _ = range grid.Temporal {
+	for range grid.Temporal {
 		for h := range grid.Height {
 			for w := range grid.Width {
 				y, x := float32(h)*stepHeight, float32(w)*stepWidth
@@ -212,7 +212,7 @@ func (m *VisionModel) positions(ctx ml.Context, grid *Grid) (_, _ ml.Tensor) {
 	totalPositions := grid.Temporal * grid.Height * grid.Width
 
 	indices := ctx.Input().FromInts(slices.Collect(func(yield func(int32) bool) {
-		for _ = range grid.Temporal {
+		for range grid.Temporal {
 			for y := range grid.Height {
 				for x := range grid.Width {
 					if !yield(int32(y)) {

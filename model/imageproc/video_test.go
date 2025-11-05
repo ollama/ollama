@@ -2,9 +2,6 @@ package imageproc
 
 import (
 	"bytes"
-	"image"
-	"image/color"
-	"image/jpeg"
 	"os/exec"
 	"testing"
 	"time"
@@ -72,7 +69,6 @@ func TestExtractVideoFrames_FFmpegAvailable(t *testing.T) {
 
 // TestExtractVideoFrames_ValidVideo tests successful frame extraction
 func TestExtractVideoFrames_ValidVideo(t *testing.T) {
-
 	// Create a simple test video using ffmpeg
 	cmd := exec.Command("ffmpeg",
 		"-f", "lavfi",
@@ -125,7 +121,6 @@ func TestExtractVideoFrames_ValidVideo(t *testing.T) {
 
 // TestExtractVideoFrames_MaxFrames tests frame limiting
 func TestExtractVideoFrames_MaxFrames(t *testing.T) {
-
 	// Create a test video
 	cmd := exec.Command("ffmpeg",
 		"-f", "lavfi",
@@ -189,7 +184,6 @@ func TestExtractVideoFrames_CustomConfig(t *testing.T) {
 
 // TestExtractVideoFrames_SingleFrame tests video with only 1 frame
 func TestExtractVideoFrames_SingleFrame(t *testing.T) {
-
 	// Create a 1-second video at 1 FPS (results in 1 frame)
 	cmd := exec.Command("ffmpeg",
 		"-f", "lavfi",
@@ -226,7 +220,6 @@ func TestExtractVideoFrames_SingleFrame(t *testing.T) {
 
 // BenchmarkExtractVideoFrames benchmarks video frame extraction
 func BenchmarkExtractVideoFrames(b *testing.B) {
-
 	// Create test video once
 	cmd := exec.Command("ffmpeg",
 		"-f", "lavfi",
@@ -249,34 +242,10 @@ func BenchmarkExtractVideoFrames(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := ExtractVideoFrames(videoData, config)
 		if err != nil {
 			b.Fatalf("ExtractVideoFrames failed: %v", err)
 		}
 	}
-}
-
-// createTestVideo creates a simple video in memory for testing
-func createTestVideo(t *testing.T, frames int) []byte {
-	t.Helper()
-
-	// Create multiple frames as JPEG images
-	var buf bytes.Buffer
-	for i := 0; i < frames; i++ {
-		// Create a simple colored frame
-		img := image.NewRGBA(image.Rect(0, 0, 100, 100))
-		c := color.RGBA{uint8(i * 50 % 255), 100, 150, 255}
-		for y := 0; y < 100; y++ {
-			for x := 0; x < 100; x++ {
-				img.Set(x, y, c)
-			}
-		}
-
-		if err := jpeg.Encode(&buf, img, nil); err != nil {
-			t.Fatalf("Failed to encode frame %d: %v", i, err)
-		}
-	}
-
-	return buf.Bytes()
 }

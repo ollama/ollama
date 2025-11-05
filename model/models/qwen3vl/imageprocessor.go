@@ -352,8 +352,8 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 		for h := range grid.Height {
 			for w := range grid.Width {
 				// Handle the 2x2 merged patches
-				for mh := 0; mh < mergeSize; mh++ {
-					for mw := 0; mw < mergeSize; mw++ {
+				for mh := range mergeSize {
+					for mw := range mergeSize {
 						baseOffset := patchIndex * patchDim
 
 						// Extract patch data for each temporal frame in this group
@@ -361,13 +361,13 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 							temporalIdx := tf - frameStart
 							frameOffset := tf * channels * height * width
 
-							for c := 0; c < channels; c++ {
+							for c := range channels {
 								channelOffset := baseOffset +
 									(c * temporalPatchSize * patchSize * patchSize) +
 									(temporalIdx * patchSize * patchSize)
 
-								for py := 0; py < patchSize; py++ {
-									for px := 0; px < patchSize; px++ {
+								for py := range patchSize {
+									for px := range patchSize {
 										// Calculate source pixel coordinates
 										y := (h*mergeSize+mh)*patchSize + py
 										x := (w*mergeSize+mw)*patchSize + px
@@ -394,13 +394,13 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 							for tf := frameEnd - frameStart; tf < temporalPatchSize; tf++ {
 								temporalIdx := tf
 
-								for c := 0; c < channels; c++ {
+								for c := range channels {
 									channelOffset := baseOffset +
 										(c * temporalPatchSize * patchSize * patchSize) +
 										(temporalIdx * patchSize * patchSize)
 
-									for py := 0; py < patchSize; py++ {
-										for px := 0; px < patchSize; px++ {
+									for py := range patchSize {
+										for px := range patchSize {
 											y := (h*mergeSize+mh)*patchSize + py
 											x := (w*mergeSize+mw)*patchSize + px
 

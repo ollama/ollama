@@ -79,7 +79,7 @@ func ExtractVideoFrames(videoData []byte, config VideoExtractionConfig) ([]image
 
 	// Write video data to temporary file
 	videoPath := filepath.Join(tempDir, "input.mp4")
-	if err := os.WriteFile(videoPath, videoData, 0600); err != nil {
+	if err := os.WriteFile(videoPath, videoData, 0o600); err != nil {
 		return nil, fmt.Errorf("failed to write video file: %w", err)
 	}
 
