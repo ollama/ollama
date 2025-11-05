@@ -237,7 +237,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	} else {
 		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 			// metal never updates free VRAM
-			return devices
+			return append([]ml.DeviceInfo{}, devices...)
 		}
 
 		slog.Debug("refreshing free memory")
@@ -336,7 +336,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		}
 	}
 
-	return devices
+	return append([]ml.DeviceInfo{}, devices...)
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
