@@ -131,9 +131,7 @@ func TestBenchmarkChat_Success(t *testing.T) {
 	server := createMockOllamaServer(t, mockResponses)
 	defer server.Close()
 
-	oldEnv := os.Getenv("OLLAMA_HOST")
-	os.Setenv("OLLAMA_HOST", server.URL)
-	defer os.Setenv("OLLAMA_HOST", oldEnv)
+	t.Setenv("OLLAMA_HOST", server.URL)
 
 	output := captureOutput(func() {
 		err := BenchmarkChat(fOpt)
@@ -161,9 +159,7 @@ func TestBenchmarkChat_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldEnv := os.Getenv("OLLAMA_HOST")
-	os.Setenv("OLLAMA_HOST", server.URL)
-	defer os.Setenv("OLLAMA_HOST", oldEnv)
+	t.Setenv("OLLAMA_HOST", server.URL)
 
 	output := captureOutput(func() {
 		err := BenchmarkChat(fOpt)
@@ -208,10 +204,7 @@ func TestBenchmarkChat_Timeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Set the environment variable to use our mock server
-	oldEnv := os.Getenv("OLLAMA_HOST")
-	os.Setenv("OLLAMA_HOST", server.URL)
-	defer os.Setenv("OLLAMA_HOST", oldEnv)
+	t.Setenv("OLLAMA_HOST", server.URL)
 
 	output := captureOutput(func() {
 		err := BenchmarkChat(fOpt)
@@ -242,9 +235,7 @@ func TestBenchmarkChat_NoMetrics(t *testing.T) {
 	server := createMockOllamaServer(t, mockResponses)
 	defer server.Close()
 
-	oldEnv := os.Getenv("OLLAMA_HOST")
-	os.Setenv("OLLAMA_HOST", server.URL)
-	defer os.Setenv("OLLAMA_HOST", oldEnv)
+	t.Setenv("OLLAMA_HOST", server.URL)
 
 	output := captureOutput(func() {
 		err := BenchmarkChat(fOpt)
@@ -296,9 +287,7 @@ func TestBenchmarkChat_MultipleModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldEnv := os.Getenv("OLLAMA_HOST")
-	os.Setenv("OLLAMA_HOST", server.URL)
-	defer os.Setenv("OLLAMA_HOST", oldEnv)
+	t.Setenv("OLLAMA_HOST", server.URL)
 
 	output := captureOutput(func() {
 		err := BenchmarkChat(fOpt)
@@ -320,7 +309,7 @@ func TestBenchmarkChat_MultipleModels(t *testing.T) {
 func TestBenchmarkChat_WithImage(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
-	tmpfile, err := os.CreateTemp("", "testimage")
+	tmpfile, err := os.CreateTemp(t.TempDir(), "testimage")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -367,9 +356,7 @@ func TestBenchmarkChat_WithImage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldEnv := os.Getenv("OLLAMA_HOST")
-	os.Setenv("OLLAMA_HOST", server.URL)
-	defer os.Setenv("OLLAMA_HOST", oldEnv)
+	t.Setenv("OLLAMA_HOST", server.URL)
 
 	output := captureOutput(func() {
 		err := BenchmarkChat(fOpt)
@@ -415,7 +402,7 @@ func TestBenchmarkChat_ImageError(t *testing.T) {
 }
 
 func TestReadImage_Success(t *testing.T) {
-	tmpfile, err := os.CreateTemp("", "testimage")
+	tmpfile, err := os.CreateTemp(t.TempDir(), "testimage")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -472,34 +459,5 @@ func TestOptionsMapCreation(t *testing.T) {
 	}
 	if options["seed"] != *fOpt.seed {
 		t.Errorf("Expected seed %d, got %v", *fOpt.seed, options["seed"])
-	}
-}
-
-func TestKeepAliveDuration(t *testing.T) {
-	keepAlive := 5.0
-	var keepAliveDuration *api.Duration
-
-	if keepAlive > 0 {
-		duration := api.Duration{Duration: time.Duration(keepAlive * float64(time.Second))}
-		keepAliveDuration = &duration
-	}
-
-	if keepAliveDuration == nil {
-		t.Error("Expected keepAliveDuration to be set")
-	}
-	if keepAliveDuration.Duration != 5*time.Second {
-		t.Errorf("Expected 5 seconds, got %v", keepAliveDuration.Duration)
-	}
-
-	keepAlive = 0.0
-	keepAliveDuration = nil
-
-	if keepAlive > 0 {
-		duration := api.Duration{Duration: time.Duration(keepAlive * float64(time.Second))}
-		keepAliveDuration = &duration
-	}
-
-	if keepAliveDuration != nil {
-		t.Error("Expected keepAliveDuration to be nil for zero keepAlive")
 	}
 }

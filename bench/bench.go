@@ -86,9 +86,9 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 					nsPerToken = float64(m.Duration.Nanoseconds()) / float64(m.Count)
 					tokensPerSec = float64(m.Count) / (float64(m.Duration.Nanoseconds()) + 1e-12) * 1e9
 				}
-				fmt.Fprintln(w, fmt.Sprintf("%s,%s,%d,%.2f,%.2f", m.Model, m.Step, m.Count, nsPerToken, tokensPerSec))
+				fmt.Fprintf(w, "%s,%s,%d,%.2f,%.2f\n", m.Model, m.Step, m.Count, nsPerToken, tokensPerSec)
 			} else {
-				fmt.Fprintln(w, fmt.Sprintf("%s,%s,1,%d,0", m.Model, m.Step, m.Duration.Nanoseconds()))
+				fmt.Fprintf(w, "%s,%s,1,%d,0\n", m.Model, m.Step, m.Duration.Nanoseconds())
 			}
 		}
 	default:
@@ -121,7 +121,7 @@ func BenchmarkChat(fOpt flagOptions) error {
 	}
 
 	for _, model := range models {
-		for i := 0; i < *fOpt.epochs; i++ {
+		for range *fOpt.epochs {
 			options := make(map[string]interface{})
 			if *fOpt.maxTokens > 0 {
 				options["num_predict"] = *fOpt.maxTokens
