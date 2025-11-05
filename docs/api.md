@@ -48,6 +48,8 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `videos`: (optional) a list of base64-encoded videos (for multimodal models such as `qwen3-vl`)
 - `think`: (for thinking models) should the model think before responding?
 
+> **Note on Video URLs**: This endpoint only accepts base64-encoded video data. To use HTTP/HTTPS video URLs, use the [OpenAI-compatible endpoint](/docs/api/openai-compatibility) at `/v1/chat/completions`.
+
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema
@@ -537,9 +539,11 @@ The `message` object has the following fields:
 - `content`: the content of the message
 - `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
-- `videos` (optional): a list of videos to include in the message (for multimodal models such as `qwen3-vl`)
+- `videos` (optional): a list of base64-encoded videos to include in the message (for multimodal models such as `qwen3-vl`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
 - `tool_name` (optional): add the name of the tool that was executed to inform the model of the result
+
+> **Note on Video URLs**: The `/api/chat` and `/api/generate` endpoints only accept base64-encoded video data. To use HTTP/HTTPS video URLs, use the [OpenAI-compatible endpoint](/docs/api/openai-compatibility) at `/v1/chat/completions`.
 
 Advanced parameters (optional):
 
