@@ -2,6 +2,7 @@ package qwen3vl
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"slices"
 
@@ -41,13 +42,29 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 
 		// Process video frames with temporal awareness
 		if len(frames) == 0 {
-			return nil, model.ErrNoVisionModel
+			return nil, fmt.Errorf("video contains no frames")
 		}
 
-		// Use ProcessVideoFrames for proper temporal processing
+		// If video has only 1 frame, process as a static image instead
+		// This avoids dimension mismatches in position embeddings when Temporal=1
+		if len(frames) == 1 {
+			pixelValues, grid, err := m.ProcessImage(ctx, frames[0])
+			if err != nil {
+				return nil, fmt.Errorf("failed to process single-frame video: %w", err)
+			}
+
+			visionOutputs, deepstackVisualEmbeds := m.VisionModel.Forward(ctx, pixelValues, grid)
+			mm := []input.Multimodal{{Tensor: visionOutputs, Data: grid}}
+			for i := range deepstackVisualEmbeds {
+				mm = append(mm, input.Multimodal{Tensor: deepstackVisualEmbeds[i]})
+			}
+			return mm, nil
+		}
+
+		// Use ProcessVideoFrames for proper temporal processing (2+ frames)
 		pixelValues, grid, err := m.ProcessVideoFrames(ctx, frames)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to process video frames: %w", err)
 		}
 
 		// Forward through vision model with temporal grid
