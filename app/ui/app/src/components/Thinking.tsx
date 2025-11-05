@@ -73,8 +73,9 @@ export default function Thinking({
   // Calculate max height for smooth animations
   const getMaxHeight = () => {
     if (isCollapsed) {
-      return finishedThinking ? "0px" : "12rem"; // 8rem = 128px (same as max-h-32)
+      return finishedThinking ? "0px" : "12rem";
     }
+    // When expanded, use the content height or grow naturally
     return contentHeight ? `${contentHeight}px` : "none";
   };
 
@@ -131,10 +132,11 @@ export default function Thinking({
       </div>
       <div
         ref={wrapperRef}
-        className={`text-xs text-neutral-500 dark:text-neutral-500 rounded-md overflow-hidden
-          transition-[max-height,opacity] duration-300 ease-in-out relative ml-6 mt-2`}
+        className={`text-xs text-neutral-500 dark:text-neutral-500 rounded-md
+          transition-[max-height,opacity] duration-300 ease-in-out relative ml-6 mt-2
+          ${isCollapsed ? "overflow-hidden" : "overflow-y-auto max-h-28"}`}
         style={{
-          maxHeight: getMaxHeight(),
+          maxHeight: isCollapsed ? getMaxHeight() : undefined,
           opacity: isCollapsed && finishedThinking ? 0 : 1,
         }}
       >
