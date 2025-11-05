@@ -43,6 +43,8 @@ export const TEXT_FILE_EXTENSIONS = [
 
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg"];
 
+export const VIDEO_EXTENSIONS = ["mp4", "mov", "avi", "mkv", "webm", "m4v"];
+
 export interface FileValidationOptions {
   maxFileSize?: number; // in MB
   allowedExtensions?: string[];
@@ -62,7 +64,7 @@ export function validateFile(
 ): ValidationResult {
   const {
     maxFileSize = 10,
-    allowedExtensions = [...TEXT_FILE_EXTENSIONS, ...IMAGE_EXTENSIONS],
+    allowedExtensions = [...TEXT_FILE_EXTENSIONS, ...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS],
     hasVisionCapability = false,
     customValidator,
   } = options;
@@ -83,8 +85,14 @@ export function validateFile(
     return { valid: false, error: "File type not supported" };
   }
 
+  // Image validation - requires vision capability
   if (IMAGE_EXTENSIONS.includes(fileExtension) && !hasVisionCapability) {
     return { valid: false, error: "This model does not support images" };
+  }
+
+  // Video validation - requires vision capability (same as images for now)
+  if (VIDEO_EXTENSIONS.includes(fileExtension) && !hasVisionCapability) {
+    return { valid: false, error: "This model does not support videos" };
   }
 
   // File size validation

@@ -283,7 +283,9 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 					"cfg", "conf", "log", "rtf",
 				}
 				imageExts := []string{"png", "jpg", "jpeg"}
+				videoExts := []string{"mp4", "mov", "avi", "mkv", "webm", "m4v"}
 				allowedExts := append(textExts, imageExts...)
+				allowedExts = append(allowedExts, videoExts...)
 
 				// Use native multiple file selection with extension filtering
 				filenames, err := dialog.File().
