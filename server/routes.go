@@ -621,34 +621,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	truncate := true
-	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
-	}
-
-	// Basic server-side guard: if truncation is enabled and num_ctx <= 1, return an error
-	if truncate && req.Options != nil {
-		if v, ok := req.Options["num_ctx"]; ok {
-			var numCtx int
-			switch t := v.(type) {
-			case float64:
-				numCtx = int(t)
-			case int:
-				numCtx = t
-			case int64:
-				numCtx = int(t)
-			case json.Number:
-				if i, err := t.Int64(); err == nil {
-					numCtx = int(i)
-				}
-			}
-			if numCtx <= 1 {
-				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "input after truncation exceeds maximum context length"})
-				return
-			}
-		}
-	}
-
 	var input []string
 
 	switch i := req.Input.(type) {
@@ -683,17 +655,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	// Model KV metadata for server-side truncation decisions
-	kvData, _, err := getModelData(m.ModelPath, false)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
 	checkpointLoaded := time.Now()
 
 	if len(input) == 0 {
 		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
+		return
+	}
+
+	kvData, _, err := getModelData(m.ModelPath, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
