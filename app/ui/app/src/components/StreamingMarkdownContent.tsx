@@ -2,7 +2,8 @@ import React from "react";
 import { Streamdown, defaultRemarkPlugins } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
-import { codeToTokens, type BundledLanguage } from "shiki";
+import type { BundledLanguage } from "shiki";
+import { highlighter } from "@/lib/highlighter";
 
 interface StreamingMarkdownContentProps {
   content: string;
@@ -30,9 +31,6 @@ const extractText = (node: React.ReactNode): string => {
 
 const CodeBlock = React.memo(
   ({ children }: React.HTMLAttributes<HTMLPreElement>) => {
-    const [lightTokens, setLightTokens] = React.useState<any>(null);
-    const [darkTokens, setDarkTokens] = React.useState<any>(null);
-
     // Extract code and language from children
     const codeElement = children as React.ReactElement<{
       className?: string;
@@ -42,26 +40,25 @@ const CodeBlock = React.memo(
       codeElement.props.className?.replace(/language-/, "") || "";
     const codeText = extractText(codeElement.props.children);
 
-    React.useEffect(() => {
-      async function highlight() {
-        try {
-          const [light, dark] = await Promise.all([
-            codeToTokens(codeText, {
-              lang: language as BundledLanguage,
-              theme: "github-light",
-            }),
-            codeToTokens(codeText, {
-              lang: language as BundledLanguage,
-              theme: "github-dark",
-            }),
-          ]);
-          setLightTokens(light);
-          setDarkTokens(dark);
-        } catch (error) {
-          console.error("Failed to highlight code:", error);
-        }
+    // Synchronously highlight code using the pre-loaded highlighter
+    const tokens = React.useMemo(() => {
+      if (!highlighter) return null;
+
+      try {
+        return {
+          light: highlighter.codeToTokensBase(codeText, {
+            lang: language as BundledLanguage,
+            theme: "one-light" as any,
+          }),
+          dark: highlighter.codeToTokensBase(codeText, {
+            lang: language as BundledLanguage,
+            theme: "one-dark" as any,
+          }),
+        };
+      } catch (error) {
+        console.error("Failed to highlight code:", error);
+        return null;
       }
-      highlight();
     }, [codeText, language]);
 
     return (
@@ -81,8 +78,8 @@ const CodeBlock = React.memo(
         {/* Light mode */}
         <pre className="dark:hidden m-0 bg-neutral-100 text-sm overflow-x-auto p-4">
           <code className="font-mono text-sm">
-            {lightTokens
-              ? lightTokens.tokens.map((line: any, i: number) => (
+            {tokens?.light
+              ? tokens.light.map((line: any, i: number) => (
                   <React.Fragment key={i}>
                     {line.map((token: any, j: number) => (
                       <span
@@ -94,7 +91,7 @@ const CodeBlock = React.memo(
                         {token.content}
                       </span>
                     ))}
-                    {i < lightTokens.tokens.length - 1 && "\n"}
+                    {i < tokens.light.length - 1 && "\n"}
                   </React.Fragment>
                 ))
               : codeText}
@@ -103,8 +100,8 @@ const CodeBlock = React.memo(
         {/* Dark mode */}
         <pre className="hidden dark:block m-0 bg-neutral-800 text-sm overflow-x-auto p-4">
           <code className="font-mono text-sm">
-            {darkTokens
-              ? darkTokens.tokens.map((line: any, i: number) => (
+            {tokens?.dark
+              ? tokens.dark.map((line: any, i: number) => (
                   <React.Fragment key={i}>
                     {line.map((token: any, j: number) => (
                       <span
@@ -116,7 +113,7 @@ const CodeBlock = React.memo(
                         {token.content}
                       </span>
                     ))}
-                    {i < darkTokens.tokens.length - 1 && "\n"}
+                    {i < tokens.dark.length - 1 && "\n"}
                   </React.Fragment>
                 ))
               : codeText}
@@ -158,6 +155,26 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           prose-pre:my-0
           prose-pre:max-w-full
           prose-pre:pt-1
+          [&_table]:border-collapse
+          [&_table]:w-full
+          [&_table]:border
+          [&_table]:border-neutral-200
+          [&_table]:rounded-lg
+          [&_table]:overflow-hidden
+          [&_th]:px-3
+          [&_th]:py-2
+          [&_th]:text-left
+          [&_th]:font-semibold
+          [&_th]:border-b
+          [&_th]:border-r
+          [&_th]:border-neutral-200
+          [&_th:last-child]:border-r-0
+          [&_td]:px-3
+          [&_td]:py-2
+          [&_td]:border-r
+          [&_td]:border-neutral-200
+          [&_td:last-child]:border-r-0
+          [&_tbody_tr:not(:last-child)_td]:border-b
           [&_code:not(pre_code)]:text-neutral-700
           [&_code:not(pre_code)]:bg-neutral-100
           [&_code:not(pre_code)]:font-normal
@@ -174,6 +191,10 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           dark:prose-strong:text-neutral-200
           dark:prose-pre:text-neutral-200
           dark:prose:pre:text-neutral-200
+          dark:[&_table]:border-neutral-700
+          dark:[&_thead]:bg-neutral-800
+          dark:[&_th]:border-neutral-700
+          dark:[&_td]:border-neutral-700
           dark:[&_code:not(pre_code)]:text-neutral-200
           dark:[&_code:not(pre_code)]:bg-neutral-800
           dark:[&_code:not(pre_code)]:font-normal
@@ -190,6 +211,7 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
             parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
             remarkPlugins={remarkPlugins}
+            disableTableActions={true}
             components={{
               pre: CodeBlock,
               table: ({
@@ -199,41 +221,11 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
                 <div className="overflow-x-auto max-w-full">
                   <table
                     {...props}
-                    className="w-full border-separate border-spacing-0 rounded-lg overflow-hidden border border-neutral-200 dark:border-neutral-700"
+                    className="border-collapse w-full border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden"
                   >
                     {children}
                   </table>
                 </div>
-              ),
-              thead: ({
-                children,
-                ...props
-              }: React.HTMLAttributes<HTMLTableSectionElement>) => (
-                <thead {...props} className="bg-neutral-50 dark:bg-neutral-800">
-                  {children}
-                </thead>
-              ),
-              th: ({
-                children,
-                ...props
-              }: React.HTMLAttributes<HTMLTableCellElement>) => (
-                <th
-                  {...props}
-                  className="px-3 py-2 text-left font-semibold border-b border-r border-neutral-200 dark:border-neutral-700 last:border-r-0"
-                >
-                  {children}
-                </th>
-              ),
-              td: ({
-                children,
-                ...props
-              }: React.HTMLAttributes<HTMLTableCellElement>) => (
-                <td
-                  {...props}
-                  className="px-3 py-2 border-r border-neutral-200 dark:border-neutral-700 last:border-r-0 [tr:not(:last-child)_&]:border-b"
-                >
-                  {children}
-                </td>
               ),
               // @ts-expect-error: custom citation type
               "ol-citation": ({
