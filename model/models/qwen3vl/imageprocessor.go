@@ -340,7 +340,7 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 	patchIndex := 0
 
 	// Iterate over temporal groups
-	for t := 0; t < grid.Temporal; t++ {
+	for t := range grid.Temporal {
 		// Get frames for this temporal patch
 		frameStart := t * temporalPatchSize
 		frameEnd := frameStart + temporalPatchSize
@@ -349,8 +349,8 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 		}
 
 		// Iterate over spatial grid with 2x2 merging
-		for h := 0; h < grid.Height; h++ {
-			for w := 0; w < grid.Width; w++ {
+		for h := range grid.Height {
+			for w := range grid.Width {
 				// Handle the 2x2 merged patches
 				for mh := 0; mh < mergeSize; mh++ {
 					for mw := 0; mw < mergeSize; mw++ {
