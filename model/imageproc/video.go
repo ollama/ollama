@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	_ "image/jpeg"
 	"os"
 	"os/exec"
 	"path/filepath"
