@@ -96,7 +96,6 @@ func TestExtractVideoFrames_ValidVideo(t *testing.T) {
 	config.FPS = 2.0
 
 	frames, err := ExtractVideoFrames(videoData, config)
-
 	if err != nil {
 		t.Fatalf("ExtractVideoFrames failed: %v", err)
 	}
@@ -146,7 +145,6 @@ func TestExtractVideoFrames_MaxFrames(t *testing.T) {
 	config.MaxFrames = 3
 
 	frames, err := ExtractVideoFrames(videoData, config)
-
 	if err != nil {
 		t.Fatalf("ExtractVideoFrames failed: %v", err)
 	}
@@ -207,7 +205,6 @@ func TestExtractVideoFrames_SingleFrame(t *testing.T) {
 	config.FPS = 1.0
 
 	frames, err := ExtractVideoFrames(videoData, config)
-
 	if err != nil {
 		t.Fatalf("ExtractVideoFrames failed: %v", err)
 	}
