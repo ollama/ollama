@@ -7,9 +7,6 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"math"
-	"os"
-	"os/exec"
-	"path/filepath"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -82,10 +79,22 @@ func (p *ImageProcessor) SmartResize(height, width int) (int, int) {
 	return hBar, wBar
 }
 
+// Grid represents the spatial and temporal dimensions of processed vision inputs.
+//
+// For images:
+//   - Height, Width: Spatial patch grid dimensions (in units of merged patches)
+//   - Temporal: Always 1 for static images
+//
+// For videos:
+//   - Height, Width: Spatial patch grid dimensions (in units of merged patches)
+//   - Temporal: Number of temporal patch groups (ceil(numFrames / temporalPatchSize))
+//
+// The total number of patches is Temporal × Height × Width.
+// This structure is used by the vision model to apply position embeddings correctly.
 type Grid struct {
-	Height   int
-	Width    int
-	Temporal int
+	Height   int // Spatial height in patch units
+	Width    int // Spatial width in patch units
+	Temporal int // Temporal dimension (1 for images, >1 for videos)
 }
 
 func (p *ImageProcessor) ProcessImage(ctx ml.Context, img image.Image) (ml.Tensor, *Grid, error) {
@@ -130,8 +139,36 @@ func (p *ImageProcessor) ProcessImage(ctx ml.Context, img image.Image) (ml.Tenso
 	return pixelValues, grid, nil
 }
 
-// ProcessVideoFrames processes multiple video frames with temporal awareness
-// Returns tensors with proper temporal dimension for Qwen3-VL video understanding
+// ProcessVideoFrames processes multiple video frames with temporal awareness for Qwen3-VL.
+//
+// This method implements the video processing pipeline for Qwen3-VL's temporal understanding:
+//
+//  1. Frame Preprocessing:
+//     - Composites each frame (removes alpha channel)
+//     - Resizes frames to optimal dimensions using SmartResize
+//     - Normalizes pixel values using ImageNet statistics
+//
+//  2. Temporal Patch Creation:
+//     - Groups frames into temporal patches using temporalPatchSize (typically 2)
+//     - Creates 3D patches (Time × Height × Width) from the video
+//     - Applies 2×2 spatial merging for efficiency
+//
+//  3. Grid Calculation:
+//     - Temporal dimension: ceil(numFrames / temporalPatchSize)
+//     - Spatial dimensions: (H/patchSize/mergeSize) × (W/patchSize/mergeSize)
+//
+// The output tensor has shape [patchDim, numPatches] where:
+//   - patchDim = channels × temporalPatchSize × patchSize × patchSize
+//   - numPatches = Temporal × Height × Width
+//
+// Parameters:
+//   - ctx: ML context for tensor creation
+//   - frames: Slice of video frames as image.Image objects
+//
+// Returns:
+//   - ml.Tensor: Processed video patches ready for the vision model
+//   - *Grid: Grid structure containing Temporal, Height, Width dimensions
+//   - error: Any error encountered during processing
 func (p *ImageProcessor) ProcessVideoFrames(ctx ml.Context, frames []image.Image) (ml.Tensor, *Grid, error) {
 	if len(frames) == 0 {
 		return nil, nil, fmt.Errorf("no frames provided")
@@ -260,8 +297,35 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 	return result, nil
 }
 
-// createPatchesWithTemporal creates patches across temporal dimension for video
-// This properly handles the temporal patch size to group frames together
+// createPatchesWithTemporal creates 3D video patches with temporal and spatial dimensions.
+//
+// This function implements Qwen3-VL's video patching strategy:
+//
+//  1. Temporal Grouping:
+//     - Groups consecutive frames into temporal patches of size temporalPatchSize (typically 2)
+//     - Each temporal patch contains pixel data from multiple frames
+//     - If the last group has fewer frames, it's padded by repeating the last frame
+//
+//  2. Spatial Patching:
+//     - Divides each frame spatially into patches of size patchSize × patchSize
+//     - Applies 2×2 merge: combines 4 adjacent patches into a single unit
+//     - This reduces the spatial resolution by 4× (2×2 merging)
+//
+//  3. Patch Organization:
+//     - Output format: [Temporal][Height][Width][MergeH][MergeW][Channel][TemporalIdx][PatchH][PatchW]
+//     - Flattened into a 1D array with shape: [numPatches × patchDim]
+//     - numPatches = Temporal × Height × Width × mergeSize × mergeSize
+//     - patchDim = channels × temporalPatchSize × patchSize × patchSize
+//
+// Parameters:
+//   - pixels: Flattened pixel data for all frames in CHW format (channels, height, width) per frame
+//   - height, width: Spatial dimensions of each frame
+//   - numFrames: Total number of frames
+//   - grid: Grid structure specifying output dimensions
+//
+// Returns:
+//   - []float32: Flattened patch data ready for Conv3D processing
+//   - error: Any error encountered during patch creation
 func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, width, numFrames int, grid *Grid) ([]float32, error) {
 	channels := p.numChannels
 	patchSize := p.patchSize
@@ -362,71 +426,13 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 	return result, nil
 }
 
-// ExtractVideoFrames extracts frames from video data using ffmpeg
-// Returns a slice of image.Image frames sampled at the specified FPS
+// ExtractVideoFrames extracts frames from video data using ffmpeg.
+// This is a convenience wrapper around imageproc.ExtractVideoFrames with default settings.
+// For more control over extraction parameters, use imageproc.ExtractVideoFrames directly.
 func ExtractVideoFrames(videoData []byte, fps float64) ([]image.Image, error) {
-	// Create temporary directory for video processing
-	tempDir, err := os.MkdirTemp("", "ollama-video-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Write video data to temporary file
-	videoPath := filepath.Join(tempDir, "input.mp4")
-	if err := os.WriteFile(videoPath, videoData, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write video file: %w", err)
-	}
-
-	// Extract frames using ffmpeg
-	// -i: input file
-	// -vf fps=X: extract X frames per second
-	// -vsync 0: disable frame synchronization (extract all frames)
-	// -q:v 2: quality (2 is high quality)
-	// output_%04d.jpg: output pattern
-	framePattern := filepath.Join(tempDir, "frame_%04d.jpg")
-	cmd := exec.Command("ffmpeg",
-		"-i", videoPath,
-		"-vf", fmt.Sprintf("fps=%.2f", fps),
-		"-vsync", "0",
-		"-q:v", "2",
-		framePattern,
-	)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg failed: %w (stderr: %s)", err, stderr.String())
-	}
-
-	// Read extracted frames
-	frameFiles, err := filepath.Glob(filepath.Join(tempDir, "frame_*.jpg"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to list frame files: %w", err)
-	}
-
-	if len(frameFiles) == 0 {
-		return nil, fmt.Errorf("no frames extracted from video")
-	}
-
-	// Load frames as images
-	frames := make([]image.Image, 0, len(frameFiles))
-	for _, framePath := range frameFiles {
-		frameData, err := os.ReadFile(framePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read frame %s: %w", framePath, err)
-		}
-
-		img, _, err := image.Decode(bytes.NewReader(frameData))
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode frame %s: %w", framePath, err)
-		}
-
-		frames = append(frames, img)
-	}
-
-	return frames, nil
+	config := imageproc.DefaultVideoConfig()
+	config.FPS = fps
+	return imageproc.ExtractVideoFrames(videoData, config)
 }
 
 // ProcessVideo extracts frames from video and processes them as images
