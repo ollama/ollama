@@ -181,11 +181,11 @@ type Message struct {
 	Content string `json:"content"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking  string      `json:"thinking,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
-	Videos    []ImageData `json:"videos,omitempty"`
-	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
-	ToolName  string      `json:"tool_name,omitempty"`
+	Thinking   string      `json:"thinking,omitempty"`
+	Images     []ImageData `json:"images,omitempty"`
+	Videos     []ImageData `json:"videos,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName   string      `json:"tool_name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 

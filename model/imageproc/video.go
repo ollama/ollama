@@ -14,13 +14,13 @@ import (
 type VideoExtractionConfig struct {
 	// FPS specifies how many frames per second to extract from the video
 	FPS float64
-	
+
 	// Quality specifies the JPEG quality for extracted frames (1-31, lower is better quality)
 	Quality int
-	
+
 	// MaxFrames limits the maximum number of frames to extract (0 = no limit)
 	MaxFrames int
-	
+
 	// Timeout specifies the maximum time allowed for ffmpeg extraction
 	Timeout time.Duration
 }
@@ -28,15 +28,15 @@ type VideoExtractionConfig struct {
 // DefaultVideoConfig returns sensible defaults for video extraction
 func DefaultVideoConfig() VideoExtractionConfig {
 	return VideoExtractionConfig{
-		FPS:       1.0,  // 1 frame per second
-		Quality:   2,    // High quality JPEG
-		MaxFrames: 0,    // No limit
+		FPS:       1.0, // 1 frame per second
+		Quality:   2,   // High quality JPEG
+		MaxFrames: 0,   // No limit
 		Timeout:   60 * time.Second,
 	}
 }
 
 // ExtractVideoFrames extracts frames from video data using ffmpeg.
-// 
+//
 // This function:
 // - Creates a temporary directory for processing
 // - Writes the video data to a temporary file
@@ -55,9 +55,10 @@ func DefaultVideoConfig() VideoExtractionConfig {
 //   - error: Any error encountered during extraction
 //
 // Example:
-//   config := imageproc.DefaultVideoConfig()
-//   config.FPS = 2.0  // Extract 2 frames per second
-//   frames, err := imageproc.ExtractVideoFrames(videoData, config)
+//
+//	config := imageproc.DefaultVideoConfig()
+//	config.FPS = 2.0  // Extract 2 frames per second
+//	frames, err := imageproc.ExtractVideoFrames(videoData, config)
 func ExtractVideoFrames(videoData []byte, config VideoExtractionConfig) ([]image.Image, error) {
 	// Validate input
 	if len(videoData) == 0 {
