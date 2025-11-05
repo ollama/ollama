@@ -106,6 +106,8 @@ Videos can be provided as:
 - **HTTP/HTTPS URLs**: The video will be downloaded
 - **Base64 data URLs**: `data:video/mp4;base64,<base64-data>`
 
+> **Important Note**: Only the OpenAI-compatible endpoint (`/v1/chat/completions`) supports HTTP/HTTPS video URLs. The native API endpoints (`/api/chat` and `/api/generate`) only accept base64-encoded video data. Additionally, unlike videos, images do not support HTTP/HTTPS URLs in any endpoint - they require base64 encoding (data URIs).
+
 ## Desktop App
 
 The Ollama desktop app supports video uploads in the chat interface.
