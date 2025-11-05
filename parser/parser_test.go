@@ -484,6 +484,91 @@ TEMPLATE """
 			},
 			nil,
 		},
+		{
+			`
+FROM foo
+SYSTEM 'single quoted value'
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: "single quoted value"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM 'value with "double quotes" inside'
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: `value with "double quotes" inside`},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM '''
+This is a
+multiline system with single quotes.
+'''
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: "\nThis is a\nmultiline system with single quotes.\n"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM '''This is a multiline system.'''
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: "This is a multiline system."},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM ''
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: ""},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM ''''''
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: ""},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM '
+`,
+			nil,
+			io.ErrUnexpectedEOF,
+		},
+		{
+			`
+FROM foo
+SYSTEM '''incomplete triple
+`,
+			nil,
+			io.ErrUnexpectedEOF,
+		},
 	}
 
 	for _, c := range cases {
