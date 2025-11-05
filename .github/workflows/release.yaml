@@ -264,20 +264,20 @@ jobs:
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
     steps:
       - uses: actions/checkout@v4
-      # - uses: google-github-actions/auth@v2
-      #   with:
-      #     project_id: ollama
-      #     credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
-      # - run: |
-      #     $ErrorActionPreference = "Stop"
-      #     Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
-      #     Start-Process "${{ runner.temp }}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ollama
+          credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
+      - run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
+          Start-Process "${{ runner.temp }}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
 
-      #     Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${{ runner.temp }}\plugin.zip"
-      #     Expand-Archive -Path "${{ runner.temp }}\plugin.zip" -DestinationPath "${{ runner.temp }}\plugin\"
-      #     & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
+          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${{ runner.temp }}\plugin.zip"
+          Expand-Archive -Path "${{ runner.temp }}\plugin.zip" -DestinationPath "${{ runner.temp }}\plugin\"
+          & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
 
-      #     echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
+          echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
