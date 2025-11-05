@@ -689,6 +689,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
+		// TODO: avoid reaching into kvData here; pass required tokenizer metadata via model/options instead
 		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
 		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
 			ctxLen--
