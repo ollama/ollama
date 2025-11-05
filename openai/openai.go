@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -499,6 +500,82 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					}
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+				case "video_url":
+					var url string
+					if urlMap, ok := data["video_url"].(map[string]any); ok {
+						if url, ok = urlMap["url"].(string); !ok {
+							return nil, errors.New("invalid message format")
+						}
+					} else {
+						if url, ok = data["video_url"].(string); !ok {
+							return nil, errors.New("invalid message format")
+						}
+					}
+
+					var vid []byte
+					var err error
+
+					// Check if it's an HTTP/HTTPS URL
+					if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+						// Fetch video from URL with proper headers
+						req, err := http.NewRequest("GET", url, nil)
+						if err != nil {
+							return nil, fmt.Errorf("failed to create video request: %w", err)
+						}
+
+						// Add headers to mimic a browser request
+						req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+						req.Header.Set("Accept", "video/*,*/*")
+						req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+						req.Header.Set("Referer", url)
+
+						client := &http.Client{
+							Timeout: 60 * time.Second,
+						}
+
+						resp, err := client.Do(req)
+						if err != nil {
+							return nil, fmt.Errorf("failed to fetch video from URL: %w", err)
+						}
+						defer resp.Body.Close()
+
+						if resp.StatusCode != http.StatusOK {
+							return nil, fmt.Errorf("failed to fetch video: HTTP %d", resp.StatusCode)
+						}
+
+						vid, err = io.ReadAll(resp.Body)
+						if err != nil {
+							return nil, fmt.Errorf("failed to read video data: %w", err)
+						}
+					} else {
+						// Handle base64-encoded video
+						videoTypes := []string{"mp4", "avi", "mov", "webm", "mkv", "flv", "wmv", "mpeg"}
+						valid := false
+						// support blank mime type to match api/chat taking just unadorned base64
+						if strings.HasPrefix(url, "data:;base64,") {
+							url = strings.TrimPrefix(url, "data:;base64,")
+							valid = true
+						}
+						for _, t := range videoTypes {
+							prefix := "data:video/" + t + ";base64,"
+							if strings.HasPrefix(url, prefix) {
+								url = strings.TrimPrefix(url, prefix)
+								valid = true
+								break
+							}
+						}
+
+						if !valid {
+							return nil, errors.New("invalid video input: must be HTTP(S) URL or base64-encoded")
+						}
+
+						vid, err = base64.StdEncoding.DecodeString(url)
+						if err != nil {
+							return nil, errors.New("invalid base64 video data")
+						}
+					}
+
+					messages = append(messages, api.Message{Role: msg.Role, Videos: []api.ImageData{vid}})
 				default:
 					return nil, errors.New("invalid message format")
 				}
