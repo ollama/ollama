@@ -79,7 +79,7 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 
 		k := min(topK, len(pairs))
 		topLogprobs := make([]TokenLogprob, k)
-		for i := 0; i < k; i++ {
+		for i := range k {
 			tokenText := decoder.DecodeToken(pairs[i].tokenID)
 			topLogprobs[i] = TokenLogprob{
 				Token:   tokenText,
