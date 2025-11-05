@@ -79,6 +79,53 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, model.ErrNoVisionModel
 	}
 
+	// Try to decode as an image first
+	_, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		// If image decode fails, try to process as video
+		frames, videoErr := m.ImageProcessor.ExtractVideoFrames(multimodalData)
+		if videoErr != nil {
+			// Return original image decode error if video extraction also fails
+			return nil, err
+		}
+
+		if len(frames) == 0 {
+			return nil, fmt.Errorf("video contains no frames")
+		}
+
+		// If video has only 1 frame, process as a static image instead
+		// This ensures single-frame videos are handled efficiently
+		if len(frames) == 1 {
+			f32s, grid, err := m.ImageProcessor.ProcessImage(frames[0])
+			if err != nil {
+				return nil, err
+			}
+
+			patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
+				m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
+			numPatches := grid.Temporal * grid.Height * grid.Width
+
+			pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
+			visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
+			return []input.Multimodal{{Tensor: visionOutputs}}, nil
+		}
+
+		// Use ProcessVideoFrames for proper temporal processing (2+ frames)
+		f32s, grid, err := m.ImageProcessor.ProcessVideoFrames(frames)
+		if err != nil {
+			return nil, err
+		}
+
+		patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
+			m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
+		numPatches := grid.Temporal * grid.Height * grid.Width
+
+		pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
+		visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
+		return []input.Multimodal{{Tensor: visionOutputs}}, nil
+	}
+
+	// Single image processing
 	pixels, grid, err := m.PixelValues(ctx, multimodalData)
 	if err != nil {
 		return nil, err
