@@ -26,7 +26,6 @@ func createTestFlagOptions() flagOptions {
 	prompt := "test prompt"
 	imageFile := ""
 	keepAlive := 5.0
-	inputFile := ""
 	verbose := false
 	debug := false
 
@@ -41,7 +40,6 @@ func createTestFlagOptions() flagOptions {
 		prompt:      &prompt,
 		imageFile:   &imageFile,
 		keepAlive:   &keepAlive,
-		inputFile:   &inputFile,
 		verbose:     &verbose,
 		debug:       &debug,
 	}
