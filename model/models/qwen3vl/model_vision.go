@@ -171,15 +171,24 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 		Add(ctx, positionEmbeds.View(ctx, 2*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions)).
 		Add(ctx, positionEmbeds.View(ctx, 3*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions))
 
-	// Reshape and permute, accounting for temporal dimension
-	// For images: temporal=1, apply spatial reordering
-	// For videos: temporal>1, keep flat since patches are already in correct temporal-spatial order
+	// Reshape and permute position embeddings, handling temporal dimension for videos
+	//
+	// GGML Backend Constraint: GGML only supports up to 4D tensors, but videos naturally
+	// require 5D operations: [batch, temporal, width_chunks, merge_size, height_chunks]
+	//
+	// Solution: For videos, we keep position embeddings flat at [n, totalPositions] because:
+	//  1. The temporal loop above already generated embeddings in the correct order
+	//  2. The spatial reordering from createPatchesWithTemporal maintains consistency
+	//  3. This avoids the 5D tensor reshape that would crash GGML
+	//
+	// For images (temporal=1), we can safely use 4D reshape and permute operations.
 	if grid.Temporal > 1 {
-		// Videos: position embeddings are already in correct order from temporal loop above
-		// GGML doesn't support 5D tensors, so we keep it at [n, totalPositions]
+		// Videos: Keep embeddings flat to avoid 5D tensor operations
+		// Position embeddings are already correctly ordered from the temporal×height×width loop
 		positionEmbeds = positionEmbeds.Contiguous(ctx, n, -1)
 	} else {
-		// Images: apply spatial reordering as before
+		// Images: Apply standard 4D spatial reordering
+		// Reshape to [n, W/merge, merge, H/merge] then permute to [n, merge, W/merge, H/merge]
 		positionEmbeds = positionEmbeds.Reshape(ctx, -1, grid.Width/opts.spatialMergeSize, opts.spatialMergeSize, grid.Height/opts.spatialMergeSize)
 		positionEmbeds = positionEmbeds.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, n, -1)
 	}
@@ -197,10 +206,12 @@ type VisionModel struct {
 }
 
 func (m *VisionModel) positions(ctx ml.Context, grid *Grid) (_, _ ml.Tensor) {
+	// Generate position indices (y, x pairs) for all positions in the grid
+	// For videos with temporal dimension > 1, this generates T×H×W position pairs
+	// For images (temporal=1), this generates H×W position pairs
 	totalPositions := grid.Temporal * grid.Height * grid.Width
 
 	indices := ctx.Input().FromInts(slices.Collect(func(yield func(int32) bool) {
-		// For videos, iterate over temporal dimension as well
 		for _ = range grid.Temporal {
 			for y := range grid.Height {
 				for x := range grid.Width {
@@ -215,12 +226,14 @@ func (m *VisionModel) positions(ctx ml.Context, grid *Grid) (_, _ ml.Tensor) {
 		}
 	}), totalPositions*2)
 
-	// For videos, avoid 5D reshape - keep indices flat and reorganize differently
+	// Reshape and reorder indices based on spatial merge size
+	// For videos (temporal > 1), we need to avoid 5D reshapes, so keep indices flat
+	// For images (temporal = 1), apply the standard 4D reshape and permute
 	if grid.Temporal > 1 {
-		// Videos: keep flat since we have T*H*W positions
+		// Videos: Keep flat structure for T×H×W positions to avoid 5D tensor operations
 		indices = indices.Contiguous(ctx)
 	} else {
-		// Images: apply spatial reordering as before
+		// Images: Apply standard spatial reordering
 		indices = indices.Reshape(ctx, -1, grid.Width/m.spatialMergeSize, m.spatialMergeSize, grid.Height/m.spatialMergeSize)
 		indices = indices.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 		indices = indices.Reshape(ctx, -1)
