@@ -639,19 +639,9 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					// Extract frames from video (1 FPS = 1 frame per second)
-					frames, err := extractVideoFrames(vid, 1.0)
-					if err != nil {
-						return nil, fmt.Errorf("failed to extract video frames: %w", err)
-					}
-
-					// Add all frames to a single message as images
-					// This preserves temporal ordering for the model
-					frameImages := make([]api.ImageData, len(frames))
-					for i, frame := range frames {
-						frameImages[i] = frame
-					}
-					messages = append(messages, api.Message{Role: msg.Role, Images: frameImages})
+					// Store raw video data in Videos field
+					// The model backend will extract frames and process with temporal awareness
+					messages = append(messages, api.Message{Role: msg.Role, Videos: []api.ImageData{vid}})
 				default:
 					return nil, errors.New("invalid message format")
 				}
