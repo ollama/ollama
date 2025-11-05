@@ -1,6 +1,6 @@
 package cocoa
 
-// #cgo darwin LDFLAGS: -framework Cocoa
+// #cgo darwin LDFLAGS: -framework Cocoa -framework UniformTypeIdentifiers
 // #include <stdlib.h>
 // #include <sys/syslimits.h>
 // #include "dlg.h"
