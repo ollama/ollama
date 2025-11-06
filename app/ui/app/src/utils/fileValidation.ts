@@ -41,7 +41,7 @@ export const TEXT_FILE_EXTENSIONS = [
   "rtf",
 ];
 
-export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg"];
+export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
 
 export interface FileValidationOptions {
   maxFileSize?: number; // in MB
