@@ -67,7 +67,7 @@ export function SidebarLayout({
         {settings.sidebarOpen && sidebar}
       </div>
       <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
+        className={`flex flex-1 flex-col min-w-0 ${mounted ? "transition-all duration-300" : "transition-none"}`}
       >
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
