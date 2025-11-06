@@ -7,6 +7,7 @@ import React, { useState, useMemo, useRef } from "react";
 import {
   Reasoning,
   getThinkingMessage,
+  ReasoningContent,
 } from "@/components/ai-elements/reasoning";
 import {
   CollapsibleContent,
@@ -958,14 +959,18 @@ function OtherRoleMessage({
             </CollapsibleTrigger>
             <CollapsibleContent
               forceMount
-              className="relative ml-6 mt-3 outline-none overflow-hidden transition-all duration-300 ease-in-out data-[state=closed]:max-h-0 data-[state=closed]:opacity-0 data-[state=open]:max-h-28 data-[state=open]:opacity-100"
+              className={`relative ml-6 mt-3 outline-none overflow-hidden transition-all duration-300 ease-in-out data-[state=closed]:max-h-0 data-[state=closed]:opacity-0 data-[state=open]:opacity-100 ${
+                activelyThinking ? "data-[state=open]:max-h-28" : ""
+              }`}
             >
-              <div className="text-xs text-neutral-500 dark:text-neutral-500 rounded-md max-h-28 overflow-y-auto">
-                <StreamingMarkdownContent
-                  content={message.thinking}
-                  isStreaming={!!activelyThinking}
-                  size="sm"
-                />
+              <div
+                className={`text-sm rounded-md ${
+                  activelyThinking ? "max-h-28 overflow-y-auto" : ""
+                }`}
+              >
+                <ReasoningContent isStreaming={!!activelyThinking}>
+                  {message.thinking}
+                </ReasoningContent>
               </div>
             </CollapsibleContent>
           </Reasoning>

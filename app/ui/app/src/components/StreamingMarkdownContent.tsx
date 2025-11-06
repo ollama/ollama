@@ -10,6 +10,7 @@ interface StreamingMarkdownContentProps {
   isStreaming?: boolean;
   size?: "sm" | "md" | "lg";
   browserToolResult?: any; // TODO: proper type
+  className?: string;
 }
 
 // Helper to extract text from React nodes
@@ -125,19 +126,26 @@ const CodeBlock = React.memo(
 );
 
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
-  React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
-    // Build the remark plugins array - keep default GFM and Math, add citations
-    const remarkPlugins = React.useMemo(() => {
-      return [
-        defaultRemarkPlugins.gfm,
-        defaultRemarkPlugins.math,
-        remarkCitationParser,
-      ];
-    }, []);
+  React.memo(
+    ({
+      content,
+      isStreaming = false,
+      size,
+      browserToolResult,
+      className = "",
+    }) => {
+      // Build the remark plugins array - keep default GFM and Math, add citations
+      const remarkPlugins = React.useMemo(() => {
+        return [
+          defaultRemarkPlugins.gfm,
+          defaultRemarkPlugins.math,
+          remarkCitationParser,
+        ];
+      }, []);
 
-    return (
-      <div
-        className={`
+      return (
+        <div
+          className={`
           max-w-full
           ${size === "sm" ? "prose-sm" : size === "lg" ? "prose-lg" : ""}
           prose
@@ -201,11 +209,8 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           dark:prose-ul:marker:text-neutral-300
           dark:prose-li:marker:text-neutral-300
           break-words
+          ${className}
         `}
-      >
-        <StreamingMarkdownErrorBoundary
-          content={content}
-          isStreaming={isStreaming}
         >
           <Streamdown
             parseIncompleteMarkdown={isStreaming}
@@ -278,10 +283,10 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           >
             {content}
           </Streamdown>
-        </StreamingMarkdownErrorBoundary>
-      </div>
-    );
-  });
+        </div>
+      );
+    },
+  );
 
 interface StreamingMarkdownErrorBoundaryProps {
   content: string;

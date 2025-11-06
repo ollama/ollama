@@ -1,11 +1,16 @@
 "use client";
 
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
-import { Collapsible, CollapsibleTrigger } from "@radix-ui/react-collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@radix-ui/react-collapsible";
 import { ChevronDownIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Shimmer } from "./shimmer";
+import StreamingMarkdownContent from "../StreamingMarkdownContent";
 
 type ReasoningContextValue = {
   isStreaming: boolean;
@@ -99,7 +104,7 @@ export const getThinkingMessage = (isStreaming: boolean, duration?: number) => {
   if (duration === undefined) {
     return <span>Thought for a few seconds</span>;
   }
-  if (duration < 2) {
+  if (duration <= 2) {
     return <span>Thought for a moment</span>;
   }
   return <span>Thought for {duration} seconds</span>;
@@ -133,5 +138,40 @@ export const ReasoningTrigger = memo(
   },
 );
 
+export type ReasoningContentProps = ComponentProps<
+  typeof CollapsibleContent
+> & {
+  children: string;
+  isStreaming?: boolean;
+};
+
+export const ReasoningContent = memo(
+  ({
+    className,
+    children,
+    isStreaming = false,
+    ...props
+  }: ReasoningContentProps) => {
+    const reasoningContext = useReasoning();
+    const actuallyStreaming = isStreaming ?? reasoningContext.isStreaming;
+
+    return (
+      <CollapsibleContent
+        className={`data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in ${className || ""}`}
+        {...props}
+      >
+        <div className="[&_*]:!text-neutral-500 dark:[&_*]:!text-neutral-500">
+          <StreamingMarkdownContent
+            content={children}
+            isStreaming={actuallyStreaming}
+            size="sm"
+          />
+        </div>
+      </CollapsibleContent>
+    );
+  },
+);
+
 Reasoning.displayName = "Reasoning";
 ReasoningTrigger.displayName = "ReasoningTrigger";
+ReasoningContent.displayName = "ReasoningContent";
