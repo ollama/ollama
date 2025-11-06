@@ -160,6 +160,19 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
 		}
 	}
+
+	rpcServers := ""
+	for _, gpu := range gpus {
+		if gpu.Library != "rpc" {
+			continue
+		}
+
+		if rpcServers != "" {
+			rpcServers += ","
+		}
+		rpcServers += gpu.ID
+	}
+
 	if textProcessor == nil {
 		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
 		if err != nil {
@@ -176,7 +189,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
-	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
+	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache(), RpcServers: rpcServers}
 
 	defaultThreads := systemInfo.ThreadCount
 	if opts.NumThread > 0 {
@@ -449,6 +462,7 @@ type LoadRequest struct {
 	NumThreads     int
 	GPULayers      ml.GPULayersList
 	MultiUserCache bool
+	RpcServers     string `json:"rpc_servers,omitempty"`
 
 	// Legacy fields - not used with the Ollama engine
 	ProjectorPath string
@@ -530,6 +544,10 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus [
 
 		// mmap has issues with partial offloading on metal
 		for _, g := range gpus {
+			if g.Library == "rpc" {
+				s.options.UseMMap = new(bool)
+				*s.options.UseMMap = false
+			}
 			if g.Library == "Metal" &&
 				uint64(s.options.NumGPU) > 0 &&
 				uint64(s.options.NumGPU) < s.ggml.KV().BlockCount()+1 {
@@ -868,7 +886,20 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 	}
 
 	gpuLayers := ml.GPULayersList{}
-	for _, gl := range ml.ByLibrary(gpus) {
+
+	// When RPC servers are configured, combine all libraries instead of picking the best one
+	libraries := ml.ByLibrary(gpus)
+	if envconfig.RPCServers() != "" && envconfig.SchedSpread() && len(libraries) > 1 {
+		slog.Info("combining libraries for RPC with spread scheduling", "num_libraries", len(libraries))
+		// Combine all GPUs from all libraries into a single group
+		combinedGPUs := []ml.DeviceInfo{}
+		for _, lib := range libraries {
+			combinedGPUs = append(combinedGPUs, lib...)
+		}
+		libraries = [][]ml.DeviceInfo{combinedGPUs}
+	}
+
+	for _, gl := range libraries {
 		// If a GPU already has a graph allocated on it, then we should continue to use it.
 		// Otherwise, we lose information that we got from previous allocations, which can
 		// cause cycling. Plus, we get more information about required allocation from each

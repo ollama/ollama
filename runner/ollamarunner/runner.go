@@ -1242,6 +1242,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 			NumThreads:     req.NumThreads,
 			GPULayers:      req.GPULayers,
 			FlashAttention: req.FlashAttention,
+			RPCServers:     req.RpcServers,
 		}
 
 		s.batchSize = req.BatchSize

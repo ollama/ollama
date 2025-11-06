@@ -870,6 +870,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 			MainGpu:      req.MainGPU,
 			UseMmap:      req.UseMmap && len(req.LoraPath) == 0,
 			TensorSplit:  tensorSplit,
+			RPCServers:   req.RpcServers,
 			Progress: func(progress float32) {
 				s.progress = progress
 			},
