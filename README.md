@@ -288,6 +288,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
+## Proxy and security tools
+- [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server)
+
 ### Web & Desktop
 
 - [Open WebUI](https://github.com/open-webui/open-webui)
