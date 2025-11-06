@@ -335,6 +335,7 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 		})
 	}
 }
+
 func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
 	fn := ToolCallFunction{
 		Name:      "echo",
