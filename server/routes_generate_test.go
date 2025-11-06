@@ -485,13 +485,7 @@ func TestGenerateChat(t *testing.T) {
 				Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
-					}{
+					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]api.ToolProperty{
@@ -585,13 +579,7 @@ func TestGenerateChat(t *testing.T) {
 				Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
-					}{
+					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]api.ToolProperty{
