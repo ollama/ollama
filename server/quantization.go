@@ -120,14 +120,30 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 
 	if newType.IsQuantized() {
 		nx := shape[0]
-		ny := uint64(1)
-		if len(shape) > 1 {
-			ny = shape[1]
-		}
 		qk_k := newType.BlockSize()
+
+		// Check if first dimension is divisible by block size
 		if nx%qk_k != 0 {
-			slog.Warn(fmt.Sprintf("tensor cols %d x %d are not divisible by %d, required for %s.  Falling back to quantization %s", nx, ny, qk_k, newType.String(), fsggml.TensorTypeF16.String()))
-			newType = fsggml.TensorTypeF16
+			// Store the original type for logging
+			originalType := newType
+
+			// Select appropriate fallback based on original type
+			switch newType {
+			case fsggml.TensorTypeQ4_K:
+				newType = fsggml.TensorTypeQ5_0
+			case fsggml.TensorTypeQ5_K:
+				newType = fsggml.TensorTypeQ5_1
+			case fsggml.TensorTypeQ6_K:
+				newType = fsggml.TensorTypeQ8_0
+			}
+
+			// Final check - if still incompatible, fall back to F16
+			if nx%newType.BlockSize() != 0 {
+				newType = fsggml.TensorTypeF16
+			}
+
+			slog.Warn(fmt.Sprintf("tensor cols %d are not divisible by %d, required for %s - using fallback quantization %s",
+				nx, qk_k, originalType.String(), newType.String()))
 		}
 	}
 	return newType
@@ -214,6 +230,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	// do not quantize relative position bias (T5)
 	quantize = quantize && !strings.Contains(name, "attn_rel_b.weight")
+
+	quantize = quantize && !strings.Contains(name, "per_layer_token_embd.weight")
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {

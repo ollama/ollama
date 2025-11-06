@@ -247,6 +247,67 @@ func TestParseTokenizer(t *testing.T) {
 				Pre: "default",
 			},
 		},
+		{
+			name: "generation config eos token ids",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"added_tokens": [
+						{
+							"id": 0,
+							"content": "<bos>",
+							"special": true
+						},
+						{
+							"id": 1,
+							"content": "<eos>",
+							"special": true
+						},
+						{
+							"id": 2,
+							"content": "<eot>",
+							"special": true
+						},
+						{
+							"id": 3,
+							"content": "<eom>",
+							"special": true
+						}
+					],
+					"model": {
+						"vocab": {
+							"<bos>": 0,
+							"<eos>": 1,
+							"<eot>": 2,
+							"<eom>": 3
+						}
+					}
+				}`),
+				"tokenizer_config.json": strings.NewReader(`{
+					"add_bos_token": true,
+					"add_eos_token": false,
+					"bos_token": "<bos>",
+					"eos_token": "<eos>"
+				}`),
+				"generation_config.json": strings.NewReader(`{
+					"bos_token_id": 0,
+					"eos_token_id": [1, 2, 3]
+				}`),
+			}),
+			specialTokenTypes: []string{"pad", "eos", "bos", "unk"},
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model:  "gpt2",
+					Tokens: []string{"<bos>", "<eos>", "<eot>", "<eom>"},
+					Scores: []float32{0, 1, 2, 3},
+					Types:  []int32{3, 3, 3, 3},
+				},
+				SpecialVocabulary: []*SpecialVocabulary{
+					{Type: "eos", Content: "<eos>", ID: 1, IDs: []int32{1, 2, 3}, AddToken: false},
+					{Type: "bos", Content: "<bos>", ID: 0, AddToken: true},
+				},
+				Pre: "default",
+			},
+		},
 	}
 
 	for _, tt := range cases {

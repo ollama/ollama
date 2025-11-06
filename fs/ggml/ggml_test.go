@@ -269,3 +269,33 @@ func TestKeyValue(t *testing.T) {
 		t.Errorf("unexpected uint8s (-got +want):\n%s", diff)
 	}
 }
+
+func TestHeadCount(t *testing.T) {
+	valuesArray := []int32{1, 5, 3, 4}
+	cases := []struct {
+		kv   KV
+		want uint64
+	}{
+		{
+			kv: KV{
+				"general.architecture":     "abc",
+				"abc.attention.head_count": &array[int32]{values: valuesArray, size: len(valuesArray)},
+			},
+			want: uint64(5),
+		},
+		{
+			kv: KV{
+				"general.architecture":     "abc",
+				"abc.attention.head_count": uint32(3),
+			},
+			want: uint64(3),
+		},
+	}
+
+	for _, tt := range cases {
+		got := tt.kv.HeadCountMax()
+		if got != tt.want {
+			t.Errorf("unexpected max value: got=%d want=%d", got, tt.want)
+		}
+	}
+}

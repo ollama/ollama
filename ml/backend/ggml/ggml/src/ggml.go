@@ -1,7 +1,7 @@
 package ggml
 
 // #cgo CXXFLAGS: -std=c++17
-// #cgo CPPFLAGS: -DNDEBUG -DGGML_USE_CPU
+// #cgo CPPFLAGS: -DNDEBUG -DGGML_USE_CPU -DGGML_VERSION=0x0 -DGGML_COMMIT=0x0
 // #cgo CPPFLAGS: -I${SRCDIR}/../include -I${SRCDIR}/ggml-cpu
 // #cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 // #cgo windows LDFLAGS: -lmsvcrt -static -static-libgcc -static-libstdc++
@@ -75,9 +75,9 @@ var OnceLoad = sync.OnceFunc(func() {
 		paths = value
 	}
 
-	split := filepath.SplitList(paths)
-	visited := make(map[string]struct{}, len(split))
-	for _, path := range split {
+	libPaths = filepath.SplitList(paths)
+	visited := make(map[string]struct{}, len(libPaths))
+	for _, path := range libPaths {
 		abspath, err := filepath.Abs(path)
 		if err != nil {
 			slog.Error("failed to get absolute path", "error", err)
@@ -103,6 +103,12 @@ var OnceLoad = sync.OnceFunc(func() {
 
 	slog.Info("system", "", system{})
 })
+
+var libPaths []string
+
+func LibPaths() []string {
+	return libPaths
+}
 
 type system struct{}
 

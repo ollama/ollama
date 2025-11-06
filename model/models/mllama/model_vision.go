@@ -15,9 +15,7 @@ type VisionSelfAttention struct {
 	Query  *nn.Linear `gguf:"attn_q"`
 	Key    *nn.Linear `gguf:"attn_k"`
 	Value  *nn.Linear `gguf:"attn_v"`
-	Output *nn.Linear `gguf:"attn_out"`
-
-	Gate ml.Tensor `gguf:"attn_gate"`
+	Output *nn.Linear `gguf:"attn_output"`
 }
 
 func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *VisionModelOptions) ml.Tensor {
@@ -25,56 +23,38 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, query.Dim(1), batchSize)
-	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numHeads, key.Dim(1), batchSize)
-	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numHeads, value.Dim(1), batchSize)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	scores := key.Mulmat(ctx, query)
-	scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
-	scores = scores.Softmax(ctx)
-
-	attention := value.Mulmat(ctx, scores)
-	attention = attention.Reshape(ctx, headDim, attention.Dim(1), opts.numHeads, batchSize)
-	attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(headDim)), nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
-
-	hiddenState = sa.Output.Forward(ctx, attention)
-	if sa.Gate != nil {
-		hiddenState = hiddenState.Mul(ctx, sa.Gate)
-	}
-
-	return hiddenState
+	return sa.Output.Forward(ctx, attention)
 }
 
 type VisionMLP struct {
-	Down *nn.Linear `gguf:"ffn_down"`
 	Up   *nn.Linear `gguf:"ffn_up"`
-
-	Gate ml.Tensor `gguf:"ffn_gate"`
+	Down *nn.Linear `gguf:"ffn_down"`
 }
 
 func (mlp *VisionMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *VisionModelOptions) ml.Tensor {
-	hiddenState = mlp.Down.Forward(ctx, hiddenState).GELU(ctx)
-	hiddenState = mlp.Up.Forward(ctx, hiddenState)
-	if mlp.Gate != nil {
-		hiddenState = hiddenState.Mul(ctx, mlp.Gate)
-	}
+	hiddenState = mlp.Up.Forward(ctx, hiddenState).GELU(ctx)
+	hiddenState = mlp.Down.Forward(ctx, hiddenState)
 
 	return hiddenState
 }
 
 type VisionEncoderLayer struct {
-	AttentionNorm *nn.LayerNorm `gguf:"ln1"`
+	AttentionNorm *nn.LayerNorm `gguf:"attn_norm"`
 	SelfAttention *VisionSelfAttention
+	AttentionGate ml.Tensor `gguf:"attn_gate"`
 
-	MLPNorm *nn.LayerNorm `gguf:"ln2"`
+	MLPNorm *nn.LayerNorm `gguf:"ffn_norm"`
 	MLP     *VisionMLP
+	MLPGate ml.Tensor `gguf:"ffn_gate"`
 }
 
 func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *VisionModelOptions) ml.Tensor {
@@ -83,13 +63,19 @@ func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts
 	// self attention
 	hiddenState = e.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = e.SelfAttention.Forward(ctx, hiddenState, opts)
+	if e.AttentionGate != nil {
+		hiddenState = hiddenState.Mul(ctx, e.AttentionGate)
+	}
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
-	// feed forward
 	hiddenState = e.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = e.MLP.Forward(ctx, hiddenState, opts)
-	return hiddenState.Add(ctx, residual)
+	if e.MLPGate != nil {
+		hiddenState = hiddenState.Mul(ctx, e.MLPGate)
+	}
+	hiddenState = hiddenState.Add(ctx, residual)
+	return hiddenState
 }
 
 type VisionEncoder struct {
@@ -114,9 +100,9 @@ type PrecomputedAspectRatioEmbedding struct {
 	Gate      ml.Tensor `gguf:"gate"`
 }
 
-func (e *PrecomputedAspectRatioEmbedding) Forward(ctx ml.Context, hiddenState ml.Tensor, aspectRatioIDs ml.Tensor, opts *VisionModelOptions) ml.Tensor {
+func (e *PrecomputedAspectRatioEmbedding) Forward(ctx ml.Context, hiddenState ml.Tensor, aspectRatioIDs ml.Tensor, numTiles int, opts *VisionModelOptions) ml.Tensor {
 	embeddings := e.Embedding.Forward(ctx, aspectRatioIDs)
-	embeddings = embeddings.Reshape(ctx, opts.hiddenSize, 1, opts.numTiles)
+	embeddings = embeddings.Reshape(ctx, opts.hiddenSize, 1, numTiles)
 	if e.Gate != nil {
 		embeddings = embeddings.Mul(ctx, e.Gate)
 	}
@@ -132,7 +118,7 @@ type PrecomputedPositionEmbedding struct {
 	TilePositionEmbeddingGate ml.Tensor     `gguf:"tile_position_embd.gate"`
 }
 
-func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs, aspectRatioIDs ml.Tensor, numPositions int, opts *VisionModelOptions) ml.Tensor {
+func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs, aspectRatioIDs ml.Tensor, numPositions, numTiles int, opts *VisionModelOptions) ml.Tensor {
 	positionEmbedding := e.PositionEmbedding.Forward(ctx, positionIDs)
 	if e.PositionEmbeddingGate != nil {
 		positionEmbedding = positionEmbedding.Mul(ctx, e.PositionEmbeddingGate)
@@ -141,7 +127,7 @@ func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, posi
 	hiddenState = hiddenState.Add(ctx, positionEmbedding)
 
 	tilePositionEmbedding := e.TilePositionEmbedding.Forward(ctx, aspectRatioIDs)
-	tilePositionEmbedding = tilePositionEmbedding.Reshape(ctx, opts.hiddenSize, numPositions, opts.numTiles)
+	tilePositionEmbedding = tilePositionEmbedding.Reshape(ctx, opts.hiddenSize, numPositions, numTiles)
 	if e.TilePositionEmbeddingGate != nil {
 		tilePositionEmbedding = tilePositionEmbedding.Mul(ctx, e.TilePositionEmbeddingGate)
 	}
@@ -150,9 +136,9 @@ func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, posi
 }
 
 type VisionModelOptions struct {
-	hiddenSize, numHeads, numTiles int
-	imageSize, patchSize           int
-	eps                            float32
+	hiddenSize, numHeads int
+	imageSize, patchSize int
+	eps                  float32
 
 	intermediateLayersIndices []int32
 }
@@ -181,14 +167,16 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 		numPositions++
 	}
 
+	numTiles := pixelValues.Dim(3)
+
 	hiddenState := m.PatchEmbeddings.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
-	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize, m.numTiles)
+	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize, numTiles)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
-	hiddenState = m.ClassEmbedding.Repeat(ctx, 2, m.numTiles).Concat(ctx, hiddenState, 1)
+	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, numTiles, m.VisionModelOptions)
+	hiddenState = m.ClassEmbedding.Repeat(ctx, 2, numTiles).Concat(ctx, hiddenState, 1)
 
-	hiddenState = m.PositionEmbedding.Forward(ctx, hiddenState, positionIDs, aspectRatioIDs, numPositions, m.VisionModelOptions)
+	hiddenState = m.PositionEmbedding.Forward(ctx, hiddenState, positionIDs, aspectRatioIDs, numPositions, numTiles, m.VisionModelOptions)
 	hiddenState = m.PreLayerNorm.Forward(ctx, hiddenState, m.eps)
 
 	numPaddingPatches := 8 - (hiddenState.Dim(1)%8)%8
@@ -199,18 +187,18 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 
 	hiddenState = m.PostLayerNorm.Forward(ctx, hiddenState, m.eps)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenState = m.PostTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, numTiles, batchSize)
+	hiddenState = m.PostTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, numTiles, m.VisionModelOptions)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, m.numTiles*(numPositions+numPaddingPatches), batchSize)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numTiles*(numPositions+numPaddingPatches), batchSize)
 	hiddenState, _ = m.GlobalTransformer.Forward(ctx, hiddenState, nil, m.VisionModelOptions)
 
 	hiddenStates := intermediateHiddenStates[0].Stack(ctx, 0, intermediateHiddenStates[1:]...)
-	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenStates = hiddenStates.Unpad(ctx, 0, numPaddingPatches, 0, 0)
+	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, numTiles, batchSize)
+	hiddenStates = hiddenStates.Pad(ctx, 0, -numPaddingPatches, 0, 0)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenState = hiddenState.Unpad(ctx, 0, numPaddingPatches, 0, 0)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, numTiles, batchSize)
+	hiddenState = hiddenState.Pad(ctx, 0, -numPaddingPatches, 0, 0)
 	return hiddenState.Concat(ctx, hiddenStates, 0)
 }
 
@@ -222,7 +210,6 @@ func newVisionModel(c fs.Config) *VisionModel {
 		VisionModelOptions: &VisionModelOptions{
 			hiddenSize: int(c.Uint("vision.embedding_length")),
 			numHeads:   int(c.Uint("vision.attention.head_count")),
-			numTiles:   int(c.Uint("vision.max_num_tiles")),
 
 			imageSize: int(c.Uint("vision.image_size")),
 			patchSize: int(c.Uint("vision.patch_size")),

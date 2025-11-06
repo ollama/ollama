@@ -46,7 +46,7 @@ func NewInputCache(lc *llama.Context, kvSize int, numSlots int, multiUserCache b
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
-// through LoadCacheSlot) require a lock to be be held that serializes
+// through LoadCacheSlot) require a lock to be held that serializes
 // these operations with each other and llama.Decode
 
 type InputCacheSlot struct {
@@ -104,8 +104,8 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 	slog.Debug("loading cache slot", "id", slot.Id, "cache", len(slot.Inputs), "prompt", len(prompt),
 		"used", numPast, "remaining", len(prompt)-numPast)
 
+	slot.Inputs = prompt[:numPast]
 	prompt = prompt[numPast:]
-	slot.Inputs = slot.Inputs[:numPast]
 
 	return slot, prompt, nil
 }
@@ -204,13 +204,8 @@ func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
 	targetFree = max(targetFree, 1)
 
 	currentFree := c.numCtx - inputLen
-	discard := targetFree - currentFree
 
-	if discard < 0 {
-		discard = 0
-	}
-
-	return discard
+	return max(targetFree-currentFree, 0)
 }
 
 type ErrReprocessInputs struct {

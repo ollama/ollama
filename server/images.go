@@ -23,9 +23,11 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -37,6 +39,7 @@ var (
 	errCapabilityInsert     = errors.New("insert")
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
+	errCapabilityThinking   = errors.New("thinking")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -71,44 +74,66 @@ func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
 	// Check for completion capability
-	r, err := os.Open(m.ModelPath)
-	if err == nil {
-		defer r.Close()
-
-		f, _, err := ggml.Decode(r, 1024)
+	if m.ModelPath != "" {
+		f, err := gguf.Open(m.ModelPath)
 		if err == nil {
-			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
+			defer f.Close()
+
+			if f.KeyValue("pooling_type").Valid() {
 				capabilities = append(capabilities, model.CapabilityEmbedding)
 			} else {
+				// If no embedding is specified, we assume the model supports completion
 				capabilities = append(capabilities, model.CapabilityCompletion)
 			}
-			if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok {
+			if f.KeyValue("vision.block_count").Valid() {
 				capabilities = append(capabilities, model.CapabilityVision)
 			}
 		} else {
-			slog.Error("couldn't decode ggml", "error", err)
+			slog.Error("couldn't open model file", "error", err)
+		}
+	} else if len(m.Config.Capabilities) > 0 {
+		for _, c := range m.Config.Capabilities {
+			capabilities = append(capabilities, model.Capability(c))
 		}
 	} else {
-		slog.Error("couldn't open model file", "error", err)
+		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 
 	if m.Template == nil {
 		return capabilities
 	}
 
+	builtinParser := parsers.ParserForName(m.Config.Parser)
 	// Check for tools capability
-	if slices.Contains(m.Template.Vars(), "tools") {
+	v, err := m.Template.Vars()
+	if err != nil {
+		slog.Warn("model template contains errors", "error", err)
+	}
+	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
 		capabilities = append(capabilities, model.CapabilityTools)
 	}
 
 	// Check for insert capability
-	if slices.Contains(m.Template.Vars(), "suffix") {
+	if slices.Contains(v, "suffix") {
 		capabilities = append(capabilities, model.CapabilityInsert)
 	}
 
 	// Check for vision capability in projector-based models
 	if len(m.ProjectorPaths) > 0 {
 		capabilities = append(capabilities, model.CapabilityVision)
+	}
+
+	// Skip the thinking check if it's already set
+	if slices.Contains(capabilities, "thinking") {
+		return capabilities
+	}
+
+	// Check for thinking capability
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
+	hasTags := openingTag != "" && closingTag != ""
+	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
+	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
+		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
 	return capabilities
@@ -127,6 +152,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityInsert:     errCapabilityInsert,
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
+		model.CapabilityThinking:   errCapabilityThinking,
 	}
 
 	for _, cap := range want {
@@ -141,11 +167,19 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		}
 	}
 
+	var err error
 	if len(errs) > 0 {
-		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
+		err = fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
-	return nil
+	if slices.Contains(errs, errCapabilityThinking) {
+		if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+			// append a message to the existing error
+			return fmt.Errorf("%w. Pull the model again to get the latest version with full thinking support", err)
+		}
+	}
+
+	return err
 }
 
 func (m *Model) String() string {
@@ -181,6 +215,20 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "system",
 			Args: m.System,
+		})
+	}
+
+	if m.Config.Renderer != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "renderer",
+			Args: m.Config.Renderer,
+		})
+	}
+
+	if m.Config.Parser != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "parser",
+			Args: m.Config.Parser,
 		})
 	}
 
@@ -222,8 +270,19 @@ type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
 	ModelFamily   string   `json:"model_family"`
 	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"`
-	FileType      string   `json:"file_type"`
+	ModelType     string   `json:"model_type"` // shown as Parameter Size
+	FileType      string   `json:"file_type"`  // shown as Quantization Level
+	Renderer      string   `json:"renderer,omitempty"`
+	Parser        string   `json:"parser,omitempty"`
+
+	RemoteHost  string `json:"remote_host,omitempty"`
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// used for remotes
+	Capabilities []string `json:"capabilities,omitempty"`
+	ContextLen   int      `json:"context_length,omitempty"`
+	EmbedLen     int      `json:"embedding_length,omitempty"`
+	BaseName     string   `json:"base_name,omitempty"`
 
 	// required by spec
 	Architecture string `json:"architecture"`

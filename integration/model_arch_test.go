@@ -19,36 +19,7 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-var (
-	started    = time.Now()
-	chatModels = []string{
-		"granite3-moe:latest",
-		"granite-code:latest",
-		"nemotron-mini:latest",
-		"command-r:latest",
-		"gemma2:latest",
-		"gemma:latest",
-		"internlm2:latest",
-		"phi3.5:latest",
-		"phi3:latest",
-		// "phi:latest", // flaky, sometimes generates no response on first query
-		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
-		"falcon:latest",
-		"falcon2:latest",
-		"minicpm-v:latest",
-		"mistral:latest",
-		"orca-mini:latest",
-		"llama2:latest",
-		"llama3.1:latest",
-		"llama3.2:latest",
-		"llama3.2-vision:latest",
-		"qwen2.5-coder:latest",
-		"qwen:latest",
-		"solar-pro:latest",
-	}
-)
-
-func TestModelsGenerate(t *testing.T) {
+func TestModelsChat(t *testing.T) {
 	softTimeout, hardTimeout := getTimeouts(t)
 	slog.Info("Setting timeouts", "soft", softTimeout, "hard", hardTimeout)
 	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
@@ -66,6 +37,13 @@ func TestModelsGenerate(t *testing.T) {
 		}
 	} else {
 		slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
+	}
+
+	var chatModels []string
+	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
+		chatModels = ollamaEngineChatModels
+	} else {
+		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
 	}
 
 	for _, model := range chatModels {
@@ -87,17 +65,41 @@ func TestModelsGenerate(t *testing.T) {
 					}
 				}
 			}
+			initialTimeout := 120 * time.Second
+			streamTimeout := 30 * time.Second
+			slog.Info("loading", "model", model)
+			err := client.Generate(ctx,
+				&api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
+				func(response api.GenerateResponse) error { return nil },
+			)
+			if err != nil {
+				t.Fatalf("failed to load model %s: %s", model, err)
+			}
+			gpuPercent := getGPUPercent(ctx, t, client, model)
+			if gpuPercent < 80 {
+				slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
+				initialTimeout = 240 * time.Second
+				streamTimeout = 40 * time.Second
+			}
+
 			// TODO - fiddle with context size
-			req := api.GenerateRequest{
-				Model:  model,
-				Prompt: "why is the sky blue?",
+			req := api.ChatRequest{
+				Model: model,
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: blueSkyPrompt,
+					},
+				},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"temperature": 0,
 					"seed":        123,
 				},
 			}
-			anyResp := []string{"rayleigh", "scattering", "atmosphere", "nitrogen", "oxygen"}
-			DoGenerate(ctx, t, client, req, anyResp, 120*time.Second, 30*time.Second)
+			DoChat(ctx, t, client, req, blueSkyExpected, initialTimeout, streamTimeout)
+			// best effort unload once we're done with the model
+			client.Generate(ctx, &api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		})
 	}
 }
@@ -151,8 +153,9 @@ func TestModelsEmbed(t *testing.T) {
 				}
 			}
 			req := api.EmbeddingRequest{
-				Model:  model,
-				Prompt: "why is the sky blue?",
+				Model:     model,
+				Prompt:    "why is the sky blue?",
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"temperature": 0,
 					"seed":        123,
@@ -162,6 +165,10 @@ func TestModelsEmbed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("embeddings call failed %s", err)
 			}
+			defer func() {
+				// best effort unload once we're done with the model
+				client.Generate(ctx, &api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
+			}()
 			if len(resp.Embedding) == 0 {
 				t.Errorf("zero length embedding response")
 			}
