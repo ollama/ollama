@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { useSettings } from "@/hooks/useSettings";
 
@@ -11,7 +12,11 @@ export function SidebarLayout({
 }>) {
   const { settings, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
-
+  const [mounted, setMounted] = useState(false);
+    useEffect(() => {
+      setMounted(true);
+    }, []);
+  
   return (
     <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
       <div
