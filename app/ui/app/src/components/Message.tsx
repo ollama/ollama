@@ -958,13 +958,15 @@ function OtherRoleMessage({
             </CollapsibleTrigger>
             <CollapsibleContent
               forceMount
-              className="text-xs text-neutral-500 dark:text-neutral-500 rounded-md transition-[max-height,opacity] duration-500 ease-in-out relative ml-6 mt-3 outline-none data-[state=closed]:overflow-hidden data-[state=open]:overflow-y-auto data-[state=open]:max-h-28 data-[state=closed]:max-h-0 data-[state=closed]:opacity-0 data-[state=open]:opacity-100"
+              className="relative ml-6 mt-3 outline-none overflow-hidden transition-all duration-300 ease-in-out data-[state=closed]:max-h-0 data-[state=closed]:opacity-0 data-[state=open]:max-h-28 data-[state=open]:opacity-100"
             >
-              <StreamingMarkdownContent
-                content={message.thinking}
-                isStreaming={!!activelyThinking}
-                size="sm"
-              />
+              <div className="text-xs text-neutral-500 dark:text-neutral-500 rounded-md max-h-28 overflow-y-auto">
+                <StreamingMarkdownContent
+                  content={message.thinking}
+                  isStreaming={!!activelyThinking}
+                  size="sm"
+                />
+              </div>
             </CollapsibleContent>
           </Reasoning>
         )}
