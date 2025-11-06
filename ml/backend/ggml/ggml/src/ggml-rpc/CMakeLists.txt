@@ -2,7 +2,6 @@ message(STATUS "Using RPC backend")
 
 ggml_add_backend_library(ggml-rpc
                          ggml-rpc.cpp
-                         rpc-server.cpp
                         )
 
 if (WIN32)

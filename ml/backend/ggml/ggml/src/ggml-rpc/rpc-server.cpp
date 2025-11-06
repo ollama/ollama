@@ -319,7 +319,17 @@ int run_rpc_server(const char *host, int port, const char *device) {
         return 1;
     }
 
-    ggml_backend_rpc_start_server(backend, endpoint.c_str(), cache_dir, free_mem, total_mem);
+    // Get the device from the backend
+    ggml_backend_dev_t dev = ggml_backend_get_device(backend);
+    if (!dev) {
+        fprintf(stderr, "Failed to get device from backend\n");
+        ggml_backend_free(backend);
+        return 1;
+    }
+
+    // Pass device array (single device) to start_server
+    ggml_backend_dev_t devices[1] = { dev };
+    ggml_backend_rpc_start_server(endpoint.c_str(), cache_dir, params.n_threads, 1, devices);
 
     ggml_backend_free(backend);
     return 0;

@@ -4,6 +4,7 @@ ARG FLAVOR=${TARGETARCH}
 ARG PARALLEL=8
 
 ARG ROCMVERSION=6.3.3
+ARG ROCM7VERSION=7.0.2
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
@@ -16,13 +17,15 @@ RUN yum install -y yum-utils \
     && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
     && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
     && dnf install -y ccache \
-    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/* /var/lib/dnf/*.sqlite* /var/lib/dnf/history.* /tmp/*
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 ARG VULKANVERSION
 RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
     && tar xvf /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
     && dnf -y install ninja-build \
-    && ln -s /usr/bin/python3 /usr/bin/python \  
+    && ln -s /usr/bin/python3 /usr/bin/python \
     && /${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
     && /${VULKANVERSION}/vulkansdk -j 8 shaderc
 RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
@@ -44,7 +47,9 @@ COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
 
 FROM base AS cpu
-RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/* /var/lib/dnf/*.sqlite* /var/lib/dnf/history.* /tmp/*
 ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
@@ -58,7 +63,7 @@ RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 11' \
+    cmake --preset 'CUDA 11' -DOLLAMA_RUNNER_DIR="cuda_v11" \
         && cmake --build --parallel ${PARALLEL} --preset 'CUDA 11' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
@@ -68,7 +73,7 @@ RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 12' \
+    cmake --preset 'CUDA 12' -DOLLAMA_RUNNER_DIR="cuda_v12"\
         && cmake --build --parallel ${PARALLEL} --preset 'CUDA 12' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
@@ -79,7 +84,7 @@ RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 13' \
+    cmake --preset 'CUDA 13' -DOLLAMA_RUNNER_DIR="cuda_v13" \
         && cmake --build --parallel ${PARALLEL} --preset 'CUDA 13' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
@@ -88,10 +93,42 @@ FROM base AS rocm-6
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 6' \
+    cmake --preset 'ROCm 6' -DOLLAMA_RUNNER_DIR="rocm" \
         && cmake --build --parallel ${PARALLEL} --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel ${PARALLEL}
 RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
+
+FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCM7VERSION}-complete AS base-rocm7
+RUN yum install -y yum-utils \
+    && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
+    && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
+    && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
+    && dnf install -y ccache \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/* /var/lib/dnf/*.sqlite* /var/lib/dnf/history.* /tmp/*
+ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
+ARG CMAKEVERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+ENV LDFLAGS=-s
+
+FROM base-rocm7 AS rocm-7
+# ROCm 7 specific paths
+ENV ROCM_PATH=/opt/rocm
+ENV PATH=$ROCM_PATH/bin:$PATH
+ENV LD_LIBRARY_PATH=$ROCM_PATH/lib:$LD_LIBRARY_PATH
+ENV CMAKE_PREFIX_PATH=$ROCM_PATH
+ARG PARALLEL
+# Allow customization of GPU architecture (defaults to auto-detect or gfx1100,gfx1101,gfx1102,gfx1151)
+ARG AMDGPU_TARGETS="gfx1100;gfx1101;gfx1102;gfx1151"
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'ROCm 6' \
+        -DOLLAMA_RUNNER_DIR="rocm_v7" \
+        -DAMDGPU_TARGETS="${AMDGPU_TARGETS}" \
+        && cmake --build --parallel ${PARALLEL} --preset 'ROCm 6' \
+        && cmake --install build --component HIP --strip --parallel ${PARALLEL}
+RUN rm -f dist/lib/ollama/rocm_v7/rocblas/library/*gfx90[06]*
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
@@ -101,7 +138,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 5' \
+    cmake --preset 'JetPack 5' -DOLLAMA_RUNNER_DIR="cuda_jetpack5" \
         && cmake --build --parallel ${PARALLEL} --preset 'JetPack 5' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
@@ -113,15 +150,15 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ARG PARALLEL
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 6' \
+    cmake --preset 'JetPack 6' -DOLLAMA_RUNNER_DIR="cuda_jetpack6" \
         && cmake --build --parallel ${PARALLEL} --preset 'JetPack 6' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 FROM base AS vulkan
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'Vulkan' \
+    cmake --preset 'Vulkan' -DOLLAMA_RUNNER_DIR="vulkan" \
         && cmake --build --parallel --preset 'Vulkan' \
-        && cmake --install build --component Vulkan --strip --parallel 8 
+        && cmake --install build --component Vulkan --strip --parallel 8
 
 
 FROM base AS build
@@ -153,6 +190,9 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
+
+FROM scratch AS rocm7
+COPY --from=rocm-7 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 ARG VULKANVERSION
@@ -198,4 +238,31 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
+CMD ["serve"]
+
+FROM base-rocm7 AS rocm7-final
+
+# Copy the ollama binary from the 'build' stage
+COPY --from=build /bin/ollama /usr/bin/ollama
+
+# Copy the CPU runner as a fallback
+COPY --from=cpu dist/lib/ollama /usr/lib/ollama
+
+# Copy the rocm-7 runner we built
+COPY --from=rocm-7 dist/lib/ollama /usr/lib/ollama
+
+ENV OLLAMA_HOST=0.0.0.0:11434
+
+RUN dnf clean all && \
+  rm -rf /var/cache/dnf/* \
+  /var/lib/dnf/*.sqlite* \
+  /var/lib/dnf/history.* \
+  /tmp/*
+
+# Set the correct library path.
+# The base-rocm7 image already has /opt/rocm/lib on its path.
+ENV LD_LIBRARY_PATH=/opt/rocm/lib:/usr/lib/ollama
+
+EXPOSE 11434
+ENTRYPOINT ["/usr/bin/ollama"]
 CMD ["serve"]
