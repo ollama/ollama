@@ -27,7 +27,6 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
@@ -66,7 +65,7 @@ func (e filteredEnv) LogValue() slog.Value {
 
 type LlamaServer interface {
 	ModelPath() string
-	Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) ([]ml.DeviceID, error)
+	Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error)
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
@@ -115,7 +114,7 @@ type llamaServer struct {
 	llmServer
 
 	ggml     *ggml.GGML
-	gpus     discover.GpuInfoList // The set of GPUs covered by the memory estimate
+	gpus     []ml.DeviceInfo // The set of GPUs covered by the memory estimate
 	estimate MemoryEstimate
 }
 
@@ -146,7 +145,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 }
 
 // NewLlamaServer will run a server for the given GPUs
-func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
@@ -179,7 +178,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
-	defaultThreads := discover.GetSystemInfo().GetOptimalThreadCount()
+	defaultThreads := systemInfo.ThreadCount
 	if opts.NumThread > 0 {
 		loadRequest.NumThreads = opts.NumThread
 	} else if defaultThreads > 0 {
@@ -200,7 +199,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
 	// that can handle it.
-	if fa && !gpus.FlashAttentionSupported() {
+	if fa && !ml.FlashAttentionSupported(gpus) {
 		slog.Warn("flash attention enabled but not supported by gpu")
 		fa = false
 	}
@@ -227,218 +226,185 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 	}
 
-	availableLibs := make(map[string]string)
-	if entries, err := os.ReadDir(discover.LibOllamaPath); err == nil {
-		for _, entry := range entries {
-			availableLibs[entry.Name()] = filepath.Join(discover.LibOllamaPath, entry.Name())
-		}
+	gpuLibs := ml.LibraryPaths(gpus)
+	status := NewStatusWriter(os.Stderr)
+	cmd, port, err := StartRunner(
+		textProcessor != nil,
+		modelPath,
+		gpuLibs,
+		status,
+		ml.GetVisibleDevicesEnv(gpus),
+	)
+
+	s := llmServer{
+		port:           port,
+		cmd:            cmd,
+		status:         status,
+		options:        opts,
+		modelPath:      modelPath,
+		loadRequest:    loadRequest,
+		llamaModel:     llamaModel,
+		llamaModelLock: &sync.Mutex{},
+		textProcessor:  textProcessor,
+		numParallel:    numParallel,
+		sem:            semaphore.NewWeighted(int64(numParallel)),
+		totalLayers:    f.KV().BlockCount() + 1,
+		loadStart:      time.Now(),
+		done:           make(chan error, 1),
 	}
 
-	var gpuLibs []string
-	for _, gpu := range gpus {
-		gpuLibs = append(gpuLibs, gpu.RunnerName())
-	}
-
-	requested := envconfig.LLMLibrary()
-	if availableLibs[requested] != "" {
-		slog.Info("using requested gpu library", "requested", requested)
-		gpuLibs = []string{requested}
-	}
-
-	var compatible []string
-	for _, gpuLib := range gpuLibs {
-		var matchingLibs []string
-		for k := range availableLibs {
-			// exact match first
-			if k == gpuLib {
-				matchingLibs = append([]string{k}, matchingLibs...)
-				continue
-			}
-
-			// then match the family (e.g. 'cuda')
-			if strings.Split(k, "_")[0] == strings.Split(gpuLib, "_")[0] {
-				matchingLibs = append(matchingLibs, k)
-			}
-		}
-
-		if len(matchingLibs) > 0 {
-			compatible = append(compatible, matchingLibs[0])
-		}
-	}
-
-	exe, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
+		var msg string
+		if s.status != nil && s.status.LastErrMsg != "" {
+			msg = s.status.LastErrMsg
+		}
+		err := fmt.Errorf("error starting runner: %v %s", err, msg)
+		if llamaModel != nil {
+			llama.FreeModel(llamaModel)
+		}
+		return nil, err
+	}
+
+	// reap subprocess when it exits
+	go func() {
+		err := s.cmd.Wait()
+		// Favor a more detailed message over the process exit status
+		if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+			slog.Error("llama runner terminated", "error", err)
+			if strings.Contains(s.status.LastErrMsg, "unknown model") {
+				s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+			}
+			s.done <- errors.New(s.status.LastErrMsg)
+		} else {
+			s.done <- err
+		}
+	}()
+
+	if textProcessor != nil {
+		return &ollamaServer{llmServer: s}, nil
+	} else {
+		return &llamaServer{llmServer: s, ggml: f}, nil
+	}
+}
+
+func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
+	var exe string
+	exe, err = os.Executable()
+	if err != nil {
+		return nil, 0, fmt.Errorf("unable to lookup executable path: %w", err)
 	}
 
 	if eval, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = eval
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
-	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
-	// without any LD_LIBRARY_PATH flags
-	for {
-		port := 0
-		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-			var l *net.TCPListener
-			if l, err = net.ListenTCP("tcp", a); err == nil {
-				port = l.Addr().(*net.TCPAddr).Port
-				l.Close()
-			}
-		}
-		if port == 0 {
-			slog.Debug("ResolveTCPAddr failed, using random port")
-			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-		}
-		params := []string{"runner"}
-		if textProcessor != nil {
-			// New engine
-			// TODO - if we have failure to load scenarios, add logic to retry with the old runner
-			params = append(params, "--ollama-engine")
-		}
-		params = append(params, "--model", modelPath)
-		params = append(params, "--port", strconv.Itoa(port))
-
-		var pathEnv string
-		switch runtime.GOOS {
-		case "windows":
-			pathEnv = "PATH"
-		case "darwin":
-			pathEnv = "DYLD_LIBRARY_PATH"
-		default:
-			pathEnv = "LD_LIBRARY_PATH"
-		}
-
-		// Note: we always put our dependency paths first
-		// since these are the exact version we compiled/linked against
-		libraryPaths := []string{discover.LibOllamaPath}
-		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
-		}
-
-		ggmlPaths := []string{discover.LibOllamaPath}
-		for _, c := range compatible {
-			if libpath, ok := availableLibs[c]; ok {
-				slog.Debug("adding gpu library", "path", libpath)
-				libraryPaths = append([]string{libpath}, libraryPaths...)
-				ggmlPaths = append(ggmlPaths, libpath)
-			}
-		}
-
-		for _, gpu := range gpus {
-			if gpu.DependencyPath != nil {
-				slog.Debug("adding gpu dependency paths", "paths", gpu.DependencyPath)
-				libraryPaths = append(gpu.DependencyPath, libraryPaths...)
-				ggmlPaths = append(ggmlPaths, gpu.DependencyPath...)
-			}
-		}
-
-		// finally, add the root library path
-		libraryPaths = append(libraryPaths, discover.LibOllamaPath)
-
-		s := llmServer{
-			port:           port,
-			cmd:            exec.Command(exe, params...),
-			status:         NewStatusWriter(os.Stderr),
-			options:        opts,
-			modelPath:      modelPath,
-			loadRequest:    loadRequest,
-			llamaModel:     llamaModel,
-			llamaModelLock: &sync.Mutex{},
-			textProcessor:  textProcessor,
-			numParallel:    numParallel,
-			sem:            semaphore.NewWeighted(int64(numParallel)),
-			totalLayers:    f.KV().BlockCount() + 1,
-			loadStart:      time.Now(),
-			done:           make(chan error, 1),
-		}
-
-		s.cmd.Env = os.Environ()
-		s.cmd.Stdout = os.Stdout
-		s.cmd.Stderr = s.status
-		s.cmd.SysProcAttr = LlamaServerSysProcAttr
-
-		// Always filter down the set of GPUs in case there are any unsupported devices that might crash
-		envWorkarounds := gpus.GetVisibleDevicesEnv()
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-
-		// Update or add the path variable with our adjusted version
-		pathNeeded := true
-		ollamaPathNeeded := true
-		envWorkaroundDone := make([]bool, len(envWorkarounds))
-		for i := range s.cmd.Env {
-			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
-			if strings.EqualFold(cmp[0], pathEnv) {
-				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
-				pathNeeded = false
-			} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
-				s.cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(ggmlPaths, string(filepath.ListSeparator))
-				ollamaPathNeeded = false
-			} else if len(envWorkarounds) != 0 {
-				for j, kv := range envWorkarounds {
-					tmp := strings.SplitN(kv, "=", 2)
-					if strings.EqualFold(cmp[0], tmp[0]) {
-						s.cmd.Env[i] = kv
-						envWorkaroundDone[j] = true
-					}
-				}
-			}
-		}
-		if pathNeeded {
-			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
-		}
-		if ollamaPathNeeded {
-			s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
-		}
-		for i, done := range envWorkaroundDone {
-			if !done {
-				s.cmd.Env = append(s.cmd.Env, envWorkarounds[i])
-			}
-		}
-
-		slog.Info("starting runner", "cmd", s.cmd)
-		slog.Debug("subprocess", "", filteredEnv(s.cmd.Env))
-
-		if err = s.cmd.Start(); err != nil {
-			var msg string
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
-			}
-			err := fmt.Errorf("error starting runner: %v %s", err, msg)
-			if len(compatible) == 0 {
-				if llamaModel != nil {
-					llama.FreeModel(llamaModel)
-				}
-				return nil, err
-			}
-
-			slog.Warn("unable to start runner with compatible gpu", "error", err, "compatible", compatible)
-			compatible = compatible[1:]
-			continue
-		}
-
-		// reap subprocess when it exits
-		go func() {
-			err := s.cmd.Wait()
-			// Favor a more detailed message over the process exit status
-			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
-				slog.Error("llama runner terminated", "error", err)
-				if strings.Contains(s.status.LastErrMsg, "unknown model") {
-					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
-				}
-				s.done <- errors.New(s.status.LastErrMsg)
-			} else {
-				s.done <- err
-			}
-		}()
-
-		if textProcessor != nil {
-			return &ollamaServer{llmServer: s}, nil
-		} else {
-			return &llamaServer{llmServer: s, ggml: f}, nil
+	port = 0
+	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+		var l *net.TCPListener
+		if l, err = net.ListenTCP("tcp", a); err == nil {
+			port = l.Addr().(*net.TCPAddr).Port
+			l.Close()
 		}
 	}
+	if port == 0 {
+		slog.Debug("ResolveTCPAddr failed, using random port")
+		port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+	}
+	params := []string{"runner"}
+	if ollamaEngine {
+		params = append(params, "--ollama-engine")
+	}
+	if modelPath != "" {
+		params = append(params, "--model", modelPath)
+	}
+	params = append(params, "--port", strconv.Itoa(port))
+
+	var pathEnv string
+	switch runtime.GOOS {
+	case "windows":
+		pathEnv = "PATH"
+	case "darwin":
+		pathEnv = "DYLD_LIBRARY_PATH"
+	default:
+		pathEnv = "LD_LIBRARY_PATH"
+	}
+
+	// Note: we always put our dependency paths first
+	// since these are the exact version we compiled/linked against
+	libraryPaths := append([]string{}, gpuLibs...)
+	if libraryPath, ok := os.LookupEnv(pathEnv); ok {
+		libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
+	}
+
+	cmd = exec.Command(exe, params...)
+
+	cmd.Env = os.Environ()
+
+	if out != nil {
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to spawn server stdout pipe: %w", err)
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
+		}
+		go func() {
+			io.Copy(out, stdout) //nolint:errcheck
+		}()
+		go func() {
+			io.Copy(out, stderr) //nolint:errcheck
+		}()
+	}
+	cmd.SysProcAttr = LlamaServerSysProcAttr
+
+	// Always filter down the set of GPUs in case there are any unsupported devices that might crash
+	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+	// Update or add the path variable with our adjusted version
+	pathNeeded := true
+	ollamaPathNeeded := true
+	extraEnvsDone := map[string]bool{}
+	for k := range extraEnvs {
+		extraEnvsDone[k] = false
+	}
+	for i := range cmd.Env {
+		cmp := strings.SplitN(cmd.Env[i], "=", 2)
+		if strings.EqualFold(cmp[0], pathEnv) {
+			cmd.Env[i] = pathEnv + "=" + pathEnvVal
+			pathNeeded = false
+		} else if strings.EqualFold(cmp[0], "OLLAMA_LIBRARY_PATH") {
+			cmd.Env[i] = "OLLAMA_LIBRARY_PATH=" + strings.Join(gpuLibs, string(filepath.ListSeparator))
+			ollamaPathNeeded = false
+		} else if len(extraEnvs) != 0 {
+			for k, v := range extraEnvs {
+				if strings.EqualFold(cmp[0], k) {
+					cmd.Env[i] = k + "=" + v
+					extraEnvsDone[k] = true
+				}
+			}
+		}
+	}
+	if pathNeeded {
+		cmd.Env = append(cmd.Env, pathEnv+"="+pathEnvVal)
+	}
+	if ollamaPathNeeded {
+		cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(gpuLibs, string(filepath.ListSeparator)))
+	}
+	for k, done := range extraEnvsDone {
+		if !done {
+			cmd.Env = append(cmd.Env, k+"="+extraEnvs[k])
+		}
+	}
+
+	slog.Info("starting runner", "cmd", cmd)
+	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
+
+	if err = cmd.Start(); err != nil {
+		return nil, 0, err
+	}
+	err = nil
+	return
 }
 
 func (s *llmServer) ModelPath() string {
@@ -497,47 +463,58 @@ type LoadResponse struct {
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
 
-func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) ([]ml.DeviceID, error) {
-	systemInfo := discover.GetSystemInfo()
-	systemTotalMemory := systemInfo.System.TotalMemory
-	systemFreeMemory := systemInfo.System.FreeMemory
-	systemSwapFreeMemory := systemInfo.System.FreeSwap
+func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+	systemTotalMemory := systemInfo.TotalMemory
+	systemFreeMemory := systemInfo.FreeMemory
+	systemSwapFreeMemory := systemInfo.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
-	g := pickBestFullFitByLibrary(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
-	if g == nil {
-		if !requireFull {
-			g = pickBestPartialFitByLibrary(s.ggml, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
-		} else {
+	if len(gpus) == 0 || s.options.NumGPU == 0 {
+		if !verifyCPUFit(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, systemInfo, s.numParallel) {
 			slog.Info("model requires more memory than is currently available, evicting a model to make space", "estimate", s.estimate)
-			return nil, ErrLoadRequiredFull
+			return nil, fmt.Errorf("model requires more system memory than is currently available %w", ErrLoadRequiredFull)
 		}
+	} else {
+		g := pickBestFullFitByLibrary(s.ggml, s.modelPath, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
+		if g == nil {
+			if !requireFull {
+				g = pickBestPartialFitByLibrary(s.ggml, []string{s.loadRequest.ProjectorPath}, s.loadRequest.LoraPath, s.options, gpus, s.numParallel)
+			} else {
+				slog.Info("model requires more memory than is currently available, evicting a model to make space", "estimate", s.estimate)
+				return nil, ErrLoadRequiredFull
+			}
+		}
+		gpus = g
 	}
 
-	gpus = g
 	s.estimate = estimateGPULayers(gpus, s.ggml, []string{s.loadRequest.ProjectorPath}, s.options, s.numParallel)
 
-	if len(gpus) > 1 || gpus[0].Library != "cpu" {
+	if len(gpus) >= 1 {
 		switch {
-		case gpus[0].Library == "Metal" && s.estimate.VRAMSize > systemInfo.System.TotalMemory:
+		case s.options.NumGPU == 0:
+			gpus = []ml.DeviceInfo{}
+		case gpus[0].Library == "Metal" && s.estimate.VRAMSize > systemInfo.TotalMemory:
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			s.options.NumGPU = 0
+			gpus = []ml.DeviceInfo{}
 		case gpus[0].Library != "Metal" && s.estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			gpus = discover.GpuInfoList{discover.GetCPUInfo()}
-		case s.options.NumGPU < 0 && s.estimate.Layers > 0 && gpus[0].Library != "cpu":
+			gpus = []ml.DeviceInfo{}
+		case s.options.NumGPU < 0 && s.estimate.Layers > 0:
 			s.options.NumGPU = s.estimate.Layers
 		}
+	} else {
+		s.options.NumGPU = 0
 	}
 
 	// On linux and windows, over-allocating CPU memory will almost always result in an error
 	// Darwin has fully dynamic swap so has no direct concept of free swap space
 	if runtime.GOOS != "darwin" {
 		systemMemoryRequired := s.estimate.TotalSize - s.estimate.VRAMSize
-		available := systemInfo.System.FreeMemory + systemInfo.System.FreeSwap
+		available := systemInfo.FreeMemory + systemInfo.FreeSwap
 		if systemMemoryRequired > available {
-			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.System.TotalMemory), "free", format.HumanBytes2(systemInfo.System.FreeMemory), "swap", format.HumanBytes2(systemInfo.System.FreeSwap))
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
 			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
 		}
 	}
@@ -564,10 +541,10 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 		// Windows CUDA should not use mmap for best performance
 		// Linux  with a model larger than free space, mmap leads to thrashing
 		// For CPU loads we want the memory to be allocated, not FS cache
-		if (runtime.GOOS == "windows" && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
-			(runtime.GOOS == "linux" && systemInfo.System.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
-			(gpus[0].Library == "cpu" && s.options.UseMMap == nil) ||
-			(gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
+		if (runtime.GOOS == "windows" && len(gpus) > 0 && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
+			(runtime.GOOS == "linux" && systemInfo.FreeMemory < s.estimate.TotalSize && s.options.UseMMap == nil) ||
+			(len(gpus) == 0 && s.options.UseMMap == nil) ||
+			(len(gpus) > 0 && gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
 			(s.options.UseMMap != nil && !*s.options.UseMMap) {
 			s.loadRequest.UseMmap = false
 		}
@@ -605,8 +582,8 @@ func (s *llamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requi
 
 // createGPULayers maps from the tensor splits assigned by the memory estimates to explicit assignment
 // of particular layers onto GPUs
-func createGPULayers(estimate MemoryEstimate, ggml *ggml.GGML, gpus discover.GpuInfoList, numGPU int) ml.GPULayersList {
-	if numGPU <= 0 {
+func createGPULayers(estimate MemoryEstimate, ggml *ggml.GGML, gpus []ml.DeviceInfo, numGPU int) ml.GPULayersList {
+	if numGPU <= 0 || len(gpus) == 0 {
 		return nil
 	}
 
@@ -662,7 +639,7 @@ func createGPULayers(estimate MemoryEstimate, ggml *ggml.GGML, gpus discover.Gpu
 // allowing for faster iteration, but may return less information.
 //
 // Returns the list of GPU IDs that were used in the final allocation on success
-func (s *ollamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) ([]ml.DeviceID, error) {
+func (s *ollamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	var success bool
 	defer func() {
 		if !success {
@@ -675,24 +652,21 @@ func (s *ollamaServer) Load(ctx context.Context, gpus discover.GpuInfoList, requ
 
 	slog.Info("loading model", "model layers", s.totalLayers, "requested", s.options.NumGPU)
 
-	systemInfo := discover.GetSystemInfo()
-	systemTotalMemory := systemInfo.System.TotalMemory
-	systemFreeMemory := systemInfo.System.FreeMemory
-	systemSwapFreeMemory := systemInfo.System.FreeSwap
+	systemTotalMemory := systemInfo.TotalMemory
+	systemFreeMemory := systemInfo.FreeMemory
+	systemSwapFreeMemory := systemInfo.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
-	if !(len(gpus) == 1 && gpus[0].Library == "cpu") {
-		for _, gpu := range gpus {
-			available := gpu.FreeMemory - envconfig.GpuOverhead() - gpu.MinimumMemory
-			if gpu.FreeMemory < envconfig.GpuOverhead()+gpu.MinimumMemory {
-				available = 0
-			}
-			slog.Info("gpu memory", "id", gpu.ID, "library", gpu.Library,
-				"available", format.HumanBytes2(available),
-				"free", format.HumanBytes2(gpu.FreeMemory),
-				"minimum", format.HumanBytes2(gpu.MinimumMemory),
-				"overhead", format.HumanBytes2(envconfig.GpuOverhead()))
+	for _, gpu := range gpus {
+		available := gpu.FreeMemory - envconfig.GpuOverhead() - gpu.MinimumMemory()
+		if gpu.FreeMemory < envconfig.GpuOverhead()+gpu.MinimumMemory() {
+			available = 0
 		}
+		slog.Info("gpu memory", "id", gpu.ID, "library", gpu.Library,
+			"available", format.HumanBytes2(available),
+			"free", format.HumanBytes2(gpu.FreeMemory),
+			"minimum", format.HumanBytes2(gpu.MinimumMemory()),
+			"overhead", format.HumanBytes2(envconfig.GpuOverhead()))
 	}
 
 	pastAllocations := make(map[uint64]struct{})
@@ -762,7 +736,6 @@ nextOperation:
 						if err != nil {
 							return nil, err
 						}
-
 						slog.Debug("new layout created", "layers", newGPULayers)
 
 						s.loadRequest.GPULayers = newGPULayers
@@ -808,15 +781,12 @@ nextOperation:
 				// Memory allocation failed even though we created a layout that we thought should
 				// fit in available memory. This could happen if either our free memory reports
 				// are incorrect or if available memory is changing between layout and allocation
-				// time. Apply an exponential backoff to try to find the real amount of available
-				// space.
+				// time. Apply a backoff to try to find the real amount of available space.
 				if backoff > 1 {
 					slog.Warn("memory layout cannot be allocated", "memory", resp.Memory)
 					return nil, errors.New("memory layout cannot be allocated")
-				} else if backoff == 0 {
-					backoff = 0.01
 				} else {
-					backoff *= 2
+					backoff += 0.1
 				}
 
 				slog.Info("model layout did not fit, applying backoff", "backoff", fmt.Sprintf("%.2f", backoff))
@@ -864,20 +834,27 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 // - Calculating how much space each GPU has available for layers, based on free memory and space occupied by the graph
 // - Assigning layers
 // - Ensuring that we don't exceed limits, such as requirements about partial offloading or system memory
-func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs discover.GpuInfoList, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, error) {
-	if s.totalLayers == 0 || s.options.NumGPU == 0 || len(systemGPUs) == 0 || (len(systemGPUs) == 1 && systemGPUs[0].Library == "cpu") {
-		return ml.GPULayersList{}, nil
-	}
-
-	gpus := append(make(discover.GpuInfoList, 0, len(systemGPUs)), systemGPUs...)
-	sort.Sort(sort.Reverse(discover.ByFreeMemory(gpus)))
-
+func (s *ollamaServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, error) {
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
 			Weights: make([]uint64, s.totalLayers),
 			Cache:   make([]uint64, s.totalLayers),
 		}}
 	}
+	gpuLayers, layers, err := s.buildLayout(systemGPUs, memory, requireFull, backoff)
+	if err != nil {
+		return nil, err
+	}
+	err = s.verifyLayout(systemInfo, memory, requireFull, gpuLayers, layers)
+	if err != nil {
+		return nil, err
+	}
+	return gpuLayers, nil
+}
+
+func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, []uint64, error) {
+	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
+	sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
 
 	layers := make([]uint64, len(memory.CPU.Weights))
 	for i := range layers {
@@ -891,7 +868,7 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 	}
 
 	gpuLayers := ml.GPULayersList{}
-	for _, gl := range gpus.ByLibrary() {
+	for _, gl := range ml.ByLibrary(gpus) {
 		// If a GPU already has a graph allocated on it, then we should continue to use it.
 		// Otherwise, we lose information that we got from previous allocations, which can
 		// cause cycling. Plus, we get more information about required allocation from each
@@ -905,7 +882,7 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 						lastUsedGPU = i
 					}
 
-					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory + envconfig.GpuOverhead() + memory.GPUs[j].Graph
+					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory() + envconfig.GpuOverhead() + memory.GPUs[j].Graph
 					if gl[i].FreeMemory > reserved {
 						gl[i].FreeMemory -= reserved
 					} else {
@@ -914,7 +891,7 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 
 					slog.Debug("available gpu", "id", gl[i].ID, "library", gl[i].Library,
 						"available layer vram", format.HumanBytes2(gl[i].FreeMemory),
-						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(gl[i].MinimumMemory),
+						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(gl[i].MinimumMemory()),
 						"overhead", format.HumanBytes2(envconfig.GpuOverhead()),
 						"graph", format.HumanBytes2(memory.GPUs[j].Graph))
 
@@ -933,7 +910,11 @@ func (s *ollamaServer) createLayout(systemInfo discover.SystemInfo, systemGPUs d
 			gpuLayers = libraryGpuLayers
 		}
 	}
+	return gpuLayers, layers, nil
+}
 
+// verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
+func (s *ollamaServer) verifyLayout(systemInfo ml.SystemInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
@@ -961,24 +942,24 @@ nextLayer:
 
 	if requireFull {
 		if gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
-			return nil, ErrLoadRequiredFull
+			return ErrLoadRequiredFull
 		}
 
-		if cpuSize > systemInfo.System.FreeMemory {
-			return nil, ErrLoadRequiredFull
+		if cpuSize > systemInfo.FreeMemory {
+			return ErrLoadRequiredFull
 		}
 	}
 
 	// On linux and windows, over-allocating CPU memory will almost always result in an error
 	// Darwin has fully dynamic swap so has no direct concept of free swap space
 	if runtime.GOOS != "darwin" {
-		available := systemInfo.System.FreeMemory + systemInfo.System.FreeSwap
+		available := systemInfo.FreeMemory + systemInfo.FreeSwap
 		if cpuSize > available {
-			slog.Warn("model request too large for system", "requested", format.HumanBytes2(cpuSize), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.System.TotalMemory), "free", format.HumanBytes2(systemInfo.System.FreeMemory), "swap", format.HumanBytes2(systemInfo.System.FreeSwap))
-			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(cpuSize), format.HumanBytes2(available))
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(cpuSize), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
+			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(cpuSize), format.HumanBytes2(available))
 		}
 	} else {
-		if vramSize > systemInfo.System.TotalMemory {
+		if vramSize > systemInfo.TotalMemory {
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			s.options.NumGPU = 0
@@ -990,11 +971,11 @@ nextLayer:
 		slog.Debug("insufficient VRAM to load any model layers")
 	}
 
-	return gpuLayers, nil
+	return nil
 }
 
 // assignLayers packs the maximum number of layers onto the smallest set of GPUs and comes up with a layer assignment
-func assignLayers(layers []uint64, gpus discover.GpuInfoList, requireFull bool, requestedLayers int, lastUsedGPU int) (gpuLayers ml.GPULayersList) {
+func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, requestedLayers int, lastUsedGPU int) (gpuLayers ml.GPULayersList) {
 	// If we can't fit everything then prefer offloading layers other than the output layer
 	for range 2 {
 		// requestedLayers may be -1 if nothing was requested
@@ -1028,7 +1009,7 @@ func assignLayers(layers []uint64, gpus discover.GpuInfoList, requireFull bool, 
 // findBestFit binary searches to find the smallest capacity factor that can fit
 // the max number of layers. The capacity factor is multiplied by the free space on
 // each GPU and a small one will force even balancing.
-func findBestFit(layers []uint64, gpus discover.GpuInfoList, requestedLayers int, forceRequest bool) (gpuLayers ml.GPULayersList) {
+func findBestFit(layers []uint64, gpus []ml.DeviceInfo, requestedLayers int, forceRequest bool) (gpuLayers ml.GPULayersList) {
 	var high float32 = 1
 	var low float32 = 0
 
@@ -1053,12 +1034,11 @@ func findBestFit(layers []uint64, gpus discover.GpuInfoList, requestedLayers int
 			low = mid
 		}
 	}
-
 	return bestAssignments
 }
 
 // greedyFit assigns layers incrementally to GPUs, spilling over as each runs out of free space
-func greedyFit(layers []uint64, gpus discover.GpuInfoList, capacity float32, requestedLayers int) (gpuLayers ml.GPULayersList) {
+func greedyFit(layers []uint64, gpus []ml.DeviceInfo, capacity float32, requestedLayers int) (gpuLayers ml.GPULayersList) {
 	device := len(gpus) - 1
 	gpuLayers = ml.GPULayersList{{DeviceID: gpus[device].DeviceID}}
 	freeSpace := uint64(float32(gpus[device].FreeMemory) * capacity)
@@ -1082,7 +1062,6 @@ func greedyFit(layers []uint64, gpus discover.GpuInfoList, capacity float32, req
 			freeSpace = uint64(float32(gpus[device].FreeMemory) * capacity)
 		}
 	}
-
 	return gpuLayers
 }
 
@@ -1893,7 +1872,7 @@ func (s *ollamaServer) VRAMByGPU(id ml.DeviceID) uint64 {
 }
 
 func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
-	devices, err := discover.GetDevicesFromRunner(ctx, s)
+	devices, err := ml.GetDevicesFromRunner(ctx, s)
 	if err != nil {
 		if s.cmd != nil && s.cmd.ProcessState == nil {
 			// Still running but hit an error, log

@@ -214,7 +214,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 		parts = []string{prompt}
 	}
 
-	postTokenize := false
 	for i, part := range parts {
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
@@ -257,11 +256,10 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 			mmStore.addMultimodal(imageEmbeddings)
 
 			inputs = append(inputs, &input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
-			postTokenize = true
 		}
 	}
 
-	if visionModel && postTokenize {
+	if visionModel {
 		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
@@ -599,7 +597,8 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
-	batch.Outputs = nextBatch.ctx.Input().FromIntSlice(batchOutputs, len(batchOutputs))
+	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
+	nextBatch.ctx.SetBatchSize(len(batchInputs))
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -692,7 +691,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	// At this point the seqs are ready for forwardBatch to move forward so unblock
 	s.mu.Unlock()
 
-	activeBatch.batch.Inputs.SetValueFromIntSlice(batchInputs)
+	activeBatch.batch.Inputs.FromInts(batchInputs)
 	activeBatch.ctx.ComputeWithNotify(
 		func() {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
@@ -1086,12 +1085,17 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) reserveWorstCaseGraph() error {
+func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
 
 	var err error
-	inputs := make([]*input.Input, s.batchSize)
+	batchSize := 1
+	if prompt {
+		batchSize = s.batchSize
+	}
+
+	inputs := make([]*input.Input, batchSize)
 	for i := range inputs {
 		inputs[i] = &input.Input{}
 	}
@@ -1108,7 +1112,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 	// - The result may now be larger than a batch (images may not fit in a
 	//   single batch), so trim based on what will fit and must be grouped together.
 	// - Fill out the rest of the space with text tokens.
-	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); ok {
+	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); prompt && ok {
 		mmCtx := s.model.Backend().NewContext()
 		defer mmCtx.Close()
 
@@ -1135,10 +1139,10 @@ func (s *Server) reserveWorstCaseGraph() error {
 				}
 			}
 
-			if len(inputs) < s.batchSize {
-				newInputs := make([]*input.Input, s.batchSize)
+			if len(inputs) < batchSize {
+				newInputs := make([]*input.Input, batchSize)
 				copy(newInputs, inputs)
-				for i := len(inputs); i < s.batchSize; i++ {
+				for i := len(inputs); i < batchSize; i++ {
 					newInputs[i] = &input.Input{}
 				}
 				inputs = newInputs
@@ -1164,7 +1168,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Positions[i] = int32(i)
 	}
 
-	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
+	batch.Inputs = ctx.Input().FromInts(batchInputs, len(batchInputs))
 	batch.Outputs = ctx.Input().Empty(ml.DTypeI32, s.parallel)
 
 	cache := s.model.Config().Cache
@@ -1180,6 +1184,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 		return err
 	}
 
+	ctx.SetBatchSize(batchSize)
 	ctx.Forward(t).Reserve()
 
 	return nil
@@ -1237,7 +1242,12 @@ func (s *Server) allocModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	return s.reserveWorstCaseGraph()
+	err = s.reserveWorstCaseGraph(true)
+	if err != nil {
+		return nil
+	}
+
+	return s.reserveWorstCaseGraph(false)
 }
 
 // closeModel frees all memory associated with a model

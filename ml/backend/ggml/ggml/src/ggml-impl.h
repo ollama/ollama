@@ -643,8 +643,11 @@ GGML_API int ggml_nvml_init();
 GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
 GGML_API void ggml_nvml_release();
 GGML_API int ggml_hip_mgmt_init();
-GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
+GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total);
 GGML_API void ggml_hip_mgmt_release();
+GGML_API int ggml_dxgi_pdh_init();
+GGML_API int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu);
+GGML_API void ggml_dxgi_pdh_release();
 
 #ifdef __cplusplus
 }
