@@ -378,7 +378,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
+	maxGraphNodes := max(1024, len(meta.Tensors().Items())*8)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
@@ -730,10 +730,6 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 			info.PCIID = C.GoString(props.device_id)
 		}
 		info.LibraryPath = ggml.LibPaths()
-		if props.numeric_id != nil {
-			info.FilteredID = C.GoString(props.numeric_id)
-		}
-
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
 		info.TotalMemory = (uint64)(props.memory_total)
 		info.FreeMemory = (uint64)(props.memory_free)

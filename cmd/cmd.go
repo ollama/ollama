@@ -284,6 +284,14 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		return err
 	} else if info.RemoteHost != "" {
 		// Cloud model, no need to load/unload
+		if opts.ShowConnect {
+			p.StopAndClear()
+			if strings.HasPrefix(info.RemoteHost, "https://ollama.com") {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", info.RemoteModel)
+			} else {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", info.RemoteModel, info.RemoteHost)
+			}
+		}
 		return nil
 	}
 
@@ -296,14 +304,6 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	}
 
 	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
-		if r.RemoteModel != "" && opts.ShowConnect {
-			p.StopAndClear()
-			if strings.HasPrefix(r.RemoteHost, "https://ollama.com") {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", r.RemoteModel)
-			} else {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", r.RemoteModel, r.RemoteHost)
-			}
-		}
 		return nil
 	})
 }
@@ -319,6 +319,44 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+	return nil
+}
+
+func generateEmbedding(cmd *cobra.Command, modelName, input string, keepAlive *api.Duration, truncate *bool, dimensions int) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := &api.EmbedRequest{
+		Model: modelName,
+		Input: input,
+	}
+	if keepAlive != nil {
+		req.KeepAlive = keepAlive
+	}
+	if truncate != nil {
+		req.Truncate = truncate
+	}
+	if dimensions > 0 {
+		req.Dimensions = dimensions
+	}
+
+	resp, err := client.Embed(cmd.Context(), req)
+	if err != nil {
+		return err
+	}
+
+	if len(resp.Embeddings) == 0 {
+		return errors.New("no embeddings returned")
+	}
+
+	output, err := json.Marshal(resp.Embeddings[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(output))
+
 	return nil
 }
 
@@ -386,7 +424,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		prompts = append([]string{string(in)}, prompts...)
+		// Only prepend stdin content if it's not empty
+		stdinContent := string(in)
+		if len(stdinContent) > 0 {
+			prompts = append([]string{stdinContent}, prompts...)
+		}
 		opts.ShowConnect = false
 		opts.WordWrap = false
 		interactive = false
@@ -451,6 +493,29 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	opts.ParentModel = info.Details.ParentModel
+
+	// Check if this is an embedding model
+	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
+
+	// If it's an embedding model, handle embedding generation
+	if isEmbeddingModel {
+		if opts.Prompt == "" {
+			return errors.New("embedding models require input text. Usage: ollama run " + name + " \"your text here\"")
+		}
+
+		// Get embedding-specific flags
+		var truncate *bool
+		if truncateFlag, err := cmd.Flags().GetBool("truncate"); err == nil && cmd.Flags().Changed("truncate") {
+			truncate = &truncateFlag
+		}
+
+		dimensions, err := cmd.Flags().GetInt("dimensions")
+		if err != nil {
+			return err
+		}
+
+		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
+	}
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -1684,6 +1749,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
+	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
+	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
