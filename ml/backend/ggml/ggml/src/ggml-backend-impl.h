@@ -112,8 +112,8 @@ extern "C" {
         // compute the graph with the plan
         enum ggml_status          (*graph_plan_compute)(ggml_backend_t backend, ggml_backend_graph_plan_t plan);
 
-        // compute graph (always async if supported by the backend)
-        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+        // compute graph (always async if supported by the backend). batch_size may be -1 if unknown
+        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
 
         // (optional) event synchronization
         // record an event on this stream

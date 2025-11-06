@@ -73,6 +73,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
 #define VK_KHR_SHADER_BFLOAT16_EXTENSION_NAME                        "VK_KHR_shader_bfloat16"
 #define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR ((VkStructureType)1000141000)
 #define VK_COMPONENT_TYPE_BFLOAT16_KHR                               ((VkComponentTypeKHR)1000141000)
+#define VK_LUID_SIZE_KHR                  VK_LUID_SIZE
 
 typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
     VkStructureType                       sType;
@@ -12039,7 +12040,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
     return num_adds;
 }
 
-static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
 
@@ -12235,6 +12236,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     return GGML_STATUS_SUCCESS;
 
     UNUSED(backend);
+    UNUSED(batch_size);
 }
 
 // Sort the graph for improved parallelism.
@@ -12432,7 +12434,7 @@ struct ggml_backend_vk_device_context {
     std::string pci_id;
     std::string id;
     std::string uuid;
-    std::string numeric_id;
+    std::string luid;
     int major;
     int minor;
     int driver_major;
@@ -12448,8 +12450,22 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s\n", ctx->uuid.c_str());
+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: luid %s\n", ctx->luid.c_str());
 
-    if (!ctx->is_integrated_gpu)
+    // Check VRAM reporting for Windows IGPU/DGPU using DXGI + PDH (vendor agnostic)
+    if (ggml_dxgi_pdh_init() == 0) {
+        GGML_LOG_DEBUG("DXGI + PDH Initialized. Getting GPU free memory info\n");
+        int status = ggml_dxgi_pdh_get_device_memory(ctx->luid.c_str(), free, total, ctx->is_integrated_gpu);
+        if (status == 0) {
+            GGML_LOG_DEBUG("%s utilizing DXGI + PDH memory reporting free: %zu total: %zu\n", __func__, *free, *total);
+            ggml_dxgi_pdh_release();
+            return;
+        }
+        ggml_dxgi_pdh_release();
+    }
+
+    if (!ctx->is_integrated_gpu) 
     {
         // Use vendor specific management libraries for best VRAM reporting if available
         switch (props2.properties.vendorID) {
@@ -12477,8 +12493,8 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
             break;
         }
     }
-    // else fallback to memory budget if supported
 
+    // else fallback to memory budget if supported
     *total = 0;
     *free = 0;
     vk::PhysicalDeviceMemoryBudgetPropertiesEXT mem_budget_props;
@@ -12644,7 +12660,6 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->driver_minor = ctx->driver_minor;
     props->integrated = ctx->is_integrated_gpu;
     props->library = GGML_VK_NAME;
-    props->numeric_id = ctx->numeric_id.c_str();
 }
 
 static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
@@ -13090,7 +13105,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                     /* .reg     = */ reg,
                     /* .context = */ ctx,
                 });
-
                 // Gather additional information about the device
                 int dev_idx = vk_instance.device_indices[i];
                 vk::PhysicalDeviceProperties props1;
@@ -13113,12 +13127,19 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                     }
                 }
                 ctx->uuid = oss.str();
+                const auto& luid = device_id_props.deviceLUID;
+                char luid_str[32]; // "0x" + 16 hex digits + null terminator = 19 chars
+                snprintf(luid_str, sizeof(luid_str), // high part + low part
+                    "0x%02x%02x%02x%02x%02x%02x%02x%02x",
+                    luid[7], luid[6], luid[5], luid[4],
+                    luid[3], luid[2], luid[1], luid[0]
+                );
+                ctx->luid = std::string(luid_str);
                 ctx->major = 0;
                 ctx->minor = 0;
                 // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
                 ctx->driver_major = 0;
                 ctx->driver_minor = 0;
-                ctx->numeric_id = std::to_string(i);
             }
             initialized = true;
         }

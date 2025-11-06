@@ -143,6 +143,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
+			logutil.Trace("processing incoming request", "model", pending.model.ModelPath)
 
 			for {
 				var runnerToExpire *runnerRef
@@ -161,6 +162,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						runnerToExpire = runner
 					} else {
 						// Runner is usable, return it
+						logutil.Trace("using existing loaded runner", "model", pending.model.ModelPath)
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
@@ -174,13 +176,16 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					if pending.opts.NumGPU == 0 {
 						gpus = []ml.DeviceInfo{}
 					} else {
+						logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
 						gpus = s.getGpuFn(ctx, runnersSnapshot)
 					}
+					logutil.Trace("refreshing system information", "model", pending.model.ModelPath)
 					systemInfo := s.getSystemInfoFn()
 					if maxRunners <= 0 {
 						// No user specified MaxRunners, so figure out what automatic setting to use for the next load attempt
 						if pending.opts.NumGPU == 0 {
 							// Need to get actual GPU list to set the correct default max models
+							logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
 							g := s.getGpuFn(ctx, runnersSnapshot)
 							maxRunners = uint(defaultModelsPerGPU * max(len(g), 1))
 						} else {
@@ -190,6 +195,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Load model for fitting
+					logutil.Trace("loading model metadata", "model", pending.model.ModelPath)
 					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
 					if err != nil {
 						pending.errCh <- err
@@ -197,6 +203,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Update free memory from currently loaded models
+					logutil.Trace("updating free space", "gpu_count", len(gpus), "model", pending.model.ModelPath)
 					s.updateFreeSpace(gpus)
 
 					if loadedCount == 0 {
@@ -208,7 +215,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 					// More than one loaded model, so we have to see if the
 					// new one fits
-
+					logutil.Trace("loading additional model", "model", pending.model.ModelPath)
 					needEvict := s.loadFn(pending, ggml, systemInfo, gpus, true)
 					if !needEvict {
 						slog.Debug("new model fits with existing models, loading")

@@ -112,7 +112,8 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positionSlice := slices.Collect(makeSlice2D[int32](3, len(batch.Positions)))
+	// ggml mrope requires 4 positions per token: [time, height, width, extra]
+	positionSlice := slices.Collect(makeSlice2D[int32](4, len(batch.Positions)))
 	for i, id := range batch.Positions {
 		if id < int32(len(m.positionCache)) {
 			id = m.positionCache[id]
@@ -123,6 +124,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		positionSlice[0][i] = id
 		positionSlice[1][i] = id
 		positionSlice[2][i] = id
+		// positionSlice[3] is intentionally left as zeros
 	}
 
 	hiddenStates := m.TextModel.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)
@@ -147,8 +149,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		}
 	}
 
-	positions := ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0]), len(positionSlice))
-	cos, sin := m.rotaryEmbedding(ctx, positions)
+	positions := ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0])*len(positionSlice))
 	for i, layer := range m.TextModel.Layers {
 		if m.Cache != nil {
 			m.Cache.SetLayer(i)
@@ -159,7 +160,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			outputs = batch.Outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, outputs, m.Cache, m.Options)
+		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
 		if i < len(deepstackVisualEmbeds) {
 			hiddenStates = hiddenStates.Add(ctx, deepstackVisualEmbeds[i])
 		}
@@ -191,9 +192,10 @@ func New(c fs.Config) (model.Model, error) {
 		ImageProcessor: newImageProcessor(c),
 	}
 
-	m.Cache = kvcache.NewCausalCache(func(ctx ml.Context, layer int, key, position ml.Tensor) (ml.Tensor, error) {
+	m.Cache = kvcache.NewCausalCache(func(ctx ml.Context, layer int, key, positions ml.Tensor) (ml.Tensor, error) {
 		m.positionCache = nil
-		return nil, kvcache.ErrNotSupported
+		positions = positions.Repeat(ctx, 1, 4).Reshape(ctx, -1)
+		return m.Options.applyRotaryPositionalEmbedding(ctx, key, positions), nil
 	})
 	return &m, nil
 }
