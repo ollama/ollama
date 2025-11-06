@@ -130,17 +130,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// Ensure that at least 1 input can be discarded during shift
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
-	// Basic runner-side guard: if truncation is enabled and num_ctx <= 1, return an error
-	if params.truncate && s.cache.numCtx <= 1 {
-		return nil, fmt.Errorf("input after truncation exceeds maximum context length")
-	}
-
 	if int32(len(inputs)) > s.cache.numCtx {
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
-
-		// Embeddings and generation both return the same too-long error when truncate is enabled
 
 		discard := int32(len(inputs)) - s.cache.numCtx
 		promptStart := params.numKeep + discard
