@@ -181,11 +181,10 @@ type Message struct {
 	Content string `json:"content"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking   string      `json:"thinking,omitempty"`
-	Images     []ImageData `json:"images,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
-	ToolName   string      `json:"tool_name,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Thinking  string      `json:"thinking,omitempty"`
+	Images    []ImageData `json:"images,omitempty"`
+	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName  string      `json:"tool_name,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -201,7 +200,6 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 }
 
 type ToolCall struct {
-	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
@@ -461,10 +459,6 @@ type EmbeddingRequest struct {
 
 	// Prompt is the textual prompt to embed.
 	Prompt string `json:"prompt"`
-
-	// Images is an optional list of raw image bytes accompanying this
-	// request, for multimodal models.
-	Images []ImageData `json:"images,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.

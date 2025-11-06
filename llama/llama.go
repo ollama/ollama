@@ -147,7 +147,6 @@ func kvCacheTypeFromStr(s string) C.enum_ggml_type {
 
 type Context struct {
 	c          *C.struct_llama_context
-	ImageCtx   *MtmdContext
 	numThreads int
 }
 
@@ -276,7 +275,7 @@ func FreeModel(model *Model) {
 	C.llama_model_free(model.c)
 }
 
-func NewContextWithModel(model *Model, params ContextParams, projectorPath string) (*Context, error) {
+func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 	c := Context{
 		c:          C.llama_init_from_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
@@ -285,24 +284,7 @@ func NewContextWithModel(model *Model, params ContextParams, projectorPath strin
 		return nil, errors.New("unable to create llama context")
 	}
 
-	if projectorPath != "" {
-		var err error
-		c.ImageCtx, err = NewMtmdContext(&c, projectorPath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	runtime.SetFinalizer(&c, (*Context).Free)
-
 	return &c, nil
-}
-
-func (c *Context) Free() {
-	if c.ImageCtx != nil {
-		c.ImageCtx.Free()
-		c.ImageCtx = nil
-	}
 }
 
 func (m *Model) NumVocab() int {
@@ -527,53 +509,6 @@ func (c *MtmdContext) Free() {
 type MtmdChunk struct {
 	Embed  []float32
 	Tokens []int
-}
-
-func (c *MtmdContext) EmbedImage(llamaContext *Context, data []byte) ([]float32, error) {
-	// Initialize the input chunks pointer
-	ic := C.mtmd_input_chunks_init()
-	defer C.mtmd_input_chunks_free(ic)
-
-	// Initialize an empty text prompt so we can tokenize
-	it := C.mtmd_input_text_init(C.mtmd_default_marker(), true, true)
-	defer C.mtmd_input_text_free(it)
-
-	// Initialize a bitmap with the image data
-	bm := C.mtmd_helper_bitmap_init_from_buf(c.c, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
-	defer C.mtmd_bitmap_free(bm)
-
-	// Tokenize the image
-	if C.int32_t(0) != C.mtmd_tokenize(c.c, ic, it, &bm, 1) {
-		return nil, errors.New("unable to tokenize mtmd embedding from image")
-	}
-
-	nChunks := C.mtmd_input_chunks_size(ic)
-	if nChunks != 1 {
-		return nil, fmt.Errorf("expected 1 chunk, got %d", nChunks)
-	}
-
-	chunk := C.mtmd_input_chunks_get(ic, C.size_t(0))
-	if C.mtmd_input_chunk_get_type(chunk) != C.MTMD_INPUT_CHUNK_TYPE_IMAGE {
-		return nil, errors.New("expected image chunk")
-	}
-
-	// Encode the chunk
-	if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
-		return nil, errors.New("unable to encode mtmd image chunk")
-	}
-
-	// Get the embeddings for this chunk
-	chunkEmbd := C.mtmd_get_output_embd(c.c)
-	if nil == chunkEmbd {
-		return nil, errors.New("no mtmd image embedding")
-	}
-
-	numEmbed := llamaContext.Model().NEmbd()
-	s := unsafe.Slice((*float32)(chunkEmbd), numEmbed)
-	embedding := make([]float32, len(s))
-	copy(embedding, s)
-
-	return embedding, nil
 }
 
 func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]MtmdChunk, error) {

@@ -163,7 +163,7 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs,
 }
 
 func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextConfig.hiddenSize)))
@@ -182,18 +182,16 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 	for i, layer := range m.Layers {
 		// gemma alternates between the sliding window (local) and causal (global)
 		// kv cache every 6 layers
-		if cache != nil {
-			cacheType := cacheTypeSWA
-			if (i+1)%gemmaGlobalCacheCount == 0 {
-				cacheType = cacheTypeCausal
-			}
-			cache.SetLayer(i)
-			wc := cache.(*kvcache.WrapperCache)
-			wc.SetLayerType(cacheType)
+		cacheType := cacheTypeSWA
+		if (i+1)%gemmaGlobalCacheCount == 0 {
+			cacheType = cacheTypeCausal
+		}
+		cache.SetLayer(i)
+		wc := cache.(*kvcache.WrapperCache)
+		wc.SetLayerType(cacheType)
 
-			if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
-				causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
-			}
+		if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
+			causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
 		}
 
 		var lastLayerOutputs ml.Tensor

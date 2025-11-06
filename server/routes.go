@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/netip"
@@ -143,10 +142,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 
 	// This model is much more capable with a larger context, so set that
 	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{
-		"gptoss", "gpt-oss",
-		"qwen3vl", "qwen3vlmoe",
-	}, model.Config.ModelFamily) {
+	if !s.lowVRAM && slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
@@ -292,12 +288,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		contentType := "application/json; charset=utf-8"
-		if req.Stream != nil && *req.Stream {
-			contentType = "application/x-ndjson"
-		}
-		c.Header("Content-Type", contentType)
 
 		return
 	}
@@ -773,9 +763,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		input[i] = s
 	}
 
+	var g errgroup.Group
+	embeddings := make([][]float32, len(input))
 	for i, text := range input {
-		i := i
-		text := text
+		i, text := i, text
 		g.Go(func() error {
 			var images []llm.ImageData
 			if len(req.Images) > 0 {
@@ -795,7 +786,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
-			embeddings[i+len(req.Images)] = embedding
+			embeddings[i] = embedding
 			return nil
 		})
 	}
@@ -845,49 +836,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
-		return
-	}
-
-	if len(req.Images) > 0 {
-		if !slices.Contains(m.Capabilities(), model.CapabilityVision) {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "vision model required"})
-			return
-		}
-
-		var g errgroup.Group
-		embeddings := make([][]float32, len(req.Images))
-		for i, image := range req.Images {
-			i := i
-			image := image
-			g.Go(func() error {
-				embedding, err := r.ImageEmbedding(c.Request.Context(), llm.ImageData{ID: i, Data: image})
-				if err != nil {
-					return err
-				}
-				embeddings[i] = embedding
-				return nil
-			})
-		}
-
-		if err := g.Wait(); err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
-			return
-		}
-
-		var e []float64
-		for _, embedding := range embeddings {
-			for _, v := range embedding {
-				e = append(e, float64(v))
-			}
-		}
-
-		resp := api.EmbeddingResponse{
-			Embedding: e,
-		}
-		c.JSON(http.StatusOK, resp)
 		return
 	}
 
@@ -1910,15 +1861,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
-func toolCallId() string {
-	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return "call_" + strings.ToLower(string(b))
-}
-
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -1990,14 +1932,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			req.Options = map[string]any{}
 		}
 
-		var msgs []api.Message
-		if len(req.Messages) > 0 {
-			msgs = append(m.Messages, req.Messages...)
-			if req.Messages[0].Role != "system" && m.System != "" {
-				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
-			}
+		msgs := append(m.Messages, req.Messages...)
+		if req.Messages[0].Role != "system" && m.System != "" {
+			msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 		}
-
 		msgs = filterThinkTags(msgs, m)
 		req.Messages = msgs
 
@@ -2047,12 +1985,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		contentType := "application/json; charset=utf-8"
-		if req.Stream != nil && *req.Stream {
-			contentType = "application/x-ndjson"
-		}
-		c.Header("Content-Type", contentType)
 
 		return
 	}
@@ -2237,9 +2169,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					res.Message.Content = content
 					res.Message.Thinking = thinking
-					for i := range toolCalls {
-						toolCalls[i].ID = toolCallId()
-					}
 					res.Message.ToolCalls = toolCalls
 
 					tb.WriteString(thinking)
@@ -2284,9 +2213,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					if len(content) > 0 {
 						res.Message.Content = content
 					} else if len(toolCalls) > 0 {
-						for i := range toolCalls {
-							toolCalls[i].ID = toolCallId()
-						}
 						res.Message.ToolCalls = toolCalls
 						res.Message.Content = ""
 					} else if res.Message.Thinking != "" {

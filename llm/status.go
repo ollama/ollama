@@ -23,7 +23,6 @@ func NewStatusWriter(out *os.File) *StatusWriter {
 var errorPrefixes = []string{
 	"error:",
 	"CUDA error",
-	"ROCm error",
 	"cudaMalloc failed",
 	"\"ERR\"",
 	"error loading model",

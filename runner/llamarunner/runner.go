@@ -384,7 +384,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 	defer s.mu.Unlock()
 
 	var batch *llama.Batch
-	var numOutputs int
 
 	seqIdx := s.nextSeq - 1
 	for range s.seqs {
@@ -447,12 +446,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 				break
 			}
 
-			output := i+1 == len(seq.inputs)
-			batch.Add(input.token, input.embed, len(seq.cache.Inputs)+len(seq.pendingInputs), output, seq.cache.Id)
-			if output {
-				numOutputs++
-			}
-
+			batch.Add(input.token, input.embed, len(seq.cache.Inputs)+len(seq.pendingInputs), i+1 == len(seq.inputs), seq.cache.Id)
 			seq.pendingInputs = append(seq.pendingInputs, input)
 			seq.iBatch = batch.NumTokens() - 1
 		}
@@ -469,10 +463,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		return fmt.Errorf("failed to decode batch: %w", err)
 	}
 
-	if numOutputs > 0 {
-		s.lc.Synchronize()
-	}
-
 	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
@@ -486,10 +476,10 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
-			seq.processingDuration += time.Since(t)
 			continue
 		}
 
+		s.lc.Synchronize()
 		seq.numDecoded++
 		if seq.numDecoded > 1 {
 			seq.generationDuration += time.Since(t)
@@ -794,7 +784,7 @@ func (s *Server) loadModel(
 	}
 
 	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
-	s.lc, err = llama.NewContextWithModel(s.model, ctxParams, ppath)
+	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)
 	}
@@ -936,7 +926,6 @@ func Execute(args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("/embedding", server.embeddings)
-	mux.HandleFunc("/image-embedding", server.imageEmbeddings)
 	mux.HandleFunc("/completion", server.completion)
 	mux.HandleFunc("/health", server.health)
 
@@ -951,32 +940,4 @@ func Execute(args []string) error {
 	}
 
 	return nil
-}
-
-func (s *Server) imageEmbeddings(w http.ResponseWriter, r *http.Request) {
-	s.ready.Wait()
-
-	var req llm.ImageEmbeddingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("bad request: %s", err), http.StatusBadRequest)
-		return
-	}
-
-	if s.image == nil {
-		http.Error(w, "vision model not loaded", http.StatusBadRequest)
-		return
-	}
-
-	embedding, err := s.image.EmbedImage(s.lc, req.Image.Data)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: embedding,
-	}); err != nil {
-		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
-	}
 }

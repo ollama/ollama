@@ -98,19 +98,13 @@ func NewBackend(modelPath string, params BackendParams) (Backend, error) {
 type Context interface {
 	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
-	FromBytes(dtype DType, s []byte, shape ...int) Tensor
-	FromFloats(s []float32, shape ...int) Tensor
-	FromInts(s []int32, shape ...int) Tensor
+	FromFloatSlice(s []float32, shape ...int) Tensor
+	FromIntSlice(s []int32, shape ...int) Tensor
 
 	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
 	Arange(start, stop, step float32, dtype DType) Tensor
 
 	Forward(...Tensor) Context
-
-	// SetBatchSize provides a hint on the batch size to optimize processing
-	// Uses heuristics if not set
-	SetBatchSize(int)
-
 	Compute(...Tensor)
 	ComputeWithNotify(func(), ...Tensor) // notify callback once compute has begun
 
@@ -142,9 +136,7 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
-	FromBytes([]byte)
-	FromFloats([]float32)
-	FromInts([]int32)
+	SetValueFromIntSlice(s []int32)
 
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
@@ -166,7 +158,6 @@ type Tensor interface {
 
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	Conv3D(ctx Context, weight Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) Tensor
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 

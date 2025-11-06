@@ -79,8 +79,6 @@ type Grid struct {
 }
 
 func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error) {
-	img = imageproc.Composite(img)
-
 	origWidth := img.Bounds().Dx()
 	origHeight := img.Bounds().Dy()
 

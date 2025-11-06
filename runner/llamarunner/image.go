@@ -87,25 +87,6 @@ func (c *ImageContext) MultimodalTokenize(llamaContext *llama.Context, data []by
 	return chunks, nil
 }
 
-func (c *ImageContext) EmbedImage(llamaContext *llama.Context, data []byte) ([]float32, error) {
-	if c == nil {
-		return nil, nil
-	}
-
-	if len(data) <= 0 {
-		return nil, errors.New("received zero length image")
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.mtmd != nil {
-		return c.mtmd.EmbedImage(llamaContext, data)
-	}
-
-	return nil, errors.New("received image but vision model not loaded")
-}
-
 func (c *ImageContext) BatchSize(configuredBatchSize int) int {
 	// If images are not supported, we don't need to allocate embedding batches
 	if c == nil {

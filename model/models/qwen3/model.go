@@ -3,7 +3,6 @@ package qwen3
 import (
 	"cmp"
 	"math"
-	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -182,7 +181,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 // Forward implements model.Model.
 func (m *Model) forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -211,7 +210,7 @@ var _ model.Model = (*Model)(nil)
 func New(c fs.Config) (model.Model, error) {
 	layers := make([]Layer, c.Uint("block_count"))
 	for i := range layers {
-		if strings.HasSuffix(c.String("general.architecture"), "moe") {
+		if c.String("general.architecture") == "qwen3moe" {
 			layers[i].MLP = &sparse{}
 		} else {
 			layers[i].MLP = &dense{}

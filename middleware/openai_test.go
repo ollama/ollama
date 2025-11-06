@@ -723,7 +723,7 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 				"model": "test-model"
 			}`,
 			req: api.EmbedRequest{
-				Input: []any{"Hello"},
+				Input: "Hello",
 				Model: "test-model",
 			},
 		},

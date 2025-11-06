@@ -16,8 +16,6 @@ const (
 	CollectingThinkingContent qwenParserState = iota
 	CollectingContent
 	CollectingToolContent
-	ThinkingDoneEatingWhitespace
-	ToolCallDoneEatingWhitespace
 )
 
 const (
@@ -113,28 +111,17 @@ func (p *Qwen3VLParser) parseEvents() []qwenEvent {
 	return all
 }
 
-func splitAtTag(p *Qwen3VLParser, tag string, trimAfter bool) (string, string) {
+func emitContentBeforeTag(p *Qwen3VLParser, events []qwenEvent, tag string) []qwenEvent {
 	split := strings.SplitN(p.buffer.String(), tag, 2)
 	before := split[0]
 	before = strings.TrimRightFunc(before, unicode.IsSpace)
-	after := split[1]
-	if trimAfter {
-		after = strings.TrimLeftFunc(after, unicode.IsSpace)
+	if len(before) > 0 {
+		events = append(events, qwenEventContent{content: before})
 	}
+	after := split[1]
 	p.buffer.Reset()
 	p.buffer.WriteString(after)
-	return before, after // return events
-}
-
-func (p *Qwen3VLParser) eatLeadingWhitespaceAndTransitionTo(nextState qwenParserState) ([]qwenEvent, bool) {
-	trimmed := strings.TrimLeftFunc(p.buffer.String(), unicode.IsSpace)
-	p.buffer.Reset()
-	if trimmed == "" {
-		return nil, false
-	}
-	p.state = nextState
-	p.buffer.WriteString(trimmed)
-	return nil, true
+	return events
 }
 
 func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
@@ -143,11 +130,7 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	switch p.state {
 	case CollectingContent:
 		if strings.Contains(p.buffer.String(), toolOpenTag) {
-			// events = emitContentBeforeTag(p, events, toolOpenTag)
-			before, _ := splitAtTag(p, toolOpenTag, false)
-			if len(before) > 0 {
-				events = append(events, qwenEventContent{content: before})
-			}
+			events = emitContentBeforeTag(p, events, toolOpenTag)
 			p.state = CollectingToolContent
 			return events, true
 		} else if overlapLen := overlap(p.buffer.String(), toolOpenTag); overlapLen > 0 {
@@ -184,26 +167,27 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
 
-			after := split[1]
+			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
 			events = append(events, qwenEventRawToolCall{raw: before})
 			p.buffer.Reset()
 			p.buffer.WriteString(after)
-			p.state = ToolCallDoneEatingWhitespace
+			p.state = CollectingContent
 			return events, true
 		} else {
 			return events, false
 		}
 	case CollectingThinkingContent:
 		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
-			thinking, remaining := splitAtTag(p, thinkingCloseTag, true)
-			if len(thinking) > 0 {
-				events = append(events, qwenEventThinkingContent{content: thinking})
+			split := strings.SplitN(p.buffer.String(), thinkingCloseTag, 2)
+			// before := split[0]
+			before := strings.TrimRightFunc(split[0], unicode.IsSpace)
+			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventThinkingContent{content: before})
 			}
-			if remaining == "" {
-				p.state = ThinkingDoneEatingWhitespace
-			} else {
-				p.state = CollectingContent
-			}
+			p.buffer.Reset()
+			p.buffer.WriteString(after)
+			p.state = CollectingContent
 			return events, true
 		} else if overlapLen := overlap(p.buffer.String(), thinkingCloseTag); overlapLen > 0 {
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
@@ -231,10 +215,6 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			}
 			return events, false
 		}
-	case ThinkingDoneEatingWhitespace:
-		return p.eatLeadingWhitespaceAndTransitionTo(CollectingContent)
-	case ToolCallDoneEatingWhitespace:
-		return p.eatLeadingWhitespaceAndTransitionTo(CollectingContent)
 	default:
 		panic("unreachable")
 	}

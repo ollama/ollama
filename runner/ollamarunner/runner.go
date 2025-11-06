@@ -214,6 +214,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 		parts = []string{prompt}
 	}
 
+	postTokenize := false
 	for i, part := range parts {
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
@@ -256,10 +257,11 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 			mmStore.addMultimodal(imageEmbeddings)
 
 			inputs = append(inputs, &input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
+			postTokenize = true
 		}
 	}
 
-	if visionModel {
+	if visionModel && postTokenize {
 		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
@@ -597,8 +599,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
-	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
-	nextBatch.ctx.SetBatchSize(len(batchInputs))
+	batch.Outputs = nextBatch.ctx.Input().FromIntSlice(batchOutputs, len(batchOutputs))
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -691,7 +692,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	// At this point the seqs are ready for forwardBatch to move forward so unblock
 	s.mu.Unlock()
 
-	activeBatch.batch.Inputs.FromInts(batchInputs)
+	activeBatch.batch.Inputs.SetValueFromIntSlice(batchInputs)
 	activeBatch.ctx.ComputeWithNotify(
 		func() {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
@@ -933,7 +934,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) imageEmbeddings(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.model.(model.MultimodalProcessor); !ok {
+	multimodalProcessor, ok := s.model.(model.MultimodalProcessor)
+	if !ok {
 		http.Error(w, "this model does not support image embeddings", http.StatusNotImplemented)
 		return
 	}
@@ -953,55 +955,21 @@ func (s *Server) imageEmbeddings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	images := []llm.ImageData{req.Image}
-	prompt := fmt.Sprintf("[img-%d]", req.Image.ID)
-
-	seq, err := s.NewSequence(prompt, images, NewSequenceParams{
-		embedding: true,
-		truncate:  true,
-	})
+	ctx := s.model.Backend().NewContext()
+	defer ctx.Close()
+	imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, req.Image.Data)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to encode image: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
-		if errors.Is(err, context.Canceled) {
-			slog.Info("aborting image embedding request due to client closing the connection")
-		} else {
-			http.Error(w, fmt.Sprintf("failed to acquire semaphore: %v", err), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	s.mu.Lock()
-	found := false
-	for i, sq := range s.seqs {
-		if sq == nil {
-			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, false)
-			if err != nil {
-				s.mu.Unlock()
-				s.seqsSem.Release(1)
-				http.Error(w, fmt.Sprintf("failed to load cache: %v", err), http.StatusInternalServerError)
-				return
-			}
-
-			s.seqs[i] = seq
-			s.cond.Signal()
-			found = true
-			break
-		}
-	}
-	s.mu.Unlock()
-
-	if !found {
-		s.seqsSem.Release(1)
-		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+	if len(imageEmbeddings) == 0 || imageEmbeddings[0].Tensor.Dim(0) == 0 {
+		http.Error(w, "failed to get image embedding", http.StatusInternalServerError)
 		return
 	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: <-seq.embedding,
+		Embedding: imageEmbeddings[0].Tensor.Floats(),
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
@@ -1085,17 +1053,12 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) reserveWorstCaseGraph(prompt bool) error {
+func (s *Server) reserveWorstCaseGraph() error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
 
 	var err error
-	batchSize := 1
-	if prompt {
-		batchSize = s.batchSize
-	}
-
-	inputs := make([]*input.Input, batchSize)
+	inputs := make([]*input.Input, s.batchSize)
 	for i := range inputs {
 		inputs[i] = &input.Input{}
 	}
@@ -1112,7 +1075,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 	// - The result may now be larger than a batch (images may not fit in a
 	//   single batch), so trim based on what will fit and must be grouped together.
 	// - Fill out the rest of the space with text tokens.
-	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); prompt && ok {
+	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); ok {
 		mmCtx := s.model.Backend().NewContext()
 		defer mmCtx.Close()
 
@@ -1139,10 +1102,10 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 				}
 			}
 
-			if len(inputs) < batchSize {
-				newInputs := make([]*input.Input, batchSize)
+			if len(inputs) < s.batchSize {
+				newInputs := make([]*input.Input, s.batchSize)
 				copy(newInputs, inputs)
-				for i := len(inputs); i < batchSize; i++ {
+				for i := len(inputs); i < s.batchSize; i++ {
 					newInputs[i] = &input.Input{}
 				}
 				inputs = newInputs
@@ -1168,7 +1131,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 		batch.Positions[i] = int32(i)
 	}
 
-	batch.Inputs = ctx.Input().FromInts(batchInputs, len(batchInputs))
+	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
 	batch.Outputs = ctx.Input().Empty(ml.DTypeI32, s.parallel)
 
 	cache := s.model.Config().Cache
@@ -1184,7 +1147,6 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 		return err
 	}
 
-	ctx.SetBatchSize(batchSize)
 	ctx.Forward(t).Reserve()
 
 	return nil
@@ -1242,12 +1204,7 @@ func (s *Server) allocModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	err = s.reserveWorstCaseGraph(true)
-	if err != nil {
-		return nil
-	}
-
-	return s.reserveWorstCaseGraph(false)
+	return s.reserveWorstCaseGraph()
 }
 
 // closeModel frees all memory associated with a model

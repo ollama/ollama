@@ -2065,6 +2065,12 @@ power management:
 			cpus := linuxCPUDetails(buf)
 
 			slog.Info("example", "scenario", k, "cpus", cpus)
+			si := SystemInfo{
+				System: CPUInfo{
+					CPUs: cpus,
+				},
+			}
+			threadCount := si.GetOptimalThreadCount()
 			if len(v.expCPUs) != len(cpus) {
 				t.Fatalf("incorrect number of sockets: expected:%v got:%v", v.expCPUs, cpus)
 			}
@@ -2078,6 +2084,10 @@ power management:
 				if c.ThreadCount != v.expCPUs[i].threads {
 					t.Fatalf("incorrect number of threads: expected:%v got:%v", v.expCPUs[i], c)
 				}
+			}
+
+			if threadCount != v.expThreadCount {
+				t.Fatalf("incorrect thread count expected:%d got:%d", v.expThreadCount, threadCount)
 			}
 		})
 	}

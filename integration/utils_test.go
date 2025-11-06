@@ -248,33 +248,15 @@ var (
 		"zephyr",
 	}
 	libraryEmbedModels = []string{
-		"qwen3-embedding",
-		"embeddinggemma",
-		"nomic-embed-text",
 		"all-minilm",
 		"bge-large",
 		"bge-m3",
 		"granite-embedding",
 		"mxbai-embed-large",
+		"nomic-embed-text",
 		"paraphrase-multilingual",
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
-	}
-	libraryToolsModels = []string{
-		"qwen3-vl",
-		"gpt-oss:20b",
-		"gpt-oss:120b",
-		"qwen3",
-		"llama3.1",
-		"llama3.2",
-		"mistral",
-		"qwen2.5",
-		"qwen2",
-		"mistral-nemo",
-		"mistral-small",
-		"mixtral:8x22b",
-		"qwq",
-		"granite3.3",
 	}
 
 	blueSkyPrompt   = "why is the sky blue? Be brief but factual in your reply"
@@ -339,7 +321,7 @@ func GetTestEndpoint() (*api.Client, string) {
 		}
 	}
 
-	if os.Getenv("OLLAMA_TEST_EXISTING") == "" && runtime.GOOS != "windows" && port == defaultPort {
+	if os.Getenv("OLLAMA_TEST_EXISTING") == "" && port == defaultPort {
 		port = FindPort()
 	}
 
@@ -353,20 +335,15 @@ func GetTestEndpoint() (*api.Client, string) {
 		http.DefaultClient), fmt.Sprintf("%s:%s", host, port)
 }
 
-// Server lifecycle management
-var (
-	serverMutex sync.Mutex
-	serverReady bool
-	serverLog   bytes.Buffer
-	serverDone  chan int
-	serverCmd   *exec.Cmd
-)
+var serverMutex sync.Mutex
+var serverReady bool
+var serverLogFile string
 
 func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
 	CLIName, err := filepath.Abs("../ollama")
 	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
+		return err
 	}
 
 	if runtime.GOOS == "windows" {
@@ -374,42 +351,72 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	}
 	_, err = os.Stat(CLIName)
 	if err != nil {
-		return fmt.Errorf("CLI missing, did you forget to 'go build .' first?  %w", err)
+		return fmt.Errorf("CLI missing, did you forget to build first?  %w", err)
 	}
 	serverMutex.Lock()
 	defer serverMutex.Unlock()
 	if serverReady {
 		return nil
 	}
-	serverDone = make(chan int)
-	serverLog.Reset()
 
 	if tmp := os.Getenv("OLLAMA_HOST"); tmp != ollamaHost {
 		slog.Info("setting env", "OLLAMA_HOST", ollamaHost)
 		t.Setenv("OLLAMA_HOST", ollamaHost)
 	}
 
-	serverCmd = exec.Command(CLIName, "serve")
-	serverCmd.Stderr = &serverLog
-	serverCmd.Stdout = &serverLog
+	logDir := t.TempDir()
+	slog.Info("starting server", "url", ollamaHost)
+	done, err := SpawnServer(ctx, "../ollama", logDir)
+	if err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
 	go func() {
-		slog.Info("starting server", "url", ollamaHost)
-		if err := serverCmd.Run(); err != nil {
-			// "signal: killed" expected during normal shutdown
+		<-ctx.Done()
+		serverMutex.Lock()
+		defer serverMutex.Unlock()
+		exitCode := <-done
+		if exitCode > 0 {
+			slog.Warn("server failure", "exit", exitCode)
+		}
+		serverReady = false
+	}()
+
+	// TODO wait only long enough for the server to be responsive...
+	time.Sleep(500 * time.Millisecond)
+
+	serverReady = true
+	return nil
+}
+
+func SpawnServer(ctx context.Context, command, logDir string) (chan int, error) {
+	done := make(chan int)
+	fp, err := os.CreateTemp(logDir, "ollama-server-*.log")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log file: %w", err)
+	}
+	serverLogFile = fp.Name()
+
+	cmd := exec.CommandContext(ctx, command, "serve")
+	cmd.Stderr = fp
+	cmd.Stdout = fp
+
+	go func() {
+		slog.Info("starting server...")
+		if err := cmd.Run(); err != nil {
+			// "signal: killed" expected
 			if !strings.Contains(err.Error(), "signal") {
 				slog.Info("failed to run server", "error", err)
 			}
 		}
 		var code int
-		if serverCmd.ProcessState != nil {
-			code = serverCmd.ProcessState.ExitCode()
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
 		}
 		slog.Info("server exited")
-		serverDone <- code
+		done <- code
 	}()
-
-	serverReady = true
-	return nil
+	return done, nil
 }
 
 func PullIfMissing(ctx context.Context, client *api.Client, modelName string) error {
@@ -470,65 +477,52 @@ var serverProcMutex sync.Mutex
 // Starts the server if needed
 func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, string, func()) {
 	client, testEndpoint := GetTestEndpoint()
-	cleanup := func() {}
-	if os.Getenv("OLLAMA_TEST_EXISTING") == "" && runtime.GOOS != "windows" {
-		var err error
-		err = startServer(t, ctx, testEndpoint)
-		if err != nil {
+	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+		serverProcMutex.Lock()
+		if err := startServer(t, ctx, testEndpoint); err != nil {
 			t.Fatal(err)
-		}
-		cleanup = func() {
-			serverMutex.Lock()
-			defer serverMutex.Unlock()
-			serverReady = false
-
-			slog.Info("shutting down server")
-			serverCmd.Process.Signal(os.Interrupt)
-			slog.Info("waiting for server to exit")
-			<-serverDone
-			slog.Info("terminate complete")
-
-			if t.Failed() {
-				slog.Warn("SERVER LOG FOLLOWS")
-				io.Copy(os.Stderr, &serverLog)
-				slog.Warn("END OF SERVER")
-			}
-			slog.Info("cleanup complete", "failed", t.Failed())
 		}
 	}
 	// Make sure server is online and healthy before returning
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("context done before server ready: %v", ctx.Err())
-			break
-		default:
+	listCtx, cancel := context.WithDeadlineCause(
+		ctx,
+		time.Now().Add(120*time.Second),
+		fmt.Errorf("list models took too long"),
+	)
+	defer cancel()
+	models, err := client.ListRunning(listCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models.Models) > 0 {
+		names := make([]string, len(models.Models))
+		for i, m := range models.Models {
+			names[i] = m.Name
 		}
-		listCtx, cancel := context.WithDeadlineCause(
-			ctx,
-			time.Now().Add(10*time.Second),
-			fmt.Errorf("list models took too long"),
-		)
-		defer cancel()
-		models, err := client.ListRunning(listCtx)
-		if err != nil {
-			if runtime.GOOS == "windows" {
-				t.Fatalf("did you forget to start the server: %v", err)
-			}
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		if len(models.Models) > 0 {
-			names := make([]string, len(models.Models))
-			for i, m := range models.Models {
-				names[i] = m.Name
-			}
-			slog.Info("currently loaded", "models", names)
-		}
-		break
+		slog.Info("currently loaded", "models", names)
 	}
 
-	return client, testEndpoint, cleanup
+	return client, testEndpoint, func() {
+		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+			defer serverProcMutex.Unlock()
+			if t.Failed() {
+				fp, err := os.Open(serverLogFile)
+				if err != nil {
+					slog.Error("failed to open server log", "logfile", serverLogFile, "error", err)
+					return
+				}
+				defer fp.Close()
+				data, err := io.ReadAll(fp)
+				if err != nil {
+					slog.Error("failed to read server log", "logfile", serverLogFile, "error", err)
+					return
+				}
+				slog.Warn("SERVER LOG FOLLOWS")
+				os.Stderr.Write(data)
+				slog.Warn("END OF SERVER")
+			}
+		}
+	}
 }
 
 func ChatTestHelper(ctx context.Context, t *testing.T, req api.ChatRequest, anyResp []string) {

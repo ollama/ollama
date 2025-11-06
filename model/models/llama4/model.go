@@ -76,7 +76,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	tilesLocal := ctx.Input().FromFloats(pixelsLocal, size.X, size.Y, m.numChannels)
+	tilesLocal := ctx.Input().FromFloatSlice(pixelsLocal, size.X, size.Y, m.numChannels)
 
 	ratioW, ratioH := size.X/m.imageSize, size.Y/m.imageSize
 
@@ -87,7 +87,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	pixelValues := tilesLocal
 
 	if len(pixelsGlobal) > 0 {
-		tilesGlobal := ctx.Input().FromFloats(pixelsGlobal, m.imageSize, m.imageSize, m.numChannels)
+		tilesGlobal := ctx.Input().FromFloatSlice(pixelsGlobal, m.imageSize, m.imageSize, m.numChannels)
 		pixelValues = pixelValues.Concat(ctx, tilesGlobal, 3)
 	}
 
@@ -174,7 +174,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, batch, m.Cache), nil
 }
 

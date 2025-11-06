@@ -30,7 +30,7 @@ type Model struct {
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 	hiddenStates = hiddenStates.Add(ctx, m.TypeEmbedding.Weight.View(ctx, 0, m.hiddenSize))
-	hiddenStates = hiddenStates.Add(ctx, m.PositionEmbedding.Forward(ctx, ctx.Input().FromInts(batch.Positions, len(batch.Positions))))
+	hiddenStates = hiddenStates.Add(ctx, m.PositionEmbedding.Forward(ctx, ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))))
 	hiddenStates = m.TokenEmbeddingNorm.Forward(ctx, hiddenStates, m.eps)
 
 	for _, layer := range m.Layers {

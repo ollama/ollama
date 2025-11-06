@@ -69,7 +69,7 @@ func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *
 		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
 	numPatches := grid.Temporal * grid.Height * grid.Width
 
-	pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
+	pixelValues := ctx.Input().FromFloatSlice(f32s, patchDim, numPatches)
 
 	return pixelValues, grid, nil
 }
@@ -139,7 +139,7 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, batch, m.Cache)
 }

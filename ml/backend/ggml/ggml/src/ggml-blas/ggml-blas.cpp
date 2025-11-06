@@ -224,7 +224,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
     delete backend;
 }
 
-static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
@@ -254,7 +254,6 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, 
     return GGML_STATUS_SUCCESS;
 
     GGML_UNUSED(backend);
-    GGML_UNUSED(batch_size);
 }
 
 static struct ggml_backend_i blas_backend_i = {

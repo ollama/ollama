@@ -14,9 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/ml"
 )
 
 func getTestTools() []api.Tool {
@@ -275,9 +275,9 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 					loaded:          make(map[string]*runnerRef),
 					newServerFn:     newMockServer(&mock),
 					getGpuFn:        getGpuFn,
-					getSystemInfoFn: getSystemInfoFn,
+					getCpuFn:        getCpuFn,
 					waitForRecovery: 100 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}
@@ -426,9 +426,9 @@ func TestChatHarmonyParserStreamingSimple(t *testing.T) {
 			loaded:          make(map[string]*runnerRef),
 			newServerFn:     newMockServer(&mock),
 			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
+			getCpuFn:        getCpuFn,
 			waitForRecovery: 100 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -608,9 +608,9 @@ func TestChatHarmonyParserStreaming(t *testing.T) {
 					loaded:          make(map[string]*runnerRef),
 					newServerFn:     newMockServer(&mock),
 					getGpuFn:        getGpuFn,
-					getSystemInfoFn: getSystemInfoFn,
+					getCpuFn:        getCpuFn,
 					waitForRecovery: 250 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}

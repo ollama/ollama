@@ -3,21 +3,15 @@ package ml
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"hash/maphash"
-	"io"
 	"log/slog"
-	"net/http"
-	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/logutil"
 )
 
 // GPULayers is a set of layers to be allocated on a single GPU
@@ -257,7 +251,7 @@ type DeviceInfo struct {
 
 	// FilterID is populated with the unfiltered device ID if a numeric ID is used
 	// so the device can be included.
-	FilterID string `json:"filter_id,omitempty"`
+	FilteredID string `json:"filtered_id,omitempty"`
 
 	// Integrated is set true for integrated GPUs, false for Discrete GPUs
 	Integrated bool `json:"integration,omitempty"`
@@ -288,20 +282,6 @@ type DeviceInfo struct {
 	LibraryPath []string
 }
 
-type SystemInfo struct {
-	// ThreadCount is the optimal number of threads to use for inference
-	ThreadCount int `json:"threads,omitempty"`
-
-	// TotalMemory is the total amount of system memory
-	TotalMemory uint64 `json:"total_memory,omitempty"`
-
-	// FreeMemory is the amount of memory currently available on the system for loading models
-	FreeMemory uint64 `json:"free_memory,omitempty"`
-
-	// FreeSwap is the amount of system swap space reported as available
-	FreeSwap uint64 `json:"free_swap,omitempty"`
-}
-
 func (d DeviceInfo) Compute() string {
 	// AMD gfx is encoded into the major minor in hex form
 	if strings.EqualFold(d.Library, "ROCm") {
@@ -314,71 +294,6 @@ func (d DeviceInfo) Driver() string {
 	return strconv.Itoa(d.DriverMajor) + "." + strconv.Itoa(d.DriverMinor)
 }
 
-// MinimumMemory reports the amount of memory that should be set aside
-// on the device for overhead (e.g. VRAM consumed by context structures independent
-// of model allocations)
-func (d DeviceInfo) MinimumMemory() uint64 {
-	if d.Library == "Metal" {
-		return 512 * format.MebiByte
-	}
-	return 457 * format.MebiByte
-}
-
-// Sort by Free Space.
-// iGPUs are reported first, thus Reverse() yields the largest discrete GPU first
-type ByFreeMemory []DeviceInfo
-
-func (a ByFreeMemory) Len() int      { return len(a) }
-func (a ByFreeMemory) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByFreeMemory) Less(i, j int) bool {
-	if a[i].Integrated && !a[j].Integrated {
-		return true
-	} else if !a[i].Integrated && a[j].Integrated {
-		return false
-	}
-	return a[i].FreeMemory < a[j].FreeMemory
-}
-
-func ByLibrary(l []DeviceInfo) [][]DeviceInfo {
-	resp := [][]DeviceInfo{}
-	libs := []string{}
-	for _, info := range l {
-		found := false
-		requested := info.Library
-		for i, lib := range libs {
-			if lib == requested {
-				resp[i] = append(resp[i], info)
-				found = true
-				break
-			}
-		}
-		if !found {
-			libs = append(libs, requested)
-			resp = append(resp, []DeviceInfo{info})
-		}
-	}
-	return resp
-}
-
-func LibraryPaths(l []DeviceInfo) []string {
-	gpuLibs := []string{LibOllamaPath}
-	for _, gpu := range l {
-		for _, dir := range gpu.LibraryPath {
-			needed := true
-			for _, existing := range gpuLibs {
-				if dir == existing {
-					needed = false
-					break
-				}
-			}
-			if needed {
-				gpuLibs = append(gpuLibs, dir)
-			}
-		}
-	}
-	return gpuLibs
-}
-
 type DeviceComparison int
 
 const (
@@ -389,10 +304,6 @@ const (
 
 func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 	if a.PCIID != b.PCIID {
-		return UniqueDevice
-	}
-	// If PCIID is empty, we have to use ID + library for uniqueness
-	if a.PCIID == "" && a.DeviceID != b.DeviceID {
 		return UniqueDevice
 	}
 	if a.Library == b.Library {
@@ -424,164 +335,4 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 	cmp := []string{aLibSplit[1], bLibSplit[1]}
 	sort.Sort(sort.Reverse(sort.StringSlice(cmp)))
 	return cmp[0] == bLibSplit[1]
-}
-
-// For each GPU, check if it does NOT support flash attention
-func FlashAttentionSupported(l []DeviceInfo) bool {
-	for _, gpu := range l {
-		supportsFA := gpu.Library == "cpu" ||
-			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
-			gpu.Library == "ROCm" ||
-			gpu.Library == "Vulkan"
-
-		if !supportsFA {
-			return false
-		}
-	}
-	return true
-}
-
-// Given the list of GPUs this instantiation is targeted for,
-// figure out the visible devices environment variables
-func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
-	if len(l) == 0 {
-		return nil
-	}
-	env := map[string]string{}
-	for _, d := range l {
-		d.updateVisibleDevicesEnv(env)
-	}
-	return env
-}
-
-// NeedsInitValidation returns true if the device in question has the potential
-// to crash at inference time and requires deeper validation before we include
-// it in the supported devices list.
-func (d DeviceInfo) NeedsInitValidation() bool {
-	// At this time the only library we know needs a 2nd pass is ROCm since
-	// rocblas will crash on unsupported devices.  We want to find those crashes
-	// during bootstrap discovery so we can eliminate those GPUs before the user
-	// tries to run inference on them
-	return d.Library == "ROCm"
-}
-
-// Set the init validation environment variable
-func (d DeviceInfo) AddInitValidation(env map[string]string) {
-	env["GGML_CUDA_INIT"] = "1" // force deep initialization to trigger crash on unsupported GPUs
-}
-
-// PreferredLibrary returns true if this library is preferred over the other input
-// library
-// Used to filter out Vulkan in favor of CUDA or ROCm
-func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
-	// TODO in the future if we find Vulkan is better than ROCm on some devices
-	// that implementation can live here.
-
-	if d.Library == "CUDA" || d.Library == "ROCm" {
-		return true
-	}
-	return false
-}
-
-func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
-	var envVar string
-	switch d.Library {
-	case "ROCm":
-		// ROCm must be filtered as it can crash the runner on unsupported devices
-		envVar = "ROCR_VISIBLE_DEVICES"
-		if runtime.GOOS != "linux" {
-			envVar = "HIP_VISIBLE_DEVICES"
-		}
-	default:
-		// CUDA and Vulkan are not filtered via env var, but via scheduling decisions
-		return
-	}
-	v, existing := env[envVar]
-	if existing {
-		v = v + ","
-	}
-	if d.FilterID != "" {
-		v = v + d.FilterID
-	} else {
-		v = v + d.ID
-	}
-	env[envVar] = v
-}
-
-type BaseRunner interface {
-	// GetPort returns the localhost port number the runner is running on
-	GetPort() int
-
-	// HasExited indicates if the runner is no longer running.  This can be used during
-	// bootstrap to detect if a given filtered device is incompatible and triggered an assert
-	HasExited() bool
-}
-
-type RunnerDiscovery interface {
-	BaseRunner
-
-	// GetDeviceInfos will perform a query of the underlying device libraries
-	// for device identification and free VRAM information
-	// During bootstrap scenarios, this routine may take seconds to complete
-	GetDeviceInfos(ctx context.Context) []DeviceInfo
-}
-
-type FilteredRunnerDiscovery interface {
-	RunnerDiscovery
-
-	// GetActiveDeviceIDs returns the filtered set of devices actively in
-	// use by this runner for running models.  If the runner is a bootstrap runner, no devices
-	// will be active yet so no device IDs are returned.
-	// This routine will not query the underlying device and will return immediately
-	GetActiveDeviceIDs() []DeviceID
-}
-
-func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo, error) {
-	var moreDevices []DeviceInfo
-	port := runner.GetPort()
-	tick := time.Tick(10 * time.Millisecond)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("failed to finish discovery before timeout")
-		case <-tick:
-			r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/info", port), nil)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create request: %w", err)
-			}
-			r.Header.Set("Content-Type", "application/json")
-
-			resp, err := http.DefaultClient.Do(r)
-			if err != nil {
-				// slog.Warn("failed to send request", "error", err)
-				if runner.HasExited() {
-					return nil, fmt.Errorf("runner crashed")
-				}
-				continue
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusNotFound {
-				// old runner, fall back to bootstrapping model
-				return nil, fmt.Errorf("llamarunner free vram reporting not supported")
-			}
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				slog.Warn("failed to read response", "error", err)
-				continue
-			}
-			if resp.StatusCode != 200 {
-				logutil.Trace("runner failed to discover free VRAM", "status", resp.StatusCode, "response", body)
-				return nil, fmt.Errorf("runner error: %s", string(body))
-			}
-
-			if err := json.Unmarshal(body, &moreDevices); err != nil {
-				slog.Warn("unmarshal encode response", "error", err)
-				continue
-			}
-			return moreDevices, nil
-		}
-	}
 }

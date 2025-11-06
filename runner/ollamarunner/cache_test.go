@@ -3,7 +3,6 @@ package ollamarunner
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
@@ -239,137 +238,59 @@ func TestShiftDiscard(t *testing.T) {
 		name     string
 		numCtx   int32
 		numKeep  int32
-		inputs   []*input.Input
+		inputLen int32
 		expected int32
 	}{
 		{
 			name:     "Shift",
 			numCtx:   2048,
 			numKeep:  5,
-			inputs:   slices.Repeat([]*input.Input{{}}, 2048),
+			inputLen: 2048,
 			expected: 1021,
 		},
 		{
 			name:     "Max Keep",
 			numCtx:   2048,
 			numKeep:  2047,
-			inputs:   slices.Repeat([]*input.Input{{}}, 2048),
+			inputLen: 2048,
 			expected: 1,
 		},
 		{
 			name:     "No Keep",
 			numCtx:   2048,
 			numKeep:  0,
-			inputs:   slices.Repeat([]*input.Input{{}}, 2048),
+			inputLen: 2048,
 			expected: 1024,
 		},
 		{
 			name:     "Truncate",
 			numCtx:   2048,
 			numKeep:  5,
-			inputs:   slices.Repeat([]*input.Input{{}}, 5000),
+			inputLen: 5000,
 			expected: 3973,
 		},
 		{
 			name:     "Truncate Keep",
 			numCtx:   2048,
 			numKeep:  2047,
-			inputs:   slices.Repeat([]*input.Input{{}}, 5000),
+			inputLen: 5000,
 			expected: 2953,
 		},
 		{
 			name:     "No Op",
 			numCtx:   2048,
 			numKeep:  5,
-			inputs:   slices.Repeat([]*input.Input{{}}, 512),
+			inputLen: 512,
 			expected: 0,
-		},
-		{
-			name:    "Same Batch",
-			numCtx:  2048,
-			numKeep: 5,
-			inputs: slices.Collect(func(yield func(*input.Input) bool) {
-				for range 1024 {
-					if !yield(&input.Input{}) {
-						return
-					}
-				}
-
-				if !yield(&input.Input{SameBatch: 512 - 1}) {
-					return
-				}
-
-				for range 2048 - 1024 - 1 {
-					if !yield(&input.Input{}) {
-						return
-					}
-				}
-			}),
-			expected: 1531,
-		},
-		{
-			name:    "Same Batch Near Start",
-			numCtx:  2048,
-			numKeep: 5,
-			inputs: slices.Collect(func(yield func(*input.Input) bool) {
-				for range 10 {
-					if !yield(&input.Input{}) {
-						return
-					}
-				}
-
-				if !yield(&input.Input{SameBatch: 512 - 1}) {
-					return
-				}
-
-				for range 2048 - 10 - 1 {
-					if !yield(&input.Input{}) {
-						return
-					}
-				}
-			}),
-			expected: 1021,
-		},
-		{
-			name:   "Consecutive Same Batch",
-			numCtx: 32,
-			inputs: slices.Collect(func(yield func(*input.Input) bool) {
-				for i := range 32 {
-					input := input.Input{}
-					if i%10 == 0 {
-						input.SameBatch = 10 - 1
-					}
-					if !yield(&input) {
-						return
-					}
-				}
-			}),
-			expected: 20,
-		},
-		{
-			name:   "Overlapping Same Batch",
-			numCtx: 32,
-			inputs: slices.Collect(func(yield func(*input.Input) bool) {
-				for i := range 32 {
-					input := input.Input{}
-					if slices.Contains([]int{4, 8, 14}, i) {
-						input.SameBatch = 10 - 1
-					}
-					if !yield(&input) {
-						return
-					}
-				}
-			}),
-			expected: 24,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := InputCache{numCtx: tt.numCtx}
-			result := c.ShiftDiscard(tt.inputs, tt.numKeep)
+			result := c.ShiftDiscard(tt.inputLen, tt.numKeep)
 			if result != tt.expected {
-				t.Errorf("shiftDiscard(ctx: %v, keep: %v inputs: %v): have %v; want %v", tt.numCtx, tt.numKeep, len(tt.inputs), result, tt.expected)
+				t.Errorf("shiftDiscard(ctx: %v, keep: %v input: %v): have %v; want %v", tt.numCtx, tt.numKeep, tt.inputLen, result, tt.expected)
 			}
 		})
 	}

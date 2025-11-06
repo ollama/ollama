@@ -331,7 +331,7 @@ void ggml_hip_mgmt_release() {
     if (gpus != NULL) gpus->pVtbl->Release(gpus); \
     if (gpu != NULL) gpu->pVtbl->Release(gpu)
 
-int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
     std::lock_guard<std::mutex> lock(ggml_adlx_lock);
     if (adlx.handle == NULL) {
         GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
@@ -343,13 +343,9 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
     IADLXGPU* gpu = NULL;
     IADLXGPUMetrics *gpuMetrics = NULL;
     ADLX_RESULT status;
+    // The "UniqueID" exposed in ADLX is the PCI Bus and Device IDs
+    adlx_int target = (pci_bus_id << 8) | (pci_device_id & 0xff);
 
-    uint32_t pci_domain, pci_bus, pci_device, pci_function;
-    if (sscanf(id, "%04x:%02x:%02x.%x", &pci_domain, &pci_bus, &pci_device, &pci_function) != 4) {
-        // TODO - parse other formats?
-        GGML_LOG_DEBUG("%s device ID was not a PCI ID %s\n", __func__, id);
-        return ADLX_NOT_FOUND;
-    }
     status = adlx.sys->pVtbl->GetPerformanceMonitoringServices(adlx.sys, &perfMonitoringServices);
     if (ADLX_FAILED(status)) {
         GGML_LOG_INFO("%s GetPerformanceMonitoringServices failed %d\n", __func__, status);
@@ -372,15 +368,16 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
             GGML_LOG_INFO("%s %d] At_GPUList failed %d\n", __func__, crt, status);
             continue;
         }
-        adlx_int uniqueID;
-        status = gpu->pVtbl->UniqueId(gpu, &uniqueID);
+        adlx_int id;
+        status = gpu->pVtbl->UniqueId(gpu, &id);
         if (ADLX_FAILED(status)) {
             GGML_LOG_INFO("%s %d] UniqueId lookup failed %d\n", __func__, crt, status);
             gpu->pVtbl->Release(gpu);
             gpu = NULL;
             continue;
         }
-        if ((((uniqueID >> 8) & 0xff) != pci_bus) || ((uniqueID & 0xff) != pci_device)) {
+        if (id != target) {
+            GGML_LOG_DEBUG("%s %d] GPU UniqueId: %x does not match target %02x %02x\n", __func__, crt, id, pci_bus_id, pci_device_id);
             gpu->pVtbl->Release(gpu);
             gpu = NULL;
             continue;
@@ -443,7 +440,7 @@ int ggml_hip_mgmt_init() {
     return -1;
 }
 void ggml_hip_mgmt_release() {}
-int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
     return -1;
 }
 

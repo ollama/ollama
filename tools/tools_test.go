@@ -1033,7 +1033,6 @@ func TestFindArguments(t *testing.T) {
 		name   string
 		buffer []byte
 		want   map[string]any
-		tool   string
 	}{
 		{
 			name:   "empty string",
@@ -1291,29 +1290,11 @@ func TestFindArguments(t *testing.T) {
 				"location": "San Francisco, CA",
 			},
 		},
-		{
-			name:   "simple tool call",
-			tool:   "get_temperature",
-			buffer: []byte(`{"get_temperature": {"format": "fahrenheit", "location": "San Francisco, CA"}}`),
-			want: map[string]any{
-				"format":   "fahrenheit",
-				"location": "San Francisco, CA",
-			},
-		},
-		{
-			name:   "stringified simple tool call",
-			tool:   "get_temperature",
-			buffer: []byte(`{"get_temperature": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
-			want: map[string]any{
-				"format":   "fahrenheit",
-				"location": "San Francisco, CA",
-			},
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := findArguments(&api.Tool{Function: api.ToolFunction{Name: tt.tool}}, tt.buffer)
+			got, _ := findArguments(tt.buffer)
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)

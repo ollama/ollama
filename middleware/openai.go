@@ -7,7 +7,6 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -45,8 +44,7 @@ type RetrieveWriter struct {
 
 type EmbedWriter struct {
 	BaseWriter
-	model          string
-	encodingFormat string
+	model string
 }
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
@@ -256,7 +254,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat))
+	err = json.NewEncoder(w.ResponseWriter).Encode(openai.ToEmbeddingList(w.model, embedResponse))
 	if err != nil {
 		return 0, err
 	}
@@ -350,14 +348,6 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Validate encoding_format parameter
-		if req.EncodingFormat != "" {
-			if !strings.EqualFold(req.EncodingFormat, "float") && !strings.EqualFold(req.EncodingFormat, "base64") {
-				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, fmt.Sprintf("Invalid value for 'encoding_format' = %s. Supported values: ['float', 'base64'].", req.EncodingFormat)))
-				return
-			}
-		}
-
 		if req.Input == "" {
 			req.Input = []string{""}
 		}
@@ -373,13 +363,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		embedReq, err := openai.FromEmbedRequest(req)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		if err := json.NewEncoder(&b).Encode(embedReq); err != nil {
+		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input, Dimensions: req.Dimensions}); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
@@ -387,9 +371,8 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &EmbedWriter{
-			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
-			model:          req.Model,
-			encodingFormat: req.EncodingFormat,
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      req.Model,
 		}
 
 		c.Writer = w

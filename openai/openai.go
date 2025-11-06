@@ -2,13 +2,12 @@
 package openai
 
 import (
-	"bytes"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"slices"
 	"strings"
@@ -74,84 +73,9 @@ type JsonSchema struct {
 }
 
 type EmbedRequest struct {
-	Input          any    `json:"input"`
-	Model          string `json:"model"`
-	Dimensions     int    `json:"dimensions,omitempty"`
-	EncodingFormat string `json:"encoding_format,omitempty"` // "float" or "base64"
-}
-
-// FromEmbedRequest converts an EmbedRequest to api.EmbedRequest
-func FromEmbedRequest(r EmbedRequest) (*api.EmbedRequest, error) {
-	var images []api.ImageData
-	var input []string
-	switch v := r.Input.(type) {
-	case string:
-		input = []string{v}
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				input = append(input, s)
-			} else {
-				return nil, errors.New("invalid input type")
-			}
-		}
-	case [][]any:
-		for _, items := range v {
-			for _, item := range items {
-				if s, ok := item.(map[string]any); ok {
-					switch s["type"] {
-					case "text":
-						input = append(input, s["text"].(string))
-					case "image_url":
-						var url string
-						if urlMap, ok := s["image_url"].(map[string]any); ok {
-							if url, ok = urlMap["url"].(string); !ok {
-								return nil, errors.New("invalid message format")
-							}
-						} else {
-							if url, ok = s["image_url"].(string); !ok {
-								return nil, errors.New("invalid message format")
-							}
-						}
-						types := []string{"jpeg", "jpg", "png", "webp"}
-						valid := false
-						// support blank mime type to match api/chat taking just unadorned base64
-						if strings.HasPrefix(url, "data:;base64,") {
-							url = strings.TrimPrefix(url, "data:;base64,")
-							valid = true
-						}
-						for _, t := range types {
-							prefix := "data:image/" + t + ";base64,"
-							if strings.HasPrefix(url, prefix) {
-								url = strings.TrimPrefix(url, prefix)
-								valid = true
-								break
-							}
-						}
-
-						if !valid {
-							return nil, errors.New("invalid image input")
-						}
-
-						img, err := base64.StdEncoding.DecodeString(url)
-						if err != nil {
-							return nil, errors.New("invalid message format")
-						}
-						images = append(images, api.ImageData(img))
-					}
-				} else {
-					return nil, errors.New("invalid input type")
-				}
-			}
-		}
-	}
-
-	return &api.EmbedRequest{
-		Model:      r.Model,
-		Input:      input,
-		Images:     images,
-		Dimensions: r.Dimensions,
-	}, nil
+	Input      any    `json:"input"`
+	Model      string `json:"model"`
+	Dimensions int    `json:"dimensions,omitempty"`
 }
 
 type StreamOptions struct {
@@ -257,9 +181,9 @@ type Model struct {
 }
 
 type Embedding struct {
-	Object    string `json:"object"`
-	Embedding any    `json:"embedding"` // Can be []float32 (float format) or string (base64 format)
-	Index     int    `json:"index"`
+	Object    string    `json:"object"`
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
 }
 
 type ListCompletion struct {
@@ -302,11 +226,20 @@ func ToUsage(r api.ChatResponse) Usage {
 	}
 }
 
+func toolCallId() string {
+	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 8)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return "call_" + strings.ToLower(string(b))
+}
+
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
 func ToToolCalls(tc []api.ToolCall) []ToolCall {
 	toolCalls := make([]ToolCall, len(tc))
 	for i, tc := range tc {
-		toolCalls[i].ID = tc.ID
+		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
 		toolCalls[i].Index = tc.Function.Index
@@ -444,21 +377,13 @@ func ToListCompletion(r api.ListResponse) ListCompletion {
 }
 
 // ToEmbeddingList converts an api.EmbedResponse to EmbeddingList
-// encodingFormat can be "float", "base64", or empty (defaults to "float")
-func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) EmbeddingList {
+func ToEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
 	if r.Embeddings != nil {
 		var data []Embedding
 		for i, e := range r.Embeddings {
-			var embedding any
-			if strings.EqualFold(encodingFormat, "base64") {
-				embedding = floatsToBase64(e)
-			} else {
-				embedding = e
-			}
-
 			data = append(data, Embedding{
 				Object:    "embedding",
-				Embedding: embedding,
+				Embedding: e,
 				Index:     i,
 			})
 		}
@@ -475,13 +400,6 @@ func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) E
 	}
 
 	return EmbeddingList{}
-}
-
-// floatsToBase64 encodes a []float32 to a base64 string
-func floatsToBase64(floats []float32) string {
-	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, floats)
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
 // ToModel converts an api.ShowResponse to Model

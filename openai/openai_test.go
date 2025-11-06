@@ -4,8 +4,6 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-
 	"github.com/ollama/ollama/api"
 )
 
@@ -148,73 +146,5 @@ func TestNewError(t *testing.T) {
 		if result.Error.Message != "test message" {
 			t.Errorf("NewError(%d) message = %q, want %q", tt.code, result.Error.Message, "test message")
 		}
-	}
-}
-
-func TestToToolCallsPreservesIDs(t *testing.T) {
-	original := []api.ToolCall{
-		{
-			ID: "call_abc123",
-			Function: api.ToolCallFunction{
-				Index: 2,
-				Name:  "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
-					"location": "Seattle",
-				},
-			},
-		},
-		{
-			ID: "call_def456",
-			Function: api.ToolCallFunction{
-				Index: 7,
-				Name:  "get_time",
-				Arguments: api.ToolCallFunctionArguments{
-					"timezone": "UTC",
-				},
-			},
-		},
-	}
-
-	toolCalls := make([]api.ToolCall, len(original))
-	copy(toolCalls, original)
-	got := ToToolCalls(toolCalls)
-
-	if len(got) != len(original) {
-		t.Fatalf("expected %d tool calls, got %d", len(original), len(got))
-	}
-
-	expected := []ToolCall{
-		{
-			ID:    "call_abc123",
-			Type:  "function",
-			Index: 2,
-			Function: struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}{
-				Name:      "get_weather",
-				Arguments: `{"location":"Seattle"}`,
-			},
-		},
-		{
-			ID:    "call_def456",
-			Type:  "function",
-			Index: 7,
-			Function: struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}{
-				Name:      "get_time",
-				Arguments: `{"timezone":"UTC"}`,
-			},
-		},
-	}
-
-	if diff := cmp.Diff(expected, got); diff != "" {
-		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
-	}
-
-	if diff := cmp.Diff(original, toolCalls); diff != "" {
-		t.Errorf("input tool calls mutated (-want +got):\n%s", diff)
 	}
 }
