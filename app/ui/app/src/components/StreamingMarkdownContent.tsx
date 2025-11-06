@@ -211,7 +211,7 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
             parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
             remarkPlugins={remarkPlugins}
-            disableTableActions={true}
+            controls={false}
             components={{
               pre: CodeBlock,
               table: ({

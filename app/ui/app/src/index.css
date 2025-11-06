@@ -28,17 +28,3 @@
     opacity: 1;
   }
 }
-
-/* Hide Streamdown table action buttons */
-.prose button[title="Copy table as markdown"],
-.prose button[title="Download table"] {
-  display: none !important;
-}
-
-/* Hide the parent div if it only contains these buttons */
-.prose
-  div:has(> button[title="Copy table as markdown"]):has(
-    > button[title="Download table"]
-  ) {
-  display: none !important;
-}
