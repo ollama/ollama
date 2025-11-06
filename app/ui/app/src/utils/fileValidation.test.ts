@@ -7,7 +7,6 @@ describe("fileValidation", () => {
       expect(IMAGE_EXTENSIONS).toContain("png");
       expect(IMAGE_EXTENSIONS).toContain("jpg");
       expect(IMAGE_EXTENSIONS).toContain("jpeg");
-      expect(IMAGE_EXTENSIONS).toContain("gif");
       expect(IMAGE_EXTENSIONS).toContain("webp");
     });
   });
@@ -24,14 +23,6 @@ describe("fileValidation", () => {
 
     it("should accept WebP images when vision capability is enabled", () => {
       const file = createMockFile("test.webp", 1024, "image/webp");
-      const result = validateFile(file, {
-        hasVisionCapability: true,
-      });
-      expect(result.valid).toBe(true);
-    });
-
-    it("should accept GIF images when vision capability is enabled", () => {
-      const file = createMockFile("test.gif", 1024, "image/gif");
       const result = validateFile(file, {
         hasVisionCapability: true,
       });

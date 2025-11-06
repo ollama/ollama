@@ -84,13 +84,6 @@ export function validateFile(
   }
 
   if (IMAGE_EXTENSIONS.includes(fileExtension) && !hasVisionCapability) {
-    console.log("Image validation failed:", {
-      fileExtension,
-      fileName: file.name,
-      hasVisionCapability,
-      IMAGE_EXTENSIONS,
-      isImageExtension: IMAGE_EXTENSIONS.includes(fileExtension),
-    });
     return { valid: false, error: "This model does not support images" };
   }
 
