@@ -3,6 +3,11 @@
 #include <string.h>
 #include <sys/syslimits.h>
 
+// Import UniformTypeIdentifiers for macOS 11+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#endif
+
 void* NSStr(void* buf, int len) {
 	return (void*)[[NSString alloc] initWithBytes:buf length:len encoding:NSUTF8StringEncoding];
 }
@@ -109,12 +114,20 @@ DlgResult fileDlg(FileDlgParams* params) {
 	if(self->params->title != nil) {
 		[panel setTitle:[[NSString alloc] initWithUTF8String:self->params->title]];
 	}
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	// Use modern allowedContentTypes API for better file type support (especially video files)
 	if(self->params->numext > 0) {
-		[panel setAllowedFileTypes:[NSArray arrayWithObjects:(NSString**)self->params->exts count:self->params->numext]];
+		NSMutableArray *utTypes = [NSMutableArray arrayWithCapacity:self->params->numext];
+		NSString** exts = (NSString**)self->params->exts;
+		for(int i = 0; i < self->params->numext; i++) {
+			UTType *type = [UTType typeWithFilenameExtension:exts[i]];
+			if(type) {
+				[utTypes addObject:type];
+			}
+		}
+		if([utTypes count] > 0) {
+			[panel setAllowedContentTypes:utTypes];
+		}
 	}
-#pragma clang diagnostic pop
 	if(self->params->relaxext) {
 		[panel setAllowsOtherFileTypes:YES];
 	}
