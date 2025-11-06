@@ -565,14 +565,23 @@ static inline ggml_bf16_t ggml_compute_fp32_to_bf16(float s) {
 #define GGML_FP32_TO_BF16(x) ggml_compute_fp32_to_bf16(x)
 #define GGML_BF16_TO_FP32(x) ggml_compute_bf16_to_fp32(x)
 
+static inline int32_t ggml_node_get_use_count(const struct ggml_cgraph * cgraph, int node_idx) {
+    const struct ggml_tensor * node = cgraph->nodes[node_idx];
+
+    size_t hash_pos = ggml_hash_find(&cgraph->visited_hash_set, node);
+    if (!ggml_bitset_get(cgraph->visited_hash_set.used, hash_pos)) {
+        return 0;
+    }
+    return cgraph->use_counts[hash_pos];
+}
+
 // return true if the node's results are only used by N other nodes
 // and can be fused into their calculations.
 static inline bool ggml_node_has_n_uses(const struct ggml_cgraph * cgraph, int node_idx, int32_t n_uses) {
     const struct ggml_tensor * node = cgraph->nodes[node_idx];
 
     // check the use count against how many we're replacing
-    size_t hash_pos = ggml_hash_find(&cgraph->visited_hash_set, node);
-    if (!ggml_bitset_get(cgraph->visited_hash_set.used, hash_pos) || cgraph->use_counts[hash_pos] != n_uses) {
+    if (ggml_node_get_use_count(cgraph, node_idx) != n_uses) {
         return false;
     }
 
@@ -638,13 +647,46 @@ static inline bool ggml_can_fuse(const struct ggml_cgraph * cgraph, int node_idx
     return ggml_can_fuse_ext(cgraph, idxs, ops, num_ops);
 }
 
+GGML_API bool ggml_can_fuse_subgraph_ext(const struct ggml_cgraph * cgraph,
+                                         const int *                node_idxs,
+                                         int                        count,
+                                         const enum ggml_op *       ops,
+                                         const int *                outputs,
+                                         int                        num_outputs);
+
+// Returns true if the subgraph formed by {node_idxs} can be fused
+// checks whethers all nodes which are not part of outputs can be elided
+// by checking if their num_uses are confined to the subgraph
+static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
+                                          int                        node_idx,
+                                          int                        count,
+                                          const enum ggml_op *       ops,
+                                          const int *                outputs,
+                                          int                        num_outputs) {
+    GGML_ASSERT(count < 32);
+    if (node_idx + count > cgraph->n_nodes) {
+        return false;
+    }
+
+    int idxs[32];
+
+    for (int i = 0; i < count; ++i) {
+        idxs[i] = node_idx + i;
+    }
+
+    return ggml_can_fuse_subgraph_ext(cgraph, idxs, count, ops, outputs, num_outputs);
+}
+
 // Management libraries for fetching more accurate free VRAM data
 GGML_API int ggml_nvml_init();
 GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
 GGML_API void ggml_nvml_release();
 GGML_API int ggml_hip_mgmt_init();
-GGML_API int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total);
+GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total);
 GGML_API void ggml_hip_mgmt_release();
+GGML_API int ggml_dxgi_pdh_init();
+GGML_API int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu);
+GGML_API void ggml_dxgi_pdh_release();
 
 #ifdef __cplusplus
 }
@@ -657,6 +699,13 @@ GGML_API void ggml_hip_mgmt_release();
 // nicer C++ syntax for ggml_can_fuse
 inline bool ggml_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, std::initializer_list<enum ggml_op> ops) {
     return ggml_can_fuse(cgraph, node_idx, ops.begin(), (int)ops.size());
+}
+
+inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph *          cgraph,
+                                   int                                 start_idx,
+                                   std::initializer_list<enum ggml_op> ops,
+                                   std::initializer_list<int>          outputs = {}) {
+    return ggml_can_fuse_subgraph(cgraph, start_idx, ops.size(), ops.begin(), outputs.begin(), outputs.size());
 }
 
 // expose GGUF internals for test code

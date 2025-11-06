@@ -1,8 +1,17 @@
 cmake_minimum_required(VERSION 3.19)
 cmake_policy(SET CMP0114 NEW)
 cmake_policy(SET CMP0116 NEW)
+if (POLICY CMP0147)
+    # Parallel build custom build steps
+    cmake_policy(SET CMP0147 NEW)
+endif()
 
 find_package(Vulkan COMPONENTS glslc REQUIRED)
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    # Parallel build object files
+    add_definitions(/MP)
+endif()
 
 function(detect_host_compiler)
     if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")

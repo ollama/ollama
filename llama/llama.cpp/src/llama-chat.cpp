@@ -63,6 +63,8 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "megrez",            LLM_CHAT_TEMPLATE_MEGREZ            },
     { "yandex",            LLM_CHAT_TEMPLATE_YANDEX            },
     { "bailing",           LLM_CHAT_TEMPLATE_BAILING           },
+    { "bailing-think",     LLM_CHAT_TEMPLATE_BAILING_THINK     },
+    { "bailing2",          LLM_CHAT_TEMPLATE_BAILING2          },
     { "llama4",            LLM_CHAT_TEMPLATE_LLAMA4            },
     { "smolvlm",           LLM_CHAT_TEMPLATE_SMOLVLM           },
     { "hunyuan-moe",       LLM_CHAT_TEMPLATE_HUNYUAN_MOE       },
@@ -191,6 +193,10 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_YANDEX;
     } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("'HUMAN'")) {
         return LLM_CHAT_TEMPLATE_BAILING;
+    } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("\"HUMAN\"") && tmpl_contains("<think>")) {
+        return LLM_CHAT_TEMPLATE_BAILING_THINK;
+    } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("<role>HUMAN</role>") && tmpl_contains("<|role_end|>")) {
+        return LLM_CHAT_TEMPLATE_BAILING2;
     } else if (tmpl_contains("<|header_start|>") && tmpl_contains("<|header_end|>")) {
         return LLM_CHAT_TEMPLATE_LLAMA4;
     } else if (tmpl_contains("<|endofuserprompt|>")) {
@@ -644,8 +650,8 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << " Ассистент:[SEP]";
         }
-    }  else if (tmpl == LLM_CHAT_TEMPLATE_BAILING) {
-        // Bailing (Ling) template
+    } else if (tmpl == LLM_CHAT_TEMPLATE_BAILING || tmpl == LLM_CHAT_TEMPLATE_BAILING_THINK) {
+        // Bailing (Ling/Ring) template
         for (auto message : chat) {
             std::string role(message->role);
 
@@ -656,6 +662,33 @@ int32_t llm_chat_apply_template(
             }
 
             ss << "<role>" << role << "</role>" << message->content;
+        }
+
+        if (add_ass) {
+            ss << "<role>ASSISTANT</role>";
+
+            if (tmpl == LLM_CHAT_TEMPLATE_BAILING_THINK) {
+                ss << "<think>";
+            }
+        }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_BAILING2) {
+        // Bailing2 (Ling 2.0) template
+        bool has_system = !chat.empty() && std::string(chat[0]->role) == "system";
+
+        if (!has_system) {
+            ss << "<role>SYSTEM</role>detailed thinking off<|role_end|>";
+        }
+
+        for (auto message : chat) {
+            std::string role(message->role);
+
+            if (role == "user") {
+                role = "HUMAN";
+            } else {
+                std::transform(role.begin(), role.end(), role.begin(), ::toupper);
+            }
+
+            ss << "<role>" << role << "</role>" << message->content << "<|role_end|>";
         }
 
         if (add_ass) {
