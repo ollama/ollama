@@ -53,7 +53,7 @@ func (p ImageProcessor) fitToCanvas(imageSize, canvasSize image.Point) image.Poi
 	tw := min(max(imageSize.X, p.imageSize), canvasSize.X)
 	th := min(max(imageSize.Y, p.imageSize), canvasSize.Y)
 
-	r := math.Min(
+	r := min(
 		float64(tw)/float64(imageSize.X),
 		float64(th)/float64(imageSize.Y),
 	)
@@ -89,10 +89,10 @@ func (p ImageProcessor) optimalTiledCanvas(imageSize image.Point) image.Point {
 			if minUpscale == 0 {
 				minUpscale = s
 			} else {
-				minUpscale = math.Min(minUpscale, s)
+				minUpscale = min(minUpscale, s)
 			}
 		} else {
-			maxDownscale = math.Max(maxDownscale, s)
+			maxDownscale = max(maxDownscale, s)
 		}
 	}
 

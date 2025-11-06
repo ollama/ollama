@@ -17,7 +17,7 @@ type ImageContext struct {
 	// mu is required to be held when generating embeddings or accessing the cache
 	mu sync.Mutex
 
-	clip *llama.ClipContext
+	mtmd *llama.MtmdContext
 
 	// cache of images to embeddings
 	images    []imageCache
@@ -32,7 +32,7 @@ func NewImageContext(llamaContext *llama.Context, modelPath string) (*ImageConte
 
 	var c ImageContext
 	if arch == "clip" {
-		c.clip, err = llama.NewClipContext(llamaContext, modelPath)
+		c.mtmd, err = llama.NewMtmdContext(llamaContext, modelPath)
 	} else {
 		return nil, fmt.Errorf("unknown vision model architecture: %s", arch)
 	}
@@ -51,12 +51,12 @@ func (c *ImageContext) Free(modelPath string) {
 		return
 	}
 
-	if c.clip != nil {
-		c.clip.Free()
+	if c.mtmd != nil {
+		c.mtmd.Free()
 	}
 }
 
-func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte) ([][]float32, error) {
+func (c *ImageContext) MultimodalTokenize(llamaContext *llama.Context, data []byte) ([]llama.MtmdChunk, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -70,10 +70,10 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte) ([][]f
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	embed, err := c.findImage(hash)
+	chunks, err := c.findImage(hash)
 	if err != nil {
-		if c.clip != nil {
-			embed, err = c.clip.NewEmbed(llamaContext, data)
+		if c.mtmd != nil {
+			chunks, err = c.mtmd.MultimodalTokenize(llamaContext, data)
 			if err != nil {
 				return nil, err
 			}
@@ -81,10 +81,10 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte) ([][]f
 			return nil, errors.New("received image but vision model not loaded")
 		}
 
-		c.addImage(hash, embed)
+		c.addImage(hash, chunks)
 	}
 
-	return embed, nil
+	return chunks, nil
 }
 
 func (c *ImageContext) BatchSize(configuredBatchSize int) int {
@@ -102,7 +102,7 @@ func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
 
 type imageCache struct {
 	key      uint64
-	val      [][]float32
+	val      []llama.MtmdChunk
 	lastUsed time.Time
 }
 
@@ -114,7 +114,7 @@ func (c *ImageContext) hashImage(image []byte) uint64 {
 
 var errImageNotFound = errors.New("image not found in cache")
 
-func (c *ImageContext) findImage(hash uint64) ([][]float32, error) {
+func (c *ImageContext) findImage(hash uint64) ([]llama.MtmdChunk, error) {
 	for i := range c.images {
 		if c.images[i].key == hash {
 			slog.Debug("loading image embeddings from cache", "entry", i)
@@ -126,7 +126,7 @@ func (c *ImageContext) findImage(hash uint64) ([][]float32, error) {
 	return nil, errImageNotFound
 }
 
-func (c *ImageContext) addImage(hash uint64, embed [][]float32) {
+func (c *ImageContext) addImage(hash uint64, embed []llama.MtmdChunk) {
 	best := time.Now()
 	var bestImage int
 

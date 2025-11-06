@@ -66,6 +66,7 @@ Examples:
 
       llm/backend/mlx: support the llama architecture
       CONTRIBUTING: provide clarity on good commit messages, and bad
+      docs: simplify manual installation with shorter curl commands
 
 Bad Examples:
 
