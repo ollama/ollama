@@ -22,13 +22,12 @@ func TestAPIGenerate(t *testing.T) {
 	// Set up the test data
 	req := api.GenerateRequest{
 		Model:  smol,
-		Prompt: "why is the sky blue? be brief",
+		Prompt: blueSkyPrompt,
 		Options: map[string]interface{}{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
-	anyResp := []string{"rayleigh", "scattering"}
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -120,14 +119,14 @@ func TestAPIGenerate(t *testing.T) {
 				// Verify the response contains the expected data
 				response := buf.String()
 				atLeastOne := false
-				for _, resp := range anyResp {
+				for _, resp := range blueSkyExpected {
 					if strings.Contains(strings.ToLower(response), resp) {
 						atLeastOne = true
 						break
 					}
 				}
 				if !atLeastOne {
-					t.Errorf("none of %v found in %s", anyResp, response)
+					t.Errorf("none of %v found in %s", blueSkyExpected, response)
 				}
 			case <-ctx.Done():
 				t.Error("outer test context done while waiting for generate")
@@ -181,7 +180,7 @@ func TestAPIChat(t *testing.T) {
 		Messages: []api.Message{
 			{
 				Role:    "user",
-				Content: "why is the sky blue?  be brief",
+				Content: blueSkyPrompt,
 			},
 		},
 		Options: map[string]interface{}{
@@ -189,7 +188,6 @@ func TestAPIChat(t *testing.T) {
 			"seed":        123,
 		},
 	}
-	anyResp := []string{"rayleigh", "scattering"}
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -279,14 +277,14 @@ func TestAPIChat(t *testing.T) {
 				// Verify the response contains the expected data
 				response := buf.String()
 				atLeastOne := false
-				for _, resp := range anyResp {
+				for _, resp := range blueSkyExpected {
 					if strings.Contains(strings.ToLower(response), resp) {
 						atLeastOne = true
 						break
 					}
 				}
 				if !atLeastOne {
-					t.Errorf("none of %v found in %s", anyResp, response)
+					t.Errorf("none of %v found in %s", blueSkyExpected, response)
 				}
 			case <-ctx.Done():
 				t.Error("outer test context done while waiting for chat")
@@ -381,32 +379,5 @@ func TestAPIShowModel(t *testing.T) {
 	var nilTime time.Time
 	if resp.ModifiedAt == nilTime {
 		t.Errorf("%s missing modified_at: %#v", modelName, resp)
-	}
-}
-
-func TestAPIEmbeddings(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	req := api.EmbeddingRequest{
-		Model:  "orca-mini",
-		Prompt: "why is the sky blue?",
-		Options: map[string]interface{}{
-			"temperature": 0,
-			"seed":        123,
-		},
-	}
-
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
-
-	resp, err := client.Embeddings(ctx, &req)
-	if err != nil {
-		t.Fatalf("embeddings call failed %s", err)
-	}
-	if len(resp.Embedding) == 0 {
-		t.Errorf("zero length embedding response")
 	}
 }

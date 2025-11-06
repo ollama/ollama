@@ -18,7 +18,7 @@ type Model struct {
 	model.BytePairEncoding
 
 	*TextModel
-	*VisionModel `gguf:"v,vision"`
+	*VisionModel `gguf:"v"`
 
 	ImageProcessor
 }
@@ -29,7 +29,6 @@ var _ model.MultimodalProcessor = (*Model)(nil)
 func New(c fs.Config) (model.Model, error) {
 	m := &Model{
 		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -42,6 +41,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		TextModel:      NewTextModel(c),
 		VisionModel:    newVisionModel(c),
@@ -69,7 +69,7 @@ func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *
 		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
 	numPatches := grid.Temporal * grid.Height * grid.Width
 
-	pixelValues := ctx.Input().FromFloatSlice(f32s, patchDim, numPatches)
+	pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
 
 	return pixelValues, grid, nil
 }
@@ -89,8 +89,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 }
 
 // PostTokenize arranges Qwen-2.5-VL's inputs for the forward pass
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var result []input.Input
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
 
 	var (
 		imageToken       int32 = 151655
@@ -112,16 +112,16 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 				return nil, fmt.Errorf("failed to encode image prompt: %w", err)
 			}
 			for i := range pre {
-				result = append(result, input.Input{Token: pre[i]})
+				result = append(result, &input.Input{Token: pre[i]})
 			}
 
 			patchesPerChunk := inp.Multimodal[0].Tensor.Dim(1)
 
 			// First add the vision start token
-			result = append(result, input.Input{Token: visionStartToken})
+			result = append(result, &input.Input{Token: visionStartToken})
 
 			// Add the image token with the multimodal tensor data at the first position
-			result = append(result, input.Input{
+			result = append(result, &input.Input{
 				Token:          imageToken,
 				Multimodal:     inp.Multimodal,
 				MultimodalHash: inp.MultimodalHash,
@@ -129,9 +129,9 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			})
 
 			// Add the placeholder tokens for the remaining positions (tokensPerGrid-1)
-			result = append(result, slices.Repeat([]input.Input{{Token: imageToken}}, patchesPerChunk-1)...)
+			result = append(result, slices.Repeat([]*input.Input{{Token: imageToken}}, patchesPerChunk-1)...)
 
-			result = append(result, input.Input{Token: visionEndToken})
+			result = append(result, &input.Input{Token: visionEndToken})
 		}
 	}
 
@@ -139,10 +139,9 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache)
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, batch, m.Cache)
 }
 
 func init() {

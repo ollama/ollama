@@ -60,6 +60,8 @@ func TestSWA(t *testing.T) {
 
 	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
+	x := float32(math.Inf(-1))
+
 	tests := []testCase{
 		{
 			name:          "FirstBatch",
@@ -69,7 +71,12 @@ func TestSWA(t *testing.T) {
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
-			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
+			expectedMask: []float32{
+				0, x, x, x,
+				0, 0, x, x,
+				x, 0, 0, x,
+				x, x, 0, 0,
+			},
 		},
 		{
 			name:          "SecondBatch",
@@ -79,7 +86,133 @@ func TestSWA(t *testing.T) {
 			pos:           []int32{4, 5},
 			expected:      []float32{5, 6, 3, 4},
 			expectedShape: []int{1, 1, 4},
-			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1))},
+			expectedMask: []float32{
+				0, x, x, 0,
+				0, 0, x, x,
+			},
+		},
+	}
+
+	testCache(t, backend, cache, tests)
+}
+
+func TestSWASeparateBatches(t *testing.T) {
+	backend := &testBackend{}
+	cache := NewSWACache(1, nil)
+	defer cache.Close()
+
+	cache.Init(backend, ml.DTypeF16, 2, 16, 2)
+
+	x := float32(math.Inf(-1))
+
+	tests := []testCase{
+		{
+			name:          "First seq 0",
+			in:            []float32{1, 2},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{0, 1},
+			expected:      []float32{1, 2},
+			expectedShape: []int{1, 1, 2},
+			expectedMask: []float32{
+				0, x,
+				0, 0,
+			},
+		},
+		{
+			name:          "Second seq 0",
+			in:            []float32{3, 4},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{2, 3},
+			expected:      []float32{2, 3, 4},
+			expectedShape: []int{1, 1, 3},
+			expectedMask: []float32{
+				0, 0, x,
+				x, 0, 0,
+			},
+		},
+		{
+			name:          "First seq 1",
+			in:            []float32{5, 6},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{1, 1},
+			pos:           []int32{0, 1},
+			expected:      []float32{5, 6},
+			expectedShape: []int{1, 1, 2},
+			expectedMask: []float32{
+				0, x,
+				0, 0,
+			},
+		},
+		{
+			name:          "Second seq 1",
+			in:            []float32{7, 8},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{1, 1},
+			pos:           []int32{2, 3},
+			expected:      []float32{6, 3, 4, 7, 8},
+			expectedShape: []int{1, 1, 5},
+			expectedMask: []float32{
+				0, x, x, 0, x,
+				x, x, x, 0, 0,
+			},
+		},
+		{
+			name:          "Third seq 0",
+			in:            []float32{9, 10},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{4, 5},
+			expected:      []float32{9, 10, 3, 4},
+			expectedShape: []int{1, 1, 4},
+			expectedMask: []float32{
+				0, x, x, 0,
+				0, 0, x, x,
+			},
+		},
+	}
+
+	testCache(t, backend, cache, tests)
+}
+
+func TestSWAMem(t *testing.T) {
+	backend := &testBackend{}
+	cache := NewSWAMemCache(1, 3, nil)
+	defer cache.Close()
+
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
+
+	x := float32(math.Inf(-1))
+
+	tests := []testCase{
+		{
+			name:          "FirstBatch",
+			in:            []float32{1, 2, 3, 4},
+			inShape:       []int{1, 1, 4},
+			seqs:          []int{0, 0, 0, 0},
+			pos:           []int32{0, 1, 2, 3},
+			expected:      []float32{1, 2, 3, 4},
+			expectedShape: []int{1, 1, 4},
+			expectedMask: []float32{
+				0, x, x, x,
+				0, 0, x, x,
+				x, 0, 0, x,
+				x, x, 0, 0,
+			},
+		},
+		{
+			name:          "SecondBatch",
+			in:            []float32{5, 6},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{4, 5},
+			expected:      []float32{4, 5, 6},
+			expectedShape: []int{1, 1, 3},
+			expectedMask: []float32{
+				0, 0, x,
+				x, 0, 0,
+			},
 		},
 	}
 
@@ -344,7 +477,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			}
 
 			cache.SetLayer(0)
-			tensor := context.FromFloatSlice(test.in, test.inShape...)
+			tensor := context.FromFloats(test.in, test.inShape...)
 			cache.Put(context, tensor, tensor)
 
 			out, _, mask := cache.Get(context)
@@ -378,15 +511,15 @@ func TestCanResume(t *testing.T) {
 	defer context.Close()
 
 	err := cache.StartForward(context, input.Batch{
-		Positions: []int32{0, 1, 2, 3},
-		Sequences: []int{0, 0, 0, 0},
+		Positions: []int32{0, 1, 2, 3, 4},
+		Sequences: []int{0, 0, 0, 0, 0},
 	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
 	}
 
 	cache.SetLayer(0)
-	tensor := context.FromFloatSlice([]float32{1, 2, 3, 4}, 1, 1, 4)
+	tensor := context.FromFloats([]float32{1, 2, 3, 4, 5}, 1, 1, 5)
 	cache.Put(context, tensor, tensor)
 
 	// with window size 4, nothing has slid out of the window yet
@@ -402,18 +535,21 @@ func TestCanResume(t *testing.T) {
 	if !cache.CanResume(0, 3) {
 		t.Errorf("CanResume(0, 3) = false, want true (latest position)")
 	}
+	if !cache.CanResume(0, 4) {
+		t.Errorf("CanResume(0, 4) = false, want true (latest position)")
+	}
 
-	// shift window by adding position 4
+	// shift window by adding position 5
 	err = cache.StartForward(context, input.Batch{
-		Positions: []int32{4, 5},
-		Sequences: []int{0, 0},
+		Positions: []int32{5},
+		Sequences: []int{0},
 	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
 	}
 
 	cache.SetLayer(0)
-	tensor = context.FromFloatSlice([]float32{5, 6}, 1, 1, 2)
+	tensor = context.FromFloats([]float32{6}, 1, 1, 1)
 	cache.Put(context, tensor, tensor)
 
 	// only the latest position has overlapping windows
@@ -434,6 +570,70 @@ func TestCanResume(t *testing.T) {
 	}
 	if !cache.CanResume(0, 5) {
 		t.Errorf("after shift: CanResume(0, 5) = false, want true (latest position)")
+	}
+}
+
+func TestCanResumeSWAMem(t *testing.T) {
+	backend := &testBackend{}
+	windowSize := int32(4)
+	memSize := int32(5)
+	cache := NewSWAMemCache(windowSize, memSize, nil)
+	defer cache.Close()
+
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
+
+	context := backend.NewContext()
+	defer context.Close()
+
+	err := cache.StartForward(context, input.Batch{
+		Positions: []int32{0, 1, 2, 3, 4, 5, 6},
+		Sequences: []int{0, 0, 0, 0, 0, 0, 0},
+	}, false)
+	if err != nil {
+		t.Fatalf("StartForward failed: %v", err)
+	}
+
+	cache.SetLayer(0)
+	tensor := context.FromFloats([]float32{1, 2, 3, 4, 5, 6, 7}, 1, 1, 7)
+	cache.Put(context, tensor, tensor)
+
+	// shift window by adding position 7
+	err = cache.StartForward(context, input.Batch{
+		Positions: []int32{7},
+		Sequences: []int{0},
+	}, false)
+	if err != nil {
+		t.Fatalf("StartForward failed: %v", err)
+	}
+
+	cache.SetLayer(0)
+	tensor = context.FromFloats([]float32{8}, 1, 1, 1)
+	cache.Put(context, tensor, tensor)
+
+	// only the latest position has overlapping windows
+	if cache.CanResume(0, 0) {
+		t.Errorf("after shift: CanResume(0, 0) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 1) {
+		t.Errorf("after shift: CanResume(0, 1) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 2) {
+		t.Errorf("after shift: CanResume(0, 2) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 3) {
+		t.Errorf("after shift: CanResume(0, 3) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 4) {
+		t.Errorf("after shift: CanResume(0, 4) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 5) {
+		t.Errorf("after shift: CanResume(0, 5) = true, want false (outside window)")
+	}
+	if !cache.CanResume(0, 6) {
+		t.Errorf("after shift: CanResume(0, 6) = false, want true (inside window)")
+	}
+	if !cache.CanResume(0, 7) {
+		t.Errorf("after shift: CanResume(0, 7) = false, want true (latest position)")
 	}
 }
 
@@ -470,7 +670,7 @@ func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return c.Empty(dtype, shape...)
 }
 
-func (c *testContext) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
+func (c *testContext) FromFloats(s []float32, shape ...int) ml.Tensor {
 	t := c.Empty(ml.DTypeF32, shape...).(*testTensor)
 
 	copy(t.data, s)
@@ -478,13 +678,13 @@ func (c *testContext) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
 	return t
 }
 
-func (c *testContext) FromIntSlice(s []int32, shape ...int) ml.Tensor {
+func (c *testContext) FromInts(s []int32, shape ...int) ml.Tensor {
 	f := make([]float32, len(s))
 	for i := range f {
 		f[i] = float32(s[i])
 	}
 
-	out := c.FromFloatSlice(f, shape...)
+	out := c.FromFloats(f, shape...)
 	out.(*testTensor).dtype = ml.DTypeI32
 
 	return out
@@ -496,7 +696,7 @@ func (c *testContext) Arange(start, stop, step float32, dtype ml.DType) ml.Tenso
 		s = append(s, i)
 	}
 
-	out := c.FromFloatSlice(s, len(s))
+	out := c.FromFloats(s, len(s))
 	out.(*testTensor).dtype = dtype
 	return out
 }

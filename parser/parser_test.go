@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -196,6 +197,34 @@ BADCOMMAND param1 value1
 	if !errors.As(err, &parserError) {
 		t.Errorf("unexpected error: expected: %s, actual: %s", parserError.Error(), err.Error())
 	}
+}
+
+func TestParseFileRenderer(t *testing.T) {
+	input := `
+FROM foo
+RENDERER renderer1
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "renderer", Args: "renderer1"}}, modelfile.Commands)
+}
+
+func TestParseFileParser(t *testing.T) {
+	input := `
+FROM foo
+PARSER parser1
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "parser", Args: "parser1"}}, modelfile.Commands)
 }
 
 func TestParseFileMessages(t *testing.T) {
@@ -771,7 +800,10 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	}
 	defer f.Close()
 
-	if err := ggml.WriteGGUF(f, kv, ti); err != nil {
+	base := map[string]any{"general.architecture": "test"}
+	maps.Copy(base, kv)
+
+	if err := ggml.WriteGGUF(f, base, ti); err != nil {
 		t.Fatal(err)
 	}
 	// Calculate sha256 of file

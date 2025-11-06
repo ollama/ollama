@@ -22,6 +22,11 @@ import (
 //
 //	Attention output with shape [d_v, heads, seq_len_q]
 func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
+	return AttentionWithSinks(ctx, query, key, value, nil, scale, cache)
+}
+
+func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
+	ctx.Forward(query)
 	if key != nil && value != nil {
 		if query.Dim(0) != key.Dim(0) {
 			panic(fmt.Errorf("d_k in attention operation does not match between query(%v) and key(%v)", query.Dim(0), key.Dim(0)))
@@ -35,6 +40,7 @@ func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache
 			panic(fmt.Errorf("seq_len_k in attention operation does not match between key(%v) and value(%v)", key.Dim(2), value.Dim(2)))
 		}
 
+		ctx.Forward(key, value)
 		if cache != nil {
 			cache.Put(ctx, key, value)
 		}
@@ -50,7 +56,7 @@ func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache
 	// Only use the fast SDPA implementation if we have a cache, since that's what
 	// will do any expected backend-specific transformations for us
 	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok && cache != nil {
-		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, scale)
+		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, scale)
 	} else {
 		query = query.Permute(ctx, 0, 2, 1, 3)
 		key = key.Permute(ctx, 0, 2, 1, 3)

@@ -22,6 +22,7 @@ void ggml_compute_forward_sqrt(const struct ggml_compute_params * params, struct
 void ggml_compute_forward_sin(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_cos(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_log(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_xielu(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 
 #ifdef __cplusplus
 }

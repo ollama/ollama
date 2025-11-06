@@ -18,6 +18,11 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 		exp  *Duration
 	}{
 		{
+			name: "Unset",
+			req:  `{ }`,
+			exp:  nil,
+		},
+		{
 			name: "Positive Integer",
 			req:  `{ "keep_alive": 42 }`,
 			exp:  &Duration{42 * time.Second},
@@ -25,7 +30,7 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 		{
 			name: "Positive Float",
 			req:  `{ "keep_alive": 42.5 }`,
-			exp:  &Duration{42 * time.Second},
+			exp:  &Duration{42500 * time.Millisecond},
 		},
 		{
 			name: "Positive Integer String",
@@ -293,6 +298,30 @@ func TestToolFunction_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
+	fn := ToolCallFunction{
+		Name:      "echo",
+		Arguments: ToolCallFunctionArguments{"message": "hi"},
+	}
+
+	data, err := json.Marshal(fn)
+	require.NoError(t, err)
+
+	raw := map[string]any{}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Contains(t, raw, "index")
+	assert.Equal(t, float64(0), raw["index"])
+
+	fn.Index = 3
+	data, err = json.Marshal(fn)
+	require.NoError(t, err)
+
+	raw = map[string]any{}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Contains(t, raw, "index")
+	assert.Equal(t, float64(3), raw["index"])
+}
+
 func TestPropertyType_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -374,24 +403,21 @@ func TestPropertyType_MarshalJSON(t *testing.T) {
 }
 
 func TestThinking_UnmarshalJSON(t *testing.T) {
-	trueVal := true
-	falseVal := false
-
 	tests := []struct {
 		name             string
 		input            string
-		expectedThinking *bool
+		expectedThinking *ThinkValue
 		expectedError    bool
 	}{
 		{
 			name:             "true",
 			input:            `{ "think": true }`,
-			expectedThinking: &trueVal,
+			expectedThinking: &ThinkValue{Value: true},
 		},
 		{
 			name:             "false",
 			input:            `{ "think": false }`,
-			expectedThinking: &falseVal,
+			expectedThinking: &ThinkValue{Value: false},
 		},
 		{
 			name:             "unset",
@@ -399,8 +425,23 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			expectedThinking: nil,
 		},
 		{
-			name:             "invalid",
-			input:            `{ "think": "true" }`,
+			name:             "string_high",
+			input:            `{ "think": "high" }`,
+			expectedThinking: &ThinkValue{Value: "high"},
+		},
+		{
+			name:             "string_medium",
+			input:            `{ "think": "medium" }`,
+			expectedThinking: &ThinkValue{Value: "medium"},
+		},
+		{
+			name:             "string_low",
+			input:            `{ "think": "low" }`,
+			expectedThinking: &ThinkValue{Value: "low"},
+		},
+		{
+			name:             "invalid_string",
+			input:            `{ "think": "invalid" }`,
 			expectedThinking: nil,
 			expectedError:    true,
 		},
@@ -414,8 +455,60 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, test.expectedThinking, req.Think)
+				if test.expectedThinking == nil {
+					assert.Nil(t, req.Think)
+				} else {
+					require.NotNil(t, req.Think)
+					assert.Equal(t, test.expectedThinking.Value, req.Think.Value)
+				}
 			}
+		})
+	}
+}
+
+func TestToolFunctionParameters_String(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   ToolFunctionParameters
+		expected string
+	}{
+		{
+			name: "simple object with string property",
+			params: ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"name"},
+				Properties: map[string]ToolProperty{
+					"name": {
+						Type:        PropertyType{"string"},
+						Description: "The name of the person",
+					},
+				},
+			},
+			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"The name of the person"}}}`,
+		},
+		{
+			name: "marshal failure returns empty string",
+			params: ToolFunctionParameters{
+				Type: "object",
+				Defs: func() any {
+					// Create a cycle that will cause json.Marshal to fail
+					type selfRef struct {
+						Self *selfRef
+					}
+					s := &selfRef{}
+					s.Self = s
+					return s
+				}(),
+				Properties: map[string]ToolProperty{},
+			},
+			expected: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := test.params.String()
+			assert.Equal(t, test.expected, result)
 		})
 	}
 }

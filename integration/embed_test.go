@@ -8,11 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
 
 func dotProduct[V float32 | float64](v1, v2 []V) V {
 	var result V = 0
+	if len(v1) != len(v2) {
+		return result
+	}
+
 	for i := 0; i < len(v1); i++ {
 		result += v1[i] * v2[i]
 	}
@@ -28,7 +33,113 @@ func magnitude[V float32 | float64](v []V) V {
 }
 
 func cosineSimilarity[V float32 | float64](v1, v2 []V) V {
+	mag1 := magnitude(v1)
+	mag2 := magnitude(v2)
+
+	if mag1 == 0 || mag2 == 0 {
+		return 0
+	}
+
 	return dotProduct(v1, v2) / (magnitude(v1) * magnitude(v2))
+}
+
+func euclideanDistance[V float32 | float64](v1, v2 []V) V {
+	if len(v1) != len(v2) {
+		return V(math.Inf(1))
+	}
+
+	var sum V = 0
+	for i := 0; i < len(v1); i++ {
+		diff := v1[i] - v2[i]
+		sum += diff * diff
+	}
+
+	return V(math.Sqrt(float64(sum)))
+}
+
+func manhattanDistance[V float32 | float64](v1, v2 []V) V {
+	if len(v1) != len(v2) {
+		return V(math.Inf(1))
+	}
+
+	var sum V = 0
+	for i := 0; i < len(v1); i++ {
+		sum += V(math.Abs(float64(v1[i] - v2[i])))
+	}
+
+	return sum
+}
+
+func TestEmbedCosineDistanceCorrelation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	for _, model := range libraryEmbedModels {
+		t.Run(model, func(t *testing.T) {
+			testCases := []struct {
+				a string
+				b string
+				c string
+			}{
+				{"cat", "kitten", "dog"},
+				{"king", "queen", "baron"},
+				{"paris", "london", "vancouver"},
+				{"The cat is sleeping on the sofa", "A feline is sleeping on the couch", "Quantum physics is complex"},
+				{"I love programming in python", "Coding in python brings me joy", "Pizza is delicious"},
+				{"Machine learning is fascinating", "Artificial intelligence is amazing", "I need to buy groceries"},
+				{"The quick brown fox jumps over the lazy dog", "A fast brown fox leaps over a sleepy dog", "The weather is warm and sunny today"},
+			}
+
+			for _, tc := range testCases {
+				testEmbed := make(map[string][]float32)
+				strs := []string{tc.a, tc.b, tc.c}
+
+				req := api.EmbedRequest{
+					Model:     model,
+					Input:     strs,
+					KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				}
+
+				resp, err := embedTestHelper(ctx, client, t, req)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				for cnt, v := range resp.Embeddings {
+					testEmbed[strs[cnt]] = v
+				}
+
+				// Calculate cosine similarities
+				cosAB := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.b])
+				cosAC := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.c])
+
+				// Calculate distances
+				distAB := euclideanDistance(testEmbed[tc.a], testEmbed[tc.b])
+				distAC := euclideanDistance(testEmbed[tc.a], testEmbed[tc.c])
+
+				manhattanAB := manhattanDistance(testEmbed[tc.a], testEmbed[tc.b])
+				manhattanAC := manhattanDistance(testEmbed[tc.a], testEmbed[tc.c])
+
+				// Consistency check: if cosAB > cosAC, then distances should be smaller
+				if cosAB > cosAC {
+					if distAB >= distAC {
+						t.Errorf("Euclidean distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but distAB=%f >= distAC=%f",
+							model, tc.a, tc.b, tc.c, cosAB, cosAC, distAB, distAC)
+					}
+
+					if manhattanAB >= manhattanAC {
+						t.Errorf("Manhattan distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but manhattanAB=%f >= manhattanAC=%f",
+							model, tc.a, tc.b, tc.c, cosAB, cosAC, manhattanAB, manhattanAC)
+					}
+				} else {
+					t.Errorf("Cosine Similarity inconsistency (%s): cosinSim(%s, %s) < cosinSim(%s, %s)",
+						model, tc.a, tc.b, tc.a, tc.c)
+				}
+			}
+		})
+	}
 }
 
 func TestAllMiniLMEmbeddings(t *testing.T) {
@@ -38,14 +149,14 @@ func TestAllMiniLMEmbeddings(t *testing.T) {
 	defer cleanup()
 
 	req := api.EmbeddingRequest{
-		Model:  "all-minilm",
-		Prompt: "why is the sky blue?",
+		Model:     "all-minilm",
+		Prompt:    "why is the sky blue?",
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 	}
 
 	res, err := embeddingTestHelper(ctx, client, t, req)
-
 	if err != nil {
-		t.Fatalf("error: %v", err)
+		t.Fatal(err)
 	}
 
 	if len(res.Embedding) != 384 {
@@ -73,9 +184,8 @@ func TestAllMiniLMEmbed(t *testing.T) {
 	}
 
 	res, err := embedTestHelper(ctx, client, t, req)
-
 	if err != nil {
-		t.Fatalf("error: %v", err)
+		t.Fatal(err)
 	}
 
 	if len(res.Embeddings) != 1 {
@@ -111,9 +221,8 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 	}
 
 	res, err := embedTestHelper(ctx, client, t, req)
-
 	if err != nil {
-		t.Fatalf("error: %v", err)
+		t.Fatal(err)
 	}
 
 	if len(res.Embeddings) != 2 {
@@ -155,93 +264,148 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 
 	truncTrue, truncFalse := true, false
 
-	type testReq struct {
-		Name    string
-		Request api.EmbedRequest
+	want, err := embedTestHelper(ctx, client, t, api.EmbedRequest{
+		Model: "all-minilm",
+		Input: "why",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	reqs := []testReq{
+	cases := []struct {
+		name    string
+		request api.EmbedRequest
+		check   func(*api.EmbedResponse, error)
+	}{
 		{
-			Name: "Target Truncation",
-			Request: api.EmbedRequest{
+			name: "target truncation",
+			request: api.EmbedRequest{
 				Model: "all-minilm",
 				Input: "why",
 			},
-		},
-		{
-			Name: "Default Truncate",
-			Request: api.EmbedRequest{
-				Model:   "all-minilm",
-				Input:   "why is the sky blue?",
-				Options: map[string]any{"num_ctx": 1},
+			check: func(got *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if diff := cmp.Diff(want.Embeddings[0], got.Embeddings[0]); diff != "" {
+					t.Errorf("embedding mismatch (-want +got):\n%s", diff)
+				}
 			},
 		},
 		{
-			Name: "Explicit Truncate",
-			Request: api.EmbedRequest{
+			name: "default truncate",
+			request: api.EmbedRequest{
+				Model:   "all-minilm",
+				Input:   "why is the sky blue?",
+				Options: map[string]any{"num_ctx": 3},
+			},
+			check: func(got *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(want.Embeddings[0], got.Embeddings[0]); diff != "" {
+					t.Errorf("embedding mismatch (-want +got):\n%s", diff)
+				}
+			},
+		},
+		{
+			name: "explicit truncate",
+			request: api.EmbedRequest{
+				Model:    "all-minilm",
+				Input:    "why is the sky blue?",
+				Truncate: &truncTrue,
+				Options:  map[string]any{"num_ctx": 3},
+			},
+			check: func(got *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(want.Embeddings[0], got.Embeddings[0]); diff != "" {
+					t.Errorf("embedding mismatch (-want +got):\n%s", diff)
+				}
+			},
+		},
+		{
+			name: "truncate error",
+			request: api.EmbedRequest{
+				Model:    "all-minilm",
+				Input:    "why is the sky blue?",
+				Truncate: &truncFalse,
+				Options:  map[string]any{"num_ctx": 3},
+			},
+			check: func(res *api.EmbedResponse, err error) {
+				if err.Error() != "input exceeds maximum context length" {
+					t.Fatalf("expected truncation error, got: %v", err)
+				}
+			},
+		},
+		{
+			name: "input after truncate error",
+			request: api.EmbedRequest{
 				Model:    "all-minilm",
 				Input:    "why is the sky blue?",
 				Truncate: &truncTrue,
 				Options:  map[string]any{"num_ctx": 1},
 			},
+			check: func(res *api.EmbedResponse, err error) {
+				if err.Error() != "input after truncation exceeds maximum context length" {
+					t.Fatalf("expected truncation error, got: %v", err)
+				}
+			},
+		},
+		{
+			name: "input after truncate error",
+			request: api.EmbedRequest{
+				Model:    "all-minilm",
+				Input:    "why is the sky blue?",
+				Truncate: &truncTrue,
+				Options:  map[string]any{"num_ctx": 0},
+			},
+			check: func(res *api.EmbedResponse, err error) {
+				if err.Error() != "input after truncation exceeds maximum context length" {
+					t.Fatalf("expected truncation error, got: %v", err)
+				}
+			},
+		},
+		{
+			name: "boundary truncation",
+			request: api.EmbedRequest{
+				Model:   "all-minilm",
+				Input:   "why is the sky blue? Why is the sky blue? hi there my",
+				Options: map[string]any{"num_ctx": 16},
+			},
+			check: func(res *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+			},
 		},
 	}
 
-	res := make(map[string]*api.EmbedResponse)
-
-	for _, req := range reqs {
-		response, err := embedTestHelper(ctx, client, t, req.Request)
-		if err != nil {
-			t.Fatalf("error: %v", err)
-		}
-		res[req.Name] = response
-	}
-
-	if res["Target Truncation"].Embeddings[0][0] != res["Default Truncate"].Embeddings[0][0] {
-		t.Fatal("expected default request to truncate correctly")
-	}
-
-	if res["Default Truncate"].Embeddings[0][0] != res["Explicit Truncate"].Embeddings[0][0] {
-		t.Fatal("expected default request and truncate true request to be the same")
-	}
-
-	// check that truncate set to false returns an error if context length is exceeded
-	_, err := embedTestHelper(ctx, client, t, api.EmbedRequest{
-		Model:    "all-minilm",
-		Input:    "why is the sky blue?",
-		Truncate: &truncFalse,
-		Options:  map[string]any{"num_ctx": 1},
-	})
-
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	for _, req := range cases {
+		t.Run(req.name, func(t *testing.T) {
+			req.check(embedTestHelper(ctx, client, t, req.request))
+		})
 	}
 }
 
 func embeddingTestHelper(ctx context.Context, client *api.Client, t *testing.T, req api.EmbeddingRequest) (*api.EmbeddingResponse, error) {
+	t.Helper()
+
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("failed to pull model %s: %v", req.Model, err)
+		t.Fatal(err)
 	}
 
-	response, err := client.Embeddings(ctx, &req)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return response, nil
+	return client.Embeddings(ctx, &req)
 }
 
 func embedTestHelper(ctx context.Context, client *api.Client, t *testing.T, req api.EmbedRequest) (*api.EmbedResponse, error) {
+	t.Helper()
+
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("failed to pull model %s: %v", req.Model, err)
+		t.Fatal(err)
 	}
 
-	response, err := client.Embed(ctx, &req)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return response, nil
+	return client.Embed(ctx, &req)
 }

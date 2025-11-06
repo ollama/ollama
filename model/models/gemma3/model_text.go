@@ -53,7 +53,10 @@ func newTextModel(c fs.Config) *TextModel {
 			eps:            c.Float("attention.layer_norm_rms_epsilon", 1e-06),
 			ropeLocalBase:  c.Float("rope.local.freq_base", 10000.0),
 			ropeGlobalBase: c.Float("rope.global.freq_base", 1000000.0),
-			ropeScale:      c.Float("rope.freq_scale", 1.0),
+			ropeScale:      1,
+			// NOTE: the rope.scaling.factor is set incorrectly in the official QAT weights
+			//       (8 instead of 1)
+			// ropeScale:      c.Float("rope.scaling.factor", 1.0),
 		},
 	}
 
@@ -84,7 +87,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
 	q = sa.QueryNorm.Forward(ctx, q, opts.eps)
-	q = fast.RoPE(ctx, q, positionIDs, opts.attnKeyLen, ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	q = fast.RoPE(ctx, q, positionIDs, opts.attnKeyLen, ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -95,7 +98,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
 	k = sa.KeyNorm.Forward(ctx, k, opts.eps)
-	k = fast.RoPE(ctx, k, positionIDs, opts.attnKeyLen, ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	k = fast.RoPE(ctx, k, positionIDs, opts.attnKeyLen, ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
@@ -113,7 +116,7 @@ func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.T
 		ropeBase = m.TextConfig.ropeGlobalBase
 	}
 
-	return fast.RoPE(ctx, key, shift, m.TextConfig.attnKeyLen, ropeBase, m.TextConfig.ropeScale, rope.WithTypeNeoX()), nil
+	return fast.RoPE(ctx, key, shift, m.TextConfig.attnKeyLen, ropeBase, 1/m.TextConfig.ropeScale, rope.WithTypeNeoX()), nil
 }
 
 type TextMLP struct {
@@ -123,7 +126,7 @@ type TextMLP struct {
 }
 
 func (mlp *TextMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextConfig) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
@@ -159,8 +162,10 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs,
 	return hiddenState.Add(ctx, residual)
 }
 
-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
-	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
+func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cache) ml.Tensor {
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+
+	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextConfig.hiddenSize)))
 
 	// set image embeddings
@@ -177,26 +182,28 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	for i, layer := range m.Layers {
 		// gemma alternates between the sliding window (local) and causal (global)
 		// kv cache every 6 layers
-		cacheType := cacheTypeSWA
-		if (i+1)%gemmaGlobalCacheCount == 0 {
-			cacheType = cacheTypeCausal
-		}
-		cache.SetLayer(i)
-		wc := cache.(*kvcache.WrapperCache)
-		wc.SetLayerType(cacheType)
+		if cache != nil {
+			cacheType := cacheTypeSWA
+			if (i+1)%gemmaGlobalCacheCount == 0 {
+				cacheType = cacheTypeCausal
+			}
+			cache.SetLayer(i)
+			wc := cache.(*kvcache.WrapperCache)
+			wc.SetLayerType(cacheType)
 
-		if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
-			causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
+			if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
+				causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
+			}
 		}
 
 		var lastLayerOutputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
+			lastLayerOutputs = batch.Outputs
 		}
 
 		hiddenState = layer.Forward(ctx, i, hiddenState, positions, lastLayerOutputs, cache, m.TextConfig)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
-	return m.Output.Forward(ctx, hiddenState)
+	return hiddenState
 }
