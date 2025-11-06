@@ -134,7 +134,7 @@ export default function Thinking({
         ref={wrapperRef}
         className={`text-xs text-neutral-500 dark:text-neutral-500 rounded-md
           transition-[max-height,opacity] duration-300 ease-in-out relative ml-6 mt-2
-          ${isCollapsed ? "overflow-hidden" : "overflow-y-auto max-h-28"}`}
+          ${isCollapsed ? "overflow-hidden" : activelyThinking ? "overflow-y-auto max-h-28" : "overflow-y-auto"}`}
         style={{
           maxHeight: isCollapsed ? getMaxHeight() : undefined,
           opacity: isCollapsed && finishedThinking ? 0 : 1,
