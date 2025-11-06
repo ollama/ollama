@@ -320,6 +320,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
 - [Alpaca WebUI](https://github.com/mmo80/alpaca-webui)
 - [OllamaGUI](https://github.com/enoch1118/ollamaGUI)
+- [OllamaGUI](https://github.com/MedGm/OllamaGUI) (Lightweight, privacy-first desktop app for chatting with local Ollama models on Linux)
 - [OpenAOE](https://github.com/InternLM/OpenAOE)
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X](https://github.com/mrdjohnson/llm-x) (Progressive Web App)
