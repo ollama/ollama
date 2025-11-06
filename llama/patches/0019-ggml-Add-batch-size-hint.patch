@@ -178,19 +178,19 @@ index 3191faaa4..32f14c811 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 5b852f690..c555cd30f 100644
+index cc201afff..02d413467 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2684,7 +2684,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+@@ -2693,7 +2693,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
  
  #ifdef USE_CUDA_GRAPH
- static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
+ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
 -    bool use_cuda_graph) {
 +    int batch_size, bool use_cuda_graph) {
  
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
-     cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
-@@ -2718,24 +2718,34 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
+ 
+@@ -2726,24 +2726,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
  #endif
          }
  
@@ -240,8 +240,8 @@ index 5b852f690..c555cd30f 100644
 +            }
          }
  
-         if (node->op == GGML_OP_CPY) {
-@@ -3132,7 +3142,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+         if (!use_cuda_graph) {
+@@ -3128,7 +3138,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
      }
  }
  
@@ -250,12 +250,12 @@ index 5b852f690..c555cd30f 100644
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
      ggml_cuda_set_device(cuda_ctx->device);
-@@ -3170,7 +3180,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3166,7 +3176,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      if (use_cuda_graph) {
          cuda_graph_update_required = is_cuda_graph_update_required(cuda_ctx, cgraph);
  
--        use_cuda_graph = check_node_graph_compatibility_and_refresh_copy_ops(cuda_ctx, cgraph, use_cuda_graph);
-+        use_cuda_graph = check_node_graph_compatibility_and_refresh_copy_ops(cuda_ctx, cgraph, batch_size, use_cuda_graph);
+-        use_cuda_graph = check_node_graph_compatibility(cgraph, use_cuda_graph);
++        use_cuda_graph = check_node_graph_compatibility(cgraph, batch_size, use_cuda_graph);
  
          // Disable CUDA graphs (from the next token) if the use-case is demanding too many consecutive graph updates.
          if (use_cuda_graph && cuda_graph_update_required) {
@@ -278,10 +278,10 @@ index f2ff9f322..05ff6a5a6 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ed83236f4..bd3ece516 100644
+index 216dc167c..3a6bbe564 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -12015,7 +12015,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -12357,7 +12357,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -290,7 +290,7 @@ index ed83236f4..bd3ece516 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -12211,6 +12211,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -12561,6 +12561,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);

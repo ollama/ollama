@@ -466,29 +466,45 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         list(APPEND ARCH_FLAGS "-march=${MARCH_STR}" -mabi=lp64d)
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         message(STATUS "s390x detected")
-        list(APPEND GGML_CPU_SOURCES ggml-cpu/arch/s390/quants.c)
-        file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
-        string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/arch/s390/quants.c)
 
-        # TODO: Separation to determine activation of VX/VXE/VXE2
-        if (${S390X_M} MATCHES "8561|8562")
-            message(STATUS "z15 target")
-            list(APPEND ARCH_FLAGS -march=z15)
-        elseif (${S390X_M} MATCHES "3931")
-            message(STATUS "z16 target")
-            list(APPEND ARCH_FLAGS -march=z16)
-        elseif (${S390X_M} MATCHES "9175|9176")
-            # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
-            #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
-            message(STATUS "z17 target")
-            list(APPEND ARCH_FLAGS -march=arch15)
-        else()
-            message(STATUS "Unknown target")
-            message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
-            list(APPEND ARCH_FLAGS -march=native -mtune=native)
+        # for native compilation
+        if (GGML_NATIVE)
+            # check machine level to determine target
+            file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
+            string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+
+            # TODO: Separation to determine activation of VX/VXE/VXE2
+            if (${S390X_M} MATCHES "8561|8562")
+                message(STATUS "z15 target")
+                list(APPEND ARCH_FLAGS -march=z15)
+            elseif (${S390X_M} MATCHES "3931")
+                message(STATUS "z16 target")
+                list(APPEND ARCH_FLAGS -march=z16)
+            elseif (${S390X_M} MATCHES "9175|9176")
+                # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
+                #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
+                message(STATUS "z17 target")
+                list(APPEND ARCH_FLAGS -march=arch15)
+            else()
+                message(STATUS "Unknown target")
+                message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
+                list(APPEND ARCH_FLAGS -march=native -mtune=native)
+            endif()
+        # for cross-compilation
+        elseif(GGML_CPU_ALL_VARIANTS)
+            # range through IBM z15 to z17
+            # NOTE: update when a new hardware level is released
+            foreach (ZHW RANGE 15 17)
+                if(DEFINED GGML_INTERNAL_Z${ZHW})
+                    message(STATUS "z${ZHW} cross-compile target")
+                    list(APPEND ARCH_FLAGS -march=z${ZHW})
+                endif()
+            endforeach()
         endif()
 
-        if (GGML_VXE)
+        if (GGML_VXE OR GGML_INTERNAL_VXE)
             message(STATUS "VX/VXE/VXE2 enabled")
             list(APPEND ARCH_FLAGS -mvx -mzvector)
             list(APPEND ARCH_DEFINITIONS GGML_VXE)
