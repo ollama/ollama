@@ -81,6 +81,70 @@ static __global__ void upscale_f32_bilinear(const float * x, float * dst,
     dst[index] = result;
 }
 
+namespace bicubic_interpolation {
+// https://en.wikipedia.org/wiki/Bicubic_interpolation#Bicubic_convolution_algorithm
+__device__ const float a = -0.75f; // use alpha = -0.75 (same as PyTorch)
+
+static __device__ float weight1(float x) { return ((a + 2) * x - (a + 3)) * x * x + 1; };
+static __device__ float weight2(float x) { return ((a * x - 5 * a) * x + 8 * a) * x - 4 * a; };
+
+static __device__ float bicubic(float p0, float p1, float p2, float p3, float x) {
+    const float w0 = weight2(x + 1);
+    const float w1 = weight1(x + 0);
+    const float w2 = weight1(1 - x);
+    const float w3 = weight2(2 - x);
+    return p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3;
+};
+} // namespace bicubic_interpolation
+
+static __global__ void upscale_f32_bicubic(const float * x, float * dst,
+        const int nb00, const int nb01, const int nb02, const int nb03,
+        const int ne00_src, const int ne01_src,
+        const int ne10_dst, const int ne11_dst, const int ne12_dst, const int ne13_dst,
+        const float sf0, const float sf1, const float sf2, const float sf3,
+        const float pixel_offset) {
+    using bicubic_interpolation::bicubic;
+
+    const int64_t index              = threadIdx.x + blockIdx.x * blockDim.x;
+    const int64_t dst_total_elements = ne10_dst * ne11_dst * ne12_dst * ne13_dst;
+
+    if (index >= dst_total_elements) {
+        return;
+    }
+
+    const int i10_dst = index % ne10_dst;
+    const int i11_dst = (index / ne10_dst) % ne11_dst;
+    const int i12_dst = (index / (ne10_dst * ne11_dst)) % ne12_dst;
+    const int i13_dst = index / (ne10_dst * ne11_dst * ne12_dst);
+
+    const int i02_src = (int)(i12_dst / sf2);
+    const int i03_src = (int)(i13_dst / sf3);
+
+    const float y_src_f = ((float)i11_dst + pixel_offset) / sf1 - pixel_offset;
+    const int y0_src    = (int)floorf(y_src_f);
+    const float dy      = y_src_f - (float)y0_src;
+
+    const float x_src_f = ((float)i10_dst + pixel_offset) / sf0 - pixel_offset;
+    const int x0_src    = (int)floorf(x_src_f);
+    const float dx      = x_src_f - (float)x0_src;
+
+    const char * x_base = (const char *)x + (int64_t)i02_src * nb02 + (int64_t)i03_src * nb03;
+
+    auto load = [=](int x_off, int y_off) -> float {
+        int i00_src = max(0, min(x0_src + x_off, ne00_src - 1));
+        int i01_src = max(0, min(y0_src + y_off, ne01_src - 1));
+        return *(const float *)(x_base + (int64_t)i00_src * nb00 + (int64_t)i01_src * nb01);
+    };
+
+    const float result = bicubic(
+        bicubic(load(-1,-1), load(0,-1), load(1,-1), load(2,-1), dx),
+        bicubic(load(-1, 0), load(0, 0), load(1, 0), load(2, 0), dx),
+        bicubic(load(-1, 1), load(0, 1), load(1, 1), load(2, 1), dx),
+        bicubic(load(-1, 2), load(0, 2), load(1, 2), load(2, 2), dx), dy);
+
+    dst[index] = result;
+}
+
 static void upscale_f32_cuda(const float * x, float * dst,
         const int nb00, const int nb01, const int nb02, const int nb03,
         const int ne10, const int ne11, const int ne12, const int ne13,
@@ -104,6 +168,18 @@ static void upscale_f32_bilinear_cuda(const float * x, float * dst,
     upscale_f32_bilinear<<<num_blocks, CUDA_UPSCALE_BLOCK_SIZE,0,stream>>>(x, dst, nb00, nb01, nb02, nb03, ne00_src, ne01_src, ne10_dst, ne11_dst, ne12_dst, ne13_dst, sf0, sf1, sf2, sf3, pixel_offset);
 }
 
+static void upscale_f32_bicubic_cuda(const float * x, float * dst,
+        const int nb00, const int nb01, const int nb02, const int nb03,
+        const int ne00_src, const int ne01_src,
+        const int ne10_dst, const int ne11_dst, const int ne12_dst, const int ne13_dst,
+        const float sf0, const float sf1, const float sf2, const float sf3,
+        const float pixel_offset, cudaStream_t stream) {
+    const int64_t dst_size   = ne10_dst * ne11_dst * ne12_dst * ne13_dst;
+    const int64_t num_blocks = (dst_size + CUDA_UPSCALE_BLOCK_SIZE - 1) / CUDA_UPSCALE_BLOCK_SIZE;
+
+    upscale_f32_bicubic<<<num_blocks, CUDA_UPSCALE_BLOCK_SIZE,0,stream>>>(x, dst, nb00, nb01, nb02, nb03, ne00_src, ne01_src, ne10_dst, ne11_dst, ne12_dst, ne13_dst, sf0, sf1, sf2, sf3, pixel_offset);
+}
+
 void ggml_cuda_op_upscale(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const float * src0_d = (const float *)src0->data;
@@ -121,16 +197,21 @@ void ggml_cuda_op_upscale(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     float sf2 = (float)dst->ne[2]/src0->ne[2];
     const float sf3 = (float)dst->ne[3]/src0->ne[3];
 
+    float pixel_offset = 0.5f;
+    if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
+        sf0          = dst->ne[0] > 1 && src0->ne[0] > 1 ? (float)(dst->ne[0] - 1) / (src0->ne[0] - 1) : sf0;
+        sf1          = dst->ne[1] > 1 && src0->ne[1] > 1 ? (float)(dst->ne[1] - 1) / (src0->ne[1] - 1) : sf1;
+        pixel_offset = 0.0f;
+    }
+
     if (mode == GGML_SCALE_MODE_NEAREST) {
         upscale_f32_cuda(src0_d, dst_d, src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3], dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3], sf0, sf1, sf2, sf3, stream);
     } else if (mode == GGML_SCALE_MODE_BILINEAR) {
-        float pixel_offset = 0.5f;
-        if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
-            sf0          = (float)(dst->ne[0] - 1) / (src0->ne[0] - 1);
-            sf1          = (float)(dst->ne[1] - 1) / (src0->ne[1] - 1);
-            pixel_offset = 0.0f;
-        }
         upscale_f32_bilinear_cuda(src0_d, dst_d, src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
+                                 src0->ne[0], src0->ne[1], dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
+                                 sf0, sf1, sf2, sf3, pixel_offset, stream);
+    } else if (mode == GGML_SCALE_MODE_BICUBIC) {
+        upscale_f32_bicubic_cuda(src0_d, dst_d, src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
                                  src0->ne[0], src0->ne[1], dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
                                  sf0, sf1, sf2, sf3, pixel_offset, stream);
     }

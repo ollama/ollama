@@ -1615,13 +1615,8 @@ static void ggml_compute_forward_mul_mat_id(
             chunk_size = 64;
         }
 
-#if defined(__aarch64__)
-        // disable for ARM
-        const bool disable_chunking = true;
-#else
         // disable for NUMA
         const bool disable_chunking = ggml_is_numa();
-#endif // defined(__aarch64__)
 
         int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
         int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;

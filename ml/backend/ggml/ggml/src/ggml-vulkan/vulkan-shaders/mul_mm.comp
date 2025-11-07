@@ -100,7 +100,6 @@ layout (push_constant) uniform parameter
 layout (constant_id = 0) const uint BLOCK_SIZE = 64;
 layout (constant_id = 1) const uint BM = 64;
 layout (constant_id = 2) const uint BN = 64;
-layout (constant_id = 3) const uint BK = 16;  // Assumed to be 32 if working with a quant
 layout (constant_id = 4) const uint WM = 32;
 layout (constant_id = 5) const uint WN = 32;
 layout (constant_id = 6) const uint WMITER = 2;
@@ -108,6 +107,14 @@ layout (constant_id = 7) const uint TM = 4;
 layout (constant_id = 8) const uint TN = 2;
 layout (constant_id = 9) const uint TK = 1;  // Only needed for coopmat
 layout (constant_id = 10) const uint WARP = 32;
+
+#if defined(DATA_A_F32) || defined(DATA_A_F16)
+#define BK 32
+#define BK_STEP 4
+#else
+layout (constant_id = 3) const uint BK = 16;  // Assumed to be 32 if working with a quant
+#define BK_STEP 2
+#endif
 
 #ifdef COOPMAT
 #define SHMEM_STRIDE (BK / 2 + 4)
@@ -120,81 +127,11 @@ shared FLOAT_TYPE_VEC2 buf_b[BN * SHMEM_STRIDE];
 
 #define NUM_WARPS (BLOCK_SIZE / WARP)
 
-#ifdef MUL_MAT_ID
-shared u16vec2 row_ids[BN];
-uint _ne1;
-
-#ifdef MUL_MAT_ID_USE_SUBGROUPS
-shared uvec4 ballots_sh[NUM_WARPS];
-
-void load_row_ids(uint expert_idx, bool nei0_is_pow2, uint ic) {
-    _ne1 = 0;
-    uint num_elements = p.nei1 * p.nei0;
-    uint nei0shift = findLSB(p.nei0);
-
-    uint ids[16];
-    uint iter = 0;
-
-    for (uint j = 0; j < num_elements; j += BLOCK_SIZE) {
-        // prefetch up to 16 elements
-        if (iter == 0) {
-            [[unroll]] for (uint k = 0; k < 16; ++k) {
-                uint i = j + gl_LocalInvocationIndex + k*BLOCK_SIZE;
-                bool in_range = i < num_elements;
-                uint ii1;
-                if (nei0_is_pow2) {
-                    ii1 = i >> nei0shift;
-                } else {
-                    ii1 = i / p.nei0;
-                }
-                uint ii0 = i - ii1 * p.nei0;
-                ids[k] = in_range ? data_ids[ii1*p.nbi1 + ii0] : 0;
-            }
-        }
-        uint i = j + gl_LocalInvocationIndex;
-        bool in_range = i < num_elements;
-        uint ii1;
-        if (nei0_is_pow2) {
-            ii1 = i >> nei0shift;
-        } else {
-            ii1 = i / p.nei0;
-        }
-        uint ii0 = i - ii1 * p.nei0;
-        uint id = ids[iter++];
-        uvec4 ballot = subgroupBallot(in_range && id == expert_idx);
-
-        ballots_sh[gl_SubgroupID] = ballot;
-        barrier();
-
-        uint subgroup_base = 0;
-        uint total = 0;
-        for (uint k = 0; k < gl_NumSubgroups; ++k) {
-            if (k == gl_SubgroupID) {
-                subgroup_base = total;
-            }
-            total += subgroupBallotBitCount(ballots_sh[k]);
-        }
-        barrier();
-
-        uint idx = subgroup_base + subgroupBallotExclusiveBitCount(ballot);
-        if (in_range && id == expert_idx && _ne1 + idx >= ic * BN && _ne1 + idx < (ic + 1) * BN) {
-            row_ids[_ne1 + idx - ic * BN] = u16vec2(ii0, ii1);
-        }
-        _ne1 += total;
-        iter &= 15;
-        if (_ne1 >= (ic + 1) * BN) {
-            break;
-        }
-    }
-    barrier();
-}
-#endif // MUL_MAT_ID_USE_SUBGROUPS
-#endif // MUL_MAT_ID
-
 #ifdef COOPMAT
 shared ACC_TYPE coopmat_stage[TM * TN * NUM_WARPS];
 #endif
 
+#include "mul_mm_id_funcs.glsl"
 #include "mul_mm_funcs.glsl"
 
 void main() {
@@ -314,8 +251,13 @@ void main() {
     }
 #else
     ACC_TYPE_VEC2 sums[WMITER * TM * WNITER * TN/2];
+#if defined(DATA_A_F32) || defined(DATA_A_F16)
+    FLOAT_TYPE_VEC4 cache_a[WMITER * TM];
+    FLOAT_TYPE_VEC4 cache_b;
+#else
     FLOAT_TYPE_VEC2 cache_a[WMITER * TM];
     FLOAT_TYPE_VEC2 cache_b;
+#endif
 
     [[unroll]] for (uint i = 0; i < WMITER*TM*WNITER*TN/2; i++) {
         sums[i] = ACC_TYPE_VEC2(0.0f, 0.0f);
@@ -353,24 +295,41 @@ void main() {
             }
         }
 #else
-        [[unroll]] for (uint i = 0; i < BK / 2; i++) {
+        [[unroll]] for (uint i = 0; i < BK / BK_STEP; i++) {
             // Load from shared into cache
             [[unroll]] for (uint wsir = 0; wsir < WMITER; wsir++) {
                 [[unroll]] for (uint j = 0; j < TM; j++) {
+                #if defined(DATA_A_F32) || defined(DATA_A_F16)
+                    cache_a[wsir * TM + j].xy = buf_a[(warp_r * WM + wsir * WSUBM + tiwr * TM + j) * SHMEM_STRIDE + 2 * i    ];
+                    cache_a[wsir * TM + j].zw = buf_a[(warp_r * WM + wsir * WSUBM + tiwr * TM + j) * SHMEM_STRIDE + 2 * i + 1];
+                #else
                     cache_a[wsir * TM + j] = buf_a[(warp_r * WM + wsir * WSUBM + tiwr * TM + j) * SHMEM_STRIDE + i];
+                #endif
                 }
             }
 
             [[unroll]] for (uint wsic = 0; wsic < WNITER; wsic++) {
                 [[unroll]] for (uint cc = 0; cc < TN; cc++) {
+                #if defined(DATA_A_F32) || defined(DATA_A_F16)
+                    cache_b.xy = buf_b[(warp_c * WN + wsic * WSUBN + tiwc * TN + cc) * SHMEM_STRIDE + 2 * i    ];
+                    cache_b.zw = buf_b[(warp_c * WN + wsic * WSUBN + tiwc * TN + cc) * SHMEM_STRIDE + 2 * i + 1];
+                #else
                     cache_b = buf_b[(warp_c * WN + wsic * WSUBN + tiwc * TN + cc) * SHMEM_STRIDE + i];
+                #endif
 
                     [[unroll]] for (uint wsir = 0; wsir < WMITER; wsir++) {
                         [[unroll]] for (uint cr = 0; cr < TM / 2; cr++) {
                             // [WNITER][TN][WMITER][TM / 2] -> [wsic][cc][wsir][cr]
                             const uint sums_idx = (wsic * TN + cc) * WMITER * (TM / 2) + wsir * (TM / 2) + cr;
+                        #if defined(DATA_A_F32) || defined(DATA_A_F16)
+                            sums[sums_idx].x = fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr    ].x), ACC_TYPE(cache_b.x), fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr    ].y), ACC_TYPE(cache_b.y),
+                                               fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr    ].z), ACC_TYPE(cache_b.z), fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr    ].w), ACC_TYPE(cache_b.w), sums[sums_idx].x))));
+                            sums[sums_idx].y = fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr + 1].x), ACC_TYPE(cache_b.x), fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr + 1].y), ACC_TYPE(cache_b.y),
+                                               fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr + 1].z), ACC_TYPE(cache_b.z), fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr + 1].w), ACC_TYPE(cache_b.w), sums[sums_idx].y))));
+                        #else
                             sums[sums_idx].x = fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr    ].x), ACC_TYPE(cache_b.x), fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr    ].y), ACC_TYPE(cache_b.y), sums[sums_idx].x));
                             sums[sums_idx].y = fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr + 1].x), ACC_TYPE(cache_b.x), fma(ACC_TYPE(cache_a[wsir * TM + 2 * cr + 1].y), ACC_TYPE(cache_b.y), sums[sums_idx].y));
+                        #endif
                         }
                     }
                 }

@@ -24,8 +24,8 @@ void main() {
         const uint ql_idx = 32 * ip + il;
         const uint8_t qs = data_a[i].qs[32 * ip + il];
 
-        FLOAT_TYPE dall = FLOAT_TYPE(data_a[i].d.x);
-        FLOAT_TYPE dmin = FLOAT_TYPE(data_a[i].d.y);
+        FLOAT_TYPE dall = FLOAT_TYPE(data_a[i].dm.x);
+        FLOAT_TYPE dmin = FLOAT_TYPE(data_a[i].dm.y);
         data_b[y_idx +  0] = D_TYPE(dall * FLOAT_TYPE((data_a[i].scales[is+0] & 0xF) * ((qs >> 0) & 3)) - dmin * FLOAT_TYPE(data_a[i].scales[is+0] >> 4));
         data_b[y_idx + 32] = D_TYPE(dall * FLOAT_TYPE((data_a[i].scales[is+2] & 0xF) * ((qs >> 2) & 3)) - dmin * FLOAT_TYPE(data_a[i].scales[is+2] >> 4));
         data_b[y_idx + 64] = D_TYPE(dall * FLOAT_TYPE((data_a[i].scales[is+4] & 0xF) * ((qs >> 4) & 3)) - dmin * FLOAT_TYPE(data_a[i].scales[is+4] >> 4));

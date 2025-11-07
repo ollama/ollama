@@ -601,7 +601,10 @@ private:
     }
 
     std::string _resolve_ref(const std::string & ref) {
-        std::string ref_name = ref.substr(ref.find_last_of('/') + 1);
+        auto it = ref.find('#');
+        std::string ref_fragment = it != std::string::npos ? ref.substr(it + 1) : ref;
+        static const std::regex nonalphanumeric_regex(R"([^a-zA-Z0-9-]+)");
+        std::string ref_name = "ref" + std::regex_replace(ref_fragment, nonalphanumeric_regex, "-");
         if (_rules.find(ref_name) == _rules.end() && _refs_being_resolved.find(ref) == _refs_being_resolved.end()) {
             _refs_being_resolved.insert(ref);
             json resolved = _refs[ref];
@@ -774,11 +777,24 @@ public:
                         std::vector<std::string> tokens = string_split(pointer, "/");
                         for (size_t i = 1; i < tokens.size(); ++i) {
                             std::string sel = tokens[i];
-                            if (target.is_null() || !target.contains(sel)) {
+                            if (target.is_object() && target.contains(sel)) {
+                                target = target[sel];
+                            } else if (target.is_array()) {
+                                size_t sel_index;
+                                try {
+                                    sel_index = std::stoul(sel);
+                                } catch (const std::invalid_argument & e) {
+                                    sel_index = target.size();
+                                }
+                                if (sel_index >= target.size()) {
+                                    _errors.push_back("Error resolving ref " + ref + ": " + sel + " not in " + target.dump());
+                                    return;
+                                }
+                                target = target[sel_index];
+                            } else {
                                 _errors.push_back("Error resolving ref " + ref + ": " + sel + " not in " + target.dump());
                                 return;
                             }
-                            target = target[sel];
                         }
                         _refs[ref] = target;
                     }

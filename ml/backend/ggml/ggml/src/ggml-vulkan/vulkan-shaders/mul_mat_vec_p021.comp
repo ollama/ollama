@@ -17,6 +17,8 @@ layout (binding = 2) writeonly buffer D {D_TYPE dst[];};
 layout (binding = 0) readonly buffer AV4 {A_TYPE_VEC4 data_a_v4[];};
 layout (binding = 1) readonly buffer BV4 {B_TYPE_VEC4 data_b_v4[];};
 
+layout (binding = 3) readonly buffer Bias {D_TYPE data_bias[];};
+
 layout(constant_id = 0) const int BLOCK_SIZE = 32;
 // gqa_ratio is in the range [1,8]
 layout(constant_id = 1) const uint gqa_ratio = 1;
@@ -29,6 +31,7 @@ layout (push_constant) uniform parameter
     uint nchannels_y;
     uint b_offset;
     uint d_offset;
+    uint enable_bias;
 } p;
 
 #if !USE_SUBGROUP_ADD
@@ -148,6 +151,9 @@ void main() {
         [[unroll]] for (uint c = 0; c < gqa_ratio; ++c) {
             // dst is not transposed and not permuted
             const uint idst = (channel + c)*nrows_dst + row_dst;
+            if (p.enable_bias != 0) {
+                temp[c] += FLOAT_TYPE(data_bias[idst]);
+            }
             dst[idst] = temp[c];
         }
     }

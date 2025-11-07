@@ -242,6 +242,7 @@
 #define GGML_ROPE_TYPE_NEOX   2
 #define GGML_ROPE_TYPE_MROPE  8
 #define GGML_ROPE_TYPE_VISION 24
+#define GGML_ROPE_TYPE_IMROPE 40 // binary: 101000
 
 #define GGML_MROPE_SECTIONS   4
 
@@ -2107,6 +2108,7 @@ extern "C" {
     enum ggml_scale_mode {
         GGML_SCALE_MODE_NEAREST  = 0,
         GGML_SCALE_MODE_BILINEAR = 1,
+        GGML_SCALE_MODE_BICUBIC  = 2,
 
         GGML_SCALE_MODE_COUNT
     };

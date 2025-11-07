@@ -182,7 +182,7 @@ int32_t mtmd_helper_decode_image_chunk(
     }
 
     const llama_model * model = llama_get_model(lctx);
-    int n_mmproj_embd = llama_model_n_embd(model);
+    int n_mmproj_embd = llama_model_n_embd_inp(model);
     int n_pos_per_embd = mtmd_decode_use_mrope(ctx) ? 4 : 1;
 
     int32_t n_tokens = mtmd_input_chunk_get_n_tokens(chunk);
