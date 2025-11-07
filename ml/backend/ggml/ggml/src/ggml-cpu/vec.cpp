@@ -360,6 +360,13 @@ void ggml_vec_silu_f32(const int n, float * y, const float * x) {
     for (; i + 3 < n; i += 4) {
         vst1q_f32(y + i, ggml_v_silu(vld1q_f32(x + i)));
     }
+#elif defined(__riscv_v_intrinsic)
+    for (int vl; i < n; i += vl) {
+        vl = __riscv_vsetvl_e32m2(n - i);
+        vfloat32m2_t vx = __riscv_vle32_v_f32m2(&x[i], vl);
+        vfloat32m2_t vy = ggml_v_silu_m2(vx, vl);
+        __riscv_vse32_v_f32m2(&y[i], vy, vl);
+    }
 #endif
     for (; i < n; ++i) {
         y[i] = ggml_silu_f32(x[i]);
@@ -460,6 +467,16 @@ ggml_float ggml_vec_cvar_f32(const int n, float * y, const float * x, const floa
         val = vec_mul(val, val);
         sum += (ggml_float)vec_hsum_f32x4(val);
     }
+#elif defined(__riscv_v_intrinsic)
+    vfloat64m1_t vsum = __riscv_vfmv_v_f_f64m1(0, 1);
+    for (int vl; i < n; i += vl) {
+        vl = __riscv_vsetvl_e32m2(n - i);
+        vfloat32m2_t val = __riscv_vfsub_vf_f32m2(__riscv_vle32_v_f32m2(&x[i], vl), mean, vl);
+        __riscv_vse32_v_f32m2(&y[i], val, vl);
+        val = __riscv_vfmul_vv_f32m2(val, val, vl);
+        vsum = __riscv_vfwredusum_vs_f32m2_f64m1(val, vsum, vl);
+    }
+    sum = (ggml_float)__riscv_vfmv_f_s_f64m1_f64(vsum);
 #endif
     for (; i < n; ++i) {
         float val = x[i] - mean;

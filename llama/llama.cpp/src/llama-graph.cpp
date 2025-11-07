@@ -810,6 +810,9 @@ ggml_tensor * llm_graph_context::build_ffn(
             GGML_ABORT("fatal error");
     }
 
+    //expand here so that we can fuse ffn gate
+    ggml_build_forward_expand(gf, cur);
+
     if (gate && type_gate == LLM_FFN_PAR) {
         cur = ggml_mul(ctx0, cur, tmp);
         cb(cur, "ffn_gate_par", il);
@@ -1006,10 +1009,9 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_tensor * weights_sum = ggml_sum_rows(ctx0, weights); // [1, n_tokens]
         cb(weights_sum, "ffn_moe_weights_sum", il);
 
-        if (arch == LLM_ARCH_BAILINGMOE2) {
-            weights_sum = ggml_scale_bias(ctx0, weights_sum, 1.0, 1e-20);
-            cb(weights_sum, "ffn_moe_weights_sum_biased", il);
-        }
+        // Avoid division by zero, clamp to smallest number representable by F16
+        weights_sum = ggml_clamp(ctx0, weights_sum, 6.103515625e-5, INFINITY);
+        cb(weights_sum, "ffn_moe_weights_sum_clamped", il);
 
         weights = ggml_div(ctx0, weights, weights_sum); // [n_expert_used, n_tokens]
         cb(weights, "ffn_moe_weights_norm", il);
@@ -1091,6 +1093,9 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
             GGML_ABORT("fatal error");
     }
 
+    //expand here so that we can fuse ffn gate
+    ggml_build_forward_expand(gf, cur);
+
     experts = build_lora_mm_id(down_exps, cur, selected_experts); // [n_embd, n_expert_used, n_tokens]
     cb(experts, "ffn_moe_down", il);
 
@@ -1137,7 +1142,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
 // input embeddings with optional lora
 ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
-    const int64_t n_embd = hparams.n_embd;
+    const int64_t n_embd = hparams.n_embd_inp();
 
     auto inp = std::make_unique<llm_graph_input_embd>();
 
@@ -1274,7 +1279,7 @@ ggml_tensor * llm_graph_context::build_inp_cross_embd() const {
     //    return cur;
     //}
 
-    const auto n_embd = !cross->v_embd.empty() ? cross->n_embd : hparams.n_embd;
+    const auto n_embd = !cross->v_embd.empty() ? cross->n_embd : hparams.n_embd_inp();
     const auto n_enc  = !cross->v_embd.empty() ? cross->n_enc : hparams.n_ctx_train;
 
     cur = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_enc);
@@ -1587,9 +1592,10 @@ ggml_tensor * llm_graph_context::build_attn(
             int       il) const {
     // these nodes are added to the graph together so that they are not reordered
     // by doing so, the number of splits in the graph is reduced
+    // expand k later to enable rope fusion which directly writes into k-v cache
     ggml_build_forward_expand(gf, q_cur);
-    ggml_build_forward_expand(gf, k_cur);
     ggml_build_forward_expand(gf, v_cur);
+    ggml_build_forward_expand(gf, k_cur);
 
     const auto * mctx_cur = inp->mctx;
 
@@ -2030,7 +2036,7 @@ int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buck
 
     if (bidirectional) {
         relative_bucket += (relative_position > 0) * n_buckets;
-        relative_position = abs(relative_position);
+        relative_position = std::abs(relative_position);
     } else {
         relative_position = -std::min<int32_t>(relative_position, 0);
     }

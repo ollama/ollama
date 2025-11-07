@@ -437,7 +437,7 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
 #if defined(DATA_A_MXFP4)
 vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     const uint vui = uint(data_a[a_offset + ib].qs[iqs]);
-    return vec2(kvalues_mxfp4[vui & 0xF], kvalues_mxfp4[vui >> 4]);
+    return vec2(kvalues_mxfp4[vui & 0xF], kvalues_mxfp4[vui >> 4]) * 0.5;
 }
 vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
     vec2 v0 = dequantize(ib, iqs, a_offset);
@@ -488,9 +488,9 @@ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
 
     const uvec2 qs = uvec2(data_a[a_offset + ib].qs[qsi], data_a[a_offset + ib].qs[qsi + 1]);
     const uint scales = data_a[a_offset + ib].scales[scalesi];
-    const vec2 d = vec2(data_a[a_offset + ib].d);
+    const vec2 dm = vec2(data_a[a_offset + ib].dm);
 
-    return d.x * float(scales & 0xF) * vec2((qs >> qsshift) & 3) - d.y * float(scales >> 4);
+    return dm.x * float(scales & 0xF) * vec2((qs >> qsshift) & 3) - dm.y * float(scales >> 4);
 }
 vec2 get_dm(uint ib, uint a_offset) {
     return vec2(1, 0);
@@ -529,7 +529,7 @@ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     const uint is = 2 * n + b;                 // 0..7
     const uint qsi = n * 32 + (iqs % 16) * 2;  // 0,2,4..126
 
-    const vec2 loadd = vec2(data_a[a_offset + ib].d);
+    const vec2 loadd = vec2(data_a[a_offset + ib].dm);
 
     const uint scidx0 = (is < 4) ? is : (is + 4);
     const uint scidx1 = (is < 4) ? is : (is - 4);
@@ -567,7 +567,7 @@ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
 
     const uint8_t hm = uint8_t(1 << (iqs / 16));
 
-    const vec2 loadd = vec2(data_a[a_offset + ib].d);
+    const vec2 loadd = vec2(data_a[a_offset + ib].dm);
 
     const uint scidx0 = (is < 4) ? is : (is + 4);
     const uint scidx1 = (is < 4) ? is : (is - 4);

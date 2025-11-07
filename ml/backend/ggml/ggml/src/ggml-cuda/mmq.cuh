@@ -3494,7 +3494,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int col_diff = col_high - col_low;
 
     for (int j = threadIdx.y*warp_size + threadIdx.x; j < mmq_x; j += nwarps*warp_size) {
-        ids_dst_shared[j] = ids_dst[col_low + j];
+        ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
     }
     __syncthreads();
 

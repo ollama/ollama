@@ -3,6 +3,32 @@
 #include "generic_binary_head.glsl"
 #include "types.glsl"
 
+#if RMS_NORM_ROPE_FUSION
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
+
+// data is passed from rms_norm -> rope through shared memory.
+// rms_norm calls this data_d, rope calls this rope_data_a.
+// Binding 2 is not used
+shared FLOAT_TYPE rope_data_a[1024];
+#define data_d rope_data_a
+
+layout (binding = 3) readonly buffer R_Y {int rope_data_pos[];};
+layout (binding = 4) readonly buffer R_Z {float rope_data_ff[];};
+layout (binding = 5) writeonly buffer R_D {ROPE_D_TYPE rope_data_d[];};
+layout (binding = 6) readonly buffer R_I {uvec2 rope_data_i[];}; // indices for set_rows
+
+#include "rope_params.glsl"
+#include "rope_funcs.glsl"
+
+#define GGML_ROPE_TYPE_NORMAL 0
+#define GGML_ROPE_TYPE_NEOX   2
+#define GGML_ROPE_TYPE_MROPE  8
+#define GGML_ROPE_TYPE_VISION 24
+
+#endif
+
 #extension GL_EXT_control_flow_attributes : enable
 #define BLOCK_SIZE 512
 
@@ -28,8 +54,12 @@ void rms_norm(uint num_iters) {
 
     uint32_t a_offset = samp*stride_sample + channel*stride_channel + row*stride_row + get_aoffset();
     uint32_t b_offset = src1_idx(0, row, channel, samp) + get_boffset();
+#if RMS_NORM_ROPE_FUSION
+    // Per-row offset in shared memory
+    uint32_t d_offset = 0;
+#else
     uint32_t d_offset = ((samp*nchannels + channel)*nrows + row)*ncols + get_doffset();
-
+#endif
     FLOAT_TYPE sum = FLOAT_TYPE(0.0f); // partial sum for thread in warp
 
     [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
@@ -79,6 +109,18 @@ void rms_norm(uint num_iters) {
             data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
         }
     }
+#if RMS_NORM_ROPE_FUSION
+    barrier();
+    rope_params rp = p.rope;
+    uint rope_row = (samp*nchannels + channel)*nrows + row;
+    for (uint t = 2*tid; t < ncols; t += 2*BLOCK_SIZE) {
+        if (rp.rope_mode == GGML_ROPE_TYPE_NEOX) {
+            rope_neox(t, rope_row, rp);
+        } else if (rp.rope_mode == GGML_ROPE_TYPE_NORMAL) {
+            rope_norm(t, rope_row, rp);
+        }
+    }
+#endif
 }
 
 void main() {

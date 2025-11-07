@@ -1615,13 +1615,8 @@ static void ggml_compute_forward_mul_mat_id(
             chunk_size = 64;
         }
 
-#if defined(__aarch64__)
-        // disable for ARM
-        const bool disable_chunking = true;
-#else
         // disable for NUMA
         const bool disable_chunking = ggml_is_numa();
-#endif // defined(__aarch64__)
 
         int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
         int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
@@ -1738,6 +1733,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_sum_rows(params, tensor);
             } break;
+        case GGML_OP_CUMSUM:
+            {
+                ggml_compute_forward_cumsum(params, tensor);
+            } break;
         case GGML_OP_MEAN:
             {
                 ggml_compute_forward_mean(params, tensor);
@@ -1813,22 +1812,6 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_CONT:
             {
                 ggml_compute_forward_cont(params, tensor);
-            } break;
-        case GGML_OP_RESHAPE:
-            {
-                ggml_compute_forward_reshape(params, tensor);
-            } break;
-        case GGML_OP_VIEW:
-            {
-                ggml_compute_forward_view(params, tensor);
-            } break;
-        case GGML_OP_PERMUTE:
-            {
-                ggml_compute_forward_permute(params, tensor);
-            } break;
-        case GGML_OP_TRANSPOSE:
-            {
-                ggml_compute_forward_transpose(params, tensor);
             } break;
         case GGML_OP_GET_ROWS:
             {
@@ -1950,6 +1933,14 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_leaky_relu(params, tensor);
             } break;
+        case GGML_OP_TRI:
+            {
+                ggml_compute_forward_tri(params, tensor);
+            } break;
+        case GGML_OP_FILL:
+            {
+                ggml_compute_forward_fill(params, tensor);
+            } break;
         case GGML_OP_FLASH_ATTN_EXT:
             {
                 ggml_compute_forward_flash_attn_ext(params, tensor);
@@ -2005,6 +1996,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_rwkv_wkv7(params, tensor);
             } break;
+        case GGML_OP_SOLVE_TRI:
+            {
+                ggml_compute_forward_solve_tri(params, tensor);
+            } break;
         case GGML_OP_MAP_CUSTOM1:
             {
                 ggml_compute_forward_map_custom1(params, tensor);
@@ -2046,6 +2041,22 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             }
             break;
         case GGML_OP_NONE:
+            {
+                // nop
+            } break;
+        case GGML_OP_RESHAPE:
+            {
+                // nop
+            } break;
+        case GGML_OP_PERMUTE:
+            {
+                // nop
+            } break;
+        case GGML_OP_VIEW:
+            {
+                // nop
+            } break;
+        case GGML_OP_TRANSPOSE:
             {
                 // nop
             } break;
@@ -2147,6 +2158,9 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_ADD_ID:
         case GGML_OP_ADD1:
         case GGML_OP_ACC:
+        case GGML_OP_CUMSUM:
+        case GGML_OP_TRI:
+        case GGML_OP_FILL:
             {
                 n_tasks = n_threads;
             } break;
@@ -2164,6 +2178,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 n_tasks = 1;
             } break;
         case GGML_OP_COUNT_EQUAL:
+        case GGML_OP_SOLVE_TRI:
             {
                 n_tasks = n_threads;
             } break;
@@ -2186,6 +2201,8 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 case GGML_UNARY_OP_HARDSWISH:
                 case GGML_UNARY_OP_HARDSIGMOID:
                 case GGML_UNARY_OP_EXP:
+                case GGML_UNARY_OP_SOFTPLUS:
+                case GGML_UNARY_OP_EXPM1:
                 case GGML_UNARY_OP_FLOOR:
                 case GGML_UNARY_OP_CEIL:
                 case GGML_UNARY_OP_ROUND:
@@ -2891,6 +2908,11 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
 
+        if (ggml_op_is_empty(node->op)) {
+            // skip NOPs
+            continue;
+        }
+
         ggml_compute_forward(&params, node);
 
 #ifdef OLLAMA_DEBUG
@@ -3279,6 +3301,13 @@ void ggml_cpu_fp16_to_fp32(const ggml_fp16_t * x, float * y, int64_t n) {
         __m128i x_vec = _mm_loadl_epi64((const __m128i *)(x + i));
         __m128 y_vec = _mm_cvtph_ps(x_vec);
         _mm_storeu_ps(y + i, y_vec);
+    }
+#elif defined(__riscv_zvfh)
+    for (int vl; i < n; i += vl) {
+        vl = __riscv_vsetvl_e16m1(n - i);
+        vfloat16m1_t vx = __riscv_vle16_v_f16m1((_Float16 *)&x[i], vl);
+        vfloat32m2_t vy = __riscv_vfwcvt_f_f_v_f32m2(vx, vl);
+        __riscv_vse32_v_f32m2(&y[i], vy, vl);
     }
 #endif
 
