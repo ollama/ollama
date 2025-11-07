@@ -13,27 +13,23 @@ Embeddings turn text into numeric vectors you can store in a vector database, se
 
 ## Generate embeddings
 
-### CLI
-
-Generate embeddings directly from the command line:
-
-```shell
-ollama run embeddinggemma "Hello world"
-```
-
-You can also pipe text to generate embeddings:
-
-```shell
-echo "Hello world" | ollama run embeddinggemma
-```
-
-Output is a JSON array.
-
-### API and SDKs
-
-Use `/api/embed` with a single string.
-
 <Tabs>
+  <Tab title="CLI">
+    Generate embeddings directly from the command line:
+
+    ```shell
+    ollama run embeddinggemma "Hello world"
+    ```
+
+    You can also pipe text to generate embeddings:
+
+    ```shell
+    echo "Hello world" | ollama run embeddinggemma
+    ```
+
+    Output is a JSON array.
+
+  </Tab>
   <Tab title="cURL">
     ```shell
     curl -X POST http://localhost:11434/api/embed \
