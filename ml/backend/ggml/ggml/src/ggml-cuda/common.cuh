@@ -55,10 +55,20 @@ static cudaError_t cudaMemcpy2DAsyncReserve ( void* dst, size_t dpitch, const vo
     }
 }
 
+static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t count, cudaStream_t stream = 0 ) {
+    if (!reserving_graph) {
+        return cudaMemsetAsync(devPtr, value, count, stream);
+    } else {
+        return cudaSuccess;
+    }
+}
+
 #undef cudaMemcpyAsync
 #define cudaMemcpyAsync cudaMemcpyAsyncReserve
 #undef cudaMemcpy2DAsync
 #define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
+#undef cudaMemsetAsync
+#define cudaMemsetAsync cudaMemsetAsyncReserve
 
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
 #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
@@ -972,13 +982,6 @@ struct ggml_cuda_graph {
     bool disable_due_to_failed_graph_capture = false;
     int number_consecutive_updates = 0;
     std::vector<ggml_graph_node_properties> ggml_graph_properties;
-    bool use_cpy_indirection = false;
-    std::vector<char *> cpy_dest_ptrs;
-    char ** dest_ptrs_d;
-    int dest_ptrs_size = 0;
-    // Index to allow each cpy kernel to be aware of it's position within the graph
-    // relative to other cpy nodes.
-    int graph_cpynode_index = -1;
 #endif
 };
 

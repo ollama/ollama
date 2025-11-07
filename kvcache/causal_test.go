@@ -477,7 +477,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			}
 
 			cache.SetLayer(0)
-			tensor := context.FromFloatSlice(test.in, test.inShape...)
+			tensor := context.FromFloats(test.in, test.inShape...)
 			cache.Put(context, tensor, tensor)
 
 			out, _, mask := cache.Get(context)
@@ -519,7 +519,7 @@ func TestCanResume(t *testing.T) {
 	}
 
 	cache.SetLayer(0)
-	tensor := context.FromFloatSlice([]float32{1, 2, 3, 4, 5}, 1, 1, 5)
+	tensor := context.FromFloats([]float32{1, 2, 3, 4, 5}, 1, 1, 5)
 	cache.Put(context, tensor, tensor)
 
 	// with window size 4, nothing has slid out of the window yet
@@ -549,7 +549,7 @@ func TestCanResume(t *testing.T) {
 	}
 
 	cache.SetLayer(0)
-	tensor = context.FromFloatSlice([]float32{6}, 1, 1, 1)
+	tensor = context.FromFloats([]float32{6}, 1, 1, 1)
 	cache.Put(context, tensor, tensor)
 
 	// only the latest position has overlapping windows
@@ -594,7 +594,7 @@ func TestCanResumeSWAMem(t *testing.T) {
 	}
 
 	cache.SetLayer(0)
-	tensor := context.FromFloatSlice([]float32{1, 2, 3, 4, 5, 6, 7}, 1, 1, 7)
+	tensor := context.FromFloats([]float32{1, 2, 3, 4, 5, 6, 7}, 1, 1, 7)
 	cache.Put(context, tensor, tensor)
 
 	// shift window by adding position 7
@@ -607,7 +607,7 @@ func TestCanResumeSWAMem(t *testing.T) {
 	}
 
 	cache.SetLayer(0)
-	tensor = context.FromFloatSlice([]float32{8}, 1, 1, 1)
+	tensor = context.FromFloats([]float32{8}, 1, 1, 1)
 	cache.Put(context, tensor, tensor)
 
 	// only the latest position has overlapping windows
@@ -670,7 +670,7 @@ func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return c.Empty(dtype, shape...)
 }
 
-func (c *testContext) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
+func (c *testContext) FromFloats(s []float32, shape ...int) ml.Tensor {
 	t := c.Empty(ml.DTypeF32, shape...).(*testTensor)
 
 	copy(t.data, s)
@@ -678,13 +678,13 @@ func (c *testContext) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
 	return t
 }
 
-func (c *testContext) FromIntSlice(s []int32, shape ...int) ml.Tensor {
+func (c *testContext) FromInts(s []int32, shape ...int) ml.Tensor {
 	f := make([]float32, len(s))
 	for i := range f {
 		f[i] = float32(s[i])
 	}
 
-	out := c.FromFloatSlice(f, shape...)
+	out := c.FromFloats(f, shape...)
 	out.(*testTensor).dtype = ml.DTypeI32
 
 	return out
@@ -696,7 +696,7 @@ func (c *testContext) Arange(start, stop, step float32, dtype ml.DType) ml.Tenso
 		s = append(s, i)
 	}
 
-	out := c.FromFloatSlice(s, len(s))
+	out := c.FromFloats(s, len(s))
 	out.(*testTensor).dtype = dtype
 	return out
 }
