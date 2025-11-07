@@ -728,8 +728,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
+	durations := make([]time.Duration, len(input))
 	for i, text := range input {
 		g.Go(func() error {
+			startEmbed := time.Now()
 			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
 				return err
@@ -740,6 +742,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				embedding = normalize(embedding[:req.Dimensions])
 			}
 			embeddings[i] = embedding
+			durations[i] = time.Since(startEmbed)
 			return nil
 		})
 	}
@@ -750,11 +753,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	resp := api.EmbedResponse{
-		Model:           req.Model,
-		Embeddings:      embeddings,
-		TotalDuration:   time.Since(checkpointStart),
-		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: count,
+		Model:              req.Model,
+		Embeddings:         embeddings,
+		TotalDuration:      time.Since(checkpointStart),
+		LoadDuration:       checkpointLoaded.Sub(checkpointStart),
+		PromptEvalCount:    count,
+		EmbeddingDurations: durations,
 	}
 	c.JSON(http.StatusOK, resp)
 }
