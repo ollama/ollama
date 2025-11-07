@@ -25,8 +25,12 @@ Install [n8n](https://docs.n8n.io/choose-n8n/).
     width="75%"
   />
 </div>
-3. Confirm Base URL is set to `http://localhost:11434` and click **Save**
+3. Confirm Base URL is set to `http://localhost:11434` if running locally or `http://host.docker.internal:11434` if running through docker and click **Save**
+
 <Note> If connecting to `http://localhost:11434` fails, use `http://127.0.0.1:11434`</Note>
+
+You should see a `Connection tested successfully` message.
+
 4. When creating a new workflow, select **Add a first step** and select an **Ollama node** 
 <div style={{ display: 'flex', justifyContent: 'center' }}>
   <img 
