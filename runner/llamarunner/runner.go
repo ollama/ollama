@@ -538,15 +538,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		seq.samplingCtx.Accept(token, true)
 		piece := s.model.TokenToPiece(token)
 
-		// Calculate logprobs if requested
-		if seq.logprobs {
-			logits := s.lc.GetLogitsIth(seq.iBatch)
-			if logits != nil {
-				logprobs := calculateLogprobsLlama(logits, token, seq.topLogprobs, s.model)
-				seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
-			}
-		}
-
 		seq.numPredicted++
 
 		// if it's an end of sequence token, break
@@ -557,6 +548,15 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
+		}
+
+		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
+		if seq.logprobs {
+			logits := s.lc.GetLogitsIth(seq.iBatch)
+			if logits != nil {
+				logprobs := calculateLogprobsLlama(logits, token, seq.topLogprobs, s.model)
+				seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
+			}
 		}
 
 		seq.inputs = []input{{token: token}}
@@ -571,6 +571,17 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			origLen := len(seq.pendingResponses)
 			seq.pendingResponses, tokenTruncated = common.TruncateStop(seq.pendingResponses, stop)
 			newLen := len(seq.pendingResponses)
+
+			// Truncate logprobs to match the truncated responses
+			if seq.logprobs {
+				origLogprobsLen := len(seq.pendingLogprobs)
+				numTokensRemoved := origLen - newLen
+				newLogprobsLen := origLogprobsLen - numTokensRemoved
+				if newLogprobsLen < 0 {
+					newLogprobsLen = 0
+				}
+				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
+			}
 
 			// Update the cache based on the tokens that will be returned:
 			// - We have 1 token more than is currently in the cache because

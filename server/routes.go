@@ -510,7 +510,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
-		var allLogprobs []api.Logprob
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:      prompt,
@@ -557,14 +556,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				ch <- gin.H{"error": err.Error()}
 			}
 
-			// Accumulate logprobs from each chunk
-			if len(cr.Logprobs) > 0 {
-				allLogprobs = append(allLogprobs, toAPILogprobs(cr.Logprobs)...)
-			}
-
 			if cr.Done {
-				// Set the accumulated logprobs on the final response
-				res.Logprobs = allLogprobs
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -601,6 +593,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.Stream != nil && !*req.Stream {
 		var r api.GenerateResponse
+		var allLogprobs []api.Logprob
 		var sbThinking strings.Builder
 		var sbContent strings.Builder
 		for rr := range ch {
@@ -609,6 +602,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				sbThinking.WriteString(t.Thinking)
 				sbContent.WriteString(t.Response)
 				r = t
+				// Accumulate logprobs from all chunks for non-streaming response
+				if len(t.Logprobs) > 0 {
+					allLogprobs = append(allLogprobs, t.Logprobs...)
+				}
 			case gin.H:
 				msg, ok := t["error"].(string)
 				if !ok {
@@ -630,6 +627,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		r.Thinking = sbThinking.String()
 		r.Response = sbContent.String()
+		r.Logprobs = allLogprobs
 
 		c.JSON(http.StatusOK, r)
 		return
@@ -2117,7 +2115,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		for {
 			var tb strings.Builder
-			var allLogprobs []api.Logprob
 
 			currentFormat := req.Format
 			// structured outputs via double request is enabled when:
@@ -2159,14 +2156,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}
 
-				// Accumulate logprobs from each chunk
-				if len(r.Logprobs) > 0 {
-					allLogprobs = append(allLogprobs, toAPILogprobs(r.Logprobs)...)
-				}
-
 				if r.Done {
-					// Set the accumulated logprobs on the final response
-					res.Logprobs = allLogprobs
 					res.DoneReason = r.DoneReason.String()
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -2294,6 +2284,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var toolCalls []api.ToolCall
+		var allLogprobs []api.Logprob
 		var sbThinking strings.Builder
 		var sbContent strings.Builder
 		for rr := range ch {
@@ -2304,6 +2295,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				resp = t
 				if len(req.Tools) > 0 {
 					toolCalls = append(toolCalls, t.Message.ToolCalls...)
+				}
+				// Accumulate logprobs from all chunks for non-streaming response
+				if len(t.Logprobs) > 0 {
+					allLogprobs = append(allLogprobs, t.Logprobs...)
 				}
 			case gin.H:
 				msg, ok := t["error"].(string)
@@ -2326,6 +2321,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		resp.Message.Content = sbContent.String()
 		resp.Message.Thinking = sbThinking.String()
+		resp.Logprobs = allLogprobs
 
 		if len(toolCalls) > 0 {
 			resp.Message.ToolCalls = toolCalls

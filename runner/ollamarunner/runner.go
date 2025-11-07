@@ -765,12 +765,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 
 		nextBatchTokens[i].Token = token
 
-		// Calculate logprobs if requested
-		if seq.logprobs {
-			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(model.TextProcessor))
-			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
-		}
-
 		// if it's an end of sequence token, break
 		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
 			// TODO (jmorganca): we should send this back
@@ -786,6 +780,12 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			panic("failed to decode token")
 		}
 
+		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
+		if seq.logprobs {
+			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(model.TextProcessor))
+			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
+		}
+
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")
 
@@ -796,6 +796,17 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			origLen := len(seq.pendingResponses)
 			seq.pendingResponses, tokenTruncated = common.TruncateStop(seq.pendingResponses, stop)
 			newLen := len(seq.pendingResponses)
+
+			// Truncate logprobs to match the truncated responses
+			if seq.logprobs {
+				origLogprobsLen := len(seq.pendingLogprobs)
+				numTokensRemoved := origLen - newLen
+				newLogprobsLen := origLogprobsLen - numTokensRemoved
+				if newLogprobsLen < 0 {
+					newLogprobsLen = 0
+				}
+				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
+			}
 
 			// Update the cache based on the tokens that will be returned:
 			// - We have 1 token more than is currently in the cache because
