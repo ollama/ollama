@@ -27,7 +27,18 @@ Install [n8n](https://docs.n8n.io/choose-n8n/).
 </div>
 3. Confirm Base URL is set to `http://localhost:11434` if running locally or `http://host.docker.internal:11434` if running through docker and click **Save**
 
-<Note> If connecting to `http://localhost:11434` fails, use `http://127.0.0.1:11434`</Note>
+<Note> 
+In environments that don't use Docker Desktop (ie, Linux server installations), `host.docker.internal` is not automatically added. 
+
+Run n8n in docker with `--add-host=host.docker.internal:host-gateway` 
+
+or add the following to a docker compose file:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+</Note>
 
 You should see a `Connection tested successfully` message.
 
