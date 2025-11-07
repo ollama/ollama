@@ -6,8 +6,8 @@ Subject: [PATCH] add ollama vocab for grammar support
 ---
  src/llama-grammar.cpp  | 49 ++++++++++++++++++++++++++++++++++++------
  src/llama-grammar.h    | 14 ++++++++++++
- src/llama-sampling.cpp |  4 ++--
- 3 files changed, 58 insertions(+), 9 deletions(-)
+ src/llama-sampling.cpp |  6 +++---
+ 3 files changed, 59 insertions(+), 10 deletions(-)
 
 diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
 index bed706bb2..b51cee090 100644
@@ -184,10 +184,10 @@ index f8c291de9..2a3a62db3 100644
                        const char * grammar_root,
                                bool lazy,
 diff --git a/src/llama-sampling.cpp b/src/llama-sampling.cpp
-index 55d2e355f..da34526b1 100644
+index adb3f8810..afb5e6c1c 100644
 --- a/src/llama-sampling.cpp
 +++ b/src/llama-sampling.cpp
-@@ -1563,7 +1563,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
+@@ -1564,7 +1564,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
          trigger_patterns_c.push_back(trigger_pattern.pattern.c_str());
      }
  
@@ -196,12 +196,15 @@ index 55d2e355f..da34526b1 100644
                                                   ctx->grammar->lazy, trigger_patterns_c.data(), trigger_patterns_c.size(),
                                                   ctx->grammar->trigger_tokens.data(), ctx->grammar->trigger_tokens.size());
  
-@@ -1645,7 +1645,7 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
+@@ -1642,9 +1642,9 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
+             trigger_pattern += ")[\\s\\S]*";
+ 
+             std::array<const char *, 1> tmp_trigger_patterns = { trigger_pattern.c_str() };
+-            grammar = llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, tmp_trigger_patterns.data(), tmp_trigger_patterns.size(), trigger_tokens, num_trigger_tokens);
++            grammar = llama_grammar_init_impl(vocab, nullptr, grammar_str, grammar_root, lazy, tmp_trigger_patterns.data(), tmp_trigger_patterns.size(), trigger_tokens, num_trigger_tokens);
+         } else {
+-            grammar = llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens);
++            grammar = llama_grammar_init_impl(vocab, nullptr, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens);
+         }
+         *ctx = {
              /* .vocab        = */ vocab,
-             /* .grammar_str  = */ grammar_str,
-             /* .grammar_root = */ grammar_root,
--            /* .grammar      = */ llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens),
-+            /* .grammar      = */ llama_grammar_init_impl(vocab, nullptr, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens),
-         };
-         if (!ctx->grammar) {
-             delete ctx;

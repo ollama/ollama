@@ -22,6 +22,9 @@ include /src/llama.*
 include /src/llama-*.*
 include /src/unicode-data.*
 include /src/unicode.*
+include /src/models/
+include /src/models/*.h
+include /src/models/*.cpp
 include /vendor/
 include /vendor/miniaudio/
 include /vendor/miniaudio/*.h

@@ -22,6 +22,8 @@ void ggml_compute_forward_sqrt(const struct ggml_compute_params * params, struct
 void ggml_compute_forward_sin(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_cos(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_log(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_expm1(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_softplus(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_floor(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ceil(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_round(const struct ggml_compute_params * params, struct ggml_tensor * dst);

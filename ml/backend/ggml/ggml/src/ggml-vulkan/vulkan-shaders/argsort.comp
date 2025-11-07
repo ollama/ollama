@@ -14,6 +14,7 @@ layout (binding = 1)          buffer D {int data_d[];};
 
 layout (push_constant) uniform parameter {
     uint ncols;
+    uint nrows;
     uint order;
 } p;
 
@@ -26,10 +27,9 @@ void swap(uint idx0, uint idx1) {
     dst_row[idx1] = tmp;
 }
 
-void argsort(bool needs_bounds_check) {
+void argsort(bool needs_bounds_check, const uint row) {
     // bitonic sort
     const int col = int(gl_LocalInvocationID.x);
-    const uint row = gl_WorkGroupID.y;
 
     const uint row_offset = row * p.ncols;
 
@@ -72,8 +72,16 @@ void argsort(bool needs_bounds_check) {
 
 void main() {
     if (p.ncols == BLOCK_SIZE) {
-        argsort(false);
+        uint row = gl_WorkGroupID.y;
+        while (row < p.nrows) {
+            argsort(false, row);
+            row += gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+        }
     } else {
-        argsort(true);
+        uint row = gl_WorkGroupID.y;
+        while (row < p.nrows) {
+            argsort(true, row);
+            row += gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+        }
     }
 }

@@ -1,3 +1,4 @@
+#pragma once
 #include "common.cuh"
 
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256

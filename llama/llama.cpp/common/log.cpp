@@ -442,3 +442,9 @@ void common_log_set_prefix(struct common_log * log, bool prefix) {
 void common_log_set_timestamps(struct common_log * log, bool timestamps) {
     log->set_timestamps(timestamps);
 }
+
+void common_log_default_callback(enum ggml_log_level level, const char * text, void * /*user_data*/) {
+    if (LOG_DEFAULT_LLAMA <= common_log_verbosity_thold) {
+        common_log_add(common_log_main(), level, "%s", text);
+    }
+}
