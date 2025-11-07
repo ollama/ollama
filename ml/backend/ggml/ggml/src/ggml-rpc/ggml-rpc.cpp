@@ -111,6 +111,28 @@ enum rpc_cmd {
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
 
+static const char * rpc_cmd_to_string(uint8_t cmd) {
+    switch (cmd) {
+        case RPC_CMD_ALLOC_BUFFER: return "ALLOC_BUFFER";
+        case RPC_CMD_GET_ALIGNMENT: return "GET_ALIGNMENT";
+        case RPC_CMD_GET_MAX_SIZE: return "GET_MAX_SIZE";
+        case RPC_CMD_BUFFER_GET_BASE: return "BUFFER_GET_BASE";
+        case RPC_CMD_FREE_BUFFER: return "FREE_BUFFER";
+        case RPC_CMD_BUFFER_CLEAR: return "BUFFER_CLEAR";
+        case RPC_CMD_SET_TENSOR: return "SET_TENSOR";
+        case RPC_CMD_SET_TENSOR_HASH: return "SET_TENSOR_HASH";
+        case RPC_CMD_GET_TENSOR: return "GET_TENSOR";
+        case RPC_CMD_COPY_TENSOR: return "COPY_TENSOR";
+        case RPC_CMD_GRAPH_COMPUTE: return "GRAPH_COMPUTE";
+        case RPC_CMD_GET_DEVICE_MEMORY: return "GET_DEVICE_MEMORY";
+        case RPC_CMD_INIT_TENSOR: return "INIT_TENSOR";
+        case RPC_CMD_GET_ALLOC_SIZE: return "GET_ALLOC_SIZE";
+        case RPC_CMD_HELLO: return "HELLO";
+        case RPC_CMD_DEVICE_COUNT: return "DEVICE_COUNT";
+        default: return "UNKNOWN";
+    }
+}
+
 // Try RPC_CMD_SET_TENSOR_HASH first when data size is larger than this threshold
 const size_t HASH_THRESHOLD = 10 * 1024 * 1024;
 
@@ -665,11 +687,32 @@ static void ggml_backend_rpc_buffer_clear(ggml_backend_buffer_t buffer, uint8_t 
     RPC_STATUS_ASSERT(status);
 }
 
+static void ggml_backend_rpc_buffer_memset_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+    // Implement memset by creating a buffer filled with the value and using SET_TENSOR
+    ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
+
+    // Allocate local buffer with the memset value
+    std::vector<uint8_t> data(size, value);
+
+    // Serialize tensor info
+    rpc_tensor rpc_tensor = serialize_tensor(tensor);
+
+    // Build SET_TENSOR input: | rpc_tensor | offset (8 bytes) | data (size bytes)
+    size_t input_size = sizeof(rpc_tensor) + sizeof(uint64_t) + size;
+    std::vector<uint8_t> input(input_size);
+    memcpy(input.data(), &rpc_tensor, sizeof(rpc_tensor));
+    memcpy(input.data() + sizeof(rpc_tensor), &offset, sizeof(offset));
+    memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), data.data(), size);
+
+    bool status = send_rpc_cmd(ctx->sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
+    RPC_STATUS_ASSERT(status);
+}
+
 static ggml_backend_buffer_i ggml_backend_rpc_buffer_interface = {
     /* .free_buffer     = */ ggml_backend_rpc_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_rpc_buffer_get_base,
     /* .init_tensor     = */ ggml_backend_rpc_buffer_init_tensor,
-    /* .memset_tensor   = */ NULL,
+    /* .memset_tensor   = */ ggml_backend_rpc_buffer_memset_tensor,
     /* .set_tensor      = */ ggml_backend_rpc_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_rpc_buffer_get_tensor,
     /* .cpy_tensor      = */ ggml_backend_rpc_buffer_cpy_tensor,
@@ -1510,6 +1553,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             GGML_LOG_ERROR("Unknown command: %d\n", cmd);
             break;
         }
+        printf("[RPC Server] Received command: %s (%d)\n", rpc_cmd_to_string(cmd), cmd);
+        fflush(stdout);
         switch (cmd) {
             case RPC_CMD_HELLO: {
                 // HELLO command is handled above
@@ -1521,6 +1566,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 }
                 rpc_msg_device_count_rsp response;
                 response.device_count = backends.size();
+                printf("[RPC Server] DEVICE_COUNT response: %u devices\n", response.device_count);
+                fflush(stdout);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }
@@ -1531,10 +1578,14 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sockfd, &request, sizeof(request))) {
                     return;
                 }
+                printf("[RPC Server] ALLOC_BUFFER: device=%u, size=%" PRIu64 " bytes\n", request.device, request.size);
+                fflush(stdout);
                 rpc_msg_alloc_buffer_rsp response;
                 if (!server.alloc_buffer(request, response)) {
                     return;
                 }
+                printf("[RPC Server] ALLOC_BUFFER response: remote_ptr=0x%" PRIx64 ", remote_size=%" PRIu64 "\n", response.remote_ptr, response.remote_size);
+                fflush(stdout);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }
@@ -1692,10 +1743,12 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sockfd, input)) {
                     return;
                 }
+                LOG_DBG("[RPC Server] GRAPH_COMPUTE: input size=%zu bytes\n", input.size());
                 rpc_msg_graph_compute_rsp response;
                 if (!server.graph_compute(input, response)) {
                     return;
                 }
+                LOG_DBG("[RPC Server] GRAPH_COMPUTE response: result=%d\n", response.result);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }
@@ -1706,10 +1759,14 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sockfd, &request, sizeof(request))) {
                     return;
                 }
+                printf("[RPC Server] GET_DEVICE_MEMORY: device=%u\n", request.device);
+                fflush(stdout);
                 rpc_msg_get_device_memory_rsp response;
                 if (!server.get_device_memory(request, response)) {
                     return;
                 }
+                printf("[RPC Server] GET_DEVICE_MEMORY response: free=%" PRIu64 " bytes, total=%" PRIu64 " bytes\n", response.free_mem, response.total_mem);
+                fflush(stdout);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }

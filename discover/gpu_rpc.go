@@ -90,10 +90,11 @@ func getRPCServerMemory(endpoint string) RPCServerMemoryResult {
 		return RPCServerMemoryResult{}
 	}
 	slog.Debug("successfully sent RPC_CMD_GET_DEVICE_MEMORY command")
-	// Input Size (8 bytes)
+	// Input Size (8 bytes) - must be 4 bytes (sizeof(uint32_t) for device ID)
 	deadLine = time.Now().Add(timeout)
 	client.SetDeadline(deadLine)
 	size := [8]byte{}
+	binary.LittleEndian.PutUint64(size[:], 4) // Input is 4 bytes (device ID)
 	_, err = client.Write(size[:])
 	if err != nil {
 		slog.Error("failed to send input size of RPC_CMD_GET_DEVICE_MEMORY command to RPC server", "err", err)

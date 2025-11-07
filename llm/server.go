@@ -501,7 +501,9 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus [
 		gpus = g
 	}
 
+	slog.Info("DEBUG estimating GPU layers", "gpus_count", len(gpus), "gpus", gpus)
 	s.estimate = estimateGPULayers(gpus, s.ggml, []string{s.loadRequest.ProjectorPath}, s.options, s.numParallel)
+	slog.Info("DEBUG estimate result", "layers", s.estimate.Layers, "VRAMSize", format.HumanBytes2(s.estimate.VRAMSize), "TotalSize", format.HumanBytes2(s.estimate.TotalSize))
 
 	if len(gpus) >= 1 {
 		switch {
@@ -527,6 +529,7 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus [
 	if runtime.GOOS != "darwin" {
 		systemMemoryRequired := s.estimate.TotalSize - s.estimate.VRAMSize
 		available := systemInfo.FreeMemory + systemInfo.FreeSwap
+		slog.Info("DEBUG memory check", "TotalSize", format.HumanBytes2(s.estimate.TotalSize), "VRAMSize", format.HumanBytes2(s.estimate.VRAMSize), "systemMemoryRequired", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "layers", s.estimate.Layers, "gpus", len(gpus))
 		if systemMemoryRequired > available {
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
 			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
