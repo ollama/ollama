@@ -486,7 +486,8 @@ func TestLogprobsWithStopSequences(t *testing.T) {
 			if tokenTruncated && checkLen > 0 {
 				checkLen-- // Skip checking the last token when it was partially truncated
 			}
-			for i := 0; i < checkLen; i++ {
+
+			for i := range checkLen {
 				if i < len(responses) && logprobs[i].Token != responses[i] {
 					t.Errorf("Logprob[%d] token %q doesn't match response[%d] %q",
 						i, logprobs[i].Token, i, responses[i])
