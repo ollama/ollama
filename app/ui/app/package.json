@@ -61,7 +61,7 @@
     "eslint-plugin-react-refresh": "^0.4.19",
     "eslint-plugin-storybook": "^9.0.14",
     "globals": "^16.0.0",
-    "playwright": "^1.53.2",
+    "playwright": "^1.56.1",
     "postcss-preset-env": "^10.2.4",
     "react-markdown": "^10.1.0",
     "remark": "^15.0.1",
@@ -71,7 +71,7 @@
     "tailwindcss": "^4.1.9",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.30.1",
-    "vite": "^6.3.5",
+    "vite": "^6.4.1",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.4"
   },
