@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -237,6 +239,18 @@ func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
 func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	val, _ := keyValue(kv, key, &array[bool]{values: append(defaultValue, []bool(nil))[0]})
 	return val.values
+}
+
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
 }
 
 func (kv KV) OllamaEngineRequired() bool {

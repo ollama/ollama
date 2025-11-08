@@ -12,7 +12,7 @@ set(BUILD_SHARED_LIBS ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON) # Recent versions of MLX Requires gnu++17 extensions to compile properly
 
 set(GGML_BUILD ON)
 set(GGML_SHARED ON)
@@ -157,4 +157,9 @@ if(Vulkan_FOUND)
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
     )
+endif()
+
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    message(STATUS "Setting up MLX (this takes a while...)")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/x/ml/backend/mlx)
 endif()
