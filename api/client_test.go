@@ -111,6 +111,20 @@ func TestClientStream(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "plain text error response",
+			responses: []any{
+				"internal server error",
+			},
+			wantErr: "internal server error",
+		},
+		{
+			name: "HTML error page",
+			responses: []any{
+				"<html><body>404 Not Found</body></html>",
+			},
+			wantErr: "404 Not Found",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -133,6 +147,12 @@ func TestClientStream(t *testing.T) {
 							t.Fatal("failed to encode error response:", err)
 						}
 						return
+					}
+
+					if str, ok := resp.(string); ok {
+						fmt.Fprintln(w, str)
+						flusher.Flush()
+						continue
 					}
 
 					if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -262,3 +282,4 @@ func TestClientDo(t *testing.T) {
 		})
 	}
 }
+
