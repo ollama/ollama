@@ -181,10 +181,11 @@ type Message struct {
 	Content string `json:"content"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking  string      `json:"thinking,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
-	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
-	ToolName  string      `json:"tool_name,omitempty"`
+	Thinking   string      `json:"thinking,omitempty"`
+	Images     []ImageData `json:"images,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName   string      `json:"tool_name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -200,11 +201,12 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 }
 
 type ToolCall struct {
+	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
 type ToolCallFunction struct {
-	Index     int                       `json:"index,omitempty"`
+	Index     int                       `json:"index"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
@@ -266,9 +268,9 @@ func (pt PropertyType) String() string {
 
 type ToolProperty struct {
 	AnyOf       []ToolProperty `json:"anyOf,omitempty"`
-	Type        PropertyType   `json:"type"`
+	Type        PropertyType   `json:"type,omitempty"`
 	Items       any            `json:"items,omitempty"`
-	Description string         `json:"description"`
+	Description string         `json:"description,omitempty"`
 	Enum        []any          `json:"enum,omitempty"`
 }
 
@@ -321,7 +323,7 @@ type ToolFunctionParameters struct {
 	Type       string                  `json:"type"`
 	Defs       any                     `json:"$defs,omitempty"`
 	Items      any                     `json:"items,omitempty"`
-	Required   []string                `json:"required"`
+	Required   []string                `json:"required,omitempty"`
 	Properties map[string]ToolProperty `json:"properties"`
 }
 
@@ -332,7 +334,7 @@ func (t *ToolFunctionParameters) String() string {
 
 type ToolFunction struct {
 	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
+	Description string                 `json:"description,omitempty"`
 	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 

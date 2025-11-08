@@ -69,7 +69,9 @@ func EnumerateGPUs() []ml.DeviceID {
 	for i := range C.ggml_backend_dev_count() {
 		device := C.ggml_backend_dev_get(i)
 
-		if C.ggml_backend_dev_type(device) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
+		switch C.ggml_backend_dev_type(device) {
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			var props C.struct_ggml_backend_dev_props
 			C.ggml_backend_dev_get_props(device, &props)
 			ids = append(ids, ml.DeviceID{
@@ -504,7 +506,12 @@ func (c *MtmdContext) Free() {
 	C.mtmd_free(c.c)
 }
 
-func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32, error) {
+type MtmdChunk struct {
+	Embed  []float32
+	Tokens []int
+}
+
+func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]MtmdChunk, error) {
 	// Initialize the input chunks pointer
 	ic := C.mtmd_input_chunks_init()
 	defer C.mtmd_input_chunks_free(ic)
@@ -523,35 +530,51 @@ func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	}
 	nChunks := C.mtmd_input_chunks_size(ic)
 	numEmbed := llamaContext.Model().NEmbd()
-	embed := make([][]float32, 0)
+	outChunks := make([]MtmdChunk, 0)
 	for i := range int(nChunks) {
 		chunk := C.mtmd_input_chunks_get(ic, C.size_t(i))
 		numTokens := int(C.mtmd_input_chunk_get_n_tokens(chunk))
 		slog.Debug("chunk tokens", "index", i, "numTokens", numTokens)
 
-		// Encode the chunk
-		if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
-			return nil, errors.New("unable to encode mtmd image chunk")
-		}
+		if C.mtmd_input_chunk_get_type(chunk) == C.MTMD_INPUT_CHUNK_TYPE_TEXT {
+			// If this is a text chunk, add the tokens
+			cNumTokens := C.size_t(0)
+			cTokens := C.mtmd_input_chunk_get_tokens_text(chunk, &cNumTokens)
+			cTokensArr := unsafe.Slice(cTokens, int(cNumTokens))
+			tokens := make([]int, int(cNumTokens))
+			for j := range int(cNumTokens) {
+				tokens[j] = int(cTokensArr[j])
+			}
+			outChunks = append(outChunks, MtmdChunk{Tokens: tokens})
+		} else {
+			// Otherwise, encode the image chunk to embeddings
 
-		// Get the embeddings for this chunk
-		chunkEmbed := make([][]float32, numTokens)
-		chunkEmbd := C.mtmd_get_output_embd(c.c)
-		if nil == chunkEmbd {
-			continue
-		}
+			// Encode the chunk
+			if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
+				return nil, errors.New("unable to encode mtmd image chunk")
+			}
 
-		// Extend the embedding array for each token
-		s := unsafe.Slice((*float32)(chunkEmbd), numTokens*numEmbed)
-		rows := make([]float32, len(s))
-		copy(rows, s)
-		for i := range numTokens {
-			chunkEmbed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+			// Get the embeddings for this chunk
+			chunkEmbed := make([][]float32, numTokens)
+			chunkEmbd := C.mtmd_get_output_embd(c.c)
+			if nil == chunkEmbd {
+				return nil, errors.New("no mtmd image embedding")
+			}
+
+			// Extend the embedding array for each token
+			s := unsafe.Slice((*float32)(chunkEmbd), numTokens*numEmbed)
+			rows := make([]float32, len(s))
+			copy(rows, s)
+			for i := range numTokens {
+				chunkEmbed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+			}
+			for _, e := range chunkEmbed {
+				outChunks = append(outChunks, MtmdChunk{Embed: e})
+			}
 		}
-		embed = append(embed, chunkEmbed...)
 	}
-	slog.Debug("image embeddings", "totalEmbeddings", len(embed))
-	return embed, nil
+	slog.Debug("image tokenization chunks", "totalChunks", len(outChunks))
+	return outChunks, nil
 }
 
 func (c *Context) Synchronize() {

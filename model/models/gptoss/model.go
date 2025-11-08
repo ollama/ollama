@@ -30,9 +30,8 @@ type Transformer struct {
 // Forward implements model.Model.
 func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
-	one := ctx.Input().FromFloatSlice([]float32{1}, 1)
 	for i, block := range m.TransformerBlocks {
 		m.Cache.SetLayer(i)
 		if c, ok := m.Cache.(*kvcache.WrapperCache); ok {
@@ -45,7 +44,7 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 			outputs = batch.Outputs
 		}
 
-		hiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, one, m.Cache, &m.Options)
+		hiddenStates = block.Forward(ctx, hiddenStates, positions, outputs, m.Cache, &m.Options)
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
@@ -90,13 +89,13 @@ type TransformerBlock struct {
 	MLP       *MLPBlock
 }
 
-func (d *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outputs, one ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (d *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	hiddenStates = d.Attention.Forward(ctx, hiddenStates, positions, cache, opts)
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
 	}
 
-	hiddenStates = d.MLP.Forward(ctx, hiddenStates, one, opts)
+	hiddenStates = d.MLP.Forward(ctx, hiddenStates, opts)
 	return hiddenStates
 }
 
@@ -177,7 +176,7 @@ type MLPBlock struct {
 	Down *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
-func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates, one ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
 	hiddenDim, sequenceLength, batchSize := hiddenStates.Dim(0), hiddenStates.Dim(1), hiddenStates.Dim(2)
 
 	residual := hiddenStates

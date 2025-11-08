@@ -392,12 +392,8 @@ static void ggml_dyn_tallocr_free(struct ggml_dyn_tallocr * alloc) {
     free(alloc);
 }
 
-static size_t ggml_dyn_tallocr_max_size(struct ggml_dyn_tallocr * alloc) {
-    size_t max_size = 0;
-    for (int i = 0; i < alloc->n_chunks; i++) {
-        max_size += alloc->chunks[i]->max_size;
-    }
-    return max_size;
+static size_t ggml_dyn_tallocr_max_size(struct ggml_dyn_tallocr * alloc, int chunk) {
+    return chunk < alloc->n_chunks ? alloc->chunks[chunk]->max_size : 0;
 }
 
 
@@ -417,10 +413,8 @@ static void ggml_vbuffer_free(struct vbuffer * buf) {
     free(buf);
 }
 
-static int ggml_vbuffer_n_chunks(struct vbuffer * buf) {
-    int n = 0;
-    while (n < GGML_VBUFFER_MAX_CHUNKS && buf->chunks[n]) n++;
-    return n;
+static size_t ggml_vbuffer_chunk_size(struct vbuffer * buf, int chunk) {
+    return buf->chunks[chunk] ? ggml_backend_buffer_get_size(buf->chunks[chunk]) : 0;
 }
 
 static size_t ggml_vbuffer_size(struct vbuffer * buf) {
@@ -609,6 +603,26 @@ static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor 
     return t->data != NULL || ggml_gallocr_hash_get(galloc, t)->allocated;
 }
 
+// free the extra space at the end if the new tensor is smaller
+static void ggml_gallocr_free_extra_space(ggml_gallocr_t galloc, struct ggml_tensor * node, struct ggml_tensor * parent) {
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+    struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent);
+
+    size_t parent_size = ggml_backend_buft_get_alloc_size(galloc->bufts[p_hn->buffer_id], parent);
+    size_t node_size = ggml_backend_buft_get_alloc_size(galloc->bufts[hn->buffer_id], node);
+
+    GGML_ASSERT(parent_size >= node_size);
+
+    if (parent_size > node_size) {
+        struct ggml_dyn_tallocr * p_alloc = galloc->buf_tallocs[p_hn->buffer_id];
+        struct buffer_address p_addr = p_hn->addr;
+        p_addr.offset += node_size;
+        size_t extra_size = parent_size - node_size;
+        AT_PRINTF("freeing extra %zu bytes from parent %s for %s\n", extra_size, parent->name, node->name);
+        ggml_dyn_tallocr_free_tensor(p_alloc, p_addr, extra_size, parent);
+    }
+}
+
 static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node, int buffer_id) {
     GGML_ASSERT(buffer_id >= 0);
     struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
@@ -654,6 +668,7 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                             hn->addr = p_hn->addr;
                             p_hn->allocated = false; // avoid freeing the parent
                             view_src_hn->allocated = false;
+                            ggml_gallocr_free_extra_space(galloc, node, view_src);
                             return;
                         }
                     } else {
@@ -661,6 +676,7 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                         hn->buffer_id = p_hn->buffer_id;
                         hn->addr = p_hn->addr;
                         p_hn->allocated = false; // avoid freeing the parent
+                        ggml_gallocr_free_extra_space(galloc, node, parent);
                         return;
                     }
                 }
@@ -892,12 +908,20 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
             }
         }
 
-        size_t cur_size = galloc->buffers[i] ? ggml_vbuffer_size(galloc->buffers[i]) : 0;
-        size_t new_size = ggml_dyn_tallocr_max_size(galloc->buf_tallocs[i]);
-
         // even if there are no tensors allocated in this buffer, we still need to allocate it to initialize views
-        if (new_size > cur_size || galloc->buffers[i] == NULL) {
+        bool realloc = galloc->buffers[i] == NULL;
+        size_t new_size = 0;
+        for (int c = 0; c < galloc->buf_tallocs[i]->n_chunks; c++) {
+            size_t cur_chunk_size = galloc->buffers[i] ? ggml_vbuffer_chunk_size(galloc->buffers[i], c) : 0;
+            size_t new_chunk_size = ggml_dyn_tallocr_max_size(galloc->buf_tallocs[i], c);
+            new_size += new_chunk_size;
+            if (new_chunk_size > cur_chunk_size) {
+                realloc = true;
+            }
+        }
+        if (realloc) {
 #ifndef NDEBUG
+            size_t cur_size = galloc->buffers[i] ? ggml_vbuffer_size(galloc->buffers[i]) : 0;
             GGML_LOG_DEBUG("%s: reallocating %s buffer from size %.02f MiB to %.02f MiB\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), cur_size / 1024.0 / 1024.0, new_size / 1024.0 / 1024.0);
 #endif
 

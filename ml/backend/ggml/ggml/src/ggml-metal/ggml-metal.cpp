@@ -195,9 +195,9 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
             } break;
         case GGML_OP_FLASH_ATTN_EXT:
             {
-                if (ggml_metal_op_flash_attn_ext_use_vec(tensor)) {
-                    res += ggml_metal_op_flash_attn_ext_extra_tmp(tensor);
-                }
+                res += ggml_metal_op_flash_attn_ext_extra_pad(tensor);
+                res += ggml_metal_op_flash_attn_ext_extra_blk(tensor);
+                res += ggml_metal_op_flash_attn_ext_extra_tmp(tensor);
             } break;
         default:
             break;
@@ -410,10 +410,12 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
     GGML_UNUSED(dst);
 }
 
-static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     ggml_metal_t ctx = (ggml_metal_t)backend->context;
 
     return ggml_metal_graph_compute(ctx, cgraph);
+
+    GGML_UNUSED(batch_size);
 }
 
 static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
@@ -543,6 +545,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
     props->type        = ggml_backend_metal_device_get_type(dev);
 
     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+
     props->library = GGML_METAL_NAME;
     props->caps = {
         /* .async                 = */ true,

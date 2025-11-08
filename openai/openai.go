@@ -2,12 +2,13 @@
 package openai
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"slices"
 	"strings"
@@ -73,9 +74,10 @@ type JsonSchema struct {
 }
 
 type EmbedRequest struct {
-	Input      any    `json:"input"`
-	Model      string `json:"model"`
-	Dimensions int    `json:"dimensions,omitempty"`
+	Input          any    `json:"input"`
+	Model          string `json:"model"`
+	Dimensions     int    `json:"dimensions,omitempty"`
+	EncodingFormat string `json:"encoding_format,omitempty"` // "float" or "base64"
 }
 
 type StreamOptions struct {
@@ -181,9 +183,9 @@ type Model struct {
 }
 
 type Embedding struct {
-	Object    string    `json:"object"`
-	Embedding []float32 `json:"embedding"`
-	Index     int       `json:"index"`
+	Object    string `json:"object"`
+	Embedding any    `json:"embedding"` // Can be []float32 (float format) or string (base64 format)
+	Index     int    `json:"index"`
 }
 
 type ListCompletion struct {
@@ -226,19 +228,11 @@ func ToUsage(r api.ChatResponse) Usage {
 	}
 }
 
-func toolCallId() string {
-	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return "call_" + strings.ToLower(string(b))
-}
-
-func toToolCalls(tc []api.ToolCall) []ToolCall {
+// ToToolCalls converts api.ToolCall to OpenAI ToolCall format
+func ToToolCalls(tc []api.ToolCall) []ToolCall {
 	toolCalls := make([]ToolCall, len(tc))
 	for i, tc := range tc {
-		toolCalls[i].ID = toolCallId()
+		toolCalls[i].ID = tc.ID
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
 		toolCalls[i].Index = tc.Function.Index
@@ -256,7 +250,7 @@ func toToolCalls(tc []api.ToolCall) []ToolCall {
 
 // ToChatCompletion converts an api.ChatResponse to ChatCompletion
 func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := toToolCalls(r.Message.ToolCalls)
+	toolCalls := ToToolCalls(r.Message.ToolCalls)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -282,7 +276,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 
 // ToChunk converts an api.ChatResponse to ChatCompletionChunk
 func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
-	toolCalls := toToolCalls(r.Message.ToolCalls)
+	toolCalls := ToToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -376,13 +370,21 @@ func ToListCompletion(r api.ListResponse) ListCompletion {
 }
 
 // ToEmbeddingList converts an api.EmbedResponse to EmbeddingList
-func ToEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
+// encodingFormat can be "float", "base64", or empty (defaults to "float")
+func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) EmbeddingList {
 	if r.Embeddings != nil {
 		var data []Embedding
 		for i, e := range r.Embeddings {
+			var embedding any
+			if strings.EqualFold(encodingFormat, "base64") {
+				embedding = floatsToBase64(e)
+			} else {
+				embedding = e
+			}
+
 			data = append(data, Embedding{
 				Object:    "embedding",
-				Embedding: e,
+				Embedding: embedding,
 				Index:     i,
 			})
 		}
@@ -399,6 +401,13 @@ func ToEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
 	}
 
 	return EmbeddingList{}
+}
+
+// floatsToBase64 encodes a []float32 to a base64 string
+func floatsToBase64(floats []float32) string {
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.LittleEndian, floats)
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
 // ToModel converts an api.ShowResponse to Model
@@ -424,11 +433,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 		switch content := msg.Content.(type) {
 		case string:
-			toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
+			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -456,6 +465,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 					types := []string{"jpeg", "jpg", "png", "webp"}
 					valid := false
+					// support blank mime type to match api/chat taking just unadorned base64
+					if strings.HasPrefix(url, "data:;base64,") {
+						url = strings.TrimPrefix(url, "data:;base64,")
+						valid = true
+					}
 					for _, t := range types {
 						prefix := "data:image/" + t + ";base64,"
 						if strings.HasPrefix(url, prefix) {
@@ -482,14 +496,13 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			// since we might have added multiple messages above, if we have tools
 			// calls we'll add them to the last message
 			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
-				toolCalls, err := fromCompletionToolCall(msg.ToolCalls)
+				toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 				if err != nil {
 					return nil, err
 				}
 				messages[len(messages)-1].ToolCalls = toolCalls
-				if toolName != "" {
-					messages[len(messages)-1].ToolName = toolName
-				}
+				messages[len(messages)-1].ToolName = toolName
+				messages[len(messages)-1].ToolCallID = msg.ToolCallID
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
@@ -498,15 +511,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
 
-			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
-			for i, tc := range msg.ToolCalls {
-				toolCalls[i].Function.Name = tc.Function.Name
-				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
-				if err != nil {
-					return nil, errors.New("invalid tool call arguments")
-				}
+			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
 		}
 	}
 
@@ -613,9 +622,11 @@ func nameFromToolCallID(messages []Message, toolCallID string) string {
 	return ""
 }
 
-func fromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
+// FromCompletionToolCall converts OpenAI ToolCall format to api.ToolCall
+func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 	apiToolCalls := make([]api.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
+		apiToolCalls[i].ID = tc.ID
 		apiToolCalls[i].Function.Name = tc.Function.Name
 		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
 		if err != nil {

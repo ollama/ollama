@@ -104,6 +104,21 @@ func TestQwenParserStreaming(t *testing.T) {
 			},
 		},
 		{
+			desc: "unambiguous empty: partial tool open at buffer start",
+			steps: []step{
+				{
+					input:      "<tool_ca",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "ll>abc</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "abc"},
+					},
+				},
+			},
+		},
+		{
 			desc: "trailing whitespace between tool call and content",
 			steps: []step{
 				{
@@ -961,6 +976,21 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 			paramType: api.PropertyType{"string", "integer"},
 			raw:       "123",
 			want:      123, // Integer has higher precedence than string
+		},
+		{
+			desc:      "anyOf array or string - with array of objects",
+			paramType: api.PropertyType{"array", "string"},
+			raw:       `[{"content": "task 1", "status": "pending", "priority": "high", "id": "1"}, {"content": "task 2", "status": "completed", "priority": "low", "id": "2"}]`,
+			want: []any{
+				map[string]any{"content": "task 1", "status": "pending", "priority": "high", "id": "1"},
+				map[string]any{"content": "task 2", "status": "completed", "priority": "low", "id": "2"},
+			},
+		},
+		{
+			desc:      "anyOf array or string - with plain string",
+			paramType: api.PropertyType{"array", "string"},
+			raw:       "Error: could not load data",
+			want:      "Error: could not load data",
 		},
 	}
 

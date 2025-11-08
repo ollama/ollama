@@ -296,6 +296,7 @@ extern "C" {
         bool use_mlock;       // force system to keep model in RAM
         bool check_tensors;   // validate model tensor data
         bool use_extra_bufts; // use extra buffer types (used for weight repacking)
+        bool no_host;         // bypass host buffer allowing extra buffers to be used
     };
 
     // NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may cause crashes or incorrect results in certain configurations
@@ -542,6 +543,9 @@ extern "C" {
 
     // Returns true if the model is recurrent (like Mamba, RWKV, etc.)
     LLAMA_API bool llama_model_is_recurrent(const struct llama_model * model);
+
+    // Returns true if the model is hybrid (like Jamba, Granite, etc.)
+    LLAMA_API bool llama_model_is_hybrid(const struct llama_model * model);
 
     // Returns true if the model is diffusion-based (like LLaDA, Dream, etc.)
     LLAMA_API bool llama_model_is_diffusion(const struct llama_model * model);
@@ -791,7 +795,11 @@ extern "C" {
                           size_t   n_token_capacity,
                           size_t * n_token_count_out);
 
+// for backwards-compat
 #define LLAMA_STATE_SEQ_FLAGS_SWA_ONLY 1
+
+// work only with partial states, such as SWA KV cache or recurrent cache (e.g. Mamba)
+#define LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY 1
 
     typedef uint32_t llama_state_seq_flags;
 

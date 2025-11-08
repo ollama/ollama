@@ -162,6 +162,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		embeddingOnly:    params.embedding,
 		stop:             params.stop,
 		numKeep:          params.numKeep,
+		shift:            params.shift,
 	}, nil
 }
 
@@ -208,13 +209,19 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
-			embed, err := s.image.NewEmbed(s.lc, images[imageIndex].Data)
+			chunks, err := s.image.MultimodalTokenize(s.lc, images[imageIndex].Data)
 			if err != nil {
 				return nil, err
 			}
 
-			for _, e := range embed {
-				inputs = append(inputs, input{embed: e})
+			for _, c := range chunks {
+				if len(c.Embed) != 0 {
+					inputs = append(inputs, input{embed: c.Embed})
+				} else {
+					for _, t := range c.Tokens {
+						inputs = append(inputs, input{token: t})
+					}
+				}
 			}
 		}
 	}
@@ -377,6 +384,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 	defer s.mu.Unlock()
 
 	var batch *llama.Batch
+	var numOutputs int
 
 	seqIdx := s.nextSeq - 1
 	for range s.seqs {
@@ -439,7 +447,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 				break
 			}
 
-			batch.Add(input.token, input.embed, len(seq.cache.Inputs)+len(seq.pendingInputs), i+1 == len(seq.inputs), seq.cache.Id)
+			output := i+1 == len(seq.inputs)
+			batch.Add(input.token, input.embed, len(seq.cache.Inputs)+len(seq.pendingInputs), output, seq.cache.Id)
+			if output {
+				numOutputs++
+			}
+
 			seq.pendingInputs = append(seq.pendingInputs, input)
 			seq.iBatch = batch.NumTokens() - 1
 		}
@@ -456,6 +469,10 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		return fmt.Errorf("failed to decode batch: %w", err)
 	}
 
+	if numOutputs > 0 {
+		s.lc.Synchronize()
+	}
+
 	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
@@ -469,10 +486,10 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
+			seq.processingDuration += time.Since(t)
 			continue
 		}
 
-		s.lc.Synchronize()
 		seq.numDecoded++
 		if seq.numDecoded > 1 {
 			seq.generationDuration += time.Since(t)
@@ -690,7 +707,14 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
+		embedding: true,
+
+		// TODO (jmorganca): this should be provided by the server via the
+		// request options and truncated here in the runner, instead of relying on
+		// the server's truncate logic
+		truncate: true,
+	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return

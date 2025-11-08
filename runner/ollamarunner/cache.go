@@ -235,15 +235,28 @@ func countCommonPrefix(a []*input.Input, b []*input.Input) int32 {
 	return count
 }
 
-// TODO(jessegross): If we need to reprocess the inputs we should ensure that
-// we don't split up a SameBatch
-func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
-	targetFree := (c.numCtx - numKeep) / 2
-	targetFree = max(targetFree, 1)
+// ShiftDiscard computes how many inputs can be discarded from the cache. Inputs in the same batch
+// are discarded together.
+func (c *InputCache) ShiftDiscard(inputs []*input.Input, numKeep int32) int32 {
+	targetFree := max((c.numCtx-numKeep)/2, 1)
+	currentFree := c.numCtx - int32(len(inputs))
 
-	currentFree := c.numCtx - inputLen
+	var discard, sameBatch int32
+	for _, input := range inputs[numKeep:] {
+		if sameBatch <= 0 && currentFree >= targetFree {
+			break
+		}
 
-	return max(targetFree-currentFree, 0)
+		sameBatch--
+		currentFree++
+		discard++
+
+		if input.SameBatch > 0 {
+			sameBatch = int32(input.SameBatch)
+		}
+	}
+
+	return discard
 }
 
 type ErrReprocessInputs struct {
@@ -264,7 +277,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 	}
 
 	inputLen := int32(len(slot.Inputs))
-	discard := c.ShiftDiscard(inputLen, numKeep)
+	discard := c.ShiftDiscard(slot.Inputs, numKeep)
 
 	if discard <= 0 {
 		return nil

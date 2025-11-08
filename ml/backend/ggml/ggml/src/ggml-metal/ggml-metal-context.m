@@ -125,12 +125,7 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
 
     res->d_queue = dispatch_queue_create("ggml-metal", DISPATCH_QUEUE_CONCURRENT);
 
-    if (@available(macOS 14.0, *)) {
-        res->use_bfloat = props_dev->has_bfloat;
-    } else {
-        res->use_bfloat = false;
-    }
-
+    res->use_bfloat      = props_dev->has_bfloat;
     res->use_fusion      = getenv("GGML_METAL_FUSION_DISABLE") == nil;
     res->use_concurrency = getenv("GGML_METAL_CONCURRENCY_DISABLE") == nil;
 
