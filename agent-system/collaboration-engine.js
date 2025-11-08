@@ -1,4 +1,18 @@
-const logger = require('winston');
+// Use parent logger if available, otherwise create minimal fallback logger
+const logger = (() => {
+    try {
+        return require('winston');
+    } catch (e) {
+        // Fallback to console-based logger if winston is not available
+        console.warn('Winston logger not available, using console fallback');
+        return {
+            info: (...args) => console.log('[INFO]', ...args),
+            warn: (...args) => console.warn('[WARN]', ...args),
+            error: (...args) => console.error('[ERROR]', ...args),
+            debug: (...args) => console.log('[DEBUG]', ...args)
+        };
+    }
+})();
 
 /**
  * Collaboration Engine

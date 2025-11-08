@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:with-ollama": "./start-with-ollama.sh",
     "dev": "nodemon server.js"
   },
   "keywords": [
@@ -27,7 +28,7 @@
     "helmet": "^8.1.0",
     "isomorphic-dompurify": "^2.31.0",
     "opossum": "^9.0.0",
-    "p-retry": "^7.1.0",
+    "p-retry": "^5.1.2",
     "socket.io": "^4.6.1",
     "tmp-promise": "^3.0.3",
     "winston": "^3.18.3"

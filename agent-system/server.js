@@ -11,7 +11,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const session = require('express-session');
 const tmp = require('tmp-promise');
-const pRetry = require('p-retry');
+const pRetry = require('p-retry').default;
 const CircuitBreaker = require('opossum');
 const Ajv = require('ajv');
 const winston = require('winston');
@@ -68,7 +68,8 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'"], // Needed for inline scripts
+            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Needed for inline scripts
+            scriptSrcAttr: ["'unsafe-inline'"], // Allow inline event handlers (onclick, etc)
             styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
             fontSrc: ["'self'", "fonts.gstatic.com"],
             imgSrc: ["'self'", "data:"],
@@ -644,7 +645,7 @@ async function getAvailableModels() {
                 size: m.size,
                 category: m.size < 1e9 ? 'tiny' : m.size < 3e9 ? 'small' : m.size < 7e9 ? 'medium' : 'large'
             }))
-            .sort((a, b) => b.size - a.size); // Sort largest to smallest for cascade
+            .sort((a, b) => a.size - b.size); // Sort smallest to largest for faster response in resource-constrained environments
 
         modelCache = models;
         modelCacheTime = now;
@@ -698,7 +699,7 @@ async function processSearchRequests(response) {
 const ollamaBreaker = new CircuitBreaker(async (url, data, config) => {
     return await axios.post(url, data, config);
 }, {
-    timeout: 30000, // 30s timeout
+    timeout: 60000, // 60s timeout (larger models may need more time on first load)
     errorThresholdPercentage: 50, // Open circuit at 50% errors
     resetTimeout: 30000, // Try again after 30s
     name: 'ollamaAPI'
@@ -944,11 +945,11 @@ app.post('/api/message', async (req, res) => {
             model: model || 'auto'
         });
 
-        // Update user profiling based on message
-        updateUserProfile(message);
-
         // Get response from Ollama (with optional model preference)
         const response = await callOllama(agentKey, message, model);
+
+        // Update user profiling based on message and response
+        updateUserProfile(agentKey, message, response);
 
         // Validate response
         if (typeof response !== 'string' || response.length === 0) {
@@ -1010,8 +1011,13 @@ app.post('/api/message', async (req, res) => {
 // Initialize collaboration engine on first use
 function getCollaborationEngine() {
     if (!collaborationEngine) {
-        collaborationEngine = new CollaborationEngine(agents, callOllama);
-        logger.info('Collaboration engine initialized');
+        try {
+            collaborationEngine = new CollaborationEngine(agents, callOllama);
+            logger.info('Collaboration engine initialized');
+        } catch (error) {
+            logger.error('Failed to initialize collaboration engine:', error);
+            throw new Error(`Collaboration engine initialization failed: ${error.message}`);
+        }
     }
     return collaborationEngine;
 }
@@ -1021,10 +1027,22 @@ app.get('/api/collaboration/templates', (req, res) => {
     try {
         const engine = getCollaborationEngine();
         const templates = engine.getTemplates();
-        res.json({ templates });
+
+        // Always return at least an empty array, never fail completely
+        res.json({
+            templates: templates || [],
+            fallbackMode: !templates || templates.length === 0
+        });
     } catch (error) {
         logger.error('Error fetching templates:', error);
-        res.status(500).json({ error: 'Failed to fetch templates' });
+
+        // Return empty templates array instead of error
+        // This allows frontend to still open modal in custom mode
+        res.json({
+            templates: [],
+            fallbackMode: true,
+            error: 'Engine unavailable - custom mode only'
+        });
     }
 });
 

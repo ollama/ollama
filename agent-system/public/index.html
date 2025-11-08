@@ -200,6 +200,25 @@
             margin-right: 8px;
             animation: pulse 2s infinite;
         }
+        .agent-model-selector {
+            margin-top: 8px;
+            padding: 5px;
+            font-size: 0.85em;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            width: 100%;
+            font-family: 'Courier New', monospace;
+            cursor: pointer;
+        }
+        .agent-model-selector:hover {
+            background: rgba(0, 255, 0, 0.1);
+        }
+        .agent-name-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
         @keyframes pulse {
             0%, 100% {
                 box-shadow: 0 0 5px #00ff00;
@@ -720,12 +739,93 @@
             for (const [key, agent] of Object.entries(agents)) {
                 const item = document.createElement('div');
                 item.className = 'agent-item';
-                item.onclick = () => selectAgent(key, item);
+                item.onclick = (e) => {
+                    // Only select agent if not clicking on model selector
+                    if (!e.target.classList.contains('agent-model-selector')) {
+                        selectAgent(key, item);
+                    }
+                };
+
+                // Get saved model preference or use default
+                const savedModel = localStorage.getItem(`agent_${key}_model`) || agent.model;
+
                 item.innerHTML = `
-                    <span class="agent-status"></span>
-                    ${agentIcons[key] || '🤖'} ${agent.name.toUpperCase()}
+                    <div class="agent-name-row">
+                        <span><span class="agent-status"></span>${agentIcons[key] || '🤖'} ${agent.name.toUpperCase()}</span>
+                    </div>
+                    <select class="agent-model-selector" data-agent="${key}" onclick="event.stopPropagation()">
+                        <option value="">Loading models...</option>
+                    </select>
                 `;
                 list.appendChild(item);
+
+                // Store reference to update later
+                item.querySelector('.agent-model-selector').dataset.currentModel = savedModel;
+            }
+
+            // Load models for selectors after rendering
+            populateAgentModelSelectors();
+        }
+
+        async function populateAgentModelSelectors() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+
+                const selectors = document.querySelectorAll('.agent-model-selector');
+                selectors.forEach(selector => {
+                    const agentKey = selector.dataset.agent;
+                    const currentModel = selector.dataset.currentModel;
+
+                    selector.innerHTML = '<option value="">AUTO</option>';
+
+                    if (data.demo) {
+                        selector.innerHTML += '<option value="" disabled>Ollama unavailable</option>';
+                        return;
+                    }
+
+                    data.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.name;
+                        option.textContent = `${model.name} (${model.size})`;
+                        if (model.name === currentModel) {
+                            option.selected = true;
+                        }
+                        selector.appendChild(option);
+                    });
+
+                    // Handle model change
+                    selector.addEventListener('change', (e) => {
+                        const newModel = e.target.value;
+                        updateAgentModel(agentKey, newModel);
+                    });
+                });
+
+            } catch (error) {
+                console.error('Error loading models for agent selectors:', error);
+            }
+        }
+
+        async function updateAgentModel(agentKey, modelName) {
+            try {
+                // Save to localStorage
+                if (modelName) {
+                    localStorage.setItem(`agent_${agentKey}_model`, modelName);
+                    console.log(`💾 ${agentIcons[agentKey]} ${agents[agentKey].name} → ${modelName}`);
+                } else {
+                    localStorage.removeItem(`agent_${agentKey}_model`);
+                    console.log(`💾 ${agentIcons[agentKey]} ${agents[agentKey].name} → AUTO`);
+                }
+
+                // Update agent configuration
+                agents[agentKey].model = modelName || agents[agentKey].model;
+
+                // Show confirmation
+                addSystemMessage(`✓ ${agents[agentKey].name.toUpperCase()} model updated to: ${modelName || 'AUTO'}`);
+
+            } catch (error) {
+                console.error('Error updating agent model:', error);
+                addSystemMessage(`ERROR: Failed to update ${agents[agentKey].name} model`);
             }
         }
 
@@ -762,7 +862,11 @@
             const input = document.getElementById('command-input');
             const agentKey = document.getElementById('agent-selector').value || currentAgent;
             const message = input.value.trim();
-            const model = document.getElementById('model-selector').value || null;
+
+            // Get agent-specific model or global model or null
+            const agentSpecificModel = localStorage.getItem(`agent_${agentKey}_model`);
+            const globalModel = document.getElementById('model-selector').value;
+            const model = agentSpecificModel || globalModel || null;
 
             if (!message || !agentKey) {
                 addSystemMessage('ERROR: SELECT_AGENT AND ENTER_COMMAND');
@@ -1170,16 +1274,46 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
 
         async function openCollaborationPanel() {
             console.log('🚀 Opening collaboration panel...');
-            // Load templates
+
+            // Reset display states and open modal FIRST
+            document.getElementById('collab-progress').style.display = 'none';
+            document.getElementById('collab-results').style.display = 'none';
+            document.getElementById('collaboration-modal').style.display = 'block';
+
+            // Populate agent checkboxes (always available, not dependent on templates)
+            const agentContainer = document.getElementById('collab-agents');
+            agentContainer.innerHTML = '';
+            Object.keys(agents).forEach(agentKey => {
+                const checkbox = document.createElement('div');
+                checkbox.style.padding = '10px';
+                checkbox.style.border = '1px solid var(--primary-color)';
+                checkbox.style.cursor = 'pointer';
+                checkbox.innerHTML = `
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" value="${agentKey}" style="width: 20px; height: 20px; cursor: pointer;">
+                        <span>${agentIcons[agentKey] || '🤖'} ${agents[agentKey].name.toUpperCase()}</span>
+                    </label>
+                `;
+                agentContainer.appendChild(checkbox);
+            });
+
+            // Load templates (may fail, but modal stays open)
             try {
                 const response = await fetch('/api/collaboration/templates');
                 const data = await response.json();
                 console.log('✅ Templates loaded:', data.templates);
-                collaborationTemplates = data.templates;
+                collaborationTemplates = data.templates || [];
 
                 // Populate template selector
                 const templateSelector = document.getElementById('collab-template');
                 templateSelector.innerHTML = '<option value="custom">CUSTOM</option>';
+
+                if (data.fallbackMode || !data.templates || data.templates.length === 0) {
+                    console.warn('⚠ Templates unavailable, using custom mode only');
+                    addSystemMessage('⚠ Templates unavailable. Using CUSTOM mode.');
+                    return; // Modal stays open in custom mode
+                }
+
                 collaborationTemplates.forEach(template => {
                     const option = document.createElement('option');
                     option.value = template.id;
@@ -1201,33 +1335,10 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                     }
                 });
 
-                // Populate agent checkboxes
-                const agentContainer = document.getElementById('collab-agents');
-                agentContainer.innerHTML = '';
-                Object.keys(agents).forEach(agentKey => {
-                    const checkbox = document.createElement('div');
-                    checkbox.style.padding = '10px';
-                    checkbox.style.border = '1px solid var(--primary-color)';
-                    checkbox.style.cursor = 'pointer';
-                    checkbox.innerHTML = `
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
-                            <input type="checkbox" value="${agentKey}" style="width: 20px; height: 20px; cursor: pointer;">
-                            <span>${agentIcons[agentKey] || '🤖'} ${agents[agentKey].name.toUpperCase()}</span>
-                        </label>
-                    `;
-                    agentContainer.appendChild(checkbox);
-                });
-
-                // Reset display states
-                document.getElementById('collab-progress').style.display = 'none';
-                document.getElementById('collab-results').style.display = 'none';
-
-                // Open modal
-                document.getElementById('collaboration-modal').style.display = 'block';
-
             } catch (error) {
-                console.error('Error loading collaboration panel:', error);
-                addSystemMessage('ERROR: FAILED_TO_LOAD_COLLABORATION_SYSTEM');
+                console.error('Error loading collaboration templates:', error);
+                addSystemMessage('⚠ Template loading failed. CUSTOM mode available.');
+                // Modal stays open, user can still use custom collaboration
             }
         }
 
