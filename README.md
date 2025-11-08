@@ -226,6 +226,18 @@ ollama ps
 ollama stop llama3.2
 ```
 
+### Generate embeddings from the CLI
+
+```shell
+ollama run embeddinggemma "Your text to embed"
+```
+
+You can also pipe text for scripted workflows:
+
+```shell
+echo "Your text to embed" | ollama run embeddinggemma
+```
+
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
@@ -282,7 +294,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
-- [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
+- [Lollms WebUI (Single user)](https://github.com/ParisNeo/lollms-webui)
+- [Lollms (Multi users)](https://github.com/ParisNeo/lollms)
 - [LibreChat](https://github.com/danny-avila/LibreChat)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
@@ -423,6 +436,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 
+### Tutorial
+
+- [handy-ollama](https://github.com/datawhalechina/handy-ollama) (Chinese Tutorial for Ollama by [Datawhale ](https://github.com/datawhalechina) - China's Largest Open Source AI Learning Community)
+
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
@@ -462,6 +479,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AWS-Strands-With-Ollama](https://github.com/rapidarchitect/ollama_strands) - AWS Strands Agents with Ollama Examples
 - [ollama-multirun](https://github.com/attogram/ollama-multirun) - A bash shell script to run a single prompt against any or all of your locally installed ollama models, saving the output and performance statistics as easily navigable web pages. ([Demo](https://attogram.github.io/ai_test_zone/))
 - [ollama-bash-toolshed](https://github.com/attogram/ollama-bash-toolshed) - Bash scripts to chat with tool using models. Add new tools to your shed with ease. Runs on Ollama.
+- [hle-eval-ollama](https://github.com/mags0ft/hle-eval-ollama) - Runs benchmarks like "Humanity's Last Exam" (HLE) on your favorite local Ollama models and evaluates the quality of their responses
 - [VT Code](https://github.com/vinhnx/vtcode) - VT Code is a Rust-based terminal coding agent with semantic code intelligence via Tree-sitter. Ollama integration for running local/cloud models with configurable endpoints.
 
 ### Apple Vision Pro
@@ -594,7 +612,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Terraform AWS Ollama & Open WebUI](https://github.com/xuyangbocn/terraform-aws-self-host-llm) (A Terraform module to deploy on AWS a ready-to-use Ollama service, together with its front-end Open WebUI service.)
 - [node-red-contrib-ollama](https://github.com/jakubburkiewicz/node-red-contrib-ollama)
 - [Local AI Helper](https://github.com/ivostoykov/localAI) (Chrome and Firefox extensions that enable interactions with the active tab and customisable API endpoints. Includes secure storage for user prompts.)
-- [vnc-lm](https://github.com/jake83741/vnc-lm) (Discord bot for messaging with LLMs through Ollama and LiteLLM. Seamlessly move between local and flagship models.)
 - [LSP-AI](https://github.com/SilasMarvin/lsp-ai) (Open-source language server for AI-powered functionality)
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) (AI-powered coding assistant plugin for Qt Creator)
 - [Obsidian Quiz Generator plugin](https://github.com/ECuiDev/obsidian-quiz-generator)
@@ -622,3 +639,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.
+
+## Security
+- [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server)

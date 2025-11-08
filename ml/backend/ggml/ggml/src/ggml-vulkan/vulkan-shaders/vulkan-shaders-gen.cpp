@@ -611,9 +611,6 @@ void process_shaders() {
         }
 
         for (const auto& tname : type_names) {
-            if (tname == "f32") {
-                continue;
-            }
             if (tname == "bf16") continue;
 
 #if defined(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
@@ -630,7 +627,7 @@ void process_shaders() {
             if (tname == "f16") {
                 string_to_spv("flash_attn_f32_f16_" + tname, "flash_attn_cm1.comp",
                     merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"COOPMAT", "1"}}), true, true, false, f16acc);
-            } else if (tname == "q4_0" || tname == "q8_0") {
+            } else if (tname == "q4_0" || tname == "q8_0" || tname == "f32") {
                 std::string data_a_key = "DATA_A_" + to_uppercase(tname);
                 string_to_spv("flash_attn_f32_f16_" + tname, "flash_attn_cm1.comp",
                     merge_maps(fa_base_dict, {{data_a_key, "1"}, {"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"BLOCK_SIZE", "QUANT_K_"+to_uppercase(tname)}, {"COOPMAT", "1"}}), true, true, false, f16acc);
@@ -639,7 +636,7 @@ void process_shaders() {
             if (tname == "f16") {
                 string_to_spv("flash_attn_f32_f16_" + tname, "flash_attn.comp",
                     merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}}), true, false, false, f16acc);
-            } else if (tname == "q4_0" || tname == "q8_0") {
+            } else if (tname == "q4_0" || tname == "q8_0" || tname == "f32") {
                 std::string data_a_key = "DATA_A_" + to_uppercase(tname);
                 string_to_spv("flash_attn_f32_f16_" + tname, "flash_attn.comp",
                     merge_maps(fa_base_dict, {{data_a_key, "1"}, {"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"BLOCK_SIZE", "QUANT_K_"+to_uppercase(tname) }}), true, false, false, f16acc);
@@ -919,6 +916,13 @@ void process_shaders() {
     string_to_spv("multi_add_f32", "multi_add.comp", {{"A_TYPE", "float"}, {"B_TYPE", "float"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"RTE16", "1"}, {"ADD_RMS" , "0"}});
     string_to_spv("multi_add_rms_f32", "multi_add.comp", {{"A_TYPE", "float"}, {"B_TYPE", "float"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"RTE16", "1"}, {"ADD_RMS" , "1"}});
 
+    string_to_spv("ssm_scan_f32",          "ssm_scan.comp", {{"A_TYPE", "float"}});
+    string_to_spv("ssm_scan_subgroup_f32", "ssm_scan.comp", {{"A_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}});
+
+    string_to_spv("ssm_conv_f32", "ssm_conv.comp", {{"A_TYPE", "float"}});
+
+    string_to_spv("topk_moe_f32", "topk_moe.comp", {});
+
     for (auto &c : compiles) {
         c.wait();
     }
@@ -962,7 +966,7 @@ void write_output_files() {
     }
 
     std::string suffixes[2] = {"_f32", "_f16"};
-    for (auto op : {"add", "sub", "mul", "div", "add_rms"}) {
+    for (std::string op : {"add", "sub", "mul", "div", "add_rms"}) {
         hdr << "extern const void * " << op << "_data[2][2][2][2];\n";
         hdr << "extern const uint64_t " << op << "_len[2][2][2][2];\n";
 

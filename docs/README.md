@@ -12,7 +12,7 @@
 ### Reference
 
 * [API Reference](https://docs.ollama.com/api)
-* [Modelfile Reference](./modelfile.md)
+* [Modelfile Reference](https://docs.ollama.com/modelfile)
 * [OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility)
 * [Video Support](./video-support.md)
 

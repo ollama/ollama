@@ -324,7 +324,7 @@ type ToolFunctionParameters struct {
 	Type       string                  `json:"type"`
 	Defs       any                     `json:"$defs,omitempty"`
 	Items      any                     `json:"items,omitempty"`
-	Required   []string                `json:"required"`
+	Required   []string                `json:"required,omitempty"`
 	Properties map[string]ToolProperty `json:"properties"`
 }
 

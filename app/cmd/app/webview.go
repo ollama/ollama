@@ -282,7 +282,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 					"go", "rs", "swift", "kt", "scala", "sh", "bat", "yaml", "yml", "toml", "ini",
 					"cfg", "conf", "log", "rtf",
 				}
-				imageExts := []string{"png", "jpg", "jpeg"}
+				imageExts := []string{"png", "jpg", "jpeg", "webp"}
 				videoExts := []string{"mp4", "mov", "avi", "mkv", "webm", "m4v"}
 				allowedExts := append(textExts, imageExts...)
 				allowedExts = append(allowedExts, videoExts...)
