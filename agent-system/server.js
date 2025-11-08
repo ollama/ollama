@@ -224,6 +224,34 @@ let userProfile = {
     }
 };
 
+// Conversation Management System
+let conversations = {}; // In-memory conversation store: { conversationId: conversationObject }
+let activeConversations = {}; // Track active conversation per user/session
+const CONVERSATIONS_DIR = path.join(__dirname, 'data', 'conversations');
+
+// Conversation schema
+function createConversation(agent, name = null) {
+    const id = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const conversation = {
+        id,
+        name: name || `New ${agents[agent]?.name || 'Agent'} Chat`,
+        agent,
+        created: new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+        messages: [],
+        tags: [],
+        pinned: false,
+        archived: false,
+        metadata: {
+            messageCount: 0,
+            searchCount: 0,
+            collaborations: []
+        }
+    };
+    conversations[id] = conversation;
+    return conversation;
+}
+
 // Initialize conversation history and summaries for each agent
 Object.keys(agents).forEach(agentKey => {
     conversationHistory[agentKey] = [];
@@ -233,6 +261,37 @@ Object.keys(agents).forEach(agentKey => {
         permanentLearnings: [] // Key insights that persist forever
     };
 });
+
+// Save single conversation to disk
+async function saveConversation(conversationId) {
+    try {
+        const conv = conversations[conversationId];
+        if (!conv) {
+            throw new Error(`Conversation ${conversationId} not found`);
+        }
+
+        await fs.mkdir(CONVERSATIONS_DIR, { recursive: true });
+        const filepath = path.join(CONVERSATIONS_DIR, `${conversationId}.json`);
+        await fs.writeFile(filepath, JSON.stringify(conv, null, 2), 'utf8');
+        logger.debug(`Saved conversation ${conversationId}`);
+    } catch (error) {
+        logger.error(`Failed to save conversation ${conversationId}:`, error);
+        throw error;
+    }
+}
+
+// Delete conversation from disk
+async function deleteConversation(conversationId) {
+    try {
+        const filepath = path.join(CONVERSATIONS_DIR, `${conversationId}.json`);
+        await fs.unlink(filepath);
+        delete conversations[conversationId];
+        logger.info(`Deleted conversation ${conversationId}`);
+    } catch (error) {
+        logger.error(`Failed to delete conversation ${conversationId}:`, error);
+        throw error;
+    }
+}
 
 // Initialize Collaboration Engine
 let collaborationEngine = null;
@@ -374,6 +433,26 @@ async function loadData() {
         logger.info('✓ Loaded conversation summaries');
     } catch (error) {
         logger.info('○ Starting with fresh summaries');
+    }
+
+    // Load conversations
+    try {
+        await fs.mkdir(CONVERSATIONS_DIR, { recursive: true });
+        const files = await fs.readdir(CONVERSATIONS_DIR);
+        const jsonFiles = files.filter(f => f.endsWith('.json'));
+
+        for (const file of jsonFiles) {
+            try {
+                const data = await fs.readFile(path.join(CONVERSATIONS_DIR, file), 'utf8');
+                const conv = JSON.parse(data);
+                conversations[conv.id] = conv;
+            } catch (err) {
+                logger.warn(`Failed to load conversation ${file}:`, err.message);
+            }
+        }
+        logger.info(`✓ Loaded ${Object.keys(conversations).length} conversations`);
+    } catch (error) {
+        logger.info('○ Starting with no saved conversations');
     }
 
     // Load user profile
@@ -987,6 +1066,156 @@ app.post('/api/search', async (req, res) => {
     } catch (error) {
         console.error('Search API error:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// ========================================
+// CONVERSATION MANAGEMENT API ROUTES
+// ========================================
+
+// Get all conversations
+app.get('/api/conversations', (req, res) => {
+    try {
+        const { agent, archived, search } = req.query;
+        let results = Object.values(conversations);
+
+        // Filter by agent
+        if (agent) {
+            results = results.filter(c => c.agent === agent);
+        }
+
+        // Filter by archived status
+        if (archived !== undefined) {
+            const isArchived = archived === 'true';
+            results = results.filter(c => c.archived === isArchived);
+        }
+
+        // Search by name or messages
+        if (search) {
+            const searchLower = search.toLowerCase();
+            results = results.filter(c =>
+                c.name.toLowerCase().includes(searchLower) ||
+                c.messages.some(m => m.content.toLowerCase().includes(searchLower))
+            );
+        }
+
+        // Sort by last updated (newest first)
+        results.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
+
+        res.json({ conversations: results, count: results.length });
+    } catch (error) {
+        logger.error('Error fetching conversations:', error);
+        res.status(500).json({ error: 'Failed to fetch conversations' });
+    }
+});
+
+// Get specific conversation
+app.get('/api/conversations/:id', (req, res) => {
+    try {
+        const conversation = conversations[req.params.id];
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        res.json(conversation);
+    } catch (error) {
+        logger.error('Error fetching conversation:', error);
+        res.status(500).json({ error: 'Failed to fetch conversation' });
+    }
+});
+
+// Create new conversation
+app.post('/api/conversations', async (req, res) => {
+    try {
+        const { agent, name } = req.body;
+
+        if (!agent || !agents[agent]) {
+            return res.status(400).json({ error: 'Valid agent required' });
+        }
+
+        const conversation = createConversation(agent, name);
+        await saveConversation(conversation.id);
+
+        logger.info(`Created new conversation: ${conversation.id}`);
+        res.json(conversation);
+    } catch (error) {
+        logger.error('Error creating conversation:', error);
+        res.status(500).json({ error: 'Failed to create conversation' });
+    }
+});
+
+// Update conversation (rename, tag, pin, archive)
+app.put('/api/conversations/:id', async (req, res) => {
+    try {
+        const conversation = conversations[req.params.id];
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+
+        const { name, tags, pinned, archived } = req.body;
+
+        if (name !== undefined) conversation.name = name;
+        if (tags !== undefined) conversation.tags = tags;
+        if (pinned !== undefined) conversation.pinned = pinned;
+        if (archived !== undefined) conversation.archived = archived;
+
+        conversation.lastUpdated = new Date().toISOString();
+
+        await saveConversation(conversation.id);
+        logger.info(`Updated conversation: ${conversation.id}`);
+        res.json(conversation);
+    } catch (error) {
+        logger.error('Error updating conversation:', error);
+        res.status(500).json({ error: 'Failed to update conversation' });
+    }
+});
+
+// Delete conversation
+app.delete('/api/conversations/:id', async (req, res) => {
+    try {
+        const conversation = conversations[req.params.id];
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+
+        await deleteConversation(conversation.id);
+        res.json({ success: true, message: 'Conversation deleted' });
+    } catch (error) {
+        logger.error('Error deleting conversation:', error);
+        res.status(500).json({ error: 'Failed to delete conversation' });
+    }
+});
+
+// Export conversation
+app.post('/api/conversations/:id/export', (req, res) => {
+    try {
+        const conversation = conversations[req.params.id];
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+
+        const { format = 'markdown' } = req.body;
+
+        if (format === 'json') {
+            res.json(conversation);
+        } else if (format === 'markdown') {
+            const md = `# ${conversation.name}\n\n` +
+                `**Agent:** ${conversation.agent}\n` +
+                `**Created:** ${new Date(conversation.created).toLocaleString()}\n` +
+                `**Messages:** ${conversation.metadata.messageCount}\n\n` +
+                `---\n\n` +
+                conversation.messages.map(m =>
+                    `**${m.role === 'user' ? 'You' : agents[conversation.agent].name}:**\n${m.content}\n`
+                ).join('\n');
+
+            res.setHeader('Content-Type', 'text/markdown');
+            res.setHeader('Content-Disposition', `attachment; filename="${conversation.name}.md"`);
+            res.send(md);
+        } else {
+            res.status(400).json({ error: 'Invalid format. Use "json" or "markdown"' });
+        }
+    } catch (error) {
+        logger.error('Error exporting conversation:', error);
+        res.status(500).json({ error: 'Failed to export conversation' });
     }
 });
 
