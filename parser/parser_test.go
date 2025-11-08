@@ -909,7 +909,7 @@ func TestFilesForModel(t *testing.T) {
 			},
 		},
 		{
-			name: "safetensors without model-*.safetensors files - uses consolidated",
+			name: "safetensors without model-.safetensors files - uses consolidated",
 			setup: func(dir string) error {
 				files := []string{
 					"consolidated.safetensors",
