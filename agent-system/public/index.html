@@ -6,6 +6,53 @@
     <title>AGENT TERMINAL SYSTEM v1.0</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
+
+        /* Theme Variables */
+        :root {
+            --primary-color: #00ff00;
+            --bg-color: #000;
+            --screen-bg: #0a0a0a;
+            --glow-color: rgba(0, 255, 0, 0.3);
+        }
+
+        /* Theme Variants */
+        body.theme-amber {
+            --primary-color: #ffb000;
+            --glow-color: rgba(255, 176, 0, 0.3);
+        }
+        body.theme-blue {
+            --primary-color: #00d4ff;
+            --glow-color: rgba(0, 212, 255, 0.3);
+        }
+        body.theme-matrix {
+            --primary-color: #00ff41;
+            --glow-color: rgba(0, 255, 65, 0.3);
+        }
+        body.theme-cyberpunk {
+            --primary-color: #ff00ff;
+            --glow-color: rgba(255, 0, 255, 0.3);
+        }
+        body.theme-phosphor {
+            --primary-color: #33ff33;
+            --glow-color: rgba(51, 255, 51, 0.3);
+        }
+
+        /* Matrix Rain Canvas */
+        #matrix-rain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            opacity: 0;
+            transition: opacity 0.5s;
+            pointer-events: none;
+        }
+        body.theme-matrix #matrix-rain {
+            opacity: 0.15;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -13,10 +60,11 @@
         }
         body {
             font-family: 'VT323', monospace;
-            background: #000;
-            color: #00ff00;
+            background: var(--bg-color);
+            color: var(--primary-color);
             overflow: hidden;
             height: 100vh;
+            transition: color 0.5s, background 0.5s;
         }
         /* CRT Screen Effect */
         .crt-container {
@@ -317,9 +365,123 @@
         .screen {
             animation: bootup 1s;
         }
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+        }
+        .modal-content {
+            position: relative;
+            background-color: #0a0a0a;
+            margin: 5% auto;
+            padding: 0;
+            border: 3px solid #00ff00;
+            width: 90%;
+            max-width: 1200px;
+            max-height: 80vh;
+            box-shadow: 0 0 50px rgba(0, 255, 0, 0.3);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 2px solid #00ff00;
+            background: rgba(0, 255, 0, 0.05);
+        }
+        .modal-title {
+            font-size: 1.5em;
+            text-shadow: 0 0 10px #00ff00;
+            letter-spacing: 2px;
+        }
+        .modal-close {
+            font-size: 1.5em;
+            cursor: pointer;
+            padding: 5px 15px;
+            border: 1px solid #00ff00;
+            transition: all 0.3s;
+        }
+        .modal-close:hover {
+            background: rgba(0, 255, 0, 0.2);
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+        .modal-body {
+            padding: 20px;
+            max-height: 60vh;
+            overflow-y: auto;
+            font-size: 1.1em;
+            line-height: 1.6;
+        }
+        .memory-section {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            background: rgba(0, 255, 0, 0.02);
+        }
+        .memory-section-title {
+            font-size: 1.3em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 5px #00ff00;
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 5px;
+        }
+        .memory-item {
+            margin: 8px 0;
+            padding-left: 15px;
+        }
+        .memory-tag {
+            display: inline-block;
+            padding: 3px 10px;
+            margin: 3px;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .memory-tag:hover {
+            background: rgba(0, 255, 0, 0.2);
+            box-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+        }
+        .memory-tag.deletable:hover {
+            border-color: #ff0000;
+            color: #ff0000;
+        }
+        .agent-memory-card {
+            margin: 15px 0;
+            padding: 15px;
+            border-left: 3px solid #00ff00;
+            background: rgba(0, 255, 0, 0.03);
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            border: 1px solid #00ff00;
+            margin: 10px 0;
+            position: relative;
+        }
+        .progress-fill {
+            height: 100%;
+            background: rgba(0, 255, 0, 0.3);
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+            transition: width 0.5s;
+        }
     </style>
 </head>
 <body>
+    <!-- Matrix Rain Background -->
+    <canvas id="matrix-rain"></canvas>
+
     <div class="crt-container">
         <div class="screen">
             <div class="terminal-header">
@@ -366,12 +528,93 @@
                     </div>
                     <div class="controls">
                         <button class="control-btn" onclick="clearTerminal()">[CLEAR_TERM]</button>
+                        <button class="control-btn" onclick="openCollaborationPanel()">[COLLABORATE]</button>
                         <button class="control-btn" onclick="viewProfile()">[USER_PROFILE]</button>
+                        <button class="control-btn" onclick="viewMemory()">[MEMORY_BANK]</button>
+                        <button class="control-btn" onclick="exportConversation()">[EXPORT]</button>
+                        <button class="control-btn" onclick="cycleTheme()">[THEME: <span id="theme-name">GREEN</span>]</button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Memory Viewer Modal -->
+    <div id="memory-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title">[ MEMORY BANK DATABASE ]</span>
+                <span class="modal-close" onclick="closeMemory()">[X]</span>
+            </div>
+            <div id="memory-content" class="modal-body">
+                Loading memory data...
+            </div>
+        </div>
+    </div>
+
+    <!-- Collaboration Modal -->
+    <div id="collaboration-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title">[ AGENT COLLABORATION SYSTEM ]</span>
+                <span class="modal-close" onclick="closeCollaboration()">[X]</span>
+            </div>
+            <div id="collaboration-content" class="modal-body">
+                <div class="memory-section">
+                    <div class="memory-section-title">╔══[ CONFIGURE COLLABORATION ]══╗</div>
+
+                    <div style="margin: 20px 0;">
+                        <label style="display: block; margin-bottom: 10px;">TASK DESCRIPTION:</label>
+                        <textarea id="collab-task" style="width: 100%; height: 100px; background: #000; color: var(--primary-color); border: 2px solid var(--primary-color); padding: 10px; font-family: 'VT323', monospace; font-size: 1.2em;" placeholder="Describe the task you want agents to collaborate on..."></textarea>
+                    </div>
+
+                    <div style="margin: 20px 0;">
+                        <label style="display: block; margin-bottom: 10px;">SELECT TEMPLATE:</label>
+                        <select id="collab-template" style="width: 100%; background: #000; color: var(--primary-color); border: 2px solid var(--primary-color); padding: 10px; font-family: 'VT323', monospace; font-size: 1.2em;">
+                            <option value="">Loading templates...</option>
+                        </select>
+                    </div>
+
+                    <div style="margin: 20px 0;">
+                        <label style="display: block; margin-bottom: 10px;">SELECT AGENTS (minimum 2):</label>
+                        <div id="collab-agents" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                            <!-- Agent checkboxes will be inserted here -->
+                        </div>
+                    </div>
+
+                    <div style="margin: 20px 0;">
+                        <label style="display: block; margin-bottom: 10px;">NUMBER OF ROUNDS:</label>
+                        <input type="number" id="collab-rounds" min="2" max="10" value="3" style="width: 100%; background: #000; color: var(--primary-color); border: 2px solid var(--primary-color); padding: 10px; font-family: 'VT323', monospace; font-size: 1.2em;">
+                    </div>
+
+                    <div style="margin: 20px 0; text-align: center;">
+                        <button onclick="startCollaboration()" style="background: transparent; border: 2px solid var(--primary-color); color: var(--primary-color); padding: 15px 40px; font-family: 'VT323', monospace; font-size: 1.3em; cursor: pointer; transition: all 0.3s;">
+                            [START_COLLABORATION]
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Collaboration Progress Display -->
+                <div id="collab-progress" style="display: none;">
+                    <div class="memory-section">
+                        <div class="memory-section-title">╔══[ COLLABORATION IN PROGRESS ]══╗</div>
+                        <div id="collab-status" style="margin: 20px 0; font-size: 1.2em;"></div>
+                        <div id="collab-rounds-display"></div>
+                    </div>
+                </div>
+
+                <!-- Collaboration Results -->
+                <div id="collab-results" style="display: none;">
+                    <div class="memory-section">
+                        <div class="memory-section-title">╔══[ COLLABORATION COMPLETE ]══╗</div>
+                        <div id="collab-synthesis" style="margin: 20px 0;"></div>
+                        <div id="collab-history" style="margin: 20px 0;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         let agents = {};
         let currentAgent = null;
@@ -563,6 +806,9 @@
             document.getElementById('send-btn').disabled = false;
         }
 
+        // Conversation Persistence
+        let conversationLog = [];
+
         function addMessage(author, text, isUser = false) {
             const chatArea = document.getElementById('chat-area');
             const message = document.createElement('div');
@@ -584,6 +830,10 @@
 
             chatArea.appendChild(message);
             chatArea.scrollTop = chatArea.scrollHeight;
+
+            // Save to conversation log
+            conversationLog.push({ author, text, isUser, time, type: 'message' });
+            saveConversation();
         }
 
         function addSystemMessage(text) {
@@ -598,6 +848,59 @@
             `;
             chatArea.appendChild(message);
             chatArea.scrollTop = chatArea.scrollHeight;
+
+            // Save to conversation log
+            conversationLog.push({ author: 'SYSTEM', text, type: 'system' });
+            saveConversation();
+        }
+
+        function saveConversation() {
+            try {
+                // Keep only last 100 messages to avoid storage limits
+                const toSave = conversationLog.slice(-100);
+                localStorage.setItem('conversationLog', JSON.stringify(toSave));
+            } catch (e) {
+                console.warn('Failed to save conversation:', e);
+            }
+        }
+
+        function loadConversation() {
+            try {
+                const saved = localStorage.getItem('conversationLog');
+                if (saved) {
+                    conversationLog = JSON.parse(saved);
+                    const chatArea = document.getElementById('chat-area');
+                    chatArea.innerHTML = ''; // Clear default message
+
+                    // Restore messages
+                    conversationLog.forEach(msg => {
+                        if (msg.type === 'system') {
+                            addSystemMessage(msg.text);
+                        } else {
+                            // Manually create message without re-saving
+                            const message = document.createElement('div');
+                            message.className = 'message' + (msg.isUser ? ' message-user' : '');
+                            message.innerHTML = `
+                                <div class="message-header">
+                                    [${msg.author}]<span class="timestamp">${msg.time}</span>
+                                </div>
+                                <div>${msg.text}</div>
+                            `;
+                            chatArea.appendChild(message);
+                        }
+                    });
+
+                    chatArea.scrollTop = chatArea.scrollHeight;
+
+                    // Remove the duplicates from re-adding
+                    conversationLog = conversationLog.slice(0, -conversationLog.length);
+                    conversationLog = JSON.parse(saved);
+
+                    addSystemMessage(`Restored ${conversationLog.length} messages from previous session`);
+                }
+            } catch (e) {
+                console.warn('Failed to load conversation:', e);
+            }
         }
 
         function addThinking(agentKey) {
@@ -626,6 +929,9 @@
                     <div>TERMINAL CLEARED - SELECT AN AGENT TO BEGIN</div>
                 </div>
             `;
+            // Clear saved conversation
+            conversationLog = [];
+            localStorage.removeItem('conversationLog');
         }
 
         async function viewProfile() {
@@ -649,19 +955,617 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             }
         }
 
+        // Memory Viewer
+        async function viewMemory() {
+            try {
+                const response = await fetch('/api/memory');
+                const memory = await response.json();
+
+                let html = `
+                    <div class="memory-section">
+                        <div class="memory-section-title">╔══[ USER PERSONALITY PROFILE ]══╗</div>
+                        <div class="memory-item">→ Communication Style: ${memory.profile.personality.communicationStyle.toUpperCase()}</div>
+                        <div class="memory-item">→ Detail Preference: ${memory.profile.personality.detailPreference.toUpperCase()}</div>
+                        <div class="memory-item">→ Learning Style: ${memory.profile.personality.learningStyle.toUpperCase()}</div>
+                        <div class="memory-item">→ Total Messages: ${memory.profile.conversationMetrics.totalMessages}</div>
+                        <div class="memory-item">→ Average Message Length: ${Math.round(memory.profile.conversationMetrics.averageLength)} chars</div>
+                    </div>
+
+                    <div class="memory-section">
+                        <div class="memory-section-title">╔══[ TRACKED INTERESTS ]══╗</div>
+                        <div class="memory-item">
+                            ${memory.profile.interests.slice(0, 30).map(i =>
+                                `<span class="memory-tag deletable" onclick="deleteMemoryItem('interest', '${i}')">${i}</span>`
+                            ).join('')}
+                        </div>
+                    </div>
+
+                    <div class="memory-section">
+                        <div class="memory-section-title">╔══[ KEY LEARNINGS ]══╗</div>
+                        ${memory.profile.learnings.slice(-10).map(l =>
+                            `<div class="memory-item">• ${l}</div>`
+                        ).join('')}
+                    </div>
+
+                    <div class="memory-section">
+                        <div class="memory-section-title">╔══[ AGENT MEMORY BANKS ]══╗</div>
+                        ${Object.keys(memory.agents).map(agentKey => {
+                            const agent = memory.agents[agentKey];
+                            const messagePercent = (agent.messageCount / 100) * 100;
+                            return `
+                                <div class="agent-memory-card">
+                                    <div style="font-size: 1.2em; margin-bottom: 10px;">▶ ${agent.name}</div>
+                                    <div class="memory-item">Messages: ${agent.messageCount}</div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: ${Math.min(messagePercent, 100)}%"></div>
+                                    </div>
+
+                                    ${agent.summaries.length > 0 ? `
+                                        <div style="margin-top: 15px; font-size: 0.95em; opacity: 0.9;">
+                                            <div>└─ Session Summaries (${agent.summaries.length}):</div>
+                                            ${agent.summaries.map((s, i) => `
+                                                <div style="margin-left: 20px; margin-top: 8px; padding: 8px; border-left: 2px solid #00ff00;">
+                                                    <div style="opacity: 0.7;">${new Date(s.timestamp).toLocaleString()}</div>
+                                                    <div>${s.summary.substring(0, 200)}${s.summary.length > 200 ? '...' : ''}</div>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    ` : '<div style="margin-top: 10px; opacity: 0.6;">└─ No summaries yet (conversations will be summarized after 30 messages)</div>'}
+
+                                    ${agent.permanentLearnings.length > 0 ? `
+                                        <div style="margin-top: 15px;">
+                                            <div>└─ Permanent Learnings:</div>
+                                            ${agent.permanentLearnings.map(l =>
+                                                `<div class="memory-item">• ${l}</div>`
+                                            ).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+
+                document.getElementById('memory-content').innerHTML = html;
+                document.getElementById('memory-modal').style.display = 'block';
+            } catch (error) {
+                console.error('Memory load error:', error);
+                addSystemMessage('ERROR: FAILED_TO_LOAD_MEMORY_BANK');
+            }
+        }
+
+        function closeMemory() {
+            document.getElementById('memory-modal').style.display = 'none';
+        }
+
+        async function deleteMemoryItem(type, value) {
+            if (!confirm(`Delete "${value}" from ${type}s?`)) return;
+
+            try {
+                await fetch('/api/memory/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: `delete_${type}`,
+                        value: value
+                    })
+                });
+                viewMemory(); // Refresh
+                addSystemMessage(`Deleted ${type}: ${value}`);
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_UPDATE_MEMORY');
+            }
+        }
+
+        // Export Conversation
+        async function exportConversation() {
+            const format = prompt('Export format? (txt/md/json)', 'txt');
+            if (!format) return;
+
+            try {
+                const response = await fetch('/api/memory');
+                const data = await response.json();
+
+                let content = '';
+                const timestamp = new Date().toISOString().slice(0, 10);
+
+                if (format === 'json') {
+                    content = JSON.stringify(data, null, 2);
+                } else if (format === 'md') {
+                    content = `# Agent Terminal Export - ${timestamp}\n\n`;
+                    content += `## User Profile\n\n`;
+                    content += `- Communication Style: ${data.profile.personality.communicationStyle}\n`;
+                    content += `- Total Messages: ${data.profile.conversationMetrics.totalMessages}\n\n`;
+                    content += `## Interests\n\n${data.profile.interests.slice(0, 20).join(', ')}\n\n`;
+                    content += `## Agent Conversations\n\n`;
+                    Object.keys(data.agents).forEach(key => {
+                        content += `### ${data.agents[key].name}\n`;
+                        content += `Messages: ${data.agents[key].messageCount}\n\n`;
+                        data.agents[key].summaries.forEach(s => {
+                            content += `**${new Date(s.timestamp).toLocaleString()}**\n${s.summary}\n\n`;
+                        });
+                    });
+                } else {
+                    content = `AGENT TERMINAL EXPORT - ${timestamp}\n${'='.repeat(50)}\n\n`;
+                    content += `USER PROFILE:\n`;
+                    content += `Communication: ${data.profile.personality.communicationStyle}\n`;
+                    content += `Messages: ${data.profile.conversationMetrics.totalMessages}\n\n`;
+                    content += `INTERESTS:\n${data.profile.interests.slice(0, 20).join(', ')}\n\n`;
+                    content += `AGENT CONVERSATIONS:\n`;
+                    Object.keys(data.agents).forEach(key => {
+                        content += `\n${data.agents[key].name}:\n${'-'.repeat(30)}\n`;
+                        content += `Messages: ${data.agents[key].messageCount}\n\n`;
+                        data.agents[key].summaries.forEach(s => {
+                            content += `[${new Date(s.timestamp).toLocaleString()}]\n${s.summary}\n\n`;
+                        });
+                    });
+                }
+
+                const blob = new Blob([content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `agent-terminal-export-${timestamp}.${format}`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                addSystemMessage(`Exported conversation as ${format.toUpperCase()}`);
+            } catch (error) {
+                addSystemMessage('ERROR: EXPORT_FAILED');
+            }
+        }
+
+        // Theme Management
+        const themes = [
+            { name: 'GREEN', class: '' },
+            { name: 'AMBER', class: 'theme-amber' },
+            { name: 'BLUE', class: 'theme-blue' },
+            { name: 'MATRIX', class: 'theme-matrix' },
+            { name: 'CYBERPUNK', class: 'theme-cyberpunk' },
+            { name: 'PHOSPHOR', class: 'theme-phosphor' }
+        ];
+        let currentThemeIndex = 0;
+
+        function cycleTheme() {
+            currentThemeIndex = (currentThemeIndex + 1) % themes.length;
+            const theme = themes[currentThemeIndex];
+
+            // Remove all theme classes
+            document.body.className = '';
+
+            // Add new theme class if not default
+            if (theme.class) {
+                document.body.classList.add(theme.class);
+            }
+
+            // Update theme name display
+            document.getElementById('theme-name').textContent = theme.name;
+
+            // Save preference
+            localStorage.setItem('preferredTheme', currentThemeIndex);
+
+            addSystemMessage(`Theme changed to: ${theme.name}`);
+        }
+
+        // Load saved theme on startup
+        function loadSavedTheme() {
+            const savedTheme = localStorage.getItem('preferredTheme');
+            if (savedTheme !== null) {
+                currentThemeIndex = parseInt(savedTheme);
+                const theme = themes[currentThemeIndex];
+                if (theme.class) {
+                    document.body.classList.add(theme.class);
+                }
+                document.getElementById('theme-name').textContent = theme.name;
+            }
+        }
+
+        // ===================================
+        // COLLABORATION SYSTEM
+        // ===================================
+
+        let collaborationTemplates = [];
+        let currentCollabSession = null;
+        let collabPollingInterval = null;
+
+        async function openCollaborationPanel() {
+            console.log('🚀 Opening collaboration panel...');
+            // Load templates
+            try {
+                const response = await fetch('/api/collaboration/templates');
+                const data = await response.json();
+                console.log('✅ Templates loaded:', data.templates);
+                collaborationTemplates = data.templates;
+
+                // Populate template selector
+                const templateSelector = document.getElementById('collab-template');
+                templateSelector.innerHTML = '<option value="custom">CUSTOM</option>';
+                collaborationTemplates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.id;
+                    option.textContent = `${template.name.toUpperCase()} - ${template.description}`;
+                    templateSelector.appendChild(option);
+                });
+
+                // Auto-select recommended agents based on template
+                templateSelector.addEventListener('change', () => {
+                    const selectedTemplate = collaborationTemplates.find(t => t.id === templateSelector.value);
+                    if (selectedTemplate) {
+                        // Check recommended agents
+                        const checkboxes = document.querySelectorAll('#collab-agents input[type="checkbox"]');
+                        checkboxes.forEach(cb => {
+                            cb.checked = selectedTemplate.recommendedAgents.includes(cb.value);
+                        });
+                        // Set recommended rounds
+                        document.getElementById('collab-rounds').value = selectedTemplate.rounds;
+                    }
+                });
+
+                // Populate agent checkboxes
+                const agentContainer = document.getElementById('collab-agents');
+                agentContainer.innerHTML = '';
+                Object.keys(agents).forEach(agentKey => {
+                    const checkbox = document.createElement('div');
+                    checkbox.style.padding = '10px';
+                    checkbox.style.border = '1px solid var(--primary-color)';
+                    checkbox.style.cursor = 'pointer';
+                    checkbox.innerHTML = `
+                        <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" value="${agentKey}" style="width: 20px; height: 20px; cursor: pointer;">
+                            <span>${agentIcons[agentKey] || '🤖'} ${agents[agentKey].name.toUpperCase()}</span>
+                        </label>
+                    `;
+                    agentContainer.appendChild(checkbox);
+                });
+
+                // Reset display states
+                document.getElementById('collab-progress').style.display = 'none';
+                document.getElementById('collab-results').style.display = 'none';
+
+                // Open modal
+                document.getElementById('collaboration-modal').style.display = 'block';
+
+            } catch (error) {
+                console.error('Error loading collaboration panel:', error);
+                addSystemMessage('ERROR: FAILED_TO_LOAD_COLLABORATION_SYSTEM');
+            }
+        }
+
+        function closeCollaboration() {
+            document.getElementById('collaboration-modal').style.display = 'none';
+            if (collabPollingInterval) {
+                clearInterval(collabPollingInterval);
+                collabPollingInterval = null;
+            }
+        }
+
+        async function startCollaboration() {
+            const task = document.getElementById('collab-task').value.trim();
+            const template = document.getElementById('collab-template').value;
+            const rounds = parseInt(document.getElementById('collab-rounds').value);
+
+            // Get selected agents
+            const selectedAgents = Array.from(document.querySelectorAll('#collab-agents input[type="checkbox"]:checked'))
+                .map(cb => cb.value);
+
+            // Validation
+            if (!task) {
+                alert('Please enter a task description');
+                return;
+            }
+
+            if (selectedAgents.length < 2) {
+                alert('Please select at least 2 agents for collaboration');
+                return;
+            }
+
+            try {
+                // Start collaboration session
+                const response = await fetch('/api/collaboration/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        task,
+                        template,
+                        participants: selectedAgents,
+                        rounds
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                currentCollabSession = data.sessionId;
+
+                // Hide config, show progress
+                document.querySelector('#collaboration-content > .memory-section').style.display = 'none';
+                document.getElementById('collab-progress').style.display = 'block';
+
+                // Start polling for updates
+                pollCollaborationStatus();
+
+            } catch (error) {
+                console.error('Error starting collaboration:', error);
+                alert('Failed to start collaboration: ' + error.message);
+            }
+        }
+
+        async function pollCollaborationStatus() {
+            if (!currentCollabSession) return;
+
+            try {
+                const response = await fetch(`/api/collaboration/${currentCollabSession}`);
+                const session = await response.json();
+
+                // Update status
+                const statusDiv = document.getElementById('collab-status');
+                statusDiv.innerHTML = `
+                    <div>SESSION ID: ${session.id}</div>
+                    <div>STATUS: ${session.status.toUpperCase()}</div>
+                    <div>ROUND: ${session.currentRound} / ${session.totalRounds}</div>
+                    <div>PARTICIPANTS: ${session.participants.map(p => agents[p].name).join(', ')}</div>
+                `;
+
+                // Update rounds display
+                const roundsDiv = document.getElementById('collab-rounds-display');
+                let roundsHTML = '';
+
+                session.history.forEach((entry, index) => {
+                    const isExpanded = index === session.history.length - 1; // Auto-expand latest
+                    roundsHTML += `
+                        <div class="agent-memory-card" style="margin: 10px 0;">
+                            <div style="cursor: pointer; font-size: 1.2em; margin-bottom: 10px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                                <span style="color: ${isExpanded ? 'var(--primary-color)' : '#666'};">▶</span>
+                                ROUND ${entry.round} - ${entry.agentName.toUpperCase()} (${entry.type})
+                            </div>
+                            <div style="display: ${isExpanded ? 'block' : 'none'}; padding-left: 20px;">
+                                <div style="opacity: 0.8; margin-bottom: 10px; font-size: 0.9em;">
+                                    ${new Date(entry.timestamp).toLocaleString()}
+                                </div>
+                                <div style="white-space: pre-wrap; line-height: 1.6;">${entry.response}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                roundsDiv.innerHTML = roundsHTML;
+
+                // Check if completed
+                if (session.status === 'completed') {
+                    clearInterval(collabPollingInterval);
+                    collabPollingInterval = null;
+                    showCollaborationResults(session);
+                } else if (session.status === 'error') {
+                    clearInterval(collabPollingInterval);
+                    collabPollingInterval = null;
+                    statusDiv.innerHTML += `<div style="color: #ff0000; margin-top: 10px;">ERROR: ${session.error}</div>`;
+                } else if (session.status === 'running') {
+                    // Continue polling every 2 seconds
+                    if (!collabPollingInterval) {
+                        collabPollingInterval = setInterval(pollCollaborationStatus, 2000);
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error polling collaboration status:', error);
+                if (collabPollingInterval) {
+                    clearInterval(collabPollingInterval);
+                    collabPollingInterval = null;
+                }
+            }
+        }
+
+        function showCollaborationResults(session) {
+            document.getElementById('collab-progress').style.display = 'none';
+            document.getElementById('collab-results').style.display = 'block';
+
+            // Show synthesis
+            const synthesisDiv = document.getElementById('collab-synthesis');
+            synthesisDiv.innerHTML = `
+                <div class="memory-section-title">╔══[ FINAL SYNTHESIS ]══╗</div>
+                <div style="margin: 20px 0; padding: 20px; border: 2px solid var(--primary-color); background: rgba(0, 255, 0, 0.05);">
+                    <div style="font-size: 1.2em; margin-bottom: 10px;">
+                        ${agentIcons[session.synthesis.agent] || '🤖'} ${session.synthesis.agentName.toUpperCase()}
+                    </div>
+                    <div style="opacity: 0.8; margin-bottom: 10px; font-size: 0.9em;">
+                        ${new Date(session.synthesis.timestamp).toLocaleString()}
+                    </div>
+                    <div style="white-space: pre-wrap; line-height: 1.6; font-size: 1.1em;">
+                        ${session.synthesis.response}
+                    </div>
+                </div>
+            `;
+
+            // Show full history (collapsible)
+            const historyDiv = document.getElementById('collab-history');
+            let historyHTML = '<div class="memory-section-title">╔══[ COLLABORATION HISTORY ]══╗</div>';
+
+            session.history.forEach(entry => {
+                historyHTML += `
+                    <div class="agent-memory-card" style="margin: 10px 0;">
+                        <div style="cursor: pointer; font-size: 1.1em; margin-bottom: 10px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                            ▶ ROUND ${entry.round} - ${entry.agentName.toUpperCase()} (${entry.type})
+                        </div>
+                        <div style="display: none; padding-left: 20px;">
+                            <div style="opacity: 0.8; margin-bottom: 10px; font-size: 0.9em;">
+                                ${new Date(entry.timestamp).toLocaleString()}
+                            </div>
+                            <div style="white-space: pre-wrap; line-height: 1.6;">${entry.response}</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            historyHTML += `
+                <div style="margin: 20px 0; text-align: center;">
+                    <button onclick="resetCollaborationPanel()" style="background: transparent; border: 2px solid var(--primary-color); color: var(--primary-color); padding: 10px 30px; font-family: 'VT323', monospace; font-size: 1.2em; cursor: pointer;">
+                        [NEW_COLLABORATION]
+                    </button>
+                    <button onclick="copyCollaborationToChat('${session.id}')" style="background: transparent; border: 2px solid var(--primary-color); color: var(--primary-color); padding: 10px 30px; font-family: 'VT323', monospace; font-size: 1.2em; cursor: pointer; margin-left: 10px;">
+                        [COPY_TO_CHAT]
+                    </button>
+                </div>
+            `;
+
+            historyDiv.innerHTML = historyHTML;
+
+            // Add to main terminal
+            addSystemMessage(`COLLABORATION COMPLETE: Session ${session.id.substring(0, 12)}...`);
+        }
+
+        function resetCollaborationPanel() {
+            document.getElementById('collab-results').style.display = 'none';
+            document.querySelector('#collaboration-content > .memory-section').style.display = 'block';
+            document.getElementById('collab-task').value = '';
+            currentCollabSession = null;
+        }
+
+        function copyCollaborationToChat(sessionId) {
+            // This would copy the synthesis result to the main chat
+            addSystemMessage('COLLABORATION_SYNTHESIS_COPIED - Check results above');
+            closeCollaboration();
+        }
+
+        // Keyboard Shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+L: Clear terminal
+            if (e.ctrlKey && e.key === 'l') {
+                e.preventDefault();
+                clearTerminal();
+            }
+            // Ctrl+M: Memory viewer
+            if (e.ctrlKey && e.key === 'm') {
+                e.preventDefault();
+                viewMemory();
+            }
+            // Ctrl+E: Export
+            if (e.ctrlKey && e.key === 'e') {
+                e.preventDefault();
+                exportConversation();
+            }
+            // Ctrl+T: Cycle theme
+            if (e.ctrlKey && e.key === 't') {
+                e.preventDefault();
+                cycleTheme();
+            }
+            // Ctrl+1-4: Select agents
+            if (e.ctrlKey && ['1', '2', '3', '4'].includes(e.key)) {
+                e.preventDefault();
+                const agentKeys = Object.keys(agents);
+                const index = parseInt(e.key) - 1;
+                if (agentKeys[index]) {
+                    selectAgent(agentKeys[index]);
+                }
+            }
+            // ESC: Close modal
+            if (e.key === 'Escape') {
+                closeMemory();
+            }
+        });
+
+        // Matrix Rain Effect with proper cleanup
+        const matrixCanvas = document.getElementById('matrix-rain');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        let matrixInterval = null;
+
+        function initMatrixRain() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+
+            const fontSize = 14;
+            const columns = Math.floor(matrixCanvas.width / fontSize);
+            const drops = Array(columns).fill(0);
+
+            // Matrix characters (katakana + numbers + symbols)
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝ0123456789@#$%^&*()';
+
+            function drawMatrix() {
+                // Only draw if page is visible
+                if (document.hidden) return;
+
+                // Semi-transparent black to create fade effect
+                matrixCtx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+                matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+
+                // Green text
+                matrixCtx.fillStyle = '#00ff41';
+                matrixCtx.font = `${fontSize}px monospace`;
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    const x = i * fontSize;
+                    const y = drops[i] * fontSize;
+
+                    matrixCtx.fillText(char, x, y);
+
+                    // Reset drop to top randomly
+                    if (y > matrixCanvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            // Clear existing interval if any
+            if (matrixInterval) {
+                clearInterval(matrixInterval);
+            }
+
+            // Start animation
+            matrixInterval = setInterval(drawMatrix, 50);
+        }
+
+        function stopMatrixRain() {
+            if (matrixInterval) {
+                clearInterval(matrixInterval);
+                matrixInterval = null;
+            }
+        }
+
+        // Pause when tab is hidden to save resources
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopMatrixRain();
+            } else {
+                initMatrixRain();
+            }
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            stopMatrixRain();
+            saveConversation();
+        });
+
+        // Resize canvas on window resize
+        window.addEventListener('resize', () => {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+        });
+
         // Initialize on page load
         window.onload = function() {
             console.log('🚀 Page loaded! Loading agents and models...');
+            loadSavedTheme();
+            loadConversation();
             loadAgents();
             loadModels();
+            initMatrixRain(); // Start Matrix rain animation
         };
 
         // Also try loading immediately if DOM is already ready
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
             console.log('🚀 DOM already ready! Loading agents and models immediately...');
             setTimeout(() => {
+                loadSavedTheme();
+                loadConversation();
                 loadAgents();
                 loadModels();
+                initMatrixRain(); // Start Matrix rain animation
             }, 100);
         }
     </script>

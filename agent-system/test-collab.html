@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Collaboration</title>
+</head>
+<body>
+    <h1>Collaboration System Test</h1>
+    <button onclick="testTemplates()">Test Templates API</button>
+    <button onclick="testStartCollab()">Test Start Collaboration</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function testTemplates() {
+            const output = document.getElementById('output');
+            try {
+                const response = await fetch('/api/collaboration/templates');
+                const data = await response.json();
+                output.textContent = 'Templates API Response:\n' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent = 'Error: ' + error.message;
+            }
+        }
+
+        async function testStartCollab() {
+            const output = document.getElementById('output');
+            try {
+                const response = await fetch('/api/collaboration/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        task: 'Test collaboration task',
+                        template: 'custom',
+                        participants: ['researcher', 'coder'],
+                        rounds: 2
+                    })
+                });
+                const data = await response.json();
+                output.textContent = 'Start Collaboration Response:\n' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>

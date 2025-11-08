@@ -17,10 +17,20 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "ajv": "^8.17.1",
     "axios": "^1.6.0",
+    "dompurify": "^3.3.0",
     "duck-duck-scrape": "^2.2.7",
     "express": "^4.18.2",
-    "socket.io": "^4.6.1"
+    "express-rate-limit": "^8.2.1",
+    "express-session": "^1.18.2",
+    "helmet": "^8.1.0",
+    "isomorphic-dompurify": "^2.31.0",
+    "opossum": "^9.0.0",
+    "p-retry": "^7.1.0",
+    "socket.io": "^4.6.1",
+    "tmp-promise": "^3.0.3",
+    "winston": "^3.18.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

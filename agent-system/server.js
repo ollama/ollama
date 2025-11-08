@@ -6,12 +6,53 @@ const fs = require('fs').promises;
 const axios = require('axios');
 const { search } = require('duck-duck-scrape');
 
+// Security & Reliability imports
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const session = require('express-session');
+const tmp = require('tmp-promise');
+const pRetry = require('p-retry');
+const CircuitBreaker = require('opossum');
+const Ajv = require('ajv');
+const winston = require('winston');
+const CollaborationEngine = require('./collaboration-engine');
+
+// Initialize logger
+const logger = winston.createLogger({
+    level: process.env.LOG_LEVEL || 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.errors({ stack: true }),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+        new winston.transports.File({ filename: 'logs/combined.log' }),
+        new winston.transports.Console({
+            format: winston.format.combine(
+                winston.format.colorize(),
+                winston.format.simple()
+            )
+        })
+    ]
+});
+
 const app = express();
 const server = http.createServer(app);
+
+// Secure CORS configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'];
 const io = socketIo(server, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+        origin: (origin, callback) => {
+            if (!origin || allowedOrigins.includes(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
+        methods: ["GET", "POST"],
+        credentials: true
     },
     transports: ['websocket', 'polling'],
     allowEIO3: true,
@@ -22,9 +63,68 @@ const io = socketIo(server, {
 const PORT = process.env.PORT || 3000;
 const OLLAMA_API = process.env.OLLAMA_API || 'http://localhost:11434';
 
-// Serve static files
-app.use(express.static('public'));
-app.use(express.json());
+// Security middleware
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"], // Needed for inline scripts
+            styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+            fontSrc: ["'self'", "fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:"],
+            connectSrc: ["'self'", "ws:", "wss:"]
+        }
+    }
+}));
+
+// Rate limiting
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const messageLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 20, // Limit each IP to 20 messages per minute
+    message: 'Too many messages, please slow down.',
+});
+
+// Session management
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'change-this-in-production-' + Math.random(),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+}));
+
+// Apply rate limiting to API routes
+app.use('/api/', apiLimiter);
+app.use('/api/message', messageLimiter);
+
+// Serve static files with caching
+app.use(express.static('public', {
+    maxAge: '1d',
+    etag: true
+}));
+
+// Body parser with size limits
+app.use(express.json({ limit: '100kb' }));
+
+// Request logging
+app.use((req, res, next) => {
+    logger.info(`${req.method} ${req.path}`, {
+        ip: req.ip,
+        userAgent: req.get('user-agent')
+    });
+    next();
+});
 
 // Agent definitions with personalities and roles
 const agents = {
@@ -84,58 +184,228 @@ You have access to conversation history. Use it to understand the user's priorit
 
 // In-memory storage (will be persisted to files)
 let conversationHistory = {};
+let conversationSummaries = {}; // Hierarchical summaries
 let userProfile = {
     preferences: {},
     interests: [],
     learnings: [],
     interactions: 0,
     firstSeen: new Date().toISOString(),
-    lastSeen: new Date().toISOString()
+    lastSeen: new Date().toISOString(),
+    personality: {
+        communicationStyle: 'neutral', // casual, formal, technical
+        detailPreference: 'medium', // brief, medium, detailed
+        expertiseLevel: {}, // domain -> level (beginner, intermediate, expert)
+        learningStyle: 'balanced' // visual, example-driven, theoretical, hands-on
+    },
+    conversationMetrics: {
+        totalMessages: 0,
+        averageLength: 0,
+        topicsDiscussed: {},
+        agentPreferences: {}
+    }
 };
 
-// Initialize conversation history for each agent
+// Initialize conversation history and summaries for each agent
 Object.keys(agents).forEach(agentKey => {
     conversationHistory[agentKey] = [];
+    conversationSummaries[agentKey] = {
+        sessionSummaries: [], // Recent session summaries
+        weeklyDigest: '', // Week-level summary
+        permanentLearnings: [] // Key insights that persist forever
+    };
 });
 
-// Load persistent data
-async function loadData() {
-    try {
-        const historyData = await fs.readFile(path.join(__dirname, 'data', 'history.json'), 'utf8');
-        conversationHistory = JSON.parse(historyData);
-        console.log('✓ Loaded conversation history');
-    } catch (error) {
-        console.log('○ Starting with fresh conversation history');
+// Initialize Collaboration Engine
+let collaborationEngine = null;
+
+// JSON Schema Validation
+const ajv = new Ajv();
+
+const messageSchema = {
+    type: 'object',
+    required: ['role', 'content'],
+    properties: {
+        role: { type: 'string', enum: ['user', 'assistant', 'system'] },
+        content: { type: 'string', maxLength: 10000 }
+    },
+    additionalProperties: false
+};
+
+const historySchema = {
+    type: 'object',
+    patternProperties: {
+        '^[a-z]+$': {
+            type: 'array',
+            items: messageSchema
+        }
+    }
+};
+
+const validateMessage = ajv.compile(messageSchema);
+const validateHistory = ajv.compile(historySchema);
+
+// Input Sanitization & Validation
+function sanitizeInput(input) {
+    if (typeof input !== 'string') {
+        throw new Error('Invalid input type');
     }
 
+    // Remove control characters except newlines and tabs
+    let sanitized = input.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+
+    // Trim and enforce length limits
+    sanitized = sanitized.trim();
+    if (sanitized.length > 10000) {
+        throw new Error('Input too long (max 10,000 characters)');
+    }
+    if (sanitized.length === 0) {
+        throw new Error('Input cannot be empty');
+    }
+
+    return sanitized;
+}
+
+function validateAgentKey(agentKey) {
+    if (!agentKey || typeof agentKey !== 'string') {
+        throw new Error('Invalid agent key');
+    }
+    if (!agents[agentKey]) {
+        throw new Error('Unknown agent');
+    }
+    return agentKey;
+}
+
+function safeFilePath(filepath) {
+    const resolved = path.resolve(filepath);
+    const dataDir = path.resolve(__dirname, 'data');
+    if (!resolved.startsWith(dataDir)) {
+        throw new Error('Invalid file path - path traversal detected');
+    }
+    return resolved;
+}
+
+// Atomic write with backup
+async function atomicWrite(filepath, data) {
     try {
-        const profileData = await fs.readFile(path.join(__dirname, 'data', 'profile.json'), 'utf8');
-        userProfile = JSON.parse(profileData);
-        console.log('✓ Loaded user profile');
+        // Ensure directory exists
+        await fs.mkdir(path.dirname(filepath), { recursive: true });
+
+        // Create backup if file exists
+        try {
+            await fs.access(filepath);
+            const backupPath = filepath.replace(/\.json$/, `.backup.json`);
+            await fs.copyFile(filepath, backupPath);
+        } catch (error) {
+            // File doesn't exist yet, no backup needed
+        }
+
+        // Write to temp file first (in same directory for atomic rename)
+        const tmpPath = filepath + '.tmp';
+
+        await fs.writeFile(tmpPath, data, 'utf8');
+
+        // Atomic rename (works on most filesystems)
+        await fs.rename(tmpPath, filepath);
+
+        logger.info(`Saved data to ${filepath}`);
     } catch (error) {
-        console.log('○ Starting with fresh user profile');
+        logger.error(`Failed to save ${filepath}:`, error);
+        throw error;
     }
 }
 
-// Save persistent data
-async function saveData() {
+// Load persistent data with validation
+async function loadData() {
+    // Load conversation history
     try {
-        await fs.mkdir(path.join(__dirname, 'data'), { recursive: true });
+        const historyData = await fs.readFile(path.join(__dirname, 'data', 'history.json'), 'utf8');
+        const parsed = JSON.parse(historyData);
 
-        await fs.writeFile(
-            path.join(__dirname, 'data', 'history.json'),
-            JSON.stringify(conversationHistory, null, 2)
-        );
-
-        await fs.writeFile(
-            path.join(__dirname, 'data', 'profile.json'),
-            JSON.stringify(userProfile, null, 2)
-        );
-
-        console.log('✓ Data saved');
+        // Validate schema
+        if (validateHistory(parsed)) {
+            conversationHistory = parsed;
+            logger.info('✓ Loaded and validated conversation history');
+        } else {
+            throw new Error('Invalid history schema: ' + ajv.errorsText(validateHistory.errors));
+        }
     } catch (error) {
-        console.error('✗ Error saving data:', error);
+        logger.warn('Could not load history, trying backup...', error.message);
+
+        // Try backup
+        try {
+            const backupData = await fs.readFile(path.join(__dirname, 'data', 'history.backup.json'), 'utf8');
+            const parsed = JSON.parse(backupData);
+            if (validateHistory(parsed)) {
+                conversationHistory = parsed;
+                logger.info('✓ Restored from backup');
+            }
+        } catch (backupError) {
+            logger.info('○ Starting with fresh conversation history');
+            // Initialize default structure
+            Object.keys(agents).forEach(agentKey => {
+                conversationHistory[agentKey] = [];
+            });
+        }
     }
+
+    // Load summaries
+    try {
+        const summariesData = await fs.readFile(path.join(__dirname, 'data', 'summaries.json'), 'utf8');
+        conversationSummaries = JSON.parse(summariesData);
+        logger.info('✓ Loaded conversation summaries');
+    } catch (error) {
+        logger.info('○ Starting with fresh summaries');
+    }
+
+    // Load user profile
+    try {
+        const profileData = await fs.readFile(path.join(__dirname, 'data', 'profile.json'), 'utf8');
+        const parsed = JSON.parse(profileData);
+
+        // Merge with defaults to handle schema evolution
+        userProfile = {
+            ...userProfile,
+            ...parsed,
+            personality: { ...userProfile.personality, ...parsed.personality },
+            conversationMetrics: { ...userProfile.conversationMetrics, ...parsed.conversationMetrics }
+        };
+
+        logger.info('✓ Loaded user profile');
+    } catch (error) {
+        logger.info('○ Starting with fresh user profile');
+    }
+}
+
+// Save persistent data with mutex to prevent race conditions
+let saveMutex = Promise.resolve();
+async function saveData() {
+    // Queue saves to prevent concurrent writes
+    saveMutex = saveMutex.then(async () => {
+        try {
+            await atomicWrite(
+                path.join(__dirname, 'data', 'history.json'),
+                JSON.stringify(conversationHistory, null, 2)
+            );
+
+            await atomicWrite(
+                path.join(__dirname, 'data', 'summaries.json'),
+                JSON.stringify(conversationSummaries, null, 2)
+            );
+
+            await atomicWrite(
+                path.join(__dirname, 'data', 'profile.json'),
+                JSON.stringify(userProfile, null, 2)
+            );
+
+            logger.info('✓ All data saved successfully');
+        } catch (error) {
+            logger.error('✗ Error saving data:', error);
+            throw error;
+        }
+    });
+
+    return saveMutex;
 }
 
 // Auto-save every 5 minutes
@@ -184,22 +454,147 @@ async function webSearch(query) {
     }
 }
 
+// Conversation summarization using smallest model
+async function summarizeConversation(agentKey) {
+    const history = conversationHistory[agentKey] || [];
+
+    // Only summarize if we have enough history (> 30 messages)
+    if (history.length < 30) {
+        return null;
+    }
+
+    // Get messages to summarize (everything except last 10)
+    const toSummarize = history.slice(0, -10);
+    if (toSummarize.length === 0) {
+        return null;
+    }
+
+    try {
+        console.log(`📝 Summarizing ${toSummarize.length} messages for ${agentKey}...`);
+
+        // Build conversation text
+        const conversationText = toSummarize.map(msg =>
+            `${msg.role}: ${msg.content}`
+        ).join('\n');
+
+        // Use smallest model for summarization
+        const summaryPrompt = {
+            model: 'qwen2.5:0.5b',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a conversation summarizer. Create a concise summary of the key points, topics, and user preferences mentioned. Focus on facts, preferences, and important context. Keep it under 200 words.'
+                },
+                {
+                    role: 'user',
+                    content: `Summarize this conversation:\n\n${conversationText}`
+                }
+            ],
+            options: { temperature: 0.3 },
+            stream: false
+        };
+
+        const response = await axios.post(`${OLLAMA_API}/api/chat`, summaryPrompt, { timeout: 30000 });
+        const summary = response.data.message.content;
+
+        console.log(`✓ Created summary (${summary.length} chars)`);
+
+        // Store summary
+        conversationSummaries[agentKey].sessionSummaries.push({
+            timestamp: new Date().toISOString(),
+            messageCount: toSummarize.length,
+            summary: summary
+        });
+
+        // Keep only last 5 session summaries
+        if (conversationSummaries[agentKey].sessionSummaries.length > 5) {
+            conversationSummaries[agentKey].sessionSummaries.shift();
+        }
+
+        // Clear old messages from history (keep only last 10)
+        conversationHistory[agentKey] = history.slice(-10);
+
+        await saveData();
+        return summary;
+    } catch (error) {
+        console.error('✗ Summarization error:', error.message);
+        return null;
+    }
+}
+
+// Enhanced user profiling with semantic extraction
+function updateUserProfile(message) {
+    // Update metrics
+    userProfile.conversationMetrics.totalMessages++;
+    userProfile.conversationMetrics.averageLength =
+        (userProfile.conversationMetrics.averageLength * (userProfile.conversationMetrics.totalMessages - 1) +
+            message.length) / userProfile.conversationMetrics.totalMessages;
+
+    // Extract keywords (simple but effective)
+    const words = message.toLowerCase().split(/\W+/).filter(w => w.length > 4);
+    const stopWords = ['about', 'would', 'could', 'should', 'which', 'where', 'there', 'their', 'these', 'those'];
+    const keywords = words.filter(w => !stopWords.includes(w));
+
+    // Update interests
+    keywords.forEach(keyword => {
+        if (!userProfile.interests.includes(keyword) && userProfile.interests.length < 50) {
+            userProfile.interests.push(keyword);
+        }
+    });
+
+    // Detect communication style
+    const hasExclamation = message.includes('!');
+    const hasQuestion = message.includes('?');
+    const avgWordLength = words.reduce((sum, w) => sum + w.length, 0) / (words.length || 1);
+
+    if (avgWordLength > 6) {
+        userProfile.personality.communicationStyle = 'technical';
+    } else if (hasExclamation || message.toLowerCase().includes('lol') || message.toLowerCase().includes('cool')) {
+        userProfile.personality.communicationStyle = 'casual';
+    }
+
+    // Detect detail preference
+    if (message.length > 200 || message.split('\n').length > 3) {
+        userProfile.personality.detailPreference = 'detailed';
+    } else if (message.length < 50) {
+        userProfile.personality.detailPreference = 'brief';
+    }
+}
+
 // Build context for agent from history and profile
 function buildContext(agentKey, currentMessage) {
     const agent = agents[agentKey];
     const history = conversationHistory[agentKey] || [];
+    const summaries = conversationSummaries[agentKey] || { sessionSummaries: [], permanentLearnings: [] };
 
     // Get recent conversation (last 10 exchanges)
-    const recentHistory = history.slice(-20);
+    const recentHistory = history.slice(-10);
 
-    // Build profile summary
+    // Build conversation memory from summaries
+    let conversationMemory = '';
+    if (summaries.sessionSummaries.length > 0) {
+        conversationMemory = '\n\nPAST CONVERSATION SUMMARIES:\n';
+        summaries.sessionSummaries.forEach((summary, i) => {
+            conversationMemory += `Session ${i + 1} (${new Date(summary.timestamp).toLocaleDateString()}): ${summary.summary}\n`;
+        });
+    }
+
+    if (summaries.permanentLearnings.length > 0) {
+        conversationMemory += '\n\nPERMANENT LEARNINGS:\n- ' + summaries.permanentLearnings.join('\n- ');
+    }
+
+    // Build enhanced profile summary
     const profileSummary = `
 USER PROFILE:
 - Total interactions: ${userProfile.interactions}
+- Total messages: ${userProfile.conversationMetrics.totalMessages}
 - Member since: ${new Date(userProfile.firstSeen).toLocaleDateString()}
-- Interests: ${userProfile.interests.join(', ') || 'Learning...'}
+- Communication style: ${userProfile.personality.communicationStyle}
+- Detail preference: ${userProfile.personality.detailPreference}
+- Learning style: ${userProfile.personality.learningStyle}
+- Interests: ${userProfile.interests.slice(0, 10).join(', ') || 'Learning...'}
 - Key learnings: ${userProfile.learnings.slice(-5).join('; ') || 'Building understanding...'}
-`;
+${conversationMemory}`;
 
     // Add web search capability instructions
     const searchInstructions = `
@@ -299,7 +694,41 @@ async function processSearchRequests(response) {
     return enhancedResponse;
 }
 
-// Call Ollama API (with auto-fallback cascade and demo mode)
+// Circuit Breaker for Ollama API
+const ollamaBreaker = new CircuitBreaker(async (url, data, config) => {
+    return await axios.post(url, data, config);
+}, {
+    timeout: 30000, // 30s timeout
+    errorThresholdPercentage: 50, // Open circuit at 50% errors
+    resetTimeout: 30000, // Try again after 30s
+    name: 'ollamaAPI'
+});
+
+ollamaBreaker.fallback(() => {
+    throw new Error('Ollama API circuit breaker is open');
+});
+
+ollamaBreaker.on('open', () => logger.warn('Circuit breaker opened - Ollama API not responding'));
+ollamaBreaker.on('halfOpen', () => logger.info('Circuit breaker half-open - testing Ollama API'));
+ollamaBreaker.on('close', () => logger.info('Circuit breaker closed - Ollama API recovered'));
+
+// Retry wrapper with exponential backoff
+async function retryOllamaCall(fn, options = {}) {
+    return await pRetry(fn, {
+        retries: 3,
+        factor: 2,
+        minTimeout: 1000,
+        maxTimeout: 10000,
+        onFailedAttempt: error => {
+            logger.warn(`Ollama API attempt ${error.attemptNumber} failed. ${error.retriesLeft} retries left.`, {
+                error: error.message
+            });
+        },
+        ...options
+    });
+}
+
+// Call Ollama API (with circuit breaker, retry, auto-fallback cascade and demo mode)
 async function callOllama(agentKey, message, preferredModel = null) {
     const context = buildContext(agentKey, message);
 
@@ -307,12 +736,14 @@ async function callOllama(agentKey, message, preferredModel = null) {
     if (preferredModel) {
         try {
             context.model = preferredModel;
-            const response = await axios.post(`${OLLAMA_API}/api/chat`, context, { timeout: 30000 });
-            console.log(`✓ Success with model: ${preferredModel}`);
+            const response = await retryOllamaCall(() =>
+                ollamaBreaker.fire(`${OLLAMA_API}/api/chat`, context, { timeout: 30000 })
+            );
+            logger.info(`✓ Success with model: ${preferredModel}`);
             const content = response.data.message.content;
             return await processSearchRequests(content);
         } catch (error) {
-            console.warn(`✗ Failed with ${preferredModel}: ${error.message}`);
+            logger.warn(`✗ Failed with ${preferredModel}: ${error.message}`);
             // Fall through to cascade
         }
     }
@@ -326,13 +757,15 @@ async function callOllama(agentKey, message, preferredModel = null) {
 
         try {
             context.model = model.name;
-            console.log(`→ Trying model: ${model.name} (${model.category})...`);
-            const response = await axios.post(`${OLLAMA_API}/api/chat`, context, { timeout: 30000 });
-            console.log(`✓ Success with model: ${model.name}`);
+            logger.info(`→ Trying model: ${model.name} (${model.category})...`);
+            const response = await retryOllamaCall(() =>
+                ollamaBreaker.fire(`${OLLAMA_API}/api/chat`, context, { timeout: 30000 })
+            );
+            logger.info(`✓ Success with model: ${model.name}`);
             const content = response.data.message.content;
             return await processSearchRequests(content);
         } catch (error) {
-            console.warn(`✗ Failed with ${model.name}: ${error.message}`);
+            logger.warn(`✗ Failed with ${model.name}: ${error.message}`);
             // Continue to next model
         }
     }
@@ -394,6 +827,55 @@ app.get('/profile', (req, res) => {
     res.json(userProfile);
 });
 
+// Get memory data for dashboard
+app.get('/api/memory', (req, res) => {
+    const memoryData = {
+        profile: userProfile,
+        agents: {}
+    };
+
+    // Add agent-specific memory
+    Object.keys(agents).forEach(agentKey => {
+        memoryData.agents[agentKey] = {
+            name: agents[agentKey].name,
+            messageCount: conversationHistory[agentKey]?.length || 0,
+            summaries: conversationSummaries[agentKey]?.sessionSummaries || [],
+            permanentLearnings: conversationSummaries[agentKey]?.permanentLearnings || [],
+            lastInteraction: conversationHistory[agentKey]?.slice(-1)[0]?.content.substring(0, 100) || 'No interactions yet'
+        };
+    });
+
+    res.json(memoryData);
+});
+
+// Update memory (edit/delete)
+app.post('/api/memory/update', async (req, res) => {
+    const { action, target, value, agentKey } = req.body;
+
+    try {
+        if (action === 'delete_interest') {
+            userProfile.interests = userProfile.interests.filter(i => i !== value);
+        } else if (action === 'delete_learning') {
+            userProfile.learnings = userProfile.learnings.filter(l => l !== value);
+        } else if (action === 'add_permanent_learning' && agentKey) {
+            if (!conversationSummaries[agentKey].permanentLearnings.includes(value)) {
+                conversationSummaries[agentKey].permanentLearnings.push(value);
+            }
+        } else if (action === 'delete_permanent_learning' && agentKey) {
+            conversationSummaries[agentKey].permanentLearnings =
+                conversationSummaries[agentKey].permanentLearnings.filter(l => l !== value);
+        } else if (action === 'clear_history' && agentKey) {
+            conversationHistory[agentKey] = [];
+            conversationSummaries[agentKey].sessionSummaries = [];
+        }
+
+        await saveData();
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get available Ollama models
 app.get('/api/models', async (req, res) => {
     try {
@@ -451,28 +933,55 @@ app.post('/api/search', async (req, res) => {
 
 // Simple REST API for messages (no Socket.IO required)
 app.post('/api/message', async (req, res) => {
-    const { agent: agentKey, message, model } = req.body;
-
-    if (!agents[agentKey]) {
-        return res.status(400).json({ error: 'Invalid agent' });
-    }
-
-    if (!message) {
-        return res.status(400).json({ error: 'Message required' });
-    }
-
     try {
+        // Validate and sanitize inputs
+        const agentKey = validateAgentKey(req.body.agent);
+        const message = sanitizeInput(req.body.message);
+        const model = req.body.model || null;
+
+        logger.info(`Message received from ${agentKey}`, {
+            messageLength: message.length,
+            model: model || 'auto'
+        });
+
+        // Update user profiling based on message
+        updateUserProfile(message);
+
         // Get response from Ollama (with optional model preference)
         const response = await callOllama(agentKey, message, model);
 
+        // Validate response
+        if (typeof response !== 'string' || response.length === 0) {
+            throw new Error('Invalid response from model');
+        }
+
+        // Create validated message objects
+        const userMsg = { role: 'user', content: message };
+        const assistantMsg = { role: 'assistant', content: response };
+
+        // Validate schema before saving
+        if (!validateMessage(userMsg) || !validateMessage(assistantMsg)) {
+            throw new Error('Message validation failed');
+        }
+
         // Save to conversation history
-        conversationHistory[agentKey].push(
-            { role: 'user', content: message },
-            { role: 'assistant', content: response }
-        );
+        conversationHistory[agentKey].push(userMsg, assistantMsg);
 
         // Update user profile
-        updateUserProfile(agentKey, message, response);
+        userProfile.interactions++;
+        userProfile.lastSeen = new Date().toISOString();
+
+        // Track agent preference
+        userProfile.conversationMetrics.agentPreferences[agentKey] =
+            (userProfile.conversationMetrics.agentPreferences[agentKey] || 0) + 1;
+
+        // Check if we need to summarize (every 30 messages)
+        if (conversationHistory[agentKey].length > 30) {
+            // Summarize in background (don't wait)
+            summarizeConversation(agentKey).catch(err =>
+                logger.error('Background summarization error:', err)
+            );
+        }
 
         // Auto-save after each interaction
         await saveData();
@@ -480,8 +989,170 @@ app.post('/api/message', async (req, res) => {
         res.json({ response: response });
 
     } catch (error) {
-        console.error('Error:', error);
+        logger.error('API message error:', {
+            error: error.message,
+            stack: error.stack
+        });
+
+        // Don't leak internal errors
+        if (error.message.includes('too long') || error.message.includes('empty') || error.message.includes('Invalid')) {
+            res.status(400).json({ error: error.message });
+        } else {
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+});
+
+// ========================================
+// COLLABORATION API ROUTES
+// ========================================
+
+// Initialize collaboration engine on first use
+function getCollaborationEngine() {
+    if (!collaborationEngine) {
+        collaborationEngine = new CollaborationEngine(agents, callOllama);
+        logger.info('Collaboration engine initialized');
+    }
+    return collaborationEngine;
+}
+
+// Get available collaboration templates
+app.get('/api/collaboration/templates', (req, res) => {
+    try {
+        const engine = getCollaborationEngine();
+        const templates = engine.getTemplates();
+        res.json({ templates });
+    } catch (error) {
+        logger.error('Error fetching templates:', error);
+        res.status(500).json({ error: 'Failed to fetch templates' });
+    }
+});
+
+// Start a new collaboration session
+app.post('/api/collaboration/start', async (req, res) => {
+    try {
+        const { task, template, participants, rounds, maxRounds } = req.body;
+
+        // Validate inputs
+        if (!task || typeof task !== 'string' || task.trim().length === 0) {
+            return res.status(400).json({ error: 'Task is required' });
+        }
+
+        if (!participants || !Array.isArray(participants) || participants.length < 2) {
+            return res.status(400).json({ error: 'At least 2 participants are required' });
+        }
+
+        // Validate all participants exist
+        for (const agentKey of participants) {
+            if (!agents[agentKey]) {
+                return res.status(400).json({ error: `Unknown agent: ${agentKey}` });
+            }
+        }
+
+        const engine = getCollaborationEngine();
+        const session = await engine.startCollaboration({
+            task: sanitizeInput(task),
+            template: template || 'custom',
+            participants,
+            rounds: rounds || 3,
+            maxRounds: maxRounds || 5
+        });
+
+        logger.info(`Collaboration session started: ${session.id}`, {
+            template: session.template,
+            participants: session.participants
+        });
+
+        res.json({
+            sessionId: session.id,
+            status: session.status,
+            template: session.template,
+            participants: session.participants,
+            rounds: session.rounds
+        });
+
+    } catch (error) {
+        logger.error('Error starting collaboration:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Get collaboration session status
+app.get('/api/collaboration/:sessionId', (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const engine = getCollaborationEngine();
+        const session = engine.getSession(sessionId);
+
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        res.json({
+            id: session.id,
+            status: session.status,
+            task: session.task,
+            template: session.template,
+            participants: session.participants,
+            currentRound: session.currentRound,
+            totalRounds: session.rounds,
+            startTime: session.startTime,
+            endTime: session.endTime,
+            history: session.history,
+            synthesis: session.synthesis,
+            error: session.error
+        });
+
+    } catch (error) {
+        logger.error('Error fetching session:', error);
+        res.status(500).json({ error: 'Failed to fetch session' });
+    }
+});
+
+// Get all collaboration sessions
+app.get('/api/collaboration', (req, res) => {
+    try {
+        const engine = getCollaborationEngine();
+        const sessions = engine.getAllSessions();
+
+        // Return summary info only
+        const summaries = sessions.map(s => ({
+            id: s.id,
+            status: s.status,
+            task: s.task.substring(0, 100) + (s.task.length > 100 ? '...' : ''),
+            template: s.template,
+            participants: s.participants,
+            currentRound: s.currentRound,
+            totalRounds: s.rounds,
+            startTime: s.startTime,
+            endTime: s.endTime
+        }));
+
+        res.json({ sessions: summaries });
+
+    } catch (error) {
+        logger.error('Error fetching sessions:', error);
+        res.status(500).json({ error: 'Failed to fetch sessions' });
+    }
+});
+
+// Cancel a running collaboration session
+app.post('/api/collaboration/:sessionId/cancel', (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const engine = getCollaborationEngine();
+        const cancelled = engine.cancelSession(sessionId);
+
+        if (!cancelled) {
+            return res.status(404).json({ error: 'Session not found or already completed' });
+        }
+
+        logger.info(`Collaboration session cancelled: ${sessionId}`);
+        res.json({ success: true, message: 'Session cancelled' });
+
+    } catch (error) {
+        logger.error('Error cancelling session:', error);
+        res.status(500).json({ error: 'Failed to cancel session' });
     }
 });
 
@@ -597,12 +1268,45 @@ io.on('connection', (socket) => {
     });
 });
 
+// Health Check Endpoint
+app.get('/health', async (req, res) => {
+    const healthCheck = {
+        uptime: process.uptime(),
+        timestamp: Date.now(),
+        status: 'ok',
+        memory: process.memoryUsage(),
+        services: {
+            ollama: 'unknown',
+            agents: Object.keys(agents).length,
+            conversations: Object.keys(conversationHistory).reduce((sum, key) =>
+                sum + conversationHistory[key].length, 0)
+        }
+    };
+
+    // Check Ollama connectivity
+    try {
+        await axios.get(`${OLLAMA_API}/api/tags`, { timeout: 2000 });
+        healthCheck.services.ollama = 'connected';
+    } catch (error) {
+        healthCheck.services.ollama = 'disconnected';
+        healthCheck.status = 'degraded';
+    }
+
+    const statusCode = healthCheck.status === 'ok' ? 200 : 503;
+    res.status(statusCode).json(healthCheck);
+});
+
+// Readiness probe
+app.get('/ready', (req, res) => {
+    res.json({ ready: true });
+});
+
 // Start server
 async function start() {
     await loadData();
 
     server.listen(PORT, () => {
-        console.log(`
+        logger.info(`
 ╔═══════════════════════════════════════════╗
 ║   AGENT TERMINAL SYSTEM - SERVER ONLINE   ║
 ╚═══════════════════════════════════════════╝
@@ -619,10 +1323,50 @@ Ready to learn and assist!
 }
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('\nSaving data before shutdown...');
-    await saveData();
-    process.exit(0);
+async function gracefulShutdown(signal) {
+    logger.info(`\n${signal} received. Starting graceful shutdown...`);
+
+    // Stop accepting new requests
+    server.close(() => {
+        logger.info('HTTP server closed');
+    });
+
+    try {
+        // Save all data
+        logger.info('Saving data...');
+        await saveData();
+        logger.info('✓ Data saved successfully');
+
+        // Close socket connections
+        io.close(() => {
+            logger.info('Socket.IO connections closed');
+        });
+
+        logger.info('✓ Graceful shutdown complete. Goodbye!');
+        process.exit(0);
+    } catch (error) {
+        logger.error('Error during shutdown:', error);
+        process.exit(1);
+    }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Unhandled rejection handling
+process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
+
+process.on('uncaughtException', (error) => {
+    logger.error('Uncaught Exception:', error);
+    gracefulShutdown('UNCAUGHT_EXCEPTION');
+});
+
+// Create logs directory
+const fsSync = require('fs');
+if (!fsSync.existsSync('./logs')) {
+    fsSync.mkdirSync('./logs');
+}
 
 start();
