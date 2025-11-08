@@ -282,4 +282,3 @@ func TestClientDo(t *testing.T) {
 		})
 	}
 }
-
