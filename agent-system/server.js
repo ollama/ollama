@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -5,6 +7,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const axios = require('axios');
 const { search } = require('duck-duck-scrape');
+const { tavily } = require('@tavily/core');
 
 // Security & Reliability imports
 const helmet = require('helmet');
@@ -60,8 +63,22 @@ const io = socketIo(server, {
     pingInterval: 25000
 });
 
-const PORT = process.env.PORT || 3000;
+// Environment Configuration
 const OLLAMA_API = process.env.OLLAMA_API || 'http://localhost:11434';
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+const PORT = process.env.PORT || 3000;
+const SEARCH_RATE_LIMIT = parseInt(process.env.SEARCH_RATE_LIMIT) || 10; // searches per minute
+const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS) || 5;
+const SEARCH_TIMEOUT = parseInt(process.env.SEARCH_TIMEOUT) || 10000;
+
+// Initialize Tavily client if API key is available
+let tavilyClient = null;
+if (TAVILY_API_KEY) {
+    tavilyClient = tavily({ apiKey: TAVILY_API_KEY });
+    logger.info('✓ Tavily AI search enabled');
+} else {
+    logger.warn('⚠️  No Tavily API key found - using DuckDuckGo fallback (may be rate limited)');
+}
 
 // Security middleware
 app.use(helmet({
@@ -413,42 +430,83 @@ async function saveData() {
 setInterval(saveData, 5 * 60 * 1000);
 
 // Web search function with rate limiting
-let lastSearchTime = 0;
-const SEARCH_COOLDOWN = 2000; // 2 seconds between searches
+let searchCount = 0;
+let searchWindowStart = Date.now();
+const SEARCH_WINDOW = 60000; // 1 minute window for rate limiting
 
 async function webSearch(query) {
     try {
-        // Rate limiting: wait if needed
+        // Rate limiting: reset counter if window has passed
         const now = Date.now();
-        const timeSinceLastSearch = now - lastSearchTime;
-        if (timeSinceLastSearch < SEARCH_COOLDOWN) {
-            const waitTime = SEARCH_COOLDOWN - timeSinceLastSearch;
-            console.log(`⏱️ Rate limiting: waiting ${waitTime}ms...`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
+        if (now - searchWindowStart > SEARCH_WINDOW) {
+            searchCount = 0;
+            searchWindowStart = now;
         }
 
-        console.log(`🔍 Searching for: ${query}`);
-        lastSearchTime = Date.now();
+        // Check rate limit
+        if (searchCount >= SEARCH_RATE_LIMIT) {
+            const waitTime = SEARCH_WINDOW - (now - searchWindowStart);
+            logger.warn(`⏱️  Rate limit reached (${SEARCH_RATE_LIMIT}/min). Waiting ${Math.ceil(waitTime/1000)}s...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            searchCount = 0;
+            searchWindowStart = Date.now();
+        }
 
-        const results = await search(query, {
-            safeSearch: 0,
-            locale: 'en-us'
-        });
+        logger.info(`🔍 Searching for: "${query}"`);
+        searchCount++;
 
-        const searchResults = results.results.slice(0, 5).map(r => ({
+        // Try Tavily first (if API key is available)
+        if (tavilyClient) {
+            try {
+                const response = await Promise.race([
+                    tavilyClient.search(query, {
+                        maxResults: SEARCH_MAX_RESULTS,
+                        searchDepth: 'basic',
+                        includeAnswer: false,
+                        includeRawContent: false
+                    }),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Tavily timeout')), SEARCH_TIMEOUT)
+                    )
+                ]);
+
+                const searchResults = response.results.map(r => ({
+                    title: r.title,
+                    description: r.content,
+                    url: r.url,
+                    score: r.score
+                }));
+
+                logger.info(`✓ Tavily found ${searchResults.length} results`);
+                return searchResults;
+            } catch (tavilyError) {
+                logger.warn(`⚠️  Tavily failed: ${tavilyError.message}, falling back to DuckDuckGo`);
+            }
+        }
+
+        // Fallback to DuckDuckGo
+        const results = await Promise.race([
+            search(query, { safeSearch: 0, locale: 'en-us' }),
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('DuckDuckGo timeout')), SEARCH_TIMEOUT)
+            )
+        ]);
+
+        const searchResults = results.results.slice(0, SEARCH_MAX_RESULTS).map(r => ({
             title: r.title,
             description: r.description,
             url: r.url
         }));
 
-        console.log(`✓ Found ${searchResults.length} results`);
+        logger.info(`✓ DuckDuckGo found ${searchResults.length} results`);
         return searchResults;
+
     } catch (error) {
-        console.error('✗ Search error:', error.message);
+        logger.error(`✗ Search error: ${error.message}`);
 
         // If rate limited, provide helpful message
         if (error.message.includes('anomaly') || error.message.includes('too quickly')) {
-            console.warn('⚠️ Search rate limited - try again in a few seconds');
+            logger.warn('⚠️  DuckDuckGo rate limited - consider adding Tavily API key');
         }
 
         return [];

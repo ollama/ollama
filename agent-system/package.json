@@ -18,9 +18,11 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@tavily/core": "^0.5.12",
     "ajv": "^8.17.1",
     "axios": "^1.6.0",
     "dompurify": "^3.3.0",
+    "dotenv": "^16.6.1",
     "duck-duck-scrape": "^2.2.7",
     "express": "^4.18.2",
     "express-rate-limit": "^8.2.1",
