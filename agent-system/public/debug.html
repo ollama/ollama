@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug - Agent System</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #000;
+            color: #0f0;
+            padding: 20px;
+        }
+        .test { margin: 10px 0; padding: 10px; border: 1px solid #0f0; }
+        .pass { background: #003300; }
+        .fail { background: #330000; color: #f00; }
+        button { background: #000; color: #0f0; border: 1px solid #0f0; padding: 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Agent System Diagnostics</h1>
+
+    <div id="results"></div>
+
+    <button onclick="runTests()">Run Tests</button>
+
+    <script>
+        async function runTests() {
+            const results = document.getElementById('results');
+            results.innerHTML = '';
+
+            // Test 1: Server reachable
+            addTest('Server Reachable', 'Testing...');
+            try {
+                const res = await fetch('/');
+                updateTest('Server Reachable', res.ok, `Status: ${res.status}`);
+            } catch (e) {
+                updateTest('Server Reachable', false, e.message);
+            }
+
+            // Test 2: Agents endpoint
+            addTest('Agents Endpoint', 'Testing...');
+            try {
+                const res = await fetch('/agents');
+                const data = await res.json();
+                updateTest('Agents Endpoint', res.ok && Object.keys(data).length > 0,
+                    `Found ${Object.keys(data).length} agents: ${Object.keys(data).join(', ')}`);
+            } catch (e) {
+                updateTest('Agents Endpoint', false, e.message);
+            }
+
+            // Test 3: Socket.IO loaded
+            addTest('Socket.IO Library', typeof io !== 'undefined',
+                typeof io !== 'undefined' ? 'Socket.IO loaded' : 'Socket.IO not loaded');
+        }
+
+        function addTest(name, status) {
+            const div = document.createElement('div');
+            div.id = 'test-' + name.replace(/\s/g, '-');
+            div.className = 'test';
+            div.innerHTML = `<strong>${name}:</strong> ${status}`;
+            document.getElementById('results').appendChild(div);
+        }
+
+        function updateTest(name, pass, message) {
+            const div = document.getElementById('test-' + name.replace(/\s/g, '-'));
+            div.className = 'test ' + (pass ? 'pass' : 'fail');
+            div.innerHTML = `<strong>${name}:</strong> ${pass ? '✅ PASS' : '❌ FAIL'} - ${message}`;
+        }
+
+        // Auto-run on load
+        window.onload = runTests;
+    </script>
+</body>
+</html>

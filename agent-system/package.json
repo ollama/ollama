@@ -1,0 +1,28 @@
+{
+  "name": "agent-terminal-system",
+  "version": "1.0.0",
+  "description": "Multi-agent system powered by Ollama with learning capabilities",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "ollama",
+    "ai",
+    "agents",
+    "learning",
+    "terminal"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "duck-duck-scrape": "^2.2.7",
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

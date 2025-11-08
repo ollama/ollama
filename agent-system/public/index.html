@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGENT TERMINAL SYSTEM v1.0</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'VT323', monospace;
+            background: #000;
+            color: #00ff00;
+            overflow: hidden;
+            height: 100vh;
+        }
+        /* CRT Screen Effect */
+        .crt-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            background: #0a0a0a;
+        }
+        .crt-container::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+        .crt-container::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: rgba(18, 16, 16, 0.1);
+            opacity: 0;
+            z-index: 2;
+            pointer-events: none;
+            animation: subtleFlicker 4s infinite;
+        }
+        @keyframes subtleFlicker {
+            0% { opacity: 0.03; }
+            50% { opacity: 0.06; }
+            100% { opacity: 0.03; }
+        }
+        .screen {
+            position: relative;
+            width: 95%;
+            height: 95vh;
+            margin: 2.5vh auto;
+            border: 3px solid #333;
+            border-radius: 10px;
+            box-shadow:
+                inset 0 0 100px rgba(0, 255, 0, 0.1),
+                0 0 50px rgba(0, 255, 0, 0.2);
+            padding: 20px;
+            overflow: hidden;
+        }
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #00ff00;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .terminal-title {
+            font-size: 1.5em;
+            text-shadow: 0 0 10px #00ff00;
+            letter-spacing: 2px;
+            line-height: 1.3;
+        }
+        .system-info {
+            font-size: 1.2em;
+            opacity: 0.7;
+        }
+        .blink {
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
+        }
+        .main-container {
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            grid-template-rows: 1fr 140px;
+            gap: 20px;
+            height: calc(100% - 120px);
+        }
+        /* Agent List Sidebar */
+        .agent-sidebar {
+            border: 2px solid #00ff00;
+            padding: 15px;
+            overflow-y: auto;
+            background: rgba(0, 255, 0, 0.02);
+        }
+        .sidebar-title {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            text-align: center;
+            border-bottom: 1px dashed #00ff00;
+            padding-bottom: 10px;
+        }
+        .agent-item {
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #00ff00;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+        .agent-item:hover {
+            background: rgba(0, 255, 0, 0.1);
+            box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.3);
+            transform: translateX(5px);
+        }
+        .agent-item.active {
+            background: rgba(0, 255, 0, 0.2);
+            box-shadow: inset 0 0 15px rgba(0, 255, 0, 0.5);
+        }
+        .agent-item::before {
+            content: '>';
+            position: absolute;
+            left: 5px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .agent-item:hover::before,
+        .agent-item.active::before {
+            opacity: 1;
+        }
+        .agent-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #00ff00;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% {
+                box-shadow: 0 0 5px #00ff00;
+            }
+            50% {
+                box-shadow: 0 0 15px #00ff00, 0 0 25px #00ff00;
+            }
+        }
+        /* Chat Area */
+        .chat-area {
+            border: 2px solid #00ff00;
+            padding: 20px;
+            overflow-y: auto;
+            background: rgba(0, 255, 0, 0.02);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .message {
+            padding: 15px;
+            border-left: 3px solid #00ff00;
+            background: rgba(0, 255, 0, 0.05);
+            animation: scanline 0.3s;
+            font-size: 1.3em;
+            line-height: 1.4;
+        }
+        @keyframes scanline {
+            0% {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .message-header {
+            font-size: 1.1em;
+            margin-bottom: 8px;
+            opacity: 0.8;
+        }
+        .message-user {
+            border-left-color: #00ffff;
+            background: rgba(0, 255, 255, 0.05);
+        }
+        .message-thinking {
+            border-left-color: #ffff00;
+            background: rgba(255, 255, 0, 0.05);
+            font-style: italic;
+        }
+        .thinking-cursor::after {
+            content: '_';
+            animation: blink 1s infinite;
+        }
+        .timestamp {
+            font-size: 0.9em;
+            opacity: 0.5;
+            margin-left: 10px;
+        }
+        /* Command Input */
+        .command-input {
+            grid-column: 1 / -1;
+            border: 2px solid #00ff00;
+            padding: 20px;
+            background: rgba(0, 255, 0, 0.02);
+        }
+        .input-line {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.3em;
+            flex-wrap: wrap;
+        }
+        .prompt {
+            color: #00ff00;
+            text-shadow: 0 0 5px #00ff00;
+        }
+        .input-line select {
+            background: #000;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px 12px;
+            font-family: 'VT323', monospace;
+            font-size: 0.95em;
+            cursor: pointer;
+            min-width: 150px;
+        }
+        .input-line select:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+        .input-line input {
+            flex: 1;
+            min-width: 200px;
+            background: transparent;
+            border: none;
+            color: #00ff00;
+            font-family: 'VT323', monospace;
+            font-size: 0.95em;
+            outline: none;
+            text-shadow: 0 0 5px #00ff00;
+        }
+        .input-line button {
+            background: transparent;
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 8px 20px;
+            font-family: 'VT323', monospace;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .input-line button:hover {
+            background: rgba(0, 255, 0, 0.2);
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+            transform: scale(1.05);
+        }
+        .input-line button:active {
+            transform: scale(0.95);
+        }
+        .input-line button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        /* Control Buttons */
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        .control-btn {
+            background: transparent;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 5px 15px;
+            font-family: 'VT323', monospace;
+            font-size: 1.2em;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .control-btn:hover {
+            background: rgba(0, 255, 0, 0.1);
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+        }
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #000;
+            border: 1px solid #00ff00;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #00ff00;
+            box-shadow: 0 0 10px #00ff00;
+        }
+        /* Boot sequence animation */
+        @keyframes bootup {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        .screen {
+            animation: bootup 1s;
+        }
+    </style>
+</head>
+<body>
+    <div class="crt-container">
+        <div class="screen">
+            <div class="terminal-header">
+                <div class="terminal-title">
+                    ╔═══════════════════════════════════╗<br>
+                    ║  AGENT TERMINAL SYSTEM v1.0  ║<br>
+                    ╚═══════════════════════════════════╝
+                </div>
+                <div class="system-info">
+                    <span id="status">SYSTEM ONLINE</span> <span class="blink">█</span><br>
+                    <span id="datetime"></span>
+                </div>
+            </div>
+            <div class="main-container">
+                <!-- Agent Sidebar -->
+                <div class="agent-sidebar">
+                    <div class="sidebar-title">[ AGENTS ]</div>
+                    <div id="agent-list"></div>
+                </div>
+                <!-- Chat Area -->
+                <div class="chat-area" id="chat-area">
+                    <div class="message">
+                        <div class="message-header">[SYSTEM]</div>
+                        <div>SYSTEM INITIALIZED - SELECT AN AGENT TO BEGIN</div>
+                    </div>
+                </div>
+                <!-- Command Input -->
+                <div class="command-input">
+                    <div class="input-line">
+                        <span class="prompt">&gt;</span>
+                        <select id="agent-selector">
+                            <option value="">SELECT_AGENT</option>
+                        </select>
+                        <select id="model-selector" title="Select AI Model (auto-fallback enabled)">
+                            <option value="">AUTO</option>
+                        </select>
+                        <input
+                            type="text"
+                            id="command-input"
+                            placeholder="ENTER_COMMAND..."
+                            onkeypress="handleKeyPress(event)"
+                        >
+                        <button id="send-btn" onclick="sendCommand()">[SEND]</button>
+                    </div>
+                    <div class="controls">
+                        <button class="control-btn" onclick="clearTerminal()">[CLEAR_TERM]</button>
+                        <button class="control-btn" onclick="viewProfile()">[USER_PROFILE]</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let agents = {};
+        let currentAgent = null;
+        let isProcessing = false;
+
+        const agentIcons = {
+            researcher: '📊',
+            coder: '⌨️',
+            critic: '🔍',
+            planner: '📋'
+        };
+
+        // Update datetime
+        function updateDateTime() {
+            const now = new Date();
+            const dateElem = document.getElementById('datetime');
+            if (dateElem) {
+                dateElem.textContent =
+                    now.toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    }).replace(',', ' |');
+            }
+        }
+        setInterval(updateDateTime, 1000);
+        updateDateTime();
+
+        // Load agents on page load
+        async function loadAgents() {
+            try {
+                const response = await fetch('/agents');
+                agents = await response.json();
+                renderAgentList();
+                populateAgentSelector();
+                console.log('✅ Loaded', Object.keys(agents).length, 'agents');
+            } catch (error) {
+                console.error('Error loading agents:', error);
+                addSystemMessage('ERROR: FAILED_TO_LOAD_AGENTS - ' + error.message);
+            }
+        }
+
+        // Load available models
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+
+                const selector = document.getElementById('model-selector');
+                selector.innerHTML = '<option value="">AUTO</option>';
+
+                if (data.demo) {
+                    addSystemMessage('⚠ DEMO MODE: Ollama unavailable. Responses are simulated.');
+                    return;
+                }
+
+                data.models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.name;
+                    const categoryBadge = {
+                        'tiny': '🟢',
+                        'small': '🟡',
+                        'medium': '🟠',
+                        'large': '🔴'
+                    }[model.category] || '⚪';
+                    option.textContent = `${categoryBadge} ${model.name} (${model.size})`;
+                    selector.appendChild(option);
+                });
+
+                // Restore saved model preference
+                const savedModel = localStorage.getItem('preferredModel');
+                if (savedModel) {
+                    selector.value = savedModel;
+                    console.log('📌 Restored preferred model:', savedModel);
+                }
+
+                // Save model preference when changed
+                selector.addEventListener('change', () => {
+                    const selectedModel = selector.value;
+                    if (selectedModel) {
+                        localStorage.setItem('preferredModel', selectedModel);
+                        console.log('💾 Saved preferred model:', selectedModel);
+                    } else {
+                        localStorage.removeItem('preferredModel');
+                        console.log('💾 Cleared preferred model (using AUTO)');
+                    }
+                });
+
+                console.log('✅ Loaded', data.models.length, 'models');
+            } catch (error) {
+                console.error('Error loading models:', error);
+                addSystemMessage('⚠ Could not load models. Using auto-fallback mode.');
+            }
+        }
+
+        function renderAgentList() {
+            const list = document.getElementById('agent-list');
+            list.innerHTML = '';
+            for (const [key, agent] of Object.entries(agents)) {
+                const item = document.createElement('div');
+                item.className = 'agent-item';
+                item.onclick = () => selectAgent(key, item);
+                item.innerHTML = `
+                    <span class="agent-status"></span>
+                    ${agentIcons[key] || '🤖'} ${agent.name.toUpperCase()}
+                `;
+                list.appendChild(item);
+            }
+        }
+
+        function selectAgent(key, element) {
+            currentAgent = key;
+            document.querySelectorAll('.agent-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            element.classList.add('active');
+            document.getElementById('agent-selector').value = key;
+        }
+
+        function populateAgentSelector() {
+            const selector = document.getElementById('agent-selector');
+            selector.innerHTML = '<option value="">SELECT_AGENT</option>';
+
+            for (const [key, agent] of Object.entries(agents)) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = agent.name.toUpperCase();
+                selector.appendChild(option);
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !isProcessing) {
+                sendCommand();
+            }
+        }
+
+        async function sendCommand() {
+            if (isProcessing) return;
+
+            const input = document.getElementById('command-input');
+            const agentKey = document.getElementById('agent-selector').value || currentAgent;
+            const message = input.value.trim();
+            const model = document.getElementById('model-selector').value || null;
+
+            if (!message || !agentKey) {
+                addSystemMessage('ERROR: SELECT_AGENT AND ENTER_COMMAND');
+                return;
+            }
+
+            isProcessing = true;
+            document.getElementById('send-btn').disabled = true;
+
+            addMessage('USER', message, true);
+            addThinking(agentKey);
+
+            try {
+                const requestBody = { agent: agentKey, message: message };
+                if (model) {
+                    requestBody.model = model;
+                }
+
+                const response = await fetch('/api/message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+
+                removeThinking(agentKey);
+
+                if (data.error) {
+                    addSystemMessage('ERROR: ' + data.error);
+                } else {
+                    addMessage(agents[agentKey].name.toUpperCase(), data.response);
+                }
+            } catch (error) {
+                removeThinking(agentKey);
+                addSystemMessage('ERROR: ' + error.message);
+            }
+
+            input.value = '';
+            isProcessing = false;
+            document.getElementById('send-btn').disabled = false;
+        }
+
+        function addMessage(author, text, isUser = false) {
+            const chatArea = document.getElementById('chat-area');
+            const message = document.createElement('div');
+            message.className = 'message' + (isUser ? ' message-user' : '');
+
+            const time = new Date().toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
+            message.innerHTML = `
+                <div class="message-header">
+                    [${author}]<span class="timestamp">${time}</span>
+                </div>
+                <div>${text}</div>
+            `;
+
+            chatArea.appendChild(message);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const chatArea = document.getElementById('chat-area');
+            const message = document.createElement('div');
+            message.className = 'message';
+            message.style.borderLeftColor = '#ff0000';
+            message.style.background = 'rgba(255, 0, 0, 0.05)';
+            message.innerHTML = `
+                <div class="message-header">[SYSTEM]</div>
+                <div>${text}</div>
+            `;
+            chatArea.appendChild(message);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function addThinking(agentKey) {
+            const chatArea = document.getElementById('chat-area');
+            const thinking = document.createElement('div');
+            thinking.className = 'message message-thinking';
+            thinking.id = `thinking-${agentKey}`;
+            thinking.innerHTML = `
+                <div class="message-header">[${agents[agentKey].name.toUpperCase()}]</div>
+                <div class="thinking-cursor">PROCESSING</div>
+            `;
+            chatArea.appendChild(thinking);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function removeThinking(agentKey) {
+            const thinking = document.getElementById(`thinking-${agentKey}`);
+            if (thinking) thinking.remove();
+        }
+
+        function clearTerminal() {
+            const chatArea = document.getElementById('chat-area');
+            chatArea.innerHTML = `
+                <div class="message">
+                    <div class="message-header">[SYSTEM]</div>
+                    <div>TERMINAL CLEARED - SELECT AN AGENT TO BEGIN</div>
+                </div>
+            `;
+        }
+
+        async function viewProfile() {
+            try {
+                const response = await fetch('/profile');
+                const profile = await response.json();
+                const profileText = `USER PROFILE DATA:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total Interactions: ${profile.interactions}
+Member Since: ${new Date(profile.firstSeen).toLocaleString()}
+Last Active: ${new Date(profile.lastSeen).toLocaleString()}
+
+Top Interests: ${profile.interests.slice(0, 10).join(', ') || 'Building...'}
+
+Recent Learnings:
+${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Agents are learning about you...'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+                addSystemMessage(profileText.trim());
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_LOAD_PROFILE');
+            }
+        }
+
+        // Initialize on page load
+        window.onload = function() {
+            console.log('🚀 Page loaded! Loading agents and models...');
+            loadAgents();
+            loadModels();
+        };
+
+        // Also try loading immediately if DOM is already ready
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            console.log('🚀 DOM already ready! Loading agents and models immediately...');
+            setTimeout(() => {
+                loadAgents();
+                loadModels();
+            }, 100);
+        }
+    </script>
+</body>
+</html>
