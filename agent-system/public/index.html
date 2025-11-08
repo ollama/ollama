@@ -37,6 +37,18 @@
             --glow-color: rgba(51, 255, 51, 0.3);
         }
 
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Matrix Rain Canvas */
         #matrix-rain {
             position: fixed;
@@ -618,7 +630,24 @@
                     <div class="memory-section">
                         <div class="memory-section-title">╔══[ COLLABORATION IN PROGRESS ]══╗</div>
                         <div id="collab-status" style="margin: 20px 0; font-size: 1.2em;"></div>
-                        <div id="collab-rounds-display"></div>
+
+                        <!-- Live Conversation Feed -->
+                        <div style="margin-top: 20px;">
+                            <div style="color: var(--primary-color); margin-bottom: 10px; font-size: 1.1em;">
+                                ▼ LIVE CONVERSATION FEED
+                            </div>
+                            <div id="collab-conversation" style="
+                                max-height: 400px;
+                                overflow-y: auto;
+                                background: rgba(0, 255, 0, 0.05);
+                                border: 1px solid var(--primary-color);
+                                padding: 15px;
+                                font-size: 0.95em;
+                                line-height: 1.6;
+                            "></div>
+                        </div>
+
+                        <div id="collab-rounds-display" style="margin-top: 20px;"></div>
                     </div>
                 </div>
 
@@ -1420,6 +1449,55 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                     <div>ROUND: ${session.currentRound} / ${session.totalRounds}</div>
                     <div>PARTICIPANTS: ${session.participants.map(p => agents[p].name).join(', ')}</div>
                 `;
+
+                // Update live conversation feed
+                const conversationDiv = document.getElementById('collab-conversation');
+                let conversationHTML = '';
+
+                if (session.history.length === 0) {
+                    conversationHTML = '<div style="opacity: 0.6; text-align: center; padding: 20px;">⏳ Waiting for agents to start conversation...</div>';
+                } else {
+                    session.history.forEach((entry, index) => {
+                        const agentIcon = agentIcons[entry.agent] || '🤖';
+                        const isLatest = index === session.history.length - 1;
+
+                        conversationHTML += `
+                            <div style="
+                                margin-bottom: 15px;
+                                padding: 12px;
+                                border-left: 3px solid ${isLatest ? 'var(--primary-color)' : 'rgba(0, 255, 0, 0.3)'};
+                                background: ${isLatest ? 'rgba(0, 255, 0, 0.1)' : 'transparent'};
+                                animation: ${isLatest ? 'fadeIn 0.5s' : 'none'};
+                            ">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                                    <span style="font-size: 1.2em;">${agentIcon}</span>
+                                    <span style="font-weight: bold; color: var(--primary-color);">
+                                        ${entry.agentName.toUpperCase()}
+                                    </span>
+                                    <span style="opacity: 0.5; font-size: 0.85em;">
+                                        [Round ${entry.round}] ${entry.type}
+                                    </span>
+                                </div>
+                                <div style="
+                                    padding-left: 32px;
+                                    white-space: pre-wrap;
+                                    line-height: 1.5;
+                                    opacity: 0.9;
+                                ">
+                                    ${entry.response.length > 500
+                                        ? entry.response.substring(0, 500) + '... <span style="opacity: 0.5;">[truncated]</span>'
+                                        : entry.response
+                                    }
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
+                conversationDiv.innerHTML = conversationHTML;
+
+                // Auto-scroll to bottom to show latest message
+                conversationDiv.scrollTop = conversationDiv.scrollHeight;
 
                 // Update rounds display
                 const roundsDiv = document.getElementById('collab-rounds-display');
