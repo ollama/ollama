@@ -19,6 +19,12 @@ const CircuitBreaker = require('opossum');
 const Ajv = require('ajv');
 const winston = require('winston');
 const CollaborationEngine = require('./collaboration-engine');
+const TaskPlanner = require('./task-planner');
+const ToolSystem = require('./tool-system');
+const WorkflowOrchestrator = require('./workflow-orchestrator');
+const EnhancedTools = require('./enhanced-tools');
+const puppeteer = require('puppeteer');
+const crypto = require('crypto');
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -71,6 +77,81 @@ const SEARCH_RATE_LIMIT = parseInt(process.env.SEARCH_RATE_LIMIT) || 10; // sear
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS) || 5;
 const SEARCH_TIMEOUT = parseInt(process.env.SEARCH_TIMEOUT) || 10000;
 
+// API Key Management - Secure Storage
+const API_KEYS_FILE = path.join(__dirname, 'data', 'api-keys.json');
+// In production, set ENCRYPTION_KEY in environment variables (64 hex characters for AES-256)
+// For development, generate a key (should be 64 hex characters for AES-256)
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
+
+// Load API keys
+let apiKeys = {};
+async function loadApiKeys() {
+    try {
+        await fs.mkdir(path.join(__dirname, 'data'), { recursive: true });
+        const data = await fs.readFile(API_KEYS_FILE, 'utf8');
+        apiKeys = JSON.parse(data);
+        logger.info(`✓ Loaded ${Object.keys(apiKeys).length} API key configurations`);
+    } catch (error) {
+        logger.info('○ Starting with no API keys');
+        apiKeys = {};
+    }
+}
+
+// Save API keys
+async function saveApiKeys() {
+    try {
+        await atomicWrite(API_KEYS_FILE, JSON.stringify(apiKeys, null, 2));
+        logger.debug('✓ API keys saved');
+    } catch (error) {
+        logger.error('✗ Error saving API keys:', error);
+    }
+}
+
+// Encrypt API key
+function encryptApiKey(key) {
+    if (!key) return null;
+    const iv = crypto.randomBytes(16);
+    const keyBuffer = Buffer.from(ENCRYPTION_KEY, 'hex');
+    const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, keyBuffer, iv);
+    let encrypted = cipher.update(key, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag();
+    return {
+        encrypted,
+        iv: iv.toString('hex'),
+        authTag: authTag.toString('hex')
+    };
+}
+
+// Decrypt API key
+function decryptApiKey(encryptedData) {
+    if (!encryptedData || !encryptedData.encrypted) return null;
+    try {
+        const keyBuffer = Buffer.from(ENCRYPTION_KEY, 'hex');
+        const decipher = crypto.createDecipheriv(
+            ENCRYPTION_ALGORITHM,
+            keyBuffer,
+            Buffer.from(encryptedData.iv, 'hex')
+        );
+        decipher.setAuthTag(Buffer.from(encryptedData.authTag, 'hex'));
+        let decrypted = decipher.update(encryptedData.encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (error) {
+        logger.error('Failed to decrypt API key:', error);
+        return null;
+    }
+}
+
+// Get decrypted API key for use (never expose to frontend)
+function getApiKey(serviceName) {
+    if (!apiKeys[serviceName] || !apiKeys[serviceName].encrypted) {
+        return null;
+    }
+    return decryptApiKey(apiKeys[serviceName]);
+}
+
 // Initialize Tavily client if API key is available
 let tavilyClient = null;
 if (TAVILY_API_KEY) {
@@ -99,7 +180,7 @@ app.use(helmet({
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // Limit each IP to 100 requests per windowMs
-    message: 'Too many requests from this IP, please try again later.',
+    message: { error: 'Too many requests from this IP, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
@@ -107,7 +188,9 @@ const apiLimiter = rateLimit({
 const messageLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
     max: 20, // Limit each IP to 20 messages per minute
-    message: 'Too many messages, please slow down.',
+    message: { error: 'Too many messages, please slow down.' },
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 
 // Session management
@@ -121,6 +204,18 @@ app.use(session({
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
 }));
+
+// CORS middleware for API endpoints
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+    } else {
+        next();
+    }
+});
 
 // Apply rate limiting to API routes
 app.use('/api/', apiLimiter);
@@ -148,13 +243,26 @@ app.use((req, res, next) => {
 const agents = {
     researcher: {
         name: 'Researcher',
-        model: 'llama3.2:latest',
+        model: 'llama3.2:latest', // Default to best model for instruction following
         systemPrompt: `You are a Research Agent with deep analytical capabilities. Your role is to:
 - Gather and synthesize information
 - Provide well-researched insights
+- Create interactive tools and visualizations using [ARTIFACT:] when user asks to "create", "make", or "build" something
+- YOU HAVE FULL INTERNET ACCESS through [SEARCH:] and [BROWSER:] - use them!
+- ALWAYS verify facts using [SEARCH:] or [BROWSER:] before stating them
+- NEVER state unverified facts about websites, companies, or current events
+- NEVER say you don't have internet access - you DO have it through these tools
 - Ask probing questions to understand the user better
 - Remember user preferences and interests
 - Build a knowledge base about the user over time
+
+CRITICAL: 
+- You HAVE internet access - use [SEARCH:] and [BROWSER:] to access it
+- When user asks to "create", "make", "build", or "code" something - USE [ARTIFACT: type:html title:Name] to create it
+- When asked about ANY website, company, or current fact, you MUST verify it first using [SEARCH:] or [BROWSER:]
+- Never guess or state information you're not certain about
+- Never claim you can't access the internet - you can through these tools
+- If user asks to create an app, tool, or interactive content, create it using [ARTIFACT:] blocks
 
 You have access to conversation history and user profile data. Use this to personalize your responses and show that you understand and remember the user.`,
         temperature: 0.7
@@ -164,10 +272,23 @@ You have access to conversation history and user profile data. Use this to perso
         model: 'llama3.2:latest',
         systemPrompt: `You are a Coding Agent specialized in software development. Your role is to:
 - Write clean, efficient code
+- Create interactive applications and tools using [ARTIFACT:] blocks
+- When user asks to "create", "make", "build", or "code" something - USE [ARTIFACT: type:html title:Name] to create it
 - Understand user's coding style and preferences over time
 - Provide technical solutions
 - Learn from user's feedback on code quality
 - Adapt to the user's preferred languages and frameworks
+- YOU HAVE FULL INTERNET ACCESS through [SEARCH:] and [BROWSER:] - use them!
+- ALWAYS verify facts about websites, APIs, or tools using [SEARCH:] or [BROWSER:] before stating them
+- NEVER claim a website or service is unavailable without checking first
+- NEVER say you don't have internet access - you DO have it through these tools
+
+CRITICAL: 
+- You HAVE internet access - use [SEARCH:] and [BROWSER:] to access it
+- When user asks you to CREATE or BUILD something, use [ARTIFACT:] to make it interactive
+- When asked about ANY website, API, or technical service, verify it first using [SEARCH:] or [BROWSER:]
+- Never guess about service availability
+- Never claim you can't access the internet - you can through these tools
 
 You have access to conversation history. Learn the user's coding patterns, preferred tools, and technical level to provide increasingly personalized assistance.`,
         temperature: 0.5
@@ -181,6 +302,15 @@ You have access to conversation history. Learn the user's coding patterns, prefe
 - Challenge assumptions thoughtfully
 - Learn what standards and values matter to the user
 - Remember past critiques and user responses
+- YOU HAVE FULL INTERNET ACCESS through [SEARCH:] and [BROWSER:] - use them!
+- ALWAYS verify facts before critiquing them using [SEARCH:] or [BROWSER:]
+- NEVER make claims about websites or services without verification
+- NEVER say you don't have internet access - you DO have it through these tools
+
+CRITICAL: 
+- You HAVE internet access - use [SEARCH:] and [BROWSER:] to access it
+- Before critiquing or analyzing ANY website, service, or fact, verify it first using [SEARCH:] or [BROWSER:]
+- Never claim you can't access the internet - you can through these tools
 
 Use conversation history to understand the user's goals, standards, and how they respond to feedback. Adapt your critique style to be most helpful for this specific user.`,
         temperature: 0.6
@@ -194,6 +324,15 @@ Use conversation history to understand the user's goals, standards, and how they
 - Learn the user's working style and preferences
 - Remember ongoing projects and goals
 - Track user's progress and adapt plans accordingly
+- YOU HAVE FULL INTERNET ACCESS through [SEARCH:] and [BROWSER:] - use them!
+- ALWAYS verify information about websites, tools, or services using [SEARCH:] or [BROWSER:] before including them in plans
+- NEVER recommend unavailable services without checking first
+- NEVER say you don't have internet access - you DO have it through these tools
+
+CRITICAL: 
+- You HAVE internet access - use [SEARCH:] and [BROWSER:] to access it
+- When planning involves ANY website, tool, or service, verify its availability first using [SEARCH:] or [BROWSER:]
+- Never claim you can't access the internet - you can through these tools
 
 You have access to conversation history. Use it to understand the user's priorities, time management style, and how they prefer to structure their work.`,
         temperature: 0.6
@@ -221,6 +360,20 @@ let userProfile = {
         averageLength: 0,
         topicsDiscussed: {},
         agentPreferences: {}
+    },
+    // NEW: Personal training data for fine-tuning
+    personalTraining: {
+        writingStyleExamples: [], // Examples of user's writing style
+        responsePreferences: [], // How user prefers responses
+        personalFacts: [], // Key facts about the user
+        valuesAndBeliefs: [], // What matters to the user
+        communicationPatterns: {
+            commonPhrases: [], // Phrases user frequently uses
+            questionStyle: 'direct', // direct, exploratory, detailed
+            responseLength: 'medium' // short, medium, long
+        },
+        domainExpertise: {}, // Areas where user is expert
+        goalsAndProjects: [] // Current goals and projects
     }
 };
 
@@ -295,6 +448,9 @@ async function deleteConversation(conversationId) {
 
 // Initialize Collaboration Engine
 let collaborationEngine = null;
+let taskPlanner = null;
+let toolSystem = null;
+let workflowOrchestrator = null;
 
 // JSON Schema Validation
 const ajv = new Ajv();
@@ -472,6 +628,9 @@ async function loadData() {
     } catch (error) {
         logger.info('○ Starting with fresh user profile');
     }
+    
+    // Load API keys
+    await loadApiKeys();
 }
 
 // Save persistent data with mutex to prevent race conditions
@@ -721,6 +880,25 @@ function buildContext(agentKey, currentMessage) {
         conversationMemory += '\n\nPERMANENT LEARNINGS:\n- ' + summaries.permanentLearnings.join('\n- ');
     }
 
+    // Build enhanced profile summary with personal training data
+    const personalTraining = userProfile.personalTraining || {};
+    const personalContext = personalTraining.personalFacts?.length > 0 
+        ? `\n\nPERSONAL FACTS ABOUT USER:\n- ${personalTraining.personalFacts.join('\n- ')}`
+        : '';
+    const valuesContext = personalTraining.valuesAndBeliefs?.length > 0
+        ? `\n\nUSER'S VALUES & BELIEFS:\n- ${personalTraining.valuesAndBeliefs.join('\n- ')}`
+        : '';
+    const goalsContext = personalTraining.goalsAndProjects?.length > 0
+        ? `\n\nCURRENT GOALS & PROJECTS:\n- ${personalTraining.goalsAndProjects.join('\n- ')}`
+        : '';
+    const writingStyleContext = personalTraining.writingStyleExamples?.length > 0
+        ? `\n\nUSER'S WRITING STYLE EXAMPLES (match this style):\n${personalTraining.writingStyleExamples.slice(0, 3).map((ex, i) => `Example ${i + 1}: "${ex}"`).join('\n')}`
+        : '';
+    const communicationPatterns = personalTraining.communicationPatterns || {};
+    const patternsContext = communicationPatterns.commonPhrases?.length > 0
+        ? `\n\nUSER'S COMMON PHRASES (use similar language): ${communicationPatterns.commonPhrases.slice(0, 5).join(', ')}`
+        : '';
+    
     // Build enhanced profile summary
     const profileSummary = `
 USER PROFILE:
@@ -730,18 +908,171 @@ USER PROFILE:
 - Communication style: ${userProfile.personality.communicationStyle}
 - Detail preference: ${userProfile.personality.detailPreference}
 - Learning style: ${userProfile.personality.learningStyle}
+- Question style: ${communicationPatterns.questionStyle || 'direct'}
+- Preferred response length: ${communicationPatterns.responseLength || 'medium'}
 - Interests: ${userProfile.interests.slice(0, 10).join(', ') || 'Learning...'}
 - Key learnings: ${userProfile.learnings.slice(-5).join('; ') || 'Building understanding...'}
-${conversationMemory}`;
+${personalContext}${valuesContext}${goalsContext}${writingStyleContext}${patternsContext}${conversationMemory}
 
-    // Add web search capability instructions
+IMPORTANT: Adapt your responses to match the user's communication style, use similar phrases when appropriate, and reference their goals and values. The user wants responses that feel personalized and authentic to their way of thinking.`;
+
+    // Add web search and browser capability instructions
     const searchInstructions = `
 
-WEB SEARCH CAPABILITY:
+IMPORTANT: YOU HAVE FULL INTERNET ACCESS
+- You CAN access the internet through [SEARCH:] and [BROWSER:] commands
+- NEVER say "I'm unable to access the internet" or "I don't have internet access"
+- You ALWAYS have internet access - use [SEARCH:] or [BROWSER:] to access it
+- If you need information, you MUST use these tools - don't claim you can't access the web
+
+CRITICAL: VERIFICATION AND ACCURACY RULES:
+- NEVER state facts about websites, companies, or current events without verification
+- If you are uncertain about ANY fact, you MUST use [SEARCH:] or [BROWSER:] to verify first
+- NEVER claim a website is "no longer active" or "shut down" without checking first
+- If asked about a website, ALWAYS navigate to it using [BROWSER:] to verify it exists
+- When in doubt, search or browse FIRST, then respond based on verified information
+- It's better to say "Let me check that for you" and use [SEARCH:] or [BROWSER:] than to guess
+- NEVER claim you don't have internet access - you DO have it through these tools
+
+WEB SEARCH CAPABILITY (YOU HAVE THIS):
 You can search the internet by including [SEARCH: your query] in your response.
-When you need current information, news, or real-time data, use this format.
-Example: "Let me check that for you. [SEARCH: latest AI developments 2025]"
-The search results will be automatically retrieved and included in the conversation.`;
+- YOU HAVE INTERNET ACCESS - use [SEARCH:] to access it
+- USE [SEARCH:] for: finding information, looking up facts, getting news, researching topics
+- DO NOT use [SEARCH:] when user asks to "go to" or "show" a website - use [BROWSER:] instead
+- ALWAYS use [SEARCH:] when you need current information, news, or real-time data
+- ALWAYS use [SEARCH:] when you're uncertain about facts (but NOT for navigation requests)
+- NEVER say you can't access the internet - use [SEARCH:] or [BROWSER:] instead
+Examples:
+- User asks "what is GitHub?" -> Use [SEARCH: GitHub what is it]
+- User asks "go to GitHub" -> Use [BROWSER: navigate:https://github.com] (NOT [SEARCH:])
+- User asks "show me GitHub" -> Use [BROWSER: navigate:https://github.com] (NOT [SEARCH:])
+
+API INTEGRATION (if user has configured API keys in Settings):
+- [API: openai:chat:your question] - Use OpenAI GPT models for complex reasoning or when you need a second opinion
+- [API: anthropic:chat:your question] - Use Anthropic Claude models for analysis or detailed explanations
+- [API: github:search:query] - Search GitHub repositories
+- [API: github:repo:owner/repo] - Get repository information
+- [API: github:issues:owner/repo] - List repository issues
+- [API: github:create-issue:owner/repo:title:body] - Create a new issue
+- [API: github:prs:owner/repo] - List pull requests
+- [API: github:file:owner/repo:path/to/file] - Read file contents
+- [API: github:gists:username] - List user's gists
+- [API: customservice:get|post|put|delete:url:body] - Call custom REST APIs
+Example: "Let me check that repo. [API: github:repo:facebook/react]"
+Note: Only use APIs if the user has configured keys in Settings. If no key is configured, inform the user they can add it in Settings.
+The search results will be automatically retrieved and included in the conversation.
+
+BROWSER CAPABILITY (YOU HAVE THIS):
+You can browse the web or run interactive apps by including [BROWSER: action:value] in your response.
+- YOU HAVE INTERNET ACCESS - use [BROWSER:] to access it
+- WHEN USER SAYS "go to [website]" or "show me [website]" or "navigate to [website]" - USE [BROWSER: navigate:url]
+- ALWAYS use [BROWSER: navigate:url] when asked to show or verify a website
+- ALWAYS use [BROWSER:] to verify a website exists before making claims about it
+- NEVER say you can't access websites - use [BROWSER:] to navigate to them
+- For common websites, construct the URL: github.com -> https://github.com, google.com -> https://google.com
+Available actions:
+- [BROWSER: navigate:https://example.com] - Navigate to a URL (USE THIS FOR "go to" REQUESTS)
+- [BROWSER: run-app:snake-game.html] - Run an interactive app (like games)
+AVAILABLE APPS:
+- snake-game.html - A playable Snake game (use [BROWSER: run-app:snake-game.html] when user asks to run/play snake game)
+Examples:
+- User says "go to github" -> You respond: "I'll navigate to GitHub for you. [BROWSER: navigate:https://github.com]"
+- User says "show me google" -> You respond: "Let me show you Google. [BROWSER: navigate:https://google.com]"
+- User says "navigate to example.com" -> You respond: "Navigating now. [BROWSER: navigate:https://example.com]"
+- User says "run snake game" or "play snake" -> You respond: "I'll run the Snake game for you. [BROWSER: run-app:snake-game.html]"
+- User says "code a snake game" -> You respond: "I can run the existing Snake game for you. [BROWSER: run-app:snake-game.html]"
+
+ARTIFACTS CAPABILITY (Claude-style interactive content):
+You can create interactive artifacts directly in the chat by using [ARTIFACT: type:xxx title:Name]...[/ARTIFACT] blocks.
+
+WHEN TO USE ARTIFACTS:
+- When user asks you to "create", "make", "build", "code", or "show" an app, game, tool, or interactive content
+- When user wants to see code examples or visualizations
+- When user asks for HTML/CSS/JS applications
+- When you want to create something interactive that the user can interact with directly
+
+Available types:
+- html - Interactive HTML/CSS/JS applications (rendered in iframe) - USE THIS for web apps, games, tools
+- code - Code snippets (formatted with syntax highlighting) - USE THIS for code examples
+- app - Web applications (same as html) - USE THIS for interactive apps
+- visualization - Charts, graphs, visual content - USE THIS for data visualizations
+
+SYNTAX:
+[ARTIFACT: type:html title:My App Name]
+<!DOCTYPE html>
+<html>
+<head><title>My App</title></head>
+<body>
+  <!-- Your HTML/CSS/JS code here -->
+</body>
+</html>
+[/ARTIFACT]
+
+EXAMPLES OF WHEN TO USE:
+- User says "create a calculator" -> Use [ARTIFACT: type:html title:Calculator] with full HTML/CSS/JS
+- User says "make a todo list" -> Use [ARTIFACT: type:html title:Todo List] with interactive HTML
+- User says "code a snake game" -> Use [ARTIFACT: type:html title:Snake Game] with game code
+- User says "show me a code example" -> Use [ARTIFACT: type:code title:Code Example] with the code
+- User says "build a timer" -> Use [ARTIFACT: type:html title:Timer] with timer app code
+
+IMPORTANT:
+- ALWAYS include complete, working code in artifacts
+- For HTML artifacts, include full <!DOCTYPE html>, <head>, and <body> tags
+- Make artifacts interactive and functional
+- Use descriptive titles that explain what the artifact does
+- The artifact will appear as an interactive, collapsible element in the chat that users can interact with
+
+TOOL SYSTEM (YOU HAVE ACCESS TO THESE TOOLS):
+You can use structured tools to perform complex operations. Include [TOOL: toolname {params}] in your response.
+
+BASIC TOOLS:
+- [TOOL: read_file {"filepath": "path/to/file"}] - Read file contents
+- [TOOL: write_file {"filepath": "path/to/file", "content": "file content"}] - Write to file
+- [TOOL: list_directory {"dirpath": "path/to/dir"}] - List directory contents
+- [TOOL: execute_code {"code": "print('hello')", "language": "python"}] - Execute code safely (python/javascript/shell)
+- [TOOL: process_json {"json_string": "{\"key\":\"value\"}", "operation": "keys"}] - Process JSON data
+- [TOOL: http_request {"url": "https://api.example.com", "method": "GET"}] - Make HTTP requests
+
+ADVANCED CODE EXECUTION:
+- [TOOL: execute_code_advanced {"code": "...", "language": "python|javascript|r|go|rust", "packages": ["numpy", "pandas"], "input": "stdin data"}] - Execute code with package installation
+- [TOOL: repl_session {"action": "start|execute|stop", "sessionId": "id", "code": "...", "language": "python"}] - Interactive REPL sessions
+
+DATABASE & GIT:
+- [TOOL: database_query {"database": "path/to.db", "query": "SELECT * FROM users", "type": "sqlite"}] - Execute SQL queries
+- [TOOL: git_operation {"operation": "status|log|branch|commit", "args": ["-a", "-m", "message"]}] - Git operations
+
+PACKAGE & TESTING:
+- [TOOL: package_manager {"manager": "npm|pip|pip3|cargo|go", "action": "install|uninstall|list", "packages": ["package1"]}] - Manage packages
+- [TOOL: run_tests {"framework": "jest|pytest|unittest|mocha", "path": ".", "options": []}] - Run test suites
+
+CODE ANALYSIS & SERVERS:
+- [TOOL: analyze_code {"filepath": "file.js", "language": "javascript", "analysis": "all"}] - Analyze code quality/complexity
+- [TOOL: start_server {"type": "node|python|go", "port": 3000, "script": "server.js"}] - Start development servers
+
+VISUALIZATION & FILES:
+- [TOOL: create_visualization {"data": "JSON or CSV", "type": "line|bar|pie|scatter", "options": {}}] - Create charts/graphs
+- [TOOL: file_operations {"operation": "search|replace|find", "pattern": "text", "replacement": "new", "directory": "."}] - Advanced file ops
+
+PROCESS MANAGEMENT:
+- [TOOL: process_manager {"action": "list|kill", "pid": 1234, "name": "node"}] - Manage system processes
+
+Examples:
+- "Run Python with numpy: [TOOL: execute_code_advanced {\"code\": \"import numpy; print(numpy.array([1,2,3]))\", \"language\": \"python\", \"packages\": [\"numpy\"]}]"
+- "Start a REPL session: [TOOL: repl_session {\"action\": \"start\", \"language\": \"python\"}]"
+- "Run tests: [TOOL: run_tests {\"framework\": \"jest\", \"path\": \".\"}]"
+- "Install packages: [TOOL: package_manager {\"manager\": \"npm\", \"action\": \"install\", \"packages\": [\"express\"]}]"
+- "Create a chart: [TOOL: create_visualization {\"data\": \"[1,2,3,4,5]\", \"type\": \"line\"}]"
+
+REMEMBER: 
+- You HAVE internet access through [SEARCH:] and [BROWSER:] - use them!
+- You HAVE access to tools through [TOOL:] - use them for file operations, code execution, etc.
+- NEVER claim you don't have internet access
+- When user says "go to [website]" or "show me [website]" -> USE [BROWSER: navigate:https://website.com]
+- When user asks "what is [thing]?" or needs information -> USE [SEARCH: thing]
+- When asked about ANY website, company, or current fact, your first step should be to VERIFY using [SEARCH:] or [BROWSER:]
+- For navigation requests ("go to", "show me", "navigate to"), ALWAYS use [BROWSER: navigate:url]
+- Don't guess or state unverified information - verify first using these tools
+- If user asks to "go to github", respond with: "I'll navigate to GitHub for you. [BROWSER: navigate:https://github.com]"`;
 
     return {
         model: agent.model,
@@ -780,9 +1111,17 @@ async function getAvailableModels() {
             .map(m => ({
                 name: m.name,
                 size: m.size,
-                category: m.size < 1e9 ? 'tiny' : m.size < 3e9 ? 'small' : m.size < 7e9 ? 'medium' : 'large'
+                category: m.size < 1e9 ? 'tiny' : m.size < 3e9 ? 'small' : m.size < 7e9 ? 'medium' : 'large',
+                // Check if it's an embedding model (common patterns)
+                isEmbedding: m.name.toLowerCase().includes('embed') || 
+                            (m.details && m.details.family && m.details.family.toLowerCase().includes('bert'))
             }))
-            .sort((a, b) => a.size - b.size); // Sort smallest to largest for faster response in resource-constrained environments
+            // Filter out embedding models - they can't be used for chat
+            .filter(m => !m.isEmbedding)
+            // Filter out tiny models (< 1GB) - they're too small to follow complex instructions
+            .filter(m => m.size >= 1e9)
+            // Sort LARGEST to SMALLEST - prioritize better models that can follow instructions
+            .sort((a, b) => b.size - a.size);
 
         modelCache = models;
         modelCacheTime = now;
@@ -812,9 +1151,9 @@ async function processSearchRequests(response) {
         const results = await webSearch(query);
 
         if (results.length > 0) {
-            const searchSummary = results.map((r, i) =>
-                `${i + 1}. ${r.title}\n   ${r.description}\n   Source: ${r.url}`
-            ).join('\n\n');
+            const searchSummary = results.map((r => 
+                `${r.title}\n   ${r.description}\n   Source: ${r.url}`
+            )).join('\n\n');
 
             // Replace the search tag with results
             enhancedResponse = enhancedResponse.replace(
@@ -832,23 +1171,631 @@ async function processSearchRequests(response) {
     return enhancedResponse;
 }
 
+// Process API requests in agent response (similar to [SEARCH:] and [BROWSER:])
+async function processApiRequests(response) {
+    const apiPattern = /\[API:\s*([^\]]+)\]/g;
+    let matches = [];
+    let match;
+    
+    while ((match = apiPattern.exec(response)) !== null) {
+        matches.push(match[1].trim());
+    }
+    
+    if (matches.length === 0) {
+        return response;
+    }
+    
+    let enhancedResponse = response;
+    for (const command of matches) {
+        try {
+            // Parse API command: "service:action:params"
+            const [service, action, ...params] = command.split(':');
+            const paramString = params.join(':');
+            
+            const apiKey = getApiKey(service);
+            if (!apiKey) {
+                enhancedResponse = enhancedResponse.replace(
+                    `[API: ${command}]`,
+                    `\n[API Error: No API key configured for ${service}. Add it in Settings.]`
+                );
+                continue;
+            }
+            
+            // Execute API call based on service
+            let result = '';
+            if (service === 'openai' && action === 'chat') {
+                result = await callOpenAI(apiKey, paramString);
+            } else if (service === 'anthropic' && action === 'chat') {
+                result = await callAnthropic(apiKey, paramString);
+            } else if (service === 'github') {
+                // GitHub supports multiple actions: search, repo, issues, create-issue, prs, file, gists
+                result = await callGitHub(apiKey, action, paramString);
+            } else {
+                // Try generic API call for custom services
+                result = await callGenericAPI(service, action, paramString, apiKey);
+            }
+            
+            enhancedResponse = enhancedResponse.replace(
+                `[API: ${command}]`,
+                `\n\n🔌 API RESULT (${service}):\n${result}\n`
+            );
+            
+            // Update last used
+            if (apiKeys[service]) {
+                apiKeys[service].lastUsed = new Date().toISOString();
+                await saveApiKeys();
+            }
+        } catch (error) {
+            enhancedResponse = enhancedResponse.replace(
+                `[API: ${command}]`,
+                `\n[API Error: ${error.message}]`
+            );
+        }
+    }
+    
+    return enhancedResponse;
+}
+
+// API call functions
+async function callOpenAI(apiKey, prompt) {
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 500
+    }, {
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        timeout: 10000
+    });
+    
+    return response.data.choices[0].message.content;
+}
+
+async function callAnthropic(apiKey, prompt) {
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 500,
+        messages: [{ role: 'user', content: prompt }]
+    }, {
+        headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json'
+        },
+        timeout: 10000
+    });
+    
+    return response.data.content[0].text;
+}
+
+// Generic API caller for custom services (basic REST API support)
+async function callGenericAPI(service, action, params, apiKey) {
+    // For custom APIs, try to make a generic REST call
+    // Format: [API: servicename:get|post|put|delete:url:body]
+    try {
+        const method = action.toLowerCase();
+        const [url, ...bodyParts] = params.split(':');
+        const body = bodyParts.join(':');
+        
+        const config = {
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 10000
+        };
+        
+        let response;
+        if (method === 'get') {
+            response = await axios.get(url, config);
+        } else if (method === 'post') {
+            response = await axios.post(url, body ? JSON.parse(body) : {}, config);
+        } else if (method === 'put') {
+            response = await axios.put(url, body ? JSON.parse(body) : {}, config);
+        } else if (method === 'delete') {
+            response = await axios.delete(url, config);
+        } else {
+            return `[API Error: Unknown HTTP method: ${method}. Use: get, post, put, delete]`;
+        }
+        
+        return JSON.stringify(response.data, null, 2);
+    } catch (error) {
+        return `[API Error: ${error.response?.data?.message || error.message}]`;
+    }
+}
+
+async function callGitHub(apiKey, action, params) {
+    const headers = {
+        'Authorization': `token ${apiKey}`,
+        'Accept': 'application/vnd.github.v3+json'
+    };
+    
+    try {
+        if (action === 'search') {
+            // Search repositories
+            const response = await axios.get(`https://api.github.com/search/repositories?q=${encodeURIComponent(params)}`, {
+                headers,
+                timeout: 10000
+            });
+            
+            const repos = response.data.items.slice(0, 5).map(repo => ({
+                name: repo.full_name,
+                description: repo.description,
+                stars: repo.stargazers_count,
+                url: repo.html_url
+            }));
+            
+            return repos.map(r => `${r.name} (⭐ ${r.stars}) - ${r.description || 'No description'}\n   ${r.url}`).join('\n\n');
+        } else if (action === 'repo') {
+            // Get repository info: owner/repo
+            const [owner, repo] = params.split('/');
+            const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}`, {
+                headers,
+                timeout: 10000
+            });
+            
+            const data = response.data;
+            return `Repository: ${data.full_name}\nDescription: ${data.description || 'No description'}\nStars: ⭐ ${data.stargazers_count}\nForks: 🍴 ${data.forks_count}\nLanguage: ${data.language || 'N/A'}\nURL: ${data.html_url}\n\n${data.description || ''}`;
+        } else if (action === 'issues') {
+            // List issues: owner/repo
+            const [owner, repo] = params.split('/');
+            const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=10`, {
+                headers,
+                timeout: 10000
+            });
+            
+            const issues = response.data.filter(issue => !issue.pull_request); // Exclude PRs
+            return issues.map(issue => 
+                `#${issue.number} ${issue.title} (${issue.state})\n   ${issue.html_url}`
+            ).join('\n\n') || 'No issues found';
+        } else if (action === 'create-issue') {
+            // Create issue: owner/repo:title:body
+            const parts = params.split(':');
+            const [owner, repo, title, ...bodyParts] = parts;
+            const body = bodyParts.join(':');
+            
+            const response = await axios.post(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+                title,
+                body: body || ''
+            }, {
+                headers,
+                timeout: 10000
+            });
+            
+            return `Issue created: #${response.data.number} - ${response.data.title}\nURL: ${response.data.html_url}`;
+        } else if (action === 'prs') {
+            // List pull requests: owner/repo
+            const [owner, repo] = params.split('/');
+            const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=10`, {
+                headers,
+                timeout: 10000
+            });
+            
+            return response.data.map(pr => 
+                `#${pr.number} ${pr.title} (${pr.state})\n   ${pr.html_url}`
+            ).join('\n\n') || 'No pull requests found';
+        } else if (action === 'file') {
+            // Get file content: owner/repo:path
+            const [owner, repo, ...pathParts] = params.split(':');
+            const path = pathParts.join(':');
+            const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+                headers,
+                timeout: 10000
+            });
+            
+            if (response.data.type === 'file') {
+                const content = Buffer.from(response.data.content, 'base64').toString('utf-8');
+                return `File: ${path}\n\n${content}`;
+            } else {
+                return `Path ${path} is a directory, not a file`;
+            }
+        } else if (action === 'gists') {
+            // List gists: username
+            const response = await axios.get(`https://api.github.com/users/${params}/gists?per_page=10`, {
+                headers,
+                timeout: 10000
+            });
+            
+            return response.data.map(gist => 
+                `${gist.description || 'Untitled'} - ${Object.keys(gist.files)[0]}\n   ${gist.html_url}`
+            ).join('\n\n') || 'No gists found';
+        } else {
+            return `[API Error: Unknown GitHub action: ${action}. Available: search, repo, issues, create-issue, prs, file, gists]`;
+        }
+    } catch (error) {
+        return `[API Error: ${error.response?.data?.message || error.message}]`;
+    }
+}
+
+// Process browser and app requests in agent response
+// Process tool calls in agent responses
+async function processToolCalls(response) {
+    try {
+        const tools = getToolSystem();
+        const toolResults = await tools.executeToolCalls(response);
+        if (toolResults.length > 0) {
+            return tools.replaceToolCalls(response, toolResults);
+        }
+    } catch (error) {
+        logger.error('Tool processing error:', error);
+    }
+    return response;
+}
+
+async function processBrowserAndAppRequests(response) {
+    // First process tool calls
+    let processed = await processToolCalls(response);
+    // Then process API requests
+    processed = await processApiRequests(processed);
+    // Then process browser requests
+    processed = await processBrowserRequests(processed);
+    // Finally process search requests
+    return await processSearchRequests(processed);
+}
+
+// SAFETY NET: Fix incorrect "no internet" responses and detect artifact requests
+function fixNoInternetResponse(response, userMessage) {
+    // Check if user asked to create/build something but agent didn't use artifacts
+    const createPatterns = [
+        /create\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list|visualization|chart|graph)/i,
+        /make\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list|visualization|chart|graph)/i,
+        /build\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list|visualization|chart|graph)/i,
+        /code\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list)/i
+    ];
+    
+    const createMatch = createPatterns.find(pattern => pattern.test(userMessage));
+    const hasArtifact = /\[ARTIFACT:/i.test(response);
+    
+    // If user asked to create something but agent didn't create an artifact
+    if (createMatch && !hasArtifact) {
+        logger.warn('⚠️ User asked to create something but agent didn\'t use artifacts. Auto-fixing...');
+        
+        const match = userMessage.match(createMatch);
+        const itemName = match ? match[1] : 'app';
+        const capitalizedName = itemName.charAt(0).toUpperCase() + itemName.slice(1);
+        
+        // Generate a simple artifact based on what was requested
+        let artifactCode = '';
+        
+        if (itemName === 'calculator') {
+            artifactCode = generateCalculatorCode();
+        } else if (itemName === 'timer') {
+            artifactCode = generateTimerCode();
+        } else if (itemName === 'todo' || itemName === 'list') {
+            artifactCode = generateTodoListCode();
+        } else {
+            artifactCode = generateBasicAppCode(itemName);
+        }
+        
+        return `I'll create a ${itemName} for you!\n\n[ARTIFACT: type:html title:${capitalizedName}]\n${artifactCode}\n[/ARTIFACT]`;
+    }
+    
+    // Patterns that indicate agent incorrectly claims no internet access
+    const noInternetPatterns = [
+        /I'm unable to (access|open|browse|navigate|directly)/i,
+        /I don't have (internet|web|network) access/i,
+        /I cannot (access|open|browse|navigate)/i,
+        /without (an? )?internet connection/i,
+        /no internet (connection|access)/i,
+        /unable to directly (access|open|browse)/i,
+        /I'm sorry.*unable/i,
+        /due to.*internet/i,
+        /current state of internet/i
+    ];
+    
+    // Check if response contains "no internet" claims
+    const hasNoInternetClaim = noInternetPatterns.some(pattern => pattern.test(response));
+    
+    if (hasNoInternetClaim) {
+        logger.warn('⚠️ Agent incorrectly claimed no internet access. Auto-fixing...');
+        logger.warn(`Original response: ${response.substring(0, 100)}...`);
+        
+        // Extract website/URL from user message - improved patterns
+        const urlPattern = /\b(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b/gi;
+        const urlMatches = [...userMessage.matchAll(urlPattern)];
+        
+        // Extract navigation intent keywords - improved
+        const navKeywords = /(?:go to|show me|navigate to|open|browse to|visit|please go to)\s+([a-z0-9.-]+(?:\.[a-z0-9-]+)*)/i;
+        const navMatch = userMessage.match(navKeywords);
+        
+        let fixedResponse = response;
+        let target = null;
+        
+        // Priority: exact URL match > navigation keyword match > first domain match
+        if (urlMatches.length > 0) {
+            // Find the most specific match (longest domain)
+            target = urlMatches.sort((a, b) => b[1].length - a[1].length)[0][1];
+        } else if (navMatch) {
+            target = navMatch[1];
+        }
+        
+        // If user asked to navigate somewhere, add browser command
+        if (target) {
+            // Remove ALL incorrect claims (more aggressive)
+            fixedResponse = fixedResponse.replace(/I'm (unable|sorry).*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/I don't have.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/I cannot.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/without.*?internet.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/no internet.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/due to.*?internet.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/current state of internet.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/If you have any other questions.*/gi, '');
+            fixedResponse = fixedResponse.replace(/please feel free to ask.*/gi, '');
+            
+            // Clean up target
+            const cleanTarget = target.replace(/^(https?:\/\/)?(www\.)?/, '').toLowerCase();
+            
+            // Add correct browser command at the START
+            fixedResponse = `I'll navigate to ${cleanTarget} for you. [BROWSER: navigate:https://${cleanTarget}]`.trim();
+            
+            logger.info(`✅ Auto-fixed: Added [BROWSER: navigate:https://${cleanTarget}]`);
+            logger.info(`Fixed response: ${fixedResponse}`);
+        } else {
+            // Generic fix - remove claim and add reminder
+            fixedResponse = fixedResponse.replace(/I'm (unable|sorry).*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/I don't have.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/I cannot.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/without.*?internet.*?[.!?]/gi, '');
+            fixedResponse = fixedResponse.replace(/no internet.*?[.!?]/gi, '');
+            fixedResponse = `I have internet access through [BROWSER:] and [SEARCH:] commands. ${fixedResponse}`.trim();
+            logger.info('✅ Auto-fixed: Removed incorrect claim, added reminder');
+        }
+        
+        return fixedResponse;
+    }
+    
+    return response;
+}
+
+// Helper functions to generate artifact code
+function generateCalculatorCode() {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Calculator</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #1a1a1a; color: #00ff00; }
+        .calculator { background: #0a0a0a; border: 2px solid #00ff00; border-radius: 10px; padding: 20px; box-shadow: 0 0 20px rgba(0, 255, 0, 0.3); }
+        .display { background: #000; border: 1px solid #00ff00; padding: 15px; font-size: 2em; text-align: right; margin-bottom: 10px; min-height: 50px; border-radius: 5px; }
+        .buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        button { padding: 20px; font-size: 1.2em; background: #1a1a1a; border: 1px solid #00ff00; color: #00ff00; cursor: pointer; border-radius: 5px; }
+        button:hover { background: rgba(0, 255, 0, 0.2); }
+        .operator { background: rgba(0, 255, 0, 0.1); }
+        .equals { background: rgba(0, 255, 0, 0.3); grid-column: span 2; }
+    </style>
+</head>
+<body>
+    <div class="calculator">
+        <div class="display" id="display">0</div>
+        <div class="buttons">
+            <button onclick="clearDisplay()">C</button>
+            <button onclick="appendToDisplay('/')" class="operator">/</button>
+            <button onclick="appendToDisplay('*')" class="operator">*</button>
+            <button onclick="deleteLast()">⌫</button>
+            <button onclick="appendToDisplay('7')">7</button>
+            <button onclick="appendToDisplay('8')">8</button>
+            <button onclick="appendToDisplay('9')">9</button>
+            <button onclick="appendToDisplay('-')" class="operator">-</button>
+            <button onclick="appendToDisplay('4')">4</button>
+            <button onclick="appendToDisplay('5')">5</button>
+            <button onclick="appendToDisplay('6')">6</button>
+            <button onclick="appendToDisplay('+')" class="operator">+</button>
+            <button onclick="appendToDisplay('1')">1</button>
+            <button onclick="appendToDisplay('2')">2</button>
+            <button onclick="appendToDisplay('3')">3</button>
+            <button onclick="appendToDisplay('.')">.</button>
+            <button onclick="appendToDisplay('0')">0</button>
+            <button onclick="calculate()" class="equals">=</button>
+        </div>
+    </div>
+    <script>
+        let display = document.getElementById('display');
+        let currentValue = '0';
+        
+        function appendToDisplay(value) {
+            if (currentValue === '0') currentValue = '';
+            currentValue += value;
+            display.textContent = currentValue;
+        }
+        
+        function clearDisplay() {
+            currentValue = '0';
+            display.textContent = currentValue;
+        }
+        
+        function deleteLast() {
+            currentValue = currentValue.slice(0, -1) || '0';
+            display.textContent = currentValue;
+        }
+        
+        function calculate() {
+            try {
+                currentValue = String(eval(currentValue) || '0');
+                display.textContent = currentValue;
+            } catch (e) {
+                display.textContent = 'Error';
+                currentValue = '0';
+            }
+        }
+    </script>
+</body>
+</html>`;
+}
+
+function generateTimerCode() {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Timer</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #1a1a1a; color: #00ff00; }
+        .timer { text-align: center; }
+        .display { font-size: 4em; margin: 20px 0; text-shadow: 0 0 20px #00ff00; }
+        button { padding: 15px 30px; margin: 10px; font-size: 1.2em; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; cursor: pointer; border-radius: 5px; }
+        button:hover { background: rgba(0, 255, 0, 0.2); }
+    </style>
+</head>
+<body>
+    <div class="timer">
+        <div class="display" id="display">00:00:00</div>
+        <div>
+            <button onclick="startTimer()">Start</button>
+            <button onclick="pauseTimer()">Pause</button>
+            <button onclick="resetTimer()">Reset</button>
+        </div>
+    </div>
+    <script>
+        let startTime = null;
+        let elapsed = 0;
+        let interval = null;
+        
+        function updateDisplay() {
+            const total = Math.floor(elapsed / 1000);
+            const hours = Math.floor(total / 3600);
+            const minutes = Math.floor((total % 3600) / 60);
+            const seconds = total % 60;
+            document.getElementById('display').textContent = 
+                String(hours).padStart(2, '0') + ':' +
+                String(minutes).padStart(2, '0') + ':' +
+                String(seconds).padStart(2, '0');
+        }
+        
+        function startTimer() {
+            if (!interval) {
+                startTime = Date.now() - elapsed;
+                interval = setInterval(() => {
+                    elapsed = Date.now() - startTime;
+                    updateDisplay();
+                }, 100);
+            }
+        }
+        
+        function pauseTimer() {
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+        }
+        
+        function resetTimer() {
+            pauseTimer();
+            elapsed = 0;
+            updateDisplay();
+        }
+    </script>
+</body>
+</html>`;
+}
+
+function generateTodoListCode() {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Todo List</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; background: #1a1a1a; color: #00ff00; padding: 20px; }
+        input { padding: 10px; width: 70%; background: #0a0a0a; border: 1px solid #00ff00; color: #00ff00; }
+        button { padding: 10px 20px; background: #0a0a0a; border: 1px solid #00ff00; color: #00ff00; cursor: pointer; }
+        ul { list-style: none; padding: 0; }
+        li { padding: 10px; margin: 5px 0; background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; display: flex; justify-content: space-between; }
+        .done { opacity: 0.5; text-decoration: line-through; }
+    </style>
+</head>
+<body>
+    <h1>Todo List</h1>
+    <div>
+        <input type="text" id="todoInput" placeholder="Add a task..." onkeypress="if(event.key==='Enter') addTodo()">
+        <button onclick="addTodo()">Add</button>
+    </div>
+    <ul id="todoList"></ul>
+    <script>
+        let todos = [];
+        
+        function addTodo() {
+            const input = document.getElementById('todoInput');
+            if (input.value.trim()) {
+                todos.push({ text: input.value, done: false });
+                input.value = '';
+                renderTodos();
+            }
+        }
+        
+        function toggleTodo(index) {
+            todos[index].done = !todos[index].done;
+            renderTodos();
+        }
+        
+        function deleteTodo(index) {
+            todos.splice(index, 1);
+            renderTodos();
+        }
+        
+        function renderTodos() {
+            const list = document.getElementById('todoList');
+            list.innerHTML = todos.map((todo, index) => 
+                \`<li class="\${todo.done ? 'done' : ''}">
+                    <span onclick="toggleTodo(\${index})" style="cursor: pointer;">\${todo.text}</span>
+                    <button onclick="deleteTodo(\${index})">Delete</button>
+                </li>\`
+            ).join('');
+        }
+    </script>
+</body>
+</html>`;
+}
+
+function generateBasicAppCode(appName) {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <title>${appName}</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #1a1a1a; color: #00ff00; }
+        .app { text-align: center; padding: 40px; border: 2px solid #00ff00; border-radius: 10px; background: #0a0a0a; }
+        h1 { text-shadow: 0 0 10px #00ff00; }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <h1>${appName}</h1>
+        <p>Your ${appName} app is ready!</p>
+    </div>
+</body>
+</html>`;
+}
+
 // Circuit Breaker for Ollama API
 const ollamaBreaker = new CircuitBreaker(async (url, data, config) => {
     return await axios.post(url, data, config);
 }, {
     timeout: 60000, // 60s timeout (larger models may need more time on first load)
-    errorThresholdPercentage: 50, // Open circuit at 50% errors
-    resetTimeout: 30000, // Try again after 30s
+    errorThresholdPercentage: 70, // Open circuit at 70% errors (less sensitive)
+    resetTimeout: 5000, // Try again after 5s (faster recovery)
+    rollingCountTimeout: 30000, // Count errors over 30s window (shorter window)
+    rollingCountBuckets: 5, // 5 buckets for faster reset
     name: 'ollamaAPI'
 });
 
 ollamaBreaker.fallback(() => {
-    throw new Error('Ollama API circuit breaker is open');
+    // Don't throw - return a rejection so retry logic can handle it
+    return Promise.reject(new Error('Ollama API circuit breaker is open'));
 });
 
-ollamaBreaker.on('open', () => logger.warn('Circuit breaker opened - Ollama API not responding'));
+ollamaBreaker.on('open', () => {
+    logger.warn('Circuit breaker opened - Ollama API not responding');
+    // Clear model cache when circuit opens to force refresh
+    modelCache = null;
+    modelCacheTime = 0;
+});
 ollamaBreaker.on('halfOpen', () => logger.info('Circuit breaker half-open - testing Ollama API'));
-ollamaBreaker.on('close', () => logger.info('Circuit breaker closed - Ollama API recovered'));
+ollamaBreaker.on('close', () => {
+    logger.info('Circuit breaker closed - Ollama API recovered');
+    // Clear model cache when circuit closes to refresh available models
+    modelCache = null;
+    modelCacheTime = 0;
+});
 
 // Retry wrapper with exponential backoff
 async function retryOllamaCall(fn, options = {}) {
@@ -879,32 +1826,119 @@ async function callOllama(agentKey, message, preferredModel = null) {
             );
             logger.info(`✓ Success with model: ${preferredModel}`);
             const content = response.data.message.content;
-            return await processSearchRequests(content);
+            // Process tool calls if any
+            const processedContent = await processToolCalls(content);
+            return await processBrowserAndAppRequests(processedContent);
         } catch (error) {
             logger.warn(`✗ Failed with ${preferredModel}: ${error.message}`);
             // Fall through to cascade
         }
     }
 
-    // Auto-fallback cascade: try available models from largest to smallest
+    // Auto-fallback cascade: try available models from largest to smallest (better instruction following)
     const availableModels = await getAvailableModels();
+    
+    // Double-check filtering: remove tiny models and embedding models
+    const filteredModels = availableModels.filter(m => {
+        // Filter out tiny models (< 1.5GB) - too small to follow complex instructions
+        if (m.size < 1.5e9) {
+            logger.debug(`Skipping tiny model: ${m.name} (${(m.size / 1e9).toFixed(2)}GB)`);
+            return false;
+        }
+        // Filter out embedding models
+        if (m.isEmbedding) {
+            logger.debug(`Skipping embedding model: ${m.name}`);
+            return false;
+        }
+        return true;
+    });
+    
+    logger.info(`Filtered models: ${filteredModels.length} suitable models (from ${availableModels.length} total)`);
+    
+    // Prioritize models that are known to follow instructions well
+    const preferredModelNames = ['llama3.2:latest', 'mistral:7b', 'gemma2:9b', 'phi3:mini', 'gemma2:2b'];
+    const prioritizedModels = [];
+    const otherModels = [];
+    
+    for (const model of filteredModels) {
+        if (model.name === preferredModel) continue; // Skip if already tried
+        if (preferredModelNames.includes(model.name)) {
+            prioritizedModels.push(model);
+        } else {
+            otherModels.push(model);
+        }
+    }
+    
+    // Try prioritized models first, then others
+    const modelsToTry = [...prioritizedModels, ...otherModels];
+    
+    if (modelsToTry.length === 0) {
+        logger.warn('No suitable models available after filtering');
+    }
 
-    for (const model of availableModels) {
-        // Skip if we already tried this model
-        if (model.name === preferredModel) continue;
-
+    for (const model of modelsToTry) {
         try {
             context.model = model.name;
-            logger.info(`→ Trying model: ${model.name} (${model.category})...`);
+            logger.info(`→ Trying model: ${model.name} (${model.category}, ${(model.size / 1e9).toFixed(1)}GB)...`);
             const response = await retryOllamaCall(() =>
                 ollamaBreaker.fire(`${OLLAMA_API}/api/chat`, context, { timeout: 30000 })
             );
             logger.info(`✓ Success with model: ${model.name}`);
             const content = response.data.message.content;
-            return await processSearchRequests(content);
+            // Process tool calls if any
+            const processedContent = await processToolCalls(content);
+            return await processBrowserAndAppRequests(processedContent);
         } catch (error) {
             logger.warn(`✗ Failed with ${model.name}: ${error.message}`);
             // Continue to next model
+        }
+    }
+
+    // All models failed - check if we should create an artifact directly
+    logger.warn('All Ollama models failed - checking for artifact request...');
+    
+    // Check if user asked to create something - create artifact directly
+    const createPatterns = [
+        /create\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list|visualization|chart|graph)/i,
+        /make\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list|visualization|chart|graph)/i,
+        /build\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list|visualization|chart|graph)/i,
+        /code\s+(?:a\s+)?(calculator|app|tool|game|timer|todo|list)/i
+    ];
+    
+    const createMatch = createPatterns.find(pattern => pattern.test(message));
+    if (createMatch) {
+        const match = message.match(createMatch);
+        const itemName = match ? match[1] : 'app';
+        const capitalizedName = itemName.charAt(0).toUpperCase() + itemName.slice(1);
+        
+        logger.info(`🎨 Creating artifact directly: ${itemName} (Ollama unavailable)`);
+        
+        let artifactCode = '';
+        if (itemName === 'calculator') {
+            artifactCode = generateCalculatorCode();
+        } else if (itemName === 'timer') {
+            artifactCode = generateTimerCode();
+        } else if (itemName === 'todo' || itemName === 'list') {
+            artifactCode = generateTodoListCode();
+        } else {
+            artifactCode = generateBasicAppCode(itemName);
+        }
+        
+        return `I'll create a ${itemName} for you! (Ollama is currently unavailable, but I can still create this artifact)\n\n[ARTIFACT: type:html title:${capitalizedName}]\n${artifactCode}\n[/ARTIFACT]`;
+    }
+    
+    // If circuit breaker is open, try to reset it by testing Ollama health
+    if (ollamaBreaker.opened) {
+        logger.info('Circuit breaker is open - attempting health check to reset...');
+        try {
+            const healthCheck = await axios.get(`${OLLAMA_API}/api/tags`, { timeout: 2000 });
+            if (healthCheck.status === 200) {
+                logger.info('Ollama health check passed - circuit breaker should reset soon');
+                // Manually try to close circuit breaker
+                ollamaBreaker.close();
+            }
+        } catch (error) {
+            logger.warn('Ollama health check failed - API is truly unavailable');
         }
     }
 
@@ -954,6 +1988,60 @@ function updateUserProfile(agentKey, userMessage, agentResponse) {
             userProfile.interests.push(keyword);
         }
     });
+    
+    // Enhanced: Auto-detect personal training data from messages
+    if (!userProfile.personalTraining) {
+        userProfile.personalTraining = {
+            writingStyleExamples: [],
+            responsePreferences: [],
+            personalFacts: [],
+            valuesAndBeliefs: [],
+            communicationPatterns: {
+                commonPhrases: [],
+                questionStyle: 'direct',
+                responseLength: 'medium'
+            },
+            domainExpertise: {},
+            goalsAndProjects: []
+        };
+    }
+    
+    // Auto-detect common phrases (phrases used 3+ times)
+    const phrases = userMessage.match(/["']([^"']{10,})["']/g) || [];
+    phrases.forEach(phrase => {
+        const cleanPhrase = phrase.replace(/["']/g, '');
+        if (cleanPhrase.length > 10 && !userProfile.personalTraining.communicationPatterns.commonPhrases.includes(cleanPhrase)) {
+            userProfile.personalTraining.communicationPatterns.commonPhrases.push(cleanPhrase);
+            // Keep only last 20 common phrases
+            if (userProfile.personalTraining.communicationPatterns.commonPhrases.length > 20) {
+                userProfile.personalTraining.communicationPatterns.commonPhrases.shift();
+            }
+        }
+    });
+    
+    // Auto-detect goals (messages containing "I want to", "I'm trying to", "goal", etc.)
+    const goalPatterns = /(?:I (?:want|need|plan|hope|aim|strive) to|goal|objective|project|working on|building|creating)/i;
+    if (goalPatterns.test(userMessage) && userMessage.length > 20) {
+        const goalMatch = userMessage.match(/(?:I (?:want|need|plan|hope|aim|strive) to|goal|objective|project|working on|building|creating)[^.!?]{10,100}/i);
+        if (goalMatch && !userProfile.personalTraining.goalsAndProjects.includes(goalMatch[0])) {
+            userProfile.personalTraining.goalsAndProjects.push(goalMatch[0]);
+            if (userProfile.personalTraining.goalsAndProjects.length > 10) {
+                userProfile.personalTraining.goalsAndProjects.shift();
+            }
+        }
+    }
+    
+    // Auto-detect values (messages containing "I believe", "important to me", "value", etc.)
+    const valuePatterns = /(?:I believe|important to me|value|matters|care about|principle)/i;
+    if (valuePatterns.test(userMessage) && userMessage.length > 20) {
+        const valueMatch = userMessage.match(/(?:I believe|important to me|I believe|value|matters|care about|principle)[^.!?]{10,100}/i);
+        if (valueMatch && !userProfile.personalTraining.valuesAndBeliefs.includes(valueMatch[0])) {
+            userProfile.personalTraining.valuesAndBeliefs.push(valueMatch[0]);
+            if (userProfile.personalTraining.valuesAndBeliefs.length > 10) {
+                userProfile.personalTraining.valuesAndBeliefs.shift();
+            }
+        }
+    }
 }
 
 // API Routes
@@ -1014,18 +2102,739 @@ app.post('/api/memory/update', async (req, res) => {
     }
 });
 
+// Personal Training Data Management API
+app.post('/api/training/add', async (req, res) => {
+    const { type, data } = req.body;
+    
+    try {
+        if (!userProfile.personalTraining) {
+            userProfile.personalTraining = {
+                writingStyleExamples: [],
+                responsePreferences: [],
+                personalFacts: [],
+                valuesAndBeliefs: [],
+                communicationPatterns: {
+                    commonPhrases: [],
+                    questionStyle: 'direct',
+                    responseLength: 'medium'
+                },
+                domainExpertise: {},
+                goalsAndProjects: []
+            };
+        }
+        
+        switch (type) {
+            case 'writing_style':
+                if (!userProfile.personalTraining.writingStyleExamples.includes(data)) {
+                    userProfile.personalTraining.writingStyleExamples.push(data);
+                }
+                break;
+            case 'personal_fact':
+                if (!userProfile.personalTraining.personalFacts.includes(data)) {
+                    userProfile.personalTraining.personalFacts.push(data);
+                }
+                break;
+            case 'value':
+                if (!userProfile.personalTraining.valuesAndBeliefs.includes(data)) {
+                    userProfile.personalTraining.valuesAndBeliefs.push(data);
+                }
+                break;
+            case 'goal':
+                if (!userProfile.personalTraining.goalsAndProjects.includes(data)) {
+                    userProfile.personalTraining.goalsAndProjects.push(data);
+                }
+                break;
+            case 'common_phrase':
+                if (!userProfile.personalTraining.communicationPatterns.commonPhrases.includes(data)) {
+                    userProfile.personalTraining.communicationPatterns.commonPhrases.push(data);
+                }
+                break;
+            case 'expertise':
+                const { domain, level } = JSON.parse(data);
+                userProfile.personalTraining.domainExpertise[domain] = level;
+                break;
+            case 'communication_style':
+                const { questionStyle, responseLength } = JSON.parse(data);
+                if (questionStyle) userProfile.personalTraining.communicationPatterns.questionStyle = questionStyle;
+                if (responseLength) userProfile.personalTraining.communicationPatterns.responseLength = responseLength;
+                break;
+        }
+        
+        await saveData();
+        res.json({ success: true, message: `Added ${type} to training data` });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/training/remove', async (req, res) => {
+    const { type, data } = req.body;
+    
+    try {
+        if (!userProfile.personalTraining) {
+            return res.status(400).json({ error: 'No training data exists' });
+        }
+        
+        switch (type) {
+            case 'writing_style':
+                userProfile.personalTraining.writingStyleExamples = 
+                    userProfile.personalTraining.writingStyleExamples.filter(x => x !== data);
+                break;
+            case 'personal_fact':
+                userProfile.personalTraining.personalFacts = 
+                    userProfile.personalTraining.personalFacts.filter(x => x !== data);
+                break;
+            case 'value':
+                userProfile.personalTraining.valuesAndBeliefs = 
+                    userProfile.personalTraining.valuesAndBeliefs.filter(x => x !== data);
+                break;
+            case 'goal':
+                userProfile.personalTraining.goalsAndProjects = 
+                    userProfile.personalTraining.goalsAndProjects.filter(x => x !== data);
+                break;
+            case 'common_phrase':
+                userProfile.personalTraining.communicationPatterns.commonPhrases = 
+                    userProfile.personalTraining.communicationPatterns.commonPhrases.filter(x => x !== data);
+                break;
+            case 'expertise':
+                delete userProfile.personalTraining.domainExpertise[data];
+                break;
+        }
+        
+        await saveData();
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/training', (req, res) => {
+    res.json(userProfile.personalTraining || {});
+});
+
+// ============================================
+// API KEY MANAGEMENT ENDPOINTS
+// ============================================
+
+// Get list of configured API services (without keys)
+app.get('/api/settings/keys', (req, res) => {
+    try {
+        const services = Object.keys(apiKeys).map(service => ({
+            service,
+            configured: true,
+            label: apiKeys[service].label || service,
+            description: apiKeys[service].description || '',
+            // Never send the actual key
+            hasKey: !!apiKeys[service].encrypted
+        }));
+        res.json({ services });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Save API key (encrypted)
+app.post('/api/settings/keys', async (req, res) => {
+    try {
+        const { service, key, label, description } = req.body;
+        
+        if (!service || !key) {
+            return res.status(400).json({ error: 'Service name and key are required' });
+        }
+        
+        // Encrypt the key
+        const encrypted = encryptApiKey(key);
+        
+        if (!encrypted) {
+            return res.status(500).json({ error: 'Failed to encrypt API key' });
+        }
+        
+        // Store encrypted key with metadata
+        apiKeys[service] = {
+            encrypted,
+            label: label || service,
+            description: description || '',
+            createdAt: new Date().toISOString(),
+            lastUsed: null
+        };
+        
+        await saveApiKeys();
+        logger.info(`✓ API key saved for service: ${service}`);
+        
+        res.json({ success: true, message: `API key saved for ${service}` });
+    } catch (error) {
+        logger.error('Error saving API key:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete API key
+app.delete('/api/settings/keys/:service', async (req, res) => {
+    try {
+        const { service } = req.params;
+        
+        if (apiKeys[service]) {
+            delete apiKeys[service];
+            await saveApiKeys();
+            logger.info(`✓ API key deleted for service: ${service}`);
+            res.json({ success: true, message: `API key deleted for ${service}` });
+        } else {
+            res.status(404).json({ error: 'API key not found' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Test API key (without exposing it)
+app.post('/api/settings/keys/:service/test', async (req, res) => {
+    try {
+        const { service } = req.params;
+        const key = getApiKey(service);
+        
+        if (!key) {
+            return res.status(404).json({ error: 'API key not found' });
+        }
+        
+        // Test the API key based on service type
+        let testResult = { success: false, message: 'Unknown service' };
+        
+        if (service === 'openai') {
+            // Test OpenAI API
+            const response = await axios.get('https://api.openai.com/v1/models', {
+                headers: { 'Authorization': `Bearer ${key}` },
+                timeout: 5000
+            });
+            testResult = { success: response.status === 200, message: 'OpenAI API key is valid' };
+        } else if (service === 'anthropic') {
+            // Test Anthropic API
+            const response = await axios.post('https://api.anthropic.com/v1/messages', {
+                model: 'claude-3-haiku-20240307',
+                max_tokens: 10,
+                messages: [{ role: 'user', content: 'test' }]
+            }, {
+                headers: {
+                    'x-api-key': key,
+                    'anthropic-version': '2023-06-01',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 5000
+            });
+            testResult = { success: response.status === 200, message: 'Anthropic API key is valid' };
+        } else if (service === 'github') {
+            // Test GitHub API
+            const response = await axios.get('https://api.github.com/user', {
+                headers: { 'Authorization': `token ${key}` },
+                timeout: 5000
+            });
+            testResult = { success: response.status === 200, message: 'GitHub API key is valid' };
+        }
+        
+        // Update last used timestamp
+        if (apiKeys[service]) {
+            apiKeys[service].lastUsed = new Date().toISOString();
+            await saveApiKeys();
+        }
+        
+        res.json(testResult);
+    } catch (error) {
+        res.json({ 
+            success: false, 
+            message: error.response?.data?.error?.message || error.message || 'API test failed' 
+        });
+    }
+});
+
+// Export training data for fine-tuning
+app.get('/api/training/export', (req, res) => {
+    const trainingData = {
+        userProfile: {
+            personality: userProfile.personality,
+            personalTraining: userProfile.personalTraining,
+            interests: userProfile.interests,
+            learnings: userProfile.learnings
+        },
+        conversations: Object.keys(conversationHistory).map(agentKey => ({
+            agent: agentKey,
+            messages: conversationHistory[agentKey].slice(-50) // Last 50 messages per agent
+        })),
+        summaries: conversationSummaries,
+        exportDate: new Date().toISOString()
+    };
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="training-data.json"');
+    res.json(trainingData);
+});
+
+// ============================================
+// TASK PLANNING API ROUTES
+// ============================================
+
+// Plan a complex task
+app.post('/api/tasks/plan', async (req, res) => {
+    try {
+        const { task, agentKey = 'planner' } = req.body;
+        
+        if (!task) {
+            return res.status(400).json({ error: 'Task description required' });
+        }
+
+        const planner = getTaskPlanner();
+        const plannedTask = await planner.planTask(task, agentKey);
+        
+        res.json({
+            taskId: plannedTask.id,
+            plan: plannedTask.plan,
+            status: plannedTask.status
+        });
+    } catch (error) {
+        logger.error('Error planning task:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Execute a planned task
+app.post('/api/tasks/:taskId/execute', async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        const { agentKey = 'planner', options = {} } = req.body;
+
+        const planner = getTaskPlanner();
+        const executedTask = await planner.executeTask(taskId, agentKey, options);
+        
+        res.json({
+            taskId: executedTask.id,
+            status: executedTask.status,
+            results: executedTask.results,
+            synthesis: executedTask.synthesis,
+            errors: executedTask.errors
+        });
+    } catch (error) {
+        logger.error('Error executing task:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get task status
+app.get('/api/tasks/:taskId', (req, res) => {
+    try {
+        const { taskId } = req.params;
+        const planner = getTaskPlanner();
+        const task = planner.getTask(taskId);
+
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        res.json(task);
+    } catch (error) {
+        logger.error('Error fetching task:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get all tasks
+app.get('/api/tasks', (req, res) => {
+    try {
+        const planner = getTaskPlanner();
+        const tasks = planner.getAllTasks();
+        res.json({ tasks });
+    } catch (error) {
+        logger.error('Error fetching tasks:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================
+// TOOL SYSTEM API ROUTES
+// ============================================
+
+// Get available tools
+app.get('/api/tools', (req, res) => {
+    try {
+        const tools = getToolSystem();
+        const availableTools = tools.getAvailableTools();
+        res.json({ tools: availableTools });
+    } catch (error) {
+        logger.error('Error fetching tools:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Execute a tool directly
+app.post('/api/tools/execute', async (req, res) => {
+    try {
+        const { toolName, params } = req.body;
+        
+        if (!toolName) {
+            return res.status(400).json({ error: 'Tool name required' });
+        }
+
+        const toolSystem = getToolSystem();
+        const tool = toolSystem.tools.get(toolName);
+        
+        if (!tool) {
+            return res.status(404).json({ error: `Tool not found: ${toolName}` });
+        }
+
+        const result = await tool.handler(params || {});
+        res.json(result);
+    } catch (error) {
+        logger.error('Error executing tool:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================
+// WORKFLOW ORCHESTRATOR API ROUTES
+// ============================================
+
+// Start a new workflow
+app.post('/api/workflows/start', async (req, res) => {
+    try {
+        const { name, description, steps, initialContext } = req.body;
+        
+        if (!steps || !Array.isArray(steps) || steps.length === 0) {
+            return res.status(400).json({ error: 'Workflow steps required' });
+        }
+
+        const orchestrator = getWorkflowOrchestrator();
+        const workflow = await orchestrator.startWorkflow({
+            name,
+            description,
+            steps,
+            initialContext
+        });
+        
+        res.json({
+            workflowId: workflow.id,
+            status: workflow.status,
+            name: workflow.name
+        });
+    } catch (error) {
+        logger.error('Error starting workflow:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get workflow status
+app.get('/api/workflows/:workflowId', (req, res) => {
+    try {
+        const { workflowId } = req.params;
+        const orchestrator = getWorkflowOrchestrator();
+        const workflow = orchestrator.getWorkflow(workflowId);
+
+        if (!workflow) {
+            return res.status(404).json({ error: 'Workflow not found' });
+        }
+
+        res.json(workflow);
+    } catch (error) {
+        logger.error('Error fetching workflow:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get all workflows
+app.get('/api/workflows', (req, res) => {
+    try {
+        const orchestrator = getWorkflowOrchestrator();
+        const workflows = orchestrator.getAllWorkflows();
+        res.json({ workflows });
+    } catch (error) {
+        logger.error('Error fetching workflows:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Cancel workflow
+app.post('/api/workflows/:workflowId/cancel', (req, res) => {
+    try {
+        const { workflowId } = req.params;
+        const orchestrator = getWorkflowOrchestrator();
+        const cancelled = orchestrator.cancelWorkflow(workflowId);
+
+        if (!cancelled) {
+            return res.status(400).json({ error: 'Workflow not found or not running' });
+        }
+
+        res.json({ success: true, message: 'Workflow cancelled' });
+    } catch (error) {
+        logger.error('Error cancelling workflow:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================
+// LIVE BROWSER SYSTEM FOR AGENTS
+// ============================================
+
+// Browser instance management
+let browserInstances = new Map(); // sessionId -> browser instance
+let browserPages = new Map(); // sessionId -> page instance
+
+// Initialize browser for a session
+async function initBrowser(sessionId) {
+    try {
+        if (browserInstances.has(sessionId)) {
+            return browserInstances.get(sessionId);
+        }
+        
+        logger.info(`🌐 Initializing browser for session: ${sessionId}`);
+        const browser = await puppeteer.launch({
+            headless: 'new', // Use new headless mode to avoid deprecation warning
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ]
+        });
+        
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1280, height: 720 });
+        
+        browserInstances.set(sessionId, browser);
+        browserPages.set(sessionId, page);
+        
+        // Cleanup on page close
+        page.on('close', () => {
+            browserPages.delete(sessionId);
+        });
+        
+        return browser;
+    } catch (error) {
+        logger.error(`Failed to initialize browser: ${error.message}`);
+        throw error;
+    }
+}
+
+// Cleanup browser for a session
+async function closeBrowser(sessionId) {
+    try {
+        const browser = browserInstances.get(sessionId);
+        if (browser) {
+            await browser.close();
+            browserInstances.delete(sessionId);
+            browserPages.delete(sessionId);
+            logger.info(`🌐 Browser closed for session: ${sessionId}`);
+        }
+    } catch (error) {
+        logger.error(`Error closing browser: ${error.message}`);
+    }
+}
+
+// Browser API Endpoints
+app.post('/api/browser/navigate', async (req, res) => {
+    const { url, sessionId = 'default' } = req.body;
+    
+    try {
+        await initBrowser(sessionId);
+        const page = browserPages.get(sessionId);
+        
+        logger.info(`🌐 Navigating to: ${url}`);
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        const title = await page.title();
+        const screenshot = await page.screenshot({ encoding: 'base64', type: 'png' });
+        const content = await page.content();
+        
+        res.json({
+            success: true,
+            url: page.url(),
+            title,
+            screenshot: `data:image/png;base64,${screenshot}`,
+            content: content.substring(0, 5000) // First 5000 chars
+        });
+    } catch (error) {
+        logger.error(`Browser navigation error: ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/browser/click', async (req, res) => {
+    const { selector, sessionId = 'default' } = req.body;
+    
+    try {
+        const page = browserPages.get(sessionId);
+        if (!page) {
+            return res.status(400).json({ error: 'Browser not initialized' });
+        }
+        
+        await page.click(selector);
+        const screenshot = await page.screenshot({ encoding: 'base64', type: 'png' });
+        
+        res.json({
+            success: true,
+            screenshot: `data:image/png;base64,${screenshot}`
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/browser/type', async (req, res) => {
+    const { selector, text, sessionId = 'default' } = req.body;
+    
+    try {
+        const page = browserPages.get(sessionId);
+        if (!page) {
+            return res.status(400).json({ error: 'Browser not initialized' });
+        }
+        
+        if (selector) {
+            await page.type(selector, text);
+        } else {
+            await page.keyboard.type(text);
+        }
+        
+        const screenshot = await page.screenshot({ encoding: 'base64', type: 'png' });
+        
+        res.json({
+            success: true,
+            screenshot: `data:image/png;base64,${screenshot}`
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/browser/screenshot', async (req, res) => {
+    const { sessionId = 'default' } = req.body;
+    
+    try {
+        const page = browserPages.get(sessionId);
+        if (!page) {
+            return res.status(400).json({ error: 'Browser not initialized' });
+        }
+        
+        const screenshot = await page.screenshot({ encoding: 'base64', type: 'png', fullPage: true });
+        const url = page.url();
+        const title = await page.title();
+        
+        res.json({
+            success: true,
+            url,
+            title,
+            screenshot: `data:image/png;base64,${screenshot}`
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/browser/close', async (req, res) => {
+    const { sessionId = 'default' } = req.body;
+    
+    try {
+        await closeBrowser(sessionId);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Run interactive app (like snake game) in browser
+app.post('/api/browser/run-app', async (req, res) => {
+    const { appPath, sessionId = 'default' } = req.body;
+    
+    try {
+        await initBrowser(sessionId);
+        const page = browserPages.get(sessionId);
+        
+        // Navigate to local app
+        const appUrl = `http://localhost:${PORT}/${appPath}`;
+        logger.info(`🎮 Running app: ${appUrl}`);
+        
+        await page.goto(appUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        const screenshot = await page.screenshot({ encoding: 'base64', type: 'png' });
+        const title = await page.title();
+        
+        res.json({
+            success: true,
+            url: appUrl,
+            title,
+            screenshot: `data:image/png;base64,${screenshot}`,
+            message: `App loaded: ${appPath}`
+        });
+    } catch (error) {
+        logger.error(`Error running app: ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Process browser requests in agent responses (similar to [SEARCH:])
+async function processBrowserRequests(response) {
+    const browserPattern = /\[BROWSER:\s*([^\]]+)\]/g;
+    let matches = [];
+    let match;
+    
+    while ((match = browserPattern.exec(response)) !== null) {
+        matches.push(match[1].trim());
+    }
+    
+    if (matches.length === 0) {
+        return response;
+    }
+    
+    let enhancedResponse = response;
+    for (const command of matches) {
+        try {
+            // Parse browser command: "navigate:url" or "run-app:path"
+            const [action, ...args] = command.split(':');
+            const value = args.join(':');
+            
+            if (action === 'navigate') {
+                const result = await axios.post(`http://localhost:${PORT}/api/browser/navigate`, {
+                    url: value,
+                    sessionId: 'agent-session'
+                });
+                enhancedResponse = enhancedResponse.replace(
+                    `[BROWSER: ${command}]`,
+                    `\n\n🌐 BROWSER NAVIGATION:\nURL: ${result.data.url}\nTitle: ${result.data.title}\n\n[Screenshot captured - check browser view]`
+                );
+            } else if (action === 'run-app') {
+                const result = await axios.post(`http://localhost:${PORT}/api/browser/run-app`, {
+                    appPath: value,
+                    sessionId: 'agent-session'
+                });
+                enhancedResponse = enhancedResponse.replace(
+                    `[BROWSER: ${command}]`,
+                    `\n\n🎮 RUNNING APP: ${value}\n\n[App loaded in browser view - check terminal]`
+                );
+            }
+        } catch (error) {
+            enhancedResponse = enhancedResponse.replace(
+                `[BROWSER: ${command}]`,
+                `\n[Browser action failed: ${error.message}]`
+            );
+        }
+    }
+    
+    return enhancedResponse;
+}
+
 // Get available Ollama models
 app.get('/api/models', async (req, res) => {
     try {
         const response = await axios.get(`${OLLAMA_API}/api/tags`, { timeout: 3000 });
-        const models = response.data.models.map(m => ({
-            name: m.name,
-            size: (m.size / (1024 * 1024 * 1024)).toFixed(2) + ' GB',
-            sizeBytes: m.size,
-            modified: m.modified_at,
-            // Categorize by size for auto-fallback
-            category: m.size < 1e9 ? 'tiny' : m.size < 3e9 ? 'small' : m.size < 7e9 ? 'medium' : 'large'
-        }));
+        const models = response.data.models
+            .map(m => ({
+                name: m.name,
+                size: (m.size / (1024 * 1024 * 1024)).toFixed(2) + ' GB',
+                sizeBytes: m.size,
+                modified: m.modified_at,
+                // Categorize by size for auto-fallback
+                category: m.size < 1e9 ? 'tiny' : m.size < 3e9 ? 'small' : m.size < 7e9 ? 'medium' : 'large',
+                // Check if it's an embedding model
+                isEmbedding: m.name.toLowerCase().includes('embed') || 
+                            (m.details && m.details.family && m.details.family.toLowerCase().includes('bert'))
+            }))
+            // Filter out embedding models - they can't be used for chat
+            .filter(m => !m.isEmbedding);
 
         // Sort by size (smallest first for fallback order)
         models.sort((a, b) => a.sizeBytes - b.sizeBytes);
@@ -1219,6 +3028,91 @@ app.post('/api/conversations/:id/export', (req, res) => {
     }
 });
 
+// Save current chat from client
+app.post('/api/chats/save', async (req, res) => {
+    try {
+        const { name, messages, agent } = req.body;
+        
+        if (!messages || !Array.isArray(messages)) {
+            return res.status(400).json({ error: 'Messages array required' });
+        }
+
+        // Filter out system messages for saved chats
+        const chatMessages = messages.filter(m => m.type !== 'system');
+        
+        if (chatMessages.length === 0) {
+            return res.status(400).json({ error: 'No chat messages to save' });
+        }
+
+        // Determine agent from messages if not provided
+        let chatAgent = agent || 'researcher';
+        if (!agent) {
+            // Try to find agent from messages
+            const agentMsg = chatMessages.find(m => m.author && m.author !== 'USER' && m.author !== 'SYSTEM');
+            if (agentMsg) {
+                const agentName = agentMsg.author.toLowerCase();
+                chatAgent = Object.keys(agents).find(key => 
+                    agents[key].name.toLowerCase() === agentName
+                ) || 'researcher';
+            }
+        }
+
+        if (!agents[chatAgent]) {
+            return res.status(400).json({ error: 'Invalid agent' });
+        }
+
+        // Create conversation from chat messages
+        const conversation = createConversation(chatAgent, name || `Chat ${new Date().toLocaleString()}`);
+        
+        // Convert chat messages to conversation format
+        conversation.messages = chatMessages.map(msg => ({
+            role: msg.isUser ? 'user' : 'assistant',
+            content: msg.text || msg.content || '',
+            timestamp: msg.time || new Date().toISOString()
+        }));
+
+        conversation.metadata.messageCount = conversation.messages.length;
+        conversation.lastUpdated = new Date().toISOString();
+
+        await saveConversation(conversation.id);
+        logger.info(`Saved chat as conversation: ${conversation.id}`);
+
+        res.json({ success: true, conversation });
+    } catch (error) {
+        logger.error('Error saving chat:', error);
+        res.status(500).json({ error: 'Failed to save chat' });
+    }
+});
+
+// Load chat from saved conversation
+app.get('/api/chats/:id/load', (req, res) => {
+    try {
+        const conversation = conversations[req.params.id];
+        if (!conversation) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+
+        // Convert conversation messages to chat format
+        const chatMessages = conversation.messages.map(msg => ({
+            author: msg.role === 'user' ? 'USER' : (agents[conversation.agent]?.name.toUpperCase() || 'AGENT'),
+            text: msg.content,
+            time: msg.timestamp || conversation.created,
+            isUser: msg.role === 'user',
+            type: msg.role === 'user' ? 'user' : 'agent'
+        }));
+
+        res.json({ 
+            success: true, 
+            messages: chatMessages,
+            agent: conversation.agent,
+            name: conversation.name
+        });
+    } catch (error) {
+        logger.error('Error loading chat:', error);
+        res.status(500).json({ error: 'Failed to load chat' });
+    }
+});
+
 // Simple REST API for messages (no Socket.IO required)
 app.post('/api/message', async (req, res) => {
     try {
@@ -1233,7 +3127,18 @@ app.post('/api/message', async (req, res) => {
         });
 
         // Get response from Ollama (with optional model preference)
-        const response = await callOllama(agentKey, message, model);
+        let response = await callOllama(agentKey, message, model);
+
+        // SAFETY NET: Detect and fix incorrect "no internet" responses
+        const originalResponse = response;
+        response = fixNoInternetResponse(response, message);
+        
+        // Log if we made a fix
+        if (response !== originalResponse) {
+            logger.info('🔧 Safety net applied - response was fixed');
+            logger.info(`Original: ${originalResponse.substring(0, 150)}...`);
+            logger.info(`Fixed: ${response.substring(0, 150)}...`);
+        }
 
         // Update user profiling based on message and response
         updateUserProfile(agentKey, message, response);
@@ -1307,6 +3212,52 @@ function getCollaborationEngine() {
         }
     }
     return collaborationEngine;
+}
+
+// Initialize task planner
+function getTaskPlanner() {
+    if (!taskPlanner) {
+        try {
+            taskPlanner = new TaskPlanner(callOllama, agents);
+            logger.info('Task planner initialized');
+        } catch (error) {
+            logger.error('Failed to initialize task planner:', error);
+            throw new Error(`Task planner initialization failed: ${error.message}`);
+        }
+    }
+    return taskPlanner;
+}
+
+// Initialize tool system
+function getToolSystem() {
+    if (!toolSystem) {
+        try {
+            const baseSystem = new ToolSystem();
+            const enhanced = new EnhancedTools(baseSystem);
+            toolSystem = baseSystem; // Enhanced tools are registered on base system
+            logger.info('Tool system initialized with enhanced capabilities');
+        } catch (error) {
+            logger.error('Failed to initialize tool system:', error);
+            throw new Error(`Tool system initialization failed: ${error.message}`);
+        }
+    }
+    return toolSystem;
+}
+
+// Initialize workflow orchestrator
+function getWorkflowOrchestrator() {
+    if (!workflowOrchestrator) {
+        try {
+            const planner = getTaskPlanner();
+            const tools = getToolSystem();
+            workflowOrchestrator = new WorkflowOrchestrator(callOllama, agents, tools, planner);
+            logger.info('Workflow orchestrator initialized');
+        } catch (error) {
+            logger.error('Failed to initialize workflow orchestrator:', error);
+            throw new Error(`Workflow orchestrator initialization failed: ${error.message}`);
+        }
+    }
+    return workflowOrchestrator;
 }
 
 // Get available collaboration templates

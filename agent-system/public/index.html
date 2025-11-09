@@ -7,32 +7,72 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
 
-        /* Theme Variables */
+        /* Theme Variables - Default: Matrix (Dark) */
         :root {
-            --primary-color: #00ff00;
+            --primary-color: #00ff41;
             --bg-color: #000;
             --screen-bg: #0a0a0a;
-            --glow-color: rgba(0, 255, 0, 0.3);
+            --glow-color: rgba(0, 255, 65, 0.3);
+            --text-color: #00ff41;
+            --border-color: #00ff41;
+            --hover-bg: rgba(0, 255, 65, 0.1);
+            --active-bg: rgba(0, 255, 65, 0.2);
         }
 
-        /* Theme Variants */
-        body.theme-amber {
+        /* Light Theme */
+        body.theme-light {
+            --primary-color: #0066cc;
+            --bg-color: #ffffff;
+            --screen-bg: #f5f5f5;
+            --glow-color: rgba(0, 102, 204, 0.2);
+            --text-color: #1a1a1a;
+            --border-color: #0066cc;
+            --hover-bg: rgba(0, 102, 204, 0.1);
+            --active-bg: rgba(0, 102, 204, 0.15);
+        }
+
+        /* Dark Theme (Modern) */
+        body.theme-dark {
+            --primary-color: #4a9eff;
+            --bg-color: #1a1a1a;
+            --screen-bg: #2a2a2a;
+            --glow-color: rgba(74, 158, 255, 0.3);
+            --text-color: #e0e0e0;
+            --border-color: #4a9eff;
+            --hover-bg: rgba(74, 158, 255, 0.1);
+            --active-bg: rgba(74, 158, 255, 0.2);
+        }
+
+        /* Matrix Theme (Modern - not retro) */
+        body.theme-matrix:not(.retro-mode) {
+            --primary-color: #00ff41;
+            --bg-color: #000;
+            --screen-bg: #0a0a0a;
+            --glow-color: rgba(0, 255, 65, 0.3);
+            --text-color: #00ff41;
+            --border-color: #00ff41;
+            --hover-bg: rgba(0, 255, 65, 0.1);
+            --active-bg: rgba(0, 255, 65, 0.2);
+        }
+
+        /* Retro Theme Variants (only when retro mode is on) */
+        body.retro-mode.theme-amber {
             --primary-color: #ffb000;
             --glow-color: rgba(255, 176, 0, 0.3);
         }
-        body.theme-blue {
+        body.retro-mode.theme-blue {
             --primary-color: #00d4ff;
             --glow-color: rgba(0, 212, 255, 0.3);
         }
-        body.theme-matrix {
+        body.retro-mode.theme-matrix {
             --primary-color: #00ff41;
             --glow-color: rgba(0, 255, 65, 0.3);
         }
-        body.theme-cyberpunk {
+        body.retro-mode.theme-cyberpunk {
             --primary-color: #ff00ff;
             --glow-color: rgba(255, 0, 255, 0.3);
         }
-        body.theme-phosphor {
+        body.retro-mode.theme-phosphor {
             --primary-color: #33ff33;
             --glow-color: rgba(51, 255, 51, 0.3);
         }
@@ -61,8 +101,15 @@
             transition: opacity 0.5s;
             pointer-events: none;
         }
-        body.theme-matrix #matrix-rain {
+        body.retro-mode.theme-matrix #matrix-rain {
             opacity: 0.15;
+        }
+        body.theme-matrix:not(.retro-mode) #matrix-rain {
+            opacity: 0.15;
+            display: block;
+        }
+        body:not(.theme-matrix):not(.retro-mode) #matrix-rain {
+            display: none;
         }
 
         * {
@@ -71,21 +118,29 @@
             box-sizing: border-box;
         }
         body {
-            font-family: 'VT323', monospace;
+            font-family: 'Share Tech Mono', 'Courier New', monospace;
             background: var(--bg-color);
-            color: var(--primary-color);
+            color: var(--text-color);
             overflow: hidden;
             height: 100vh;
-            transition: color 0.5s, background 0.5s;
+            transition: color 0.3s, background 0.3s;
         }
-        /* CRT Screen Effect */
+        body.retro-mode {
+            font-family: 'VT323', monospace;
+        }
+        
+        /* CRT Screen Effect - Only in retro mode */
         .crt-container {
             position: relative;
             width: 100%;
             height: 100vh;
-            background: #0a0a0a;
+            background: var(--screen-bg);
         }
-        .crt-container::before {
+        body:not(.retro-mode) .crt-container::before,
+        body:not(.retro-mode) .crt-container::after {
+            display: none;
+        }
+        body.retro-mode .crt-container::before {
             content: " ";
             display: block;
             position: absolute;
@@ -98,7 +153,7 @@
             background-size: 100% 2px, 3px 100%;
             pointer-events: none;
         }
-        .crt-container::after {
+        body.retro-mode .crt-container::after {
             content: " ";
             display: block;
             position: absolute;
@@ -122,27 +177,40 @@
             width: 95%;
             height: 95vh;
             margin: 2.5vh auto;
-            border: 3px solid #333;
+            border: 3px solid var(--border-color);
             border-radius: 10px;
+            box-shadow: 
+                inset 0 0 100px var(--glow-color),
+                0 0 50px var(--glow-color);
+            padding: 20px;
+            overflow: hidden;
+            background: var(--screen-bg);
+            transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
+        }
+        body.retro-mode .screen {
+            border: 3px solid #333;
             box-shadow:
                 inset 0 0 100px rgba(0, 255, 0, 0.1),
                 0 0 50px rgba(0, 255, 0, 0.2);
-            padding: 20px;
-            overflow: hidden;
         }
         .terminal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 2px solid #00ff00;
+            border-bottom: 2px solid var(--border-color);
             padding-bottom: 15px;
             margin-bottom: 20px;
+            transition: border-color 0.3s;
         }
         .terminal-title {
             font-size: 1.5em;
-            text-shadow: 0 0 10px #00ff00;
+            text-shadow: 0 0 10px var(--glow-color);
             letter-spacing: 2px;
             line-height: 1.3;
+            color: var(--primary-color);
+        }
+        body.retro-mode .terminal-title {
+            text-shadow: 0 0 10px var(--primary-color);
         }
         .system-info {
             font-size: 1.2em;
@@ -164,34 +232,83 @@
         }
         /* Agent List Sidebar */
         .agent-sidebar {
-            border: 2px solid #00ff00;
+            border: 2px solid var(--border-color);
             padding: 15px;
             overflow-y: auto;
-            background: rgba(0, 255, 0, 0.02);
+            background: var(--hover-bg);
+            transition: border-color 0.3s, background 0.3s;
+        }
+        .history-item {
+            padding: 8px;
+            margin: 5px 0;
+            border-left: 2px solid var(--border-color);
+            background: transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9em;
+            line-height: 1.3;
+        }
+        .history-item:hover {
+            background: var(--hover-bg);
+            border-left-color: var(--primary-color);
+            transform: translateX(3px);
+        }
+        .history-item-user {
+            border-left-color: var(--primary-color);
+            opacity: 0.9;
+        }
+        .history-item-agent {
+            border-left-color: var(--border-color);
+            opacity: 0.8;
+        }
+        .history-item-system {
+            border-left-color: #ff4444;
+            opacity: 0.7;
+            font-size: 0.85em;
+        }
+        .history-author {
+            font-weight: bold;
+            color: var(--primary-color);
+            margin-right: 5px;
+        }
+        .history-text {
+            color: var(--text-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+        .history-time {
+            font-size: 0.75em;
+            opacity: 0.6;
+            margin-top: 3px;
         }
         .sidebar-title {
             font-size: 1.5em;
             margin-bottom: 15px;
             text-align: center;
-            border-bottom: 1px dashed #00ff00;
+            border-bottom: 1px dashed var(--border-color);
             padding-bottom: 10px;
+            color: var(--primary-color);
         }
         .agent-item {
             padding: 12px;
             margin: 10px 0;
-            border: 1px solid #00ff00;
+            border: 1px solid var(--border-color);
             cursor: pointer;
             transition: all 0.3s;
             position: relative;
+            background: transparent;
+            color: var(--text-color);
         }
         .agent-item:hover {
-            background: rgba(0, 255, 0, 0.1);
-            box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.3);
+            background: var(--hover-bg);
+            box-shadow: inset 0 0 10px var(--glow-color);
             transform: translateX(5px);
         }
         .agent-item.active {
-            background: rgba(0, 255, 0, 0.2);
-            box-shadow: inset 0 0 15px rgba(0, 255, 0, 0.5);
+            background: var(--active-bg);
+            box-shadow: inset 0 0 15px var(--glow-color);
         }
         .agent-item::before {
             content: '>';
@@ -241,21 +358,36 @@
         }
         /* Chat Area */
         .chat-area {
-            border: 2px solid #00ff00;
+            border: 2px solid var(--border-color);
             padding: 20px;
             overflow-y: auto;
-            background: rgba(0, 255, 0, 0.02);
+            overflow-x: hidden;
+            position: relative;
+            background: var(--hover-bg);
             display: flex;
             flex-direction: column;
             gap: 15px;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        /* Ensure browser view is not clipped by chat area - use fixed positioning */
+        .chat-area .browser-view.active {
+            position: fixed !important;
+            top: 100px !important;
+            left: 270px !important;
+            right: 20px !important;
+            height: calc(70vh) !important;
+            z-index: 300 !important;
         }
         .message {
             padding: 15px;
-            border-left: 3px solid #00ff00;
-            background: rgba(0, 255, 0, 0.05);
+            border-left: 3px solid var(--border-color);
+            background: var(--hover-bg);
             animation: scanline 0.3s;
             font-size: 1.3em;
             line-height: 1.4;
+            color: var(--text-color);
+            transition: border-color 0.3s, background 0.3s;
         }
         @keyframes scanline {
             0% {
@@ -273,17 +405,40 @@
             opacity: 0.8;
         }
         .message-user {
-            border-left-color: #00ffff;
-            background: rgba(0, 255, 255, 0.05);
+            border-left-color: var(--primary-color);
+            background: var(--active-bg);
         }
         .message-thinking {
-            border-left-color: #ffff00;
-            background: rgba(255, 255, 0, 0.05);
+            border-left-color: var(--primary-color);
+            background: var(--hover-bg);
             font-style: italic;
+            opacity: 0.8;
+        }
+        .thinking-cursor {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .thinking-dots {
+            font-weight: bold;
+        }
+        .thinking-animation {
+            font-family: monospace;
+            animation: blink 1s infinite;
         }
         .thinking-cursor::after {
             content: '_';
             animation: blink 1s infinite;
+        }
+        .command-badge {
+            display: inline-block;
+            margin: 2px;
+        }
+        .message-content a {
+            transition: opacity 0.2s;
+        }
+        .message-content a:hover {
+            opacity: 0.7;
         }
         .timestamp {
             font-size: 0.9em;
@@ -305,47 +460,57 @@
             flex-wrap: wrap;
         }
         .prompt {
-            color: #00ff00;
-            text-shadow: 0 0 5px #00ff00;
+            color: var(--primary-color);
+            text-shadow: 0 0 5px var(--glow-color);
         }
         .input-line select {
-            background: #000;
-            color: #00ff00;
-            border: 1px solid #00ff00;
+            background: var(--screen-bg);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
             padding: 8px 12px;
-            font-family: 'VT323', monospace;
+            font-family: inherit;
             font-size: 0.95em;
             cursor: pointer;
             min-width: 150px;
+            transition: background 0.3s, border-color 0.3s, color 0.3s;
+        }
+        body.retro-mode .input-line select {
+            font-family: 'VT323', monospace;
         }
         .input-line select:focus {
             outline: none;
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+            box-shadow: 0 0 10px var(--glow-color);
         }
         .input-line input {
             flex: 1;
             min-width: 200px;
             background: transparent;
             border: none;
-            color: #00ff00;
-            font-family: 'VT323', monospace;
+            color: var(--text-color);
+            font-family: inherit;
             font-size: 0.95em;
             outline: none;
-            text-shadow: 0 0 5px #00ff00;
+            text-shadow: 0 0 5px var(--glow-color);
+        }
+        body.retro-mode .input-line input {
+            font-family: 'VT323', monospace;
         }
         .input-line button {
             background: transparent;
-            border: 2px solid #00ff00;
-            color: #00ff00;
+            border: 2px solid var(--border-color);
+            color: var(--text-color);
             padding: 8px 20px;
-            font-family: 'VT323', monospace;
+            font-family: inherit;
             font-size: 1em;
             cursor: pointer;
             transition: all 0.3s;
         }
+        body.retro-mode .input-line button {
+            font-family: 'VT323', monospace;
+        }
         .input-line button:hover {
-            background: rgba(0, 255, 0, 0.2);
-            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+            background: var(--hover-bg);
+            box-shadow: 0 0 15px var(--glow-color);
             transform: scale(1.05);
         }
         .input-line button:active {
@@ -358,23 +523,60 @@
         /* Control Buttons */
         .controls {
             display: flex;
-            gap: 15px;
+            gap: 8px;
             margin-top: 10px;
             flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            padding: 5px 10px;
+            background: var(--hover-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+        }
+        .control-group::after {
+            content: '';
+            width: 1px;
+            height: 20px;
+            background: var(--border-color);
+            margin-left: 5px;
+            opacity: 0.5;
+        }
+        .control-group:last-child::after {
+            display: none;
         }
         .control-btn {
             background: transparent;
-            border: 1px solid #00ff00;
-            color: #00ff00;
-            padding: 5px 15px;
-            font-family: 'VT323', monospace;
-            font-size: 1.2em;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 6px 12px;
+            font-family: inherit;
+            font-size: 0.95em;
             cursor: pointer;
             transition: all 0.3s;
+            white-space: nowrap;
+        }
+        body.retro-mode .control-btn {
+            font-family: 'VT323', monospace;
         }
         .control-btn:hover {
-            background: rgba(0, 255, 0, 0.1);
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+            background: var(--hover-bg);
+            box-shadow: 0 0 8px var(--glow-color);
+            transform: translateY(-1px);
+        }
+        .control-btn:active {
+            transform: translateY(0);
+        }
+        .control-btn.primary {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        .control-btn.secondary {
+            opacity: 0.8;
+            font-size: 0.9em;
         }
         /* Scrollbar */
         ::-webkit-scrollbar {
@@ -408,104 +610,337 @@
             background-color: rgba(0, 0, 0, 0.8);
             backdrop-filter: blur(5px);
         }
+        body.theme-light .modal {
+            background-color: rgba(255, 255, 255, 0.8);
+        }
         .modal-content {
             position: relative;
-            background-color: #0a0a0a;
-            margin: 5% auto;
+            background-color: var(--screen-bg);
+            margin: 1% auto;
             padding: 0;
-            border: 3px solid #00ff00;
-            width: 90%;
-            max-width: 1200px;
-            max-height: 80vh;
-            box-shadow: 0 0 50px rgba(0, 255, 0, 0.3);
+            border: 3px solid var(--border-color);
+            width: 95%;
+            max-width: 1400px;
+            max-height: 98vh;
+            box-shadow: 0 0 50px var(--glow-color);
             border-radius: 10px;
             overflow: hidden;
+            transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
         }
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 20px;
-            border-bottom: 2px solid #00ff00;
-            background: rgba(0, 255, 0, 0.05);
+            border-bottom: 2px solid var(--border-color);
+            background: var(--hover-bg);
+            transition: border-color 0.3s, background 0.3s;
         }
         .modal-title {
             font-size: 1.5em;
-            text-shadow: 0 0 10px #00ff00;
+            text-shadow: 0 0 10px var(--glow-color);
             letter-spacing: 2px;
+            color: var(--primary-color);
         }
         .modal-close {
             font-size: 1.5em;
             cursor: pointer;
             padding: 5px 15px;
-            border: 1px solid #00ff00;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            color: var(--text-color);
             transition: all 0.3s;
         }
         .modal-close:hover {
-            background: rgba(0, 255, 0, 0.2);
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+            background: var(--hover-bg);
+            box-shadow: 0 0 10px var(--glow-color);
         }
         .modal-body {
             padding: 20px;
-            max-height: 60vh;
+            max-height: 85vh;
             overflow-y: auto;
             font-size: 1.1em;
             line-height: 1.6;
+            color: var(--text-color);
+            background: var(--screen-bg);
+        }
+        /* Collaboration Panel Integration Styles */
+        .collab-panel-integrated {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--screen-bg);
+            border: 3px solid var(--primary-color);
+            z-index: 200;
+            overflow-y: auto;
+            padding: 20px;
+            transition: all 0.3s;
+            box-shadow: 0 0 30px var(--glow-color);
+        }
+        .collab-panel-integrated.active {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            animation: fadeIn 0.3s;
+        }
+        .collab-toggle-btn {
+            position: absolute;
+            top: 10px;
+            right: 50px;
+            padding: 5px 15px;
+            border: 1px solid var(--border-color);
+            background: var(--hover-bg);
+            color: var(--text-color);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 1em;
+            z-index: 101;
+            transition: all 0.3s;
+        }
+        body.retro-mode .collab-toggle-btn {
+            font-family: 'VT323', monospace;
+        }
+        .collab-toggle-btn:hover {
+            background: var(--active-bg);
+            box-shadow: 0 0 10px var(--glow-color);
+        }
+        /* Browser View Styles */
+        .browser-view {
+            display: none;
+            position: fixed;
+            top: 100px;
+            left: 270px;
+            right: 20px;
+            height: 70vh;
+            min-width: 400px;
+            min-height: 300px;
+            background: var(--screen-bg);
+            border: 3px solid var(--primary-color);
+            z-index: 200;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(0, 255, 65, 0.5), inset 0 0 20px rgba(0, 255, 65, 0.1);
+        }
+        /* Resize handles */
+        .browser-resize-handle {
+            position: absolute;
+            background: var(--primary-color);
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 10;
+        }
+        .browser-view.active .browser-resize-handle {
+            opacity: 0.3;
+        }
+        .browser-view.active .browser-resize-handle:hover {
+            opacity: 0.8;
+        }
+        .browser-resize-handle.n {
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 8px;
+            cursor: ns-resize;
+        }
+        .browser-resize-handle.s {
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 8px;
+            cursor: ns-resize;
+        }
+        .browser-resize-handle.e {
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 8px;
+            cursor: ew-resize;
+        }
+        .browser-resize-handle.w {
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 8px;
+            cursor: ew-resize;
+        }
+        .browser-resize-handle.ne {
+            top: 0;
+            right: 0;
+            width: 12px;
+            height: 12px;
+            cursor: nesw-resize;
+        }
+        .browser-resize-handle.nw {
+            top: 0;
+            left: 0;
+            width: 12px;
+            height: 12px;
+            cursor: nwse-resize;
+        }
+        .browser-resize-handle.se {
+            bottom: 0;
+            right: 0;
+            width: 12px;
+            height: 12px;
+            cursor: nwse-resize;
+        }
+        .browser-resize-handle.sw {
+            bottom: 0;
+            left: 0;
+            width: 12px;
+            height: 12px;
+            cursor: nesw-resize;
+        }
+        .browser-view.active {
+            display: flex !important;
+            flex-direction: column;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+        .browser-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            border-bottom: 2px solid var(--border-color);
+            background: var(--hover-bg);
+            transition: border-color 0.3s, background 0.3s;
+            cursor: move !important;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
+        .browser-header:hover {
+            background: var(--active-bg);
+        }
+        .browser-header .browser-title {
+            pointer-events: none;
+        }
+        .browser-title {
+            font-size: 1.2em;
+            text-shadow: 0 0 10px var(--glow-color);
+            color: var(--primary-color);
+        }
+        .browser-controls {
+            display: flex;
+            gap: 10px;
+        }
+        .browser-btn {
+            padding: 5px 15px;
+            border: 1px solid var(--border-color);
+            background: var(--hover-bg);
+            color: var(--text-color);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+        body.retro-mode .browser-btn {
+            font-family: 'VT323', monospace;
+        }
+        .browser-btn:hover {
+            background: var(--active-bg);
+            box-shadow: 0 0 10px var(--glow-color);
+        }
+        .browser-content {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--screen-bg);
+            color: var(--text-color);
+        }
+        .browser-screenshot {
+            max-width: 100%;
+            max-height: 100%;
+            border: 2px solid var(--border-color);
+            box-shadow: 0 0 20px var(--glow-color);
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .browser-iframe {
+            width: 100%;
+            height: 100%;
+            border: 2px solid var(--primary-color);
+            background: #000;
+        }
+        .browser-url {
+            padding: 10px;
+            margin: 10px 0;
+            background: rgba(0, 255, 0, 0.05);
+            border: 1px solid var(--primary-color);
+            font-family: 'VT323', monospace;
+            font-size: 1.1em;
+            width: 100%;
+            color: var(--primary-color);
         }
         .memory-section {
             margin-bottom: 30px;
             padding: 15px;
-            border: 1px solid #00ff00;
+            border: 1px solid var(--border-color);
             border-radius: 5px;
-            background: rgba(0, 255, 0, 0.02);
+            background: var(--hover-bg);
+            transition: border-color 0.3s, background 0.3s;
         }
         .memory-section-title {
             font-size: 1.3em;
             margin-bottom: 10px;
-            text-shadow: 0 0 5px #00ff00;
-            border-bottom: 1px solid #00ff00;
+            text-shadow: 0 0 5px var(--glow-color);
+            border-bottom: 1px solid var(--border-color);
             padding-bottom: 5px;
+            color: var(--primary-color);
         }
         .memory-item {
             margin: 8px 0;
             padding-left: 15px;
+            color: var(--text-color);
         }
         .memory-tag {
             display: inline-block;
             padding: 3px 10px;
             margin: 3px;
-            border: 1px solid #00ff00;
+            border: 1px solid var(--border-color);
             border-radius: 3px;
             font-size: 0.9em;
             cursor: pointer;
             transition: all 0.3s;
+            background: var(--hover-bg);
+            color: var(--text-color);
         }
         .memory-tag:hover {
-            background: rgba(0, 255, 0, 0.2);
-            box-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+            background: var(--active-bg);
+            box-shadow: 0 0 8px var(--glow-color);
         }
         .memory-tag.deletable:hover {
-            border-color: #ff0000;
-            color: #ff0000;
+            border-color: #ff4444;
+            color: #ff4444;
         }
         .agent-memory-card {
             margin: 15px 0;
             padding: 15px;
-            border-left: 3px solid #00ff00;
-            background: rgba(0, 255, 0, 0.03);
+            border-left: 3px solid var(--border-color);
+            background: var(--hover-bg);
+            transition: border-color 0.3s, background 0.3s;
         }
         .progress-bar {
             width: 100%;
             height: 20px;
-            border: 1px solid #00ff00;
+            border: 1px solid var(--border-color);
             margin: 10px 0;
             position: relative;
+            background: var(--hover-bg);
+            transition: border-color 0.3s, background 0.3s;
         }
         .progress-fill {
             height: 100%;
-            background: rgba(0, 255, 0, 0.3);
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-            transition: width 0.5s;
+            background: var(--primary-color);
+            box-shadow: 0 0 10px var(--glow-color);
+            transition: width 0.5s, background 0.3s, box-shadow 0.3s;
         }
     </style>
 </head>
@@ -527,13 +962,52 @@
                 </div>
             </div>
             <div class="main-container">
-                <!-- Agent Sidebar -->
-                <div class="agent-sidebar">
-                    <div class="sidebar-title">[ AGENTS ]</div>
-                    <div id="agent-list"></div>
+                <!-- Conversation History Sidebar -->
+                <div class="agent-sidebar" id="history-sidebar">
+                    <div class="sidebar-title">[ SAVED CHATS ]</div>
+                    <div style="margin-bottom: 10px; display: flex; gap: 5px; flex-wrap: wrap;">
+                        <button onclick="newChat()" style="flex: 1; min-width: 60px; padding: 6px; font-size: 0.85em; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer;">New</button>
+                        <button onclick="saveCurrentChat()" style="flex: 1; min-width: 60px; padding: 6px; font-size: 0.85em; background: var(--success-color, #00aa00); color: white; border: none; border-radius: 4px; cursor: pointer;">Save</button>
+                    </div>
+                    <div id="conversation-history"></div>
                 </div>
                 <!-- Chat Area -->
-                <div class="chat-area" id="chat-area">
+                <div class="chat-area" id="chat-area" style="position: relative;">
+                    <!-- Browser View (hidden by default) -->
+                    <div id="browser-view" class="browser-view">
+                        <!-- Resize handles -->
+                        <div class="browser-resize-handle n"></div>
+                        <div class="browser-resize-handle s"></div>
+                        <div class="browser-resize-handle e"></div>
+                        <div class="browser-resize-handle w"></div>
+                        <div class="browser-resize-handle ne"></div>
+                        <div class="browser-resize-handle nw"></div>
+                        <div class="browser-resize-handle se"></div>
+                        <div class="browser-resize-handle sw"></div>
+                        <div class="browser-header" id="browser-header">
+                            <div class="browser-title">🌐 LIVE BROWSER VIEW</div>
+                            <div class="browser-controls">
+                                <button class="browser-btn" onclick="refreshBrowser()">[REFRESH]</button>
+                                <button class="browser-btn" onclick="closeBrowserView()">[CLOSE]</button>
+                            </div>
+                        </div>
+                        <div class="browser-content" id="browser-content">
+                            <div style="text-align: center; opacity: 0.6;">
+                                <div style="font-size: 2em; margin-bottom: 20px;">🌐</div>
+                                <div>Browser view will appear here when agents navigate or run apps</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Integrated Collaboration Panel (hidden by default) -->
+                    <div id="collab-panel-integrated" class="collab-panel-integrated">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid var(--primary-color); padding-bottom: 10px;">
+                            <span style="font-size: 1.5em; text-shadow: 0 0 10px #00ff00;">[ AGENT COLLABORATION SYSTEM ]</span>
+                            <button class="collab-toggle-btn" onclick="toggleCollabIntegration()">[CLOSE]</button>
+                        </div>
+                        <div id="collab-content-integrated" style="max-height: calc(100vh - 150px); overflow-y: auto;">
+                            <!-- Collaboration content will be synced from modal -->
+                        </div>
+                    </div>
                     <div class="message">
                         <div class="message-header">[SYSTEM]</div>
                         <div>SYSTEM INITIALIZED - SELECT AN AGENT TO BEGIN</div>
@@ -558,12 +1032,37 @@
                         <button id="send-btn" onclick="sendCommand()">[SEND]</button>
                     </div>
                     <div class="controls">
-                        <button class="control-btn" onclick="clearTerminal()">[CLEAR_TERM]</button>
-                        <button class="control-btn" onclick="openCollaborationPanel()">[COLLABORATE]</button>
-                        <button class="control-btn" onclick="viewProfile()">[USER_PROFILE]</button>
-                        <button class="control-btn" onclick="viewMemory()">[MEMORY_BANK]</button>
-                        <button class="control-btn" onclick="exportConversation()">[EXPORT]</button>
-                        <button class="control-btn" onclick="cycleTheme()">[THEME: <span id="theme-name">GREEN</span>]</button>
+                        <!-- Chat Actions -->
+                        <div class="control-group">
+                            <button class="control-btn" onclick="clearTerminal()" title="Clear terminal">🗑️ CLEAR</button>
+                            <button class="control-btn secondary" onclick="exportConversation()" title="Export conversation">📥 EXPORT</button>
+                        </div>
+                        
+                        <!-- Collaboration -->
+                        <div class="control-group">
+                            <button class="control-btn primary" onclick="openCollaborationPanel()" title="Start multi-agent collaboration">🤝 COLLAB</button>
+                            <button class="control-btn secondary" onclick="toggleCollabIntegration()" id="collab-integrate-btn" title="Toggle integrated collaboration view">💬 IN_CHAT</button>
+                            <button class="control-btn secondary" onclick="quickStartCollaboration()" title="Quick collaboration">⚡ QUICK</button>
+                        </div>
+                        
+                        <!-- Tools -->
+                        <div class="control-group">
+                            <button class="control-btn" onclick="toggleBrowserView()" id="browser-view-btn" title="Toggle browser view">🌐 BROWSER</button>
+                            <button class="control-btn secondary" onclick="runApp('snake-game.html')" title="Run Snake Game">🐍 SNAKE</button>
+                        </div>
+                        
+                        <!-- Data & Settings -->
+                        <div class="control-group">
+                            <button class="control-btn" onclick="viewProfile()" title="View user profile">👤 PROFILE</button>
+                            <button class="control-btn" onclick="viewMemory()" title="View memory bank">🧠 MEMORY</button>
+                            <button class="control-btn" onclick="viewSettings()" title="API keys and settings">⚙️ SETTINGS</button>
+                        </div>
+                        
+                        <!-- Appearance -->
+                        <div class="control-group">
+                            <button class="control-btn" onclick="toggleRetroMode()" id="retro-mode-btn" title="Toggle retro mode">🎮 <span id="retro-status">RETRO</span></button>
+                            <button class="control-btn" onclick="toggleLightDark()" id="light-dark-btn" title="Toggle theme">🎨 <span id="theme-mode">THEME</span></button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -596,7 +1095,7 @@
 
                     <div style="margin: 20px 0;">
                         <label style="display: block; margin-bottom: 10px;">TASK DESCRIPTION:</label>
-                        <textarea id="collab-task" style="width: 100%; height: 100px; background: #000; color: var(--primary-color); border: 2px solid var(--primary-color); padding: 10px; font-family: 'VT323', monospace; font-size: 1.2em;" placeholder="Describe the task you want agents to collaborate on..."></textarea>
+                        <textarea id="collab-task" style="width: 100%; height: 100px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); padding: 10px; font-family: inherit; font-size: 1.2em;" placeholder="Describe the task you want agents to collaborate on..."></textarea>
                     </div>
 
                     <div style="margin: 20px 0;">
@@ -637,7 +1136,8 @@
                                 ▼ LIVE CONVERSATION FEED
                             </div>
                             <div id="collab-conversation" style="
-                                max-height: 400px;
+                                max-height: 600px;
+                                min-height: 400px;
                                 overflow-y: auto;
                                 background: rgba(0, 255, 0, 0.05);
                                 border: 1px solid var(--primary-color);
@@ -698,22 +1198,83 @@
         // Load agents on page load
         async function loadAgents() {
             try {
-                const response = await fetch('/agents');
+                console.log('🔄 Fetching agents from /agents...');
+                
+                // Add timeout to fetch
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                
+                const response = await fetch('/agents', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                console.log('📡 Response status:', response.status, response.statusText);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+                }
+                
                 agents = await response.json();
-                renderAgentList();
+                console.log('📦 Parsed agents:', Object.keys(agents));
+                
+                if (!agents || Object.keys(agents).length === 0) {
+                    throw new Error('No agents returned from server');
+                }
+                
                 populateAgentSelector();
+                // Load saved chats
+                loadSavedChats();
                 console.log('✅ Loaded', Object.keys(agents).length, 'agents');
             } catch (error) {
-                console.error('Error loading agents:', error);
-                addSystemMessage('ERROR: FAILED_TO_LOAD_AGENTS - ' + error.message);
+                console.error('❌ Error loading agents:', error);
+                let errorMsg = 'Unknown error';
+                if (error.name === 'AbortError') {
+                    errorMsg = 'Request timeout - server took too long to respond';
+                } else if (error.message) {
+                    errorMsg = error.message;
+                } else if (error.toString) {
+                    errorMsg = error.toString();
+                }
+                console.error('Error details:', { name: error.name, message: error.message, stack: error.stack });
+                addSystemMessage('ERROR: FAILED_TO_LOAD_AGENTS - ' + errorMsg);
             }
         }
 
         // Load available models
         async function loadModels() {
             try {
-                const response = await fetch('/api/models');
+                console.log('🔄 Fetching models from /api/models...');
+                
+                // Add timeout to fetch
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                
+                const response = await fetch('/api/models', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                console.log('📡 Response status:', response.status, response.statusText);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+                }
+                
                 const data = await response.json();
+                console.log('📦 Parsed models data:', data);
 
                 const selector = document.getElementById('model-selector');
                 selector.innerHTML = '<option value="">AUTO</option>';
@@ -757,8 +1318,21 @@
 
                 console.log('✅ Loaded', data.models.length, 'models');
             } catch (error) {
-                console.error('Error loading models:', error);
-                addSystemMessage('⚠ Could not load models. Using auto-fallback mode.');
+                console.error('❌ Error loading models:', error);
+                let errorMsg = 'Unknown error';
+                if (error.name === 'AbortError') {
+                    errorMsg = 'Request timeout - server took too long to respond';
+                } else if (error.message) {
+                    errorMsg = error.message;
+                } else if (error.toString) {
+                    errorMsg = error.toString();
+                }
+                console.error('Full error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                addSystemMessage('⚠ Could not load models. Using auto-fallback mode. Error: ' + errorMsg);
             }
         }
 
@@ -889,8 +1463,104 @@
             if (isProcessing) return;
 
             const input = document.getElementById('command-input');
-            const agentKey = document.getElementById('agent-selector').value || currentAgent;
+            let agentKey = document.getElementById('agent-selector').value || currentAgent;
+            
+            // If no agent selected, default to researcher
+            if (!agentKey) {
+                agentKey = 'researcher';
+                document.getElementById('agent-selector').value = agentKey;
+                currentAgent = agentKey;
+            }
+            
             const message = input.value.trim();
+            
+            // Check if user wants to start a debate/collaboration (more flexible matching)
+            const lowerMessage = message.toLowerCase();
+            const hasDebate = lowerMessage.includes('debate') || lowerMessage.includes('4 agents') || lowerMessage.includes('multiple agents');
+            const hasPolitical = lowerMessage.includes('trump') || lowerMessage.includes('donald') || lowerMessage.includes('republican') || lowerMessage.includes('democrat') || lowerMessage.includes('political');
+            const hasCollaborate = lowerMessage.includes('collaborat') || lowerMessage.includes('work together');
+            
+            if ((hasDebate && hasPolitical) || (hasCollaborate && hasPolitical) || (hasDebate && lowerMessage.includes('2 people'))) {
+                // Clear input first
+                input.value = '';
+                
+                addSystemMessage('💡 Detected debate request! Opening collaboration panel...');
+                addSystemMessage('📋 Setting up 4-agent debate with Republican and Democratic perspectives...');
+                
+                // Open collaboration panel in current view mode
+                if (collabViewMode === 'integrated') {
+                    const integratedPanel = document.getElementById('collab-panel-integrated');
+                    if (integratedPanel) {
+                        integratedPanel.classList.add('active');
+                        integratedPanel.style.display = 'block';
+                        syncCollabContent();
+                    } else {
+                        openCollaborationPanel();
+                    }
+                } else {
+                    openCollaborationPanel();
+                }
+                
+                // Wait for panel to be ready, then pre-fill
+                const setupDebate = () => {
+                    // Try both modal and integrated views
+                    const taskInput = document.getElementById('collab-task') || document.getElementById('collab-content-integrated')?.querySelector('#collab-task');
+                    const templateSelect = document.getElementById('collab-template') || document.getElementById('collab-content-integrated')?.querySelector('#collab-template');
+                    const agentsContainer = document.getElementById('collab-agents') || document.getElementById('collab-content-integrated')?.querySelector('#collab-agents');
+                    
+                    if (taskInput) {
+                        const topic = lowerMessage.includes('trump') || lowerMessage.includes('donald') 
+                            ? "Donald Trump's presidency, policies, and political impact" 
+                            : "the requested political topic";
+                        taskInput.value = `Conduct a structured educational debate about ${topic}. This is for academic/educational purposes to understand different political perspectives. 
+
+AGENT ROLES:
+- First 2 agents selected: Represent Republican/conservative perspective
+- Next 2 agents selected: Represent Democratic/liberal perspective
+
+Present arguments, counterarguments, evidence, and policy positions from both sides. Be respectful, factual, and focus on policy differences rather than personal attacks.`;
+                    }
+                    
+                    if (templateSelect && templateSelect.options.length > 1) {
+                        // Find debate option
+                        for (let i = 0; i < templateSelect.options.length; i++) {
+                            const optionText = templateSelect.options[i].textContent.toLowerCase();
+                            if (optionText.includes('debate') || optionText.includes('structured')) {
+                                templateSelect.selectedIndex = i;
+                                templateSelect.dispatchEvent(new Event('change'));
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Select all 4 agents
+                    if (agentsContainer) {
+                        const checkboxes = agentsContainer.querySelectorAll('input[type="checkbox"]');
+                        if (checkboxes.length >= 4) {
+                            checkboxes.forEach((cb) => {
+                                cb.checked = true; // Select all agents
+                            });
+                            addSystemMessage('✅ All 4 agents selected automatically');
+                        }
+                    }
+                    
+                    // Set rounds to 4-5 for a good debate
+                    const roundsInput = document.getElementById('collab-rounds') || document.getElementById('collab-content-integrated')?.querySelector('#collab-rounds');
+                    if (roundsInput) {
+                        roundsInput.value = 5;
+                    }
+                    
+                    addSystemMessage('✅ Debate collaboration pre-configured! Look for the collaboration form above and click [START_COLLABORATION] when ready.');
+                };
+                
+                // Try multiple times in case panel is still loading
+                setTimeout(setupDebate, 500);
+                setTimeout(setupDebate, 1500);
+                setTimeout(setupDebate, 3000);
+                
+                // IMPORTANT: Stop processing - don't send to single agent
+                return; // Don't send as regular message
+            }
 
             // Get agent-specific model or global model or null
             const agentSpecificModel = localStorage.getItem(`agent_${agentKey}_model`);
@@ -920,14 +1590,45 @@
                     body: JSON.stringify(requestBody)
                 });
 
-                const data = await response.json();
+                // Get response text first (can only read body once)
+                const responseText = await response.text();
+                
+                // Check if response is OK
+                if (!response.ok) {
+                    // Try to parse as JSON first, fallback to text
+                    let errorMessage = 'Request failed';
+                    try {
+                        const errorData = JSON.parse(responseText);
+                        errorMessage = errorData.error || errorData.message || errorMessage;
+                    } catch (e) {
+                        // If not JSON, use text as-is
+                        errorMessage = responseText || `HTTP ${response.status}: ${response.statusText}`;
+                    }
+                    removeThinking(agentKey);
+                    addSystemMessage(`ERROR: ${errorMessage}`);
+                    return;
+                }
+
+                // Parse JSON response
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    // If response is not JSON, show error
+                    removeThinking(agentKey);
+                    addSystemMessage(`ERROR: Invalid response format - ${responseText.substring(0, 100)}`);
+                    return;
+                }
 
                 removeThinking(agentKey);
 
                 if (data.error) {
                     addSystemMessage('ERROR: ' + data.error);
+                } else if (data.response) {
+                    // Process response for browser/search commands and enhance UX
+                    await processAgentResponse(data.response, agentKey);
                 } else {
-                    addMessage(agents[agentKey].name.toUpperCase(), data.response);
+                    addSystemMessage('ERROR: Unexpected response format');
                 }
             } catch (error) {
                 removeThinking(agentKey);
@@ -954,11 +1655,14 @@
                 second: '2-digit'
             });
 
+            // Enhance text formatting (links, code blocks, etc.)
+            const enhancedText = formatMessageText(text);
+
             message.innerHTML = `
                 <div class="message-header">
                     [${author}]<span class="timestamp">${time}</span>
                 </div>
-                <div>${text}</div>
+                <div class="message-content">${enhancedText}</div>
             `;
 
             chatArea.appendChild(message);
@@ -968,6 +1672,439 @@
             conversationLog.push({ author, text, isUser, time, type: 'message' });
             saveConversation();
         }
+        
+        // Store saved chats
+        let savedChats = [];
+        let currentChatId = null;
+
+        // Load saved chats from server
+        async function loadSavedChats() {
+            try {
+                const response = await fetch('/api/conversations');
+                const data = await response.json();
+                savedChats = data.conversations || [];
+                renderHistorySidebar();
+            } catch (error) {
+                console.error('Failed to load saved chats:', error);
+            }
+        }
+
+        // Save current chat
+        async function saveCurrentChat() {
+            try {
+                // Get current agent
+                const selectedAgent = document.querySelector('input[name="agent"]:checked');
+                if (!selectedAgent) {
+                    addSystemMessage('❌ Please select an agent first');
+                    return;
+                }
+                const agentKey = selectedAgent.value;
+
+                // Get chat messages (filter out system messages)
+                const chatMessages = conversationLog.filter(m => m.type !== 'system');
+                
+                if (chatMessages.length === 0) {
+                    addSystemMessage('❌ No messages to save');
+                    return;
+                }
+
+                // Prompt for chat name
+                const chatName = prompt('Enter a name for this chat:', `Chat with ${agents[agentKey].name} - ${new Date().toLocaleDateString()}`);
+                if (!chatName) return;
+
+                const response = await fetch('/api/chats/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: chatName,
+                        messages: chatMessages,
+                        agent: agentKey
+                    })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addSystemMessage(`✅ Chat saved: ${chatName}`);
+                    await loadSavedChats();
+                } else {
+                    addSystemMessage(`❌ Failed to save chat: ${data.error}`);
+                }
+            } catch (error) {
+                addSystemMessage(`❌ Error saving chat: ${error.message}`);
+            }
+        }
+
+        // Create new chat
+        function newChat() {
+            if (confirm('Start a new chat? Current chat will be cleared.')) {
+                const chatArea = document.getElementById('chat-area');
+                chatArea.innerHTML = '';
+                conversationLog = [];
+                currentChatId = null;
+                addSystemMessage('💬 New chat started');
+                saveConversation();
+            }
+        }
+
+        // Load a saved chat
+        async function loadChat(chatId) {
+            try {
+                if (currentChatId && conversationLog.length > 0) {
+                    if (!confirm('Load this chat? Current chat will be replaced.')) {
+                        return;
+                    }
+                }
+
+                const response = await fetch(`/api/chats/${chatId}/load`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Clear current chat
+                    const chatArea = document.getElementById('chat-area');
+                    chatArea.innerHTML = '';
+                    conversationLog = [];
+
+                    // Load messages
+                    data.messages.forEach(msg => {
+                        if (msg.isUser) {
+                            addMessage('USER', msg.text, true);
+                        } else {
+                            addMessage(msg.author, msg.text, false);
+                        }
+                    });
+
+                    // Set current agent
+                    const agentRadio = document.querySelector(`input[name="agent"][value="${data.agent}"]`);
+                    if (agentRadio) {
+                        agentRadio.checked = true;
+                    }
+
+                    currentChatId = chatId;
+                    addSystemMessage(`✅ Loaded chat: ${data.name}`);
+                    saveConversation();
+                } else {
+                    addSystemMessage(`❌ Failed to load chat: ${data.error}`);
+                }
+            } catch (error) {
+                addSystemMessage(`❌ Error loading chat: ${error.message}`);
+            }
+        }
+
+        // Delete a saved chat
+        async function deleteChat(chatId, event) {
+            event.stopPropagation();
+            if (!confirm('Delete this chat? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/conversations/${chatId}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addSystemMessage('✅ Chat deleted');
+                    await loadSavedChats();
+                } else {
+                    addSystemMessage(`❌ Failed to delete chat: ${data.error}`);
+                }
+            } catch (error) {
+                addSystemMessage(`❌ Error deleting chat: ${error.message}`);
+            }
+        }
+
+        function renderHistorySidebar() {
+            const historyContainer = document.getElementById('conversation-history');
+            if (!historyContainer) return;
+            
+            historyContainer.innerHTML = '';
+            
+            if (savedChats.length === 0) {
+                historyContainer.innerHTML = '<div style="padding: 10px; text-align: center; opacity: 0.6; font-size: 0.9em;">No saved chats yet</div>';
+                return;
+            }
+            
+            // Show in reverse order (newest at top)
+            const sorted = [...savedChats].sort((a, b) => 
+                new Date(b.lastUpdated || b.created) - new Date(a.lastUpdated || a.created)
+            );
+            
+            sorted.forEach((chat) => {
+                const chatItem = document.createElement('div');
+                chatItem.className = 'history-item';
+                if (currentChatId === chat.id) {
+                    chatItem.style.borderLeftColor = 'var(--primary-color)';
+                    chatItem.style.background = 'rgba(0, 170, 255, 0.1)';
+                }
+                
+                const date = new Date(chat.lastUpdated || chat.created);
+                const dateStr = date.toLocaleDateString();
+                const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                const messageCount = chat.metadata?.messageCount || chat.messages?.length || 0;
+                
+                // Get preview text from first user message
+                const firstUserMsg = chat.messages?.find(m => m.role === 'user');
+                const preview = firstUserMsg?.content?.substring(0, 50) || 'No messages';
+                
+                chatItem.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 5px;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; font-size: 0.95em; margin-bottom: 3px;">${escapeHtml(chat.name)}</div>
+                            <div style="font-size: 0.8em; opacity: 0.7; margin-bottom: 3px;">${escapeHtml(preview)}${preview.length >= 50 ? '...' : ''}</div>
+                            <div style="font-size: 0.75em; opacity: 0.6;">${messageCount} messages • ${dateStr} ${timeStr}</div>
+                        </div>
+                        <button onclick="deleteChat('${chat.id}', event)" style="background: #ff4444; color: white; border: none; border-radius: 3px; padding: 3px 6px; font-size: 0.7em; cursor: pointer; margin-left: 5px;">×</button>
+                    </div>
+                `;
+                
+                // Click to load chat
+                chatItem.onclick = (e) => {
+                    if (e.target.tagName !== 'BUTTON') {
+                        loadChat(chat.id);
+                    }
+                };
+                
+                historyContainer.appendChild(chatItem);
+            });
+        }
+
+        function scrollToMessageInChat(historyItem) {
+            const chatArea = document.getElementById('chat-area');
+            const messages = chatArea.querySelectorAll('.message');
+            
+            // Find matching message by author and time
+            for (const msg of messages) {
+                const header = msg.querySelector('.message-header');
+                if (header && header.textContent.includes(historyItem.author) && 
+                    header.textContent.includes(historyItem.time)) {
+                    msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Highlight briefly
+                    msg.style.background = 'var(--active-bg)';
+                    setTimeout(() => {
+                        msg.style.background = '';
+                    }, 2000);
+                    break;
+                }
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Format message text with links, code blocks, artifacts, etc.
+        function formatMessageText(text) {
+            if (!text) return text;
+            
+            let formatted = text;
+            
+            // Format [ARTIFACT: ...] blocks FIRST (before other formatting)
+            const artifactRegex = /\[ARTIFACT:\s*type:(\w+)\s*title:([^\]]+)\]([\s\S]*?)\[\/ARTIFACT\]/g;
+            formatted = formatted.replace(artifactRegex, (match, type, title, content) => {
+                const artifactId = 'artifact-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                return createArtifactElement(artifactId, type, title.trim(), content.trim());
+            });
+            
+            // Convert URLs to clickable links
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            formatted = formatted.replace(urlRegex, '<a href="$1" target="_blank" style="color: var(--primary-color); text-decoration: underline;">$1</a>');
+            
+            // Format [BROWSER: ...] commands as badges
+            const browserRegex = /\[BROWSER:\s*([^\]]+)\]/g;
+            formatted = formatted.replace(browserRegex, '<span class="command-badge" style="background: rgba(0, 255, 0, 0.1); border: 1px solid var(--primary-color); padding: 2px 6px; border-radius: 3px; font-family: monospace;">🌐 BROWSER: $1</span>');
+            
+            // Format [SEARCH: ...] commands as badges
+            const searchRegex = /\[SEARCH:\s*([^\]]+)\]/g;
+            formatted = formatted.replace(searchRegex, '<span class="command-badge" style="background: rgba(0, 255, 0, 0.1); border: 1px solid var(--primary-color); padding: 2px 6px; border-radius: 3px; font-family: monospace;">🔍 SEARCH: $1</span>');
+            
+            // Format code blocks (basic)
+            const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g;
+            formatted = formatted.replace(codeBlockRegex, (match, lang, code) => {
+                const language = lang || 'text';
+                return `<pre style="background: rgba(0, 0, 0, 0.3); padding: 10px; border: 1px solid var(--primary-color); border-radius: 5px; overflow-x: auto; position: relative;"><span style="position: absolute; top: 5px; right: 10px; font-size: 0.8em; opacity: 0.5;">${language}</span><code style="display: block; margin-top: 20px;">${escapeHtml(code.trim())}</code></pre>`;
+            });
+            
+            // Format inline code
+            const inlineCodeRegex = /`([^`]+)`/g;
+            formatted = formatted.replace(inlineCodeRegex, '<code style="background: rgba(0, 255, 0, 0.1); padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>');
+            
+            // Preserve line breaks
+            formatted = formatted.replace(/\n/g, '<br>');
+            
+            return formatted;
+        }
+        
+        // Create artifact element (Claude-style)
+        function createArtifactElement(id, type, title, content) {
+            const artifactTypes = {
+                'html': { icon: '🌐', mime: 'text/html' },
+                'code': { icon: '💻', mime: 'text/plain' },
+                'app': { icon: '🎮', mime: 'text/html' },
+                'visualization': { icon: '📊', mime: 'text/html' }
+            };
+            
+            const artifactInfo = artifactTypes[type] || { icon: '📄', mime: 'text/plain' };
+            
+            return `
+                <div class="artifact-container" id="${id}" style="margin: 15px 0; border: 2px solid var(--primary-color); border-radius: 8px; overflow: hidden; background: rgba(0, 0, 0, 0.3);">
+                    <div class="artifact-header" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: rgba(0, 255, 0, 0.1); border-bottom: 1px solid var(--primary-color); cursor: pointer;" onclick="toggleArtifact('${id}')">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 1.2em;">${artifactInfo.icon}</span>
+                            <span style="font-weight: bold; text-shadow: 0 0 10px #00ff00;">${escapeHtml(title)}</span>
+                            <span style="opacity: 0.6; font-size: 0.9em;">(${type})</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button onclick="event.stopPropagation(); copyArtifact('${id}')" style="padding: 5px 10px; background: rgba(0, 255, 0, 0.2); border: 1px solid var(--primary-color); color: var(--primary-color); cursor: pointer; font-family: monospace; font-size: 0.9em;">[COPY]</button>
+                            <span class="artifact-toggle" id="${id}-toggle" style="font-size: 1.2em;">▼</span>
+                        </div>
+                    </div>
+                    <div class="artifact-content" id="${id}-content" style="display: block; max-height: 600px; overflow: auto;">
+                        ${renderArtifactContent(type, content)}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Render artifact content based on type
+        function renderArtifactContent(type, content) {
+            if (type === 'html' || type === 'app' || type === 'visualization') {
+                // Create a sandboxed iframe for HTML artifacts
+                const artifactId = 'artifact-iframe-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                const blob = new Blob([content], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                
+                return `
+                    <iframe 
+                        id="${artifactId}"
+                        src="${url}"
+                        style="width: 100%; height: 500px; border: none; background: #000;"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                    ></iframe>
+                `;
+            } else if (type === 'code') {
+                return `
+                    <pre style="background: rgba(0, 0, 0, 0.5); padding: 15px; margin: 0; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 0.9em; line-height: 1.4;"><code>${escapeHtml(content)}</code></pre>
+                `;
+            } else {
+                return `
+                    <div style="padding: 15px; white-space: pre-wrap; font-family: monospace;">${escapeHtml(content)}</div>
+                `;
+            }
+        }
+        
+        // Toggle artifact visibility
+        function toggleArtifact(id) {
+            const content = document.getElementById(id + '-content');
+            const toggle = document.getElementById(id + '-toggle');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                toggle.textContent = '▼';
+            } else {
+                content.style.display = 'none';
+                toggle.textContent = '▶';
+            }
+        }
+        
+        // Copy artifact content
+        function copyArtifact(id) {
+            const content = document.getElementById(id + '-content');
+            const text = content.innerText || content.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                addSystemMessage('✅ Artifact copied to clipboard');
+            }).catch(err => {
+                addSystemMessage('❌ Failed to copy artifact');
+            });
+        }
+        
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Process agent response for browser/search commands
+        async function processAgentResponse(response, agentKey) {
+            // First, add the message
+            addMessage(agents[agentKey].name.toUpperCase(), response);
+            
+            // Check for browser commands
+            const browserPattern = /\[BROWSER:\s*([^\]]+)\]/g;
+            const browserMatches = [...response.matchAll(browserPattern)];
+            
+            if (browserMatches.length > 0) {
+                // Show browser action indicator
+                addSystemMessage('🌐 Agent is using browser...');
+                
+                // Auto-open browser view if not already open
+                if (!browserViewActive) {
+                    toggleBrowserView();
+                }
+                
+                // Process each browser command
+                for (const match of browserMatches) {
+                    const command = match[1].trim();
+                    const [action, ...args] = command.split(':');
+                    const value = args.join(':');
+                    
+                    if (action === 'navigate') {
+                        await handleBrowserNavigate(value);
+                    } else if (action === 'run-app') {
+                        await handleBrowserRunApp(value);
+                    }
+                }
+            }
+            
+            // Check for search commands (show indicator)
+            const searchPattern = /\[SEARCH:\s*([^\]]+)\]/g;
+            const searchMatches = [...response.matchAll(searchPattern)];
+            
+            if (searchMatches.length > 0) {
+                addSystemMessage('🔍 Agent is searching the web...');
+            }
+        }
+
+        // Handle browser navigation
+        async function handleBrowserNavigate(url) {
+            try {
+                // Ensure URL has protocol
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    url = 'https://' + url;
+                }
+                
+                addSystemMessage(`🌐 Navigating to: ${url}`);
+                
+                const response = await fetch('/api/browser/navigate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        url: url,
+                        sessionId: 'agent-session'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateBrowserView(data.url, data.title, data.screenshot);
+                    addSystemMessage(`✅ Loaded: ${data.title || data.url}`);
+                } else {
+                    addSystemMessage(`❌ Failed to navigate: ${data.error}`);
+                }
+            } catch (error) {
+                addSystemMessage(`❌ Browser error: ${error.message}`);
+            }
+        }
+
+        // Handle running apps
+        async function handleBrowserRunApp(appPath) {
+            await runApp(appPath);
+        }
 
         function addSystemMessage(text) {
             const chatArea = document.getElementById('chat-area');
@@ -975,6 +2112,14 @@
             message.className = 'message';
             message.style.borderLeftColor = '#ff0000';
             message.style.background = 'rgba(255, 0, 0, 0.05)';
+            
+            const time = new Date().toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            
             message.innerHTML = `
                 <div class="message-header">[SYSTEM]</div>
                 <div>${text}</div>
@@ -985,6 +2130,8 @@
             // Save to conversation log
             conversationLog.push({ author: 'SYSTEM', text, type: 'system' });
             saveConversation();
+            
+            // Add to history sidebar (already added above in addSystemMessage)
         }
 
         function saveConversation() {
@@ -1030,6 +2177,7 @@
                     conversationLog = JSON.parse(saved);
 
                     addSystemMessage(`Restored ${conversationLog.length} messages from previous session`);
+                    // History sidebar will be populated by addMessage/addSystemMessage calls above
                 }
             } catch (e) {
                 console.warn('Failed to load conversation:', e);
@@ -1043,10 +2191,27 @@
             thinking.id = `thinking-${agentKey}`;
             thinking.innerHTML = `
                 <div class="message-header">[${agents[agentKey].name.toUpperCase()}]</div>
-                <div class="thinking-cursor">PROCESSING</div>
+                <div class="thinking-cursor">
+                    <span class="thinking-dots">PROCESSING</span>
+                    <span class="thinking-animation">...</span>
+                </div>
             `;
             chatArea.appendChild(thinking);
             chatArea.scrollTop = chatArea.scrollHeight;
+            
+            // Animate thinking dots
+            const dots = thinking.querySelector('.thinking-animation');
+            if (dots) {
+                let dotCount = 0;
+                const dotInterval = setInterval(() => {
+                    if (!document.getElementById(`thinking-${agentKey}`)) {
+                        clearInterval(dotInterval);
+                        return;
+                    }
+                    dotCount = (dotCount % 3) + 1;
+                    dots.textContent = '.'.repeat(dotCount);
+                }, 500);
+            }
         }
 
         function removeThinking(agentKey) {
@@ -1089,6 +2254,276 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
         }
 
         // Memory Viewer
+        async function viewSettings() {
+            try {
+                const response = await fetch('/api/settings/keys');
+                const data = await response.json();
+                const services = data.services || [];
+                
+                // Common API services with templates
+                const commonServices = [
+                    { service: 'openai', label: 'OpenAI', description: 'GPT-3.5, GPT-4, DALL-E, Whisper', icon: '🤖', capabilities: ['chat', 'image', 'audio'] },
+                    { service: 'anthropic', label: 'Anthropic', description: 'Claude AI models', icon: '🧠', capabilities: ['chat', 'analysis'] },
+                    { service: 'github', label: 'GitHub', description: 'Repositories, Issues, PRs, Gists', icon: '🐙', capabilities: ['search', 'repos', 'issues', 'prs', 'gists'] }
+                ];
+                
+                const configuredServices = new Set(services.map(s => s.service));
+                const customServices = services.filter(s => !commonServices.find(cs => cs.service === s.service));
+                
+                let html = `
+                    <div style="background: var(--screen-bg); padding: 30px; border-radius: 8px; max-width: 1200px; margin: 20px auto; color: var(--text-color);">
+                        <h2 style="color: var(--primary-color); margin-top: 0; font-size: 2em;">⚙️ API KEY SETTINGS</h2>
+                        <p style="color: var(--text-color); opacity: 0.8; margin-bottom: 30px; font-size: 1.1em;">Store API keys securely. Keys are encrypted using AES-256-GCM and never exposed to agents.</p>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+                            <div>
+                                <h3 style="color: var(--primary-color); margin-bottom: 15px;">🔐 Security</h3>
+                                <ul style="color: var(--text-color); opacity: 0.9; line-height: 1.8;">
+                                    <li>Keys encrypted with AES-256-GCM</li>
+                                    <li>Never sent to frontend</li>
+                                    <li>Decrypted only when needed</li>
+                                    <li>Stored in encrypted JSON file</li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h3 style="color: var(--primary-color); margin-bottom: 15px;">💡 How Agents Use APIs</h3>
+                                <ul style="color: var(--text-color); opacity: 0.9; line-height: 1.8;">
+                                    <li><strong>GitHub:</strong> Search repos, read code, create issues/PRs</li>
+                                    <li><strong>OpenAI:</strong> Chat, generate images, transcribe audio</li>
+                                    <li><strong>Anthropic:</strong> Analysis, reasoning, explanations</li>
+                                    <li><strong>Custom:</strong> Any REST API you configure</li>
+                                </ul>
+                            </div>
+                        </div>
+                        
+                        <h3 style="color: var(--primary-color); margin: 30px 0 15px 0; border-bottom: 2px solid var(--border-color); padding-bottom: 10px;">📋 Predefined Services</h3>
+                        <div id="api-keys-list">
+                `;
+                
+                for (const svc of commonServices) {
+                    const isConfigured = configuredServices.has(svc.service);
+                    const existing = services.find(s => s.service === svc.service);
+                    
+                    html += `
+                        <div style="background: var(--hover-bg); padding: 20px; margin-bottom: 15px; border-radius: 8px; border: 2px solid ${isConfigured ? 'var(--primary-color)' : 'var(--border-color)'};">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                                <div style="flex: 1;">
+                                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                                        <span style="font-size: 1.5em;">${svc.icon}</span>
+                                        <strong style="color: var(--primary-color); font-size: 1.2em;">${svc.label}</strong>
+                                        <span style="color: ${isConfigured ? 'var(--primary-color)' : '#ff0'}; font-size: 0.9em;">
+                                            ${isConfigured ? '✓ Configured' : '○ Not configured'}
+                                        </span>
+                                    </div>
+                                    <div style="color: var(--text-color); opacity: 0.8; margin-bottom: 10px;">${svc.description}</div>
+                                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                        ${svc.capabilities.map(cap => `<span style="background: var(--active-bg); padding: 4px 8px; border-radius: 4px; font-size: 0.85em; border: 1px solid var(--border-color);">${cap}</span>`).join('')}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            ${isConfigured ? `
+                                <div style="margin-top: 15px; display: flex; gap: 10px;">
+                                    <button onclick="testApiKey('${svc.service}')" style="background: var(--primary-color); color: var(--bg-color); border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold;">Test</button>
+                                    <button onclick="deleteApiKey('${svc.service}')" style="background: #ff4444; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer;">Delete</button>
+                                    ${svc.service === 'github' ? `<button onclick="showGitHubCapabilities()" style="background: var(--hover-bg); color: var(--text-color); border: 1px solid var(--border-color); padding: 8px 15px; border-radius: 5px; cursor: pointer;">Capabilities</button>` : ''}
+                                </div>
+                            ` : `
+                                <div style="margin-top: 15px;">
+                                    <input type="text" id="key-${svc.service}" placeholder="Enter API key..." style="width: 70%; padding: 10px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); border-radius: 5px; font-family: monospace; font-size: 0.95em;">
+                                    <button onclick="saveApiKey('${svc.service}', '${svc.label}', '${svc.description}')" style="background: var(--primary-color); color: var(--bg-color); border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-left: 10px; font-weight: bold;">Save</button>
+                                </div>
+                            `}
+                        </div>
+                    `;
+                }
+                
+                // Custom APIs section
+                html += `
+                        </div>
+                        
+                        <h3 style="color: var(--primary-color); margin: 30px 0 15px 0; border-bottom: 2px solid var(--border-color); padding-bottom: 10px;">🔧 Custom API Services</h3>
+                        <div id="custom-apis-list">
+                `;
+                
+                // Show custom APIs
+                customServices.forEach(svc => {
+                    html += `
+                        <div style="background: var(--hover-bg); padding: 15px; margin-bottom: 10px; border-radius: 5px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong style="color: var(--primary-color);">${svc.label || svc.service}</strong>
+                                <span style="color: var(--text-color); opacity: 0.7; margin-left: 10px;">${svc.description || 'Custom API service'}</span>
+                            </div>
+                            <div>
+                                <button onclick="testApiKey('${svc.service}')" style="background: var(--primary-color); color: var(--bg-color); border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; margin-right: 5px; font-size: 0.9em;">Test</button>
+                                <button onclick="deleteApiKey('${svc.service}')" style="background: #ff4444; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 0.9em;">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
+                        
+                        <div style="margin-top: 20px; padding: 20px; background: var(--hover-bg); border-radius: 8px; border: 2px solid var(--border-color);">
+                            <h3 style="color: var(--primary-color); margin-top: 0;">➕ Add Custom API</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 10px; margin-bottom: 10px;">
+                                <input type="text" id="custom-service-name" placeholder="Service name (e.g., 'myapi')" style="padding: 10px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); border-radius: 5px;">
+                                <input type="text" id="custom-service-label" placeholder="Display name (e.g., 'My API')" style="padding: 10px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); border-radius: 5px;">
+                                <input type="text" id="custom-service-desc" placeholder="Description" style="padding: 10px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); border-radius: 5px;">
+                            </div>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="text" id="custom-service-key" placeholder="Enter API key..." style="flex: 1; padding: 10px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); border-radius: 5px; font-family: monospace;">
+                                <button onclick="saveCustomApiKey()" style="background: var(--primary-color); color: var(--bg-color); border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">Add API</button>
+                            </div>
+                            <p style="color: var(--text-color); opacity: 0.7; font-size: 0.9em; margin-top: 10px;">
+                                Custom APIs can be used via [API: servicename:action:params]. You'll need to implement the handler in server.js for custom actions.
+                            </p>
+                        </div>
+                        
+                        <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid var(--border-color);">
+                            <h3 style="color: var(--primary-color); margin-bottom: 15px;">📖 Usage Examples</h3>
+                            <div style="background: var(--hover-bg); padding: 15px; border-radius: 5px; font-family: monospace; font-size: 0.9em; line-height: 1.8; color: var(--text-color);">
+                                <div><strong>OpenAI:</strong> [API: openai:chat:What is quantum computing?]</div>
+                                <div><strong>Anthropic:</strong> [API: anthropic:chat:Analyze this code]</div>
+                                <div><strong>GitHub Search:</strong> [API: github:search:react hooks]</div>
+                                <div><strong>GitHub Repo:</strong> [API: github:repo:owner/repo] - Get repo info</div>
+                                <div><strong>GitHub Issues:</strong> [API: github:issues:owner/repo] - List issues</div>
+                                <div><strong>GitHub Create Issue:</strong> [API: github:create-issue:owner/repo:title:body]</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                addSystemMessage(html);
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_LOAD_SETTINGS - ' + error.message);
+            }
+        }
+        
+        async function saveCustomApiKey() {
+            const service = document.getElementById('custom-service-name').value.trim();
+            const label = document.getElementById('custom-service-label').value.trim();
+            const description = document.getElementById('custom-service-desc').value.trim();
+            const key = document.getElementById('custom-service-key').value.trim();
+            
+            if (!service || !key) {
+                addSystemMessage('ERROR: Service name and API key are required');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/settings/keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ service, key, label: label || service, description: description || 'Custom API service' })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addSystemMessage(`✓ Custom API key saved for ${label || service}`);
+                    // Clear form
+                    document.getElementById('custom-service-name').value = '';
+                    document.getElementById('custom-service-label').value = '';
+                    document.getElementById('custom-service-desc').value = '';
+                    document.getElementById('custom-service-key').value = '';
+                    viewSettings(); // Refresh
+                } else {
+                    addSystemMessage('ERROR: ' + (data.error || 'Failed to save API key'));
+                }
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_SAVE_API_KEY - ' + error.message);
+            }
+        }
+        
+        function showGitHubCapabilities() {
+            const html = `
+                <div style="background: var(--screen-bg); padding: 20px; border-radius: 8px; border: 2px solid var(--border-color); color: var(--text-color);">
+                    <h3 style="color: var(--primary-color); margin-top: 0;">🐙 GitHub API Capabilities</h3>
+                    <p style="opacity: 0.9; margin-bottom: 15px;">With GitHub API key, agents can:</p>
+                    <ul style="line-height: 2; opacity: 0.9;">
+                        <li><strong>Search Repositories:</strong> [API: github:search:query] - Find repos by name/topic</li>
+                        <li><strong>Get Repository Info:</strong> [API: github:repo:owner/repo] - Get repo details, stars, description</li>
+                        <li><strong>List Issues:</strong> [API: github:issues:owner/repo] - View open/closed issues</li>
+                        <li><strong>Create Issue:</strong> [API: github:create-issue:owner/repo:title:body] - Create new issues</li>
+                        <li><strong>List PRs:</strong> [API: github:prs:owner/repo] - View pull requests</li>
+                        <li><strong>Get File Content:</strong> [API: github:file:owner/repo:path] - Read file contents</li>
+                        <li><strong>List Gists:</strong> [API: github:gists:username] - View user's gists</li>
+                    </ul>
+                    <p style="margin-top: 15px; opacity: 0.8; font-size: 0.9em;">
+                        <strong>Note:</strong> GitHub API requires a Personal Access Token with appropriate scopes (repo, gist, etc.)
+                    </p>
+                </div>
+            `;
+            addSystemMessage(html);
+        }
+        
+        async function saveApiKey(service, label, description) {
+            const keyInput = document.getElementById(`key-${service}`);
+            const key = keyInput.value.trim();
+            
+            if (!key) {
+                addSystemMessage('ERROR: API key cannot be empty');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/settings/keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ service, key, label, description })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addSystemMessage(`✓ API key saved for ${label}`);
+                    viewSettings(); // Refresh
+                } else {
+                    addSystemMessage('ERROR: ' + (data.error || 'Failed to save API key'));
+                }
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_SAVE_API_KEY - ' + error.message);
+            }
+        }
+        
+        async function deleteApiKey(service) {
+            if (!confirm(`Delete API key for ${service}?`)) return;
+            
+            try {
+                const response = await fetch(`/api/settings/keys/${service}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addSystemMessage(`✓ API key deleted for ${service}`);
+                    viewSettings(); // Refresh
+                } else {
+                    addSystemMessage('ERROR: ' + (data.error || 'Failed to delete API key'));
+                }
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_DELETE_API_KEY - ' + error.message);
+            }
+        }
+        
+        async function testApiKey(service) {
+            addSystemMessage(`Testing ${service} API key...`);
+            try {
+                const response = await fetch(`/api/settings/keys/${service}/test`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addSystemMessage(`✓ ${data.message}`);
+                } else {
+                    addSystemMessage(`✗ ${data.message}`);
+                }
+            } catch (error) {
+                addSystemMessage('ERROR: FAILED_TO_TEST_API_KEY - ' + error.message);
+            }
+        }
+        
         async function viewMemory() {
             try {
                 const response = await fetch('/api/memory');
@@ -1249,7 +2684,9 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
         }
 
         // Theme Management
-        const themes = [
+        let isRetroMode = false;
+        let currentTheme = 'dark'; // 'dark', 'light', or 'matrix'
+        const retroThemes = [
             { name: 'GREEN', class: '' },
             { name: 'AMBER', class: 'theme-amber' },
             { name: 'BLUE', class: 'theme-blue' },
@@ -1257,40 +2694,180 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             { name: 'CYBERPUNK', class: 'theme-cyberpunk' },
             { name: 'PHOSPHOR', class: 'theme-phosphor' }
         ];
-        let currentThemeIndex = 0;
+        let currentRetroThemeIndex = 2; // Default to MATRIX
 
-        function cycleTheme() {
-            currentThemeIndex = (currentThemeIndex + 1) % themes.length;
-            const theme = themes[currentThemeIndex];
+        function toggleRetroMode() {
+            isRetroMode = !isRetroMode;
+            
+            if (isRetroMode) {
+                document.body.classList.add('retro-mode');
+                // Apply retro theme based on current theme
+                retroThemes.forEach(t => {
+                    if (t.class) document.body.classList.remove(t.class);
+                });
+                
+                if (currentTheme === 'matrix') {
+                    document.body.classList.add('theme-matrix');
+                    initMatrixRain();
+                } else if (currentTheme === 'light') {
+                    // Use amber for light theme in retro mode
+                    document.body.classList.add('theme-amber');
+                    stopMatrixRain();
+                } else {
+                    // Use blue for dark theme in retro mode
+                    document.body.classList.add('theme-blue');
+                    stopMatrixRain();
+                }
+            } else {
+                document.body.classList.remove('retro-mode');
+                // Remove all retro theme classes
+                retroThemes.forEach(t => {
+                    if (t.class) document.body.classList.remove(t.class);
+                });
+                // Apply current theme (dark/light/matrix) in modern mode
+                applyTheme(currentTheme);
+            }
+            
+            const retroStatusEl = document.getElementById('retro-status');
+            if (retroStatusEl) {
+                retroStatusEl.textContent = isRetroMode ? 'ON' : 'OFF';
+            }
+            localStorage.setItem('retroMode', isRetroMode);
+            addSystemMessage(`Retro mode: ${isRetroMode ? 'ON' : 'OFF'}`);
+        }
 
-            // Remove all theme classes
-            document.body.className = '';
+        function applyTheme(theme) {
+            // Remove all theme classes first
+            document.body.classList.remove('theme-dark', 'theme-light', 'theme-matrix');
+            
+            if (theme === 'matrix') {
+                // Matrix theme - green on black with matrix rain
+                document.body.classList.add('theme-matrix');
+                // Start matrix rain for matrix theme (works in both retro and modern)
+                initMatrixRain();
+            } else if (theme === 'light') {
+                document.body.classList.add('theme-light');
+                stopMatrixRain();
+            } else {
+                // Default to dark
+                document.body.classList.add('theme-dark');
+                stopMatrixRain();
+            }
+        }
+
+        function toggleLightDark() {
+            // Cycle through: dark -> light -> matrix -> dark
+            if (currentTheme === 'dark') {
+                currentTheme = 'light';
+            } else if (currentTheme === 'light') {
+                currentTheme = 'matrix';
+            } else {
+                currentTheme = 'dark';
+            }
+            
+            // Apply theme regardless of retro mode
+            // If retro mode is on, it will keep retro effects but use the theme colors
+            applyTheme(currentTheme);
+            
+            // If in retro mode, we need to also apply the retro theme variant
+            if (isRetroMode) {
+                // Remove all retro theme classes first
+                retroThemes.forEach(t => {
+                    if (t.class) document.body.classList.remove(t.class);
+                });
+                
+                // Apply retro theme based on current theme
+                if (currentTheme === 'matrix') {
+                    // Use matrix retro theme
+                    document.body.classList.add('theme-matrix');
+                } else if (currentTheme === 'light') {
+                    // Use amber retro theme for light (warm colors)
+                    document.body.classList.add('theme-amber');
+                } else {
+                    // Use blue retro theme for dark (cool colors)
+                    document.body.classList.add('theme-blue');
+                }
+            }
+            
+            document.getElementById('theme-mode').textContent = currentTheme.toUpperCase();
+            localStorage.setItem('currentTheme', currentTheme);
+            addSystemMessage(`Theme: ${currentTheme.toUpperCase()}${isRetroMode ? ' (Retro)' : ''}`);
+        }
+
+        // Cycle retro themes (only works in retro mode)
+        function cycleRetroTheme() {
+            if (!isRetroMode) return;
+            
+            currentRetroThemeIndex = (currentRetroThemeIndex + 1) % retroThemes.length;
+            const theme = retroThemes[currentRetroThemeIndex];
+
+            // Remove all retro theme classes
+            retroThemes.forEach(t => {
+                if (t.class) document.body.classList.remove(t.class);
+            });
 
             // Add new theme class if not default
             if (theme.class) {
                 document.body.classList.add(theme.class);
             }
 
-            // Update theme name display
-            document.getElementById('theme-name').textContent = theme.name;
+            // Update matrix rain
+            if (theme.class === 'theme-matrix' || currentRetroThemeIndex === 2) {
+                initMatrixRain();
+            } else {
+                stopMatrixRain();
+            }
 
-            // Save preference
-            localStorage.setItem('preferredTheme', currentThemeIndex);
-
-            addSystemMessage(`Theme changed to: ${theme.name}`);
+            localStorage.setItem('retroThemeIndex', currentRetroThemeIndex);
+            addSystemMessage(`Retro theme: ${theme.name}`);
         }
 
-        // Load saved theme on startup
+        // Load saved theme preferences on startup
         function loadSavedTheme() {
-            const savedTheme = localStorage.getItem('preferredTheme');
-            if (savedTheme !== null) {
-                currentThemeIndex = parseInt(savedTheme);
-                const theme = themes[currentThemeIndex];
-                if (theme.class) {
-                    document.body.classList.add(theme.class);
-                }
-                document.getElementById('theme-name').textContent = theme.name;
+            // Load retro mode
+            const savedRetro = localStorage.getItem('retroMode');
+            if (savedRetro === 'true') {
+                isRetroMode = true;
+                document.body.classList.add('retro-mode');
             }
+            
+            // Load retro theme index
+            const savedRetroTheme = localStorage.getItem('retroThemeIndex');
+            if (savedRetroTheme !== null) {
+                currentRetroThemeIndex = parseInt(savedRetroTheme);
+            }
+            
+            // Load current theme (dark/light/matrix)
+            const savedTheme = localStorage.getItem('currentTheme');
+            if (savedTheme && ['dark', 'light', 'matrix'].includes(savedTheme)) {
+                currentTheme = savedTheme;
+            } else {
+                // Default to dark
+                currentTheme = 'dark';
+            }
+            
+            // Apply themes
+            if (isRetroMode) {
+                // Apply retro theme based on current theme
+                retroThemes.forEach(t => {
+                    if (t.class) document.body.classList.remove(t.class);
+                });
+                
+                if (currentTheme === 'matrix') {
+                    document.body.classList.add('theme-matrix');
+                    // Matrix rain will be initialized after page load
+                } else if (currentTheme === 'light') {
+                    document.body.classList.add('theme-amber');
+                } else {
+                    document.body.classList.add('theme-blue');
+                }
+            } else {
+                applyTheme(currentTheme);
+            }
+            
+            // Update UI
+            document.getElementById('retro-status').textContent = isRetroMode ? 'ON' : 'OFF';
+            document.getElementById('theme-mode').textContent = currentTheme.toUpperCase();
         }
 
         // ===================================
@@ -1304,27 +2881,49 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
         async function openCollaborationPanel() {
             console.log('🚀 Opening collaboration panel...');
 
-            // Reset display states and open modal FIRST
+            // Reset display states
             document.getElementById('collab-progress').style.display = 'none';
             document.getElementById('collab-results').style.display = 'none';
-            document.getElementById('collaboration-modal').style.display = 'block';
+            
+            // Show config section
+            const configSection = document.querySelector('#collaboration-content > .memory-section');
+            if (configSection) configSection.style.display = 'block';
+            
+            // Open in current view mode (modal or integrated)
+            if (collabViewMode === 'integrated') {
+                const integratedPanel = document.getElementById('collab-panel-integrated');
+                integratedPanel.classList.add('active');
+                // Sync content to integrated view
+                syncCollabContent();
+            } else {
+                document.getElementById('collaboration-modal').style.display = 'block';
+            }
 
             // Populate agent checkboxes (always available, not dependent on templates)
+            // Need to populate in both modal and integrated views
             const agentContainer = document.getElementById('collab-agents');
-            agentContainer.innerHTML = '';
-            Object.keys(agents).forEach(agentKey => {
-                const checkbox = document.createElement('div');
-                checkbox.style.padding = '10px';
-                checkbox.style.border = '1px solid var(--primary-color)';
-                checkbox.style.cursor = 'pointer';
-                checkbox.innerHTML = `
-                    <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox" value="${agentKey}" style="width: 20px; height: 20px; cursor: pointer;">
-                        <span>${agentIcons[agentKey] || '🤖'} ${agents[agentKey].name.toUpperCase()}</span>
-                    </label>
-                `;
-                agentContainer.appendChild(checkbox);
-            });
+            const agentContainerIntegrated = document.getElementById('collab-content-integrated')?.querySelector('#collab-agents');
+            
+            const populateAgents = (container) => {
+                if (!container) return;
+                container.innerHTML = '';
+                Object.keys(agents).forEach(agentKey => {
+                    const checkbox = document.createElement('div');
+                    checkbox.style.padding = '10px';
+                    checkbox.style.border = '1px solid var(--primary-color)';
+                    checkbox.style.cursor = 'pointer';
+                    checkbox.innerHTML = `
+                        <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" value="${agentKey}" style="width: 20px; height: 20px; cursor: pointer;">
+                            <span>${agentIcons[agentKey] || '🤖'} ${agents[agentKey].name.toUpperCase()}</span>
+                        </label>
+                    `;
+                    container.appendChild(checkbox);
+                });
+            };
+            
+            populateAgents(agentContainer);
+            if (agentContainerIntegrated) populateAgents(agentContainerIntegrated);
 
             // Load templates (may fail, but modal stays open)
             try {
@@ -1333,9 +2932,28 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                 console.log('✅ Templates loaded:', data.templates);
                 collaborationTemplates = data.templates || [];
 
-                // Populate template selector
+                // Populate template selector in both views
+                const populateTemplates = (selector) => {
+                    if (!selector) return;
+                    selector.innerHTML = '<option value="custom">CUSTOM</option>';
+
+                    if (data.fallbackMode || !data.templates || data.templates.length === 0) {
+                        return;
+                    }
+
+                    collaborationTemplates.forEach(template => {
+                        const option = document.createElement('option');
+                        option.value = template.id;
+                        option.textContent = `${template.name.toUpperCase()} - ${template.description}`;
+                        selector.appendChild(option);
+                    });
+                };
+                
                 const templateSelector = document.getElementById('collab-template');
-                templateSelector.innerHTML = '<option value="custom">CUSTOM</option>';
+                const templateSelectorIntegrated = document.getElementById('collab-content-integrated')?.querySelector('#collab-template');
+                
+                populateTemplates(templateSelector);
+                populateTemplates(templateSelectorIntegrated);
 
                 if (data.fallbackMode || !data.templates || data.templates.length === 0) {
                     console.warn('⚠ Templates unavailable, using custom mode only');
@@ -1343,26 +2961,31 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                     return; // Modal stays open in custom mode
                 }
 
-                collaborationTemplates.forEach(template => {
-                    const option = document.createElement('option');
-                    option.value = template.id;
-                    option.textContent = `${template.name.toUpperCase()} - ${template.description}`;
-                    templateSelector.appendChild(option);
-                });
-
-                // Auto-select recommended agents based on template
-                templateSelector.addEventListener('change', () => {
-                    const selectedTemplate = collaborationTemplates.find(t => t.id === templateSelector.value);
-                    if (selectedTemplate) {
-                        // Check recommended agents
-                        const checkboxes = document.querySelectorAll('#collab-agents input[type="checkbox"]');
-                        checkboxes.forEach(cb => {
-                            cb.checked = selectedTemplate.recommendedAgents.includes(cb.value);
-                        });
-                        // Set recommended rounds
-                        document.getElementById('collab-rounds').value = selectedTemplate.rounds;
-                    }
-                });
+                // Auto-select recommended agents based on template (for both views)
+                const setupTemplateChange = (selector) => {
+                    if (!selector) return;
+                    // Remove existing listeners by cloning
+                    const newSelector = selector.cloneNode(true);
+                    selector.parentNode.replaceChild(newSelector, selector);
+                    
+                    newSelector.addEventListener('change', () => {
+                        const selectedTemplate = collaborationTemplates.find(t => t.id === newSelector.value);
+                        if (selectedTemplate) {
+                            // Check recommended agents in the same container as the selector
+                            const container = newSelector.closest('.memory-section') || document;
+                            const checkboxes = container.querySelectorAll('#collab-agents input[type="checkbox"]');
+                            checkboxes.forEach(cb => {
+                                cb.checked = selectedTemplate.recommendedAgents.includes(cb.value);
+                            });
+                            // Set recommended rounds
+                            const roundsInput = container.querySelector('#collab-rounds') || document.getElementById('collab-rounds');
+                            if (roundsInput) roundsInput.value = selectedTemplate.rounds;
+                        }
+                    });
+                };
+                
+                setupTemplateChange(templateSelector);
+                if (templateSelectorIntegrated) setupTemplateChange(templateSelectorIntegrated);
 
             } catch (error) {
                 console.error('Error loading collaboration templates:', error);
@@ -1376,6 +2999,683 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             if (collabPollingInterval) {
                 clearInterval(collabPollingInterval);
                 collabPollingInterval = null;
+            }
+        }
+
+        // Toggle between modal and integrated collaboration view
+        let collabViewMode = 'modal'; // 'modal' or 'integrated'
+        
+        function toggleCollabIntegration() {
+            // Try multiple ways to find the elements
+            let integratedPanel = document.getElementById('collab-panel-integrated');
+            let modal = document.getElementById('collaboration-modal');
+            let toggleBtn = document.getElementById('collab-integrate-btn');
+            
+            // If not found by ID, try querySelector
+            if (!integratedPanel) {
+                integratedPanel = document.querySelector('.collab-panel-integrated');
+            }
+            if (!modal) {
+                modal = document.querySelector('#collaboration-modal');
+            }
+            if (!toggleBtn) {
+                toggleBtn = document.querySelector('#collab-integrate-btn');
+            }
+            
+            // Debug logging
+            console.log('🔍 Toggle collab integration - checking elements:', {
+                integratedPanel: !!integratedPanel,
+                modal: !!modal,
+                toggleBtn: !!toggleBtn,
+                chatArea: !!document.getElementById('chat-area'),
+                allCollabElements: document.querySelectorAll('[id*="collab"]').length
+            });
+            
+            if (!integratedPanel) {
+                console.error('❌ collab-panel-integrated element not found');
+                console.log('Available elements in chat-area:', document.getElementById('chat-area')?.children);
+                addSystemMessage('❌ Error: Collaboration panel not found. Creating it now...');
+                
+                // Try to create it if it doesn't exist
+                const chatArea = document.getElementById('chat-area');
+                if (chatArea) {
+                    const newPanel = document.createElement('div');
+                    newPanel.id = 'collab-panel-integrated';
+                    newPanel.className = 'collab-panel-integrated';
+                    newPanel.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid var(--primary-color); padding-bottom: 10px;">
+                            <span style="font-size: 1.5em; text-shadow: 0 0 10px var(--primary-color);">[ AGENT COLLABORATION SYSTEM ]</span>
+                            <button class="collab-toggle-btn" onclick="toggleCollabIntegration()">[CLOSE]</button>
+                        </div>
+                        <div id="collab-content-integrated" style="max-height: calc(100vh - 150px); overflow-y: auto;">
+                            <!-- Collaboration content will be synced from modal -->
+                        </div>
+                    `;
+                    chatArea.appendChild(newPanel);
+                    integratedPanel = newPanel;
+                    addSystemMessage('✅ Collaboration panel created');
+                } else {
+                    addSystemMessage('❌ Chat area not found. Please refresh the page.');
+                    return;
+                }
+            }
+            
+            if (!toggleBtn) {
+                console.error('❌ collab-integrate-btn element not found');
+                addSystemMessage('❌ Error: Toggle button not found. Please refresh the page.');
+                return;
+            }
+            
+            if (collabViewMode === 'modal') {
+                // Switch to integrated view - show panel in chat area
+                collabViewMode = 'integrated';
+                
+                // Close modal if open
+                if (modal) modal.style.display = 'none';
+                
+                // Show integrated panel
+                integratedPanel.classList.add('active');
+                integratedPanel.style.display = 'block'; // Force display
+                toggleBtn.textContent = '📋 MODAL';
+                toggleBtn.title = 'Switch to modal view';
+                
+                // Copy content from modal to integrated view (or initialize)
+                const integratedContent = document.getElementById('collab-content-integrated');
+                if (integratedContent) {
+                    // Check if content is empty or needs initialization
+                    if (!integratedContent.innerHTML.trim() || integratedContent.innerHTML.includes('<!-- Collaboration content will be synced from modal -->')) {
+                        // Initialize the collaboration UI
+                        syncCollabContent();
+                    } else {
+                        // Content exists, just ensure it's visible
+                        const configSection = integratedContent.querySelector('.memory-section');
+                        if (configSection) configSection.style.display = 'block';
+                    }
+                } else {
+                    // Content container doesn't exist, sync will create it
+                    syncCollabContent();
+                }
+                
+                // Scroll to top to show the panel
+                integratedPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                
+                addSystemMessage('💬 Collaboration panel is now visible in chat! Look for the form above with green border.');
+                addSystemMessage('📝 HOW TO USE: 1) Enter a task description 2) Select 2-4 agents 3) Choose template 4) Click START_COLLABORATION');
+            } else {
+                // Switch to modal view
+                collabViewMode = 'modal';
+                integratedPanel.classList.remove('active');
+                
+                // Open modal
+                if (modal) modal.style.display = 'block';
+                
+                toggleBtn.textContent = '💬 IN_CHAT';
+                toggleBtn.title = 'Switch to integrated view';
+                
+                // Ensure config is visible in modal
+                const configSection = document.querySelector('#collaboration-content > .memory-section');
+                if (configSection) configSection.style.display = 'block';
+                
+                addSystemMessage('📋 Collaboration panel switched to modal view');
+            }
+        }
+        
+        function syncCollabContent() {
+            const modalContent = document.getElementById('collaboration-content');
+            const integratedContent = document.getElementById('collab-content-integrated');
+            
+            if (!integratedContent) {
+                console.error('Integrated content container not found');
+                return;
+            }
+            
+            if (collabViewMode === 'integrated') {
+                // If modal content exists and has content, copy it
+                if (modalContent && modalContent.innerHTML.trim() && !modalContent.innerHTML.includes('Loading templates...')) {
+                    integratedContent.innerHTML = modalContent.innerHTML;
+                } else {
+                    // If modal wasn't initialized, create the collaboration UI directly
+                    console.log('Creating collaboration UI in integrated view');
+                    integratedContent.innerHTML = `
+                        <div class="memory-section">
+                            <div class="memory-section-title">╔══[ CONFIGURE COLLABORATION ]══╗</div>
+                            <div style="margin: 20px 0;">
+                                <label style="display: block; margin-bottom: 10px; color: var(--primary-color);">TASK DESCRIPTION:</label>
+                                <textarea id="collab-task" style="width: 100%; height: 100px; background: var(--screen-bg); color: var(--text-color); border: 2px solid var(--border-color); padding: 10px; font-family: inherit; font-size: 1.2em;" placeholder="Describe the task you want agents to collaborate on..."></textarea>
+                            </div>
+                            <div style="margin: 20px 0;">
+                                <label style="display: block; margin-bottom: 10px; color: var(--primary-color);">SELECT TEMPLATE:</label>
+                                <select id="collab-template" style="width: 100%; background: var(--screen-bg); color: var(--primary-color); border: 2px solid var(--primary-color); padding: 10px; font-family: inherit; font-size: 1.2em;">
+                                    <option value="custom">CUSTOM</option>
+                                </select>
+                            </div>
+                            <div style="margin: 20px 0;">
+                                <label style="display: block; margin-bottom: 10px; color: var(--primary-color);">SELECT AGENTS (minimum 2):</label>
+                                <div id="collab-agents" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                                    <!-- Agents will be populated -->
+                                </div>
+                            </div>
+                            <div style="margin: 20px 0;">
+                                <label style="display: block; margin-bottom: 10px; color: var(--primary-color);">NUMBER OF ROUNDS:</label>
+                                <input type="number" id="collab-rounds" min="2" max="10" value="3" style="width: 100%; background: var(--screen-bg); color: var(--primary-color); border: 2px solid var(--primary-color); padding: 10px; font-family: inherit; font-size: 1.2em;">
+                            </div>
+                            <div style="margin: 20px 0; text-align: center;">
+                                <button onclick="startCollaboration()" style="background: transparent; border: 2px solid var(--primary-color); color: var(--primary-color); padding: 15px 40px; font-family: inherit; font-size: 1.3em; cursor: pointer; transition: all 0.3s;">
+                                    [START_COLLABORATION]
+                                </button>
+                            </div>
+                        </div>
+                        <div id="collab-progress" style="display: none;">
+                            <div class="memory-section">
+                                <div class="memory-section-title">╔══[ COLLABORATION IN PROGRESS ]══╗</div>
+                                <div id="collab-status" style="margin: 20px 0; font-size: 1.2em;"></div>
+                                <div style="margin-top: 20px;">
+                                    <div style="color: var(--primary-color); margin-bottom: 10px; font-size: 1.1em;">▼ LIVE CONVERSATION FEED</div>
+                                    <div id="collab-conversation" style="max-height: 600px; min-height: 400px; overflow-y: auto; background: rgba(0, 255, 0, 0.05); border: 1px solid var(--primary-color); padding: 15px; font-size: 0.95em; line-height: 1.6;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="collab-results" style="display: none;">
+                            <div class="memory-section">
+                                <div class="memory-section-title">╔══[ COLLABORATION COMPLETE ]══╗</div>
+                                <div id="collab-synthesis" style="margin: 20px 0;"></div>
+                                <div id="collab-history" style="margin: 20px 0;"></div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // Populate agents in integrated view
+                    const agentContainer = integratedContent.querySelector('#collab-agents');
+                    if (agentContainer && Object.keys(agents).length > 0) {
+                        agentContainer.innerHTML = '';
+                        Object.keys(agents).forEach(agentKey => {
+                            const checkbox = document.createElement('div');
+                            checkbox.style.padding = '10px';
+                            checkbox.style.border = '1px solid var(--primary-color)';
+                            checkbox.style.cursor = 'pointer';
+                            checkbox.innerHTML = `
+                                <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                                    <input type="checkbox" value="${agentKey}" style="width: 20px; height: 20px; cursor: pointer;">
+                                    <span>${agentIcons[agentKey] || '🤖'} ${agents[agentKey].name.toUpperCase()}</span>
+                                </label>
+                            `;
+                            agentContainer.appendChild(checkbox);
+                        });
+                    }
+                }
+                
+                // Load templates for integrated view
+                loadTemplatesForIntegratedView();
+                
+                // Re-attach event listeners for buttons in integrated view
+                const startBtn = integratedContent.querySelector('button[onclick="startCollaboration()"]');
+                if (startBtn) {
+                    startBtn.onclick = startCollaboration;
+                }
+            }
+        }
+        
+        // Load templates for integrated view
+        async function loadTemplatesForIntegratedView() {
+            try {
+                const response = await fetch('/api/collaboration/templates');
+                const data = await response.json();
+                collaborationTemplates = data.templates || [];
+                
+                const templateSelector = document.getElementById('collab-content-integrated')?.querySelector('#collab-template');
+                if (templateSelector) {
+                    templateSelector.innerHTML = '<option value="custom">CUSTOM</option>';
+                    
+                    if (!data.fallbackMode && data.templates && data.templates.length > 0) {
+                        collaborationTemplates.forEach(template => {
+                            const option = document.createElement('option');
+                            option.value = template.id;
+                            option.textContent = `${template.name.toUpperCase()} - ${template.description}`;
+                            templateSelector.appendChild(option);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading templates for integrated view:', error);
+            }
+        }
+
+        // Browser View Functions
+        let browserViewActive = false;
+        let currentBrowserUrl = null;
+        let browserPollInterval = null;
+        let isDragging = false;
+        let isResizing = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let resizeDirection = null;
+        let initialWidth = 0;
+        let initialHeight = 0;
+        let initialLeft = 0;
+        let initialTop = 0;
+
+        function toggleBrowserView() {
+            let browserView = document.getElementById('browser-view');
+            const browserBtn = document.getElementById('browser-view-btn');
+            
+            // If browser view doesn't exist, create it
+            if (!browserView) {
+                console.log('Browser view not found, creating it...');
+                const chatArea = document.getElementById('chat-area');
+                if (chatArea) {
+                    browserView = document.createElement('div');
+                    browserView.id = 'browser-view';
+                    browserView.className = 'browser-view';
+                    browserView.innerHTML = `
+                        <!-- Resize handles -->
+                        <div class="browser-resize-handle n"></div>
+                        <div class="browser-resize-handle s"></div>
+                        <div class="browser-resize-handle e"></div>
+                        <div class="browser-resize-handle w"></div>
+                        <div class="browser-resize-handle ne"></div>
+                        <div class="browser-resize-handle nw"></div>
+                        <div class="browser-resize-handle se"></div>
+                        <div class="browser-resize-handle sw"></div>
+                        <div class="browser-header" id="browser-header">
+                            <div class="browser-title">🌐 LIVE BROWSER VIEW</div>
+                            <div class="browser-controls">
+                                <button class="browser-btn" onclick="refreshBrowser()">[REFRESH]</button>
+                                <button class="browser-btn" onclick="closeBrowserView()">[CLOSE]</button>
+                            </div>
+                        </div>
+                        <div class="browser-content" id="browser-content">
+                            <div style="text-align: center; opacity: 0.6; padding: 40px;">
+                                <div style="font-size: 2em; margin-bottom: 20px;">🌐</div>
+                                <div>Browser view will appear here when agents navigate or run apps</div>
+                                <div style="margin-top: 20px; font-size: 0.9em; opacity: 0.7;">
+                                    Agents can use [BROWSER: navigate:url] to browse websites
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    chatArea.appendChild(browserView);
+                    addSystemMessage('✅ Browser view created');
+                } else {
+                    addSystemMessage('❌ Error: Chat area not found. Cannot create browser view.');
+                    return;
+                }
+            }
+            
+            if (!browserBtn) {
+                console.error('Browser button element not found');
+                addSystemMessage('❌ Error: Browser button not found');
+                return;
+            }
+            
+            browserViewActive = !browserViewActive;
+            
+            if (browserViewActive) {
+                browserView.classList.add('active');
+                browserView.style.display = 'flex'; // Force display
+                browserView.style.visibility = 'visible';
+                browserView.style.opacity = '1';
+                browserView.style.position = 'fixed';
+                browserView.style.top = '100px';
+                browserView.style.left = '270px';
+                browserView.style.right = 'auto';
+                browserView.style.width = 'calc(100% - 300px)';
+                browserView.style.height = '70vh';
+                browserView.style.zIndex = '200';
+                browserBtn.textContent = '🔒 CLOSE';
+                browserBtn.title = 'Close browser view';
+                
+                // Force scroll into view
+                browserView.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                
+                console.log('Browser view activated:', {
+                    element: browserView,
+                    display: browserView.style.display,
+                    visibility: browserView.style.visibility,
+                    zIndex: browserView.style.zIndex,
+                    height: browserView.style.height,
+                    computedStyle: window.getComputedStyle(browserView).display,
+                    offsetHeight: browserView.offsetHeight,
+                    offsetWidth: browserView.offsetWidth
+                });
+                
+                // Verify it's actually visible
+                setTimeout(() => {
+                    const rect = browserView.getBoundingClientRect();
+                    console.log('Browser view position:', rect);
+                    if (rect.height === 0 || rect.width === 0) {
+                        console.error('Browser view has zero dimensions!');
+                        addSystemMessage('⚠️ Browser view may not be visible. Check console for details.');
+                    }
+                }, 100);
+                
+                // Start polling for browser updates
+                startBrowserPolling();
+                
+                // Initialize drag and resize handlers
+                initBrowserDragAndResize();
+                
+                addSystemMessage('🌐 Browser view opened. Drag from header to move, drag edges/corners to resize. Ask agents to navigate using [BROWSER: navigate:url]');
+            } else {
+                browserView.classList.remove('active');
+                browserView.style.display = 'none';
+                browserBtn.textContent = '🌐 BROWSER';
+                browserBtn.title = 'Toggle browser view';
+                
+                // Stop polling
+                stopBrowserPolling();
+                
+                addSystemMessage('🌐 Browser view closed');
+            }
+        }
+
+        function closeBrowserView() {
+            browserViewActive = false;
+            const browserView = document.getElementById('browser-view');
+            const browserBtn = document.getElementById('browser-view-btn');
+            
+            if (browserView) {
+                browserView.classList.remove('active');
+                browserView.style.display = 'none';
+            }
+            
+            if (browserBtn) {
+                browserBtn.textContent = '🌐 BROWSER';
+            }
+            
+            stopBrowserPolling();
+            addSystemMessage('🌐 Browser view closed');
+        }
+
+        function startBrowserPolling() {
+            if (browserPollInterval) return;
+            
+            browserPollInterval = setInterval(async () => {
+                if (!browserViewActive) {
+                    stopBrowserPolling();
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/api/browser/screenshot', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sessionId: 'agent-session' })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.screenshot) {
+                            updateBrowserView(data.url, data.title, data.screenshot);
+                        }
+                    }
+                } catch (error) {
+                    // Browser might not be initialized yet, that's okay
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        function stopBrowserPolling() {
+            if (browserPollInterval) {
+                clearInterval(browserPollInterval);
+                browserPollInterval = null;
+            }
+        }
+
+        // Initialize drag and resize functionality
+        function initBrowserDragAndResize() {
+            const browserView = document.getElementById('browser-view');
+            const browserHeader = document.getElementById('browser-header');
+            
+            if (!browserView || !browserHeader) {
+                console.log('Browser view or header not found for drag/resize init');
+                return;
+            }
+            
+            console.log('Initializing drag/resize for browser view');
+            
+            // Remove any existing listeners by cloning
+            const newHeader = browserHeader.cloneNode(true);
+            browserHeader.parentNode.replaceChild(newHeader, browserHeader);
+            const freshHeader = document.getElementById('browser-header');
+            
+            // Drag functionality - drag from header
+            freshHeader.addEventListener('mousedown', function(e) {
+                // Don't drag if clicking buttons or their children
+                if (e.target.closest('.browser-btn') || e.target.classList.contains('browser-btn')) {
+                    console.log('Button clicked, not dragging');
+                    return;
+                }
+                
+                console.log('Header mousedown - starting drag', e);
+                isDragging = true;
+                const rect = browserView.getBoundingClientRect();
+                dragStartX = e.clientX - rect.left;
+                dragStartY = e.clientY - rect.top;
+                browserView.style.cursor = 'move';
+                browserView.style.userSelect = 'none';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('Drag started:', { 
+                    dragStartX, 
+                    dragStartY, 
+                    rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    isDragging: isDragging
+                });
+            }, true); // Use capture phase
+            
+            // Resize functionality - resize from handles
+            const resizeHandles = browserView.querySelectorAll('.browser-resize-handle');
+            resizeHandles.forEach(handle => {
+                handle.addEventListener('mousedown', (e) => {
+                    isResizing = true;
+                    resizeDirection = handle.className.split(' ')[1]; // Get direction (n, s, e, w, ne, nw, se, sw)
+                    initialWidth = browserView.offsetWidth;
+                    initialHeight = browserView.offsetHeight;
+                    initialLeft = browserView.offsetLeft;
+                    initialTop = browserView.offsetTop;
+                    dragStartX = e.clientX;
+                    dragStartY = e.clientY;
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+            });
+            
+            // Mouse move handler (only add once)
+            if (!window.browserDragHandlerAdded) {
+                document.addEventListener('mousemove', (e) => {
+                    if (isDragging && browserViewActive) {
+                        const browserView = document.getElementById('browser-view');
+                        if (!browserView) {
+                            console.log('Browser view not found during drag');
+                            return;
+                        }
+                        
+                        // Calculate new position based on mouse position and initial offset
+                        const newLeft = e.clientX - dragStartX;
+                        const newTop = e.clientY - dragStartY;
+                        
+                        // Constrain to viewport
+                        const maxLeft = window.innerWidth - browserView.offsetWidth;
+                        const maxTop = window.innerHeight - browserView.offsetHeight;
+                        const minTop = 50; // Keep some space from top
+                        
+                        const constrainedLeft = Math.max(0, Math.min(newLeft, maxLeft));
+                        const constrainedTop = Math.max(minTop, Math.min(newTop, maxTop));
+                        
+                        // Apply the new position
+                        browserView.style.position = 'fixed';
+                        browserView.style.left = constrainedLeft + 'px';
+                        browserView.style.top = constrainedTop + 'px';
+                        browserView.style.right = 'auto';
+                        browserView.style.bottom = 'auto';
+                        
+                        // Preserve width and height
+                        if (!browserView.style.width) {
+                            browserView.style.width = browserView.offsetWidth + 'px';
+                        }
+                        if (!browserView.style.height) {
+                            browserView.style.height = browserView.offsetHeight + 'px';
+                        }
+                        
+                        console.log('Dragging:', { 
+                            newLeft, 
+                            newTop, 
+                            constrainedLeft, 
+                            constrainedTop,
+                            currentLeft: browserView.style.left,
+                            currentTop: browserView.style.top
+                        });
+                    } else if (isResizing && browserViewActive) {
+                        const browserView = document.getElementById('browser-view');
+                        if (!browserView) return;
+                        const deltaX = e.clientX - dragStartX;
+                        const deltaY = e.clientY - dragStartY;
+                        
+                        let newWidth = initialWidth;
+                        let newHeight = initialHeight;
+                        let newLeft = initialLeft;
+                        let newTop = initialTop;
+                        
+                        // Handle resize based on direction
+                        if (resizeDirection.includes('e')) {
+                            newWidth = Math.max(400, initialWidth + deltaX);
+                        }
+                        if (resizeDirection.includes('w')) {
+                            newWidth = Math.max(400, initialWidth - deltaX);
+                            newLeft = initialLeft + deltaX;
+                        }
+                        if (resizeDirection.includes('s')) {
+                            newHeight = Math.max(300, initialHeight + deltaY);
+                        }
+                        if (resizeDirection.includes('n')) {
+                            newHeight = Math.max(300, initialHeight - deltaY);
+                            newTop = initialTop + deltaY;
+                        }
+                        
+                        // Constrain to viewport
+                        if (newLeft < 0) {
+                            newWidth += newLeft;
+                            newLeft = 0;
+                        }
+                        if (newTop < 100) {
+                            newHeight += newTop - 100;
+                            newTop = 100;
+                        }
+                        if (newLeft + newWidth > window.innerWidth) {
+                            newWidth = window.innerWidth - newLeft;
+                        }
+                        if (newTop + newHeight > window.innerHeight) {
+                            newHeight = window.innerHeight - newTop;
+                        }
+                        
+                        browserView.style.width = newWidth + 'px';
+                        browserView.style.height = newHeight + 'px';
+                        browserView.style.left = newLeft + 'px';
+                        browserView.style.top = newTop + 'px';
+                        browserView.style.right = 'auto';
+                    }
+                });
+                
+                // Mouse up handler (only add once)
+                document.addEventListener('mouseup', () => {
+                    if (isDragging || isResizing) {
+                        isDragging = false;
+                        isResizing = false;
+                        resizeDirection = null;
+                        const browserView = document.getElementById('browser-view');
+                        if (browserView) {
+                            browserView.style.cursor = '';
+                            browserView.style.userSelect = '';
+                        }
+                        document.body.style.userSelect = '';
+                        console.log('Drag/resize ended');
+                    }
+                });
+                
+                window.browserDragHandlerAdded = true;
+            }
+        }
+
+        function updateBrowserView(url, title, screenshot) {
+            const browserContent = document.getElementById('browser-content');
+            currentBrowserUrl = url;
+            
+            browserContent.innerHTML = `
+                <div style="width: 100%; margin-bottom: 10px;">
+                    <div class="browser-url">📍 ${url}</div>
+                    <div style="padding: 5px; opacity: 0.7;">${title}</div>
+                </div>
+                <img src="${screenshot}" class="browser-screenshot" alt="Browser screenshot">
+            `;
+        }
+
+        async function refreshBrowser() {
+            if (!currentBrowserUrl) {
+                addSystemMessage('No browser session active');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/browser/navigate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        url: currentBrowserUrl,
+                        sessionId: 'agent-session'
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    updateBrowserView(data.url, data.title, data.screenshot);
+                    addSystemMessage(`Browser refreshed: ${data.title}`);
+                }
+            } catch (error) {
+                addSystemMessage(`Browser refresh failed: ${error.message}`);
+            }
+        }
+
+        // Run interactive app (like snake game)
+        async function runApp(appPath) {
+            try {
+                addSystemMessage(`🎮 Loading app: ${appPath}...`);
+                
+                // Show browser view if not already visible
+                if (!browserViewActive) {
+                    toggleBrowserView();
+                }
+                
+                const response = await fetch('/api/browser/run-app', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        appPath: appPath,
+                        sessionId: 'agent-session'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Load app in iframe for interactivity
+                    const browserContent = document.getElementById('browser-content');
+                    browserContent.innerHTML = `
+                        <div style="width: 100%; margin-bottom: 10px;">
+                            <div class="browser-url">🎮 ${data.title || appPath}</div>
+                        </div>
+                        <iframe src="${data.url}" class="browser-iframe" allow="gamepad; fullscreen"></iframe>
+                    `;
+                    currentBrowserUrl = data.url;
+                    addSystemMessage(`✅ App loaded: ${appPath}`);
+                } else {
+                    addSystemMessage(`❌ Failed to load app: ${data.error}`);
+                }
+            } catch (error) {
+                addSystemMessage(`❌ Error running app: ${error.message}`);
             }
         }
 
@@ -1420,10 +3720,28 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                 }
 
                 currentCollabSession = data.sessionId;
+                lastCollabHistoryLength = 0; // Reset history counter
 
-                // Hide config, show progress
-                document.querySelector('#collaboration-content > .memory-section').style.display = 'none';
+                // Hide config, show progress in both modal and integrated views
+                const configSection = document.querySelector('#collaboration-content > .memory-section');
+                if (configSection) configSection.style.display = 'none';
+                
+                const configSectionIntegrated = document.querySelector('#collab-content-integrated > .memory-section');
+                if (configSectionIntegrated) configSectionIntegrated.style.display = 'none';
+                
+                // Show progress in both views
                 document.getElementById('collab-progress').style.display = 'block';
+                const progressIntegrated = document.getElementById('collab-content-integrated')?.querySelector('#collab-progress');
+                if (progressIntegrated) progressIntegrated.style.display = 'block';
+                
+                // Sync content to ensure both views are updated
+                if (collabViewMode === 'integrated') {
+                    syncCollabContent();
+                }
+
+                // Add start message to chat
+                addSystemMessage(`🚀 COLLABORATION STARTED: ${task.substring(0, 50)}${task.length > 50 ? '...' : ''}`);
+                addSystemMessage(`Agents: ${selectedAgents.map(a => agents[a].name).join(', ')} | Rounds: ${rounds}`);
 
                 // Start polling for updates
                 pollCollaborationStatus();
@@ -1434,6 +3752,8 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             }
         }
 
+        let lastCollabHistoryLength = 0;
+        
         async function pollCollaborationStatus() {
             if (!currentCollabSession) return;
 
@@ -1441,97 +3761,135 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                 const response = await fetch(`/api/collaboration/${currentCollabSession}`);
                 const session = await response.json();
 
-                // Update status
+                // Update status with better formatting
                 const statusDiv = document.getElementById('collab-status');
+                const statusColor = session.status === 'completed' ? '#00ff00' : 
+                                   session.status === 'error' ? '#ff0000' : 
+                                   session.status === 'running' ? '#ffff00' : '#888';
+                
                 statusDiv.innerHTML = `
-                    <div>SESSION ID: ${session.id}</div>
-                    <div>STATUS: ${session.status.toUpperCase()}</div>
-                    <div>ROUND: ${session.currentRound} / ${session.totalRounds}</div>
-                    <div>PARTICIPANTS: ${session.participants.map(p => agents[p].name).join(', ')}</div>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 15px;">
+                        <div style="padding: 10px; background: var(--hover-bg); border: 1px solid var(--border-color); border-radius: 5px;">
+                            <div style="opacity: 0.7; font-size: 0.9em;">SESSION ID</div>
+                            <div style="color: var(--primary-color); font-family: monospace; font-size: 0.85em;">${session.id.substring(0, 20)}...</div>
+                        </div>
+                        <div style="padding: 10px; background: var(--hover-bg); border: 1px solid var(--border-color); border-radius: 5px;">
+                            <div style="opacity: 0.7; font-size: 0.9em;">STATUS</div>
+                            <div style="color: ${statusColor}; font-weight: bold;">${session.status.toUpperCase()}</div>
+                        </div>
+                        <div style="padding: 10px; background: var(--hover-bg); border: 1px solid var(--border-color); border-radius: 5px;">
+                            <div style="opacity: 0.7; font-size: 0.9em;">PROGRESS</div>
+                            <div style="color: var(--primary-color);">
+                                Round ${session.currentRound} / ${session.totalRounds}
+                                <div style="width: 100%; height: 4px; background: var(--screen-bg); border-radius: 2px; margin-top: 5px; overflow: hidden;">
+                                    <div style="width: ${(session.currentRound / session.totalRounds) * 100}%; height: 100%; background: var(--primary-color); transition: width 0.3s;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="padding: 10px; background: var(--hover-bg); border: 1px solid var(--border-color); border-radius: 5px;">
+                            <div style="opacity: 0.7; font-size: 0.9em;">PARTICIPANTS</div>
+                            <div style="color: var(--text-color);">${session.participants.map(p => `${agentIcons[p] || '🤖'} ${agents[p].name}`).join(', ')}</div>
+                        </div>
+                    </div>
                 `;
 
-                // Update live conversation feed
+                // Update live conversation feed (works in both modal and integrated views)
                 const conversationDiv = document.getElementById('collab-conversation');
+                const conversationDivIntegrated = document.getElementById('collab-panel-integrated')?.querySelector('#collab-conversation');
                 let conversationHTML = '';
 
                 if (session.history.length === 0) {
-                    conversationHTML = '<div style="opacity: 0.6; text-align: center; padding: 20px;">⏳ Waiting for agents to start conversation...</div>';
+                    conversationHTML = '<div style="opacity: 0.6; text-align: center; padding: 40px; font-size: 1.1em;">⏳ Waiting for agents to start conversation...</div>';
                 } else {
+                    // Show new messages in main chat if they're new
+                    if (session.history.length > lastCollabHistoryLength) {
+                        const newEntries = session.history.slice(lastCollabHistoryLength);
+                        newEntries.forEach(entry => {
+                            const agentIcon = agentIcons[entry.agent] || '🤖';
+                            addMessage(
+                                `${agentIcon} ${entry.agentName}`,
+                                `[COLLAB Round ${entry.round}] ${entry.type.toUpperCase()}\n\n${entry.response}`,
+                                new Date(entry.timestamp).toLocaleTimeString(),
+                                false
+                            );
+                        });
+                        lastCollabHistoryLength = session.history.length;
+                    }
+                    
                     session.history.forEach((entry, index) => {
                         const agentIcon = agentIcons[entry.agent] || '🤖';
                         const isLatest = index === session.history.length - 1;
+                        const roundColor = entry.round === 1 ? '#00ff00' : 
+                                          entry.type === 'review' ? '#ffff00' : 
+                                          entry.type === 'synthesis' ? '#00ffff' : '#888';
 
                         conversationHTML += `
                             <div style="
                                 margin-bottom: 15px;
-                                padding: 12px;
-                                border-left: 3px solid ${isLatest ? 'var(--primary-color)' : 'rgba(0, 255, 0, 0.3)'};
-                                background: ${isLatest ? 'rgba(0, 255, 0, 0.1)' : 'transparent'};
+                                padding: 15px;
+                                border-left: 4px solid ${roundColor};
+                                background: ${isLatest ? 'rgba(0, 255, 0, 0.15)' : 'rgba(0, 255, 0, 0.05)'};
+                                border-radius: 5px;
                                 animation: ${isLatest ? 'fadeIn 0.5s' : 'none'};
-                            ">
-                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-                                    <span style="font-size: 1.2em;">${agentIcon}</span>
-                                    <span style="font-weight: bold; color: var(--primary-color);">
+                                transition: all 0.3s;
+                            " onmouseover="this.style.background='rgba(0, 255, 0, 0.2)'" onmouseout="this.style.background='${isLatest ? 'rgba(0, 255, 0, 0.15)' : 'rgba(0, 255, 0, 0.05)'}'">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
+                                    <span style="font-size: 1.5em;">${agentIcon}</span>
+                                    <span style="font-weight: bold; color: var(--primary-color); font-size: 1.1em;">
                                         ${entry.agentName.toUpperCase()}
                                     </span>
-                                    <span style="opacity: 0.5; font-size: 0.85em;">
-                                        [Round ${entry.round}] ${entry.type}
+                                    <span style="background: ${roundColor}; color: #000; padding: 3px 8px; border-radius: 3px; font-size: 0.8em; font-weight: bold;">
+                                        ROUND ${entry.round} • ${entry.type.toUpperCase()}
+                                    </span>
+                                    <span style="opacity: 0.5; font-size: 0.85em; margin-left: auto;">
+                                        ${new Date(entry.timestamp).toLocaleTimeString()}
                                     </span>
                                 </div>
-                                <div style="
-                                    padding-left: 32px;
-                                    white-space: pre-wrap;
-                                    line-height: 1.5;
-                                    opacity: 0.9;
-                                ">
-                                    ${entry.response.length > 500
-                                        ? entry.response.substring(0, 500) + '... <span style="opacity: 0.5;">[truncated]</span>'
-                                        : entry.response
-                                    }
+                                <div style="white-space: pre-wrap; line-height: 1.7; opacity: 0.95; max-height: ${isLatest ? 'none' : '200px'}; overflow: ${isLatest ? 'visible' : 'hidden'}; position: relative;">
+                                    ${entry.response}
+                                    ${!isLatest && entry.response.length > 500 ? '<div style="position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, var(--screen-bg)); height: 30px;"></div>' : ''}
                                 </div>
+                                ${!isLatest && entry.response.length > 500 ? '<div style="text-align: center; margin-top: 5px; opacity: 0.6; font-size: 0.85em;">... (truncated, see full in results)</div>' : ''}
                             </div>
                         `;
                     });
                 }
 
-                conversationDiv.innerHTML = conversationHTML;
-
-                // Auto-scroll to bottom to show latest message
-                conversationDiv.scrollTop = conversationDiv.scrollHeight;
-
-                // Update rounds display
-                const roundsDiv = document.getElementById('collab-rounds-display');
-                let roundsHTML = '';
-
-                session.history.forEach((entry, index) => {
-                    const isExpanded = index === session.history.length - 1; // Auto-expand latest
-                    roundsHTML += `
-                        <div class="agent-memory-card" style="margin: 10px 0;">
-                            <div style="cursor: pointer; font-size: 1.2em; margin-bottom: 10px;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                                <span style="color: ${isExpanded ? 'var(--primary-color)' : '#666'};">▶</span>
-                                ROUND ${entry.round} - ${entry.agentName.toUpperCase()} (${entry.type})
-                            </div>
-                            <div style="display: ${isExpanded ? 'block' : 'none'}; padding-left: 20px;">
-                                <div style="opacity: 0.8; margin-bottom: 10px; font-size: 0.9em;">
-                                    ${new Date(entry.timestamp).toLocaleString()}
-                                </div>
-                                <div style="white-space: pre-wrap; line-height: 1.6;">${entry.response}</div>
-                            </div>
-                        </div>
-                    `;
-                });
-
-                roundsDiv.innerHTML = roundsHTML;
+                // Update both views
+                if (conversationDiv) {
+                    conversationDiv.innerHTML = conversationHTML;
+                    // Auto-scroll to bottom
+                    conversationDiv.scrollTop = conversationDiv.scrollHeight;
+                }
+                if (conversationDivIntegrated) {
+                    conversationDivIntegrated.innerHTML = conversationHTML;
+                    conversationDivIntegrated.scrollTop = conversationDivIntegrated.scrollHeight;
+                }
 
                 // Check if completed
                 if (session.status === 'completed') {
                     clearInterval(collabPollingInterval);
                     collabPollingInterval = null;
+                    
+                    // Add completion message to chat
+                    addSystemMessage(`✅ COLLABORATION COMPLETE: Session ${session.id.substring(0, 12)}...`);
+                    
+                    // Show synthesis in chat
+                    if (session.synthesis) {
+                        addMessage(
+                            `${agentIcons[session.synthesis.agent] || '🤖'} ${session.synthesis.agentName}`,
+                            `[FINAL SYNTHESIS]\n\n${session.synthesis.response}`,
+                            new Date(session.synthesis.timestamp).toLocaleTimeString(),
+                            false
+                        );
+                    }
+                    
                     showCollaborationResults(session);
                 } else if (session.status === 'error') {
                     clearInterval(collabPollingInterval);
                     collabPollingInterval = null;
-                    statusDiv.innerHTML += `<div style="color: #ff0000; margin-top: 10px;">ERROR: ${session.error}</div>`;
+                    statusDiv.innerHTML += `<div style="color: #ff0000; margin-top: 10px; padding: 10px; background: rgba(255, 0, 0, 0.1); border-radius: 5px;">❌ ERROR: ${session.error}</div>`;
+                    addSystemMessage(`❌ COLLABORATION ERROR: ${session.error}`);
                 } else if (session.status === 'running') {
                     // Continue polling every 2 seconds
                     if (!collabPollingInterval) {
@@ -1545,6 +3903,7 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                     clearInterval(collabPollingInterval);
                     collabPollingInterval = null;
                 }
+                addSystemMessage(`❌ Error polling collaboration: ${error.message}`);
             }
         }
 
@@ -1613,10 +3972,56 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             currentCollabSession = null;
         }
 
-        function copyCollaborationToChat(sessionId) {
-            // This would copy the synthesis result to the main chat
-            addSystemMessage('COLLABORATION_SYNTHESIS_COPIED - Check results above');
-            closeCollaboration();
+        async function copyCollaborationToChat(sessionId) {
+            try {
+                const response = await fetch(`/api/collaboration/${sessionId}`);
+                const session = await response.json();
+                
+                // Add collaboration header
+                addSystemMessage(`╔══[ COLLABORATION SESSION: ${sessionId.substring(0, 12)}... ]══╗`);
+                addSystemMessage(`Task: ${session.task}`);
+                addSystemMessage(`Agents: ${session.participants.map(p => agents[p].name).join(', ')}`);
+                addSystemMessage(`Rounds: ${session.currentRound}/${session.totalRounds}`);
+                
+                // Add each round as a message
+                session.history.forEach((entry, index) => {
+                    const agentIcon = agentIcons[entry.agent] || '🤖';
+                    addMessage(
+                        `${agentIcon} ${entry.agentName}`,
+                        `[Round ${entry.round}] ${entry.type.toUpperCase()}\n\n${entry.response}`,
+                        new Date(entry.timestamp).toLocaleTimeString(),
+                        false
+                    );
+                });
+                
+                // Add synthesis as final message
+                if (session.synthesis) {
+                    addMessage(
+                        `${agentIcons[session.synthesis.agent] || '🤖'} ${session.synthesis.agentName}`,
+                        `[FINAL SYNTHESIS]\n\n${session.synthesis.response}`,
+                        new Date(session.synthesis.timestamp).toLocaleTimeString(),
+                        false
+                    );
+                }
+                
+                addSystemMessage('╚══[ COLLABORATION COMPLETE ]══╝');
+                closeCollaboration();
+            } catch (error) {
+                addSystemMessage('ERROR: Failed to copy collaboration to chat - ' + error.message);
+            }
+        }
+        
+        // Quick start collaboration from chat
+        function quickStartCollaboration(taskText) {
+            openCollaborationPanel();
+            // Pre-fill task if provided
+            if (taskText) {
+                document.getElementById('collab-task').value = taskText;
+            }
+            // Focus on task input
+            setTimeout(() => {
+                document.getElementById('collab-task').focus();
+            }, 100);
         }
 
         // Keyboard Shortcuts
@@ -1636,10 +4041,20 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                 e.preventDefault();
                 exportConversation();
             }
-            // Ctrl+T: Cycle theme
+            // Ctrl+T: Toggle retro mode
             if (e.ctrlKey && e.key === 't') {
                 e.preventDefault();
-                cycleTheme();
+                toggleRetroMode();
+            }
+            // Ctrl+Shift+T: Cycle retro theme (only in retro mode)
+            if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+                e.preventDefault();
+                cycleRetroTheme();
+            }
+            // Ctrl+L: Toggle light/dark
+            if (e.ctrlKey && e.key === 'l') {
+                e.preventDefault();
+                toggleLightDark();
             }
             // Ctrl+1-4: Select agents
             if (e.ctrlKey && ['1', '2', '3', '4'].includes(e.key)) {
@@ -1720,7 +4135,10 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             if (document.hidden) {
                 stopMatrixRain();
             } else {
-                initMatrixRain();
+                // Only restart if matrix theme is active
+                if (currentTheme === 'matrix') {
+                    initMatrixRain();
+                }
             }
         });
 
@@ -1743,7 +4161,11 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
             loadConversation();
             loadAgents();
             loadModels();
-            initMatrixRain(); // Start Matrix rain animation
+            loadSavedChats(); // Load saved chats
+            // Start matrix rain if matrix theme is active (retro or modern)
+            if (currentTheme === 'matrix') {
+                initMatrixRain();
+            }
         };
 
         // Also try loading immediately if DOM is already ready
@@ -1754,7 +4176,11 @@ ${profile.learnings.slice(-5).map((l, i) => `${i + 1}. ${l}`).join('\n') || 'Age
                 loadConversation();
                 loadAgents();
                 loadModels();
-                initMatrixRain(); // Start Matrix rain animation
+                loadSavedChats(); // Load saved chats
+                // Start matrix rain if matrix theme is active (retro or modern)
+                if (currentTheme === 'matrix') {
+                    initMatrixRain();
+                }
             }, 100);
         }
     </script>

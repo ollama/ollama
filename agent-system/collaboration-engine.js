@@ -72,6 +72,21 @@ class CollaborationEngine {
                     synthesizer: 'Organize and prioritize all ideas into an action plan.'
                 }
             },
+            debate: {
+                name: 'Structured Debate',
+                description: 'Multi-perspective debate with opposing viewpoints',
+                roles: {
+                    primary: 'researcher',
+                    reviewers: ['critic', 'planner', 'coder'],
+                    synthesizer: 'researcher'
+                },
+                rounds: 4,
+                systemPrompts: {
+                    primary: 'Present your initial perspective on this topic. Be clear and factual.',
+                    reviewers: 'Respond to the previous perspective. Present counterarguments, supporting evidence, or alternative viewpoints. Engage in respectful debate.',
+                    synthesizer: 'Synthesize all perspectives presented. Summarize the key arguments from each side, identify areas of agreement and disagreement, and provide a balanced overview.'
+                }
+            },
             custom: {
                 name: 'Custom Workflow',
                 description: 'User-defined agent collaboration',
@@ -146,9 +161,18 @@ class CollaborationEngine {
             // Round 1: Primary agent responds
             session.currentRound = 1;
             const primaryAgent = participants[0];
+            
+            // For debates, assign roles based on participant order
+            let primaryTask = session.task;
+            if (session.template === 'debate' && participants.length >= 4) {
+                // Assign roles: first two = Republican, next two = Democratic
+                const role = participants.indexOf(primaryAgent) < 2 ? 'Republican' : 'Democratic';
+                primaryTask = `${session.task}\n\nYOUR ROLE: You are representing the ${role} perspective. Present arguments and viewpoints from this political position.`;
+            }
+            
             const primaryResponse = await this.getAgentResponse(
                 primaryAgent,
-                session.task,
+                primaryTask,
                 template.systemPrompts.primary,
                 []
             );
@@ -175,7 +199,16 @@ class CollaborationEngine {
 
                 for (const reviewerAgent of reviewers) {
                     const context = this.buildContext(session);
-                    const reviewPrompt = `${template.systemPrompts.reviewers}\n\nOriginal Task: ${session.task}\n\nPrevious Responses:\n${context}`;
+                    
+                    // For debates, assign roles
+                    let reviewTask = session.task;
+                    if (session.template === 'debate' && participants.length >= 4) {
+                        const agentIndex = participants.indexOf(reviewerAgent);
+                        const role = agentIndex < 2 ? 'Republican' : 'Democratic';
+                        reviewTask = `${session.task}\n\nYOUR ROLE: You are representing the ${role} perspective. Respond to previous arguments and present your position.`;
+                    }
+                    
+                    const reviewPrompt = `${template.systemPrompts.reviewers}\n\nOriginal Task: ${reviewTask}\n\nPrevious Responses:\n${context}`;
 
                     const reviewResponse = await this.getAgentResponse(
                         reviewerAgent,
@@ -252,8 +285,20 @@ class CollaborationEngine {
             content: `[${h.agentName}]: ${h.response}`
         }));
 
+        // Extract role assignments from task if present (for debates)
+        let enhancedSystemPrompt = systemPrompt;
+        const roleMatch = message.match(/role[:\s]+(republican|democrat|democratic)/i);
+        if (roleMatch) {
+            const role = roleMatch[1].toLowerCase();
+            if (role.includes('republican')) {
+                enhancedSystemPrompt += '\n\nIMPORTANT: You are representing a Republican/conservative perspective. Present arguments, policies, and viewpoints that align with Republican values and positions. Be respectful but firm in your positions.';
+            } else if (role.includes('democrat')) {
+                enhancedSystemPrompt += '\n\nIMPORTANT: You are representing a Democratic/liberal perspective. Present arguments, policies, and viewpoints that align with Democratic values and positions. Be respectful but firm in your positions.';
+            }
+        }
+
         const messages = [
-            { role: 'system', content: `${agent.systemPrompt}\n\n${systemPrompt}` },
+            { role: 'system', content: `${agent.systemPrompt}\n\n${enhancedSystemPrompt}` },
             ...contextMessages,
             { role: 'user', content: message }
         ];

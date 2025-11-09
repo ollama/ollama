@@ -31,6 +31,7 @@
     "isomorphic-dompurify": "^2.31.0",
     "opossum": "^9.0.0",
     "p-retry": "^5.1.2",
+    "puppeteer": "^21.11.0",
     "socket.io": "^4.6.1",
     "tmp-promise": "^3.0.3",
     "winston": "^3.18.3"
