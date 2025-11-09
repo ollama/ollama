@@ -1692,13 +1692,49 @@ Present arguments, counterarguments, evidence, and policy positions from both si
         // Save current chat
         async function saveCurrentChat() {
             try {
-                // Get current agent
-                const selectedAgent = document.querySelector('input[name="agent"]:checked');
-                if (!selectedAgent) {
-                    addSystemMessage('❌ Please select an agent first');
+                // Get current agent - try multiple methods
+                let agentKey = null;
+                
+                // Method 1: Check agent selector dropdown
+                const agentSelector = document.getElementById('agent-selector');
+                if (agentSelector && agentSelector.value) {
+                    agentKey = agentSelector.value;
+                }
+                
+                // Method 2: Check radio buttons
+                if (!agentKey) {
+                    const selectedAgent = document.querySelector('input[name="agent"]:checked');
+                    if (selectedAgent) {
+                        agentKey = selectedAgent.value;
+                    }
+                }
+                
+                // Method 3: Use currentAgent variable if available
+                if (!agentKey && typeof currentAgent !== 'undefined' && currentAgent) {
+                    agentKey = currentAgent;
+                }
+                
+                // Method 4: Get from conversation log
+                if (!agentKey && conversationLog.length > 0) {
+                    const lastMessage = conversationLog.find(m => m.author && m.author !== 'USER' && m.author !== 'SYSTEM');
+                    if (lastMessage) {
+                        // Try to infer agent from message author
+                        const authorKey = lastMessage.author.toLowerCase();
+                        if (agents[authorKey]) {
+                            agentKey = authorKey;
+                        }
+                    }
+                }
+                
+                // Method 5: Use first available agent as fallback
+                if (!agentKey && Object.keys(agents).length > 0) {
+                    agentKey = Object.keys(agents)[0];
+                }
+                
+                if (!agentKey) {
+                    addSystemMessage('❌ No agent available. Please select an agent first.');
                     return;
                 }
-                const agentKey = selectedAgent.value;
 
                 // Get chat messages (filter out system messages)
                 const chatMessages = conversationLog.filter(m => m.type !== 'system');
@@ -1920,6 +1956,24 @@ Present arguments, counterarguments, evidence, and policy positions from both si
             const searchRegex = /\[SEARCH:\s*([^\]]+)\]/g;
             formatted = formatted.replace(searchRegex, '<span class="command-badge" style="background: rgba(0, 255, 0, 0.1); border: 1px solid var(--primary-color); padding: 2px 6px; border-radius: 3px; font-family: monospace;">🔍 SEARCH: $1</span>');
             
+            // Format [TERMINAL:] commands as badges
+            const terminalCommandRegex = /\[TERMINAL:\s*([^\]]+)\]/g;
+            formatted = formatted.replace(terminalCommandRegex, '<span class="command-badge" style="background: rgba(255, 165, 0, 0.1); border: 1px solid #ffa500; padding: 2px 6px; border-radius: 3px; font-family: monospace;">💻 TERMINAL: $1</span>');
+            
+            // Format [TERMINAL OUTPUT] blocks as terminal UI
+            const terminalOutputRegex = /\[TERMINAL OUTPUT\]\n([\s\S]*?)(?=\[|$)/g;
+            formatted = formatted.replace(terminalOutputRegex, (match, content) => {
+                const terminalId = 'terminal-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                return createTerminalElement(terminalId, content.trim());
+            });
+            
+            // Format [TERMINAL ERROR] blocks
+            const terminalErrorRegex = /\[TERMINAL ERROR\]\n([\s\S]*?)(?=\[|$)/g;
+            formatted = formatted.replace(terminalErrorRegex, (match, content) => {
+                const terminalId = 'terminal-error-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                return createTerminalElement(terminalId, content.trim(), true);
+            });
+            
             // Format code blocks (basic)
             const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g;
             formatted = formatted.replace(codeBlockRegex, (match, lang, code) => {
@@ -1935,6 +1989,69 @@ Present arguments, counterarguments, evidence, and policy positions from both si
             formatted = formatted.replace(/\n/g, '<br>');
             
             return formatted;
+        }
+        
+        // Create terminal element
+        function createTerminalElement(id, content, isError = false) {
+            const lines = content.split('\n');
+            const commandLine = lines[0] || '';
+            const output = lines.slice(1).join('\n');
+            
+            return `
+                <div class="terminal-container" id="${id}" style="
+                    background: #1a1a1a;
+                    border: 2px solid ${isError ? '#ff4444' : '#00ff41'};
+                    border-radius: 5px;
+                    padding: 15px;
+                    margin: 10px 0;
+                    font-family: 'Courier New', monospace;
+                    font-size: 0.9em;
+                    color: #00ff41;
+                    box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px;">
+                        <span style="color: ${isError ? '#ff4444' : '#00ff41'}; font-weight: bold;">💻 TERMINAL</span>
+                        <button onclick="copyTerminalOutput('${id}')" style="
+                            background: transparent;
+                            border: 1px solid #00ff41;
+                            color: #00ff41;
+                            padding: 3px 8px;
+                            border-radius: 3px;
+                            cursor: pointer;
+                            font-size: 0.8em;
+                        ">📋 Copy</button>
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <span style="color: #888;">$</span> <span style="color: #00ff41;">${escapeHtml(commandLine)}</span>
+                    </div>
+                    <div style="
+                        background: rgba(0, 0, 0, 0.3);
+                        padding: 10px;
+                        border-radius: 3px;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                        max-height: 400px;
+                        overflow-y: auto;
+                        color: ${isError ? '#ff8888' : '#00ff41'};
+                    ">${escapeHtml(output || '')}</div>
+                </div>
+            `;
+        }
+        
+        // Copy terminal output
+        function copyTerminalOutput(terminalId) {
+            const terminal = document.getElementById(terminalId);
+            if (!terminal) return;
+            
+            const outputDiv = terminal.querySelector('div[style*="white-space: pre-wrap"]');
+            if (!outputDiv) return;
+            
+            const text = outputDiv.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                addSystemMessage('✅ Terminal output copied to clipboard');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
         }
         
         // Create artifact element (Claude-style)
