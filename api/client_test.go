@@ -55,6 +55,7 @@ func TestClientFromEnvironment(t *testing.T) {
 type testError struct {
 	message    string
 	statusCode int
+	raw        bool // if true, write message as-is instead of JSON encoding
 }
 
 func (e testError) Error() string {
@@ -193,9 +194,10 @@ func TestClientStream(t *testing.T) {
 
 func TestClientDo(t *testing.T) {
 	testCases := []struct {
-		name     string
-		response any
-		wantErr  string
+		name           string
+		response       any
+		wantErr        string
+		wantStatusCode int
 	}{
 		{
 			name: "immediate error response",
@@ -203,7 +205,8 @@ func TestClientDo(t *testing.T) {
 				message:    "test error message",
 				statusCode: http.StatusBadRequest,
 			},
-			wantErr: "test error message",
+			wantErr:        "test error message",
+			wantStatusCode: http.StatusBadRequest,
 		},
 		{
 			name: "server error response",
@@ -211,7 +214,8 @@ func TestClientDo(t *testing.T) {
 				message:    "internal error",
 				statusCode: http.StatusInternalServerError,
 			},
-			wantErr: "internal error",
+			wantErr:        "internal error",
+			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
 			name: "successful response",
@@ -223,6 +227,26 @@ func TestClientDo(t *testing.T) {
 				Success: true,
 			},
 		},
+		{
+			name: "plain text error response",
+			response: testError{
+				message:    "internal server error",
+				statusCode: http.StatusInternalServerError,
+				raw:        true,
+			},
+			wantErr:        "internal server error",
+			wantStatusCode: http.StatusInternalServerError,
+		},
+		{
+			name: "HTML error page",
+			response: testError{
+				message:    "<html><body>404 Not Found</body></html>",
+				statusCode: http.StatusNotFound,
+				raw:        true,
+			},
+			wantErr:        "<html><body>404 Not Found</body></html>",
+			wantStatusCode: http.StatusNotFound,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -230,11 +254,16 @@ func TestClientDo(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if errResp, ok := tc.response.(testError); ok {
 					w.WriteHeader(errResp.statusCode)
-					err := json.NewEncoder(w).Encode(map[string]string{
-						"error": errResp.message,
-					})
-					if err != nil {
-						t.Fatal("failed to encode error response:", err)
+					if !errResp.raw {
+						err := json.NewEncoder(w).Encode(map[string]string{
+							"error": errResp.message,
+						})
+						if err != nil {
+							t.Fatal("failed to encode error response:", err)
+						}
+					} else {
+						// Write raw message (simulates non-JSON error responses)
+						fmt.Fprint(w, errResp.message)
 					}
 					return
 				}
@@ -260,6 +289,15 @@ func TestClientDo(t *testing.T) {
 				}
 				if err.Error() != tc.wantErr {
 					t.Errorf("error message mismatch: got %q, want %q", err.Error(), tc.wantErr)
+				}
+				if tc.wantStatusCode != 0 {
+					if statusErr, ok := err.(StatusError); ok {
+						if statusErr.StatusCode != tc.wantStatusCode {
+							t.Errorf("status code mismatch: got %d, want %d", statusErr.StatusCode, tc.wantStatusCode)
+						}
+					} else {
+						t.Errorf("expected StatusError, got %T", err)
+					}
 				}
 				return
 			}
