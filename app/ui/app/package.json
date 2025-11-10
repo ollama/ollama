@@ -34,6 +34,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-math": "^6.0.0",
+    "streamdown": "^1.4.0",
     "unist-builder": "^4.0.0",
     "unist-util-parents": "^3.0.0"
   },
