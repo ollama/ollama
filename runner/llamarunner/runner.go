@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -853,19 +854,24 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		s.seqs = make([]*Sequence, s.parallel)
 		s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-		gpuIDs := llama.EnumerateGPUs()
-		tensorSplit := make([]float32, len(gpuIDs))
 		numGPU := 0
-		for i := range gpuIDs {
-			for _, layers := range req.GPULayers {
-				if gpuIDs[i] == layers.DeviceID {
-					tensorSplit[i] = float32(len(layers.Layers))
+		var tensorSplit []float32
+		var llamaIDs []uint64
+
+		gpuIDs := llama.EnumerateGPUs()
+		sort.Sort(req.GPULayers)
+		for _, layers := range req.GPULayers {
+			for i := range gpuIDs {
+				if gpuIDs[i].DeviceID == layers.DeviceID {
 					numGPU += len(layers.Layers)
+					tensorSplit = append(tensorSplit, float32(len(layers.Layers)))
+					llamaIDs = append(llamaIDs, gpuIDs[i].LlamaID)
 				}
 			}
 		}
 
 		params := llama.ModelParams{
+			Devices:      llamaIDs,
 			NumGpuLayers: numGPU,
 			MainGpu:      req.MainGPU,
 			UseMmap:      req.UseMmap && len(req.LoraPath) == 0,
