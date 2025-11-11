@@ -790,7 +790,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		case string:
 			thinkRequested = v != "" && v != "none"
 		}
-		
+
 		if thinkRequested && !think {
 			errorEvent := responses.ErrorEvent{
 				EventName: "error",
