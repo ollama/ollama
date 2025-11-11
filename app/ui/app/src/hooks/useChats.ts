@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getChats, getChat, sendMessage, type ChatEventUnion } from "../api";
+import {
+  getChats,
+  getChat,
+  sendMessage,
+  type ChatEventUnion,
+  updateChatMessage,
+} from "../api";
 import { Chat, ErrorEvent, Model } from "@/gotypes";
 import { Message } from "@/gotypes";
 import { useSelectedModel } from "./useSelectedModel";
@@ -709,6 +715,42 @@ export const useSendMessage = (chatId: string) => {
       // Flush any remaining batched updates and cleanup
       batcher.flushBatch();
       batcher.cleanup();
+    },
+  });
+};
+
+export const useUpdateChatMessage = (chatId: string) => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationKey: ["updateChatMessage", chatId],
+    mutationFn: ({ index, content }: { index: number; content: string }) =>
+      updateChatMessage(chatId, index, content),
+    onSuccess: ({ index, message }) => {
+      queryClient.setQueryData(
+        ["chat", chatId],
+        (old: { chat: Chat } | undefined) => {
+          if (!old?.chat?.messages) {
+            return old;
+          }
+
+          const updatedMessages = [...old.chat.messages];
+          if (index < 0 || index >= updatedMessages.length) {
+            return old;
+          }
+
+          updatedMessages[index] = message;
+
+          return {
+            ...old,
+            chat: new Chat({
+              ...old.chat,
+              messages: updatedMessages,
+            }),
+          };
+        },
+      );
+      queryClient.invalidateQueries({ queryKey: ["chats"] });
     },
   });
 };

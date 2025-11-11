@@ -13,6 +13,7 @@ import {
   useChatError,
   useShouldShowStaleDisplay,
   useDismissStaleModel,
+  useUpdateChatMessage,
 } from "@/hooks/useChats";
 import { useHealth } from "@/hooks/useHealth";
 import { useMessageAutoscroll } from "@/hooks/useMessageAutoscroll";
@@ -47,6 +48,12 @@ export default function Chat({ chatId }: { chatId: string }) {
     index: number;
     originalMessage: Message;
   } | null>(null);
+  const [editingAssistantIndex, setEditingAssistantIndex] = useState<
+    number | null
+  >(null);
+  const [assistantEditError, setAssistantEditError] = useState<string | null>(
+    null,
+  );
   const prevChatIdRef = useRef<string>(chatId);
 
   const chatFormCallbackRef = useRef<
@@ -98,9 +105,14 @@ export default function Chat({ chatId }: { chatId: string }) {
   // Clear editing state when navigating to a different chat
   useEffect(() => {
     setEditingMessage(null);
+    setEditingAssistantIndex(null);
+    setAssistantEditError(null);
   }, [chatId]);
 
   const sendMessageMutation = useSendMessage(chatId);
+  const updateAssistantMessageMutation = useUpdateChatMessage(
+    chatId === "new" ? "" : chatId,
+  );
 
   const { containerRef, handleNewUserMessage, spacerHeight } =
     useMessageAutoscroll({
@@ -186,6 +198,44 @@ export default function Chat({ chatId }: { chatId: string }) {
     }
   };
 
+  const handleAssistantEditStart = (index: number) => {
+    setAssistantEditError(null);
+    setEditingAssistantIndex(index);
+  };
+
+  const handleAssistantEditCancel = () => {
+    if (updateAssistantMessageMutation.isPending) {
+      return;
+    }
+    setAssistantEditError(null);
+    setEditingAssistantIndex(null);
+  };
+
+  const handleAssistantEditSave = async (index: number, content: string) => {
+    if (updateAssistantMessageMutation.isPending) {
+      return;
+    }
+
+    const trimmedContent = content.trim();
+    if (!trimmedContent) {
+      setAssistantEditError("Response cannot be empty.");
+      return;
+    }
+
+    try {
+      setAssistantEditError(null);
+      await updateAssistantMessageMutation.mutateAsync({
+        index,
+        content: trimmedContent,
+      });
+      setEditingAssistantIndex(null);
+    } catch (error) {
+      setAssistantEditError(
+        error instanceof Error ? error.message : "Failed to update message.",
+      );
+    }
+  };
+
   const clearChatError = () => {
     queryClient.setQueryData(
       ["chatError", chatId === "new" ? "" : chatId],
@@ -236,6 +286,12 @@ export default function Chat({ chatId }: { chatId: string }) {
               editingMessageIndex={editingMessage?.index}
               error={chatError}
               browserToolResult={browserToolResult}
+              onAssistantEditStart={handleAssistantEditStart}
+              onAssistantEditSave={handleAssistantEditSave}
+              onAssistantEditCancel={handleAssistantEditCancel}
+              assistantEditingIndex={editingAssistantIndex}
+              assistantEditIsSaving={updateAssistantMessageMutation.isPending}
+              assistantEditError={assistantEditError}
             />
           </section>
 

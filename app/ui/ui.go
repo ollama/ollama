@@ -162,7 +162,7 @@ func (s *Server) Handler() http.Handler {
 			// Add CORS headers for dev work
 			if CORS() {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 
@@ -246,6 +246,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("OPTIONS /", handle(func(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}))
+	mux.Handle("OPTIONS /api/v1/chat/{id}/messages/{index}", handle(func(w http.ResponseWriter, r *http.Request) error {
+		return nil
+	}))
 
 	// API routes - handle first to take precedence
 	mux.Handle("GET /api/v1/chats", handle(s.listChats))
@@ -254,6 +257,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/chat/{id}", handle(s.deleteChat))
 	mux.Handle("POST /api/v1/create-chat", handle(s.createChat))
 	mux.Handle("PUT /api/v1/chat/{id}/rename", handle(s.renameChat))
+	mux.Handle("PATCH /api/v1/chat/{id}/messages/{index}", handle(s.updateChatMessage))
 
 	mux.Handle("GET /api/v1/inference-compute", handle(s.getInferenceCompute))
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
@@ -1278,6 +1282,57 @@ func (s *Server) renameChat(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatInfoFromChat(*chat))
 	return nil
+}
+
+func (s *Server) updateChatMessage(w http.ResponseWriter, r *http.Request) error {
+	chatID := r.PathValue("id")
+	if chatID == "" {
+		return fmt.Errorf("chat ID is required")
+	}
+
+	indexParam := r.PathValue("index")
+	msgIndex, err := strconv.Atoi(indexParam)
+	if err != nil {
+		return fmt.Errorf("invalid message index: %w", err)
+	}
+
+	var req responses.MessageUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if strings.TrimSpace(req.Content) == "" {
+		return fmt.Errorf("message content cannot be empty")
+	}
+
+	chat, err := s.Store.ChatWithOptions(chatID, true)
+	if err != nil {
+		return fmt.Errorf("failed to load chat: %w", err)
+	}
+
+	if msgIndex < 0 || msgIndex >= len(chat.Messages) {
+		return fmt.Errorf("message index out of range")
+	}
+
+	message := chat.Messages[msgIndex]
+	if message.Role != "assistant" {
+		return fmt.Errorf("only assistant messages can be updated")
+	}
+
+	message.Content = req.Content
+	message.UpdatedAt = time.Now()
+	chat.Messages[msgIndex] = message
+
+	if err := s.Store.SetChat(*chat); err != nil {
+		return fmt.Errorf("failed to update chat message: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(responses.MessageUpdateResponse{
+		Index:   msgIndex,
+		ChatID:  chatID,
+		Message: message,
+	})
 }
 
 func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) error {

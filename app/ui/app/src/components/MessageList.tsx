@@ -14,6 +14,12 @@ export default function MessageList({
   editingMessageIndex,
   error,
   browserToolResult,
+  onAssistantEditStart,
+  onAssistantEditSave,
+  onAssistantEditCancel,
+  assistantEditingIndex,
+  assistantEditIsSaving,
+  assistantEditError,
 }: {
   messages: MessageType[];
   spacerHeight: number;
@@ -24,6 +30,15 @@ export default function MessageList({
   editingMessageIndex?: number;
   error?: ErrorEvent | null;
   browserToolResult?: any;
+  onAssistantEditStart?: (index: number) => void;
+  onAssistantEditSave?: (
+    index: number,
+    content: string,
+  ) => void | Promise<void>;
+  onAssistantEditCancel?: () => void;
+  assistantEditingIndex?: number | null;
+  assistantEditIsSaving?: boolean;
+  assistantEditError?: string | null;
 }) {
   const [showDots, setShowDots] = React.useState(false);
   const isDownloadingModel = downloadProgress && !downloadProgress.done;
@@ -101,6 +116,12 @@ export default function MessageList({
               }
               browserToolResult={browserToolResult}
               lastToolQuery={lastToolQuery}
+              onAssistantEditStart={onAssistantEditStart}
+              onAssistantEditSave={onAssistantEditSave}
+              onAssistantEditCancel={onAssistantEditCancel}
+              assistantEditingIndex={assistantEditingIndex}
+              assistantEditIsSaving={assistantEditIsSaving}
+              assistantEditError={assistantEditError}
             />
           </div>
         );

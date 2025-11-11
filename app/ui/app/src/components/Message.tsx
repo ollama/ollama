@@ -3,8 +3,16 @@ import Thinking from "./Thinking";
 import StreamingMarkdownContent from "./StreamingMarkdownContent";
 import { ImageThumbnail } from "./ImageThumbnail";
 import { isImageFile } from "@/utils/imageUtils";
-import CopyButton from "./CopyButton";
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import {
+  CheckIcon,
+  PencilSquareIcon,
+  Square2StackIcon,
+} from "@heroicons/react/24/outline";
+import {
+  MessageActions,
+  MessageAction,
+} from "@/components/ai-elements/message";
 
 const Message = React.memo(
   ({
@@ -15,6 +23,12 @@ const Message = React.memo(
     isFaded,
     browserToolResult,
     lastToolQuery,
+    onAssistantEditStart,
+    onAssistantEditSave,
+    onAssistantEditCancel,
+    assistantEditingIndex,
+    assistantEditIsSaving,
+    assistantEditError,
   }: {
     message: MessageType;
     onEditMessage?: (content: string, index: number) => void;
@@ -24,6 +38,15 @@ const Message = React.memo(
     // TODO(drifkin): this type isn't right
     browserToolResult?: BrowserToolResult;
     lastToolQuery?: string;
+    onAssistantEditStart?: (index: number) => void;
+    onAssistantEditSave?: (
+      index: number,
+      content: string,
+    ) => void | Promise<void>;
+    onAssistantEditCancel?: () => void;
+    assistantEditingIndex?: number | null;
+    assistantEditIsSaving?: boolean;
+    assistantEditError?: string | null;
   }) => {
     if (message.role === "user") {
       return (
@@ -42,6 +65,13 @@ const Message = React.memo(
           isFaded={isFaded}
           browserToolResult={browserToolResult}
           lastToolQuery={lastToolQuery}
+          messageIndex={messageIndex}
+          onAssistantEditStart={onAssistantEditStart}
+          onAssistantEditSave={onAssistantEditSave}
+          onAssistantEditCancel={onAssistantEditCancel}
+          assistantEditingIndex={assistantEditingIndex}
+          assistantEditIsSaving={assistantEditIsSaving}
+          assistantEditError={assistantEditError}
         />
       );
     }
@@ -53,7 +83,10 @@ const Message = React.memo(
       prevProps.messageIndex === nextProps.messageIndex &&
       prevProps.isStreaming === nextProps.isStreaming &&
       prevProps.isFaded === nextProps.isFaded &&
-      prevProps.browserToolResult === nextProps.browserToolResult
+      prevProps.browserToolResult === nextProps.browserToolResult &&
+      prevProps.assistantEditingIndex === nextProps.assistantEditingIndex &&
+      prevProps.assistantEditIsSaving === nextProps.assistantEditIsSaving &&
+      prevProps.assistantEditError === nextProps.assistantEditError
     );
   },
 );
@@ -880,6 +913,13 @@ function OtherRoleMessage({
   isFaded,
   browserToolResult,
   lastToolQuery,
+  messageIndex,
+  onAssistantEditStart,
+  onAssistantEditSave,
+  onAssistantEditCancel,
+  assistantEditingIndex,
+  assistantEditIsSaving,
+  assistantEditError,
 }: {
   message: MessageType;
   previousMessage?: MessageType;
@@ -888,8 +928,106 @@ function OtherRoleMessage({
   // TODO(drifkin): this type isn't right
   browserToolResult?: BrowserToolResult;
   lastToolQuery?: string;
+  messageIndex?: number;
+  onAssistantEditStart?: (index: number) => void;
+  onAssistantEditSave?: (
+    index: number,
+    content: string,
+  ) => void | Promise<void>;
+  onAssistantEditCancel?: () => void;
+  assistantEditingIndex?: number | null;
+  assistantEditIsSaving?: boolean;
+  assistantEditError?: string | null;
 }) {
   const messageRef = useRef<HTMLDivElement>(null);
+  const [draftContent, setDraftContent] = useState(message.content || "");
+  const [isCopied, setIsCopied] = useState(false);
+  const copyResetTimeoutRef = useRef<number | undefined>(undefined);
+
+  const isAssistantMessage = message.role === "assistant";
+  const isEditingAssistant =
+    isAssistantMessage &&
+    assistantEditingIndex !== null &&
+    assistantEditingIndex !== undefined &&
+    messageIndex !== undefined &&
+    assistantEditingIndex === messageIndex;
+
+  useEffect(() => {
+    if (isEditingAssistant) {
+      setDraftContent(message.content || "");
+    }
+  }, [isEditingAssistant, message.content]);
+
+  useEffect(() => {
+    setIsCopied(false);
+  }, [message.content]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current !== undefined) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleAssistantEditStart = () => {
+    if (onAssistantEditStart && messageIndex !== undefined) {
+      onAssistantEditStart(messageIndex);
+    }
+  };
+
+  const handleAssistantEditSave = async () => {
+    if (!onAssistantEditSave || messageIndex === undefined) {
+      return;
+    }
+    await onAssistantEditSave(messageIndex, draftContent);
+  };
+
+  const handleAssistantEditCancel = () => {
+    onAssistantEditCancel?.();
+  };
+
+  const handleCopy = async () => {
+    const contentToCopy = message.content || "";
+    if (!contentToCopy) {
+      return;
+    }
+
+    const scheduleReset = () => {
+      if (copyResetTimeoutRef.current !== undefined) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setIsCopied(false);
+      }, 2000);
+    };
+
+    try {
+      if (messageRef.current) {
+        const cloned = messageRef.current.cloneNode(true) as HTMLElement;
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([cloned.innerHTML], { type: "text/html" }),
+            "text/plain": new Blob([contentToCopy], { type: "text/plain" }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(contentToCopy);
+      }
+
+      setIsCopied(true);
+      scheduleReset();
+    } catch (error) {
+      console.error("Clipboard API failed, falling back to plain text", error);
+      try {
+        await navigator.clipboard.writeText(contentToCopy);
+        setIsCopied(true);
+        scheduleReset();
+      } catch (fallbackError) {
+        console.error("Fallback copy also failed:", fallbackError);
+      }
+    }
+  };
 
   return (
     <div
@@ -918,17 +1056,19 @@ function OtherRoleMessage({
 
           if (
             message.role !== "tool" &&
+            !isEditingAssistant &&
             (!message.content || !message.content.trim())
           ) {
             return null;
           }
 
-          // Render appropriate content
+          const refForContent = isEditingAssistant ? null : messageRef;
+
           return (
             <div
               className="max-w-full prose dark:prose-invert assistant-message-content break-words"
               id="message-container"
-              ref={messageRef}
+              ref={refForContent}
             >
               {message.role === "tool" ? (
                 <ToolRoleContent
@@ -936,6 +1076,42 @@ function OtherRoleMessage({
                   browserToolResult={browserToolResult}
                   lastToolQuery={lastToolQuery}
                 />
+              ) : isEditingAssistant ? (
+                <>
+                  <textarea
+                    value={draftContent}
+                    onChange={(event) => setDraftContent(event.target.value)}
+                    disabled={assistantEditIsSaving}
+                    autoFocus
+                    rows={Math.min(draftContent.split("\n").length, 20)}
+                    className="w-full max-h-[500px] overflow-y-auto resize-none rounded-2xl border border-neutral-200 bg-white p-4 text-sm leading-relaxed text-neutral-900 transition-colors dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAssistantEditSave}
+                      disabled={assistantEditIsSaving}
+                      tabIndex={0}
+                      className="rounded-2xl px-2 py-1 text-sm font-medium text-black transition-colors hover:text-neutral-700 focus-visible:ring-2 focus-visible:ring-neutral-300 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:text-neutral-200 dark:hover:text-neutral-400 dark:focus-visible:ring-neutral-500 cursor-pointer"
+                    >
+                      {assistantEditIsSaving ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAssistantEditCancel}
+                      disabled={assistantEditIsSaving}
+                      tabIndex={0}
+                      className="rounded-2xl px-2 py-1 text-sm text-neutral-500 transition-colors hover:text-neutral-700 focus-visible:ring-2 focus-visible:ring-neutral-300 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:text-neutral-400 dark:hover:text-neutral-200 dark:focus-visible:ring-neutral-500 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {assistantEditError && (
+                    <p className="mt-2 text-sm text-red-500 dark:text-red-400">
+                      {assistantEditError}
+                    </p>
+                  )}
+                </>
               ) : (
                 <StreamingMarkdownContent
                   content={message.content}
@@ -972,18 +1148,28 @@ function OtherRoleMessage({
         message.content &&
         message.content.trim() &&
         (!message.tool_calls || message.tool_calls.length === 0) &&
-        !message.tool_call && (
-          <div className="-ml-1">
-            <CopyButton
-              content={message.content || ""}
-              copyRef={messageRef as React.RefObject<HTMLElement>}
-              removeClasses={["copy-button"]}
-              size="md"
-              showLabels={false}
-              className="copy-button z-10 text-neutral-500 dark:text-neutral-400"
-              title="Copy"
-            />
-          </div>
+        !message.tool_call &&
+        !isEditingAssistant && (
+          <MessageActions>
+            <MessageAction
+              onClick={handleCopy}
+              title={isCopied ? "Copied" : "Copy"}
+              aria-label={isCopied ? "Copied" : "Copy"}
+            >
+              {isCopied ? (
+                <CheckIcon className="h-4.5 w-4.5" />
+              ) : (
+                <Square2StackIcon className="h-4.5 w-4.5" />
+              )}
+            </MessageAction>
+            <MessageAction
+              onClick={handleAssistantEditStart}
+              title="Edit"
+              aria-label="Edit"
+            >
+              <PencilSquareIcon className="h-4.5 w-4.5" />
+            </MessageAction>
+          </MessageActions>
         )}
     </div>
   );

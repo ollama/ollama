@@ -25,6 +25,16 @@ type ChatResponse struct {
 	Chat store.Chat `json:"chat"`
 }
 
+type MessageUpdateRequest struct {
+	Content string `json:"content"`
+}
+
+type MessageUpdateResponse struct {
+	Index   int           `json:"index"`
+	ChatID  string        `json:"chatId"`
+	Message store.Message `json:"message"`
+}
+
 type Model struct {
 	Model      string     `json:"model"`
 	Digest     string     `json:"digest,omitempty"`

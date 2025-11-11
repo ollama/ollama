@@ -11,6 +11,7 @@ import {
   ChatRequest,
   Settings,
   User,
+  Message,
 } from "@/gotypes";
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
@@ -298,6 +299,40 @@ export async function deleteChat(chatId: string): Promise<void> {
     const error = await response.text();
     throw new Error(error || "Failed to delete chat");
   }
+}
+
+export async function updateChatMessage(
+  chatId: string,
+  index: number,
+  content: string,
+): Promise<{
+  index: number;
+  chatId: string;
+  message: Message;
+}> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/chat/${chatId}/messages/${index}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorMessage = await response.text();
+    throw new Error(errorMessage || "Failed to update message");
+  }
+
+  const data = await response.json();
+
+  return {
+    index: data.index,
+    chatId: data.chatId,
+    message: new Message(data.message),
+  };
 }
 
 // Get upstream information for model staleness checking
