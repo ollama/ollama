@@ -1275,6 +1275,9 @@ paths:
             example:
               source: gemma3
               destination: gemma3-backup
+      responses:
+        "200":
+          description: Model successfully copied
   /api/pull:
     post:
       summary: Pull a model
@@ -1382,16 +1385,7 @@ paths:
               model: gemma3
       responses:
         "200":
-          description: Deletion status updates.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StatusResponse"
-              example:
-                status: "success"
-            application/x-ndjson:
-              schema:
-                $ref: "#/components/schemas/StatusEvent"
+          description: Model successfully deleted
   /api/version:
     get:
       summary: Get version
