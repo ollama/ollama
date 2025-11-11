@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -244,6 +244,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v11 to v12: %w", err)
 			}
 			version = 12
+		case 12:
+			// Phase 1: Add multi-API provider support, context management, and cost tracking
+			if err := db.migrateV12ToV13(); err != nil {
+				return fmt.Errorf("migrate v12 to v13: %w", err)
+			}
+			version = 13
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -495,6 +501,130 @@ func columnNotExists(err error) bool {
 			strings.Contains(sqlite3Err.Error(), "no such column")
 	}
 	return false
+}
+
+// migrateV12ToV13 adds multi-API provider support, context management, and cost tracking
+func (db *database) migrateV12ToV13() error {
+	// Create providers table
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS providers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			api_key TEXT,
+			base_url TEXT,
+			models TEXT,
+			enabled BOOLEAN DEFAULT 1,
+			default_model TEXT,
+			config TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("create providers table: %w", err)
+	}
+
+	// Create model_pricing table
+	_, err = db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS model_pricing (
+			provider_id TEXT NOT NULL,
+			model_name TEXT NOT NULL,
+			input_price_per_1m REAL,
+			output_price_per_1m REAL,
+			context_window INTEGER,
+			supports_streaming BOOLEAN DEFAULT 1,
+			supports_tools BOOLEAN DEFAULT 0,
+			supports_vision BOOLEAN DEFAULT 0,
+			last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (provider_id, model_name),
+			FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("create model_pricing table: %w", err)
+	}
+
+	// Create api_usage table
+	_, err = db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS api_usage (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT,
+			message_id INTEGER,
+			provider_id TEXT NOT NULL,
+			model_name TEXT NOT NULL,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			total_tokens INTEGER DEFAULT 0,
+			cost_usd REAL DEFAULT 0.0,
+			duration_ms INTEGER,
+			tokens_per_second REAL,
+			timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+			FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+			FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("create api_usage table: %w", err)
+	}
+
+	// Create context_snapshots table
+	_, err = db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS context_snapshots (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			snapshot_at_message_id INTEGER,
+			summary TEXT,
+			original_tokens INTEGER,
+			summary_tokens INTEGER,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+			FOREIGN KEY (snapshot_at_message_id) REFERENCES messages(id) ON DELETE SET NULL
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("create context_snapshots table: %w", err)
+	}
+
+	// Create indexes
+	_, err = db.conn.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_api_usage_chat_id ON api_usage(chat_id);
+		CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_context_snapshots_chat_id ON context_snapshots(chat_id);
+	`)
+	if err != nil {
+		return fmt.Errorf("create indexes: %w", err)
+	}
+
+	// Add new columns to settings
+	_, err = db.conn.Exec(`ALTER TABLE settings ADD COLUMN default_provider_id TEXT;`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add default_provider_id column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE settings ADD COLUMN auto_summarize BOOLEAN DEFAULT 1;`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add auto_summarize column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE settings ADD COLUMN context_warning_threshold REAL DEFAULT 0.8;`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add context_warning_threshold column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE settings ADD COLUMN track_costs BOOLEAN DEFAULT 1;`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add track_costs column: %w", err)
+	}
+
+	// Update schema version
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 13;`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
 }
 
 func (db *database) getAllChats() ([]Chat, error) {
