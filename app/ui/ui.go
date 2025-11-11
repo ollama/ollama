@@ -885,9 +885,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 
-		// Debug: Log what we're sending
-		s.log().Debug("sending chat request", "model", chatReq.Model, "think", chatReq.Think, "num_messages", len(chatReq.Messages))
-
 		err = c.Chat(ctx, chatReq, func(res api.ChatResponse) error {
 			if loading {
 				// Remove the loading indicator on first token
