@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/agent"
@@ -17,6 +18,12 @@ import (
 	"github.com/ollama/ollama/rag"
 	"github.com/ollama/ollama/templates"
 	"github.com/ollama/ollama/workspace"
+)
+
+// Global agent sessions storage
+var (
+	agentSessions   = make(map[string]*agent.Session)
+	agentSessionsMu sync.RWMutex
 )
 
 // Provider handlers (Phase 1)
@@ -372,7 +379,12 @@ func (s *Server) StartAgentSessionHandler(c *gin.Context) {
 		return
 	}
 
-	controller := agent.NewController(supervisorProvider, workerProvider)
+	// Create workspace managers
+	workspaceManager := workspace.NewManager()
+	todoManager := workspace.NewTodoManager(workspaceManager)
+	rulesManager := workspace.NewRulesManager(workspaceManager)
+
+	controller := agent.NewController(supervisorProvider, workerProvider, todoManager, rulesManager)
 	ctx := c.Request.Context()
 
 	session, err := controller.StartSession(ctx, req.WorkspacePath)
@@ -381,18 +393,27 @@ func (s *Server) StartAgentSessionHandler(c *gin.Context) {
 		return
 	}
 
+	// Store session for later retrieval
+	agentSessionsMu.Lock()
+	agentSessions[session.ID] = session
+	agentSessionsMu.Unlock()
+
 	c.JSON(http.StatusOK, session)
 }
 
 func (s *Server) GetAgentStatusHandler(c *gin.Context) {
 	sessionID := c.Param("id")
 
-	// TODO: Implement session tracking
-	c.JSON(http.StatusOK, gin.H{
-		"session_id": sessionID,
-		"status":     "running",
-		"message":    "agent status tracking not yet implemented",
-	})
+	agentSessionsMu.RLock()
+	session, exists := agentSessions[sessionID]
+	agentSessionsMu.RUnlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, session)
 }
 
 // Voice I/O handlers (Phase 11)
