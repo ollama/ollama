@@ -1498,6 +1498,36 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
+	// Multi-API Providers (Phase 1)
+	r.GET("/api/providers", s.ListProvidersHandler)
+	r.POST("/api/providers", s.AddProviderHandler)
+	r.DELETE("/api/providers/:id", s.DeleteProviderHandler)
+	r.POST("/api/providers/:provider/chat", s.ProviderChatHandler)
+	r.GET("/api/providers/:provider/models", s.ProviderModelsHandler)
+	r.POST("/api/providers/:provider/validate", s.ValidateProviderHandler)
+
+	// Workspace Management (Phase 2)
+	r.GET("/api/workspace/rules", s.GetWorkspaceRulesHandler)
+	r.POST("/api/workspace/rules", s.UpdateWorkspaceRulesHandler)
+	r.GET("/api/workspace/todos", s.GetWorkspaceTodosHandler)
+	r.POST("/api/workspace/todos/complete", s.CompleteWorkspaceTodoHandler)
+
+	// RAG (Phase 6)
+	r.POST("/api/rag/ingest", s.RAGIngestHandler)
+	r.POST("/api/rag/search", s.RAGSearchHandler)
+
+	// Templates (Phase 5)
+	r.GET("/api/templates", s.ListTemplatesHandler)
+	r.POST("/api/templates/render", s.RenderTemplateHandler)
+
+	// Agent System (Phase 10)
+	r.POST("/api/agent/start", s.StartAgentSessionHandler)
+	r.GET("/api/agent/status/:id", s.GetAgentStatusHandler)
+
+	// Voice I/O (Phase 11)
+	r.POST("/api/voice/transcribe", s.VoiceTranscribeHandler)
+	r.POST("/api/voice/synthesize", s.VoiceSynthesizeHandler)
+
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", middleware.CompletionsMiddleware(), s.GenerateHandler)
