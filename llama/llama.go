@@ -126,7 +126,14 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
-	params.flash_attn_type = (int32)(flashAttention)
+	switch flashAttention {
+	case ml.FlashAttentionEnabled:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_ENABLED)
+	case ml.FlashAttentionDisabled:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_DISABLED)
+	case ml.FlashAttentionAuto:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_AUTO)
+	}
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 
