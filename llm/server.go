@@ -508,22 +508,6 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus [
 		s.options.NumGPU = 0
 	}
 
-	// On linux and windows, over-allocating CPU memory will almost always result in an error
-	// Darwin has fully dynamic swap so has no direct concept of free swap space
-	if runtime.GOOS != "darwin" {
-		systemMemoryRequired := s.estimate.TotalSize - s.estimate.VRAMSize
-		available := systemInfo.FreeMemory + systemInfo.FreeSwap
-		if systemMemoryRequired > available {
-			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
-			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
-		}
-	}
-
-	slog.Info("offload", "", s.estimate)
-
-	s.gpus = gpus
-	s.loadRequest.GPULayers = createGPULayers(s.estimate, s.ggml, gpus, s.options.NumGPU)
-
 	// Mmap is only supported on the llama engine
 	if s.textProcessor == nil {
 		s.loadRequest.UseMmap = true
@@ -549,6 +533,22 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus [
 			s.loadRequest.UseMmap = false
 		}
 	}
+
+	// On linux and windows, over-allocating CPU memory will almost always result in an error
+	// Darwin has fully dynamic swap so has no direct concept of free swap space
+	if runtime.GOOS != "darwin" {
+		systemMemoryRequired := s.estimate.TotalSize - s.estimate.VRAMSize
+		available := systemInfo.FreeMemory + systemInfo.FreeSwap
+		if systemMemoryRequired > available && !s.loadRequest.UseMmap {
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
+			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
+		}
+	}
+
+	slog.Info("offload", "", s.estimate)
+
+	s.gpus = gpus
+	s.loadRequest.GPULayers = createGPULayers(s.estimate, s.ggml, gpus, s.options.NumGPU)
 
 	if err := s.waitUntilRunnerLaunched(ctx); err != nil {
 		return nil, err
