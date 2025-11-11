@@ -782,25 +782,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	var thinkValue any
 
 	if req.Think != nil {
-		// Validate that the model supports thinking if requested
-		thinkRequested := false
-		switch v := req.Think.(type) {
-		case bool:
-			thinkRequested = v
-		case string:
-			thinkRequested = v != "" && v != "none"
-		}
-
-		if thinkRequested && !think {
-			errorEvent := responses.ErrorEvent{
-				EventName: "error",
-				Error:     fmt.Sprintf("Model %q does not support thinking/reasoning", req.Model),
-				Code:      "model_capability_error",
-			}
-			json.NewEncoder(w).Encode(errorEvent)
-			flusher.Flush()
-			return nil
-		}
 		thinkValue = req.Think
 	} else {
 		thinkValue = think
