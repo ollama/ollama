@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/runner/common"
 )
 
@@ -832,7 +833,7 @@ func (s *Server) loadModel(
 	ppath string,
 	kvSize int,
 	kvCacheType string,
-	flashAttention bool,
+	flashAttention ml.FlashAttentionType,
 	threads int,
 	multiUserCache bool,
 ) {

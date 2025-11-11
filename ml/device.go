@@ -492,6 +492,15 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 	return true
 }
 
+type FlashAttentionType int32
+
+const (
+	// Aligned with llama_flash_attn_type
+	FlashAttentionAuto     FlashAttentionType = -1
+	FlashAttentionDisabled FlashAttentionType = 0
+	FlashAttentionEnabled  FlashAttentionType = 1
+)
+
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variables
 // Set mustFilter true to enable filtering of CUDA devices

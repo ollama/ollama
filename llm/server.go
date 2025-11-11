@@ -188,6 +188,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	if len(projectors) > 0 && llamaModel != nil {
 		loadRequest.ProjectorPath = projectors[0]
 	}
+	// Determine if the user has forced FA on or off
+	faUserSet := false
+	if envconfig.FlashAttention(true) == envconfig.FlashAttention(false) {
+		faUserSet = true
+	}
 
 	fa := envconfig.FlashAttention(f.FlashAttention())
 
@@ -205,19 +210,25 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
-	if fa {
-		slog.Info("enabling flash attention")
-		loadRequest.FlashAttention = true
+	// When running the llama engine, if the user doesn't set FA, use auto-mode
+	if textProcessor == nil && !faUserSet {
+		loadRequest.FlashAttention = ml.FlashAttentionAuto
+	} else {
+		// For Ollama engine, use our FlashAttentionSupported and SupportsFlashAttention logic
+		if fa {
+			slog.Info("enabling flash attention")
+			loadRequest.FlashAttention = ml.FlashAttentionEnabled
 
-		// Flash Attention also supports kv cache quantization
-		// Enable if the requested and kv cache type is supported by the model
-		if f.SupportsKVCacheType(kvct) {
-			loadRequest.KvCacheType = kvct
-		} else {
-			slog.Warn("kv cache type not supported by model", "type", kvct)
+			// Flash Attention also supports kv cache quantization
+			// Enable if the requested and kv cache type is supported by the model
+			if f.SupportsKVCacheType(kvct) {
+				loadRequest.KvCacheType = kvct
+			} else {
+				slog.Warn("kv cache type not supported by model", "type", kvct)
+			}
+		} else if kvct != "" && kvct != "f16" {
+			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 		}
-	} else if kvct != "" && kvct != "f16" {
-		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
@@ -435,7 +446,7 @@ type LoadRequest struct {
 	LoraPath       []string
 	Parallel       int
 	BatchSize      int
-	FlashAttention bool
+	FlashAttention ml.FlashAttentionType
 	KvSize         int
 	KvCacheType    string
 	NumThreads     int
