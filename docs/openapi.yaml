@@ -2,12 +2,15 @@ openapi: 3.1.0
 info:
   title: Ollama API
   version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
   description: |
     OpenAPI specification for the Ollama HTTP API
-
 servers:
   - url: http://localhost:11434
-    description: Local Ollama instance
+    description: Ollama
+security: []
 components:
   securitySchemes:
     bearerAuth:
@@ -93,8 +96,11 @@ components:
           type: boolean
           default: true
         think:
-          type: boolean
-          description: When true, returns separate thinking output in addition to content
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [high, medium, low]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
         raw:
           type: boolean
           description: When true, returns the raw response from the model without any prompt templating
@@ -271,8 +277,11 @@ components:
           type: boolean
           default: true
         think:
-          type: boolean
-          description: When true, returns separate thinking output in addition to content
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [high, medium, low]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
         keep_alive:
           oneOf:
             - type: string
@@ -310,7 +319,6 @@ components:
               type: array
               items:
                 type: string
-              nullable: true
               description: Optional base64-encoded images in the response
         done:
           type: boolean
@@ -367,7 +375,6 @@ components:
               type: array
               items:
                 type: string
-              nullable: true
               description: Partial base64-encoded images, when present
         done:
           type: boolean
@@ -543,6 +550,9 @@ components:
         license:
           type: string
           description: The license of the model
+        modified_at:
+          type: string
+          description: Last modified timestamp in ISO 8601 format
         details:
           type: object
           description: High-level model details
@@ -622,6 +632,9 @@ components:
         size_vram:
           type: integer
           description: VRAM usage in bytes
+        context_length:
+          type: integer
+          description: Context length for the running model
     PsResponse:
       type: object
       properties:
