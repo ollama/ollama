@@ -451,6 +451,19 @@ const (
 	FlashAttentionEnabled  FlashAttentionType = 1
 )
 
+func (f FlashAttentionType) LogValue() slog.Value {
+	switch f {
+	case FlashAttentionAuto:
+		return slog.AnyValue("Auto")
+	case FlashAttentionDisabled:
+		return slog.AnyValue("Disabled")
+	case FlashAttentionEnabled:
+		return slog.AnyValue("Enabled")
+	default:
+		return slog.AnyValue("unknown")
+	}
+}
+
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variables
 func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
