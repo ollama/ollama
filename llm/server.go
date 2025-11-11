@@ -211,10 +211,15 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
 	// When running the llama engine, if the user doesn't set FA, use auto-mode
-	if textProcessor == nil && !faUserSet {
+	if textProcessor == nil && !faUserSet && ml.FlashAttentionSupported(gpus) {
 		loadRequest.FlashAttention = ml.FlashAttentionAuto
+		if f.SupportsKVCacheType(kvct) {
+			loadRequest.KvCacheType = kvct
+		} else {
+			slog.Warn("kv cache type not supported by model", "type", kvct)
+		}
 	} else {
-		// For Ollama engine, use our FlashAttentionSupported and SupportsFlashAttention logic
+		// For Ollama engine, use our SupportsFlashAttention logic
 		if fa {
 			slog.Info("enabling flash attention")
 			loadRequest.FlashAttention = ml.FlashAttentionEnabled
