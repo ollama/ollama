@@ -782,6 +782,25 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	var thinkValue any
 
 	if req.Think != nil {
+		// Validate that the model supports thinking if requested
+		thinkRequested := false
+		switch v := req.Think.(type) {
+		case bool:
+			thinkRequested = v
+		case string:
+			thinkRequested = v != "" && v != "none"
+		}
+		
+		if thinkRequested && !think {
+			errorEvent := responses.ErrorEvent{
+				EventName: "error",
+				Error:     fmt.Sprintf("Model %q does not support thinking/reasoning", req.Model),
+				Code:      "model_capability_error",
+			}
+			json.NewEncoder(w).Encode(errorEvent)
+			flusher.Flush()
+			return nil
+		}
 		thinkValue = req.Think
 	} else {
 		thinkValue = think
@@ -865,6 +884,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
+
+		// Debug: Log what we're sending
+		s.log().Debug("sending chat request", "model", chatReq.Model, "think", chatReq.Think, "num_messages", len(chatReq.Messages))
 
 		err = c.Chat(ctx, chatReq, func(res api.ChatResponse) error {
 			if loading {
@@ -1794,13 +1816,14 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 
 	var thinkValue *api.ThinkValue
 	if think != nil {
+		// Only set Think if it's actually requesting thinking
 		if boolValue, ok := think.(bool); ok {
-			thinkValue = &api.ThinkValue{
-				Value: boolValue,
+			if boolValue {
+				thinkValue = &api.ThinkValue{Value: boolValue}
 			}
 		} else if stringValue, ok := think.(string); ok {
-			thinkValue = &api.ThinkValue{
-				Value: stringValue,
+			if stringValue != "" && stringValue != "none" {
+				thinkValue = &api.ThinkValue{Value: stringValue}
 			}
 		}
 	}
