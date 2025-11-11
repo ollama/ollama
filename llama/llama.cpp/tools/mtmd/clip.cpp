@@ -2639,6 +2639,10 @@ struct clip_model_loader {
             if (proj_type.empty()) {
                 if (modality == CLIP_MODALITY_VISION) {
                     get_string(KEY_VISION_PROJ_TYPE, proj_type, false);
+                    if (proj_type.empty()) {
+                        // Assume MLP if no projector type listed
+                        proj_type = "mlp";
+                    }
                 } else if (modality == CLIP_MODALITY_AUDIO) {
                     get_string(KEY_AUDIO_PROJ_TYPE, proj_type, false);
                 } else {
