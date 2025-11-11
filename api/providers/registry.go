@@ -65,6 +65,12 @@ func CreateProvider(providerType, apiKey, baseURL string) (Provider, error) {
 	switch providerType {
 	case "openai":
 		return NewOpenAIProvider(apiKey, baseURL), nil
+	case "anthropic":
+		return NewAnthropicProvider(apiKey), nil
+	case "google":
+		return NewGoogleProvider(apiKey), nil
+	case "groq":
+		return NewGroqProvider(apiKey), nil
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", providerType)
 	}
