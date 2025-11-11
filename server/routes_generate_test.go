@@ -1184,6 +1184,86 @@ func TestGenerate(t *testing.T) {
 	})
 }
 
+func TestGenerateLogprobs(t *testing.T) {
+	t.Run("invalid top_logprobs negative", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test",
+			Prompt:      "Hello",
+			TopLogprobs: -1,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid top_logprobs too high", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test",
+			Prompt:      "Hello",
+			TopLogprobs: 21,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+}
+
+func TestChatLogprobs(t *testing.T) {
+	t.Run("invalid top_logprobs negative", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			TopLogprobs: -1,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid top_logprobs too high", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			TopLogprobs: 21,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+}
+
 func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

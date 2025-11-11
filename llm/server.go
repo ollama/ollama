@@ -1362,6 +1362,12 @@ type CompletionRequest struct {
 	Grammar  string // set before sending the request to the subprocess
 	Shift    bool
 	Truncate bool
+
+	// Logprobs specifies whether to include log probabilities in the response
+	Logprobs bool
+
+	// TopLogprobs specifies the number of most likely alternative tokens to return (0-20)
+	TopLogprobs int
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1387,6 +1393,18 @@ func (d DoneReason) String() string {
 	}
 }
 
+// TokenLogprob represents log probability information for a single token alternative.
+type TokenLogprob struct {
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+}
+
+// Logprob contains log probability information for a generated token.
+type Logprob struct {
+	TokenLogprob
+	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
+}
+
 type CompletionResponse struct {
 	Content            string        `json:"content"`
 	DoneReason         DoneReason    `json:"done_reason"`
@@ -1395,6 +1413,9 @@ type CompletionResponse struct {
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
 	EvalCount          int           `json:"eval_count"`
 	EvalDuration       time.Duration `json:"eval_duration"`
+
+	// Logprobs contains log probability information if requested
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -1530,7 +1551,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			if c.Content != "" {
 				fn(CompletionResponse{
-					Content: c.Content,
+					Content:  c.Content,
+					Logprobs: c.Logprobs,
 				})
 			}
 

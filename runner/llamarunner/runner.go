@@ -28,6 +28,12 @@ import (
 	"github.com/ollama/ollama/runner/common"
 )
 
+// response contains a piece of generated text along with optional logprobs
+type response struct {
+	content  string
+	logprobs []llm.Logprob
+}
+
 // input is an element of the prompt to process, either
 // a token or an image embedding (generated from a vision projector)
 type input struct {
@@ -53,11 +59,14 @@ type Sequence struct {
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
 
+	// logprobs for tokens that haven't been returned yet
+	pendingLogprobs []llm.Logprob
+
 	// input cache being used by this sequence
 	cache *InputCacheSlot
 
 	// channel to send responses over
-	responses chan string
+	responses chan response
 
 	// channel to stop decoding (such as if the remote connection is closed)
 	quit chan bool
@@ -84,6 +93,10 @@ type Sequence struct {
 
 	doneReason llm.DoneReason
 
+	// logprobs configuration
+	logprobs    bool
+	topLogprobs int
+
 	// Metrics
 	processingDuration time.Duration
 	generationDuration time.Duration
@@ -99,6 +112,8 @@ type NewSequenceParams struct {
 	embedding      bool
 	shift          bool
 	truncate       bool
+	logprobs       bool
+	topLogprobs    int
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
@@ -155,7 +170,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		numPromptInputs:  len(inputs),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
-		responses:        make(chan string, 100),
+		responses:        make(chan response, 100),
 		quit:             make(chan bool, 1),
 		embedding:        make(chan []float32, 1),
 		samplingCtx:      sc,
@@ -163,7 +178,14 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		stop:             params.stop,
 		numKeep:          params.numKeep,
 		shift:            params.shift,
+		logprobs:         params.logprobs,
+		topLogprobs:      params.topLogprobs,
 	}, nil
+}
+
+// calculateLogprobsLlama converts raw logits to log probabilities and finds top K tokens
+func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []llm.Logprob {
+	return common.CalculateLogprobs(logits, selectedToken, topK, model.TokenToPiece)
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -294,7 +316,9 @@ func (s *Server) allNil() bool {
 
 func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
+	logprobs := seq.pendingLogprobs
 	seq.pendingResponses = []string{}
+	seq.pendingLogprobs = []llm.Logprob{}
 
 	// Check if there are any partial UTF-8 characters remaining.
 	// We already check and queue as we are generating but some may
@@ -311,7 +335,7 @@ func flushPending(seq *Sequence) bool {
 	}
 
 	select {
-	case seq.responses <- joined:
+	case seq.responses <- response{content: joined, logprobs: logprobs}:
 		return true
 	case <-seq.quit:
 		return false
@@ -526,6 +550,15 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
+		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
+		if seq.logprobs {
+			logits := s.lc.GetLogitsIth(seq.iBatch)
+			if logits != nil {
+				logprobs := calculateLogprobsLlama(logits, token, seq.topLogprobs, s.model)
+				seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
+			}
+		}
+
 		seq.inputs = []input{{token: token}}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
@@ -538,6 +571,17 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			origLen := len(seq.pendingResponses)
 			seq.pendingResponses, tokenTruncated = common.TruncateStop(seq.pendingResponses, stop)
 			newLen := len(seq.pendingResponses)
+
+			// Truncate logprobs to match the truncated responses
+			if seq.logprobs {
+				origLogprobsLen := len(seq.pendingLogprobs)
+				numTokensRemoved := origLen - newLen
+				newLogprobsLen := origLogprobsLen - numTokensRemoved
+				if newLogprobsLen < 0 {
+					newLogprobsLen = 0
+				}
+				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
+			}
 
 			// Update the cache based on the tokens that will be returned:
 			// - We have 1 token more than is currently in the cache because
@@ -618,6 +662,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		embedding:      false,
 		shift:          req.Shift,
 		truncate:       req.Truncate,
+		logprobs:       req.Logprobs,
+		topLogprobs:    req.TopLogprobs,
 	})
 	if err != nil {
 		if errors.Is(err, errorInputTooLong) {
@@ -669,10 +715,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			close(seq.quit)
 			return
-		case content, ok := <-seq.responses:
+		case resp, ok := <-seq.responses:
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content: content,
+					Content:  resp.content,
+					Logprobs: resp.logprobs,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
