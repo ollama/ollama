@@ -82,7 +82,7 @@ install_aot_ggml_lib_link() {
     # Define source directories
     SOURCE_DIRS=(
         "$OLLAMA_INSTALL_DIR/ollama-arm64-release/lib"
-        "/usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib"
+        "/usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib"
     )
 
     # Loop through each source directory
@@ -115,7 +115,7 @@ if [ "$OLLAMA_INSTALL_DIR/ollama-arm64-release/bin/ollama" != "$BINDIR/ollama" ]
     # varaibles are not working for the libraries when invoked by the service
     # this needs further troubleshoot.
     $SUDO cp $OLLAMA_INSTALL_DIR/ollama-arm64-release/lib/lib* /usr/lib/
-    $SUDO cp /usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib/lib* /usr/lib/
+    $SUDO cp /usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib/lib* /usr/lib/
 #    install_aot_ggml_lib_link
 fi
 
@@ -157,7 +157,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
-#Environment="LD_LIBRARY_PATH=/usr/bin/tsi/v0.1.1.tsv39_10_23_2025/bin/aot-tests/lib/:/usr/local/ollama-arm64-release/lib/:/usr/local/ollama-arm64-release/bin/"
+#Environment="LD_LIBRARY_PATH=/usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib/:/usr/local/ollama-arm64-release/lib/:/usr/local/ollama-arm64-release/bin/"
 [Install]
 WantedBy=default.target
 EOF
