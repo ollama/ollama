@@ -2,69 +2,111 @@
 
 import clsx from "clsx";
 import type { ComponentProps } from "react";
-import { useCallback } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  createContext,
+  useContext,
+} from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
-export type ConversationProps = ComponentProps<typeof StickToBottom>;
+// Create a context to share the "allow scroll" state
+const ConversationControlContext = createContext<{
+  allowScroll: () => void;
+} | null>(null);
 
-export const Conversation = ({ className, ...props }: ConversationProps) => (
-  <StickToBottom
-    className={clsx("relative h-full w-full overflow-y-auto", className)}
-    initial="instant"
-    resize="smooth"
-    role="log"
-    {...props}
-  />
-);
+export type ConversationProps = ComponentProps<typeof StickToBottom> & {
+  isStreaming?: boolean;
+};
+
+export const Conversation = ({
+  className,
+  isStreaming = false,
+  children,
+  ...props
+}: ConversationProps) => {
+  const shouldStopScrollRef = useRef(true);
+
+  const allowScroll = useCallback(() => {
+    shouldStopScrollRef.current = false;
+    setTimeout(() => {
+      shouldStopScrollRef.current = true;
+    }, 100);
+  }, []);
+
+  return (
+    <ConversationControlContext.Provider value={{ allowScroll }}>
+      <StickToBottom
+        className={clsx("relative h-full w-full overflow-y-auto", className)}
+        initial="instant"
+        resize="instant"
+        role="log"
+        {...props}
+      >
+        <ConversationContentInternal
+          isStreaming={isStreaming}
+          shouldStopScrollRef={shouldStopScrollRef}
+        >
+          <>{children}</>
+        </ConversationContentInternal>
+      </StickToBottom>
+    </ConversationControlContext.Provider>
+  );
+};
+
+const ConversationContentInternal = ({
+  isStreaming,
+  shouldStopScrollRef,
+  children,
+}: {
+  isStreaming: boolean;
+  shouldStopScrollRef: React.MutableRefObject<boolean>;
+  children: React.ReactNode;
+}) => {
+  const { stopScroll } = useStickToBottomContext();
+  const stopScrollRef = useRef(stopScroll);
+
+  useEffect(() => {
+    stopScrollRef.current = stopScroll;
+  }, [stopScroll]);
+
+  useEffect(() => {
+    if (!isStreaming) return;
+
+    const interval = setInterval(() => {
+      if (shouldStopScrollRef.current) {
+        stopScrollRef.current();
+      }
+    }, 16);
+
+    if (shouldStopScrollRef.current) {
+      stopScrollRef.current();
+    }
+
+    return () => clearInterval(interval);
+  }, [isStreaming, shouldStopScrollRef]);
+
+  return <>{children}</>;
+};
 
 export type ConversationContentProps = ComponentProps<
   typeof StickToBottom.Content
->;
+> & {
+  isStreaming?: boolean;
+};
 
 export const ConversationContent = ({
   className,
   ...props
-}: ConversationContentProps) => (
-  <StickToBottom.Content
-    className={clsx("flex flex-col", className)}
-    {...props}
-  />
-);
-
-export type ConversationEmptyStateProps = ComponentProps<"div"> & {
-  title?: string;
-  description?: string;
-  icon?: React.ReactNode;
+}: ConversationContentProps) => {
+  return (
+    <StickToBottom.Content
+      className={clsx("flex flex-col", className)}
+      {...props}
+    />
+  );
 };
-
-export const ConversationEmptyState = ({
-  className,
-  title = "No messages yet",
-  description = "Start a conversation to see messages here",
-  icon,
-  children,
-  ...props
-}: ConversationEmptyStateProps) => (
-  <div
-    className={clsx(
-      "flex size-full flex-col items-center justify-center gap-3 p-8 text-center",
-      className,
-    )}
-    {...props}
-  >
-    {children ?? (
-      <>
-        {icon && <div className="text-muted-foreground">{icon}</div>}
-        <div className="space-y-1">
-          <h3 className="font-medium text-sm">{title}</h3>
-          {description && (
-            <p className="text-muted-foreground text-sm">{description}</p>
-          )}
-        </div>
-      </>
-    )}
-  </div>
-);
 
 export type ConversationScrollButtonProps = ComponentProps<"button">;
 
@@ -73,10 +115,13 @@ export const ConversationScrollButton = ({
   ...props
 }: ConversationScrollButtonProps) => {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  const context = useContext(ConversationControlContext);
 
   const handleScrollToBottom = useCallback(() => {
+    console.log("scrollToBottom");
+    context?.allowScroll();
     scrollToBottom();
-  }, [scrollToBottom]);
+  }, [scrollToBottom, context]);
 
   return (
     !isAtBottom && (
@@ -84,7 +129,7 @@ export const ConversationScrollButton = ({
         className={clsx(
           "absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full z-50",
           "bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700",
-          "p-3 shadow-lg hover:shadow-xl transition-all",
+          "p-1 shadow-lg hover:shadow-xl transition-all",
           "text-neutral-700 dark:text-neutral-200 hover:scale-105",
           "hover:cursor-pointer",
           className,

@@ -100,41 +100,7 @@ export default function Chat({ chatId }: { chatId: string }) {
   const sendMessageMutation = useSendMessage(chatId);
 
   const latestMessageRef = useRef<HTMLDivElement>(null);
-  const prevMessageCountRef = useRef(messages.length);
 
-  // Scroll to latest message when messages change
-  useEffect(() => {
-    // Only scroll if a new message was actually added (not just re-render)
-    if (messages.length > prevMessageCountRef.current) {
-      if (latestMessageRef.current) {
-        // Find the scrollable parent container
-        let scrollContainer = latestMessageRef.current.parentElement;
-        while (scrollContainer) {
-          const overflowY = window.getComputedStyle(scrollContainer).overflowY;
-          if (overflowY === "auto" || overflowY === "scroll") {
-            break;
-          }
-          scrollContainer = scrollContainer.parentElement;
-        }
-
-        if (scrollContainer) {
-          const containerRect = scrollContainer.getBoundingClientRect();
-          const targetRect = latestMessageRef.current.getBoundingClientRect();
-          const scrollAmount =
-            targetRect.top - containerRect.top + scrollContainer.scrollTop;
-
-          scrollContainer.scrollTo({
-            top: scrollAmount,
-            behavior: "smooth",
-          });
-        }
-      }
-    }
-
-    prevMessageCountRef.current = messages.length;
-  }, [messages.length, latestMessageRef]);
-
-  // Simplified submit handler - ChatForm handles all the attachment logic
   const handleChatFormSubmit = (
     message: string,
     options: {
@@ -229,8 +195,9 @@ export default function Chat({ chatId }: { chatId: string }) {
           <Conversation
             key={chatId} // This key forces React to recreate the element when chatId changes
             className={`flex-1 overscroll-contain select-none`}
+            isStreaming={isStreaming}
           >
-            <ConversationContent>
+            <ConversationContent isStreaming={isStreaming}>
               <MessageList
                 messages={messages}
                 isWaitingForLoad={isWaitingForLoad}
