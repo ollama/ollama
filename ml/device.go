@@ -8,6 +8,7 @@ import (
 	"hash/maphash"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"runtime"
 	"slices"
@@ -26,6 +27,22 @@ type GPULayers struct {
 
 	// Layers is a set of layer indicies to load
 	Layers []int
+}
+
+// FirstLayer returns the smallest layer index scheduled on this GPU, or MaxInt when empty.
+func (g GPULayers) FirstLayer() int {
+	if len(g.Layers) == 0 {
+		return math.MaxInt
+	}
+
+	first := g.Layers[0]
+	for i := 1; i < len(g.Layers); i++ {
+		if g.Layers[i] < first {
+			first = g.Layers[i]
+		}
+	}
+
+	return first
 }
 
 func (g GPULayers) String() string {
@@ -53,6 +70,17 @@ func (g GPULayers) String() string {
 
 // GPULayersList is a set of layer allocations across multiple GPUs
 type GPULayersList []GPULayers
+
+func (l GPULayersList) Len() int      { return len(l) }
+func (l GPULayersList) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
+
+// Sort by the ordering of the layers offloaded
+func (l GPULayersList) Less(i, j int) bool {
+	li := l[i].FirstLayer()
+	lj := l[j].FirstLayer()
+
+	return li < lj
+}
 
 func (l GPULayersList) String() string {
 	if l.Sum() > 0 {
@@ -337,6 +365,28 @@ func (a ByFreeMemory) Less(i, j int) bool {
 		return false
 	}
 	return a[i].FreeMemory < a[j].FreeMemory
+}
+
+// ByPerformance groups devices by similar speed
+func ByPerformance(l []DeviceInfo) [][]DeviceInfo {
+	resp := [][]DeviceInfo{}
+	scores := []bool{}
+	for _, info := range l {
+		found := false
+		requested := info.Integrated
+		for i, score := range scores {
+			if score == requested {
+				resp[i] = append(resp[i], info)
+				found = true
+				break
+			}
+		}
+		if !found {
+			scores = append(scores, requested)
+			resp = append(resp, []DeviceInfo{info})
+		}
+	}
+	return resp
 }
 
 func ByLibrary(l []DeviceInfo) [][]DeviceInfo {
