@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/netip"
@@ -182,6 +183,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		// Ideally this is "invalid model name" but we're keeping with
@@ -208,6 +214,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
@@ -501,12 +512,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:   prompt,
-			Images:   images,
-			Format:   req.Format,
-			Options:  opts,
-			Shift:    req.Shift == nil || *req.Shift,
-			Truncate: req.Truncate == nil || *req.Truncate,
+			Prompt:      prompt,
+			Images:      images,
+			Format:      req.Format,
+			Options:     opts,
+			Shift:       req.Shift == nil || *req.Shift,
+			Truncate:    req.Truncate == nil || *req.Truncate,
+			Logprobs:    req.Logprobs,
+			TopLogprobs: req.TopLogprobs,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -519,6 +532,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
 				},
+				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
 
 			if builtinParser != nil {
@@ -579,6 +593,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.Stream != nil && !*req.Stream {
 		var r api.GenerateResponse
+		var allLogprobs []api.Logprob
 		var sbThinking strings.Builder
 		var sbContent strings.Builder
 		for rr := range ch {
@@ -587,6 +602,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				sbThinking.WriteString(t.Thinking)
 				sbContent.WriteString(t.Response)
 				r = t
+				// Accumulate logprobs from all chunks for non-streaming response
+				if len(t.Logprobs) > 0 {
+					allLogprobs = append(allLogprobs, t.Logprobs...)
+				}
 			case gin.H:
 				msg, ok := t["error"].(string)
 				if !ok {
@@ -608,6 +627,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		r.Thinking = sbThinking.String()
 		r.Response = sbContent.String()
+		r.Logprobs = allLogprobs
 
 		c.JSON(http.StatusOK, r)
 		return
@@ -1812,6 +1832,15 @@ func (s *Server) PsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
+func toolCallId() string {
+	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 8)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return "call_" + strings.ToLower(string(b))
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -1821,6 +1850,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
@@ -1846,6 +1880,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
@@ -2094,12 +2133,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:   prompt,
-				Images:   images,
-				Format:   currentFormat,
-				Options:  opts,
-				Shift:    req.Shift == nil || *req.Shift,
-				Truncate: truncate,
+				Prompt:      prompt,
+				Images:      images,
+				Format:      currentFormat,
+				Options:     opts,
+				Shift:       req.Shift == nil || *req.Shift,
+				Truncate:    truncate,
+				Logprobs:    req.Logprobs,
+				TopLogprobs: req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,
@@ -2112,7 +2153,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
 					},
+					Logprobs: toAPILogprobs(r.Logprobs),
 				}
+
 				if r.Done {
 					res.DoneReason = r.DoneReason.String()
 					res.TotalDuration = time.Since(checkpointStart)
@@ -2130,6 +2173,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					res.Message.Content = content
 					res.Message.Thinking = thinking
+					for i := range toolCalls {
+						toolCalls[i].ID = toolCallId()
+					}
 					res.Message.ToolCalls = toolCalls
 
 					tb.WriteString(thinking)
@@ -2174,6 +2220,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					if len(content) > 0 {
 						res.Message.Content = content
 					} else if len(toolCalls) > 0 {
+						for i := range toolCalls {
+							toolCalls[i].ID = toolCallId()
+						}
 						res.Message.ToolCalls = toolCalls
 						res.Message.Content = ""
 					} else if res.Message.Thinking != "" {
@@ -2235,6 +2284,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var toolCalls []api.ToolCall
+		var allLogprobs []api.Logprob
 		var sbThinking strings.Builder
 		var sbContent strings.Builder
 		for rr := range ch {
@@ -2245,6 +2295,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				resp = t
 				if len(req.Tools) > 0 {
 					toolCalls = append(toolCalls, t.Message.ToolCalls...)
+				}
+				// Accumulate logprobs from all chunks for non-streaming response
+				if len(t.Logprobs) > 0 {
+					allLogprobs = append(allLogprobs, t.Logprobs...)
 				}
 			case gin.H:
 				msg, ok := t["error"].(string)
@@ -2267,6 +2321,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		resp.Message.Content = sbContent.String()
 		resp.Message.Thinking = sbThinking.String()
+		resp.Logprobs = allLogprobs
 
 		if len(toolCalls) > 0 {
 			resp.Message.ToolCalls = toolCalls

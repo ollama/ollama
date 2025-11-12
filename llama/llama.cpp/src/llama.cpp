@@ -124,6 +124,9 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         } catch(const std::exception & e) {
             throw std::runtime_error("error loading model hyperparameters: " + std::string(e.what()));
         }
+        if (model.arch == LLM_ARCH_CLIP) {
+            throw std::runtime_error("CLIP cannot be used as main model, use it with --mmproj instead");
+        }
         try {
             model.load_vocab(ml);
         } catch(const std::exception & e) {
@@ -314,6 +317,7 @@ struct llama_model * llama_model_load_from_splits(
         LLAMA_LOG_ERROR("%s: list of splits is empty\n", __func__);
         return nullptr;
     }
+    splits.reserve(n_paths);
     for (size_t i = 0; i < n_paths; ++i) {
         splits.push_back(paths[i]);
     }

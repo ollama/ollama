@@ -8,6 +8,7 @@ import (
 	"hash/maphash"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"runtime"
 	"slices"
@@ -26,6 +27,22 @@ type GPULayers struct {
 
 	// Layers is a set of layer indicies to load
 	Layers []int
+}
+
+// FirstLayer returns the smallest layer index scheduled on this GPU, or MaxInt when empty.
+func (g GPULayers) FirstLayer() int {
+	if len(g.Layers) == 0 {
+		return math.MaxInt
+	}
+
+	first := g.Layers[0]
+	for i := 1; i < len(g.Layers); i++ {
+		if g.Layers[i] < first {
+			first = g.Layers[i]
+		}
+	}
+
+	return first
 }
 
 func (g GPULayers) String() string {
@@ -53,6 +70,17 @@ func (g GPULayers) String() string {
 
 // GPULayersList is a set of layer allocations across multiple GPUs
 type GPULayersList []GPULayers
+
+func (l GPULayersList) Len() int      { return len(l) }
+func (l GPULayersList) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
+
+// Sort by the ordering of the layers offloaded
+func (l GPULayersList) Less(i, j int) bool {
+	li := l[i].FirstLayer()
+	lj := l[j].FirstLayer()
+
+	return li < lj
+}
 
 func (l GPULayersList) String() string {
 	if l.Sum() > 0 {
@@ -257,7 +285,7 @@ type DeviceInfo struct {
 
 	// FilterID is populated with the unfiltered device ID if a numeric ID is used
 	// so the device can be included.
-	FilteredID string `json:"filtered_id,omitempty"`
+	FilterID string `json:"filter_id,omitempty"`
 
 	// Integrated is set true for integrated GPUs, false for Discrete GPUs
 	Integrated bool `json:"integration,omitempty"`
@@ -337,6 +365,28 @@ func (a ByFreeMemory) Less(i, j int) bool {
 		return false
 	}
 	return a[i].FreeMemory < a[j].FreeMemory
+}
+
+// ByPerformance groups devices by similar speed
+func ByPerformance(l []DeviceInfo) [][]DeviceInfo {
+	resp := [][]DeviceInfo{}
+	scores := []bool{}
+	for _, info := range l {
+		found := false
+		requested := info.Integrated
+		for i, score := range scores {
+			if score == requested {
+				resp[i] = append(resp[i], info)
+				found = true
+				break
+			}
+		}
+		if !found {
+			scores = append(scores, requested)
+			resp = append(resp, []DeviceInfo{info})
+		}
+	}
+	return resp
 }
 
 func ByLibrary(l []DeviceInfo) [][]DeviceInfo {
@@ -432,7 +482,8 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
-			gpu.Library == "ROCm"
+			gpu.Library == "ROCm" ||
+			gpu.Library == "Vulkan"
 
 		if !supportsFA {
 			return false
@@ -454,6 +505,35 @@ func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
 	return env
 }
 
+// NeedsInitValidation returns true if the device in question has the potential
+// to crash at inference time and requires deeper validation before we include
+// it in the supported devices list.
+func (d DeviceInfo) NeedsInitValidation() bool {
+	// At this time the only library we know needs a 2nd pass is ROCm since
+	// rocblas will crash on unsupported devices.  We want to find those crashes
+	// during bootstrap discovery so we can eliminate those GPUs before the user
+	// tries to run inference on them
+	return d.Library == "ROCm"
+}
+
+// Set the init validation environment variable
+func (d DeviceInfo) AddInitValidation(env map[string]string) {
+	env["GGML_CUDA_INIT"] = "1" // force deep initialization to trigger crash on unsupported GPUs
+}
+
+// PreferredLibrary returns true if this library is preferred over the other input
+// library
+// Used to filter out Vulkan in favor of CUDA or ROCm
+func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
+	// TODO in the future if we find Vulkan is better than ROCm on some devices
+	// that implementation can live here.
+
+	if d.Library == "CUDA" || d.Library == "ROCm" {
+		return true
+	}
+	return false
+}
+
 func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	var envVar string
 	switch d.Library {
@@ -471,8 +551,8 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	if existing {
 		v = v + ","
 	}
-	if d.FilteredID != "" {
-		v = v + d.FilteredID
+	if d.FilterID != "" {
+		v = v + d.FilterID
 	} else {
 		v = v + d.ID
 	}

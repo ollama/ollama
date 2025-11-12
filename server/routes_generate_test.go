@@ -485,13 +485,7 @@ func TestGenerateChat(t *testing.T) {
 				Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
-					}{
+					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]api.ToolProperty{
@@ -554,6 +548,14 @@ func TestGenerateChat(t *testing.T) {
 			t.Error("expected tool calls, got nil")
 		}
 
+		gotToolCall := resp.Message.ToolCalls[0]
+		if gotToolCall.ID == "" {
+			t.Error("expected tool call ID to be populated")
+		}
+		if !strings.HasPrefix(gotToolCall.ID, "call_") {
+			t.Errorf("expected tool call ID to have call_ prefix, got %q", gotToolCall.ID)
+		}
+
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
@@ -564,7 +566,8 @@ func TestGenerateChat(t *testing.T) {
 			},
 		}
 
-		if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall); diff != "" {
+		expectedToolCall.ID = gotToolCall.ID
+		if diff := cmp.Diff(gotToolCall, expectedToolCall); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -576,13 +579,7 @@ func TestGenerateChat(t *testing.T) {
 				Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
-					}{
+					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]api.ToolProperty{
@@ -669,6 +666,17 @@ func TestGenerateChat(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			if len(resp.Message.ToolCalls) > 0 {
+				for _, call := range resp.Message.ToolCalls {
+					if call.ID == "" {
+						t.Fatal("expected streaming tool call to have an ID")
+					}
+					if !strings.HasPrefix(call.ID, "call_") {
+						t.Fatalf("expected streaming tool call ID to have call_ prefix, got %q", call.ID)
+					}
+				}
+			}
+
 			if resp.Done {
 				if len(resp.Message.ToolCalls) != 1 {
 					t.Errorf("expected 1 tool call in final response, got %d", len(resp.Message.ToolCalls))
@@ -687,6 +695,14 @@ func TestGenerateChat(t *testing.T) {
 			},
 		}
 
+		if finalToolCall.ID == "" {
+			t.Fatal("expected final tool call to have an ID")
+		}
+		if !strings.HasPrefix(finalToolCall.ID, "call_") {
+			t.Fatalf("expected final tool call ID to have call_ prefix, got %q", finalToolCall.ID)
+		}
+
+		expectedToolCall.ID = finalToolCall.ID
 		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
@@ -1163,6 +1179,86 @@ func TestGenerate(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(w.Body.String(), `{"error":"rate limit exceeded"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+}
+
+func TestGenerateLogprobs(t *testing.T) {
+	t.Run("invalid top_logprobs negative", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test",
+			Prompt:      "Hello",
+			TopLogprobs: -1,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid top_logprobs too high", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test",
+			Prompt:      "Hello",
+			TopLogprobs: 21,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+}
+
+func TestChatLogprobs(t *testing.T) {
+	t.Run("invalid top_logprobs negative", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			TopLogprobs: -1,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid top_logprobs too high", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			TopLogprobs: 21,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})

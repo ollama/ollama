@@ -7,7 +7,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -17,6 +19,12 @@ var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
 // GetSystemInfo returns the last cached state of the GPUs on the system
 func GetSystemInfo() ml.SystemInfo {
+	logutil.Trace("performing CPU discovery")
+	startDiscovery := time.Now()
+	defer func() {
+		logutil.Trace("CPU discovery completed", "duration", time.Since(startDiscovery))
+	}()
+
 	memInfo, err := GetCPUMem()
 	if err != nil {
 		slog.Warn("error looking up system memory", "error", err)
