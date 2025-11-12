@@ -6,6 +6,7 @@ import { getCurrentWindow, app } from '@electron/remote'
 
 import { install } from './install'
 import OllamaIcon from './ollama.svg'
+import { APP_DISPLAY_NAME } from './utils'
 
 const store = new Store()
 
@@ -27,7 +28,7 @@ export default function () {
         {step === Step.WELCOME && (
           <>
             <div className='mx-auto text-center'>
-              <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
+              <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to {APP_DISPLAY_NAME}</h1>
               <p className='mx-auto w-[65%] text-sm text-gray-400'>
                 Let's get you up and running with your own large language models.
               </p>
