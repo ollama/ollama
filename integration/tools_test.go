@@ -171,7 +171,6 @@ func TestAPIToolCallingMultiTurn(t *testing.T) {
 				},
 			}
 
-			// First turn: User asks for weather, model should make a tool call
 			userMessage := api.Message{
 				Role:    "user",
 				Content: "What's the weather like in San Francisco?",
@@ -192,17 +191,14 @@ func TestAPIToolCallingMultiTurn(t *testing.T) {
 			var toolCallID string
 
 			fn := func(response api.ChatResponse) error {
-				// Accumulate assistant message content
 				if response.Message.Content != "" {
 					assistantMessage.Content += response.Message.Content
 					assistantMessage.Role = "assistant"
 				}
-				// Capture tool calls whenever they appear
 				if len(response.Message.ToolCalls) > 0 {
 					gotToolCall = true
 					assistantMessage.ToolCalls = response.Message.ToolCalls
 					assistantMessage.Role = "assistant"
-					// Capture the tool call ID if available
 					toolCallID = response.Message.ToolCalls[0].ID
 				}
 				if !stallTimer.Reset(streamTimeout) {
@@ -246,7 +242,6 @@ func TestAPIToolCallingMultiTurn(t *testing.T) {
 					t.Fatalf("expected tool arguments to include 'location', got: %s", firstToolCall.Function.Arguments.String())
 				}
 
-				// Second turn: Feed back the tool result and expect a natural language response
 				toolResult := `{"temperature": 72, "condition": "sunny", "humidity": 65}`
 				toolMessage := api.Message{
 					Role:       "tool",
@@ -255,7 +250,6 @@ func TestAPIToolCallingMultiTurn(t *testing.T) {
 					ToolCallID: toolCallID,
 				}
 
-				// Build conversation history: user -> assistant (with tool call) -> tool (result) -> user (follow-up)
 				messages := []api.Message{
 					userMessage,
 					assistantMessage,
@@ -312,7 +306,6 @@ func TestAPIToolCallingMultiTurn(t *testing.T) {
 						t.Fatalf("expected natural language response in second turn, got empty response")
 					}
 
-					// Verify the response mentions something about the weather (temperature, condition, etc.)
 					responseLower := strings.ToLower(finalResponse)
 					expectedKeywords := []string{"72", "sunny", "temperature", "weather", "san francisco", "fahrenheit"}
 					foundKeyword := false
@@ -325,10 +318,7 @@ func TestAPIToolCallingMultiTurn(t *testing.T) {
 					if !foundKeyword {
 						t.Logf("response: %s", finalResponse)
 						t.Logf("location from tool call: %v", location)
-						// Don't fail, just log - the model might phrase it differently
 					}
-
-					t.Logf("Successfully completed multi-turn tool calling test. First turn made tool call, second turn responded with: %s", finalResponse)
 				case <-ctx.Done():
 					t.Error("outer test context done while waiting for second turn")
 				}
