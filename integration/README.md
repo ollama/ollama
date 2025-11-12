@@ -15,3 +15,58 @@ The integration tests have 2 modes of operating.
 
 
 Many tests use a default small model suitable to run on many systems.  You can override this default model by setting `OLLAMA_TEST_DEFAULT_MODEL`
+
+## Tool Calling Tests
+
+The tool calling tests are split into two files:
+
+- **`tools_test.go`** - Tests using the native Ollama API (`api.Tool`)
+- **`tools_openai_test.go`** - Tests using the OpenAI-compatible API format
+
+### Running Tool Calling Tests
+
+Run all tool calling tests:
+```bash
+go test -tags=integration -v -run Test.*Tool.* ./integration
+```
+
+Run only OpenAI-compatible tests:
+```bash
+go test -tags=integration -v -run TestOpenAI ./integration
+```
+
+Run only native API tests:
+```bash
+go test -tags=integration -v -run TestAPIToolCalling ./integration
+```
+
+### Parallel Execution
+
+The OpenAI-compatible tests (`tools_openai_test.go`) support parallel execution for cloud models. Run with parallel execution:
+```bash
+go test -tags=integration -v -run TestOpenAI -parallel 3 ./integration
+```
+
+Cloud models (models ending with `-cloud`) will run in parallel, while local models run sequentially. This significantly speeds up test execution when testing against external endpoints.
+
+### Testing Specific Models
+
+To test a specific model, set the `OPENAI_TEST_MODELS` environment variable:
+```bash
+OPENAI_TEST_MODELS="gpt-oss:120b-cloud" go test -tags=integration -v -run TestOpenAI ./integration
+```
+
+### External Endpoints
+
+To test against an external OpenAI-compatible endpoint (e.g., Ollama Cloud):
+```bash
+OPENAI_BASE_URL="https://ollama.com/v1" OLLAMA_API_KEY="your-key" go test -tags=integration -v -run TestOpenAI ./integration
+```
+
+### Environment Variables
+
+The tool calling tests support the following environment variables:
+
+- **`OPENAI_BASE_URL`** - When set, tests will run against an external OpenAI-compatible endpoint instead of a local server. If set, `OLLAMA_API_KEY` must also be provided.
+- **`OLLAMA_API_KEY`** - API key for authenticating with external endpoints (required when `OPENAI_BASE_URL` is set).
+- **`OPENAI_TEST_MODELS`** - Override the default model list and test only the specified model(s). Can be a single model or comma-separated list.

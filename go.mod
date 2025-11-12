@@ -27,6 +27,7 @@ require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
+	github.com/openai/openai-go/v3 v3.8.1
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
 	github.com/tkrajina/typescriptify-golang-structs v0.2.0
 	golang.org/x/image v0.22.0
@@ -48,6 +49,10 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tkrajina/go-reflector v0.5.5 // indirect
 	github.com/xtgo/set v1.0.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
