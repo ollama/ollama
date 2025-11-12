@@ -169,7 +169,7 @@ DlgResult fileDlg(FileDlgParams* params) {
 	}
 	
 	NSArray* urls = [panel URLs];
-	if(self->params->allowMultiple && [urls count] >= 1) {
+	if(urls count] >= 1) {
 		// For multiple files, we need to return all paths separated by null bytes
 		char* bufPtr = self->params->buf;
 		int remainingBuf = self->params->nbuf;
