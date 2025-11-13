@@ -22,10 +22,14 @@ import (
 //
 //	Attention output with shape [d_v, heads, seq_len_q]
 func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
-	return AttentionWithSinks(ctx, query, key, value, nil, scale, cache)
+	return AttentionWithVMLA(ctx, query, key, value, nil, nil, scale, cache)
 }
 
 func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
+	return AttentionWithVMLA(ctx, query, key, value, sinks, nil, scale, cache)
+}
+
+func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
 	ctx.Forward(query)
 	if key != nil && value != nil {
 		if query.Dim(0) != key.Dim(0) {
@@ -56,7 +60,7 @@ func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scal
 	// Only use the fast SDPA implementation if we have a cache, since that's what
 	// will do any expected backend-specific transformations for us
 	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok && cache != nil {
-		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, scale)
+		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale)
 	} else {
 		query = query.Permute(ctx, 0, 2, 1, 3)
 		key = key.Permute(ctx, 0, 2, 1, 3)
@@ -71,6 +75,11 @@ func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scal
 		kq = kq.Softmax(ctx)
 
 		kqv := value.Mulmat(ctx, kq)
+
+		if vmla != nil {
+			kqv = vmla.Mulmat(ctx, kqv)
+		}
+
 		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
 }
