@@ -366,6 +366,9 @@ type TokenLogprob struct {
 
 	// Logprob is the log probability of this token.
 	Logprob float64 `json:"logprob"`
+
+	// Bytes contains the raw byte representation of the token
+	Bytes []int `json:"bytes,omitempty"`
 }
 
 // Logprob contains log probability information for a generated token.
@@ -695,7 +698,6 @@ type GenerateResponse struct {
 
 	// Response is the textual response itself.
 	Response string `json:"response"`
-
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
 	Thinking string `json:"thinking,omitempty"`
