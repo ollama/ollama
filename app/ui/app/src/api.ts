@@ -28,6 +28,8 @@ Model.prototype.isCloud = function (): boolean {
 };
 
 const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:3001" : "";
+const OLLAMA_DOT_COM =
+  import.meta.env.VITE_OLLAMA_DOT_COM_URL || "https://ollama.com";
 
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
@@ -44,8 +46,8 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 
 export async function fetchUser(): Promise<User | null> {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/me`, {
-      method: "GET",
+    const response = await fetch(`${API_BASE}/api/me`, {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
@@ -53,6 +55,12 @@ export async function fetchUser(): Promise<User | null> {
 
     if (response.ok) {
       const userData: User = await response.json();
+
+      // Transform relative avatar URL to absolute URL
+      if (userData.avatarurl && !userData.avatarurl.startsWith("http")) {
+        userData.avatarurl = `${OLLAMA_DOT_COM}${userData.avatarurl}`;
+      }
+
       return userData;
     }
 
@@ -64,23 +72,27 @@ export async function fetchUser(): Promise<User | null> {
 }
 
 export async function fetchConnectUrl(): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/v1/connect`, {
-    method: "GET",
+  // The Ollama API returns the signin_url in the /api/me endpoint
+  // when the user is not authenticated (returns 401 with signin_url)
+  const response = await fetch(`${API_BASE}/api/me`, {
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch connect URL");
+  if (response.status === 401) {
+    const data = await response.json();
+    if (data.signin_url) {
+      return data.signin_url;
+    }
   }
 
-  const data = await response.json();
-  return data.connect_url;
+  throw new Error("Failed to fetch connect URL");
 }
 
 export async function disconnectUser(): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/disconnect`, {
+  const response = await fetch(`${API_BASE}/api/signout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -392,7 +404,8 @@ export async function getInferenceCompute(): Promise<InferenceCompute[]> {
 
 export async function fetchHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/health`, {
+    // Use the /api/version endpoint as a health check
+    const response = await fetch(`${API_BASE}/api/version`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -401,7 +414,8 @@ export async function fetchHealth(): Promise<boolean> {
 
     if (response.ok) {
       const data = await response.json();
-      return data.healthy || false;
+      // If we get a version back, the server is healthy
+      return !!data.version;
     }
 
     return false;

@@ -23,7 +23,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/auth"
 	"github.com/ollama/ollama/app/server"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/tools"
@@ -264,11 +263,10 @@ func (s *Server) Handler() http.Handler {
 	ollamaProxy := s.ollamaProxy()
 	mux.Handle("GET /api/tags", ollamaProxy)
 	mux.Handle("POST /api/show", ollamaProxy)
-
-	mux.Handle("GET /api/v1/me", handle(s.me))
-	mux.Handle("POST /api/v1/disconnect", handle(s.disconnect))
-	mux.Handle("GET /api/v1/connect", handle(s.connectURL))
-	mux.Handle("GET /api/v1/health", handle(s.health))
+	mux.Handle("GET /api/version", ollamaProxy)
+	mux.Handle("HEAD /api/version", ollamaProxy)
+	mux.Handle("POST /api/me", ollamaProxy)
+	mux.Handle("POST /api/signout", ollamaProxy)
 
 	// React app - catch all non-API routes and serve the React app
 	mux.Handle("GET /", s.appHandler())
@@ -368,29 +366,26 @@ func (s *Server) UserData(ctx context.Context) (*responses.User, error) {
 	return &user, nil
 }
 
-func waitForServer(ctx context.Context) error {
-	timeout := time.Now().Add(10 * time.Second)
-	// TODO: this avoids an error on first load of the app
-	// however we should either show a loading state or
-	// wait for the Ollama server to be ready before redirecting
-	for {
+// WaitForServer waits for the Ollama server to be ready
+func WaitForServer(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
 		c, err := api.ClientFromEnvironment()
 		if err != nil {
-			return err
+			time.Sleep(100 * time.Millisecond)
+			continue // Continue waiting even if client creation fails
 		}
 		if _, err := c.Version(ctx); err == nil {
-			break
+			slog.Debug("ollama server is ready")
+			return nil
 		}
-		if time.Now().After(timeout) {
-			return fmt.Errorf("timeout waiting for Ollama server to be ready")
-		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	return nil
+	return fmt.Errorf("timeout waiting for Ollama server to be ready")
 }
 
 func (s *Server) createChat(w http.ResponseWriter, r *http.Request) error {
-	waitForServer(r.Context())
+	WaitForServer(r.Context(), 10*time.Second)
 
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -1435,129 +1430,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
 		Settings: settings,
-	})
-}
-
-func (s *Server) me(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	user, err := s.UserData(r.Context())
-	if err != nil {
-		// If fetching from API fails, try to return cached user data if available
-		if cachedUser, cacheErr := s.Store.User(); cacheErr == nil && cachedUser != nil {
-			s.log().Info("API request failed, returning cached user data", "error", err)
-			responseUser := &responses.User{
-				Name:  cachedUser.Name,
-				Email: cachedUser.Email,
-				Plan:  cachedUser.Plan,
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			return json.NewEncoder(w).Encode(responseUser)
-		}
-
-		s.log().Error("failed to get user data", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to get user data",
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(user)
-}
-
-func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	if err := s.Store.ClearUser(); err != nil {
-		s.log().Warn("failed to clear cached user data", "error", err)
-	}
-
-	// Get the SSH public key to encode for the delete request
-	pubKey, err := ollamaAuth.GetPublicKey()
-	if err != nil {
-		s.log().Error("failed to get public key", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to get public key",
-		})
-	}
-
-	// Encode the key using base64 URL encoding
-	encodedKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-
-	// Call the /api/user/keys/{encodedKey} endpoint with DELETE
-	resp, err := s.doSelfSigned(r.Context(), http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey))
-	if err != nil {
-		s.log().Error("failed to call ollama.com/api/user/keys", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to disconnect from ollama.com",
-		})
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		s.log().Error("disconnect request failed", "status", resp.StatusCode)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to disconnect from ollama.com",
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
-}
-
-func (s *Server) connectURL(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	connectURL, err := auth.BuildConnectURL(OllamaDotCom)
-	if err != nil {
-		s.log().Error("failed to build connect URL", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to build connect URL",
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(map[string]string{
-		"connect_url": connectURL,
-	})
-}
-
-func (s *Server) health(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	healthy := false
-	c, err := api.ClientFromEnvironment()
-	if err == nil {
-		if _, err := c.Version(r.Context()); err == nil {
-			healthy = true
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(responses.HealthResponse{
-		Healthy: healthy,
 	})
 }
 
