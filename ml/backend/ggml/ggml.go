@@ -1137,13 +1137,6 @@ func (t *Tensor) Cast(ctx ml.Context, dtype ml.DType) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
-	}
-}
-
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1632,20 +1625,6 @@ func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
-	var tt *C.struct_ggml_tensor
-	switch len(strides) {
-	case 0:
-		tt = C.ggml_set_1d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset))
-	case 1:
-		tt = C.ggml_set_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset), C.size_t(strides[0]))
-	default:
-		panic("unsupported number of dimensions")
-	}
-
-	return &Tensor{b: t.b, t: tt}
-}
-
 func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, scale float64) ml.Tensor {
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
@@ -1729,13 +1708,6 @@ func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_sqrt(ctx.(*Context).ctx, t.t),
-	}
-}
-
-func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
 }
 
