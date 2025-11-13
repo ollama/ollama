@@ -640,5 +640,5 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.
 
-## Security
+### Security
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server)
