@@ -152,6 +152,7 @@ func New(c fs.Config) (model.Model, error) {
 				)),
 			},
 		},
+		false,
 	)
 
 	return &Model{
