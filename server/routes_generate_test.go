@@ -1227,18 +1227,15 @@ func TestGenerateLogprobs(t *testing.T) {
 		mock := &mockRunner{}
 		expectedPrimary := llm.TokenLogprob{
 			Token:   "Hi",
-			Bytes:   []int{72, 105},
 			Logprob: -0.01,
 		}
 		expectedAlternatives := []llm.TokenLogprob{
 			{
 				Token:   "Hello",
-				Bytes:   []int{72, 101, 108, 108, 111},
 				Logprob: -0.25,
 			},
 			{
 				Token:   "Hey",
-				Bytes:   []int{72, 101, 121},
 				Logprob: -0.5,
 			},
 		}
@@ -1337,7 +1334,12 @@ func TestGenerateLogprobs(t *testing.T) {
 			t.Fatalf("expected 1 logprob entry, got %d", len(resp.Logprobs))
 		}
 
-		if diff := cmp.Diff(expectedPrimary.Bytes, resp.Logprobs[0].Bytes); diff != "" {
+		expectedPrimaryBytes := stringToByteInts(expectedPrimary.Token)
+		expectedAlternativesBytes := make([][]int, len(expectedAlternatives))
+		for i, alternative := range expectedAlternatives {
+			expectedAlternativesBytes[i] = stringToByteInts(alternative.Token)
+		}
+		if diff := cmp.Diff(expectedPrimaryBytes, resp.Logprobs[0].Bytes); diff != "" {
 			t.Fatalf("primary token bytes mismatch (-want +got):\n%s", diff)
 		}
 
@@ -1346,7 +1348,7 @@ func TestGenerateLogprobs(t *testing.T) {
 		}
 
 		for i, top := range resp.Logprobs[0].TopLogprobs {
-			if diff := cmp.Diff(expectedAlternatives[i].Bytes, top.Bytes); diff != "" {
+			if diff := cmp.Diff(expectedAlternativesBytes[i], top.Bytes); diff != "" {
 				t.Fatalf("top logprob[%d] bytes mismatch (-want +got):\n%s", i, diff)
 			}
 		}
@@ -1400,20 +1402,22 @@ func TestChatLogprobs(t *testing.T) {
 		mock := &mockRunner{}
 		expectedPrimary := llm.TokenLogprob{
 			Token:   "Hi",
-			Bytes:   []int{72, 105},
 			Logprob: -0.02,
 		}
 		expectedAlternatives := []llm.TokenLogprob{
 			{
 				Token:   "Hello",
-				Bytes:   []int{72, 101, 108, 108, 111},
 				Logprob: -0.3,
 			},
 			{
 				Token:   "Hey",
-				Bytes:   []int{72, 101, 121},
 				Logprob: -0.45,
 			},
+		}
+		expectedPrimaryBytes := stringToByteInts(expectedPrimary.Token)
+		expectedAlternativesBytes := make([][]int, len(expectedAlternatives))
+		for i, alternative := range expectedAlternatives {
+			expectedAlternativesBytes[i] = stringToByteInts(alternative.Token)
 		}
 
 		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
@@ -1513,7 +1517,7 @@ func TestChatLogprobs(t *testing.T) {
 			t.Fatalf("expected 1 logprob entry, got %d", len(resp.Logprobs))
 		}
 
-		if diff := cmp.Diff(expectedPrimary.Bytes, resp.Logprobs[0].Bytes); diff != "" {
+		if diff := cmp.Diff(expectedPrimaryBytes, resp.Logprobs[0].Bytes); diff != "" {
 			t.Fatalf("primary token bytes mismatch (-want +got):\n%s", diff)
 		}
 
@@ -1522,7 +1526,7 @@ func TestChatLogprobs(t *testing.T) {
 		}
 
 		for i, top := range resp.Logprobs[0].TopLogprobs {
-			if diff := cmp.Diff(expectedAlternatives[i].Bytes, top.Bytes); diff != "" {
+			if diff := cmp.Diff(expectedAlternativesBytes[i], top.Bytes); diff != "" {
 				t.Fatalf("top logprob[%d] bytes mismatch (-want +got):\n%s", i, diff)
 			}
 		}

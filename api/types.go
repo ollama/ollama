@@ -698,6 +698,7 @@ type GenerateResponse struct {
 
 	// Response is the textual response itself.
 	Response string `json:"response"`
+
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
 	Thinking string `json:"thinking,omitempty"`
