@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/tools"
 )
 
 type qwenParserState int
@@ -246,7 +247,7 @@ type XMLParameter struct {
 // celsius
 // </parameter>
 // </function>
-func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
+func parseToolCall(raw qwenEventRawToolCall, toolList []api.Tool) (api.ToolCall, error) {
 	toolCall := api.ToolCall{}
 
 	xmlString := transformToXML(raw.raw)
@@ -263,9 +264,9 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 
 	// Find the matching tool to get parameter types
 	var matchedTool *api.Tool
-	for i := range tools {
-		if tools[i].Function.Name == functionCall.Name {
-			matchedTool = &tools[i]
+	for i := range toolList {
+		if toolList[i].Function.Name == functionCall.Name {
+			matchedTool = &toolList[i]
 			break
 		}
 	}
@@ -289,6 +290,7 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 
 		toolCall.Function.Arguments[parameter.Name] = parseValue(parameter.Value, paramType)
 	}
+	toolCall.ID = tools.ToolCallID()
 
 	return toolCall, nil
 }

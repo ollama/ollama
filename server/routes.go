@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/netip"
@@ -1832,15 +1831,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
-func toolCallId() string {
-	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return "call_" + strings.ToLower(string(b))
-}
-
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -2174,7 +2164,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.Content = content
 					res.Message.Thinking = thinking
 					for i := range toolCalls {
-						toolCalls[i].ID = toolCallId()
+						toolCalls[i].ID = tools.ToolCallID()
 					}
 					res.Message.ToolCalls = toolCalls
 
@@ -2221,7 +2211,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						res.Message.Content = content
 					} else if len(toolCalls) > 0 {
 						for i := range toolCalls {
-							toolCalls[i].ID = toolCallId()
+							toolCalls[i].ID = tools.ToolCallID()
 						}
 						res.Message.ToolCalls = toolCalls
 						res.Message.Content = ""
