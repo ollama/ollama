@@ -188,6 +188,29 @@ curl http://localhost:11434/v1/chat/completions \
     "max_tokens": 300
   }'
 
+curl http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-vl",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What'\''s happening in this video?"
+          },
+          {
+            "type": "video_url",
+            "video_url": {
+               "url": "https://download.samplelib.com/mp4/sample-5s.mp4"
+            }
+          }
+        ]
+      }
+    ]
+  }'
+
 curl http://localhost:11434/v1/completions \
     -H "Content-Type: application/json" \
     -d '{
@@ -218,6 +241,7 @@ curl http://localhost:11434/v1/embeddings \
 - [x] JSON mode
 - [x] Reproducible outputs
 - [x] Vision
+- [x] Video (Qwen3-VL, Qwen2.5-VL)
 - [x] Tools
 - [ ] Logprobs
 
@@ -227,8 +251,11 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `messages`
   - [x] Text `content`
   - [x] Image `content`
-    - [x] Base64 encoded image
-    - [ ] Image URL
+    - [x] Base64 encoded image (data URI)
+    - [ ] Image URL (HTTP/HTTPS)
+  - [x] Video `content`
+    - [x] Base64 encoded video (data URI)
+    - [x] Video URL (HTTP/HTTPS)
   - [x] Array of `content` parts
 - [x] `frequency_penalty`
 - [x] `presence_penalty`
