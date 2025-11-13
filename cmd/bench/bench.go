@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -39,6 +40,8 @@ type Metrics struct {
 }
 
 var once sync.Once
+
+const DefaultPrompt = `Please write a descriptive story about a llama named Alonso who grows up to be President of the Land of Llamas. Include details about Alonso's childhood, adolescent years, and how he grew up to be a political mover and shaker. Write the story with a sense of whimsy.`
 
 func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) {
 	switch format {
@@ -90,6 +93,30 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 			} else {
 				fmt.Fprintf(w, "%s,%s,1,%d,0\n", m.Model, m.Step, m.Duration.Nanoseconds())
 			}
+		}
+	case "markdown":
+		printHeader := func() {
+			fmt.Fprintln(w, "| Model | Step | Count | Duration | nsPerToken | tokensPerSec |")
+			fmt.Fprintln(w, "|-------|------|-------|----------|------------|--------------|")
+		}
+		once.Do(printHeader)
+
+		for _, m := range metrics {
+			var nsPerToken, tokensPerSec float64
+			var nsPerTokenStr, tokensPerSecStr string
+
+			if m.Step == "generate" || m.Step == "prefill" {
+				nsPerToken = float64(m.Duration.Nanoseconds()) / float64(m.Count)
+				tokensPerSec = float64(m.Count) / (float64(m.Duration.Nanoseconds()) + 1e-12) * 1e9
+				nsPerTokenStr = fmt.Sprintf("%.2f", nsPerToken)
+				tokensPerSecStr = fmt.Sprintf("%.2f", tokensPerSec)
+			} else {
+				nsPerTokenStr = "-"
+				tokensPerSecStr = "-"
+			}
+
+			fmt.Fprintf(w, "| %s | %s | %d | %v | %s | %s |\n",
+				m.Model, m.Step, m.Count, m.Duration, nsPerTokenStr, tokensPerSecStr)
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown output format '%s'\n", format)
@@ -160,7 +187,7 @@ func BenchmarkChat(fOpt flagOptions) error {
 
 			err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
 				if *fOpt.debug {
-					fmt.Fprintf(os.Stderr, "%s", resp.Message.Content)
+					fmt.Fprintf(os.Stderr, "%s", cmp.Or(resp.Message.Thinking, resp.Message.Content))
 				}
 
 				if resp.Done {
@@ -242,15 +269,15 @@ func readImage(filePath string) (api.ImageData, error) {
 func main() {
 	fOpt := flagOptions{
 		models:      flag.String("model", "", "Model to benchmark"),
-		epochs:      flag.Int("epochs", 1, "Number of epochs (iterations) per model"),
-		maxTokens:   flag.Int("max-tokens", 0, "Maximum tokens for model response"),
+		epochs:      flag.Int("epochs", 6, "Number of epochs (iterations) per model"),
+		maxTokens:   flag.Int("max-tokens", 200, "Maximum tokens for model response"),
 		temperature: flag.Float64("temperature", 0, "Temperature parameter"),
 		seed:        flag.Int("seed", 0, "Random seed"),
 		timeout:     flag.Int("timeout", 60*5, "Timeout in seconds (default 300s)"),
-		prompt:      flag.String("p", "Write a long story.", "Prompt to use"),
+		prompt:      flag.String("p", DefaultPrompt, "Prompt to use"),
 		imageFile:   flag.String("image", "", "Filename for an image to include"),
 		keepAlive:   flag.Float64("k", 0, "Keep alive duration in seconds"),
-		format:      flag.String("format", "benchstat", "Output format [benchstat|csv] (default benchstat)"),
+		format:      flag.String("format", "markdown", "Output format [benchstat|csv] (default benchstat)"),
 		outputFile:  flag.String("output", "", "Output file for results (stdout if empty)"),
 		verbose:     flag.Bool("v", false, "Show system information"),
 		debug:       flag.Bool("debug", false, "Show debug information"),
@@ -263,16 +290,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  ollama-bench -model gpt-oss:20b -epochs 3 -temperature 0.7\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gpt-oss:20b -epochs 3 -temperature 0.7\n")
 	}
 	flag.Parse()
 
-	if !slices.Contains([]string{"benchstat", "csv"}, *fOpt.format) {
+	if !slices.Contains([]string{"markdown", "benchstat", "csv"}, *fOpt.format) {
 		fmt.Fprintf(os.Stderr, "ERROR: Unknown format '%s'\n", *fOpt.format)
 		os.Exit(1)
 	}
 
 	if len(*fOpt.models) == 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: No model(s) specified to benchmark.\n")
 		flag.Usage()
 		return
 	}

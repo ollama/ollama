@@ -70,6 +70,18 @@ benchstat -col /name gemma.bench
 
 ## Output Formats
 
+### Markdown Format
+
+The default markdown format is suitable for copying and pasting into a GitHub issue and will look like:
+```
+ Model | Step | Count | Duration | nsPerToken | tokensPerSec |
+|-------|------|-------|----------|------------|--------------|
+| gpt-oss:20b | prefill | 124 | 30.006458ms | 241987.56 | 4132.44 |
+| gpt-oss:20b | generate | 200 | 2.646843954s | 13234219.77 | 75.56 |
+| gpt-oss:20b | load | 1 | 121.674208ms | - | - |
+| gpt-oss:20b | total | 1 | 2.861047625s | - | - |
+```
+
 ### Benchstat Format
 
 Compatible with Go's benchstat tool for statistical analysis:
