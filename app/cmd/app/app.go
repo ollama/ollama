@@ -273,6 +273,12 @@ func main() {
 		Handler: uiServer.Handler(),
 	}
 
+	// Wait for the Ollama server to be ready before loading user data
+	slog.Debug("waiting for ollama server to be ready")
+	if err := ui.WaitForServer(ctx, 10*time.Second); err != nil {
+		slog.Warn("ollama server not ready, continuing anyway", "error", err)
+	}
+
 	if _, err := uiServer.UserData(ctx); err != nil {
 		slog.Warn("failed to load user data", "error", err)
 	}
@@ -361,7 +367,7 @@ func checkUserLoggedIn(uiServerPort int) bool {
 		return false
 	}
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/me", uiServerPort))
+	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/api/me", uiServerPort), "application/json", nil)
 	if err != nil {
 		slog.Debug("failed to call local auth endpoint", "error", err)
 		return false
