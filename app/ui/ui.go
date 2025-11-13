@@ -159,12 +159,12 @@ type errHandlerFunc func(http.ResponseWriter, *http.Request) error
 func (s *Server) Handler() http.Handler {
 	handle := func(f errHandlerFunc) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Add CORS headers for dev work
-			if CORS() {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+		// Add CORS headers for dev work
+		if CORS() {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 				// Handle preflight requests
 				if r.Method == "OPTIONS" {
@@ -286,7 +286,7 @@ func (s *Server) handleError(w http.ResponseWriter, e error) {
 	if CORS() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
