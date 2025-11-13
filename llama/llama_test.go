@@ -80,10 +80,10 @@ func TestIssue7978(t *testing.T) {
 	}
 }
 
-func TestSchemaToGrammer(t *testing.T) {
+func TestSchemaToGrammar(t *testing.T) {
 	cases := []struct {
 		schema string
-		prefix []byte // nil is check as nil
+		prefix []byte // nil is checked as nil
 	}{
 		{`invalid`, nil},
 
@@ -92,7 +92,7 @@ func TestSchemaToGrammer(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		t.Run("x", func(t *testing.T) {
+		t.Run(c.schema, func(t *testing.T) {
 			g := SchemaToGrammar([]byte(c.schema))
 			if c.prefix == nil && g != nil {
 				t.Fatalf("grammar = %v, want nil", g)
