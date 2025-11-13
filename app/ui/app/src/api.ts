@@ -53,7 +53,6 @@ export async function fetchUser(): Promise<User | null> {
     if (response.ok) {
       const userData: User = await response.json();
 
-      // Transform relative avatar URL to absolute URL
       if (userData.avatarurl && !userData.avatarurl.startsWith("http")) {
         userData.avatarurl = `${OLLAMA_DOT_COM}${userData.avatarurl}`;
       }
@@ -69,8 +68,6 @@ export async function fetchUser(): Promise<User | null> {
 }
 
 export async function fetchConnectUrl(): Promise<string> {
-  // The Ollama API returns the signin_url in the /api/me endpoint
-  // when the user is not authenticated (returns 401 with signin_url)
   const response = await fetch(`${API_BASE}/api/me`, {
     method: "POST",
     headers: {
