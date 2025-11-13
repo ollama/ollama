@@ -7,19 +7,6 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-func stringToByteInts(s string) []int {
-	if s == "" {
-		return nil
-	}
-
-	raw := []byte(s)
-	ints := make([]int, len(raw))
-	for i, b := range raw {
-		ints[i] = int(b)
-	}
-	return ints
-}
-
 // TokenDecoderFunc is a function that converts token IDs to text.
 type TokenDecoderFunc func(tokenID int) string
 
@@ -56,7 +43,6 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 	result := llm.Logprob{
 		TokenLogprob: llm.TokenLogprob{
 			Token:   selectedText,
-			Bytes:   stringToByteInts(selectedText),
 			Logprob: float64(selectedLogprob),
 		},
 	}
@@ -83,7 +69,6 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 			tokenText := decoder(pairs[i].tokenID)
 			topLogprobs[i] = llm.TokenLogprob{
 				Token:   tokenText,
-				Bytes:   stringToByteInts(tokenText),
 				Logprob: float64(pairs[i].logprob),
 			}
 		}

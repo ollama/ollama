@@ -12,7 +12,7 @@ func toAPILogprobs(logprobs []llm.Logprob) []api.Logprob {
 		result[i] = api.Logprob{
 			TokenLogprob: api.TokenLogprob{
 				Token:   lp.Token,
-				Bytes:   lp.Bytes,
+				Bytes:   stringToByteInts(lp.Token),
 				Logprob: lp.Logprob,
 			},
 		}
@@ -21,11 +21,24 @@ func toAPILogprobs(logprobs []llm.Logprob) []api.Logprob {
 			for j, tlp := range lp.TopLogprobs {
 				result[i].TopLogprobs[j] = api.TokenLogprob{
 					Token:   tlp.Token,
-					Bytes:   tlp.Bytes,
+					Bytes:   stringToByteInts(tlp.Token),
 					Logprob: tlp.Logprob,
 				}
 			}
 		}
 	}
 	return result
+}
+
+func stringToByteInts(s string) []int {
+	if s == "" {
+		return nil
+	}
+
+	raw := []byte(s)
+	ints := make([]int, len(raw))
+	for i, b := range raw {
+		ints[i] = int(b)
+	}
+	return ints
 }
