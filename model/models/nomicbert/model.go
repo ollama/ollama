@@ -60,18 +60,16 @@ type MLP struct {
 
 // Forward implements model.Model interface
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	seqLen := batch.Inputs.Dim(0)
-
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
-	typeEmbed := m.TypeEmbedding.Weight.View(ctx, 0, m.hiddenSize)
+	typeEmbed := m.TypeEmbedding.Weight.Slice(ctx, 1, 0, 1, 1)
 	hiddenStates = hiddenStates.Add(ctx, typeEmbed)
 
 	// no position embedding - we use ROPE instead
 
 	hiddenStates = m.TokenEmbeddingNorm.Forward(ctx, hiddenStates, m.eps)
 
-	positions := ctx.Arange(0, float32(seqLen), 1, ml.DTypeI32)
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	for _, layer := range m.Layers {
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, &m.Options)
@@ -105,9 +103,9 @@ func (a *Attention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml
 
 	qkv := a.QKV.Forward(ctx, hiddenStates)
 
-	query := qkv.View(ctx, 0, opts.hiddenSize, qkv.Stride(0), batchSize).Contiguous(ctx)
-	key := qkv.View(ctx, opts.hiddenSize*qkv.Stride(0), opts.hiddenSize, qkv.Stride(0), batchSize).Contiguous(ctx)
-	value := qkv.View(ctx, 2*opts.hiddenSize*qkv.Stride(0), opts.hiddenSize, qkv.Stride(0), batchSize).Contiguous(ctx)
+	query := qkv.Slice(ctx, 0, 0, opts.hiddenSize, 1).Contiguous(ctx)
+	key := qkv.Slice(ctx, 0, opts.hiddenSize, 2*opts.hiddenSize, 1).Contiguous(ctx)
+	value := qkv.Slice(ctx, 0, 2*opts.hiddenSize, 3*opts.hiddenSize, 1).Contiguous(ctx)
 
 	query = query.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
 	key = key.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
@@ -124,9 +122,7 @@ func (a *Attention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml
 }
 
 func (m *MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
-	gate := m.Gate.Forward(ctx, hiddenStates).SILU(ctx)
-	up := m.Up.Forward(ctx, hiddenStates)
-	hidden := gate.Mul(ctx, up)
+	hidden := m.Gate.Forward(ctx, hiddenStates).SILU(ctx, m.Up.Forward(ctx, hiddenStates))
 
 	return m.Down.Forward(ctx, hidden)
 }
@@ -167,7 +163,7 @@ func New(c fs.Config) (model.Model, error) {
 			headDim:      headDim,
 			eps:          c.Float("attention.layer_norm_epsilon"),
 			poolingType:  pooling.Type(c.Uint("pooling_type")),
-			normalize:    c.Bool("normalize_embeddings", true),
+			normalize:    c.Bool("normalize_embeddings", false),
 			ropeFreqBase: c.Float("rope.freq_base", 1000.0),
 		},
 	}, nil
