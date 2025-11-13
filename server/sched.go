@@ -61,6 +61,10 @@ type Scheduler struct {
 // on a large GPU can cause stalling
 var defaultModelsPerGPU = 3
 
+// ctxLenReuseLimit caps how many smaller-context requests a runner may serve
+// before requiring a reload.
+const ctxLenReuseLimit uint = 3
+
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
@@ -484,6 +488,12 @@ iGPUScan:
 		loading:         true,
 		pid:             llama.Pid(),
 	}
+	runner.maxContext = runner.Options.NumCtx
+	if ctxLenReuseLimit > 0 {
+		runner.ctxLenReuseRemaining = ctxLenReuseLimit
+	} else {
+		runner.ctxLenReuseRemaining = 0
+	}
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
 
@@ -589,6 +599,8 @@ type runnerRef struct {
 	modelPath   string
 	numParallel int
 	*api.Options
+	maxContext           int
+	ctxLenReuseRemaining uint
 }
 
 // The refMu must already be held when calling unload
@@ -619,12 +631,32 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		return true
 	}
 
+	if runner.maxContext == 0 {
+		runner.maxContext = runner.Options.NumCtx
+	}
+	if ctxLenReuseLimit == 0 {
+		runner.ctxLenReuseRemaining = 0
+	} else if runner.ctxLenReuseRemaining > ctxLenReuseLimit {
+		runner.ctxLenReuseRemaining = ctxLenReuseLimit
+	}
+
 	// Don't reload runner if num_gpu=-1 was provided
 	optsExisting := runner.Options.Runner
 	optsNew := req.opts.Runner
 	if optsNew.NumGPU < 0 {
 		optsExisting.NumGPU = -1
 		optsNew.NumGPU = -1
+	}
+
+	newCtx := optsNew.NumCtx
+	if ctxLenReuseLimit > 0 && newCtx >= runner.maxContext && newCtx > 0 {
+		runner.maxContext = max(runner.maxContext, newCtx)
+		runner.ctxLenReuseRemaining = ctxLenReuseLimit
+	}
+
+	allowReuse := runner.allowCtxLenReuseLocked(&optsExisting, &optsNew)
+	if allowReuse {
+		optsExisting.NumCtx = optsNew.NumCtx
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -636,7 +668,41 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		return true
 	}
 
+	if allowReuse {
+		if ctxLenReuseLimit > 0 && runner.ctxLenReuseRemaining > 0 {
+			runner.ctxLenReuseRemaining--
+		}
+	}
+
 	return false
+}
+
+func (runner *runnerRef) allowCtxLenReuseLocked(optsExisting, optsNew *api.Runner) bool {
+	if ctxLenReuseLimit == 0 {
+		return false
+	}
+
+	maxCtx := runner.maxContext
+	if maxCtx == 0 {
+		maxCtx = optsExisting.NumCtx
+	}
+	newCtx := optsNew.NumCtx
+	if newCtx <= 0 || maxCtx <= 0 {
+		return false
+	}
+	if newCtx >= maxCtx {
+		return false
+	}
+	if runner.ctxLenReuseRemaining == 0 {
+		return false
+	}
+
+	// Ignore NumCtx for comparison to ensure no other runner options changed.
+	existingCopy := *optsExisting
+	newCopy := *optsNew
+	existingCopy.NumCtx = 0
+	newCopy.NumCtx = 0
+	return reflect.DeepEqual(existingCopy, newCopy)
 }
 
 // Free memory reporting on GPUs can lag for a while even after the runner
