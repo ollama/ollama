@@ -3,6 +3,7 @@ import React from "react";
 import Message from "./Message";
 import Downloading from "./Downloading";
 import { ErrorMessage } from "./ErrorMessage";
+import { ConversationSpacer } from "./ai-elements/conversation";
 
 export default function MessageList({
   messages,
@@ -94,6 +95,7 @@ export default function MessageList({
           <div
             key={`${message.created_at}-${idx}`}
             data-message-index={idx}
+            data-message-role={message.role}
             ref={isLastMessage ? latestMessageRef : null}
           >
             <Message
@@ -165,6 +167,9 @@ export default function MessageList({
           />
         </section>
       )}
+
+      {/* Dynamic spacer */}
+      <ConversationSpacer />
     </div>
   );
 }

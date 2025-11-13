@@ -5,10 +5,10 @@ import { DisplayUpgrade } from "./DisplayUpgrade";
 import { DisplayStale } from "./DisplayStale";
 import { DisplayLogin } from "./DisplayLogin";
 import {
-  Conversation,
   ConversationContent,
   ConversationScrollButton,
-} from "./ai-elements";
+  ConversationWithSpacer,
+} from "./ai-elements/conversation";
 import {
   useChat,
   useSendMessage,
@@ -192,10 +192,11 @@ export default function Chat({ chatId }: { chatId: string }) {
         </div>
       ) : (
         <main className="flex h-screen w-full flex-col relative allow-context-menu select-none">
-          <Conversation
-            key={chatId} // This key forces React to recreate the element when chatId changes
+          <ConversationWithSpacer
+            key={chatId}
             className={`flex-1 overscroll-contain select-none`}
             isStreaming={isStreaming}
+            messageCount={messages.length}
           >
             <ConversationContent isStreaming={isStreaming}>
               <MessageList
@@ -213,7 +214,7 @@ export default function Chat({ chatId }: { chatId: string }) {
               />
             </ConversationContent>
             <ConversationScrollButton />
-          </Conversation>
+          </ConversationWithSpacer>
 
           <div className="flex-shrink-0 sticky bottom-0 z-20">
             {selectedModel && shouldShowStaleDisplay && (
