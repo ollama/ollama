@@ -299,6 +299,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LibreChat](https://github.com/danny-avila/LibreChat)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
+- [AI-UI](https://github.com/bajahaw/ai-ui)
 - [Saddle](https://github.com/jikkuatwork/saddle)
 - [TagSpaces](https://www.tagspaces.org) (A platform for file-based apps, [utilizing Ollama](https://docs.tagspaces.org/ai/) for the generation of tags and descriptions)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
