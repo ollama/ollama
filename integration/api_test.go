@@ -382,125 +382,173 @@ func TestAPIShowModel(t *testing.T) {
 	}
 }
 
-func TestAPIEmbeddings(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	req := api.EmbeddingRequest{
-		Model:  libraryEmbedModels[0],
-		Prompt: "why is the sky blue?",
-		Options: map[string]interface{}{
-			"temperature": 0,
-			"seed":        123,
-		},
-	}
-
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
-
-	resp, err := client.Embeddings(ctx, &req)
-	if err != nil {
-		t.Fatalf("embeddings call failed %s", err)
-	}
-	if len(resp.Embedding) == 0 {
-		t.Errorf("zero length embedding response")
-	}
-}
-
-func TestAPIToolCalling(t *testing.T) {
-	initialTimeout := 60 * time.Second
-	streamTimeout := 30 * time.Second
+func TestAPIGenerateLogprobs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	modelName := "qwen3:0.6b"
-	if err := PullIfMissing(ctx, client, modelName); err != nil {
+	if err := PullIfMissing(ctx, client, smol); err != nil {
 		t.Fatalf("pull failed %s", err)
 	}
 
-	tools := []api.Tool{
+	enableLogprobs := true
+	noStream := false
+
+	tests := []struct {
+		name        string
+		logprobs    *bool
+		topLogprobs int
+		expectCount int
+	}{
 		{
-			Type: "function",
-			Function: api.ToolFunction{
-				Name:        "get_weather",
-				Description: "Get the current weather in a given location",
-				Parameters: api.ToolFunctionParameters{
-					Type:     "object",
-					Required: []string{"location"},
-					Properties: map[string]api.ToolProperty{
-						"location": {
-							Type:        api.PropertyType{"string"},
-							Description: "The city and state, e.g. San Francisco, CA",
-						},
-					},
-				},
-			},
+			name:        "no_logprobs",
+			logprobs:    nil,
+			topLogprobs: 0,
+			expectCount: 0,
+		},
+		{
+			name:        "logprobs_only",
+			logprobs:    &enableLogprobs,
+			topLogprobs: 0,
+			expectCount: 1,
+		},
+		{
+			name:        "logprobs_with_top_5",
+			logprobs:    &enableLogprobs,
+			topLogprobs: 5,
+			expectCount: 1,
 		},
 	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := api.GenerateRequest{
+				Model:       smol,
+				Prompt:      "Why is the sky blue?",
+				Stream:      &noStream,
+				Logprobs:    test.logprobs != nil && *test.logprobs,
+				TopLogprobs: test.topLogprobs,
+				Options: map[string]interface{}{
+					"temperature": 0,
+					"seed":        123,
+					"num_predict": 10,
+				},
+			}
+
+			var response api.GenerateResponse
+			err := client.Generate(ctx, &req, func(resp api.GenerateResponse) error {
+				if resp.Done {
+					response = resp
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("generate failed: %s", err)
+			}
+
+			// Check logprobs based on expectation
+			if test.expectCount == 0 {
+				if len(response.Logprobs) > 0 {
+					t.Errorf("expected no logprobs but got %d", len(response.Logprobs))
+				}
+			} else {
+				if len(response.Logprobs) == 0 {
+					t.Errorf("expected logprobs but got none")
+				}
+
+				// Validate each logprob entry
+				for i, lp := range response.Logprobs {
+					if lp.Token == "" {
+						t.Errorf("logprob[%d] has empty token", i)
+					}
+					if lp.Logprob > 0 {
+						t.Errorf("logprob[%d] has positive logprob %f (should be <= 0)", i, lp.Logprob)
+					}
+
+					// Check top_logprobs if requested
+					if test.topLogprobs > 0 {
+						if len(lp.TopLogprobs) == 0 {
+							t.Errorf("logprob[%d] expected top_logprobs but got none", i)
+						}
+						if len(lp.TopLogprobs) > test.topLogprobs {
+							t.Errorf("logprob[%d] has %d top_logprobs, expected max %d", i, len(lp.TopLogprobs), test.topLogprobs)
+						}
+
+						// Verify top_logprobs are sorted by probability (descending)
+						for j := 1; j < len(lp.TopLogprobs); j++ {
+							if lp.TopLogprobs[j-1].Logprob < lp.TopLogprobs[j].Logprob {
+								t.Errorf("logprob[%d].top_logprobs not sorted: %f < %f", i, lp.TopLogprobs[j-1].Logprob, lp.TopLogprobs[j].Logprob)
+							}
+						}
+					} else if len(lp.TopLogprobs) > 0 {
+						t.Errorf("logprob[%d] has top_logprobs but none were requested", i)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAPIChatLogprobs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	if err := PullIfMissing(ctx, client, smol); err != nil {
+		t.Fatalf("pull failed %s", err)
+	}
+
+	enableLogprobs := true
+	noStream := false
 
 	req := api.ChatRequest{
-		Model: modelName,
+		Model: smol,
 		Messages: []api.Message{
-			{
-				Role:    "user",
-				Content: "Call get_weather with location set to San Francisco.",
-			},
+			{Role: "user", Content: "Say hello in one word"},
 		},
-		Tools: tools,
-		Options: map[string]any{
+		Stream:      &noStream,
+		Logprobs:    enableLogprobs,
+		TopLogprobs: 3,
+		Options: map[string]interface{}{
 			"temperature": 0,
+			"seed":        123,
+			"num_predict": 5,
 		},
 	}
 
-	stallTimer := time.NewTimer(initialTimeout)
-	var gotToolCall bool
-	var lastToolCall api.ToolCall
-
-	fn := func(response api.ChatResponse) error {
-		if len(response.Message.ToolCalls) > 0 {
-			gotToolCall = true
-			lastToolCall = response.Message.ToolCalls[len(response.Message.ToolCalls)-1]
-		}
-		if !stallTimer.Reset(streamTimeout) {
-			return fmt.Errorf("stall was detected while streaming response, aborting")
+	var response api.ChatResponse
+	err := client.Chat(ctx, &req, func(resp api.ChatResponse) error {
+		if resp.Done {
+			response = resp
 		}
 		return nil
+	})
+	if err != nil {
+		t.Fatalf("chat failed: %s", err)
 	}
 
-	stream := true
-	req.Stream = &stream
-	done := make(chan int)
-	var genErr error
-	go func() {
-		genErr = client.Chat(ctx, &req, fn)
-		done <- 0
-	}()
+	if len(response.Logprobs) == 0 {
+		t.Fatal("expected logprobs in response but got none")
+	}
 
-	select {
-	case <-stallTimer.C:
-		t.Errorf("tool-calling chat never started. Timed out after: %s", initialTimeout.String())
-	case <-done:
-		if genErr != nil {
-			t.Fatalf("chat failed: %v", genErr)
-		}
+	t.Logf("received %d logprobs for chat response", len(response.Logprobs))
 
-		if !gotToolCall {
-			t.Fatalf("expected at least one tool call, got none")
+	for i, lp := range response.Logprobs {
+		if lp.Token == "" {
+			t.Errorf("logprob[%d] has empty token", i)
 		}
-
-		if lastToolCall.Function.Name != "get_weather" {
-			t.Errorf("unexpected tool called: got %q want %q", lastToolCall.Function.Name, "get_weather")
+		if lp.Logprob > 0 {
+			t.Errorf("logprob[%d] has positive logprob %f", i, lp.Logprob)
 		}
-
-		if _, ok := lastToolCall.Function.Arguments["location"]; !ok {
-			t.Errorf("expected tool arguments to include 'location', got: %s", lastToolCall.Function.Arguments.String())
+		if len(lp.TopLogprobs) == 0 {
+			t.Errorf("logprob[%d] expected top_logprobs but got none", i)
 		}
-	case <-ctx.Done():
-		t.Error("outer test context done while waiting for tool-calling chat")
+		if len(lp.TopLogprobs) > 3 {
+			t.Errorf("logprob[%d] has %d top_logprobs, expected max 3", i, len(lp.TopLogprobs))
+		}
 	}
 }

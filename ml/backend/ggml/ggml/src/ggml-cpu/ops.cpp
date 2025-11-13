@@ -5509,14 +5509,11 @@ static void ggml_mrope_cache_init(
         }
 
         float theta = theta_t;
-        if (sector >= sections[0] && sector < sec_w) {
+        if (sector % 3 == 1 && sector < 1 + 3 * sections[1]) {
             theta = theta_h;
         }
-        else if (sector >= sec_w && sector < sec_w + sections[2]) {
+        else if (sector % 3 == 2 && sector < 2 + 3 * sections[2]) {
             theta = theta_w;
-        }
-        else if (sector >= sec_w + sections[2]) {
-            theta = theta_e;
         }
 
         rope_yarn(
@@ -9035,6 +9032,22 @@ void ggml_compute_forward_unary(
         case GGML_UNARY_OP_EXP:
             {
                 ggml_compute_forward_exp(params, dst);
+            } break;
+        case GGML_UNARY_OP_FLOOR:
+            {
+                ggml_compute_forward_floor(params, dst);
+            } break;
+        case GGML_UNARY_OP_CEIL:
+            {
+                ggml_compute_forward_ceil(params, dst);
+            } break;
+        case GGML_UNARY_OP_ROUND:
+            {
+                ggml_compute_forward_round(params, dst);
+            } break;
+        case GGML_UNARY_OP_TRUNC:
+            {
+                ggml_compute_forward_trunc(params, dst);
             } break;
         case GGML_UNARY_OP_XIELU:
             {

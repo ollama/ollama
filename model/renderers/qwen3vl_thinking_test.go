@@ -323,7 +323,7 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := (&Qwen3VLRenderer{true}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Qwen3VLRenderer{isThinking: true}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

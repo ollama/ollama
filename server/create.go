@@ -119,6 +119,27 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				if err != nil {
 					ch <- gin.H{"error": err.Error()}
 				}
+
+				if err == nil && !remote && (config.Renderer == "" || config.Parser == "") {
+					manifest, mErr := ParseNamedManifest(fromName)
+					if mErr == nil && manifest.Config.Digest != "" {
+						configPath, pErr := GetBlobsPath(manifest.Config.Digest)
+						if pErr == nil {
+							if cfgFile, fErr := os.Open(configPath); fErr == nil {
+								var baseConfig ConfigV2
+								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
+									if config.Renderer == "" {
+										config.Renderer = baseConfig.Renderer
+									}
+									if config.Parser == "" {
+										config.Parser = baseConfig.Parser
+									}
+								}
+								cfgFile.Close()
+							}
+						}
+					}
+				}
 			}
 		} else if r.Files != nil {
 			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)

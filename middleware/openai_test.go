@@ -218,6 +218,7 @@ func TestChatMiddleware(t *testing.T) {
 						Role: "assistant",
 						ToolCalls: []api.ToolCall{
 							{
+								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
 									Arguments: map[string]any{
@@ -257,6 +258,7 @@ func TestChatMiddleware(t *testing.T) {
 						Content: "Let's see what the weather is like in Paris",
 						ToolCalls: []api.ToolCall{
 							{
+								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
 									Arguments: map[string]any{
@@ -295,6 +297,7 @@ func TestChatMiddleware(t *testing.T) {
 						Role: "assistant",
 						ToolCalls: []api.ToolCall{
 							{
+								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
 									Arguments: map[string]any{
@@ -334,6 +337,7 @@ func TestChatMiddleware(t *testing.T) {
 						Thinking: "Let's see what the weather is like in Paris",
 						ToolCalls: []api.ToolCall{
 							{
+								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
 									Arguments: map[string]any{
@@ -373,6 +377,7 @@ func TestChatMiddleware(t *testing.T) {
 						Role: "assistant",
 						ToolCalls: []api.ToolCall{
 							{
+								ID: "id_abc",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
 									Arguments: map[string]any{
@@ -384,9 +389,10 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 					{
-						Role:     "tool",
-						Content:  "The weather in Paris is 20 degrees Celsius",
-						ToolName: "get_current_weather",
+						Role:       "tool",
+						Content:    "The weather in Paris is 20 degrees Celsius",
+						ToolName:   "get_current_weather",
+						ToolCallID: "id_abc",
 					},
 				},
 				Options: map[string]any{
@@ -417,6 +423,7 @@ func TestChatMiddleware(t *testing.T) {
 						Role: "assistant",
 						ToolCalls: []api.ToolCall{
 							{
+								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
 									Arguments: map[string]any{
@@ -484,13 +491,7 @@ func TestChatMiddleware(t *testing.T) {
 						Function: api.ToolFunction{
 							Name:        "get_weather",
 							Description: "Get the current weather",
-							Parameters: struct {
-								Type       string                      `json:"type"`
-								Defs       any                         `json:"$defs,omitempty"`
-								Items      any                         `json:"items,omitempty"`
-								Required   []string                    `json:"required"`
-								Properties map[string]api.ToolProperty `json:"properties"`
-							}{
+							Parameters: api.ToolFunctionParameters{
 								Type:     "object",
 								Required: []string{"location"},
 								Properties: map[string]api.ToolProperty{
