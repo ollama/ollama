@@ -10,7 +10,6 @@ layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
 layout (binding = 1) readonly buffer Y {int data_pos[];};
 layout (binding = 2) readonly buffer Z {float data_ff[];};
 layout (binding = 3) writeonly buffer D {D_TYPE data_d[];};
-layout (binding = 4) readonly buffer I {uvec2 data_i[];}; // indices for set_rows
 
 layout (push_constant) uniform parameter {
     uint ncols;
@@ -28,7 +27,6 @@ layout (push_constant) uniform parameter {
     uint s2;
     int sections[4];
     uint is_back;
-    uint set_rows_stride;
 } p;
 
 float rope_yarn_ramp(const float low, const float high, const uint i0) {
