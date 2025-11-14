@@ -65,6 +65,10 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		}
 
 		slog.Info("discovering available GPUs...")
+
+		// Warn if any user-overrides are set which could lead to incorrect GPU discovery
+		overrideWarnings()
+
 		requested := envconfig.LLMLibrary()
 		jetpack := cudaJetpack()
 
@@ -448,4 +452,25 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map
 	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
 
 	return devices
+}
+
+func overrideWarnings() {
+	anyFound := false
+	m := envconfig.AsMap()
+	for _, k := range []string{
+		"CUDA_VISIBLE_DEVICES",
+		"HIP_VISIBLE_DEVICES",
+		"ROCR_VISIBLE_DEVICES",
+		"GGML_VK_VISIBLE_DEVICES",
+		"GPU_DEVICE_ORDINAL",
+		"HSA_OVERRIDE_GFX_VERSION",
+	} {
+		if e, found := m[k]; found && e.Value != "" {
+			anyFound = true
+			slog.Warn("user override visible devices", k, e.Value)
+		}
+	}
+	if anyFound {
+		slog.Warn("if GPUs are not correctly discovered, unset and try again")
+	}
 }
