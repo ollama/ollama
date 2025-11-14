@@ -44,7 +44,10 @@ func (t tensorBase) Kind() uint32 {
 		t.name == "v.positional_embedding_vlm" ||
 		t.name == "v.tile_position_embd.weight" ||
 		t.name == "v.pre_tile_position_embd.weight" ||
-		t.name == "v.post_tile_position_embd.weight" {
+		t.name == "v.post_tile_position_embd.weight" ||
+		t.name == "s.position_embd" ||
+		strings.HasSuffix(t.name, "rel_pos_h") ||
+		strings.HasSuffix(t.name, "rel_pos_w") {
 		// these tensors are always F32
 		return tensorKindFP32
 	}
