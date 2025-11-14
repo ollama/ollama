@@ -853,17 +853,29 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		s.seqs = make([]*Sequence, s.parallel)
 		s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
+		// Add RPC servers before enumerating GPUs so they are included
+		if req.RpcServers != "" {
+			slog.Info("DEBUG: Adding RPC servers before enumeration", "servers", req.RpcServers)
+			llama.AddRPCServers(req.RpcServers)
+		}
+
 		gpuIDs := llama.EnumerateGPUs()
+		slog.Info("DEBUG: EnumerateGPUs result", "count", len(gpuIDs), "gpuIDs", gpuIDs)
+		slog.Info("DEBUG: req.GPULayers", "layers", req.GPULayers)
+
 		tensorSplit := make([]float32, len(gpuIDs))
 		numGPU := 0
 		for i := range gpuIDs {
 			for _, layers := range req.GPULayers {
+				slog.Debug("DEBUG: comparing", "gpuID", gpuIDs[i], "layerDeviceID", layers.DeviceID, "match", gpuIDs[i] == layers.DeviceID)
 				if gpuIDs[i] == layers.DeviceID {
+					slog.Info("DEBUG: MATCHED!", "gpuID", gpuIDs[i], "layers", len(layers.Layers))
 					tensorSplit[i] = float32(len(layers.Layers))
 					numGPU += len(layers.Layers)
 				}
 			}
 		}
+		slog.Info("DEBUG: final numGPU", "numGPU", numGPU, "tensorSplit", tensorSplit)
 
 		params := llama.ModelParams{
 			NumGpuLayers: numGPU,

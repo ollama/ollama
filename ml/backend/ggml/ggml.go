@@ -269,9 +269,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		C.ggml_backend_dev_get_props(d, &props)
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Library = C.GoString(props.library)
+		slog.Info("DEBUG: got device props", "device_index", i, "name", requiredMemory.GPUs[i].Name, "props.id", requiredMemory.GPUs[i].ID, "props.library", requiredMemory.GPUs[i].Library)
 
 		// RPC backend doesn't populate props.id and props.library, so we need to set them manually
 		if requiredMemory.GPUs[i].Library == "" && strings.HasPrefix(requiredMemory.GPUs[i].Name, "RPC") {
+			origID := requiredMemory.GPUs[i].ID
 			requiredMemory.GPUs[i].Library = "rpc"
 			// Extract RPC server endpoint from params.RPCServers based on device index
 			if params.RPCServers != "" {
@@ -280,10 +282,16 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				// Extract the number and use it to index into servers list
 				deviceNum := strings.TrimPrefix(requiredMemory.GPUs[i].Name, "RPC")
 				if idx, err := strconv.Atoi(deviceNum); err == nil && idx < len(servers) {
-					requiredMemory.GPUs[i].ID = strings.TrimSpace(servers[idx])
+					// Only override ID if it's empty (new RPC backend populates props.id with endpoint:device)
+					if requiredMemory.GPUs[i].ID == "" {
+						requiredMemory.GPUs[i].ID = strings.TrimSpace(servers[idx])
+						slog.Info("DEBUG: overriding empty RPC device ID", "name", requiredMemory.GPUs[i].Name, "new_id", requiredMemory.GPUs[i].ID)
+					} else {
+						slog.Info("DEBUG: keeping existing RPC device ID from props", "name", requiredMemory.GPUs[i].Name, "id", requiredMemory.GPUs[i].ID)
+					}
 				}
 			}
-			slog.Info("set RPC device ID", "name", requiredMemory.GPUs[i].Name, "id", requiredMemory.GPUs[i].ID, "library", requiredMemory.GPUs[i].Library)
+			slog.Info("DEBUG: RPC device ID after handling", "name", requiredMemory.GPUs[i].Name, "original_id", origID, "final_id", requiredMemory.GPUs[i].ID, "library", requiredMemory.GPUs[i].Library)
 		}
 
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)

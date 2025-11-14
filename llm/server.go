@@ -162,15 +162,32 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	rpcServers := ""
+	seenEndpoints := make(map[string]bool) // Track unique endpoints
 	for _, gpu := range gpus {
 		if gpu.Library != "rpc" {
 			continue
 		}
 
-		if rpcServers != "" {
-			rpcServers += ","
+		// Extract endpoint from device ID (format: "endpoint:device_index" -> "endpoint")
+		// e.g., "127.0.0.1:50053:0" -> "127.0.0.1:50053"
+		endpoint := gpu.ID
+		if lastColon := strings.LastIndex(gpu.ID, ":"); lastColon != -1 {
+			// Check if the part after last colon is a number (device index)
+			potentialIndex := gpu.ID[lastColon+1:]
+			if _, err := strconv.Atoi(potentialIndex); err == nil {
+				// It's a device index, strip it
+				endpoint = gpu.ID[:lastColon]
+			}
 		}
-		rpcServers += gpu.ID
+
+		// Only add unique endpoints (multiple devices on same server should use same endpoint)
+		if !seenEndpoints[endpoint] {
+			if rpcServers != "" {
+				rpcServers += ","
+			}
+			rpcServers += endpoint
+			seenEndpoints[endpoint] = true
+		}
 	}
 
 	if textProcessor == nil {

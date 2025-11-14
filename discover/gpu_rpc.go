@@ -11,12 +11,79 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
-// RPCServerMemory checks and total and free memory in bytes of a given RPC
-// endpoint.
+// getRPCDeviceCount gets the number of devices available on an RPC server
+func getRPCDeviceCount(endpoint string) uint32 {
+	timeout := time.Duration(5 * 1000 * 1000 * 1000)
+
+	client, err := net.DialTimeout("tcp", endpoint, timeout)
+	if err != nil {
+		return 0
+	}
+	defer client.Close()
+
+	// First send RPC_CMD_HELLO (14)
+	client.SetDeadline(time.Now().Add(timeout))
+	if _, err := client.Write([]byte{14}); err != nil {
+		return 0
+	}
+
+	// HELLO input size (8 bytes) - no input
+	client.SetDeadline(time.Now().Add(timeout))
+	helloSize := [8]byte{}
+	if _, err := client.Write(helloSize[:]); err != nil {
+		return 0
+	}
+
+	// Read HELLO reply size (8 bytes) - should be 3
+	client.SetDeadline(time.Now().Add(timeout))
+	helloReplySize := [8]byte{}
+	if _, err := client.Read(helloReplySize[:]); err != nil {
+		return 0
+	}
+
+	// Read HELLO reply (3 bytes - version)
+	client.SetDeadline(time.Now().Add(timeout))
+	serverVersion := [3]byte{}
+	if _, err := client.Read(serverVersion[:]); err != nil {
+		return 0
+	}
+
+	// Now send RPC_CMD_DEVICE_COUNT command (15)
+	client.SetDeadline(time.Now().Add(timeout))
+	if _, err := client.Write([]byte{15}); err != nil {
+		return 0
+	}
+
+	// Input Size (8 bytes) - no input needed
+	client.SetDeadline(time.Now().Add(timeout))
+	inputSize := [8]byte{}
+	if _, err := client.Write(inputSize[:]); err != nil {
+		return 0
+	}
+
+	// Read reply size (8 bytes)
+	client.SetDeadline(time.Now().Add(timeout))
+	replySize := [8]byte{}
+	if _, err := client.Read(replySize[:]); err != nil {
+		return 0
+	}
+
+	// Read device count (4 bytes)
+	client.SetDeadline(time.Now().Add(timeout))
+	deviceCountBytes := [4]byte{}
+	if _, err := client.Read(deviceCountBytes[:]); err != nil {
+		return 0
+	}
+
+	return binary.LittleEndian.Uint32(deviceCountBytes[:])
+}
+
+// getRPCDeviceMemory checks total and free memory in bytes of a specific device
+// on a given RPC endpoint.
 //
 // If the RPC endpoint given is unavailable (unable to connect), the total and
 // free memory returned would be 0.
-func getRPCServerMemory(endpoint string) RPCServerMemoryResult {
+func getRPCDeviceMemory(endpoint string, deviceIndex uint32) RPCServerMemoryResult {
 	// Setting timeout to 5 seconds
 	var deadLine time.Time
 	timeout := time.Duration(5 * 1000 * 1000 * 1000)
@@ -105,7 +172,7 @@ func getRPCServerMemory(endpoint string) RPCServerMemoryResult {
 	deadLine = time.Now().Add(timeout)
 	client.SetDeadline(deadLine)
 	deviceID := [4]byte{}
-	binary.LittleEndian.PutUint32(deviceID[:], 0) // Device 0
+	binary.LittleEndian.PutUint32(deviceID[:], deviceIndex)
 	_, err = client.Write(deviceID[:])
 	if err != nil {
 		slog.Error("failed to send device ID for RPC_CMD_GET_DEVICE_MEMORY command to RPC server", "err", err)
@@ -161,13 +228,14 @@ func GetRPCServers(endpoints string) []ml.DeviceInfo {
 	for _, server := range rpcServersList {
 		// No servers given
 		if server == "" {
-			break
+			continue
 		}
 
-		// Getting information
-		info := getRPCServerMemory(server)
+		// Trim whitespace
+		server = strings.TrimSpace(server)
+
+		// Validate server address
 		serverAddress := strings.Split(server, ":")
-		// We got an invalid server address
 		if len(serverAddress) != 2 {
 			slog.Warn("invalid RPC endpoint server address", "endpoint", server)
 			continue
@@ -179,20 +247,37 @@ func GetRPCServers(endpoints string) []ml.DeviceInfo {
 			continue
 		}
 
-		serverInfo := ml.DeviceInfo{
-			DeviceID: ml.DeviceID{
-				ID:      server,
-				Library: "rpc",
-			},
-			TotalMemory: info.TotalMem,
-			FreeMemory:  info.FreeMem,
+		// Get device count
+		deviceCount := getRPCDeviceCount(server)
+		if deviceCount == 0 {
+			slog.Warn("unable to connect to endpoint or no devices found", "endpoint", server)
+			continue
 		}
 
-		if serverInfo.TotalMemory == 0 && serverInfo.FreeMemory == 0 {
-			slog.Warn("unable to connect to endpoint", "endpoint", server)
-		} else {
-			slog.Debug("found RPC server", "info", serverInfo)
-			validServers = append(validServers, serverInfo)
+		slog.Info("found RPC server", "endpoint", server, "device_count", deviceCount)
+
+		// Enumerate all devices on this server
+		for deviceIdx := uint32(0); deviceIdx < deviceCount; deviceIdx++ {
+			info := getRPCDeviceMemory(server, deviceIdx)
+
+			// Device ID format is endpoint:device_index (e.g., "127.0.0.1:50053:0")
+			deviceID := server + ":" + strconv.FormatUint(uint64(deviceIdx), 10)
+
+			serverInfo := ml.DeviceInfo{
+				DeviceID: ml.DeviceID{
+					ID:      deviceID,
+					Library: "rpc",
+				},
+				TotalMemory: info.TotalMem,
+				FreeMemory:  info.FreeMem,
+			}
+
+			if serverInfo.TotalMemory == 0 && serverInfo.FreeMemory == 0 {
+				slog.Warn("unable to get memory for device", "endpoint", server, "device", deviceIdx)
+			} else {
+				slog.Debug("found RPC device", "id", deviceID, "total", serverInfo.TotalMemory, "free", serverInfo.FreeMemory)
+				validServers = append(validServers, serverInfo)
+			}
 		}
 	}
 

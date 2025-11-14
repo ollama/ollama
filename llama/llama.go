@@ -65,6 +65,15 @@ func BackendInit() {
 	C.llama_backend_init()
 }
 
+func AddRPCServers(servers string) {
+	if servers == "" {
+		return
+	}
+	rpcServers := C.CString(servers)
+	defer C.free(unsafe.Pointer(rpcServers))
+	C.add_rpc_devices(rpcServers)
+}
+
 func EnumerateGPUs() []ml.DeviceID {
 	var ids []ml.DeviceID
 
