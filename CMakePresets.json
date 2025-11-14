@@ -85,6 +85,13 @@
       }
     },
     {
+      "name": "MoltenVK",
+      "inherits": [ "Vulkan" ],
+      "cacheVariables": {
+        "OLLAMA_FETCH_MOLTENVK": "ON"
+      }
+    },
+    {
       "name": "MLX",
       "inherits": [ "Default" ],
       "cacheVariables": {
@@ -162,6 +169,11 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
+    },
+    {
+      "name": "MoltenVK",
+      "targets": [ "ggml-vulkan" ],
+      "configurePreset": "MoltenVK"
     },
     {
       "name": "MLX",
