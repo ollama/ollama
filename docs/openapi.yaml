@@ -111,6 +111,12 @@ components:
           description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
         options:
           $ref: "#/components/schemas/ModelOptions"
+        logprobs:
+          type: boolean
+          description: Whether to return log probabilities of the output tokens
+        top_logprobs:
+          type: integer
+          description: Number of most likely tokens to return at each token position when logprobs is enabled
     GenerateResponse:
       type: object
       properties:
@@ -150,6 +156,11 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs is enabled
     GenerateStreamEvent:
       type: object
       properties:
@@ -287,6 +298,12 @@ components:
             - type: string
             - type: number
           description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
+        logprobs:
+          type: boolean
+          description: Whether to return log probabilities of the output tokens
+        top_logprobs:
+          type: integer
+          description: Number of most likely tokens to return at each token position when logprobs is enabled
     ChatResponse:
       type: object
       properties:
@@ -344,6 +361,11 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs is enabled
     ChatStreamEvent:
       type: object
       properties:
@@ -706,6 +728,41 @@ components:
         version:
           type: string
           description: Version of Ollama
+    TokenLogprob:
+      type: object
+      description: Log probability information for a single token alternative
+      properties:
+        token:
+          type: string
+          description: The text representation of the token
+        logprob:
+          type: number
+          description: The log probability of this token
+        bytes:
+          type: array
+          items:
+            type: integer
+          description: The raw byte representation of the token
+    Logprob:
+      type: object
+      description: Log probability information for a generated token
+      properties:
+        token:
+          type: string
+          description: The text representation of the token
+        logprob:
+          type: number
+          description: The log probability of this token
+        bytes:
+          type: array
+          items:
+            type: integer
+          description: The raw byte representation of the token
+        top_logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenLogprob"
+          description: Most likely tokens and their log probabilities at this position
     ErrorResponse:
       type: object
       properties:
