@@ -116,7 +116,7 @@ components:
           description: Whether to return log probabilities of the output tokens
         top_logprobs:
           type: integer
-          description: Number of most likely tokens to return at each token position when logprobs is enabled
+          description: Number of most likely tokens to return at each token position when logprobs are enabled
     GenerateResponse:
       type: object
       properties:
@@ -160,7 +160,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Logprob"
-          description: Log probability information for the generated tokens when logprobs is enabled
+          description: Log probability information for the generated tokens when logprobs are enabled
     GenerateStreamEvent:
       type: object
       properties:
@@ -303,7 +303,7 @@ components:
           description: Whether to return log probabilities of the output tokens
         top_logprobs:
           type: integer
-          description: Number of most likely tokens to return at each token position when logprobs is enabled
+          description: Number of most likely tokens to return at each token position when logprobs are enabled
     ChatResponse:
       type: object
       properties:
@@ -365,7 +365,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Logprob"
-          description: Log probability information for the generated tokens when logprobs is enabled
+          description: Log probability information for the generated tokens when logprobs are enabled
     ChatStreamEvent:
       type: object
       properties:
