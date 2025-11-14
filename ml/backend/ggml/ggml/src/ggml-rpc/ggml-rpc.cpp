@@ -112,28 +112,6 @@ enum rpc_cmd {
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
 
-static const char * rpc_cmd_to_string(uint8_t cmd) {
-    switch (cmd) {
-        case RPC_CMD_ALLOC_BUFFER: return "ALLOC_BUFFER";
-        case RPC_CMD_GET_ALIGNMENT: return "GET_ALIGNMENT";
-        case RPC_CMD_GET_MAX_SIZE: return "GET_MAX_SIZE";
-        case RPC_CMD_BUFFER_GET_BASE: return "BUFFER_GET_BASE";
-        case RPC_CMD_FREE_BUFFER: return "FREE_BUFFER";
-        case RPC_CMD_BUFFER_CLEAR: return "BUFFER_CLEAR";
-        case RPC_CMD_SET_TENSOR: return "SET_TENSOR";
-        case RPC_CMD_SET_TENSOR_HASH: return "SET_TENSOR_HASH";
-        case RPC_CMD_GET_TENSOR: return "GET_TENSOR";
-        case RPC_CMD_COPY_TENSOR: return "COPY_TENSOR";
-        case RPC_CMD_GRAPH_COMPUTE: return "GRAPH_COMPUTE";
-        case RPC_CMD_GET_DEVICE_MEMORY: return "GET_DEVICE_MEMORY";
-        case RPC_CMD_INIT_TENSOR: return "INIT_TENSOR";
-        case RPC_CMD_GET_ALLOC_SIZE: return "GET_ALLOC_SIZE";
-        case RPC_CMD_HELLO: return "HELLO";
-        case RPC_CMD_DEVICE_COUNT: return "DEVICE_COUNT";
-        default: return "UNKNOWN";
-    }
-}
-
 // Try RPC_CMD_SET_TENSOR_HASH first when data size is larger than this threshold
 const size_t HASH_THRESHOLD = 10 * 1024 * 1024;
 
