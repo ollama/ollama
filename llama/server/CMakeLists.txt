@@ -25,6 +25,13 @@ elseif(NOT WIN32)
     set(CMAKE_BUILD_RPATH "$ORIGIN")
 endif()
 
+if(OLLAMA_FETCH_MOLTENVK)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake")
+    include(OllamaMoltenVK)
+    ollama_configure_moltenvk()
+    set(OLLAMA_MOLTENVK_RUNTIME "${Vulkan_LIBRARY}")
+endif()
+
 if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})
     # LunarG SDK installs SPIRV-Headers package files under SDK-specific
     # directories that CMake does not always find through the default prefix
@@ -516,6 +523,11 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
+        endif()
+        if(OLLAMA_MOLTENVK_RUNTIME AND EXISTS "${OLLAMA_MOLTENVK_RUNTIME}")
+            install(FILES "${OLLAMA_MOLTENVK_RUNTIME}"
+                DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
+                COMPONENT llama-server)
         endif()
     endif()
 else()

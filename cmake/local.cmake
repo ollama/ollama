@@ -677,14 +677,25 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 CMAKE_ARGS ${_rocm_args})
             list(APPEND _backend_targets ollama-llama-server-${_backend})
         elseif(_backend STREQUAL "vulkan")
+            set(_vulkan_args
+                -DBUILD_SHARED_LIBS=ON
+                -DGGML_BACKEND_DL=ON
+                -DGGML_VULKAN=ON
+                -DOLLAMA_GPU_BACKEND=vulkan)
+            if(OLLAMA_FETCH_MOLTENVK)
+                list(APPEND _vulkan_args -DOLLAMA_FETCH_MOLTENVK=ON)
+                foreach(_arg IN ITEMS
+                        OLLAMA_MOLTENVK_VERSION
+                        OLLAMA_MOLTENVK_URL
+                        OLLAMA_MOLTENVK_SHA256
+                        OLLAMA_MOLTENVK_INSECURE)
+                    ollama_append_cache_arg_if_set(_vulkan_args ${_arg})
+                endforeach()
+            endif()
             ollama_add_llama_server_build(vulkan
                 RUNNER_DIR vulkan
                 TARGETS ggml-vulkan
-                CMAKE_ARGS
-                    -DBUILD_SHARED_LIBS=ON
-                    -DGGML_BACKEND_DL=ON
-                    -DGGML_VULKAN=ON
-                    -DOLLAMA_GPU_BACKEND=vulkan)
+                CMAKE_ARGS ${_vulkan_args})
             list(APPEND _backend_targets ollama-llama-server-vulkan)
         elseif(_backend STREQUAL "cuda_jetpack5")
             if(CMAKE_CUDA_ARCHITECTURES)
