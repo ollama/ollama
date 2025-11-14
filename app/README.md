@@ -48,16 +48,6 @@ The `-dev` flag enables:
 - CORS headers for cross-origin requests
 - Hot-reload support for UI development
 
-#### Run Storybook
-
-Inside the `ui/app` directory, run:
-
-```bash
-npm run storybook
-```
-
-For now we're writing stories as siblings of the component they're testing. So for example, `src/components/Message.stories.tsx` is the story for `src/components/Message.tsx`.
-
 ## Build
 
 

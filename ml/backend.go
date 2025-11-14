@@ -149,7 +149,6 @@ type Tensor interface {
 	FromFloats([]float32)
 	FromInts([]int32)
 
-	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Sub(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
@@ -188,7 +187,6 @@ type Tensor interface {
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context, shape ...int) Tensor
-	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
 
@@ -201,6 +199,10 @@ type Tensor interface {
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
 
+	Slice(ctx Context, dim, low, high, step int) Tensor
+	Chunk(ctx Context, dim int, size int) []Tensor
+	ChunkSections(ctx Context, dim int, sections ...int) []Tensor
+
 	TopK(ctx Context, k int) Tensor
 	Argsort(ctx Context) Tensor
 	Mean(ctx Context) Tensor
@@ -208,7 +210,6 @@ type Tensor interface {
 	Stddev(ctx Context) Tensor
 	Sqr(ctx Context) Tensor
 	Sqrt(ctx Context) Tensor
-	Clamp(ctx Context, min, max float32) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention

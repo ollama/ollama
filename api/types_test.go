@@ -298,6 +298,44 @@ func TestToolFunction_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    ToolFunctionParameters
+		expected string
+	}{
+		{
+			name: "simple object with string property",
+			input: ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"name"},
+				Properties: map[string]ToolProperty{
+					"name": {Type: PropertyType{"string"}},
+				},
+			},
+			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
+		},
+		{
+			name: "no required",
+			input: ToolFunctionParameters{
+				Type: "object",
+				Properties: map[string]ToolProperty{
+					"name": {Type: PropertyType{"string"}},
+				},
+			},
+			expected: `{"type":"object","properties":{"name":{"type":"string"}}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.input)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, string(data))
+		})
+	}
+}
+
 func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
 	fn := ToolCallFunction{
 		Name:      "echo",

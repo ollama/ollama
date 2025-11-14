@@ -196,8 +196,6 @@ var (
 	NoPrune = Bool("OLLAMA_NOPRUNE")
 	// SchedSpread allows scheduling models across all GPUs.
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
-	// IntelGPU enables experimental Intel GPU detection.
-	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
 	// RPCServers specifies a comma separated list of RPC servers to use for inference.
@@ -208,6 +206,8 @@ var (
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
+	// Enable Vulkan backend
+	EnableVulkan = Bool("OLLAMA_VULKAN")
 )
 
 func String(s string) func() string {
@@ -317,7 +317,7 @@ func AsMap() map[string]EnvVar {
 		ret["GGML_VK_VISIBLE_DEVICES"] = EnvVar{"GGML_VK_VISIBLE_DEVICES", VkVisibleDevices(), "Set which Vulkan devices are visible by numeric ID"}
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
-		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Enable experimental Vulkan support"}
 	}
 
 	return ret

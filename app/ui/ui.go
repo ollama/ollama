@@ -1705,7 +1705,7 @@ func getStringFromMap(m map[string]any, key, defaultValue string) string {
 // isImageAttachment checks if a filename is an image file
 func isImageAttachment(filename string) bool {
 	ext := strings.ToLower(filename)
-	return strings.HasSuffix(ext, ".png") || strings.HasSuffix(ext, ".jpg") || strings.HasSuffix(ext, ".jpeg")
+	return strings.HasSuffix(ext, ".png") || strings.HasSuffix(ext, ".jpg") || strings.HasSuffix(ext, ".jpeg") || strings.HasSuffix(ext, ".webp")
 }
 
 // ptr is a convenience function for &literal
@@ -1794,13 +1794,14 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 
 	var thinkValue *api.ThinkValue
 	if think != nil {
+		// Only set Think if it's actually requesting thinking
 		if boolValue, ok := think.(bool); ok {
-			thinkValue = &api.ThinkValue{
-				Value: boolValue,
+			if boolValue {
+				thinkValue = &api.ThinkValue{Value: boolValue}
 			}
 		} else if stringValue, ok := think.(string); ok {
-			thinkValue = &api.ThinkValue{
-				Value: stringValue,
+			if stringValue != "" && stringValue != "none" {
+				thinkValue = &api.ThinkValue{Value: stringValue}
 			}
 		}
 	}

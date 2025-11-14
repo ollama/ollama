@@ -363,7 +363,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 				DebugRenderOnly: true,
 			},
 			expectDebug:    true,
-			expectTemplate: "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather information\",\"parameters\":{\"type\":\"\",\"required\":null,\"properties\":null}}}]user: Get the weather\n",
+			expectTemplate: "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather information\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]user: Get the weather\n",
 		},
 	}
 
