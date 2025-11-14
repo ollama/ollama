@@ -18,6 +18,25 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 or [download manually](https://ollama.com/download/Ollama.dmg)
 
+#### Experimental Intel Mac AMDGPU support via MoltenVK
+> [!WARNING]
+> This configuration is experimental - no support is provided, but feel free to explore it.
+
+To build app bundles with this backend:
+
+1. Install dependencies (once per machine):
+   ```bash
+   brew install cmake shaderc glslang libomp typescript
+   ```
+   > Make sure the standard development prerequisites (Go toolchain, Node.js/npm, etc.) from the earlier sections are already installed.
+
+2. Create the universal binaries and app bundles (they land in `dist/`):
+   ```bash
+   ./scripts/build_darwin_vulkan.sh
+   ```
+The resulting `dist/` folder contains the standard `Ollama.app`, but with the MoltenVK backend enabled. 
+It should technically work on both Apple Silicon & Intel Macs, but is optimised for Intel Macs with AMD GPUs and will *probably* have worse performance in most use-cases on Apple Silicon.
+
 ### Windows
 
 ```shell
