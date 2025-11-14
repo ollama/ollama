@@ -51,6 +51,7 @@ typedef int sockfd_t;
 // cross-platform socket
 struct socket_t {
     sockfd_t fd;
+    std::mutex mutex;  // Protect against concurrent access when multiple devices share same endpoint
     socket_t(sockfd_t fd) : fd(fd) {}
     ~socket_t() {
         LOG_DBG("[%s] closing socket %d\n", __func__, this->fd);
@@ -453,6 +454,7 @@ static bool parse_endpoint(const std::string & endpoint, std::string & host, int
 // RPC request : | rpc_cmd (1 byte) | request_size (8 bytes) | request_data (request_size bytes) |
 // No response
 static bool send_rpc_cmd(const std::shared_ptr<socket_t> & sock, enum rpc_cmd cmd, const void * input, size_t input_size) {
+    std::lock_guard<std::mutex> lock(sock->mutex);
     uint8_t cmd_byte = cmd;
     if (!send_data(sock->fd, &cmd_byte, sizeof(cmd_byte))) {
         return false;
@@ -469,9 +471,21 @@ static bool send_rpc_cmd(const std::shared_ptr<socket_t> & sock, enum rpc_cmd cm
 // RPC request : | rpc_cmd (1 byte) | request_size (8 bytes) | request_data (request_size bytes) |
 // RPC response: | response_size (8 bytes) | response_data (response_size bytes) |
 static bool send_rpc_cmd(const std::shared_ptr<socket_t> & sock, enum rpc_cmd cmd, const void * input, size_t input_size, void * output, size_t output_size) {
-    if (!send_rpc_cmd(sock, cmd, input, input_size)) {
+    std::lock_guard<std::mutex> lock(sock->mutex);
+
+    // Send request
+    uint8_t cmd_byte = cmd;
+    if (!send_data(sock->fd, &cmd_byte, sizeof(cmd_byte))) {
         return false;
     }
+    if (!send_data(sock->fd, &input_size, sizeof(input_size))) {
+        return false;
+    }
+    if (!send_data(sock->fd, input, input_size)) {
+        return false;
+    }
+
+    // Receive response
     // TODO: currently the output_size is always known, do we need support for commands with variable output size?
     // even if we do, we can skip sending output_size from the server for commands with known output size
     uint64_t out_size;
@@ -579,7 +593,7 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
     }
     for (uint32_t i = 0; i < GGML_MAX_DIMS; i++) {
         result.ne[i] = tensor->ne[i];
-        result.nb[i] = tensor->nb[i];
+        result.nb[i] = (uint32_t)tensor->nb[i];  // Cast size_t to uint32_t for RPC protocol
     }
     result.op = tensor->op;
     for (uint32_t i = 0; i < GGML_MAX_OP_PARAMS / sizeof(int32_t); i++) {
@@ -1129,7 +1143,7 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
     }
 
     for (uint32_t i = 0; i < GGML_MAX_DIMS; i++) {
-        result->nb[i] = tensor->nb[i];
+        result->nb[i] = (size_t)tensor->nb[i];  // Convert uint32_t from RPC protocol to size_t
     }
     result->buffer = reinterpret_cast<ggml_backend_buffer_t>(tensor->buffer);
     if (result->buffer && buffers.find(result->buffer) == buffers.end()) {
@@ -1544,8 +1558,6 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             GGML_LOG_ERROR("Unknown command: %d\n", cmd);
             break;
         }
-        printf("[RPC Server] Received command: %s (%d)\n", rpc_cmd_to_string(cmd), cmd);
-        fflush(stdout);
         switch (cmd) {
             case RPC_CMD_HELLO: {
                 // HELLO command is handled above
@@ -1557,8 +1569,6 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 }
                 rpc_msg_device_count_rsp response;
                 response.device_count = backends.size();
-                printf("[RPC Server] DEVICE_COUNT response: %u devices\n", response.device_count);
-                fflush(stdout);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }
@@ -1569,14 +1579,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sockfd, &request, sizeof(request))) {
                     return;
                 }
-                printf("[RPC Server] ALLOC_BUFFER: device=%u, size=%" PRIu64 " bytes\n", request.device, request.size);
-                fflush(stdout);
                 rpc_msg_alloc_buffer_rsp response;
                 if (!server.alloc_buffer(request, response)) {
                     return;
                 }
-                printf("[RPC Server] ALLOC_BUFFER response: remote_ptr=0x%" PRIx64 ", remote_size=%" PRIu64 "\n", response.remote_ptr, response.remote_size);
-                fflush(stdout);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }
@@ -1750,14 +1756,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sockfd, &request, sizeof(request))) {
                     return;
                 }
-                printf("[RPC Server] GET_DEVICE_MEMORY: device=%u\n", request.device);
-                fflush(stdout);
                 rpc_msg_get_device_memory_rsp response;
                 if (!server.get_device_memory(request, response)) {
                     return;
                 }
-                printf("[RPC Server] GET_DEVICE_MEMORY response: free=%" PRIu64 " bytes, total=%" PRIu64 " bytes\n", response.free_mem, response.total_mem);
-                fflush(stdout);
                 if (!send_msg(sockfd, &response, sizeof(response))) {
                     return;
                 }
