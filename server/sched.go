@@ -440,6 +440,23 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	s.loadedMu.Unlock()
 
+	systemTotalMemory := systemInfo.TotalMemory
+	systemFreeMemory := systemInfo.FreeMemory
+	systemSwapFreeMemory := systemInfo.FreeSwap
+	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+
+	for _, gpu := range gpus {
+		available := gpu.FreeMemory - envconfig.GpuOverhead() - gpu.MinimumMemory()
+		if gpu.FreeMemory < envconfig.GpuOverhead()+gpu.MinimumMemory() {
+			available = 0
+		}
+		slog.Info("gpu memory", "id", gpu.ID, "library", gpu.Library,
+			"available", format.HumanBytes2(available),
+			"free", format.HumanBytes2(gpu.FreeMemory),
+			"minimum", format.HumanBytes2(gpu.MinimumMemory()),
+			"overhead", format.HumanBytes2(envconfig.GpuOverhead()))
+	}
+
 	gpuIDs, err := llama.Load(req.ctx, systemInfo, gpus, requireFull)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {

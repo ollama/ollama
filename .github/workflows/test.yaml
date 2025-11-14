@@ -172,6 +172,7 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\VulkanSDK
           key: ${{ matrix.install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
