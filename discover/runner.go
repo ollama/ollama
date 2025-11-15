@@ -94,7 +94,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			var dirs []string
 			if dir != "" {
 				if requested != "" && filepath.Base(dir) != requested {
-					slog.Debug("skipping available library at users request", "requested", requested, "libDir", dir)
+					slog.Debug("skipping available library at user's request", "requested", requested, "libDir", dir)
 					continue
 				} else if jetpack != "" && filepath.Base(dir) != "cuda_"+jetpack {
 					continue
@@ -117,7 +117,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		// In the second pass, we more deeply initialize the GPUs to weed out devices that
 		// aren't supported by a given library.  We run this phase in parallel to speed up discovery.
 		// Only devices that need verification are included in this pass
-		slog.Debug("evluating which if any devices to filter out", "initial_count", len(devices))
+		slog.Debug("evaluating which, if any, devices to filter out", "initial_count", len(devices))
 		ctx2ndPass, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		var wg sync.WaitGroup
@@ -129,7 +129,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				continue
 			}
 			libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
-			slog.Debug("verifying device is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "id", devices[i].ID, "pci_id", devices[i].PCIID)
+			slog.Debug("verifying if device is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "id", devices[i].ID, "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -467,7 +467,7 @@ func overrideWarnings() {
 	} {
 		if e, found := m[k]; found && e.Value != "" {
 			anyFound = true
-			slog.Warn("user override visible devices", k, e.Value)
+			slog.Warn("user overrode visible devices", k, e.Value)
 		}
 	}
 	if anyFound {
