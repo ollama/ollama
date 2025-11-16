@@ -260,22 +260,6 @@ var (
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
 	}
-	libraryToolsModels = []string{
-		"qwen3-vl",
-		"gpt-oss:20b",
-		"gpt-oss:120b",
-		"qwen3",
-		"llama3.1",
-		"llama3.2",
-		"mistral",
-		"qwen2.5",
-		"qwen2",
-		"mistral-nemo",
-		"mistral-small",
-		"mixtral:8x22b",
-		"qwq",
-		"granite3.3",
-	}
 
 	blueSkyPrompt   = "why is the sky blue? Be brief but factual in your reply"
 	blueSkyExpected = []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength", "interact"}
@@ -745,6 +729,23 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 			t.Skip("skipping with small VRAM to avoid timeouts")
 		}
 	}
+}
+
+var minVRAM = map[string]uint64{
+	"qwen3-vl":      16,
+	"gpt-oss:20b":   16,
+	"gpt-oss:120b":  70,
+	"qwen3":         6,
+	"llama3.1":      8,
+	"llama3.2":      4,
+	"mistral":       6,
+	"qwen2.5":       6,
+	"qwen2":         6,
+	"mistral-nemo":  9,
+	"mistral-small": 16,
+	"mixtral:8x22b": 80,
+	"qwq":           20,
+	"granite3.3":    7,
 }
 
 // Skip if the target model isn't X% GPU loaded to avoid excessive runtime
