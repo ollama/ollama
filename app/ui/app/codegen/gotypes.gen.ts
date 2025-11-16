@@ -471,11 +471,11 @@ export class User {
     id: string;
     name: string;
     email: string;
-    avatarURL: string;
+    avatarurl: string;
     plan: string;
     bio: string;
-    firstName: string;
-    lastName: string;
+    firstname: string;
+    lastname: string;
     overThreshold: boolean;
 
     constructor(source: any = {}) {
@@ -483,11 +483,11 @@ export class User {
         this.id = source["id"];
         this.name = source["name"];
         this.email = source["email"];
-        this.avatarURL = source["avatarURL"];
+        this.avatarurl = source["avatarurl"];
         this.plan = source["plan"];
         this.bio = source["bio"];
-        this.firstName = source["firstName"];
-        this.lastName = source["lastName"];
+        this.firstname = source["firstname"];
+        this.lastname = source["lastname"];
         this.overThreshold = source["overThreshold"];
     }
 }

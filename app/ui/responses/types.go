@@ -104,11 +104,11 @@ type User struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Email         string `json:"email"`
-	AvatarURL     string `json:"avatarURL"`
+	AvatarURL     string `json:"avatarurl"`     // Match Ollama API format
 	Plan          string `json:"plan"`
 	Bio           string `json:"bio"`
-	FirstName     string `json:"firstName"`
-	LastName      string `json:"lastName"`
+	FirstName     string `json:"firstname"`     // Match Ollama API format
+	LastName      string `json:"lastname"`      // Match Ollama API format
 	OverThreshold bool   `json:"overThreshold"`
 }
 
