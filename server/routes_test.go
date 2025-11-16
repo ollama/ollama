@@ -432,8 +432,7 @@ func TestRoutes(t *testing.T) {
 				}
 
 				var params []string
-				paramsSplit := strings.Split(showResp.Parameters, "\n")
-				for _, p := range paramsSplit {
+				for p := range strings.SplitSeq(showResp.Parameters, "\n") {
 					params = append(params, strings.Join(strings.Fields(p), " "))
 				}
 				sort.Strings(params)

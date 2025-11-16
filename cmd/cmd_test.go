@@ -1322,8 +1322,8 @@ func TestRunOptions_Copy(t *testing.T) {
 	// Test 2: Verify all fields are copied correctly
 	tests := []struct {
 		name string
-		got  interface{}
-		want interface{}
+		got  any
+		want any
 	}{
 		{"Model", copied.Model, original.Model},
 		{"ParentModel", copied.ParentModel, original.ParentModel},

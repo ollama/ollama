@@ -3,6 +3,7 @@ package readline
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/mattn/go-runewidth"
@@ -515,13 +516,13 @@ func (b *Buffer) StringN(n int) string {
 }
 
 func (b *Buffer) StringNM(n, m int) string {
-	var s string
+	var sb strings.Builder
 	if m == 0 {
 		m = b.Buf.Size()
 	}
 	for cnt := n; cnt < m; cnt++ {
 		c, _ := b.Buf.Get(cnt)
-		s += string(c)
+		sb.WriteRune(c)
 	}
-	return s
+	return sb.String()
 }

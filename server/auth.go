@@ -33,7 +33,7 @@ func (r registryChallenge) URL() (*url.URL, error) {
 
 	values := redirectURL.Query()
 	values.Add("service", r.Service)
-	for _, s := range strings.Split(r.Scope, " ") {
+	for s := range strings.SplitSeq(r.Scope, " ") {
 		values.Add("scope", s)
 	}
 
@@ -57,7 +57,7 @@ func getAuthorizationToken(ctx context.Context, challenge registryChallenge) (st
 	}
 
 	sha256sum := sha256.Sum256(nil)
-	data := []byte(fmt.Sprintf("%s,%s,%s", http.MethodGet, redirectURL.String(), base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString(sha256sum[:])))))
+	data := fmt.Appendf(nil, "%s,%s,%s", http.MethodGet, redirectURL.String(), base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString(sha256sum[:]))))
 
 	headers := make(http.Header)
 	signature, err := auth.Sign(ctx, data)

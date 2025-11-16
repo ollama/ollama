@@ -68,7 +68,7 @@ func TestEmbeddingsMiddleware_EncodingFormats(t *testing.T) {
 
 			switch tc.expectType {
 			case "array":
-				if _, ok := result.Data[0].Embedding.([]interface{}); !ok {
+				if _, ok := result.Data[0].Embedding.([]any); !ok {
 					t.Errorf("expected array, got %T", result.Data[0].Embedding)
 				}
 			case "string":

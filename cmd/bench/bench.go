@@ -149,7 +149,7 @@ func BenchmarkChat(fOpt flagOptions) error {
 
 	for _, model := range models {
 		for range *fOpt.epochs {
-			options := make(map[string]interface{})
+			options := make(map[string]any)
 			if *fOpt.maxTokens > 0 {
 				options["num_predict"] = *fOpt.maxTokens
 			}

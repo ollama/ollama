@@ -41,7 +41,7 @@ func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn
 }
 
 func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error) {
-	for range strings.Fields(s) {
+	for range strings.FieldsSeq(s) {
 		tokens = append(tokens, len(tokens))
 	}
 

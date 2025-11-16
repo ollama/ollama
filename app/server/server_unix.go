@@ -67,8 +67,7 @@ func reapServers() error {
 		return nil
 	}
 
-	pids := strings.Split(pidsStr, "\n")
-	for _, pidStr := range pids {
+	for pidStr := range strings.SplitSeq(pidsStr, "\n") {
 		pidStr = strings.TrimSpace(pidStr)
 		if pidStr == "" {
 			continue

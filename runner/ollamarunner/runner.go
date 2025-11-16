@@ -801,10 +801,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			if seq.logprobs {
 				origLogprobsLen := len(seq.pendingLogprobs)
 				numTokensRemoved := origLen - newLen
-				newLogprobsLen := origLogprobsLen - numTokensRemoved
-				if newLogprobsLen < 0 {
-					newLogprobsLen = 0
-				}
+				newLogprobsLen := max(origLogprobsLen-numTokensRemoved, 0)
 				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
 			}
 

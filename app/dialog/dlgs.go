@@ -37,7 +37,7 @@ type MsgBuilder struct {
 }
 
 // Message initialises a MsgBuilder with the provided message.
-func Message(format string, args ...interface{}) *MsgBuilder {
+func Message(format string, args ...any) *MsgBuilder {
 	return &MsgBuilder{Msg: fmt.Sprintf(format, args...)}
 }
 

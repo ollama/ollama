@@ -205,12 +205,12 @@ func (q queue) Less(i, j int) bool {
 
 func (q queue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
 
-func (q *queue) Push(x interface{}) {
+func (q *queue) Push(x any) {
 	item := x.(*candidate)
 	*q = append(*q, item)
 }
 
-func (q *queue) Pop() interface{} {
+func (q *queue) Pop() any {
 	old := *q
 	n := len(old)
 	item := old[n-1]

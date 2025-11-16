@@ -414,14 +414,7 @@ func LibraryPaths(l []DeviceInfo) []string {
 	gpuLibs := []string{LibOllamaPath}
 	for _, gpu := range l {
 		for _, dir := range gpu.LibraryPath {
-			needed := true
-			for _, existing := range gpuLibs {
-				if dir == existing {
-					needed = false
-					break
-				}
-			}
-			if needed {
+			if !slices.Contains(gpuLibs, dir) {
 				gpuLibs = append(gpuLibs, dir)
 			}
 		}

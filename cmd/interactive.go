@@ -410,7 +410,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					if resp.Parameters == "" {
 						fmt.Println("  No additional parameters were specified for this model.")
 					} else {
-						for _, l := range strings.Split(resp.Parameters, "\n") {
+						for l := range strings.SplitSeq(resp.Parameters, "\n") {
 							fmt.Printf("  %s\n", l)
 						}
 					}

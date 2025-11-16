@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -1139,9 +1140,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		if m.Options == nil {
 			m.Options = make(map[string]any)
 		}
-		for k, v := range req.Options {
-			m.Options[k] = v
-		}
+		maps.Copy(m.Options, req.Options)
 	}
 
 	var sb strings.Builder

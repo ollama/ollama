@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/user"
@@ -78,9 +79,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			if req.Files == nil {
 				req.Files = digestMap
 			} else {
-				for k, v := range digestMap {
-					req.Files[k] = v
-				}
+				maps.Copy(req.Files, digestMap)
 			}
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)

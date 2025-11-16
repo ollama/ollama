@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 type Prompt struct {
@@ -124,18 +125,18 @@ func (i *Instance) Readline() (string, error) {
 			case KeyRight:
 				buf.MoveRight()
 			case CharBracketedPaste:
-				var code string
+				var code strings.Builder
 				for range 3 {
 					r, err = i.Terminal.Read()
 					if err != nil {
 						return "", io.EOF
 					}
 
-					code += string(r)
+					code.WriteRune(r)
 				}
-				if code == CharBracketedPasteStart {
+				if code.String() == CharBracketedPasteStart {
 					i.Pasting = true
-				} else if code == CharBracketedPasteEnd {
+				} else if code.String() == CharBracketedPasteEnd {
 					i.Pasting = false
 				}
 			case KeyDel:

@@ -783,7 +783,7 @@ func (m *Metrics) Summary() {
 
 func (opts *Options) FromMap(m map[string]any) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
-	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
+	typeOpts := reflect.TypeFor[Options]()    // types of the fields in the options struct
 
 	// build map of json struct tags to their types
 	jsonOpts := make(map[string]reflect.StructField)
@@ -854,8 +854,7 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 				field.Set(reflect.ValueOf(slice))
 			case reflect.Pointer:
-				var b bool
-				if field.Type() == reflect.TypeOf(&b) {
+				if field.Type() == reflect.TypeFor[*bool]() {
 					val, ok := val.(bool)
 					if !ok {
 						return fmt.Errorf("option %q must be of type boolean", key)
@@ -906,7 +905,7 @@ func DefaultOptions() Options {
 // ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low")
 type ThinkValue struct {
 	// Value can be a bool or string
-	Value interface{}
+	Value any
 }
 
 // IsValid checks if the ThinkValue is valid
@@ -1055,7 +1054,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 func FormatParams(params map[string][]string) (map[string]any, error) {
 	opts := Options{}
 	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
-	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
+	typeOpts := reflect.TypeFor[Options]()     // types of the fields in the options struct
 
 	// build map of json struct tags to their types
 	jsonOpts := make(map[string]reflect.StructField)
@@ -1102,8 +1101,7 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
-					var b bool
-					if field.Type() == reflect.TypeOf(&b) {
+					if field.Type() == reflect.TypeFor[*bool]() {
 						boolVal, err := strconv.ParseBool(vals[0])
 						if err != nil {
 							return nil, fmt.Errorf("invalid bool value %s", vals)

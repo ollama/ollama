@@ -846,14 +846,7 @@ nextOperation:
 func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 	devices := []ml.DeviceID{}
 	for _, layer := range gpuLayers {
-		new := true
-		for _, ID := range devices {
-			if layer.DeviceID == ID {
-				new = false
-				break
-			}
-		}
-		if new {
+		if !slices.Contains(devices, layer.DeviceID) {
 			devices = append(devices, layer.DeviceID)
 		}
 	}
@@ -1721,12 +1714,12 @@ func (s *llamaServer) Detokenize(ctx context.Context, tokens []int) (string, err
 		return "", fmt.Errorf("no tokenizer configured")
 	}
 
-	var resp string
+	var sb strings.Builder
 	for _, token := range tokens {
-		resp += s.llamaModel.TokenToPiece(token)
+		sb.WriteString(s.llamaModel.TokenToPiece(token))
 	}
 
-	return resp, nil
+	return sb.String(), nil
 }
 
 func (s *ollamaServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
