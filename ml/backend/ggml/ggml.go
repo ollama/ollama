@@ -499,7 +499,6 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range b.meta.Tensors().Items() {
-		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
