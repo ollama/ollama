@@ -5,11 +5,12 @@ package readline
 import (
 	"syscall"
 	"unsafe"
+	"golang.org/x/sys/unix"
 )
 
 const (
-	tcgets = 0x5401
-	tcsets = 0x5402
+	tcgets = unix.TCGETS
+	tcsets = unix.TCSETSF
 )
 
 func getTermios(fd uintptr) (*Termios, error) {
