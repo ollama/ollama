@@ -380,7 +380,7 @@ void main() {
 
     float Lfrcp[rows_per_thread];
     [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
-        Lfrcp[r] = 1.0 / Lf[r];
+        Lfrcp[r] = (Lf[r] == 0.0) ? 0.0 : (1.0 / Lf[r]);
     }
 
     [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {

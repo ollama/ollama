@@ -159,32 +159,7 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-# Temporary opt-out stages for Vulkan
-FROM --platform=linux/amd64 scratch AS amd64_novulkan
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
-COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
-COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
-FROM arm64 AS arm64_novulkan
-FROM ${FLAVOR}_novulkan AS archive_novulkan
-COPY --from=cpu dist/lib/ollama /lib/ollama
-COPY --from=build /bin/ollama /bin/ollama
-FROM ubuntu:24.04 AS novulkan
-RUN apt-get update \
-    && apt-get install -y ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=archive_novulkan /bin /usr/bin
-ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-COPY --from=archive_novulkan /lib/ollama /usr/lib/ollama
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV OLLAMA_HOST=0.0.0.0:11434
-EXPOSE 11434
-ENTRYPOINT ["/bin/ollama"]
-CMD ["serve"]
-
-FROM ubuntu:24.04 AS default
+FROM ubuntu:24.04
 RUN apt-get update \
     && apt-get install -y ca-certificates libvulkan1 \
     && apt-get clean \

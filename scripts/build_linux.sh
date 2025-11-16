@@ -13,13 +13,12 @@ set -eu
 . $(dirname $0)/env.sh
 
 mkdir -p dist
-NOVULKAN=${NOVULKAN:-""}
 
 docker buildx build \
         --output type=local,dest=./dist/ \
         --platform=${PLATFORM} \
         ${OLLAMA_COMMON_BUILD_ARGS} \
-        --target archive${NOVULKAN} \
+        --target archive \
         -f Dockerfile \
         .
 

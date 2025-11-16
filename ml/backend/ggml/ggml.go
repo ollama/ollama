@@ -1738,3 +1738,66 @@ func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
 }
+
+// Slice returns a view of the tensor sliced along dim from low to high in step steps.
+// Slice panics if the dimension is invalid or the slice parameters are out of range.
+// If dim=0 and step>1, the tensor is a copy rather than a view to ensure proper shape.
+func (t *Tensor) Slice(ctx ml.Context, dim int, low, high, step int) ml.Tensor {
+	if dim < 0 || dim >= C.GGML_MAX_DIMS {
+		panic("invalid dimension")
+	} else if low < 0 || high > t.Dim(dim) || low >= high || step < 1 {
+		panic("invalid slice parameters")
+	}
+
+	if dim == 0 && step > 1 {
+		// dim=0,step>1 is a special case so handle it here first
+		return t.View(ctx,
+			low*t.Stride(0), 1,
+			step*t.Stride(0), (high-low+1)/step,
+			t.Stride(1), t.Dim(1),
+			// preserve dim 3 by merging it into dim 2
+			t.Stride(2), t.Dim(2)*t.Dim(3),
+		).Contiguous(ctx, (high-low+1)/step, t.Dim(1), t.Dim(2), t.Dim(3))
+	}
+
+	args := []int{
+		low * t.Stride(dim), t.Dim(0),
+		t.Stride(1), t.Dim(1),
+		t.Stride(2), t.Dim(2),
+		t.Stride(3), t.Dim(3),
+	}
+
+	if step == 1 {
+		args[dim*2+1] = high - low
+		return t.View(ctx, args[0], args[1:]...)
+	} else {
+		args[dim*2] = step * t.Stride(dim)
+		args[dim*2+1] = (high - low + 1) / step
+		return t.View(ctx, args[0], args[1:]...)
+	}
+}
+
+// Chunk the tensor into chunk sized tensors along dim. Each sub-tensor is a view of
+// the original.
+func (t *Tensor) Chunk(ctx ml.Context, dim, chunk int) []ml.Tensor {
+	sections := make([]int, 0, t.Dim(dim)/chunk+1)
+	for rest := t.Dim(dim); rest > 0; rest -= chunk {
+		sections = append(sections, min(chunk, rest))
+	}
+	return t.ChunkSections(ctx, dim, sections...)
+}
+
+// ChunkSections split the tensor into section sized tensors along dim. Each sub-tensor is a
+// view of the original. The size of the dim must equal the sum of sections.
+func (t *Tensor) ChunkSections(ctx ml.Context, dim int, sections ...int) []ml.Tensor {
+	var offset int
+	s := make([]ml.Tensor, len(sections))
+	for i, section := range sections {
+		s[i] = t.Slice(ctx, dim, offset, offset+section, 1)
+		offset += section
+	}
+	if offset != t.Dim(dim) {
+		panic("sections do not sum to tensor dimension")
+	}
+	return s
+}

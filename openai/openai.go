@@ -40,22 +40,29 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
+type ChoiceLogprobs struct {
+	Content []api.Logprob `json:"content"`
+}
+
 type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason *string `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Message      Message         `json:"message"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type ChunkChoice struct {
-	Index        int     `json:"index"`
-	Delta        Message `json:"delta"`
-	FinishReason *string `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Delta        Message         `json:"delta"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type CompleteChunkChoice struct {
-	Text         string  `json:"text"`
-	Index        int     `json:"index"`
-	FinishReason *string `json:"finish_reason"`
+	Text         string          `json:"text"`
+	Index        int             `json:"index"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type Usage struct {
@@ -104,6 +111,8 @@ type ChatCompletionRequest struct {
 	Tools            []api.Tool      `json:"tools"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
+	Logprobs         *bool           `json:"logprobs"`
+	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
 }
 
@@ -142,6 +151,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
 }
 
@@ -251,6 +261,12 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 // ToChatCompletion converts an api.ChatResponse to ChatCompletion
 func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
+
+	var logprobs *ChoiceLogprobs
+	if len(r.Logprobs) > 0 {
+		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+	}
+
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -269,6 +285,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: logprobs,
 		}}, Usage: ToUsage(r),
 		DebugInfo: r.DebugInfo,
 	}
@@ -277,6 +294,12 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 // ToChunk converts an api.ChatResponse to ChatCompletionChunk
 func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
+
+	var logprobs *ChoiceLogprobs
+	if len(r.Logprobs) > 0 {
+		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+	}
+
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -295,6 +318,7 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: logprobs,
 		}},
 	}
 }
@@ -437,7 +461,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -501,9 +525,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, err
 				}
 				messages[len(messages)-1].ToolCalls = toolCalls
-				if toolName != "" {
-					messages[len(messages)-1].ToolName = toolName
-				}
+				messages[len(messages)-1].ToolName = toolName
+				messages[len(messages)-1].ToolCallID = msg.ToolCallID
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
@@ -512,15 +535,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
 
-			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
-			for i, tc := range msg.ToolCalls {
-				toolCalls[i].Function.Name = tc.Function.Name
-				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
-				if err != nil {
-					return nil, errors.New("invalid tool call arguments")
-				}
+			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
 		}
 	}
 
@@ -609,6 +628,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Stream:          &r.Stream,
 		Tools:           r.Tools,
 		Think:           think,
+		Logprobs:        r.Logprobs != nil && *r.Logprobs,
+		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }
@@ -631,6 +652,7 @@ func nameFromToolCallID(messages []Message, toolCallID string) string {
 func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 	apiToolCalls := make([]api.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
+		apiToolCalls[i].ID = tc.ID
 		apiToolCalls[i].Function.Name = tc.Function.Name
 		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
 		if err != nil {
@@ -684,12 +706,21 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["top_p"] = 1.0
 	}
 
+	var logprobs bool
+	var topLogprobs int
+	if r.Logprobs != nil && *r.Logprobs > 0 {
+		logprobs = true
+		topLogprobs = *r.Logprobs
+	}
+
 	return api.GenerateRequest{
 		Model:           r.Model,
 		Prompt:          r.Prompt,
 		Options:         options,
 		Stream:          &r.Stream,
 		Suffix:          r.Suffix,
+		Logprobs:        logprobs,
+		TopLogprobs:     topLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }

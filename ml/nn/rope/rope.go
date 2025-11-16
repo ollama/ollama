@@ -57,9 +57,16 @@ func WithAttentionFactor(attentionFactor float32) func(*Options) {
 	}
 }
 
-func WithMRoPESections(sections []int) func(*Options) {
+func WithMRoPE(sections []int) func(*Options) {
 	return func(opts *Options) {
 		opts.Type |= 1 << 3
+		opts.MRoPE.Sections = sections
+	}
+}
+
+func WithInterleaveMRoPE(sections []int) func(*Options) {
+	return func(opts *Options) {
+		opts.Type |= 1<<3 | 1<<5
 		opts.MRoPE.Sections = sections
 	}
 }
