@@ -15,6 +15,7 @@ import {
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
+import { API_BASE } from "./lib/config";
 
 // Extend Model class with utility methods
 declare module "@/gotypes" {
@@ -26,8 +27,6 @@ declare module "@/gotypes" {
 Model.prototype.isCloud = function (): boolean {
   return this.model.endsWith("cloud");
 };
-
-const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:3001" : "";
 
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
