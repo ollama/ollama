@@ -156,6 +156,7 @@ func New(c fs.Config) (model.Model, error) {
 					)),
 				},
 			},
+			true,
 		)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
