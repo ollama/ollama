@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestGenerateDebugRenderOnly(t *testing.T) {
@@ -30,16 +30,16 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
-			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -146,7 +146,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 				DebugRenderOnly: true,
 			},
 			expectDebug:     true,
-			expectTemplate:  "[img-0]\n\nDescribe this image",
+			expectTemplate:  "[img-0]Describe this image",
 			expectNumImages: 1,
 		},
 		{
@@ -180,7 +180,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 						t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
 					}
 
-					var response api.DebugTemplateResponse
+					var response api.GenerateResponse
 					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatalf("failed to unmarshal response: %v", err)
 					}
@@ -223,16 +223,16 @@ func TestChatDebugRenderOnly(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
-			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ bool) bool {
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -363,7 +363,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 				DebugRenderOnly: true,
 			},
 			expectDebug:    true,
-			expectTemplate: "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather information\",\"parameters\":{\"type\":\"\",\"required\":null,\"properties\":null}}}]user: Get the weather\n",
+			expectTemplate: "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather information\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]user: Get the weather\n",
 		},
 	}
 
@@ -385,7 +385,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 						t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
 					}
 
-					var response api.DebugTemplateResponse
+					var response api.ChatResponse
 					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatalf("failed to unmarshal response: %v", err)
 					}

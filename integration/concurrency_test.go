@@ -14,17 +14,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
 // Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected
-func TestConcurrentGenerate(t *testing.T) {
+func TestConcurrentChat(t *testing.T) {
 	// Assumes all requests have the same model
-	req, resp := GenerateRequests()
+	req, resp := ChatRequests()
 	numParallel := int(envconfig.NumParallel() + 1)
 	iterLimit := 3
 
@@ -59,7 +57,7 @@ func TestConcurrentGenerate(t *testing.T) {
 				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
-				DoGenerate(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
+				DoChat(ctx, t, client, req[k], resp[k], 120*time.Second, 20*time.Second)
 			}
 		}(i)
 	}
@@ -79,21 +77,21 @@ func TestMultiModelStress(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// All models compatible with ollama-engine
 	smallModels := []string{
 		"llama3.2:1b",
 		"qwen3:0.6b",
-		"gemma:2b",
-		"deepseek-r1:1.5b",
-		"starcoder2:3b",
+		"gemma2:2b",
+		"deepseek-r1:1.5b", // qwen2 arch
+		"gemma3:270m",
 	}
 	mediumModels := []string{
-		"qwen3:8b",
-		"llama2",
-		"deepseek-r1:7b",
-		"mistral",
-		"dolphin-mistral",
-		"gemma:7b",
-		"codellama:7b",
+		"llama3.2:3b",    // ~3.4G
+		"qwen3:8b",       // ~6.6G
+		"gpt-oss:20b",    // ~15G
+		"deepseek-r1:7b", // ~5.6G
+		"gemma3:4b",      // ~5.8G
+		"gemma2:9b",      // ~8.1G
 	}
 
 	var chosenModels []string
@@ -111,16 +109,21 @@ func TestMultiModelStress(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	initialTimeout := 120 * time.Second
+	streamTimeout := 20 * time.Second
 
 	// Make sure all the models are pulled before we get started
 	for _, model := range chosenModels {
-		require.NoError(t, PullIfMissing(ctx, client, model))
+		if err := PullIfMissing(ctx, client, model); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Determine how many models we can load in parallel before we exceed VRAM
 	// The intent is to go 1 over what can fit so we force the scheduler to thrash
 	targetLoadCount := 0
 	slog.Info("Loading models to find how many can fit in VRAM before overflowing")
+chooseModels:
 	for i, model := range chosenModels {
 		req := &api.GenerateRequest{Model: model}
 		slog.Info("loading", "model", model)
@@ -142,6 +145,15 @@ func TestMultiModelStress(t *testing.T) {
 				slog.Info("found model load capacity", "target", targetLoadCount, "current", loaded, "chosen", chosenModels[:targetLoadCount])
 				break
 			}
+			// Effectively limit model count to 2 on CPU only systems to avoid thrashing and timeouts
+			for _, m := range models.Models {
+				if m.SizeVRAM == 0 {
+					slog.Info("model running on CPU", "name", m.Name, "target", targetLoadCount, "chosen", chosenModels[:targetLoadCount])
+					initialTimeout = 240 * time.Second
+					streamTimeout = 30 * time.Second
+					break chooseModels
+				}
+			}
 		}
 	}
 	if targetLoadCount == len(chosenModels) {
@@ -155,7 +167,7 @@ func TestMultiModelStress(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			reqs, resps := GenerateRequests()
+			reqs, resps := ChatRequests()
 			for j := 0; j < 3; j++ {
 				if time.Now().Sub(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
@@ -163,11 +175,8 @@ func TestMultiModelStress(t *testing.T) {
 				}
 				k := r.Int() % len(reqs)
 				reqs[k].Model = chosenModels[i]
-				slog.Info("Starting", "model", reqs[k].Model, "iteration", j, "request", reqs[k].Prompt)
-				DoGenerate(ctx, t, client, reqs[k], resps[k],
-					120*time.Second, // Be extra patient for the model to load initially
-					10*time.Second,  // Once results start streaming, fail if they stall
-				)
+				slog.Info("Starting", "model", reqs[k].Model, "iteration", j, "request", reqs[k].Messages[0].Content)
+				DoChat(ctx, t, client, reqs[k], resps[k], initialTimeout, streamTimeout)
 			}
 		}(i)
 	}

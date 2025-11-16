@@ -24,6 +24,12 @@
 #define LOG_DEFAULT_DEBUG 1
 #define LOG_DEFAULT_LLAMA 0
 
+enum log_colors {
+    LOG_COLORS_AUTO     = -1,
+    LOG_COLORS_DISABLED = 0,
+    LOG_COLORS_ENABLED  = 1,
+};
+
 // needed by the LOG_TMPL macro to avoid computing log arguments if the verbosity lower
 // set via common_log_set_verbosity()
 extern int common_log_verbosity_thold;
@@ -65,10 +71,10 @@ void common_log_add(struct common_log * log, enum ggml_log_level level, const ch
 // D - debug   (stderr, V = LOG_DEFAULT_DEBUG)
 //
 
-void common_log_set_file      (struct common_log * log, const char * file);       // not thread-safe
-void common_log_set_colors    (struct common_log * log,       bool   colors);     // not thread-safe
-void common_log_set_prefix    (struct common_log * log,       bool   prefix);     // whether to output prefix to each log
-void common_log_set_timestamps(struct common_log * log,       bool   timestamps); // whether to output timestamps in the prefix
+void common_log_set_file      (struct common_log * log, const char * file); // not thread-safe
+void common_log_set_colors    (struct common_log * log, log_colors colors); // not thread-safe
+void common_log_set_prefix    (struct common_log * log, bool prefix);       // whether to output prefix to each log
+void common_log_set_timestamps(struct common_log * log, bool timestamps);   // whether to output timestamps in the prefix
 
 // helper macros for logging
 // use these to avoid computing log arguments if the verbosity of the log is higher than the threshold

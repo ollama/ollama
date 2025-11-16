@@ -230,3 +230,65 @@ func TestSafetensors(t *testing.T) {
 		})
 	}
 }
+
+func TestSafetensorKind(t *testing.T) {
+	tests := []struct {
+		name     string
+		st       safetensor
+		expected uint32
+	}{
+		{
+			name: "BF16 dtype with non-v. prefix and non-FP32 base kind should return BF16",
+			st: safetensor{
+				tensorBase: &tensorBase{
+					name:  "weight.matrix",
+					shape: []uint64{10, 10}, // will default to FP16
+				},
+				dtype: "BF16",
+			},
+			expected: tensorKindBF16,
+		},
+		{
+			name: "BF16 dtype with v. prefix should return base kind",
+			st: safetensor{
+				tensorBase: &tensorBase{
+					name:  "v.weight.matrix",
+					shape: []uint64{10, 10}, // will default to FP16
+				},
+				dtype: "BF16",
+			},
+			expected: tensorKindFP16,
+		},
+		{
+			name: "BF16 dtype with FP32 base kind should return FP32",
+			st: safetensor{
+				tensorBase: &tensorBase{
+					name:  "weight.matrix",
+					shape: []uint64{10}, // will default to FP32
+				},
+				dtype: "BF16",
+			},
+			expected: tensorKindFP32,
+		},
+		{
+			name: "Non-BF16 dtype should return base kind",
+			st: safetensor{
+				tensorBase: &tensorBase{
+					name:  "weight.matrix",
+					shape: []uint64{10, 10}, // will default to FP16
+				},
+				dtype: "FP16",
+			},
+			expected: tensorKindFP16,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.st.Kind()
+			if result != tt.expected {
+				t.Errorf("Kind() = %d, expected %d", result, tt.expected)
+			}
+		})
+	}
+}

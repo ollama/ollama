@@ -224,7 +224,13 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 foreach(feature DOTPROD SVE MATMUL_INT8 FMA FP16_VECTOR_ARITHMETIC SME)
                     string(FIND "${ARM_FEATURE}" "__ARM_FEATURE_${feature} 1" feature_pos)
                     if (NOT ${feature_pos} EQUAL -1)
-                        message(STATUS "ARM feature ${feature} enabled")
+                        # Special handling for MATMUL_INT8 when machine doesn't support i8mm
+                        if ("${feature}" STREQUAL "MATMUL_INT8" AND GGML_MACHINE_SUPPORTS_noi8mm)
+                            message(STATUS "ARM feature ${feature} detected but unsetting due to machine not supporting i8mm")
+                            list(APPEND ARCH_FLAGS -U__ARM_FEATURE_MATMUL_INT8)
+                        else()
+                            message(STATUS "ARM feature ${feature} enabled")
+                        endif()
                     endif()
                 endforeach()
             endif()
@@ -433,49 +439,75 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             ggml-cpu/arch/riscv/quants.c
             ggml-cpu/arch/riscv/repack.cpp
             )
-        if (GGML_RVV)
-            if (GGML_XTHEADVECTOR)
-                list(APPEND ARCH_FLAGS -march=rv64gc_xtheadvector -mabi=lp64d)
-            elseif (GGML_RV_ZFH)
-                list(APPEND ARCH_FLAGS -march=rv64gcv_zfhmin -mabi=lp64d)
-            else()
-                list(APPEND ARCH_FLAGS -march=rv64gcv -mabi=lp64d)
+        if (GGML_CPU_RISCV64_SPACEMIT)
+            target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_RISCV64_SPACEMIT ${RISCV64_SPACEMIT_IME_SPEC})
+            list(APPEND GGML_CPU_SOURCES
+                ggml-cpu/spacemit/ime.cpp
+                ggml-cpu/spacemit/ime.h
+                ggml-cpu/spacemit/ime1_kernels.cpp
+                ggml-cpu/spacemit/ime_kernels.h
+            )
+        endif()
+        set(MARCH_STR "rv64gc")
+        if (GGML_RV_ZFH)
+            string(APPEND MARCH_STR "_zfh")
+        endif()
+        if (GGML_XTHEADVECTOR)
+            string(APPEND MARCH_STR "_xtheadvector")
+        elseif (GGML_RVV)
+            string(APPEND MARCH_STR "_v")
+            if (GGML_RV_ZVFH)
+                string(APPEND MARCH_STR "_zvfh")
             endif()
         endif()
+        if (GGML_RV_ZICBOP)
+            string(APPEND MARCH_STR "_zicbop")
+        endif()
+        list(APPEND ARCH_FLAGS "-march=${MARCH_STR}" -mabi=lp64d)
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         message(STATUS "s390x detected")
-        list(APPEND GGML_CPU_SOURCES ggml-cpu/arch/s390/quants.c)
-        file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
-        string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/arch/s390/quants.c)
 
-        # TODO: Separation to determine activation of VX/VXE/VXE2
-        if (${S390X_M} MATCHES "8561|8562")
-            set(GGML_NNPA OFF)
-            message(STATUS "z15 target")
-            list(APPEND ARCH_FLAGS -march=z15)
-        elseif (${S390X_M} MATCHES "3931")
-            message(STATUS "z16 target")
-            list(APPEND ARCH_FLAGS -march=z16)
-        elseif (${S390X_M} MATCHES "9175|9176")
-            # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
-            #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
-            message(STATUS "z17 target")
-            list(APPEND ARCH_FLAGS -march=z17)
-        else()
-            message(STATUS "Unknown target")
-            message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
-            list(APPEND ARCH_FLAGS -march=native -mtune=native)
+        # for native compilation
+        if (GGML_NATIVE)
+            # check machine level to determine target
+            file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
+            string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+
+            # TODO: Separation to determine activation of VX/VXE/VXE2
+            if (${S390X_M} MATCHES "8561|8562")
+                message(STATUS "z15 target")
+                list(APPEND ARCH_FLAGS -march=z15)
+            elseif (${S390X_M} MATCHES "3931")
+                message(STATUS "z16 target")
+                list(APPEND ARCH_FLAGS -march=z16)
+            elseif (${S390X_M} MATCHES "9175|9176")
+                # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
+                #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
+                message(STATUS "z17 target")
+                list(APPEND ARCH_FLAGS -march=arch15)
+            else()
+                message(STATUS "Unknown target")
+                message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
+                list(APPEND ARCH_FLAGS -march=native -mtune=native)
+            endif()
+        # for cross-compilation
+        elseif(GGML_CPU_ALL_VARIANTS)
+            # range through IBM z15 to z17
+            # NOTE: update when a new hardware level is released
+            foreach (ZHW RANGE 15 17)
+                if(DEFINED GGML_INTERNAL_Z${ZHW})
+                    message(STATUS "z${ZHW} cross-compile target")
+                    list(APPEND ARCH_FLAGS -march=z${ZHW})
+                endif()
+            endforeach()
         endif()
 
-        if (GGML_VXE)
+        if (GGML_VXE OR GGML_INTERNAL_VXE)
             message(STATUS "VX/VXE/VXE2 enabled")
             list(APPEND ARCH_FLAGS -mvx -mzvector)
             list(APPEND ARCH_DEFINITIONS GGML_VXE)
-        endif()
-
-        if (GGML_NNPA)
-            message(STATUS "NNPA enabled")
-            list(APPEND ARCH_DEFINITIONS GGML_NNPA)
         endif()
     elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "wasm")
         message(STATUS "Wasm detected")
@@ -497,9 +529,9 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
         # Fetch KleidiAI sources:
         include(FetchContent)
-        set(KLEIDIAI_COMMIT_TAG "v1.11.0")
+        set(KLEIDIAI_COMMIT_TAG "v1.14.0")
         set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/archive/refs/tags/${KLEIDIAI_COMMIT_TAG}.tar.gz")
-        set(KLEIDIAI_ARCHIVE_MD5  "3fe9e5ab964c375c53839296eb71eaa2")
+        set(KLEIDIAI_ARCHIVE_MD5  "45e110675d93f99f82c23a1afcca76bc")
 
         if (POLICY CMP0135)
             cmake_policy(SET CMP0135 NEW)
@@ -555,6 +587,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
         list(APPEND GGML_KLEIDIAI_SOURCES
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p_f32.c
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p4x8sb_f32_neon.c
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32ps1s0scalef16_qsu4c32s16s0_neon.c
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p_f32_neon.c
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32pscalef16_qsu4c32s16s0.c)
@@ -575,8 +608,10 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1vlx4_qsi4c32p4vlx4_1vlx4vl_sme2_mopa.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x4_qsi4c32p4vlx4_1x4vl_sme2_sdot.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/kai_matmul_clamp_f32_bf16p2vlx2_bf16p2vlx2_2vlx2vl_sme2_mopa.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/kai_matmul_clamp_f32_bf16p2vlx2_bf16p2vlx2_2vlx2vl_sme2_mopa_asm.S
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_pack_bf16p2vlx2_f32_sme.c
-                ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_kxn_bf16p2vlx2b_f32_x32_sme.c)
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_kxn_bf16p2vlx2b_f32_x32_sme.c
+                ${KLEIDIAI_SRC}/kai/kai_common_sme_asm.S)
             set(PRIVATE_ARCH_FLAGS "-fno-tree-vectorize;${PRIVATE_ARCH_FLAGS}+sve+sve2")
         endif()
 
