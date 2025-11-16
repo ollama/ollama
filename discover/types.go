@@ -10,6 +10,15 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
+// RPCServerMemoryResult represents the return value of the RPCServerMemory
+// function.
+type RPCServerMemoryResult struct {
+	// The amount of free memory in bytes available in the RPC endpoint.
+	FreeMem uint64
+	// The total memory available in bytes on the RPC endpoint.
+	TotalMem uint64
+}
+
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
