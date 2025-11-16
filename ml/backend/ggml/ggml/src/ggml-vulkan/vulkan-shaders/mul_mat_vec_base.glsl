@@ -28,8 +28,11 @@ layout (binding = 1) readonly buffer BV4 {B_TYPE_VEC4 data_b_v4[];};
 #endif
 
 layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
+
+layout (binding = 3) readonly buffer Bias {D_TYPE data_bias[];};
+
 #ifdef MUL_MAT_ID
-layout (binding = 3) readonly buffer IDS {int data_ids[];};
+layout (binding = 4) readonly buffer IDS {int data_ids[];};
 #endif
 
 #include "dequant_funcs.glsl"
@@ -45,6 +48,9 @@ layout (push_constant) uniform parameter
     uint batch_stride_b;
     uint batch_stride_d;
 
+    uint enable_bias;
+    uint enable_scale;
+
 #ifdef MUL_MAT_ID
     uint nei0;
     uint ne11;
@@ -55,6 +61,10 @@ layout (push_constant) uniform parameter
     uint broadcast3;
 #endif
 } p;
+
+#ifdef MUL_MAT_ID
+uint expert_id;
+#endif
 
 void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
 #ifdef MUL_MAT_ID
@@ -75,7 +85,7 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
         batch_idx_a = i03 * p.ne02 + i02;
     }
 #else
-    const uint expert_id = data_ids[expert_idx];
+    expert_id = data_ids[expert_idx];
 #endif
 
     a_offset =
@@ -113,6 +123,19 @@ void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t 
     if (tid == 0) {
         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
             [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                if (p.enable_bias != 0) {
+#ifdef MUL_MAT_ID
+                    temp[j][n] += FLOAT_TYPE(data_bias[expert_id*p.stride_d + first_row + n]);
+#else
+                    temp[j][n] += FLOAT_TYPE(data_bias[j*p.batch_stride_d + d_offset + first_row + n]);
+#endif
+                }
+#ifdef MUL_MAT_ID
+                if (p.enable_scale != 0) {
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    temp[j][n] *= FLOAT_TYPE(data_bias[expert_idx]);
+                }
+#endif
                 data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
             }
         }
@@ -148,6 +171,19 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
                 [[unroll]] for (uint s = 0; s < gl_NumSubgroups; ++s) {
                     temp[j][n] += tmpsh[j][n][s];
                 }
+                if (p.enable_bias != 0) {
+#ifdef MUL_MAT_ID
+                    temp[j][n] += FLOAT_TYPE(data_bias[expert_id*p.stride_d + first_row + n]);
+#else
+                    temp[j][n] += FLOAT_TYPE(data_bias[j*p.batch_stride_d + d_offset + first_row + n]);
+#endif
+                }
+#ifdef MUL_MAT_ID
+                if (p.enable_scale != 0) {
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    temp[j][n] *= FLOAT_TYPE(data_bias[expert_idx]);
+                }
+#endif
                 data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
             }
         }
@@ -173,6 +209,19 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
     if (tid == 0) {
         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
             [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                if (p.enable_bias != 0) {
+#ifdef MUL_MAT_ID
+                    tmpsh[j][n][0] += FLOAT_TYPE(data_bias[expert_id*p.stride_d + first_row + n]);
+#else
+                    tmpsh[j][n][0] += FLOAT_TYPE(data_bias[j*p.batch_stride_d + d_offset + first_row + n]);
+#endif
+                }
+#ifdef MUL_MAT_ID
+                if (p.enable_scale != 0) {
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    tmpsh[j][n][0] *= FLOAT_TYPE(data_bias[expert_idx]);
+                }
+#endif
                 data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(tmpsh[j][n][0]);
             }
         }

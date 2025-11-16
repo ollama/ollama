@@ -3,6 +3,9 @@
 
 #include "rte.glsl"
 #include "utils.glsl"
+#if RMS_NORM_ROPE_FUSION
+#include "rope_params.glsl"
+#endif
 
 layout (push_constant) uniform parameter
 {
@@ -12,11 +15,16 @@ layout (push_constant) uniform parameter
     uint ne20; uint ne21; uint ne22; uint ne23; uint nb20; uint nb21; uint nb22; uint nb23;
     uint misalign_offsets;
     float param1; float param2; int param3;
+#if RMS_NORM_ROPE_FUSION
+    rope_params rope;
+#endif
 } p;
 
+#if !RMS_NORM_ROPE_FUSION
 layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
 layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
 layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
+#endif
 
 // true if src0/src1 are the same shape and the indices can be reused without additional modulus
 layout(constant_id = 0) const bool norepeat = false;

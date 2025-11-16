@@ -469,19 +469,30 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
 #endif
 
 #ifdef MMQ_SHMEM
-void block_b_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
-    const uint ib_outer = ib / 4;
-    const uint ib_inner = ib % 4;
+void block_b_to_shmem(const uint buf_ib, const uint ib, const uint iqs, const bool is_in_bounds) {
+    if (is_in_bounds) {
+        const uint ib_outer = ib / 4;
+        const uint ib_inner = ib % 4;
 
-    if (iqs == 0) {
-        buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(data_b[ib_outer].ds[ib_inner]);
+        if (iqs == 0) {
+            buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(data_b[ib_outer].ds[ib_inner]);
+        }
+
+        const ivec4 values = data_b[ib_outer].qs[ib_inner * 2 + iqs];
+        buf_b[buf_ib].qs[iqs * 4    ] = values.x;
+        buf_b[buf_ib].qs[iqs * 4 + 1] = values.y;
+        buf_b[buf_ib].qs[iqs * 4 + 2] = values.z;
+        buf_b[buf_ib].qs[iqs * 4 + 3] = values.w;
+    } else {
+        if (iqs == 0) {
+            buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(0.0f);
+        }
+
+        buf_b[buf_ib].qs[iqs * 4    ] = 0;
+        buf_b[buf_ib].qs[iqs * 4 + 1] = 0;
+        buf_b[buf_ib].qs[iqs * 4 + 2] = 0;
+        buf_b[buf_ib].qs[iqs * 4 + 3] = 0;
     }
-
-    const ivec4 values = data_b[ib_outer].qs[ib_inner * 2 + iqs];
-    buf_b[buf_ib].qs[iqs * 4    ] = values.x;
-    buf_b[buf_ib].qs[iqs * 4 + 1] = values.y;
-    buf_b[buf_ib].qs[iqs * 4 + 2] = values.z;
-    buf_b[buf_ib].qs[iqs * 4 + 3] = values.w;
 }
 
 void block_b_to_registers(const uint ib) {

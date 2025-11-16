@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ggml.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -22,9 +23,18 @@ enum clip_modality {
     CLIP_MODALITY_AUDIO,
 };
 
+enum clip_flash_attn_type {
+    CLIP_FLASH_ATTN_TYPE_AUTO     = -1,
+    CLIP_FLASH_ATTN_TYPE_DISABLED = 0,
+    CLIP_FLASH_ATTN_TYPE_ENABLED  = 1,
+};
+
 struct clip_context_params {
     bool use_gpu;
     enum ggml_log_level verbosity;
+    enum clip_flash_attn_type flash_attn_type;
+    int image_min_tokens;
+    int image_max_tokens;
 };
 
 struct clip_init_result {
