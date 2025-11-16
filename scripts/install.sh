@@ -79,7 +79,7 @@ status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
 status "Downloading Linux ${ARCH} bundle"
-curl --fail --show-error --location --progress-bar \
+curl --connect-timeout 5 --retry 9999 --retry-delay 2 --retry-max-time 0 --fail --show-error --location --progress-bar \
     "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
     $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
 
@@ -92,12 +92,12 @@ fi
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
         status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
+        curl --connect-timeout 5 --retry 9999 --retry-delay 2 --retry-max-time 0 --fail --show-error --location --progress-bar \
             "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
             $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
         status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
+        curl --connect-timeout 5 --retry 9999 --retry-delay 2 --retry-max-time 0 --fail --show-error --location --progress-bar \
             "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
             $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
     else
@@ -223,7 +223,7 @@ fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     status "Downloading Linux ROCm ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
+    curl --connect-timeout 5 --retry 9999 --retry-delay 2 --retry-max-time 0 --fail --show-error --location --progress-bar \
         "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
         $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
 
@@ -280,7 +280,7 @@ install_cuda_driver_yum() {
 install_cuda_driver_apt() {
     status 'Installing NVIDIA repository...'
     if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-keyring_1.1-1_all.deb" >/dev/null ; then
-        curl -fsSL -o $TEMP_DIR/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-keyring_1.1-1_all.deb
+        curl --connect-timeout 5 --retry 9999 --retry-delay 2 --retry-max-time 0 -fsSL -o $TEMP_DIR/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-keyring_1.1-1_all.deb
     else
         error $CUDA_REPO_ERR_MSG
     fi
