@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
@@ -38,6 +39,10 @@ func GetSystemInfo() ml.SystemInfo {
 	if threadCount == 0 {
 		// Fall back to Go's num CPU
 		threadCount = runtime.NumCPU()
+	}
+	if userThreadCount := envconfig.NumThreads(); userThreadCount > 0 {
+		slog.Info("user override thread count", "override", userThreadCount, "default", threadCount)
+		threadCount = int(userThreadCount)
 	}
 
 	return ml.SystemInfo{
