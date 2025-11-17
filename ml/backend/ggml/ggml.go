@@ -1656,6 +1656,16 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 			C.ggml_flash_attn_ext_add_sinks(kqv, sinks.(*Tensor).t) // NOTE: kqv -> kqvC
 		}
 		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32) // NOTE: kqv -> kqvC
+
+		if vmla != nil {
+			cur := &Tensor{b: t.b, t: kqv}
+			cur = cur.Permute(ctx, 0, 2, 1, 3).(*Tensor)
+			cur = vmla.Mulmat(ctx, cur).(*Tensor)
+			cur = cur.Permute(ctx, 0, 2, 1, 3).(*Tensor)
+			cur = cur.Contiguous(ctx).(*Tensor)
+			kqv = cur.t
+		}
+
 		return &Tensor{b: t.b, t: kqv}
 	} else {
 		kq := key.MulmatFullPrec(ctx, query)
