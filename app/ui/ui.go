@@ -1730,8 +1730,8 @@ func supportsWebSearchTools(model string) bool {
 
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {
-	var msgs []api.Message
-	for _, m := range chat.Messages {
+	msgs := make([]api.Message, len(chat.Messages))
+	for i, m := range chat.Messages {
 		// Skip empty messages if present
 		if m.Content == "" && m.Thinking == "" && len(m.ToolCalls) == 0 && len(m.Attachments) == 0 {
 			continue
@@ -1789,7 +1789,7 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 			s.log().Debug("unknown message role", "role", m.Role)
 		}
 
-		msgs = append(msgs, apiMsg)
+		msgs[i] = apiMsg
 	}
 
 	var thinkValue *api.ThinkValue

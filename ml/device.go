@@ -219,7 +219,7 @@ type BackendMemory struct {
 }
 
 func (m BackendMemory) LogValue() slog.Value {
-	var attrs []slog.Attr
+	attrs := make([]slog.Attr, 0, 2+len(m.GPUs))
 	if m.InputWeights != 0 {
 		attrs = append(attrs, slog.Any("InputWeights", m.InputWeights))
 	}

@@ -826,9 +826,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	var e []float64
-	for _, v := range embedding {
-		e = append(e, float64(v))
+	e := make([]float64, len(embedding))
+	for i, v := range embedding {
+		e[i] = float64(v)
 	}
 
 	resp := api.EmbeddingResponse{
@@ -1211,7 +1211,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 		return
 	}
 
-	models := []api.ListModelResponse{}
+	models := make([]api.ListModelResponse, 0, len(ms))
 	for n, m := range ms {
 		var cf ConfigV2
 

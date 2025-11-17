@@ -576,9 +576,8 @@ func extractFileNames(input string) []string {
 
 func extractFileData(input string) (string, []api.ImageData, error) {
 	filePaths := extractFileNames(input)
-	var imgs []api.ImageData
-
-	for _, fp := range filePaths {
+	imgs := make([]api.ImageData, len(filePaths))
+	for i, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
@@ -591,7 +590,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, data)
+		imgs[i] = data
 	}
 	return strings.TrimSpace(input), imgs, nil
 }

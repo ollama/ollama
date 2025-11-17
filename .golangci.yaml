@@ -63,6 +63,11 @@ linters:
     usestdlibvars:
       http-method: false
       http-status-code: false
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - prealloc
 
 formatters:
   enable:

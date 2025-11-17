@@ -309,9 +309,9 @@ func (tp ToolProperty) ToTypeScriptType() string {
 		return mapToTypeScriptType(tp.Type[0])
 	}
 
-	var types []string
-	for _, t := range tp.Type {
-		types = append(types, mapToTypeScriptType(t))
+	types := make([]string, len(tp.Type))
+	for i, t := range tp.Type {
+		types[i] = mapToTypeScriptType(t)
 	}
 	return strings.Join(types, " | ")
 }

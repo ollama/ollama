@@ -377,20 +377,19 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 
 // ToListCompletion converts an api.ListResponse to ListCompletion
 func ToListCompletion(r api.ListResponse) ListCompletion {
-	var data []Model
-	for _, m := range r.Models {
-		data = append(data, Model{
-			Id:      m.Name,
-			Object:  "model",
-			Created: m.ModifiedAt.Unix(),
-			OwnedBy: model.ParseName(m.Name).Namespace,
-		})
+	c := ListCompletion{Object: "list"}
+	if len(r.Models) > 0 {
+		c.Data = make([]Model, len(r.Models))
+		for i, m := range r.Models {
+			c.Data[i] = Model{
+				Id:      m.Name,
+				Object:  "model",
+				Created: m.ModifiedAt.Unix(),
+				OwnedBy: model.ParseName(m.Name).Namespace,
+			}
+		}
 	}
-
-	return ListCompletion{
-		Object: "list",
-		Data:   data,
-	}
+	return c
 }
 
 // ToEmbeddingList converts an api.EmbedResponse to EmbeddingList
