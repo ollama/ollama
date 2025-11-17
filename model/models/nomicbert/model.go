@@ -101,13 +101,9 @@ func (a *Attention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml
 
 	qkv := a.QKV.Forward(ctx, hiddenStates)
 
-	query := qkv.Slice(ctx, 0, 0, opts.hiddenSize, 1).Contiguous(ctx)
-	key := qkv.Slice(ctx, 0, opts.hiddenSize, 2*opts.hiddenSize, 1).Contiguous(ctx)
-	value := qkv.Slice(ctx, 0, 2*opts.hiddenSize, 3*opts.hiddenSize, 1).Contiguous(ctx)
-
-	query = query.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
-	key = key.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
-	value = value.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
+	qkv = qkv.Reshape(ctx, opts.headDim, opts.numHeads*3, batchSize)
+	chunks := qkv.Chunk(ctx, 1, opts.numHeads)
+	query, key, value := chunks[0], chunks[1], chunks[2]
 
 	query = fast.RoPE(ctx, query, positions, opts.headDim, opts.ropeFreqBase, 1.0, rope.WithTypeNeoX())
 	key = fast.RoPE(ctx, key, positions, opts.headDim, opts.ropeFreqBase, 1.0, rope.WithTypeNeoX())
