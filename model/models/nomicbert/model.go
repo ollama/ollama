@@ -59,14 +59,11 @@ type MLP struct {
 	Down *nn.Linear `gguf:"ffn_down"`
 }
 
-// Forward implements model.Model interface
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	typeEmbed := m.TypeEmbedding.Weight.Slice(ctx, 1, 0, 1, 1)
 	hiddenStates = hiddenStates.Add(ctx, typeEmbed)
-
-	// no position embedding - we use ROPE instead
 
 	hiddenStates = m.TokenEmbeddingNorm.Forward(ctx, hiddenStates, m.eps)
 
