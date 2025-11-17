@@ -1474,7 +1474,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			// User provided a JSON schema
 			g := llama.SchemaToGrammar(req.Format)
 			if g == nil {
-				return fmt.Errorf("invalid JSON schema in format")
+				return errors.New("invalid JSON schema in format")
 			}
 			req.Grammar = string(g)
 		}
@@ -1686,7 +1686,7 @@ func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, erro
 	defer s.llamaModelLock.Unlock()
 
 	if s.llamaModel == nil {
-		return nil, fmt.Errorf("no tokenizer configured")
+		return nil, errors.New("no tokenizer configured")
 	}
 
 	return s.llamaModel.Tokenize(content, false, true)
@@ -1711,7 +1711,7 @@ func (s *llamaServer) Detokenize(ctx context.Context, tokens []int) (string, err
 	defer s.llamaModelLock.Unlock()
 
 	if s.llamaModel == nil {
-		return "", fmt.Errorf("no tokenizer configured")
+		return "", errors.New("no tokenizer configured")
 	}
 
 	var sb strings.Builder

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -998,7 +999,7 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
+	return errors.New("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
 }
 
 // MarshalJSON implements json.Marshaler

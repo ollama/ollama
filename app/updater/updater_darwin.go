@@ -92,7 +92,7 @@ func DoUpgrade(interactive bool) error {
 
 	bundle := getStagedUpdate()
 	if bundle == "" {
-		return fmt.Errorf("failed to lookup downloads")
+		return errors.New("failed to lookup downloads")
 	}
 
 	slog.Info("starting upgrade", "app", BundlePath, "update", bundle, "pid", os.Getpid(), "log", UpgradeLogFile)
@@ -107,7 +107,7 @@ func DoUpgrade(interactive bool) error {
 	// Verify old doesn't exist yet
 	if _, err := os.Stat(contentsOldName); err == nil {
 		slog.Error("prior upgrade failed", "backup", contentsOldName)
-		return fmt.Errorf("prior upgrade failed - please upgrade manually by installing the bundle")
+		return errors.New("prior upgrade failed - please upgrade manually by installing the bundle")
 	}
 	if err := os.MkdirAll(appBackupDir, 0o755); err != nil {
 		return fmt.Errorf("unable to create backup dir %s: %w", appBackupDir, err)
@@ -133,7 +133,7 @@ func DoUpgrade(interactive bool) error {
 			return err
 		}
 		if !chownWithAuthorization(u.Username) {
-			return fmt.Errorf("unable to change permissions to complete upgrade")
+			return errors.New("unable to change permissions to complete upgrade")
 		}
 		if err := os.Rename(BundlePath, appBackup); err != nil {
 			return fmt.Errorf("unable to perform upgrade - failed to stage old version: %w", err)
@@ -264,7 +264,7 @@ func DoPostUpgradeCleanup() error {
 func verifyDownload() error {
 	bundle := getStagedUpdate()
 	if bundle == "" {
-		return fmt.Errorf("failed to lookup downloads")
+		return errors.New("failed to lookup downloads")
 	}
 	slog.Debug("verifying update", "bundle", bundle)
 
@@ -347,11 +347,11 @@ func verifyDownload() error {
 func DoUpgradeAtStartup() error {
 	bundle := getStagedUpdate()
 	if bundle == "" {
-		return fmt.Errorf("failed to lookup downloads")
+		return errors.New("failed to lookup downloads")
 	}
 
 	if BundlePath == "" {
-		return fmt.Errorf("unable to upgrade at startup, app in development mode")
+		return errors.New("unable to upgrade at startup, app in development mode")
 	}
 
 	// [Re]verify before proceeding

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/maphash"
 	"io"
@@ -587,7 +588,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo,
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("failed to finish discovery before timeout")
+			return nil, errors.New("failed to finish discovery before timeout")
 		case <-tick:
 			r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/info", port), nil)
 			if err != nil {
@@ -599,7 +600,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo,
 			if err != nil {
 				// slog.Warn("failed to send request", "error", err)
 				if runner.HasExited() {
-					return nil, fmt.Errorf("runner crashed")
+					return nil, errors.New("runner crashed")
 				}
 				continue
 			}
@@ -607,7 +608,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo,
 
 			if resp.StatusCode == http.StatusNotFound {
 				// old runner, fall back to bootstrapping model
-				return nil, fmt.Errorf("llamarunner free vram reporting not supported")
+				return nil, errors.New("llamarunner free vram reporting not supported")
 			}
 
 			body, err := io.ReadAll(resp.Body)

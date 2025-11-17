@@ -5,6 +5,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -587,7 +588,7 @@ func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Cha
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("chat not found")
+			return nil, errors.New("chat not found")
 		}
 		return nil, fmt.Errorf("query chat: %w", err)
 	}
@@ -752,7 +753,7 @@ func (db *database) updateLastMessage(chatID string, msg Message) error {
 		return fmt.Errorf("get rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("no message found to update")
+		return errors.New("no message found to update")
 	}
 
 	_, err = tx.Exec("DELETE FROM attachments WHERE message_id = ?", messageID)

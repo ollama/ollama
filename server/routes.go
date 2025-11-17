@@ -130,7 +130,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	}
 
 	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
-		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
+		return nil, nil, nil, errors.New("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {

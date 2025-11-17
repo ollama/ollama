@@ -204,7 +204,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	if err := client.Create(cmd.Context(), req, fn); err != nil {
 		if strings.Contains(err.Error(), "path or Modelfile are required") {
-			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+			return errors.New("the ollama server must be updated to use `ollama create` with this client")
 		}
 		return err
 	}
@@ -991,7 +991,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				var v string
 				switch vData := resp.ModelInfo[k].(type) {
 				case bool:
-					v = fmt.Sprintf("%t", vData)
+					v = strconv.FormatBool(vData)
 				case string:
 					v = vData
 				case float64:

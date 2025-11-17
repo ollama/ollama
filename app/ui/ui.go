@@ -194,7 +194,7 @@ func (s *Server) Handler() http.Handler {
 			log := s.log()
 			level := slog.LevelInfo
 			start := time.Now()
-			requestID := fmt.Sprintf("%d", time.Now().UnixNano())
+			requestID := strconv.FormatInt(time.Now().UnixNano(), 10)
 
 			defer func() {
 				p := recover()
@@ -204,7 +204,7 @@ func (s *Server) Handler() http.Handler {
 
 					// Handle panic with user-friendly error
 					if !sw.Written() {
-						s.handleError(sw, fmt.Errorf("internal server error"))
+						s.handleError(sw, errors.New("internal server error"))
 					}
 				}
 
@@ -382,7 +382,7 @@ func waitForServer(ctx context.Context) error {
 			break
 		}
 		if time.Now().After(timeout) {
-			return fmt.Errorf("timeout waiting for Ollama server to be ready")
+			return errors.New("timeout waiting for Ollama server to be ready")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -455,7 +455,7 @@ func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeo
 
 	digest := resp.Header.Get("ollama-content-digest")
 	if digest == "" {
-		return "", 0, fmt.Errorf("no digest header found")
+		return "", 0, errors.New("no digest header found")
 	}
 
 	var pushTime int64
@@ -598,12 +598,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if req.Model == "" {
-		return fmt.Errorf("empty model")
+		return errors.New("empty model")
 	}
 
 	// Don't allow empty messages unless forceUpdate is true
 	if req.Prompt == "" && !req.ForceUpdate {
-		return fmt.Errorf("empty message")
+		return errors.New("empty message")
 	}
 
 	if createdChat {
@@ -1194,7 +1194,7 @@ func (s *Server) getChat(w http.ResponseWriter, r *http.Request) error {
 	cid := r.PathValue("id")
 
 	if cid == "" {
-		return fmt.Errorf("chat ID is required")
+		return errors.New("chat ID is required")
 	}
 
 	chat, err := s.Store.Chat(cid)
@@ -1252,7 +1252,7 @@ func (s *Server) getChat(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) renameChat(w http.ResponseWriter, r *http.Request) error {
 	cid := r.PathValue("id")
 	if cid == "" {
-		return fmt.Errorf("chat ID is required")
+		return errors.New("chat ID is required")
 	}
 
 	var req struct {
@@ -1283,7 +1283,7 @@ func (s *Server) renameChat(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) error {
 	cid := r.PathValue("id")
 	if cid == "" {
-		return fmt.Errorf("chat ID is required")
+		return errors.New("chat ID is required")
 	}
 
 	// Check if the chat exists (no need to load attachments)
@@ -1291,7 +1291,7 @@ func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		if errors.Is(err, not.Found) {
 			w.WriteHeader(http.StatusNotFound)
-			return fmt.Errorf("chat not found")
+			return errors.New("chat not found")
 		}
 		return fmt.Errorf("failed to get chat: %w", err)
 	}
@@ -1592,7 +1592,7 @@ func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) err
 
 func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != "POST" {
-		return fmt.Errorf("method not allowed")
+		return errors.New("method not allowed")
 	}
 
 	var req struct {
@@ -1603,7 +1603,7 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if req.Model == "" {
-		return fmt.Errorf("model is required")
+		return errors.New("model is required")
 	}
 
 	digest, pushTime, err := s.checkModelUpstream(r.Context(), req.Model, 5*time.Second)

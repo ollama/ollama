@@ -456,7 +456,7 @@ func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
 			return l.KV(), nil
 		}
 	}
-	return ggml.KV{}, fmt.Errorf("no base model was found")
+	return ggml.KV{}, errors.New("no base model was found")
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *ConfigV2, fn func(resp api.ProgressResponse)) (err error) {

@@ -319,7 +319,7 @@ func GetInferenceComputer(ctx context.Context) ([]InferenceCompute, error) {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("timeout scanning server log for inference compute details")
+			return nil, errors.New("timeout scanning server log for inference compute details")
 		default:
 		}
 		file, err := os.Open(serverLogPath)

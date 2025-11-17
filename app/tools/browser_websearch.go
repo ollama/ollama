@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -84,7 +85,7 @@ func (w *BrowserWebSearch) Schema() map[string]any {
 func (w *BrowserWebSearch) Execute(ctx context.Context, args map[string]any) (any, error) {
 	queriesRaw, ok := args["queries"].([]any)
 	if !ok {
-		return nil, fmt.Errorf("queries parameter is required and must be an array of strings")
+		return nil, errors.New("queries parameter is required and must be an array of strings")
 	}
 
 	queries := make([]string, 0, len(queriesRaw))
@@ -95,7 +96,7 @@ func (w *BrowserWebSearch) Execute(ctx context.Context, args map[string]any) (an
 	}
 
 	if len(queries) == 0 {
-		return nil, fmt.Errorf("at least one query is required")
+		return nil, errors.New("at least one query is required")
 	}
 
 	maxResults := 5
