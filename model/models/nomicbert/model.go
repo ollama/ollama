@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/pooling"
+	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
@@ -111,8 +112,8 @@ func (a *Attention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml
 	key = key.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
 	value = value.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
 
-	query = fast.RoPE(ctx, query, positions, opts.headDim, opts.ropeFreqBase, 1.0)
-	key = fast.RoPE(ctx, key, positions, opts.headDim, opts.ropeFreqBase, 1.0)
+	query = fast.RoPE(ctx, query, positions, opts.headDim, opts.ropeFreqBase, 1.0, rope.WithTypeNeoX())
+	key = fast.RoPE(ctx, key, positions, opts.headDim, opts.ropeFreqBase, 1.0, rope.WithTypeNeoX())
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(opts.headDim)), nil)
 
