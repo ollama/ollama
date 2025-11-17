@@ -466,17 +466,11 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		w.webview = wv
 		w.webview.Navigate(url)
 	} else {
-		// marshal to JSON string first to ensure it's properly escaped
-		pathJSON, err := json.Marshal(path)
-		if err != nil {
-			slog.Error("failed to encode path for navigation", "path", path, "error", err)
-			showWindow(w.webview.Window())
-			return w.webview.Window()
-		}
-
+		// Path has been validated by parseURLScheme() to only contain
+		// allowed paths, so it's safe to use directly
 		w.webview.Eval(fmt.Sprintf(`
-			history.pushState({}, '', %s);
-		`, pathJSON))
+			history.pushState({}, '', '%s');
+		`, path))
 		showWindow(w.webview.Window())
 	}
 
