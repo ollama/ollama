@@ -130,7 +130,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
-	var thinkExplicitlySet = opts.Think != nil
+	thinkExplicitlySet := opts.Think != nil
 
 	for {
 		line, err := scanner.Readline()

@@ -1329,12 +1329,12 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		cancel()
 	}()
 
-	var state = &displayResponseState{}
+	state := &displayResponseState{}
 	var thinkingContent strings.Builder
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
-	var thinkTagOpened = false
-	var thinkTagClosed = false
+	thinkTagOpened := false
+	thinkTagClosed := false
 
 	role := "assistant"
 
@@ -1462,10 +1462,10 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		cancel()
 	}()
 
-	var state = &displayResponseState{}
+	state := &displayResponseState{}
 	var thinkingContent strings.Builder
-	var thinkTagOpened = false
-	var thinkTagClosed = false
+	thinkTagOpened := false
+	thinkTagClosed := false
 
 	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
 
