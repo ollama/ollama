@@ -942,7 +942,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 					} else {
 						onlyStandalone := true
 						for _, tc := range res.Message.ToolCalls {
-							if !(tc.Function.Name == "web_search" || tc.Function.Name == "web_fetch") {
+							if tc.Function.Name != "web_search" && tc.Function.Name != "web_fetch" {
 								onlyStandalone = false
 								break
 							}

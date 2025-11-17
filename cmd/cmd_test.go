@@ -307,7 +307,7 @@ func TestDeleteHandler(t *testing.T) {
 			} else {
 				w.WriteHeader(http.StatusNotFound)
 				errPayload := `{"error":"model '%s' not found"}`
-				w.Write([]byte(fmt.Sprintf(errPayload, req.Name)))
+				fmt.Fprintf(w, errPayload, req.Name)
 			}
 			return
 		}

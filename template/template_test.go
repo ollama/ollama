@@ -54,7 +54,7 @@ func TestNamed(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if tmpl.Tree.Root.String() == "" {
+				if tmpl.Root.String() == "" {
 					t.Errorf("empty %s template", k)
 				}
 			})

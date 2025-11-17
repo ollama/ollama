@@ -19,10 +19,12 @@ import (
 // Errors wrapping Found should provide additional context, e.g.
 // fmt.Errorf("%w: %s", not.Found, key)
 //
+//nolint:staticcheck
 //lint:ignore ST1012 This is a sentinel error intended to be read like not.Found.
 var Found = errors.New("not found")
 
 // Available is an error that indicates that a value is not available.
 //
+//nolint:staticcheck
 //lint:ignore ST1012 This is a sentinel error intended to be read like not.Available.
 var Available = errors.New("not available")

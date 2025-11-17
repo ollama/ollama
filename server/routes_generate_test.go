@@ -378,7 +378,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 	}
 
-	mock.CompletionResponse.Content = "Hi!"
+	mock.Content = "Hi!"
 	t.Run("messages", func(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model: "test",
@@ -392,7 +392,7 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "user: Hello!\n"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "user: Hello!\n"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
@@ -422,14 +422,14 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "system: You are a helpful assistant.\nuser: Hello!\n"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "system: You are a helpful assistant.\nuser: Hello!\n"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
 		checkChatResponse(t, w.Body, "test-system", "Hi!")
 	})
 
-	mock.CompletionResponse.Content = "Abra kadabra!"
+	mock.Content = "Abra kadabra!"
 	t.Run("messages with system", func(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model: "test-system",
@@ -444,7 +444,7 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "system: You can perform magic tricks.\nuser: Hello!\n"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "system: You can perform magic tricks.\nuser: Hello!\n"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
@@ -467,7 +467,7 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "system: You are a helpful assistant.\nuser: Hello!\nassistant: I can help you with that.\nsystem: You can perform magic tricks.\nuser: Help me write tests.\n"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "system: You are a helpful assistant.\nuser: Hello!\nassistant: I can help you with that.\nsystem: You can perform magic tricks.\nuser: Help me write tests.\n"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
@@ -985,7 +985,7 @@ func TestGenerate(t *testing.T) {
 		}
 	}
 
-	mock.CompletionResponse.Content = "Hi!"
+	mock.Content = "Hi!"
 	t.Run("prompt", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:  "test",
@@ -997,7 +997,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "User: Hello! "); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "User: Hello! "); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
@@ -1025,14 +1025,14 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "System: You are a helpful assistant. User: Hello! "); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "System: You are a helpful assistant. User: Hello! "); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
 		checkGenerateResponse(t, w.Body, "test-system", "Hi!")
 	})
 
-	mock.CompletionResponse.Content = "Abra kadabra!"
+	mock.Content = "Abra kadabra!"
 	t.Run("prompt with system", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:  "test-system",
@@ -1045,7 +1045,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "System: You can perform magic tricks. User: Hello! "); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "System: You can perform magic tricks. User: Hello! "); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
@@ -1067,7 +1067,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "You can perform magic tricks. ### USER Help me write tests. "); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "You can perform magic tricks. ### USER Help me write tests. "); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 
@@ -1097,7 +1097,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "<PRE> def add( <SUF>    return c <MID>"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "<PRE> def add( <SUF>    return c <MID>"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -1112,7 +1112,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "def add("); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "def add("); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -1129,7 +1129,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "Help me write tests."); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "Help me write tests."); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})

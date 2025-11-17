@@ -431,15 +431,15 @@ const (
 	DuplicateDevice                    // The same physical device but different library/backend (overlapping device)
 )
 
-func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
-	if a.PCIID != b.PCIID {
+func (d DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
+	if d.PCIID != b.PCIID {
 		return UniqueDevice
 	}
 	// If PCIID is empty, we have to use ID + library for uniqueness
-	if a.PCIID == "" && a.DeviceID != b.DeviceID {
+	if d.PCIID == "" && d.DeviceID != b.DeviceID {
 		return UniqueDevice
 	}
-	if a.Library == b.Library {
+	if d.Library == b.Library {
 		return SameBackendDevice
 	}
 	return DuplicateDevice
@@ -447,8 +447,8 @@ func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 
 // For a SameBackendDevice, return true if b is better than a
 // e.g. newer GPU library version
-func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
-	aLib := a.LibraryPath[len(a.LibraryPath)-1]
+func (d DeviceInfo) IsBetter(b DeviceInfo) bool {
+	aLib := d.LibraryPath[len(d.LibraryPath)-1]
 	bLib := b.LibraryPath[len(b.LibraryPath)-1]
 	if aLib == bLib {
 		return false
@@ -475,7 +475,7 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && (gpu.ComputeMajor != 7 || gpu.ComputeMinor != 2)) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
 

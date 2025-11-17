@@ -128,7 +128,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.Options.attnKeyLen, m.Options.ropeBase, 1/m.Options.ropeScale, rope.WithTypeNeoX()), nil
+	return fast.RoPE(ctx, key, shift, m.attnKeyLen, m.ropeBase, 1/m.ropeScale, rope.WithTypeNeoX()), nil
 }
 
 type MLP struct {
@@ -178,10 +178,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.Options.hiddenSize)))
+	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.hiddenSize)))
 
 	if len(m.Layers) == gemma27BLayerCount {
-		m.Options.largeModelScaling = true
+		m.largeModelScaling = true
 	}
 
 	for i, layer := range m.Layers {
@@ -202,9 +202,9 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenState = m.Output.Forward(ctx, hiddenState)
 
 	// final logit softcap
-	hiddenState = hiddenState.Scale(ctx, 1.0/float64(m.Options.finalLogitSoftcap))
+	hiddenState = hiddenState.Scale(ctx, 1.0/float64(m.finalLogitSoftcap))
 	hiddenState = hiddenState.Tanh(ctx)
-	return hiddenState.Scale(ctx, float64(m.Options.finalLogitSoftcap)), nil
+	return hiddenState.Scale(ctx, float64(m.finalLogitSoftcap)), nil
 }
 
 func init() {

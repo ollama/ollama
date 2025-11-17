@@ -187,15 +187,15 @@ func (w *relayWriter) Close() error {
 	return nil
 }
 
-func (t *relayWriter) awaitTurn() (ok bool) {
-	if t.ready {
+func (w *relayWriter) awaitTurn() (ok bool) {
+	if w.ready {
 		return true
 	}
 	select {
-	case <-t.t.Ready():
-		t.ready = true
+	case <-w.t.Ready():
+		w.ready = true
 		return true
-	case <-t.q.closed():
+	case <-w.q.closed():
 		return false
 	}
 }

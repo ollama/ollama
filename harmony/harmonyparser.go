@@ -319,11 +319,12 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 			}
 		case HarmonyEventContentEmitted:
 			logutil.Trace("harmony event content", "content", event.Content, "state", h.state)
-			if h.state == harmonyMessageState_Normal {
+			switch h.state {
+			case harmonyMessageState_Normal:
 				contentSb.WriteString(event.Content)
-			} else if h.state == harmonyMessageState_Thinking {
+			case harmonyMessageState_Thinking:
 				thinkingSb.WriteString(event.Content)
-			} else if h.state == harmonyMessageState_ToolCalling {
+			case harmonyMessageState_ToolCalling:
 				toolContentSb.WriteString(event.Content)
 			}
 		case HarmonyEventMessageEnd:

@@ -90,9 +90,9 @@ func (q *qwen25VLModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	return out
 }
 
-func (p *qwen25VLModel) Replacements() []string {
+func (q *qwen25VLModel) Replacements() []string {
 	return append(
-		p.qwen2Model.Replacements(),
+		q.qwen2Model.Replacements(),
 		"visual", "v",
 		"blocks", "blk",
 		"attn.proj", "attn_out",

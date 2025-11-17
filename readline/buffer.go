@@ -298,7 +298,7 @@ func (b *Buffer) drawRemaining() {
 		remaining := (remainingText[len(currLine):])
 		var totalLines int
 		var displayLength int
-		var lineLength int = currLineSpace
+		var lineLength = currLineSpace
 
 		for _, c := range remaining {
 			if displayLength == 0 || (displayLength+runewidth.RuneWidth(c))%b.LineWidth < displayLength%b.LineWidth {

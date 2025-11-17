@@ -46,7 +46,7 @@ func (w *WebSearch) Prompt() string {
 	return ""
 }
 
-func (g *WebSearch) Schema() map[string]any {
+func (w *WebSearch) Schema() map[string]any {
 	schemaBytes := []byte(`{
 		"type": "object",
 		"properties": {

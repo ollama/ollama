@@ -37,7 +37,7 @@ func (w *WebFetch) Description() string {
 	return "Crawl and extract text content from web pages"
 }
 
-func (g *WebFetch) Schema() map[string]any {
+func (w *WebFetch) Schema() map[string]any {
 	schemaBytes := []byte(`{
 		"type": "object",
 		"properties": {

@@ -129,6 +129,6 @@ func rangeUsesField(rangeNode *parse.RangeNode, field string) bool {
 		}
 		return true
 	}
-	templateVisit(rangeNode.BranchNode.Pipe, enterFn, nil)
+	templateVisit(rangeNode.Pipe, enterFn, nil)
 	return found
 }

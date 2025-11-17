@@ -48,7 +48,7 @@ func New(c fs.Config) (model.Model, error) {
 		ImageProcessor: newImageProcessor(c),
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.TextModel.Shift)
+	m.Cache = kvcache.NewCausalCache(m.Shift)
 
 	return m, nil
 }
@@ -59,14 +59,13 @@ func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *
 		return nil, nil, err
 	}
 
-	f32s, grid, err := m.ImageProcessor.ProcessImage(image)
+	f32s, grid, err := m.ProcessImage(image)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Calculate tensor dimensions
-	patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
-		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
+	patchDim := m.numChannels * m.temporalPatchSize * m.patchSize * m.patchSize
 	numPatches := grid.Temporal * grid.Height * grid.Width
 
 	pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)

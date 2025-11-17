@@ -62,7 +62,7 @@ func (q *qwen2Model) Tensors(ts []Tensor) []*ggml.Tensor {
 	return out
 }
 
-func (p *qwen2Model) Replacements() []string {
+func (q *qwen2Model) Replacements() []string {
 	return []string{
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",

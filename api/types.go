@@ -1018,7 +1018,7 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 	if d.Duration < 0 {
 		return []byte("-1"), nil
 	}
-	return []byte("\"" + d.Duration.String() + "\""), nil
+	return []byte("\"" + d.String() + "\""), nil
 }
 
 func (d *Duration) UnmarshalJSON(b []byte) (err error) {
@@ -1045,7 +1045,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 			d.Duration = time.Duration(math.MaxInt64)
 		}
 	default:
-		return fmt.Errorf("Unsupported type: '%s'", reflect.TypeOf(v))
+		return fmt.Errorf("unsupported type: '%s'", reflect.TypeOf(v))
 	}
 
 	return nil

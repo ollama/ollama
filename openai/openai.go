@@ -232,9 +232,9 @@ func NewError(code int, message string) ErrorResponse {
 // ToUsage converts an api.ChatResponse to Usage
 func ToUsage(r api.ChatResponse) Usage {
 	return Usage{
-		PromptTokens:     r.Metrics.PromptEvalCount,
-		CompletionTokens: r.Metrics.EvalCount,
-		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
 	}
 }
 
@@ -326,9 +326,9 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 // ToUsageGenerate converts an api.GenerateResponse to Usage
 func ToUsageGenerate(r api.GenerateResponse) Usage {
 	return Usage{
-		PromptTokens:     r.Metrics.PromptEvalCount,
-		CompletionTokens: r.Metrics.EvalCount,
-		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
 	}
 }
 

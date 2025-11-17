@@ -464,7 +464,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	for i, layer := range baseLayers {
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
-			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
+			if quantType != "" && layer.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
 				want, err := ggml.ParseFileType(quantType)
 				if err != nil {
 					return err
@@ -480,7 +480,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 					}
 				}
 			}
-			config.ModelFormat = cmp.Or(config.ModelFormat, layer.GGML.Name())
+			config.ModelFormat = cmp.Or(config.ModelFormat, layer.Name())
 			config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGML.KV().Architecture())
 			config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.GGML.KV().ParameterCount()))
 			config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())

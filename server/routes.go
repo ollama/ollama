@@ -650,10 +650,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	truncate := true
-	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
-	}
+	truncate := req.Truncate == nil || *req.Truncate
 
 	var input []string
 
@@ -1810,13 +1807,13 @@ func (s *Server) PsHandler(c *gin.Context) {
 			ExpiresAt: v.expiresAt,
 		}
 		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx
+			mr.ContextLength = v.NumCtx
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
 		// calculate the time w/ the sessionDuration instead.
 		var epoch time.Time
-		if v.expiresAt == epoch {
+		if v.expiresAt.Equal(epoch) {
 			mr.ExpiresAt = time.Now().Add(v.sessionDuration)
 		}
 

@@ -370,7 +370,7 @@ func (e *ParserError) Error() string {
 func ParseFile(r io.Reader) (*Modelfile, error) {
 	var cmd Command
 	var curr state
-	var currLine int = 1
+	var currLine = 1
 	var b bytes.Buffer
 	var role string
 

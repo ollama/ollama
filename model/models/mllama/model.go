@@ -54,7 +54,7 @@ func New(c fs.Config) (model.Model, error) {
 
 	encoderCache := kvcache.NewEncoderCache()
 	encoderCache.SetConfig(ml.CacheConfig{})
-	m.Cache = kvcache.NewWrapperCache(encoderCache, kvcache.NewCausalCache(m.TextModel.Shift))
+	m.Cache = kvcache.NewWrapperCache(encoderCache, kvcache.NewCausalCache(m.Shift))
 
 	return &m, nil
 }
@@ -69,7 +69,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	f32s, ratio, err := m.ImageProcessor.ProcessImage(image)
+	f32s, ratio, err := m.ProcessImage(image)
 	if err != nil {
 		return nil, err
 	}
