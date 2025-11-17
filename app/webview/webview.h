@@ -2978,7 +2978,12 @@ public:
                 }
             }
             
-            std::string js = "history.pushState({}, '', '" + path + "'); window.dispatchEvent(new PopStateEvent('popstate'));";
+            // Safely encode the path for JavaScript using JSON encoding
+            // This handles all special characters: quotes, newlines, backslashes, etc.
+            // json_escape adds quotes around the string and escapes all special chars
+            std::string path_json = detail::json_escape(path, true);
+            
+            std::string js = "history.pushState({}, '', " + path_json + "); window.dispatchEvent(new PopStateEvent('popstate'));";
             std::wstring wjs = widen_string(js);
             sender->ExecuteScript(wjs.c_str(), nullptr);
         } else {
