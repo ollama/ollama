@@ -1,5 +1,4 @@
-// fast provides implementations of fast (fused) operations for increased performance.
-package fast
+package nn
 
 import (
 	"github.com/ollama/ollama/ml"
@@ -8,7 +7,7 @@ import (
 
 // fastRoPE is an interface for tensors that support fast rotary positional embedding.
 type fastRoPE interface {
-	RoPE(ctx ml.Context, positionIDs ml.Tensor, dim int, base, scale float32, options ...func(*rope.Options)) ml.Tensor
+	RoPE(ctx ml.Context, positions ml.Tensor, dim int, base, scale float32, options ...func(*rope.Options)) ml.Tensor
 }
 
 // RoPE applies rotary positional embedding to tensor `t`.
