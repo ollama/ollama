@@ -336,7 +336,7 @@ func (s *Server) doSelfSigned(ctx context.Context, method, path string) (*http.R
 }
 
 // UserData fetches user data from ollama.com API for the current ollama key
-func (s *Server) UserData(ctx context.Context) (*responses.User, error) {
+func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 	resp, err := s.doSelfSigned(ctx, http.MethodPost, "/api/me")
 	if err != nil {
 		return nil, fmt.Errorf("failed to call ollama.com/api/me: %w", err)
@@ -347,7 +347,7 @@ func (s *Server) UserData(ctx context.Context) (*responses.User, error) {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var user responses.User
+	var user api.UserResponse
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("failed to parse user response: %w", err)
 	}
@@ -372,14 +372,13 @@ func WaitForServer(ctx context.Context, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		c, err := api.ClientFromEnvironment()
 		if err != nil {
-			time.Sleep(100 * time.Millisecond)
-			continue // Continue waiting even if client creation fails
+			return err
 		}
 		if _, err := c.Version(ctx); err == nil {
 			slog.Debug("ollama server is ready")
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for Ollama server to be ready")
 }

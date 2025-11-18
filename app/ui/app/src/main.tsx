@@ -24,24 +24,45 @@ const queryClient = new QueryClient({
   },
 });
 
-// Track initial user data fetch
-let initialUserDataPromise: Promise<User | null> | null = null;
-
-// Initialize user data on app startup
+// Poll for server readiness, then fetch user data
+// This ensures initialDataLoaded isn't set to true until we have actual data or timeout
 const initializeUserData = async () => {
+  const maxAttempts = 20; // 20 attempts * 500ms = 10 seconds max
+  const retryDelay = 500;
+
+  // First, wait for server to be ready
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const versionResponse = await fetch(
+        `${window.location.origin}/api/version`,
+        { method: "HEAD" },
+      );
+      if (versionResponse.ok) {
+        break;
+      }
+    } catch (error) {
+      console.error("Failed to fetch version:", error);
+    }
+
+    if (i < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+    }
+  }
+
+  // Now fetch user data
   try {
     const userData = await fetchUser();
     queryClient.setQueryData(["user"], userData);
     return userData;
   } catch (error) {
-    console.error("Error initializing user data:", error);
+    console.error("Failed to fetch user data:", error);
     queryClient.setQueryData(["user"], null);
     return null;
   }
 };
 
-// Start initialization immediately and track the promise
-initialUserDataPromise = initializeUserData();
+// Start initialization and track the promise
+const initialUserDataPromise = initializeUserData();
 
 // Export the promise so hooks can await it
 window.__initialUserDataPromise = initialUserDataPromise;

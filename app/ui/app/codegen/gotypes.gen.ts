@@ -469,26 +469,24 @@ export class HealthResponse {
 }
 export class User {
     id: string;
-    name: string;
     email: string;
-    avatarurl: string;
-    plan: string;
-    bio: string;
-    firstname: string;
-    lastname: string;
-    overThreshold: boolean;
+    name: string;
+    bio?: string;
+    avatarurl?: string;
+    firstname?: string;
+    lastname?: string;
+    plan?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.id = source["id"];
-        this.name = source["name"];
         this.email = source["email"];
-        this.avatarurl = source["avatarurl"];
-        this.plan = source["plan"];
+        this.name = source["name"];
         this.bio = source["bio"];
+        this.avatarurl = source["avatarurl"];
         this.firstname = source["firstname"];
         this.lastname = source["lastname"];
-        this.overThreshold = source["overThreshold"];
+        this.plan = source["plan"];
     }
 }
 export class Attachment {

@@ -101,15 +101,14 @@ type HealthResponse struct {
 }
 
 type User struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Email         string `json:"email"`
-	AvatarURL     string `json:"avatarurl"`     // Match Ollama API format
-	Plan          string `json:"plan"`
-	Bio           string `json:"bio"`
-	FirstName     string `json:"firstname"`     // Match Ollama API format
-	LastName      string `json:"lastname"`      // Match Ollama API format
-	OverThreshold bool   `json:"overThreshold"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	Bio       string `json:"bio,omitempty"`
+	AvatarURL string `json:"avatarurl,omitempty"`
+	FirstName string `json:"firstname,omitempty"`
+	LastName  string `json:"lastname,omitempty"`
+	Plan      string `json:"plan,omitempty"`
 }
 
 type Attachment struct {

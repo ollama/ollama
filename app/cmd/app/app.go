@@ -273,16 +273,6 @@ func main() {
 		Handler: uiServer.Handler(),
 	}
 
-	// Wait for the Ollama server to be ready before loading user data
-	slog.Debug("waiting for ollama server to be ready")
-	if err := ui.WaitForServer(ctx, 10*time.Second); err != nil {
-		slog.Warn("ollama server not ready, continuing anyway", "error", err)
-	}
-
-	if _, err := uiServer.UserData(ctx); err != nil {
-		slog.Warn("failed to load user data", "error", err)
-	}
-
 	// Start the UI server
 	slog.Info("starting ui server", "port", port)
 	go func() {
@@ -325,6 +315,17 @@ func main() {
 	} else {
 		slog.Debug("no URL scheme request to handle")
 	}
+
+	go func() {
+		slog.Debug("waiting for ollama server to be ready")
+		if err := ui.WaitForServer(ctx, 10*time.Second); err != nil {
+			slog.Warn("ollama server not ready, continuing anyway", "error", err)
+		}
+
+		if _, err := uiServer.UserData(ctx); err != nil {
+			slog.Warn("failed to load user data", "error", err)
+		}
+	}()
 
 	osRun(cancel, hasCompletedFirstRun, startHidden)
 
