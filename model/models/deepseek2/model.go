@@ -81,15 +81,7 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	}
 
 	query = query.Reshape(ctx, query.Dim(0)/opts.numHeads, opts.numHeads, seqLength)
-
-	qPass := query.View(ctx, 0,
-		opts.qkNopeHeadDim, query.Stride(1),
-		query.Dim(1), query.Stride(2),
-		query.Dim(2))
-	qRot := query.View(ctx, opts.qkNopeHeadDim*query.Stride(0),
-		opts.qkRopeHeadDim, query.Stride(1),
-		query.Dim(1), query.Stride(2),
-		query.Dim(2))
+	queryChunks := query.ChunkSections(ctx, 0, opts.qkNopeHeadDim, opts.qkRopeHeadDim)
 
 	compressedKV := attn.KVA.Forward(ctx, hiddenStates)
 	kPass := compressedKV.Slice(ctx, 0, 0, opts.kvLoraRank, 1)
@@ -99,7 +91,7 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		compressedKV.Stride(1), compressedKV.Dim(1),
 	)
 
-	qRot = fast.RoPE(ctx, qRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	qRot := fast.RoPE(ctx, queryChunks[1], positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
 
@@ -109,18 +101,14 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		kPass = attn.KVB.Forward(ctx, kPass)
 
 		kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
-		kPass = kv.View(ctx, 0, opts.kqNopeHeadDim, kv.Stride(1), kv.Dim(1), kv.Stride(2), kv.Dim(2))
-		value := kv.View(ctx, opts.kqNopeHeadDim*kv.Stride(0),
-			opts.vHeadDim, kv.Stride(1),
-			kv.Dim(1), kv.Stride(2),
-			kv.Dim(2)).Contiguous(ctx)
+		kvChunks := kv.ChunkSections(ctx, 0, opts.kqNopeHeadDim, opts.vHeadDim)
 
-		kRot = kRot.Repeat(ctx, 1, qPass.Dim(1))
-		query = qRot.Concat(ctx, qPass, 0)
-		key := kRot.Concat(ctx, kPass, 0)
-		attention = nn.Attention(ctx, query, key, value, opts.kqScale, cache)
+		kRot = kRot.Repeat(ctx, 1, queryChunks[0].Dim(1))
+		query = qRot.Concat(ctx, queryChunks[0], 0)
+		key := kRot.Concat(ctx, kvChunks[0], 0)
+		attention = nn.Attention(ctx, query, key, kvChunks[1], opts.kqScale, cache)
 	} else { // v3.1
-		qPass = qPass.Permute(ctx, 0, 2, 1, 3)
+		qPass := queryChunks[0].Permute(ctx, 0, 2, 1, 3)
 		qPassAbsorb := attn.KB.Forward(ctx, qPass)
 		qPassAbsorb = qPassAbsorb.Permute(ctx, 0, 2, 1, 3)
 
@@ -129,7 +117,7 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		key := kRot.Concat(ctx, kPass, 0)
 		value := kPass
 
-		attention = nn.AttentionWithVMLA(ctx, query, key, value, nil, attn.VB.Weight, opts.kqScale, cache) // is there a better way to write this?
+		attention = nn.AttentionWithVMLA(ctx, query, key, value, nil, attn.VB.Weight, opts.kqScale, cache)
 	}
 
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
@@ -249,7 +237,6 @@ type Model struct {
 
 func New(c fs.Config) (model.Model, error) {
 	layers := make([]Layer, c.Uint("block_count"))
-	// layers := make([]Layer, 4)
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
 	for i := range layers {
@@ -299,7 +286,7 @@ func New(c fs.Config) (model.Model, error) {
 			numExpertsUsed: int(c.Uint("expert_used_count")),
 			normTopKProb:   c.Bool("expert_weights_norm", true),
 
-			qLoraRank:     int(c.Uint("attention.q_lora_rank")), //&qLoraRankVal,
+			qLoraRank:     int(c.Uint("attention.q_lora_rank")),
 			kvLoraRank:    int(c.Uint("attention.kv_lora_rank")),
 			qkHeadDim:     keyLength,
 			vHeadDim:      valueLength,
