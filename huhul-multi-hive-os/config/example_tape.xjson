@@ -1,0 +1,84 @@
+{
+  "@tape": {
+    "tape_id": "huhul-analysis-tape",
+    "version": "1.0.0",
+    "description": "H'uhul Multi-Agent Analysis Tape",
+    "author": "ASX Framework",
+
+    "@blocks": [
+      {
+        "@id": "initialize",
+        "@log": "🛸 Initializing H'uhul Analysis Tape for: $input.query"
+      },
+
+      {
+        "@id": "query-memory",
+        "@hive.query": {
+          "agent": "memory",
+          "message": "Retrieve relevant knowledge about: $input.query",
+          "capture": "ctx.memory_results"
+        }
+      },
+
+      {
+        "@id": "conditional-analysis",
+        "@if": {
+          "cond": {
+            "left": "$input.type",
+            "right": "code",
+            "op": "=="
+          },
+          "@then": [
+            {
+              "@hive.query": {
+                "agent": "coder",
+                "message": "$input.query",
+                "context": "$ctx.memory_results",
+                "capture": "ctx.coder_response"
+              }
+            },
+            {
+              "@log": "✅ Code analysis complete"
+            }
+          ],
+          "@else": [
+            {
+              "@hive.query": {
+                "agent": "analyst",
+                "message": "$input.query",
+                "context": "$ctx.memory_results",
+                "capture": "ctx.analyst_response"
+              }
+            },
+            {
+              "@log": "✅ General analysis complete"
+            }
+          ]
+        }
+      },
+
+      {
+        "@id": "synthesize",
+        "@hive.query": {
+          "agent": "queen",
+          "message": "Synthesize the following results: $ctx.coder_response $ctx.analyst_response",
+          "capture": "ctx.final_response"
+        }
+      },
+
+      {
+        "@id": "save-results",
+        "@py.file.write": {
+          "path": "./huhul_data/output/$input.query_id.json",
+          "data": "$ctx",
+          "pretty": true
+        }
+      },
+
+      {
+        "@id": "complete",
+        "@log": "🎉 H'uhul Analysis Tape Complete - Results saved"
+      }
+    ]
+  }
+}

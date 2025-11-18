@@ -1,0 +1,77 @@
+{
+  "hive_id": "huhul-primary",
+  "version": "1.0.0",
+  "ollama_host": "http://localhost:11434",
+  "api_port": 8000,
+
+  "agents": {
+    "queen": {
+      "model": "qwen2.5:latest",
+      "role": "orchestrator",
+      "temperature": 0.7,
+      "system_prompt": "You are the Queen of the H'uhul Hive. Coordinate tasks, delegate to workers, and synthesize results.",
+      "priority": 10
+    },
+    "coder": {
+      "model": "qwen2.5-coder:latest",
+      "role": "specialist",
+      "temperature": 0.3,
+      "system_prompt": "You are a specialized coding agent in the H'uhul Hive. Write clean, efficient code and analyze technical problems.",
+      "priority": 8
+    },
+    "analyst": {
+      "model": "llama3.2:latest",
+      "role": "specialist",
+      "temperature": 0.5,
+      "system_prompt": "You are an analytical agent in the H'uhul Hive. Analyze data, find patterns, and provide insights.",
+      "priority": 7
+    },
+    "creative": {
+      "model": "mistral:latest",
+      "role": "specialist",
+      "temperature": 0.9,
+      "system_prompt": "You are a creative agent in the H'uhul Hive. Generate innovative ideas and unique perspectives.",
+      "priority": 6
+    },
+    "memory": {
+      "model": "llama3.2:latest",
+      "role": "knowledge",
+      "temperature": 0.2,
+      "system_prompt": "You are the memory keeper of the H'uhul Hive. Store, retrieve, and organize knowledge.",
+      "priority": 9
+    }
+  },
+
+  "asx_integration": {
+    "xjson_enabled": true,
+    "klh_orchestration": true,
+    "scxq2_compression": true,
+    "tape_runtime": true
+  },
+
+  "multi_hive": {
+    "enabled": false,
+    "nodes": [
+      "http://localhost:8000",
+      "http://localhost:8001",
+      "http://localhost:8002"
+    ],
+    "shard_mode": "distributed"
+  },
+
+  "storage": {
+    "data_path": "./huhul_data",
+    "ingested_path": "./huhul_data/ingested",
+    "memory_path": "./huhul_data/memory",
+    "max_file_size": 104857600,
+    "supported_formats": [".txt", ".md", ".json", ".py", ".js", ".ts", ".go", ".rs"]
+  },
+
+  "features": {
+    "file_ingestion": true,
+    "multi_agent_chat": true,
+    "knowledge_base": true,
+    "training_optimization": true,
+    "xjson_execution": true
+  }
+}

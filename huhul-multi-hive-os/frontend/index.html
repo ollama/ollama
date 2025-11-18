@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H'uhul Multi Hive OS - Ollama Multi-Agent System</title>
+    <style>
+        :root {
+            --huhul-green: #00cc88;
+            --huhul-blue: #0099ff;
+            --huhul-purple: #9966ff;
+            --huhul-gold: #ffaa00;
+            --huhul-dark: #0a0a1a;
+            --huhul-darker: #001133;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--huhul-dark);
+            color: white;
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, var(--huhul-purple), var(--huhul-blue));
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 204, 136, 0.3);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            text-shadow: 0 0 10px var(--huhul-green);
+            margin-bottom: 10px;
+        }
+
+        .header .subtitle {
+            font-size: 1.1em;
+            color: var(--huhul-gold);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: var(--huhul-darker);
+            border: 2px solid var(--huhul-green);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .panel h2 {
+            color: var(--huhul-green);
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            border-bottom: 1px solid var(--huhul-blue);
+            padding-bottom: 10px;
+        }
+
+        .terminal {
+            background: #001133;
+            border: 2px solid var(--huhul-green);
+            padding: 20px;
+            height: 50vh;
+            overflow-y: auto;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid var(--huhul-green);
+            background: rgba(0, 204, 136, 0.1);
+            border-radius: 4px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .message.user {
+            border-color: var(--huhul-blue);
+            background: rgba(0, 153, 255, 0.1);
+        }
+
+        .message.ai {
+            border-color: var(--huhul-purple);
+            background: rgba(153, 102, 255, 0.1);
+        }
+
+        .message.system {
+            border-color: var(--huhul-gold);
+            background: rgba(255, 170, 0, 0.1);
+        }
+
+        .message.error {
+            border-color: #ff6600;
+            background: rgba(255, 102, 0, 0.1);
+        }
+
+        .agent-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--huhul-purple);
+            border-radius: 3px;
+            font-size: 0.8em;
+            margin-right: 5px;
+            color: white;
+        }
+
+        input[type="text"],
+        input[type="file"] {
+            background: black;
+            color: var(--huhul-green);
+            border: 1px solid var(--huhul-blue);
+            padding: 12px;
+            margin: 5px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+        }
+
+        input[type="text"]:focus,
+        input[type="file"]:focus {
+            outline: none;
+            border-color: var(--huhul-green);
+            box-shadow: 0 0 10px rgba(0, 204, 136, 0.5);
+        }
+
+        button {
+            background: linear-gradient(135deg, var(--huhul-blue), var(--huhul-purple));
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 153, 255, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .status-item {
+            background: rgba(0, 153, 255, 0.1);
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid var(--huhul-blue);
+        }
+
+        .status-label {
+            color: var(--huhul-gold);
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            color: var(--huhul-green);
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        .agents-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .agent-card {
+            background: rgba(153, 102, 255, 0.2);
+            border: 2px solid var(--huhul-purple);
+            border-radius: 8px;
+            padding: 15px;
+            flex: 1;
+            min-width: 150px;
+            transition: all 0.3s ease;
+        }
+
+        .agent-card:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px var(--huhul-purple);
+        }
+
+        .agent-card.active {
+            border-color: var(--huhul-green);
+            background: rgba(0, 204, 136, 0.2);
+        }
+
+        .agent-name {
+            font-weight: bold;
+            color: var(--huhul-gold);
+            font-size: 1.1em;
+            margin-bottom: 5px;
+        }
+
+        .agent-role {
+            color: var(--huhul-blue);
+            font-size: 0.85em;
+        }
+
+        .chat-input-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .chat-input-container input {
+            flex: 1;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--huhul-green);
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--huhul-green), var(--huhul-blue));
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🛸 H'UHUL MULTI HIVE OS</h1>
+        <div class="subtitle">Ollama-Powered Multi-Agent Intelligence System</div>
+        <div class="subtitle">ASX · XJSON · KLH · SCXQ2 · Tape Runtime</div>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>📊 Hive Status</h2>
+            <div class="status-grid" id="statusGrid">
+                <div class="status-item">
+                    <div class="status-label">Connection</div>
+                    <div class="status-value" id="statusConnection">...</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Files Ingested</div>
+                    <div class="status-value" id="statusFiles">0</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Active Agents</div>
+                    <div class="status-value" id="statusAgents">0</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Knowledge Base</div>
+                    <div class="status-value" id="statusKnowledge">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>🐝 Hive Agents</h2>
+            <div class="agents-list" id="agentsList">
+                <!-- Agents will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>💬 Hive Communication Terminal</h2>
+        <div class="terminal" id="terminal">
+            <div class="message system">[H'UHUL] Multi Hive OS initialized - Waiting for Ollama connection...</div>
+        </div>
+
+        <div class="chat-input-container">
+            <input type="text" id="userInput" placeholder="Query the H'uhul Hive..." onkeypress="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()">💬 Send to Hive</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>🧠 Knowledge Management</h2>
+        <div>
+            <input type="file" id="fileInput" multiple>
+            <button onclick="ingestFiles()">📥 Ingest into Hive</button>
+            <button onclick="trainModel()">⚡ Optimize Hive</button>
+            <button onclick="checkStatus()">🔄 Refresh Status</button>
+            <button onclick="loadAgents()">🐝 Load Agents</button>
+        </div>
+
+        <div id="progressContainer" style="display: none;">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%">0%</div>
+            </div>
+            <div id="progressMessage" class="message system"></div>
+        </div>
+    </div>
+
+    <script>
+        const backend = 'http://localhost:8000';
+        const terminal = document.getElementById('terminal');
+
+        function log(msg, type = 'system', agent = null) {
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+
+            const timestamp = new Date().toLocaleTimeString();
+            let content = `[${timestamp}] `;
+
+            if (agent) {
+                content += `<span class="agent-tag">${agent}</span> `;
+            }
+
+            content += msg;
+            div.innerHTML = content;
+
+            terminal.appendChild(div);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch(`${backend}/api/status`);
+                const data = await response.json();
+
+                document.getElementById('statusConnection').textContent =
+                    data.ollama_connected ? '✅ ONLINE' : '❌ OFFLINE';
+                document.getElementById('statusFiles').textContent = data.files_ingested;
+                document.getElementById('statusAgents').textContent = data.agents_active.length;
+                document.getElementById('statusKnowledge').textContent = data.knowledge_base_size;
+
+                log(`[STATUS] Ollama: ${data.ollama_connected ? 'Connected' : 'Disconnected'} | ` +
+                    `Agents: ${data.agents_available.length} available, ${data.agents_active.length} active | ` +
+                    `Knowledge: ${data.knowledge_base_size} entries`);
+            } catch (e) {
+                log(`[ERROR] Failed to connect to H'uhul backend: ${e.message}`, 'error');
+                document.getElementById('statusConnection').textContent = '❌ ERROR';
+            }
+        }
+
+        async function loadAgents() {
+            try {
+                const response = await fetch(`${backend}/api/agents`);
+                const data = await response.json();
+
+                const agentsList = document.getElementById('agentsList');
+                agentsList.innerHTML = '';
+
+                data.agents.forEach(agent => {
+                    const card = document.createElement('div');
+                    card.className = `agent-card ${agent.active ? 'active' : ''}`;
+                    card.innerHTML = `
+                        <div class="agent-name">${agent.name.toUpperCase()}</div>
+                        <div class="agent-role">${agent.role}</div>
+                        <div style="font-size: 0.8em; color: var(--huhul-green); margin-top: 5px;">
+                            ${agent.model}
+                        </div>
+                    `;
+                    agentsList.appendChild(card);
+                });
+
+                log(`[HIVE] Loaded ${data.total_agents} agents (${data.active_count} active)`);
+            } catch (e) {
+                log(`[ERROR] Failed to load agents: ${e.message}`, 'error');
+            }
+        }
+
+        async function ingestFiles() {
+            const files = document.getElementById('fileInput').files;
+            if (!files.length) {
+                log('[ERROR] No files selected', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('files', file);
+                log(`[UPLOAD] Preparing ${file.name}...`);
+            }
+
+            try {
+                log('[HIVE] Ingesting files into hive memory...', 'system', 'MEMORY');
+                const response = await fetch(`${backend}/api/ingest`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    log(`[SUCCESS] Ingested ${result.files_processed}/${result.total_files} files | ` +
+                        `~${result.tokens_added} tokens processed`, 'ai', 'MEMORY');
+
+                    // Show summaries if available
+                    result.results.forEach(r => {
+                        if (r.success && r.summary) {
+                            log(`[${r.filename}] ${r.summary.substring(0, 200)}...`, 'ai', 'MEMORY');
+                        }
+                    });
+
+                    checkStatus();
+                }
+            } catch (e) {
+                log(`[ERROR] Ingestion failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            log(message, 'user', 'YOU');
+            input.value = '';
+
+            log('[HIVE] Orchestrating multi-agent response...', 'system', 'QUEEN');
+
+            try {
+                const response = await fetch(`${backend}/api/chat`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message})
+                });
+                const data = await response.json();
+
+                // Show which agents were activated
+                if (data.agents_used && data.agents_used.length > 0) {
+                    log(`[ACTIVATED] ${data.agents_used.join(', ').toUpperCase()}`, 'system');
+                }
+
+                // Show the response
+                log(data.response, 'ai', 'QUEEN');
+
+                // Show orchestration details if available
+                if (data.orchestration) {
+                    log(`[ANALYSIS] ${data.orchestration.specialists} specialists consulted`, 'system', 'QUEEN');
+                }
+
+                checkStatus();
+                loadAgents();
+            } catch (e) {
+                log(`[ERROR] Hive communication failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function trainModel() {
+            const progressContainer = document.getElementById('progressContainer');
+            const progressFill = document.getElementById('progressFill');
+            const progressMessage = document.getElementById('progressMessage');
+
+            progressContainer.style.display = 'block';
+            log('[TRAINING] Starting hive optimization...', 'system', 'QUEEN');
+
+            try {
+                const response = await fetch(`${backend}/api/train`, {method: 'POST'});
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+
+                    const lines = decoder.decode(value).split('\n').filter(l => l.trim());
+                    for (const line of lines) {
+                        try {
+                            const data = JSON.parse(line);
+                            progressFill.style.width = `${data.progress}%`;
+                            progressFill.textContent = `${data.progress}%`;
+                            progressMessage.innerHTML = `[TRAINING] ${data.message}`;
+                            log(`[TRAINING] ${data.message} (${data.progress}%)`, 'system', 'QUEEN');
+                        } catch (e) {
+                            console.error('Parse error:', e);
+                        }
+                    }
+                }
+
+                setTimeout(() => {
+                    progressContainer.style.display = 'none';
+                    progressFill.style.width = '0%';
+                }, 3000);
+
+            } catch (e) {
+                log(`[ERROR] Training failed: ${e.message}`, 'error');
+                progressContainer.style.display = 'none';
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            log('[H\'UHUL] Multi Hive OS Frontend Loaded', 'system');
+            checkStatus();
+            loadAgents();
+
+            // Auto-refresh status every 30 seconds
+            setInterval(checkStatus, 30000);
+        });
+    </script>
+</body>
+</html>
