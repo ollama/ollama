@@ -1,6 +1,6 @@
-# 🚀 H'uhul Multi Hive OS - Quick Start Guide
+# 🚀 K'uhul Multi Hive OS - Quick Start Guide
 
-Get your H'uhul Hive running in 5 minutes!
+Get your K'uhul Hive running in 5 minutes!
 
 ---
 
@@ -19,7 +19,7 @@ ollama pull llama3.2:latest
 ollama pull mistral:latest
 
 # 3. Start the hive
-cd huhul-multi-hive-os
+cd kuhul-multi-hive-os
 ./start_hive.sh
 ```
 
@@ -36,7 +36,7 @@ ollama pull llama3.2:latest
 ollama pull mistral:latest
 
 REM 3. Start the hive
-cd huhul-multi-hive-os
+cd kuhul-multi-hive-os
 start_hive.bat
 ```
 
@@ -126,7 +126,7 @@ ollama pull qwen2.5:latest
 ```bash
 # Find and kill the process using port 8000
 lsof -ti:8000 | xargs kill -9
-# Or change the port in huhul_server.py
+# Or change the port in kuhul_server.py
 ```
 
 ---

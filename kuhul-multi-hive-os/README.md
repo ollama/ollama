@@ -1,9 +1,15 @@
-# 🛸 H'UHUL MULTI HIVE OS
+<div align="center">
+
+<img width="60%" src="assets/kuhul-hive-logo.svg" alt="K'uhul Multi Hive OS" />
+
+# 🛸 K'UHUL MULTI HIVE OS
 
 ![Status](https://img.shields.io/badge/Status-Active-00cc88?style=for-the-badge)
 ![Ollama](https://img.shields.io/badge/Ollama-Multi--Agent-0099ff?style=for-the-badge)
 ![ASX](https://img.shields.io/badge/ASX-Integration-9966ff?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.9+-ffaa00?style=for-the-badge)
+
+</div>
 
 **An advanced multi-agent AI operating system powered by Ollama, integrated with the ASX Language Framework (XJSON, KLH, SCXQ2, Tape Runtime).**
 
@@ -11,7 +17,7 @@
 
 ## 🌟 Overview
 
-H'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that leverages Ollama's local LLM capabilities to create a "hive mind" of specialized AI agents working in harmony. Inspired by and integrated with the [ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework), it brings together:
+K'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that leverages Ollama's local LLM capabilities to create a "hive mind" of specialized AI agents working in harmony. Inspired by and integrated with the [ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework), it brings together:
 
 - **🐝 Multi-Agent Hive Architecture**: Queen + specialized worker agents
 - **⚡ Ollama Integration**: Local, private, powerful LLM execution
@@ -27,7 +33,7 @@ H'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that le
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    H'UHUL MULTI HIVE OS                     │
+│                    K'UHUL MULTI HIVE OS                     │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
@@ -105,7 +111,7 @@ H'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that le
 1. **Clone the Repository**
    ```bash
    git clone https://github.com/cannaseedus-bot/devmicro.git
-   cd devmicro/huhul-multi-hive-os
+   cd devmicro/kuhul-multi-hive-os
    ```
 
 2. **Install Python Dependencies**
@@ -114,9 +120,9 @@ H'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that le
    pip install -r requirements.txt
    ```
 
-3. **Start the H'uhul Hive**
+3. **Start the K'uhul Hive**
    ```bash
-   python huhul_server.py
+   python kuhul_server.py
    ```
 
    The server will start on `http://localhost:8000`
@@ -138,7 +144,7 @@ H'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that le
 
 ### Web Interface
 
-The H'uhul Multi Hive OS provides a beautiful cyberpunk-themed web interface:
+The K'uhul Multi Hive OS provides a beautiful cyberpunk-themed web interface:
 
 1. **Status Dashboard**: Monitor hive health and agent activity
 2. **Agent Panel**: View all available agents and their specializations
@@ -204,7 +210,7 @@ curl http://localhost:8000/api/knowledge
 
 ## 🧬 ASX Integration
 
-H'uhul Multi Hive OS seamlessly integrates with the ASX Language Framework:
+K'uhul Multi Hive OS seamlessly integrates with the ASX Language Framework:
 
 ### XJSON Execution
 
@@ -285,7 +291,7 @@ print(f"Integrity: {validation['integrity_valid']}")
 
 ### 🚧 Planned
 
-- [ ] **Multi-Hive Clustering**: Connect multiple H'uhul instances
+- [ ] **Multi-Hive Clustering**: Connect multiple K'uhul instances
 - [ ] **SCXQ2 Compression**: Full symbolic compression implementation
 - [ ] **Tape Runtime**: Production-ready tape execution system
 - [ ] **RAG Integration**: Vector database for advanced retrieval
@@ -299,9 +305,9 @@ print(f"Integrity: {validation['integrity_valid']}")
 ## 📁 Project Structure
 
 ```
-huhul-multi-hive-os/
+kuhul-multi-hive-os/
 ├── backend/
-│   ├── huhul_server.py        # Main FastAPI server
+│   ├── kuhul_server.py        # Main FastAPI server
 │   ├── quantum_torrent.py     # Distributed sharding system
 │   └── requirements.txt       # Python dependencies
 ├── frontend/
@@ -332,7 +338,7 @@ Edit `config/hive_config.json` to customize:
 Example:
 ```json
 {
-  "hive_id": "huhul-primary",
+  "hive_id": "kuhul-primary",
   "ollama_host": "http://localhost:11434",
   "api_port": 8000,
   "agents": {
@@ -349,7 +355,7 @@ Example:
 ## 🎨 Screenshots
 
 ### Web Interface
-The H'uhul Multi Hive OS features a stunning cyberpunk-themed interface with:
+The K'uhul Multi Hive OS features a stunning cyberpunk-themed interface with:
 - Real-time status monitoring
 - Interactive agent cards
 - Terminal-style chat interface
@@ -360,7 +366,7 @@ The H'uhul Multi Hive OS features a stunning cyberpunk-themed interface with:
 
 ## 🤝 Integration with ASX Framework
 
-H'uhul Multi Hive OS is designed to work seamlessly with:
+K'uhul Multi Hive OS is designed to work seamlessly with:
 
 - **[@asx/xjson-runtime-js](https://github.com/cannaseedus-bot/asx-language-framework)**: XJSON execution
 - **[@asx/klh-orchestrator](https://github.com/cannaseedus-bot/asx-language-framework)**: Hive orchestration
@@ -442,7 +448,7 @@ See [LICENSE](../LICENSE) file for details.
 
 <div align="center">
 
-**🛸 Welcome to the H'uhul Hive 🐝**
+**🛸 Welcome to the K'uhul Hive 🐝**
 
 *Where Multiple Agents Work as One*
 

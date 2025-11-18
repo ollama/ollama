@@ -1,5 +1,5 @@
 {
-  "hive_id": "huhul-primary",
+  "hive_id": "kuhul-primary",
   "version": "1.0.0",
   "ollama_host": "http://localhost:11434",
   "api_port": 8000,
@@ -9,35 +9,35 @@
       "model": "qwen2.5:latest",
       "role": "orchestrator",
       "temperature": 0.7,
-      "system_prompt": "You are the Queen of the H'uhul Hive. Coordinate tasks, delegate to workers, and synthesize results.",
+      "system_prompt": "You are the Queen of the K'uhul Hive. Coordinate tasks, delegate to workers, and synthesize results.",
       "priority": 10
     },
     "coder": {
       "model": "qwen2.5-coder:latest",
       "role": "specialist",
       "temperature": 0.3,
-      "system_prompt": "You are a specialized coding agent in the H'uhul Hive. Write clean, efficient code and analyze technical problems.",
+      "system_prompt": "You are a specialized coding agent in the K'uhul Hive. Write clean, efficient code and analyze technical problems.",
       "priority": 8
     },
     "analyst": {
       "model": "llama3.2:latest",
       "role": "specialist",
       "temperature": 0.5,
-      "system_prompt": "You are an analytical agent in the H'uhul Hive. Analyze data, find patterns, and provide insights.",
+      "system_prompt": "You are an analytical agent in the K'uhul Hive. Analyze data, find patterns, and provide insights.",
       "priority": 7
     },
     "creative": {
       "model": "mistral:latest",
       "role": "specialist",
       "temperature": 0.9,
-      "system_prompt": "You are a creative agent in the H'uhul Hive. Generate innovative ideas and unique perspectives.",
+      "system_prompt": "You are a creative agent in the K'uhul Hive. Generate innovative ideas and unique perspectives.",
       "priority": 6
     },
     "memory": {
       "model": "llama3.2:latest",
       "role": "knowledge",
       "temperature": 0.2,
-      "system_prompt": "You are the memory keeper of the H'uhul Hive. Store, retrieve, and organize knowledge.",
+      "system_prompt": "You are the memory keeper of the K'uhul Hive. Store, retrieve, and organize knowledge.",
       "priority": 9
     }
   },
@@ -60,9 +60,9 @@
   },
 
   "storage": {
-    "data_path": "./huhul_data",
-    "ingested_path": "./huhul_data/ingested",
-    "memory_path": "./huhul_data/memory",
+    "data_path": "./kuhul_data",
+    "ingested_path": "./kuhul_data/ingested",
+    "memory_path": "./kuhul_data/memory",
     "max_file_size": 104857600,
     "supported_formats": [".txt", ".md", ".json", ".py", ".js", ".ts", ".go", ".rs"]
   },

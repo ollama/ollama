@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quantum Torrent Manager for H'uhul Multi Hive OS
+Quantum Torrent Manager for K'uhul Multi Hive OS
 Distributed data sharding and verification for multi-hive synchronization
 """
 
@@ -17,7 +17,7 @@ class QuantumTorrentManager:
     Uses quantum-resistant hashing for data integrity verification
     """
 
-    def __init__(self, data_dir: str = "./huhul_data/shards"):
+    def __init__(self, data_dir: str = "./kuhul_data/shards"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_file = self.data_dir / "shard_manifest.json"
@@ -223,7 +223,7 @@ class QuantumTorrentManager:
         (Placeholder for distributed hive synchronization)
         """
         # This would implement torrent-like P2P synchronization
-        # between multiple H'uhul hive nodes
+        # between multiple K'uhul hive nodes
         return {
             "status": "not_implemented",
             "message": "Remote hive sync requires network implementation"
@@ -253,7 +253,7 @@ if __name__ == "__main__":
             "agent": "analyst"
         },
         {
-            "text": "H'uhul Hive: Coordinate multi-agent task distribution",
+            "text": "K'uhul Hive: Coordinate multi-agent task distribution",
             "type": "orchestration",
             "agent": "queen"
         },

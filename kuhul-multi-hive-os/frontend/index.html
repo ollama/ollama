@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>H'uhul Multi Hive OS - Ollama Multi-Agent System</title>
+    <title>K'uhul Multi Hive OS - Ollama Multi-Agent System</title>
     <style>
         :root {
-            --huhul-green: #00cc88;
-            --huhul-blue: #0099ff;
-            --huhul-purple: #9966ff;
-            --huhul-gold: #ffaa00;
-            --huhul-dark: #0a0a1a;
-            --huhul-darker: #001133;
+            --kuhul-green: #00cc88;
+            --kuhul-blue: #0099ff;
+            --kuhul-purple: #9966ff;
+            --kuhul-gold: #ffaa00;
+            --kuhul-dark: #0a0a1a;
+            --kuhul-darker: #001133;
         }
 
         * {
@@ -21,7 +21,7 @@
         }
 
         body {
-            background: var(--huhul-dark);
+            background: var(--kuhul-dark);
             color: white;
             font-family: 'Courier New', monospace;
             padding: 20px;
@@ -32,20 +32,27 @@
             text-align: center;
             margin-bottom: 30px;
             padding: 20px;
-            background: linear-gradient(135deg, var(--huhul-purple), var(--huhul-blue));
+            background: linear-gradient(135deg, var(--kuhul-purple), var(--kuhul-blue));
             border-radius: 10px;
             box-shadow: 0 0 20px rgba(0, 204, 136, 0.3);
         }
 
         .header h1 {
             font-size: 2.5em;
-            text-shadow: 0 0 10px var(--huhul-green);
+            text-shadow: 0 0 10px var(--kuhul-green);
             margin-bottom: 10px;
         }
 
         .header .subtitle {
             font-size: 1.1em;
-            color: var(--huhul-gold);
+            color: var(--kuhul-gold);
+        }
+
+        .header .logo {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto 20px;
+            display: block;
         }
 
         .grid {
@@ -62,23 +69,23 @@
         }
 
         .panel {
-            background: var(--huhul-darker);
-            border: 2px solid var(--huhul-green);
+            background: var(--kuhul-darker);
+            border: 2px solid var(--kuhul-green);
             border-radius: 8px;
             padding: 20px;
         }
 
         .panel h2 {
-            color: var(--huhul-green);
+            color: var(--kuhul-green);
             margin-bottom: 15px;
             font-size: 1.5em;
-            border-bottom: 1px solid var(--huhul-blue);
+            border-bottom: 1px solid var(--kuhul-blue);
             padding-bottom: 10px;
         }
 
         .terminal {
             background: #001133;
-            border: 2px solid var(--huhul-green);
+            border: 2px solid var(--kuhul-green);
             padding: 20px;
             height: 50vh;
             overflow-y: auto;
@@ -90,7 +97,7 @@
         .message {
             margin: 10px 0;
             padding: 10px;
-            border-left: 4px solid var(--huhul-green);
+            border-left: 4px solid var(--kuhul-green);
             background: rgba(0, 204, 136, 0.1);
             border-radius: 4px;
             animation: slideIn 0.3s ease-out;
@@ -108,17 +115,17 @@
         }
 
         .message.user {
-            border-color: var(--huhul-blue);
+            border-color: var(--kuhul-blue);
             background: rgba(0, 153, 255, 0.1);
         }
 
         .message.ai {
-            border-color: var(--huhul-purple);
+            border-color: var(--kuhul-purple);
             background: rgba(153, 102, 255, 0.1);
         }
 
         .message.system {
-            border-color: var(--huhul-gold);
+            border-color: var(--kuhul-gold);
             background: rgba(255, 170, 0, 0.1);
         }
 
@@ -130,7 +137,7 @@
         .agent-tag {
             display: inline-block;
             padding: 2px 8px;
-            background: var(--huhul-purple);
+            background: var(--kuhul-purple);
             border-radius: 3px;
             font-size: 0.8em;
             margin-right: 5px;
@@ -140,8 +147,8 @@
         input[type="text"],
         input[type="file"] {
             background: black;
-            color: var(--huhul-green);
-            border: 1px solid var(--huhul-blue);
+            color: var(--kuhul-green);
+            border: 1px solid var(--kuhul-blue);
             padding: 12px;
             margin: 5px;
             border-radius: 5px;
@@ -152,12 +159,12 @@
         input[type="text"]:focus,
         input[type="file"]:focus {
             outline: none;
-            border-color: var(--huhul-green);
+            border-color: var(--kuhul-green);
             box-shadow: 0 0 10px rgba(0, 204, 136, 0.5);
         }
 
         button {
-            background: linear-gradient(135deg, var(--huhul-blue), var(--huhul-purple));
+            background: linear-gradient(135deg, var(--kuhul-blue), var(--kuhul-purple));
             color: white;
             border: none;
             padding: 12px 20px;
@@ -190,17 +197,17 @@
             background: rgba(0, 153, 255, 0.1);
             padding: 15px;
             border-radius: 5px;
-            border: 1px solid var(--huhul-blue);
+            border: 1px solid var(--kuhul-blue);
         }
 
         .status-label {
-            color: var(--huhul-gold);
+            color: var(--kuhul-gold);
             font-size: 0.9em;
             margin-bottom: 5px;
         }
 
         .status-value {
-            color: var(--huhul-green);
+            color: var(--kuhul-green);
             font-size: 1.2em;
             font-weight: bold;
         }
@@ -214,7 +221,7 @@
 
         .agent-card {
             background: rgba(153, 102, 255, 0.2);
-            border: 2px solid var(--huhul-purple);
+            border: 2px solid var(--kuhul-purple);
             border-radius: 8px;
             padding: 15px;
             flex: 1;
@@ -224,23 +231,23 @@
 
         .agent-card:hover {
             transform: scale(1.05);
-            box-shadow: 0 0 15px var(--huhul-purple);
+            box-shadow: 0 0 15px var(--kuhul-purple);
         }
 
         .agent-card.active {
-            border-color: var(--huhul-green);
+            border-color: var(--kuhul-green);
             background: rgba(0, 204, 136, 0.2);
         }
 
         .agent-name {
             font-weight: bold;
-            color: var(--huhul-gold);
+            color: var(--kuhul-gold);
             font-size: 1.1em;
             margin-bottom: 5px;
         }
 
         .agent-role {
-            color: var(--huhul-blue);
+            color: var(--kuhul-blue);
             font-size: 0.85em;
         }
 
@@ -258,7 +265,7 @@
             width: 100%;
             height: 30px;
             background: rgba(0, 0, 0, 0.5);
-            border: 1px solid var(--huhul-green);
+            border: 1px solid var(--kuhul-green);
             border-radius: 5px;
             overflow: hidden;
             margin: 10px 0;
@@ -266,7 +273,7 @@
 
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, var(--huhul-green), var(--huhul-blue));
+            background: linear-gradient(90deg, var(--kuhul-green), var(--kuhul-blue));
             transition: width 0.5s ease;
             display: flex;
             align-items: center;
@@ -278,7 +285,8 @@
 </head>
 <body>
     <div class="header">
-        <h1>🛸 H'UHUL MULTI HIVE OS</h1>
+        <img src="../assets/kuhul-hive-logo.svg" alt="K'uhul Logo" class="logo">
+        <h1>🛸 K'UHUL MULTI HIVE OS</h1>
         <div class="subtitle">Ollama-Powered Multi-Agent Intelligence System</div>
         <div class="subtitle">ASX · XJSON · KLH · SCXQ2 · Tape Runtime</div>
     </div>
@@ -317,11 +325,11 @@
     <div class="panel">
         <h2>💬 Hive Communication Terminal</h2>
         <div class="terminal" id="terminal">
-            <div class="message system">[H'UHUL] Multi Hive OS initialized - Waiting for Ollama connection...</div>
+            <div class="message system">[K'UHUL] Multi Hive OS initialized - Waiting for Ollama connection...</div>
         </div>
 
         <div class="chat-input-container">
-            <input type="text" id="userInput" placeholder="Query the H'uhul Hive..." onkeypress="if(event.key==='Enter') sendMessage()">
+            <input type="text" id="userInput" placeholder="Query the K'uhul Hive..." onkeypress="if(event.key==='Enter') sendMessage()">
             <button onclick="sendMessage()">💬 Send to Hive</button>
         </div>
     </div>
@@ -381,7 +389,7 @@
                     `Agents: ${data.agents_available.length} available, ${data.agents_active.length} active | ` +
                     `Knowledge: ${data.knowledge_base_size} entries`);
             } catch (e) {
-                log(`[ERROR] Failed to connect to H'uhul backend: ${e.message}`, 'error');
+                log(`[ERROR] Failed to connect to K'uhul backend: ${e.message}`, 'error');
                 document.getElementById('statusConnection').textContent = '❌ ERROR';
             }
         }
@@ -400,7 +408,7 @@
                     card.innerHTML = `
                         <div class="agent-name">${agent.name.toUpperCase()}</div>
                         <div class="agent-role">${agent.role}</div>
-                        <div style="font-size: 0.8em; color: var(--huhul-green); margin-top: 5px;">
+                        <div style="font-size: 0.8em; color: var(--kuhul-green); margin-top: 5px;">
                             ${agent.model}
                         </div>
                     `;

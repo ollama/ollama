@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-H'uhul Multi Hive OS - Backend Server
+K'uhul Multi Hive OS - Backend Server
 Ollama-powered multi-agent AI hive system
 """
 
@@ -20,7 +20,7 @@ from datetime import datetime
 
 # Configuration
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-DATA_PATH = Path("./huhul_data")
+DATA_PATH = Path("./kuhul_data")
 INGESTED_PATH = DATA_PATH / "ingested"
 MEMORY_PATH = DATA_PATH / "memory"
 
@@ -34,37 +34,37 @@ HIVE_AGENTS = {
         "model": "qwen2.5:latest",
         "role": "Orchestrator and decision maker",
         "temperature": 0.7,
-        "system_prompt": "You are the Queen of the H'uhul Hive. Coordinate tasks, delegate to workers, and synthesize results."
+        "system_prompt": "You are the Queen of the K'uhul Hive. Coordinate tasks, delegate to workers, and synthesize results."
     },
     "coder": {
         "model": "qwen2.5-coder:latest",
         "role": "Code generation and analysis",
         "temperature": 0.3,
-        "system_prompt": "You are a specialized coding agent in the H'uhul Hive. Write clean, efficient code and analyze technical problems."
+        "system_prompt": "You are a specialized coding agent in the K'uhul Hive. Write clean, efficient code and analyze technical problems."
     },
     "analyst": {
         "model": "llama3.2:latest",
         "role": "Data analysis and reasoning",
         "temperature": 0.5,
-        "system_prompt": "You are an analytical agent in the H'uhul Hive. Analyze data, find patterns, and provide insights."
+        "system_prompt": "You are an analytical agent in the K'uhul Hive. Analyze data, find patterns, and provide insights."
     },
     "creative": {
         "model": "mistral:latest",
         "role": "Creative thinking and ideation",
         "temperature": 0.9,
-        "system_prompt": "You are a creative agent in the H'uhul Hive. Generate innovative ideas and unique perspectives."
+        "system_prompt": "You are a creative agent in the K'uhul Hive. Generate innovative ideas and unique perspectives."
     },
     "memory": {
         "model": "llama3.2:latest",
         "role": "Knowledge retrieval and storage",
         "temperature": 0.2,
-        "system_prompt": "You are the memory keeper of the H'uhul Hive. Store, retrieve, and organize knowledge."
+        "system_prompt": "You are the memory keeper of the K'uhul Hive. Store, retrieve, and organize knowledge."
     }
 }
 
 
 class HuhulHive:
-    """Main H'uhul Multi-Agent Hive System"""
+    """Main K'uhul Multi-Agent Hive System"""
 
     def __init__(self):
         self.ingested_files = []
@@ -256,7 +256,7 @@ hive = HuhulHive()
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     print("=" * 60)
-    print("🛸 H'UHUL MULTI HIVE OS - INITIALIZING")
+    print("🛸 K'UHUL MULTI HIVE OS - INITIALIZING")
     print("=" * 60)
     print(f"📡 Ollama Host: {OLLAMA_HOST}")
     print(f"📁 Data Path: {DATA_PATH}")
@@ -266,7 +266,7 @@ async def lifespan(app: FastAPI):
     # Check Ollama connection
     connected = await hive.check_ollama_connection()
     if connected:
-        print("✅ H'uhul Hive is ONLINE")
+        print("✅ K'uhul Hive is ONLINE")
     else:
         print("⚠️  Warning: Ollama not detected - hive in standby mode")
 
@@ -274,12 +274,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    print("🔧 H'uhul Hive shutting down...")
+    print("🔧 K'uhul Hive shutting down...")
 
 
 # Create FastAPI app
 app = FastAPI(
-    title="H'uhul Multi Hive OS",
+    title="K'uhul Multi Hive OS",
     description="Ollama-powered multi-agent AI hive system",
     version="1.0.0",
     lifespan=lifespan
@@ -297,7 +297,7 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "system": "H'uhul Multi Hive OS",
+        "system": "K'uhul Multi Hive OS",
         "version": "1.0.0",
         "status": "online",
         "agents": list(HIVE_AGENTS.keys())
@@ -356,7 +356,7 @@ async def ingest_files(files: List[UploadFile] = File(...)):
 
 @app.post("/api/chat")
 async def chat_endpoint(request: dict):
-    """Chat with the H'uhul Hive (multi-agent orchestration)"""
+    """Chat with the K'uhul Hive (multi-agent orchestration)"""
     message = request.get("message", "")
 
     if not message:
@@ -398,7 +398,7 @@ async def train_model():
             (65, "Training agent specializations..."),
             (85, "Synchronizing hive memory..."),
             (95, "Validating multi-agent responses..."),
-            (100, "H'uhul Hive optimization complete! 🐝")
+            (100, "K'uhul Hive optimization complete! 🐝")
         ]
 
         for progress, message in stages:
@@ -448,7 +448,7 @@ async def get_knowledge_base():
 
 
 if __name__ == "__main__":
-    print("🚀 Starting H'uhul Multi Hive OS Server...")
+    print("🚀 Starting K'uhul Multi Hive OS Server...")
     uvicorn.run(
         app,
         host="0.0.0.0",

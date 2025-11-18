@@ -1,10 +1,10 @@
 #!/bin/bash
-# H'uhul Multi Hive OS - Startup Script
+# K'uhul Multi Hive OS - Startup Script
 
 set -e
 
 echo "🛸 =========================================="
-echo "   H'UHUL MULTI HIVE OS - STARTUP"
+echo "   K'UHUL MULTI HIVE OS - STARTUP"
 echo "========================================== 🛸"
 echo ""
 
@@ -57,11 +57,11 @@ if [ -f "requirements.txt" ]; then
 fi
 echo ""
 
-# Start the H'uhul Hive Server
-echo -e "${BLUE}[5/5]${NC} Starting H'uhul Hive Server..."
+# Start the K'uhul Hive Server
+echo -e "${BLUE}[5/5]${NC} Starting K'uhul Hive Server..."
 echo ""
 echo -e "${GREEN}🐝 =========================================="
-echo "   H'UHUL HIVE IS NOW ONLINE"
+echo "   K'UHUL HIVE IS NOW ONLINE"
 echo "========================================== 🐝${NC}"
 echo ""
 echo -e "📡 Backend API: ${BLUE}http://localhost:8000${NC}"
@@ -71,4 +71,4 @@ echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the hive${NC}"
 echo ""
 
-python huhul_server.py
+python kuhul_server.py

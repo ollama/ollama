@@ -1,8 +1,8 @@
 @echo off
-REM H'uhul Multi Hive OS - Windows Startup Script
+REM K'uhul Multi Hive OS - Windows Startup Script
 
 echo ============================================
-echo    H'UHUL MULTI HIVE OS - STARTUP
+echo    K'UHUL MULTI HIVE OS - STARTUP
 echo ============================================
 echo.
 
@@ -45,10 +45,10 @@ if %errorlevel% neq 0 (
 echo OK: Python dependencies installed
 echo.
 
-echo [5/5] Starting H'uhul Hive Server...
+echo [5/5] Starting K'uhul Hive Server...
 echo.
 echo ============================================
-echo    H'UHUL HIVE IS NOW ONLINE
+echo    K'UHUL HIVE IS NOW ONLINE
 echo ============================================
 echo.
 echo Backend API: http://localhost:8000
@@ -58,4 +58,4 @@ echo.
 echo Press Ctrl+C to stop the hive
 echo.
 
-python huhul_server.py
+python kuhul_server.py

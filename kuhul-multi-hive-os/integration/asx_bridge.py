@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ASX Integration Bridge for H'uhul Multi Hive OS
+ASX Integration Bridge for K'uhul Multi Hive OS
 Implements XJSON execution and KLH orchestration patterns
 """
 
@@ -16,7 +16,7 @@ import aiohttp
 class XJSONEngine:
     """
     XJSON (Executable JSON) Engine
-    Executes XJSON blocks within the H'uhul Hive context
+    Executes XJSON blocks within the K'uhul Hive context
     """
 
     def __init__(self, ctx: Optional[Dict] = None, hive_client: Optional[Any] = None):
@@ -334,7 +334,7 @@ if __name__ == "__main__":
     # Run XJSON
     result = run_xjson_job(
         "example.json",  # Would load from file
-        {"type": "test", "name": "H'uhul Test"}
+        {"type": "test", "name": "K'uhul Test"}
     )
 
     print("XJSON Result:", json.dumps(result, indent=2))
