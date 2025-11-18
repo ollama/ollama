@@ -76,12 +76,16 @@ H'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that le
 ### Prerequisites
 
 1. **Install Ollama**
-   ```bash
-   # Linux/macOS
-   curl -fsSL https://ollama.ai/install.sh | sh
 
-   # Or visit: https://ollama.ai
+   **Linux/macOS:**
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
    ```
+
+   **Windows:**
+   - Download the installer from [ollama.ai](https://ollama.ai)
+   - Run the .exe installer
+   - Ollama will start automatically
 
 2. **Pull Required Models**
    ```bash

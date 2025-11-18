@@ -12,8 +12,11 @@ Get your H'uhul Hive running in 5 minutes!
 # 1. Install Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# 2. Pull a model (at least one)
+# 2. Pull models (at least one, all recommended)
 ollama pull qwen2.5:latest
+ollama pull qwen2.5-coder:latest
+ollama pull llama3.2:latest
+ollama pull mistral:latest
 
 # 3. Start the hive
 cd huhul-multi-hive-os
@@ -23,10 +26,14 @@ cd huhul-multi-hive-os
 ### Windows
 
 ```batch
-REM 1. Install Ollama from https://ollama.ai
+REM 1. Install Ollama
+REM    Download from https://ollama.ai and run the installer
 
-REM 2. Pull a model
+REM 2. Pull models (at least one, all recommended)
 ollama pull qwen2.5:latest
+ollama pull qwen2.5-coder:latest
+ollama pull llama3.2:latest
+ollama pull mistral:latest
 
 REM 3. Start the hive
 cd huhul-multi-hive-os
