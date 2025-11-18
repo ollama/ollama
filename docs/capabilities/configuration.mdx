@@ -1,0 +1,105 @@
+---
+title: Configuration
+description: Configure Ollama to connect to remote servers and manage persistent settings.
+---
+
+Ollama supports persistent configuration settings stored in `~/.ollama/config.json`.
+
+## Configuration Settings
+
+### server_url
+
+The URL of the Ollama server to connect to.
+
+**Default:** `http://localhost:11434`
+
+**Validation:**
+- Must use `http` or `https` scheme
+- Must include a valid host
+- URL format must be valid
+
+**Priority:**
+1. `OLLAMA_HOST` environment variable (highest priority)
+2. `server_url` in `~/.ollama/config.json`
+3. Default value `http://localhost:11434` (lowest priority)
+
+## Usage
+
+<Tabs>
+  <Tab title="CLI">
+    View current configuration:
+
+    ```bash
+    ollama config
+    ```
+
+    Set server URL:
+
+    ```bash
+    ollama config server_url <url>
+    ```
+  </Tab>
+</Tabs>
+
+## Examples
+
+### Connect to Remote Server
+
+```bash
+ollama config server_url http://192.168.1.100:11434
+```
+
+### Use HTTPS
+
+```bash
+ollama config server_url https://ollama.example.com
+```
+
+### Connect to Different Port
+
+```bash
+ollama config server_url http://localhost:8080
+```
+
+### Reset to Default
+
+```bash
+ollama config server_url http://localhost:11434
+```
+
+## Configuration File
+
+**Location:** `~/.ollama/config.json`
+
+**Format:** JSON
+
+**Permissions:** 0600 (read/write for owner only)
+
+**Example:**
+```json
+{
+  "server_url": "http://localhost:11434"
+}
+```
+
+## Environment Variable Override
+
+The `OLLAMA_HOST` environment variable takes precedence over configuration file settings:
+
+```bash
+OLLAMA_HOST=http://other-server:11434 ollama list
+```
+
+## Error Handling
+
+The configuration system includes validation:
+- Invalid URL formats are rejected
+- Only HTTP and HTTPS schemes are allowed
+- Missing host in URL is rejected
+- Configuration directory is created automatically if it doesn't exist
+
+## Troubleshooting
+
+- **Invalid URL**: Ensure URL includes `http://` or `https://` and a valid hostname
+- **Connection Failed**: Verify the remote server is running and accessible
+- **Permission Denied**: Check that `~/.ollama/` directory is writable
