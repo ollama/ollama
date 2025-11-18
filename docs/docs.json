@@ -97,6 +97,7 @@
           {
             "group": "Integrations",
             "pages": [
+              "/integrations/onyx",
               "/integrations/vscode",
               "/integrations/jetbrains",
               "/integrations/codex",
