@@ -28,8 +28,10 @@ if (CXX_IS_HIPCC)
                 " Prefer setting the HIP compiler directly. See README for details.")
     endif()
 else()
-    # Forward AMDGPU_TARGETS to CMAKE_HIP_ARCHITECTURES.
-    if (AMDGPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
+    # Forward (AMD)GPU_TARGETS to CMAKE_HIP_ARCHITECTURES.
+    if(GPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES ${GPU_TARGETS})
+    elseif(AMDGPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
         set(CMAKE_HIP_ARCHITECTURES ${AMDGPU_TARGETS})
     endif()
     cmake_minimum_required(VERSION 3.21)

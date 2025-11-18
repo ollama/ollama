@@ -549,7 +549,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			for cs, err := range r.chunksums(ctx, name, l) {
 				if err != nil {
 					// Note the chunksum stream
-					// interuption, but do not cancel
+					// interruption, but do not cancel
 					// in-flight downloads. We can still
 					// make progress on them. Once they are
 					// done, ErrIncomplete will be returned
