@@ -1639,7 +1639,8 @@ func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) m
 	return &Tensor{b: t.b, t: tt}
 }
 
-func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64) ml.Tensor { // add vmla
+// NOTE (gguo): kqv -> kqvC
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64) ml.Tensor {
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
 		kqMask = mask.(*Tensor).t
@@ -1651,11 +1652,11 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 	if t.b.flashAttention {
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
-		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0) // NOTE: kqv -> kqvC
+		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
 		if sinks != nil {
-			C.ggml_flash_attn_ext_add_sinks(kqv, sinks.(*Tensor).t) // NOTE: kqv -> kqvC
+			C.ggml_flash_attn_ext_add_sinks(kqv, sinks.(*Tensor).t)
 		}
-		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32) // NOTE: kqv -> kqvC
+		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32)
 
 		if vmla != nil {
 			cur := &Tensor{b: t.b, t: kqv}
