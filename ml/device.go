@@ -543,12 +543,12 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	}
 	v, existing := env[envVar]
 	if existing {
-		v = v + ","
+		v += ","
 	}
 	if d.FilterID != "" {
-		v = v + d.FilterID
+		v += d.FilterID
 	} else {
-		v = v + d.ID
+		v += d.ID
 	}
 	env[envVar] = v
 }

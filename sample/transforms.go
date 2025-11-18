@@ -30,7 +30,7 @@ func temperature(ts []token, temp float32) {
 	// Ensure temperature clipping near 0 to avoid numerical instability
 	temp = max(temp, 1e-7)
 	for i := range ts {
-		ts[i].value = ts[i].value / temp
+		ts[i].value /= temp
 	}
 }
 

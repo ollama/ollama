@@ -146,7 +146,7 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 func modelForArch(c fs.Config) (Model, error) {
 	arch := c.Architecture()
 	if pooling.Type(c.Uint("pooling_type")) != pooling.TypeNone {
-		arch = arch + "_embed"
+		arch += "_embed"
 	}
 
 	f, ok := models[arch]

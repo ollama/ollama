@@ -1429,7 +1429,6 @@ func Execute(args []string) error {
 
 	log.Println("Server listening on", addr)
 	if err := httpServer.Serve(listener); err != nil {
-		log.Fatal("server error:", err)
 		return err
 	}
 

@@ -326,16 +326,10 @@ MESSAGE system`,
 				return
 			}
 
-			switch tt.err.(type) {
-			case *ParserError:
-				var pErr *ParserError
-				if errors.As(err, &pErr) {
-					// got the correct type of error
-					return
-				}
-			}
-
 			if errors.Is(err, tt.err) {
+				return
+			} else if pErr := (*ParserError)(nil); errors.As(err, &pErr) {
+				// got the correct type of error
 				return
 			}
 

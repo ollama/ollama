@@ -200,9 +200,7 @@ func (s *HarmonyParser) parseHeader(raw string) HarmonyHeader {
 		before := raw[:channelIndex]
 		after := raw[channelIndex+len("<|channel|>"):]
 		// the channel name is `after` all the way up to the first (if any) whitespace character
-		idx := strings.IndexFunc(after, func(r rune) bool {
-			return unicode.IsSpace(r)
-		})
+		idx := strings.IndexFunc(after, unicode.IsSpace)
 		if idx == -1 {
 			idx = len(after)
 		}

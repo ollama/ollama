@@ -362,11 +362,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
 		}
-	} else {
-		if req.Think != nil && req.Think.Bool() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
-			return
-		}
+	} else if req.Think != nil && req.Think.Bool() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
@@ -1996,11 +1994,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
 		}
-	} else {
-		if req.Think != nil && req.Think.Bool() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
-			return
-		}
+	} else if req.Think != nil && req.Think.Bool() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)

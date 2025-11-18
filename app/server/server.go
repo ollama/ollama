@@ -345,11 +345,9 @@ func GetInferenceComputer(ctx context.Context) ([]InferenceCompute, error) {
 
 				slog.Info("Matched", "inference compute", ic)
 				inference = append(inference, ic)
-			} else {
+			} else if len(inference) > 0 {
 				// Break out on first non matching line after we start matching
-				if len(inference) > 0 {
-					return inference, nil
-				}
+				return inference, nil
 			}
 		}
 		time.Sleep(100 * time.Millisecond)

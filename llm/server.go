@@ -982,13 +982,11 @@ nextLayer:
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(cpuSize), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
 			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(cpuSize), format.HumanBytes2(available))
 		}
-	} else {
-		if vramSize > systemInfo.TotalMemory {
-			// disable partial offloading when model is greater than total system memory as this
-			// can lead to locking up the system
-			s.options.NumGPU = 0
-			gpuLayers = ml.GPULayersList{}
-		}
+	} else if vramSize > systemInfo.TotalMemory {
+		// disable partial offloading when model is greater than total system memory as this
+		// can lead to locking up the system
+		s.options.NumGPU = 0
+		gpuLayers = ml.GPULayersList{}
 	}
 
 	if gpuLayers.Sum() == 0 {

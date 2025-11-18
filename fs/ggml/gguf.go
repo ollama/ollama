@@ -226,7 +226,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			Name:   name,
 			Kind:   kind,
 			Offset: offset,
-			Shape:  shape[:],
+			Shape:  shape,
 		}
 
 		llm.tensors = append(llm.tensors, &tensor)

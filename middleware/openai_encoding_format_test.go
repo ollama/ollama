@@ -210,10 +210,8 @@ func TestEmbeddingsMiddleware_InvalidEncodingFormat(t *testing.T) {
 				if !strings.Contains(errResp.Error.Message, "encoding_format") {
 					t.Errorf("expected error message to mention encoding_format, got %q", errResp.Error.Message)
 				}
-			} else {
-				if resp.Code != http.StatusOK {
-					t.Errorf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
-				}
+			} else if resp.Code != http.StatusOK {
+				t.Errorf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
 			}
 		})
 	}

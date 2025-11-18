@@ -36,6 +36,12 @@ linters:
     errcheck:
       exclude-functions:
         - fmt.Fprintf
+    gocritic:
+      disabled-checks:
+        # Detects suspicious duplicated sub-expressions.
+        # Prone to false positives when used on cgo code
+        # https://github.com/go-critic/go-critic/issues/897#issuecomment-568892104
+        - dupSubExpr
     perfsprint:
       strconcat: false
       concat-loop: false

@@ -22,6 +22,7 @@ import (
 var ErrCancelled = errors.New("Cancelled")
 
 // Cancelled refers to ErrCancelled.
+//
 // Deprecated: Use ErrCancelled instead.
 var Cancelled = ErrCancelled
 

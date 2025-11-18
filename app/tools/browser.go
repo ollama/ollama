@@ -384,15 +384,9 @@ func wrapLines(text string, width int) []string {
 			wrapped = append(wrapped, "")
 		} else if len(line) <= width {
 			wrapped = append(wrapped, line)
+		} else if words := strings.Fields(line); len(words) == 0 {
+			wrapped = append(wrapped, line)
 		} else {
-			// Word wrapping while preserving whitespace structure
-			words := strings.Fields(line)
-			if len(words) == 0 {
-				// Line with only whitespace
-				wrapped = append(wrapped, line)
-				continue
-			}
-
 			currentLine := ""
 			for _, word := range words {
 				// Check if adding this word would exceed width
@@ -537,15 +531,13 @@ func (b *BrowserOpen) Execute(ctx context.Context, args map[string]any) (any, st
 		if err != nil {
 			return nil, "", fmt.Errorf("page not found for cursor %d: %w", cursor, err)
 		}
-	} else {
+	} else if len(b.state.Data.PageStack) != 0 {
 		// get last page
-		if len(b.state.Data.PageStack) != 0 {
-			pageURL := b.state.Data.PageStack[len(b.state.Data.PageStack)-1]
-			var err error
-			page, err = b.getPageFromStack(pageURL)
-			if err != nil {
-				return nil, "", fmt.Errorf("page not found for cursor %d: %w", cursor, err)
-			}
+		pageURL := b.state.Data.PageStack[len(b.state.Data.PageStack)-1]
+		var err error
+		page, err = b.getPageFromStack(pageURL)
+		if err != nil {
+			return nil, "", fmt.Errorf("page not found for cursor %d: %w", cursor, err)
 		}
 	}
 
