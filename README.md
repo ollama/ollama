@@ -2,7 +2,7 @@
 
 ## 🌟 Overview
 
-This PR introduces **H'uhul Multi Hive OS**, a sophisticated multi-agent orchestration system powered by Ollama with full ASX Language Framework integration.
+This PR introduces **k'uhul Multi Hive OS**, a sophisticated multi-agent orchestration system powered by Ollama with full ASX Language Framework integration.
 
 ## 🎯 What's New
 
