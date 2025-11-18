@@ -2,6 +2,7 @@ package discover
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,12 +11,21 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
 )
 
 func GetCPUMem() (memInfo, error) {
+	mem, err := getCPUMem()
+	if err != nil {
+		return memInfo{}, err
+	}
+	return getCPUMemByCgroups(mem), nil
+}
+
+func getCPUMem() (memInfo, error) {
 	var mem memInfo
 	var total, available, free, buffers, cached, freeSwap uint64
 	f, err := os.Open("/proc/meminfo")
@@ -56,6 +66,32 @@ func GetCPUMem() (memInfo, error) {
 	return mem, nil
 }
 
+func getCPUMemByCgroups(mem memInfo) memInfo {
+	total, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.max")
+	if err == nil {
+		mem.TotalMemory = total
+	}
+	used, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
+	if err == nil {
+		mem.FreeMemory = mem.TotalMemory - used
+	}
+	return mem
+}
+
+func getUint64ValueFromFile(path string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Text()
+		return strconv.ParseUint(line, 10, 64)
+	}
+	return 0, errors.New("empty file content")
+}
+
 const CpuInfoFilename = "/proc/cpuinfo"
 
 type linuxCpuInfo struct {
@@ -74,7 +110,41 @@ func GetCPUDetails() []CPU {
 		return nil
 	}
 	defer file.Close()
-	return linuxCPUDetails(file)
+	cpus := linuxCPUDetails(file)
+	return overwriteThreadCountByLinuxCgroups(cpus)
+}
+
+func overwriteThreadCountByLinuxCgroups(cpus []CPU) []CPU {
+	file, err := os.Open("/sys/fs/cgroup/cpu.max")
+	if err != nil {
+		return cpus
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if sl := strings.Split(line, " "); len(sl) == 2 {
+			allowdUs, err := strconv.ParseInt(sl[0], 10, 64)
+			if err != nil {
+				slog.Warn("failed to parse CPU allowed micro secs", "error", err)
+				return cpus
+			}
+			unitUs, err := strconv.ParseInt(sl[1], 10, 64)
+			if err != nil {
+				slog.Warn("failed to parse CPU unit micro secs", "error", err)
+				return cpus
+			}
+
+			threads := int(max(allowdUs/unitUs, 1))
+
+			cpu := cpus[0]
+			cpu.CoreCount = threads
+			cpu.ThreadCount = threads
+			return []CPU{cpu}
+		}
+	}
+	return cpus
 }
 
 func linuxCPUDetails(file io.Reader) []CPU {
