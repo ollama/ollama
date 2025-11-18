@@ -380,11 +380,13 @@ func WaitForServer(ctx context.Context, timeout time.Duration) error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for Ollama server to be ready")
+	return errors.New("timeout waiting for Ollama server to be ready")
 }
 
 func (s *Server) createChat(w http.ResponseWriter, r *http.Request) error {
-	WaitForServer(r.Context(), 10*time.Second)
+	if err := WaitForServer(r.Context(), 10*time.Second); err != nil {
+		return err
+	}
 
 	id, err := uuid.NewV7()
 	if err != nil {
