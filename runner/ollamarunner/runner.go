@@ -130,12 +130,12 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// Ensure that at least 1 input can be discarded during shift
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
-	discard := int32(len(inputs)) - s.cache.numCtx
-
 	if int32(len(inputs)) > s.cache.numCtx {
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
+
+		discard := int32(len(inputs)) - s.cache.numCtx
 
 		promptStart := params.numKeep + discard
 

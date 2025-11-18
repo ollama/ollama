@@ -130,8 +130,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 			return nil, errorInputTooLong
 		}
 
-		// Embeddings and generation both return the same too-long error when truncate is enabled
-
 		newInputs := inputs[:params.numKeep]
 		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
 
