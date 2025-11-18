@@ -54,5 +54,5 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
