@@ -41,29 +41,30 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 }
 
 export async function fetchUser(): Promise<User | null> {
-  try {
-    const response = await fetch(`${API_BASE}/api/me`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+  const response = await fetch(`${API_BASE}/api/me`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
 
-    if (response.ok) {
-      const userData: User = await response.json();
+  if (response.ok) {
+    const userData: User = await response.json();
 
-      if (userData.avatarurl && !userData.avatarurl.startsWith("http")) {
-        userData.avatarurl = `${OLLAMA_DOT_COM}${userData.avatarurl}`;
-      }
-
-      return userData;
+    if (userData.avatarurl && !userData.avatarurl.startsWith("http")) {
+      userData.avatarurl = `${OLLAMA_DOT_COM}${userData.avatarurl}`;
     }
 
-    return null;
-  } catch (error) {
-    console.error("Error fetching user:", error);
+    return userData;
+  }
+
+  // Return null for 401/403 (not authenticated), but throw for other errors
+  // so React Query will retry while server is starting up
+  if (response.status === 401 || response.status === 403) {
     return null;
   }
+
+  throw new Error(`Failed to fetch user: ${response.status}`);
 }
 
 export async function fetchConnectUrl(): Promise<string> {

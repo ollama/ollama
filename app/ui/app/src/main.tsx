@@ -5,13 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { fetchUser } from "./api";
 import { StreamingProvider } from "./contexts/StreamingContext";
-import { User } from "@/gotypes";
-
-declare global {
-  interface Window {
-    __initialUserDataPromise?: Promise<User | null>;
-  }
-}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,48 +17,12 @@ const queryClient = new QueryClient({
   },
 });
 
-// Poll for server readiness, then fetch user data
-// This ensures initialDataLoaded isn't set to true until we have actual data or timeout
-const initializeUserData = async () => {
-  const maxAttempts = 20; // 20 attempts * 500ms = 10 seconds max
-  const retryDelay = 500;
-
-  // First, wait for server to be ready
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const versionResponse = await fetch(
-        `${window.location.origin}/api/version`,
-        { method: "HEAD" },
-      );
-      if (versionResponse.ok) {
-        break;
-      }
-    } catch (error) {
-      console.error("Failed to fetch version:", error);
-    }
-
-    if (i < maxAttempts - 1) {
-      await new Promise((resolve) => setTimeout(resolve, retryDelay));
-    }
-  }
-
-  // Now fetch user data
-  try {
-    const userData = await fetchUser();
+// Try to pre-cache user data if server is ready (backend might have already warmed it up)
+fetchUser().then((userData) => {
+  if (userData) {
     queryClient.setQueryData(["user"], userData);
-    return userData;
-  } catch (error) {
-    console.error("Failed to fetch user data:", error);
-    queryClient.setQueryData(["user"], null);
-    return null;
   }
-};
-
-// Start initialization and track the promise
-const initialUserDataPromise = initializeUserData();
-
-// Export the promise so hooks can await it
-window.__initialUserDataPromise = initialUserDataPromise;
+});
 
 const router = createRouter({
   routeTree,
