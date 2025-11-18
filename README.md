@@ -1,4 +1,4 @@
-# 🛸 H'uhul Multi Hive OS - Ollama-Powered Multi-Agent AI System
+# 🛸 K'uhul Multi Hive OS - Ollama-Powered Multi-Agent AI System
 
 ## 🌟 Overview
 
