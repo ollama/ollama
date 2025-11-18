@@ -1,3 +1,4 @@
+<img src="https://github.com/cannaseedus-bot/devmicro/blob/main/kuhul-hive-logo.svg" />
 # 🛸 K'uhul Multi Hive OS - Ollama-Powered Multi-Agent AI System
 
 ## 🌟 Overview
