@@ -1625,7 +1625,6 @@ func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	}
 }
 
-// NOTE (gguo): kqv -> kqvC
 func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64) ml.Tensor {
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
@@ -1645,12 +1644,12 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32)
 
 		if vmla != nil {
-			cur := &Tensor{b: t.b, t: kqv}
-			cur = cur.Permute(ctx, 0, 2, 1, 3).(*Tensor)
-			cur = vmla.Mulmat(ctx, cur).(*Tensor)
-			cur = cur.Permute(ctx, 0, 2, 1, 3).(*Tensor)
-			cur = cur.Contiguous(ctx).(*Tensor)
-			kqv = cur.t
+			var cur ml.Tensor = &Tensor{b: t.b, t: kqv}
+			cur = cur.Permute(ctx, 0, 2, 1, 3)
+			cur = vmla.Mulmat(ctx, cur)
+			cur = cur.Permute(ctx, 0, 2, 1, 3)
+			cur = cur.Contiguous(ctx)
+			kqv = cur.(*Tensor).t
 		}
 
 		return &Tensor{b: t.b, t: kqv}

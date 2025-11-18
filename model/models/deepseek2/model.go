@@ -251,8 +251,8 @@ func New(c fs.Config) (model.Model, error) {
 	kqScale := float64(mScale) * float64(mScale) / math.Sqrt(float64(c.Uint("attention.key_length")))
 
 	isMLA := c.Uint("attention.key_length_mla") != 0 && c.Uint("attention.value_length_mla") != 0
-	keyLength := cmp.Or(int(c.Uint("attention.key_length_mla")), int(c.Uint("attention.key_length")))
-	valueLength := cmp.Or(int(c.Uint("attention.value_length_mla")), int(c.Uint("attention.value_length")))
+	keyLength := int(cmp.Or(c.Uint("attention.key_length_mla"), c.Uint("attention.key_length")))
+	valueLength := int(cmp.Or(c.Uint("attention.value_length_mla"), c.Uint("attention.value_length")))
 
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
