@@ -140,7 +140,7 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
-	if addSpecial && len(ids) > 0 {
+	if addSpecial {
 		ids = wpm.vocab.addSpecials(ids)
 	}
 
