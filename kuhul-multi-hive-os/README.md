@@ -79,64 +79,51 @@ K'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that le
 
 ## 🚀 Quick Start
 
-### Prerequisites
+> **📦 For detailed installation instructions, see [INSTALL.md](INSTALL.md)**
 
-1. **Install Ollama**
+### One-Command Setup (Linux/macOS)
 
-   **Linux/macOS:**
-   ```bash
-   curl -fsSL https://ollama.ai/install.sh | sh
-   ```
+```bash
+# 1. Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
 
-   **Windows:**
-   - Download the installer from [ollama.ai](https://ollama.ai)
-   - Run the .exe installer
-   - Ollama will start automatically
+# 2. Pull at least one model
+ollama pull qwen2.5:latest
 
-2. **Pull Required Models**
-   ```bash
-   ollama pull qwen2.5:latest
-   ollama pull qwen2.5-coder:latest
-   ollama pull llama3.2:latest
-   ollama pull mistral:latest
-   ```
+# 3. Clone and start
+git clone https://github.com/cannaseedus-bot/devmicro.git
+cd devmicro/kuhul-multi-hive-os
+pip install -r backend/requirements.txt
+./start_hive.sh
+```
 
-3. **Python 3.9+**
-   ```bash
-   python --version  # Should be 3.9 or higher
-   ```
+### Windows Quick Start
 
-### Installation
+```cmd
+REM 1. Download Ollama from https://ollama.ai and install
 
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/cannaseedus-bot/devmicro.git
-   cd devmicro/kuhul-multi-hive-os
-   ```
+REM 2. Pull at least one model
+ollama pull qwen2.5:latest
 
-2. **Install Python Dependencies**
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   ```
+REM 3. Clone and start
+git clone https://github.com/cannaseedus-bot/devmicro.git
+cd devmicro\kuhul-multi-hive-os
+pip install -r backend\requirements.txt
+start_hive.bat
+```
 
-3. **Start the K'uhul Hive**
-   ```bash
-   python kuhul_server.py
-   ```
+### What You Need
 
-   The server will start on `http://localhost:8000`
+- **Ollama**: [ollama.ai](https://ollama.ai) - Local LLM runtime
+- **Python 3.9+**: [python.org](https://python.org)
+- **At least 8GB RAM** (16GB recommended)
+- **~2-11GB disk space** for models (start with 1 model)
 
-4. **Open the Frontend**
-   ```bash
-   # In a new terminal
-   cd ../frontend
-   # Open index.html in your browser
-   # Or use a simple HTTP server:
-   python -m http.server 8080
-   ```
+### Access Points
 
-   Navigate to `http://localhost:8080`
+- **Frontend**: http://localhost:8080
+- **API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
 
 ---
 
