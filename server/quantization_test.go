@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	fsggml "github.com/ollama/ollama/fs/ggml"
@@ -268,8 +269,11 @@ func TestQuantizeModel(t *testing.T) {
 				t.Fatal(err.Error())
 			}
 			progressCalled := false
+			progMu := sync.Mutex{}
 			progress := func(n uint64) {
 				// fmt.Fprintf(os.Stderr, "progress: %f\n", p)
+				progMu.Lock()
+				defer progMu.Unlock()
 				progressCalled = true
 			}
 			tmp, err := os.CreateTemp(t.TempDir(), tt.name+".out")
