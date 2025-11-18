@@ -17,7 +17,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Try to pre-cache user data if server is ready (backend might have already warmed it up)
 fetchUser().then((userData) => {
   if (userData) {
     queryClient.setQueryData(["user"], userData);

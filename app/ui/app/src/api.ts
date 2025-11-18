@@ -58,8 +58,6 @@ export async function fetchUser(): Promise<User | null> {
     return userData;
   }
 
-  // Return null for 401/403 (not authenticated), but throw for other errors
-  // so React Query will retry while server is starting up
   if (response.status === 401 || response.status === 403) {
     return null;
   }
