@@ -9,7 +9,7 @@ Subject: [PATCH] vulkan: Handle argsort with a large number of rows (#16851)
  2 files changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index aaf4334b5..3604ceb04 100644
+index db92a7901..e959674d1 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -1084,6 +1084,7 @@ struct vk_op_soft_max_push_constants {
