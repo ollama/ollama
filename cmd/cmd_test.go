@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -761,8 +762,8 @@ func TestGetModelfileName(t *testing.T) {
 				t.Errorf("expected filename: '%s' actual filename: '%s'", expectedFilename, actualFilename)
 			}
 
-			if tt.expectedErr != os.ErrNotExist {
-				if actualErr != tt.expectedErr {
+			if !errors.Is(tt.expectedErr, os.ErrNotExist) {
+				if !errors.Is(actualErr, tt.expectedErr) {
 					t.Errorf("expected err: %v actual err: %v", tt.expectedErr, actualErr)
 				}
 			} else {

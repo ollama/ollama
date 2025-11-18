@@ -31,7 +31,7 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 	data, err := io.ReadAll(sr)
 	if err != nil {
 		slog.Warn("file read error", "tensor", q.from.Name, "file", q.Name(), "error", err)
-		return 0, fmt.Errorf("unable to read tensor %s from %s: %s", q.from.Name, q.Name(), err)
+		return 0, fmt.Errorf("unable to read tensor %s from %s: %w", q.from.Name, q.Name(), err)
 	}
 	var f32s []float32
 	newType := fsggml.TensorType(q.to.Kind)

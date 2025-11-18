@@ -1083,7 +1083,7 @@ func TestFilesForModel(t *testing.T) {
 				if err == nil {
 					t.Error("Expected error, but got none")
 				}
-				if tt.expectErrType != nil && err != tt.expectErrType {
+				if tt.expectErrType != nil && !errors.Is(err, tt.expectErrType) {
 					t.Errorf("Expected error type %v, got %v", tt.expectErrType, err)
 				}
 				return

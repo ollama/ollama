@@ -386,7 +386,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		}
 		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			// Path is likely outside the root
-			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+			return nil, fmt.Errorf("%w: %w: %s", errFilePath, err, fp)
 		}
 
 		blobPath, err := GetBlobsPath(digest)
@@ -678,10 +678,10 @@ func removeLayer(layers []Layer, mediatype string) []Layer {
 func setTemplate(layers []Layer, t string) ([]Layer, error) {
 	layers = removeLayer(layers, "application/vnd.ollama.image.template")
 	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
+		return nil, fmt.Errorf("%w: %w", errBadTemplate, err)
 	}
 	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
+		return nil, fmt.Errorf("%w: %w", errBadTemplate, err)
 	}
 
 	blob := strings.NewReader(t)

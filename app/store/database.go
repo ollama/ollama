@@ -483,7 +483,8 @@ func (db *database) cleanupOrphanedData() error {
 }
 
 func duplicateColumnError(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
+	var sqlite3Err sqlite3.Error
+	if errors.As(err, &sqlite3Err) {
 		return sqlite3Err.Code == sqlite3.ErrError &&
 			strings.Contains(sqlite3Err.Error(), "duplicate column name")
 	}
@@ -491,7 +492,8 @@ func duplicateColumnError(err error) bool {
 }
 
 func columnNotExists(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
+	var sqlite3Err sqlite3.Error
+	if errors.As(err, &sqlite3Err) {
 		return sqlite3Err.Code == sqlite3.ErrError &&
 			strings.Contains(sqlite3Err.Error(), "no such column")
 	}
@@ -587,7 +589,7 @@ func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Cha
 		&browserState,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("chat not found")
 		}
 		return nil, fmt.Errorf("query chat: %w", err)

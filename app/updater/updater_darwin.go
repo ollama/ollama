@@ -338,7 +338,7 @@ func verifyDownload() error {
 	}
 
 	if err := verifyExtractedBundle(filepath.Join(dir, "Ollama.app")); err != nil {
-		return fmt.Errorf("signature verification failed: %s", err)
+		return fmt.Errorf("signature verification failed: %w", err)
 	}
 	return nil
 }

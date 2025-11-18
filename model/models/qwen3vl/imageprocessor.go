@@ -111,7 +111,7 @@ func (p *ImageProcessor) ProcessImage(ctx ml.Context, img image.Image) (ml.Tenso
 
 	patches, err := p.createPatches(normalizedPixels, resizedHeight, resizedWidth, grid)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create patches: %v", err)
+		return nil, nil, fmt.Errorf("failed to create patches: %w", err)
 	}
 
 	patchDim := p.numChannels * p.temporalPatchSize *

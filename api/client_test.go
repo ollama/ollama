@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +40,7 @@ func TestClientFromEnvironment(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", v.value)
 
 			client, err := ClientFromEnvironment()
-			if err != v.err {
+			if !errors.Is(err, v.err) {
 				t.Fatalf("expected %s, got %s", v.err, err)
 			}
 

@@ -1239,7 +1239,7 @@ func (s *Server) loadModel() {
 			s.progress = progress
 		})
 	if err != nil {
-		panic(fmt.Errorf("failed to load model: %v", err))
+		panic(fmt.Errorf("failed to load model: %w", err))
 	}
 
 	s.status = llm.ServerStatusReady

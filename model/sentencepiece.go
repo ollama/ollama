@@ -231,7 +231,7 @@ func (spm SentencePiece) Decode(ids []int32) (string, error) {
 		if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
 			byteVal, err := strconv.ParseUint(data[1:5], 0, 8)
 			if err != nil {
-				return "", fmt.Errorf("failed to parse hex byte: %v", err)
+				return "", fmt.Errorf("failed to parse hex byte: %w", err)
 			}
 
 			if err := sb.WriteByte(byte(byteVal)); err != nil {
