@@ -12,14 +12,25 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/config"
 )
 
-// Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
+// Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable
+// or the server_url setting in ~/.ollama/config.json.
 // Default is scheme "http" and host "127.0.0.1:11434"
 func Host() *url.URL {
 	defaultPort := "11434"
 
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
+	if s == "" {
+		if cfg, err := config.Load(); err == nil && cfg.ServerURL != "" {
+			s = cfg.ServerURL
+		}
+	}
+	if s == "" {
+		s = "http://localhost:11434"
+	}
 	scheme, hostport, ok := strings.Cut(s, "://")
 	switch {
 	case !ok:
