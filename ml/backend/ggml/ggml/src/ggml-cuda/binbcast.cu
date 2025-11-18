@@ -272,7 +272,7 @@ static void launch_bin_bcast_pack(const ggml_tensor * src0, const ggml_tensor * 
         const uint3 ne12 = init_fastdiv_values((uint32_t) cne1[2]);
         const uint3 ne13 = init_fastdiv_values((uint32_t) cne1[3]);
 
-        if (block_nums.z > 65535) {
+        if (block_nums.z > 65535 || block_nums.y > 65535) {
             int         block_num  = (ne0 * ne1 * ne2 * ne3 + block_size - 1) / block_size;
             const uint3 prod_012    = init_fastdiv_values((uint32_t) (ne0 * ne1 * ne2));
             const uint3 prod_01     = init_fastdiv_values((uint32_t) (ne0 * ne1));

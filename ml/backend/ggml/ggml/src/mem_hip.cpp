@@ -1,4 +1,5 @@
 #include "ggml.h"
+#include "ggml-impl.h"
 
 #ifdef _WIN32
 // AMD Device Library eXtra (ADLX)
@@ -16,7 +17,6 @@
 // Unused function parameters are commented out to avoid unnecessary type
 // definitions.
 
-#include "ggml-impl.h"
 #include <filesystem>
 #include <mutex>
 
@@ -331,7 +331,7 @@ void ggml_hip_mgmt_release() {
     if (gpus != NULL) gpus->pVtbl->Release(gpus); \
     if (gpu != NULL) gpu->pVtbl->Release(gpu)
 
-int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
     std::lock_guard<std::mutex> lock(ggml_adlx_lock);
     if (adlx.handle == NULL) {
         GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
@@ -343,9 +343,13 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, 
     IADLXGPU* gpu = NULL;
     IADLXGPUMetrics *gpuMetrics = NULL;
     ADLX_RESULT status;
-    // The "UniqueID" exposed in ADLX is the PCI Bus and Device IDs 
-    adlx_int target = (pci_bus_id << 8) | (pci_device_id & 0xff);
 
+    uint32_t pci_domain, pci_bus, pci_device, pci_function;
+    if (sscanf(id, "%04x:%02x:%02x.%x", &pci_domain, &pci_bus, &pci_device, &pci_function) != 4) {
+        // TODO - parse other formats?
+        GGML_LOG_DEBUG("%s device ID was not a PCI ID %s\n", __func__, id);
+        return ADLX_NOT_FOUND;
+    }
     status = adlx.sys->pVtbl->GetPerformanceMonitoringServices(adlx.sys, &perfMonitoringServices);
     if (ADLX_FAILED(status)) {
         GGML_LOG_INFO("%s GetPerformanceMonitoringServices failed %d\n", __func__, status);
@@ -368,16 +372,15 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, 
             GGML_LOG_INFO("%s %d] At_GPUList failed %d\n", __func__, crt, status);
             continue;
         }
-        adlx_int id;
-        status = gpu->pVtbl->UniqueId(gpu, &id);
+        adlx_int uniqueID;
+        status = gpu->pVtbl->UniqueId(gpu, &uniqueID);
         if (ADLX_FAILED(status)) {
             GGML_LOG_INFO("%s %d] UniqueId lookup failed %d\n", __func__, crt, status);
             gpu->pVtbl->Release(gpu);
             gpu = NULL;
             continue;
         }
-        if (id != target) {
-            GGML_LOG_DEBUG("%s %d] GPU UniqueId: %x does not match target %02x %02x\n", __func__, crt, id, pci_bus_id, pci_device_id);
+        if ((((uniqueID >> 8) & 0xff) != pci_bus) || ((uniqueID & 0xff) != pci_device)) {
             gpu->pVtbl->Release(gpu);
             gpu = NULL;
             continue;
@@ -433,15 +436,92 @@ int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, 
 
 #else // #ifdef _WIN32
 
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <filesystem>
+
+#include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <glob.h>
+namespace fs = std::filesystem;
+
 extern "C" {
 
-// TODO Linux implementation of accurate VRAM reporting
 int ggml_hip_mgmt_init() {
-    return -1;
+    return 0;
 }
 void ggml_hip_mgmt_release() {}
-int ggml_hip_get_device_memory(int pci_bus_id, int pci_device_id, size_t *free, size_t *total) {
-    return -1;
+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+    GGML_LOG_INFO("%s searching for device %s\n", __func__, id);
+    const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
+    const std::string drmTotalMemoryFile = "mem_info_vram_total";
+    const std::string drmUsedMemoryFile = "mem_info_vram_used";
+    const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
+
+    glob_t glob_result;
+    glob(drmDeviceGlob.c_str(), GLOB_NOSORT, NULL, &glob_result);
+
+    for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
+        const char* device_file = glob_result.gl_pathv[i];
+        std::ifstream file(device_file);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open sysfs node" << std::endl;
+            globfree(&glob_result);
+            return 1;
+        }
+
+        std::string line;
+        while (std::getline(file, line)) {
+            // Check for PCI_SLOT_NAME label
+            if (line.find(drmUeventPCISlotLabel) == 0) {
+                std::istringstream iss(line.substr(drmUeventPCISlotLabel.size()));
+                std::string pciSlot;
+                iss >> pciSlot;
+                if (pciSlot == std::string(id)) {
+                    std::string dir = fs::path(device_file).parent_path().string();
+
+                    std::string totalFile = dir + "/" + drmTotalMemoryFile;
+                    std::ifstream totalFileStream(totalFile.c_str());
+                    if (!totalFileStream.is_open()) {
+                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
+                        file.close();
+                        globfree(&glob_result);
+                        return 1;
+                    }
+
+                    uint64_t memory;
+                    totalFileStream >> memory;
+                    *total = memory;
+
+                    std::string usedFile = dir + "/" + drmUsedMemoryFile;
+                    std::ifstream usedFileStream(usedFile.c_str());
+                    if (!usedFileStream.is_open()) {
+                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
+                        file.close();
+                        globfree(&glob_result);
+                        return 1;
+                    }
+
+                    uint64_t memoryUsed;
+                    usedFileStream >> memoryUsed;
+                    *free = memory - memoryUsed;
+
+                    file.close();
+                    globfree(&glob_result);
+                    return 0;
+                }
+            }
+        }
+
+        file.close();
+    }
+    GGML_LOG_DEBUG("%s unable to find matching device\n", __func__);
+    globfree(&glob_result);
+    return 1;
 }
 
 } // extern "C"

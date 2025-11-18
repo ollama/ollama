@@ -260,9 +260,12 @@ func filesForModel(path string) ([]string, error) {
 
 	var files []string
 	// some safetensors files do not properly match "application/octet-stream", so skip checking their contentType
-	if st, _ := glob(filepath.Join(path, "*.safetensors"), ""); len(st) > 0 {
+	if st, _ := glob(filepath.Join(path, "model*.safetensors"), ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
+		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
+		// covers consolidated.safetensors
 		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
