@@ -20,7 +20,7 @@ Subject: [PATCH] vulkan: Fix crash when FP16 mul_mat accumulation is not
  1 file changed, 13 insertions(+), 7 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 3604ceb04..80185d9f0 100644
+index e959674d1..903050b0b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -146,8 +146,13 @@ static void ggml_vk_destroy_pipeline(vk::Device& device, vk_pipeline& pipeline);
