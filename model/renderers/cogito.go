@@ -23,7 +23,7 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	var conversationMessages []api.Message
 
 	if len(messages) > 0 && messages[0].Role == "system" {
-		systemPrompt = messages[0].Content // set ns.system_prompt = raw if raw is string else raw[0].text
+		systemPrompt = messages[0].Content
 		conversationMessages = messages[1:]
 	} else {
 		conversationMessages = messages
@@ -45,9 +45,6 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	if len(tools) > 0 {
 		if finalSystemPrompt != "" {
 			finalSystemPrompt += "\nYou have the following functions available:\n"
-			// {%- set ns.system_prompt = ns.system_prompt ~ '
-			// You have the following functions available:
-			// ' -%}
 		} else {
 			finalSystemPrompt = "You have the following functions available:\n"
 		}
@@ -67,7 +64,7 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		switch message.Role {
 		case "user":
 			isLastUser = true
-			sb.WriteString("<｜User｜>" + message.Content + "<｜Assistant｜>") // TODO: this is more complicated in the template
+			sb.WriteString("<｜User｜>" + message.Content + "<｜Assistant｜>")
 
 		case "assistant":
 			isLastUser = false
