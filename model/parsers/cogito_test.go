@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 )
 
@@ -140,8 +141,8 @@ func TestCogitoParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Name: "process_data",
 						Arguments: api.ToolCallFunctionArguments{
-							"items":  []interface{}{"item1", "item2"},
-							"config": map[string]interface{}{"enabled": true, "threshold": 0.95},
+							"items":  []any{"item1", "item2"},
+							"config": map[string]any{"enabled": true, "threshold": 0.95},
 							"count":  42.0,
 						},
 					},
@@ -441,8 +442,8 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 				Function: api.ToolCallFunction{
 					Name: "process_data",
 					Arguments: api.ToolCallFunctionArguments{
-						"items":  []interface{}{"item1", "item2"},
-						"config": map[string]interface{}{"enabled": true},
+						"items":  []any{"item1", "item2"},
+						"config": map[string]any{"enabled": true},
 						"count":  42.0,
 					},
 				},
@@ -541,8 +542,8 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 				Function: api.ToolCallFunction{
 					Name: "complex_tool",
 					Arguments: api.ToolCallFunctionArguments{
-						"nested": map[string]interface{}{
-							"deep": map[string]interface{}{
+						"nested": map[string]any{
+							"deep": map[string]any{
 								"value": 123.0,
 							},
 						},
