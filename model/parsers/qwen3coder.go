@@ -43,7 +43,7 @@ func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
 }
 
-func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	return tools // Qwen doesn't modify tools
 }

@@ -46,10 +46,14 @@ func (p *CogitoParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool) {
-	// Note: for cogito, if there is tools, then we don't want to be thinking
+func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
-	if !p.HasThinkingSupport() {
+
+	// Check both model capability AND request preference
+	thinkingEnabled := p.HasThinkingSupport() && thinkValue != nil && thinkValue.Bool()
+	// thinkingEnabled should be set to false for tools
+
+	if !thinkingEnabled {
 		p.state = CogitoCollectingContent
 		return
 	}
@@ -59,7 +63,8 @@ func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Too
 		return
 	}
 
-	if len(tools) > 0 { // NOTE(gguo): so this should work assuming that the server/runner has set thinking to false
+	// Note: for cogito, if there are tools, then we don't want to be thinking
+	if len(tools) > 0 {
 		p.state = CogitoCollectingContent
 		return
 	}
@@ -67,12 +72,11 @@ func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Too
 	p.state = CogitoCollectingThinking
 }
 
-func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
-	p.setInitialState(lastMessage, tools)
+func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	p.setInitialState(lastMessage, tools, thinkValue)
 	return tools
 }
 
-// Event types for cleaner parsing logic
 type cogitoEvent interface {
 	isCogitoEvent()
 }

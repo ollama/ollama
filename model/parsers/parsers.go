@@ -6,9 +6,9 @@ import (
 )
 
 type Parser interface {
-	// Init initializes the parser with tools and optional last message for chat prefill
+	// Init initializes the parser with tools, optional last message for chat prefill, and think value
 	// Returns processed tools if the parser needs to modify them (e.g., harmony renames them)
-	Init(tools []api.Tool, lastMessage *api.Message) []api.Tool
+	Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool
 	// Add processes streamed content and returns parsed content, thinking, and tool calls
 	// The done flag indicates if this is the last chunk (used for draining accumulators)
 	Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error)
@@ -61,7 +61,7 @@ func ParserForName(name string) Parser {
 
 type PassthroughParser struct{}
 
-func (p *PassthroughParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *PassthroughParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	return tools // passthrough doesn't modify tools
 }
 
