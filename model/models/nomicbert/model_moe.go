@@ -24,20 +24,7 @@ type MoEModel struct {
 
 	Layers []MoEEncoderLayer `gguf:"blk"`
 
-	MoEOptions
-}
-
-type MoEOptions struct {
-	hiddenSize      int
-	numHeads        int
-	headDim         int
-	eps             float32
-	poolingType     pooling.Type
-	normalize       bool
-	ropeFreqBase    float32
-	numExperts      int
-	numExpertsUsed  int
-	moeEveryNLayers int
+	Options
 }
 
 type MoEEncoderLayer struct {
@@ -57,7 +44,7 @@ type MoEAttention struct {
 
 // MoEFeedForward interface for both dense and sparse (MoE) implementations
 type MoEFeedForward interface {
-	Forward(ml.Context, ml.Tensor, *MoEOptions) ml.Tensor
+	Forward(ml.Context, ml.Tensor, *Options) ml.Tensor
 }
 
 type denseMLP struct {
@@ -65,7 +52,7 @@ type denseMLP struct {
 	Down *nn.Linear `gguf:"ffn_down"`
 }
 
-func (mlp *denseMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *MoEOptions) ml.Tensor {
+func (mlp *denseMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *Options) ml.Tensor {
 	return mlp.Down.Forward(ctx, mlp.Up.Forward(ctx, hiddenStates).GELU(ctx))
 }
 
@@ -75,7 +62,7 @@ type sparseMoE struct {
 	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
-func (moe *sparseMoE) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *MoEOptions) ml.Tensor {
+func (moe *sparseMoE) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
 	hiddenDim, sequenceLength, batchSize := hiddenStates.Dim(0), hiddenStates.Dim(1), hiddenStates.Dim(2)
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, sequenceLength*batchSize)
 
@@ -117,7 +104,7 @@ func (m *MoEModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error)
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	for _, layer := range m.Layers {
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, &m.MoEOptions)
+		hiddenStates = layer.Forward(ctx, hiddenStates, positions, &m.Options)
 	}
 
 	hiddenStates = m.poolingType.Forward(ctx, hiddenStates)
@@ -129,7 +116,7 @@ func (m *MoEModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error)
 	return hiddenStates, nil
 }
 
-func (e *MoEEncoderLayer) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml.Tensor, opts *MoEOptions) ml.Tensor {
+func (e *MoEEncoderLayer) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml.Tensor, opts *Options) ml.Tensor {
 	residual := hiddenStates
 	hiddenStates = e.MoEAttention.Forward(ctx, hiddenStates, positions, opts)
 	hiddenStates = hiddenStates.Add(ctx, residual)
@@ -143,7 +130,7 @@ func (e *MoEEncoderLayer) Forward(ctx ml.Context, hiddenStates ml.Tensor, positi
 	return hiddenStates
 }
 
-func (a *MoEAttention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml.Tensor, opts *MoEOptions) ml.Tensor {
+func (a *MoEAttention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml.Tensor, opts *Options) ml.Tensor {
 	batchSize := hiddenStates.Dim(1)
 
 	qkv := a.QKV.Forward(ctx, hiddenStates)
@@ -187,6 +174,7 @@ func NewMoE(c fs.Config) (model.Model, error) {
 				)),
 			},
 		},
+		false,
 	)
 
 	// Create layers with appropriate FeedForward type based on MoE configuration
@@ -210,7 +198,7 @@ func NewMoE(c fs.Config) (model.Model, error) {
 	return &MoEModel{
 		TextProcessor: processor,
 		Layers:        layers,
-		MoEOptions: MoEOptions{
+		Options: Options{
 			hiddenSize:      hiddenSize,
 			numHeads:        numHeads,
 			headDim:         headDim,
