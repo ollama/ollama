@@ -122,6 +122,13 @@ export default function Settings() {
   const handleChange = useCallback(
     (field: keyof SettingsType, value: boolean | string | number) => {
       if (settings) {
+        // Validate server URL
+        if (field === "ServerURL" && typeof value === "string") {
+          if (!validateServerURL(value)) {
+            return; // Don't update if invalid
+          }
+        }
+        
         const updatedSettings = new SettingsType({
           ...settings,
           [field]: value,
@@ -204,6 +211,53 @@ export default function Settings() {
 
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
+  // Validation functions
+  const validateServerURL = (url: string): boolean => {
+    if (!url) return true; // Empty is allowed
+    
+    try {
+      const parsed = new URL(url);
+      // Only allow http and https protocols
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return false;
+      }
+      // Prevent localhost/internal network access in production
+      const hostname = parsed.hostname.toLowerCase();
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || 
+          hostname.startsWith('192.168.') || hostname.startsWith('10.') ||
+          hostname.startsWith('172.')) {
+        // Allow in development, but log warning
+        console.warn('Internal network URL detected:', url);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const isValidAvatarURL = (url: string): boolean => {
+    if (!url) return false;
+    
+    try {
+      const parsed = new URL(url);
+      return ['http:', 'https:'].includes(parsed.protocol) && 
+             parsed.hostname.includes('ollama.com');
+    } catch {
+      return false;
+    }
+  };
+
+  const openSafeURL = (url: string) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === 'ollama.com') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      console.error('Invalid URL:', url);
+    }
+  };
+
   return (
     <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
       <header
@@ -265,12 +319,7 @@ export default function Settings() {
                             type="button"
                             color="dark"
                             className="px-3 py-2 text-sm font-medium bg-black/90 backdrop-blur-sm text-white rounded-lg border border-white/10 shadow-2xl transition-all duration-300 ease-out relative overflow-hidden group"
-                            onClick={() =>
-                              window.open(
-                                "https://ollama.com/upgrade",
-                                "_blank",
-                              )
-                            }
+                            onClick={() => openSafeURL("https://ollama.com/upgrade")}
                           >
                             <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-green-500/20 opacity-60 group-hover:opacity-80 transition-opacity duration-300"></div>
                             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 ease-out"></div>
@@ -283,9 +332,7 @@ export default function Settings() {
                           type="button"
                           color="white"
                           className="px-3 py-2 text-sm"
-                          onClick={() =>
-                            window.open("https://ollama.com/settings", "_blank")
-                          }
+                          onClick={() => openSafeURL("https://ollama.com/settings")}
                         >
                           Manage
                         </Button>
@@ -299,7 +346,7 @@ export default function Settings() {
                         </Button>
                       </div>
                     </div>
-                    {user?.avatarURL && (
+                    {user?.avatarURL && isValidAvatarURL(user.avatarURL) && (
                       <img
                         src={user.avatarURL}
                         alt={user?.name}
@@ -344,6 +391,26 @@ export default function Settings() {
           {/* Local Configuration */}
           <div className="relative overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="space-y-4 p-4">
+              {/* Server URL */}
+              <Field>
+                <div className="flex items-start space-x-3">
+                  <WifiIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                  <div className="w-full">
+                    <Label>Server URL</Label>
+                    <Description>
+                      URL of the Ollama server (e.g., http://localhost:11434)
+                    </Description>
+                    <div className="mt-2">
+                      <Input
+                        value={settings.ServerURL || ""}
+                        onChange={(e) => handleChange("ServerURL", e.target.value)}
+                        placeholder="http://localhost:11434"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </Field>
+
               {/* Expose Ollama */}
               <Field>
                 <div className="flex items-start justify-between gap-4">

@@ -6,6 +6,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/mail"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -27,6 +30,11 @@ type database struct {
 }
 
 func newDatabase(dbPath string) (*database, error) {
+	// Validate and sanitize database path
+	if err := validateDBPath(dbPath); err != nil {
+		return nil, fmt.Errorf("invalid database path: %w", err)
+	}
+	
 	// Open database connection
 	conn, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
@@ -84,6 +92,7 @@ func (db *database) init() error {
 		sidebar_open BOOLEAN NOT NULL DEFAULT 0,
 		think_enabled BOOLEAN NOT NULL DEFAULT 0,
 		think_level TEXT NOT NULL DEFAULT '',
+		server_url TEXT NOT NULL DEFAULT '',
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
@@ -244,6 +253,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v11 to v12: %w", err)
 			}
 			version = 12
+		case 12:
+			// add server_url column to settings table
+			if err := db.migrateV12ToV13(); err != nil {
+				return fmt.Errorf("migrate v12 to v13: %w", err)
+			}
+			version = 13
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -445,6 +460,21 @@ func (db *database) migrateV11ToV12() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 12`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV12ToV13 adds the server_url column to the settings table
+func (db *database) migrateV12ToV13() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN server_url TEXT NOT NULL DEFAULT ''`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add server_url column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 13`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
@@ -1108,9 +1138,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, airplane_mode, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level 
+		SELECT server_url, expose, survey, browser, models, agent, tools, working_dir, context_length, airplane_mode, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level 
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.AirplaneMode, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel)
+	`).Scan(&s.ServerURL, &s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.AirplaneMode, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1121,8 +1151,8 @@ func (db *database) getSettings() (Settings, error) {
 func (db *database) setSettings(s Settings) error {
 	_, err := db.conn.Exec(`
 		UPDATE settings 
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, airplane_mode = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.AirplaneMode, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel)
+		SET server_url = ?, expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, airplane_mode = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?
+	`, s.ServerURL, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.AirplaneMode, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}
@@ -1198,6 +1228,11 @@ func (db *database) getUser() (*User, error) {
 }
 
 func (db *database) setUser(user User) error {
+	// Validate user data
+	if err := validateUser(user); err != nil {
+		return fmt.Errorf("invalid user data: %w", err)
+	}
+	
 	if err := db.clearUser(); err != nil {
 		return fmt.Errorf("before set: %w", err)
 	}
@@ -1218,5 +1253,53 @@ func (db *database) clearUser() error {
 	if err != nil {
 		return fmt.Errorf("clear user: %w", err)
 	}
+	return nil
+}
+
+// validateDBPath validates database file path
+func validateDBPath(dbPath string) error {
+	if dbPath == "" {
+		return fmt.Errorf("database path cannot be empty")
+	}
+	
+	// Clean and validate path
+	cleanPath := filepath.Clean(dbPath)
+	if cleanPath != dbPath {
+		return fmt.Errorf("invalid path characters")
+	}
+	
+	// Check for path traversal
+	if strings.Contains(dbPath, "..") {
+		return fmt.Errorf("path traversal not allowed")
+	}
+	
+	return nil
+}
+
+// validateUser validates user data
+func validateUser(user User) error {
+	if len(user.Name) > 255 {
+		return fmt.Errorf("name too long")
+	}
+	
+	if user.Email != "" {
+		if _, err := mail.ParseAddress(user.Email); err != nil {
+			return fmt.Errorf("invalid email format")
+		}
+		if len(user.Email) > 255 {
+			return fmt.Errorf("email too long")
+		}
+	}
+	
+	if len(user.Plan) > 50 {
+		return fmt.Errorf("plan name too long")
+	}
+	
+	// Validate plan contains only allowed characters
+	validPlan := regexp.MustCompile(`^[a-zA-Z0-9_-]*$`)
+	if !validPlan.MatchString(user.Plan) {
+		return fmt.Errorf("invalid plan format")
+	}
+	
 	return nil
 }
