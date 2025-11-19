@@ -206,6 +206,9 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// Optional path to per-model override file (INI).
+	// If unset, defaults to ~/.ollama.ini
+	OverrideConfigPath = String("OLLAMA_OVERRIDE_CONFIG")
 )
 
 func String(s string) func() string {
@@ -293,6 +296,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_OVERRIDE_CONFIG":   {"OLLAMA_OVERRIDE_CONFIG", OverrideConfigPath(), "Path to model override config (default: ~/.ollama.ini)"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},

@@ -17,6 +17,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
@@ -48,8 +49,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int, *envconfig.Override) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int, _ *envconfig.Override) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
