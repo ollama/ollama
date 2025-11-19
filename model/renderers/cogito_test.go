@@ -257,7 +257,7 @@ You have the following functions available:
 ` + "```\n" + `<｜User｜>What's the weather like?<｜Assistant｜><think>
 `,
 		},
-		// Additional test cases based on Python test suite
+		// test cases based on cogito
 		{
 			name: "single_turn_thinking_false",
 			messages: []api.Message{
@@ -360,6 +360,7 @@ You are a pirate chatbot who always responds in pirate speak!
 <｜User｜>Give me a short introduction to LLMs.<｜Assistant｜>Arrr! I'm a pirate<｜end▁of▁sentence｜><｜User｜>Tell me more about LLMs.<｜Assistant｜><think>
 `,
 		},
+		// tools
 		{
 			name: "tool_calls_only_no_content",
 			messages: []api.Message{
