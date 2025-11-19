@@ -397,8 +397,8 @@ func checkUserLoggedIn(uiServerPort int) bool {
 // handleConnectURLScheme fetches the connect URL and opens it in the browser
 func handleConnectURLScheme() {
 	if checkUserLoggedIn(uiServerPort) {
-		slog.Info("user is already logged in, opening settings instead")
-		sendUIRequestMessage("/")
+		slog.Info("user is already logged in, opening app instead")
+		sendUIRequestMessage("")
 		return
 	}
 
@@ -466,6 +466,6 @@ func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage("/")
+		sendUIRequestMessage("")
 	}
 }
