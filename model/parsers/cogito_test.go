@@ -294,3 +294,183 @@ func TestCogitoParser_Init(t *testing.T) {
 		t.Errorf("expected %d tools returned, got %d", len(tools), len(returnedTools))
 	}
 }
+
+func TestCogitoParser_parseToolCallContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		expected    api.ToolCall
+		expectError bool
+	}{
+		{
+			name: "valid_tool_call_standard_format",
+			content: `function<｜tool▁sep｜>get_weather
+` + "```json\n" + `{"location":"Paris"}
+` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: api.ToolCallFunctionArguments{
+						"location": "Paris",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:    "valid_tool_call_without_newlines",
+			content: `function<｜tool▁sep｜>get_weather` + "```json" + `{"location":"Paris"}` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: api.ToolCallFunctionArguments{
+						"location": "Paris",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_tool_call_complex_args",
+			content: `function<｜tool▁sep｜>process_data
+` + "```json\n" + `{"items":["item1","item2"],"config":{"enabled":true},"count":42}
+` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "process_data",
+					Arguments: api.ToolCallFunctionArguments{
+						"items":  []interface{}{"item1", "item2"},
+						"config": map[string]interface{}{"enabled": true},
+						"count":  42.0,
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_tool_call_empty_args",
+			content: `function<｜tool▁sep｜>no_args_tool
+` + "```json\n" + `{}
+` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "no_args_tool",
+					Arguments: api.ToolCallFunctionArguments{},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:        "missing_separator",
+			content:     `functionget_weather` + "```json\n" + `{"location":"Paris"}` + "\n```",
+			expected:    api.ToolCall{},
+			expectError: true,
+		},
+		{
+			name:        "invalid_function_type",
+			content:     `not_function<｜tool▁sep｜>get_weather` + "```json\n" + `{"location":"Paris"}` + "\n```",
+			expected:    api.ToolCall{},
+			expectError: true,
+		},
+		{
+			name:        "missing_json_block_start",
+			content:     `function<｜tool▁sep｜>get_weather{"location":"Paris"}` + "```",
+			expected:    api.ToolCall{},
+			expectError: true,
+		},
+		{
+			name:        "missing_json_block_end",
+			content:     `function<｜tool▁sep｜>get_weather` + "```json\n" + `{"location":"Paris"}`,
+			expected:    api.ToolCall{},
+			expectError: true,
+		},
+		{
+			name:        "invalid_json",
+			content:     `function<｜tool▁sep｜>get_weather` + "```json\n" + `{location:Paris}` + "\n```",
+			expected:    api.ToolCall{},
+			expectError: true,
+		},
+		{
+			name:        "empty_function_type",
+			content:     `<｜tool▁sep｜>get_weather` + "```json\n" + `{"location":"Paris"}` + "\n```",
+			expected:    api.ToolCall{},
+			expectError: true,
+		},
+		{
+			name: "tool_with_spaces_in_name",
+			content: `function<｜tool▁sep｜>  get_weather  
+` + "```json\n" + `{"location":"Paris"}
+` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: api.ToolCallFunctionArguments{
+						"location": "Paris",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_with_multiline_json",
+			content: `function<｜tool▁sep｜>get_weather
+` + "```json\n" + `{
+  "location": "Paris",
+  "units": "metric"
+}
+` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: api.ToolCallFunctionArguments{
+						"location": "Paris",
+						"units":    "metric",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_with_nested_objects",
+			content: `function<｜tool▁sep｜>complex_tool
+` + "```json\n" + `{"nested":{"deep":{"value":123}}}
+` + "```",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "complex_tool",
+					Arguments: api.ToolCallFunctionArguments{
+						"nested": map[string]interface{}{
+							"deep": map[string]interface{}{
+								"value": 123.0,
+							},
+						},
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &CogitoParser{}
+
+			result, err := parser.parseToolCallContent(tt.content)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if diff := cmp.Diff(tt.expected, result); diff != "" {
+				t.Errorf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
