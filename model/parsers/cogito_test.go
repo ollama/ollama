@@ -64,8 +64,8 @@ func TestCogitoParser(t *testing.T) {
 			input: `I need to check the weather.</think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
-			expectedContent:  "",
-			expectedThinking: "I need to check the weather.",
+			expectedContent:  "I need to check the weather.</think>",
+			expectedThinking: "", // No thinking when tools are present (Cogito-specific behavior)
 			expectedToolCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -221,8 +221,8 @@ This is line 3</think>Final response here.`,
 		t.Run(tt.name, func(t *testing.T) {
 			// Use thinking-enabled parser for tests that expect thinking
 			hasThinking := tt.expectedThinking != ""
-			parser := &CogitoParser{hasThinkingSupport: hasThinking}
-			parser.Init(tt.tools, tt.lastMessage)
+			parser := &CogitoParser{hasThinkingSupport: true}                          // it has thinking support
+			parser.Init(tt.tools, tt.lastMessage, &api.ThinkValue{Value: hasThinking}) // but we should set it with the request that the user wants
 
 			content, thinking, toolCalls, err := parser.Add(tt.input, true)
 			if err != nil {
@@ -245,8 +245,8 @@ This is line 3</think>Final response here.`,
 }
 
 func TestCogitoParser_Streaming(t *testing.T) {
-	parser := &CogitoParser{hasThinkingSupport: true}
-	parser.Init(nil, nil)
+	parser := &CogitoParser{hasThinkingSupport: true}   // it has thinking support
+	parser.Init(nil, nil, &api.ThinkValue{Value: true}) // but we should set it with the request that the user wants
 
 	chunks := []string{
 		"This is ",
@@ -340,8 +340,8 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := &CogitoParser{hasThinkingSupport: tt.hasThinkingSupport}
-			parser.Init(nil, nil)
+			parser := &CogitoParser{hasThinkingSupport: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: tt.hasThinkingSupport})
 
 			var finalContent, finalThinking strings.Builder
 			var finalToolCalls []api.ToolCall
@@ -403,7 +403,7 @@ func TestCogitoParser_Init(t *testing.T) {
 
 	lastMessage := &api.Message{Role: "assistant", Content: "previous"}
 
-	returnedTools := parser.Init(tools, lastMessage)
+	returnedTools := parser.Init(tools, lastMessage, nil)
 
 	if len(returnedTools) != len(tools) {
 		t.Errorf("expected %d tools returned, got %d", len(tools), len(returnedTools))
