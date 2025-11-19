@@ -229,8 +229,13 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
         fprintf(stderr, "%s\n", message);
         ggml_print_backtrace();
     }
-
+#if defined(_WIN32)
+    fflush(stderr);
+    fflush(stdout);
+    exit(1);
+#else
     abort();
+#endif
 }
 
 // ggml_print_backtrace is registered with std::set_terminate by ggml.cpp
