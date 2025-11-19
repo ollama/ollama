@@ -1,12 +1,10 @@
 name: Framework ROCm 7 Build
 
-# We use workflow_dispatch to allow you to manually trigger this
-# and customize the AMDGPU target if you switch laptops/cards.
 on:
   workflow_dispatch:
     inputs:
       gpu_targets:
-        description: 'AMDGPU Targets (semicolon separated)'
+        description: 'AMDGPU Targets'
         required: true
         default: 'gfx1151'
       rocm_version:
@@ -19,13 +17,10 @@ on:
         default: true
 
 env:
-  # We use the GitHub Container Registry by default for forks
   REGISTRY: ghcr.io
-  # process.env.GITHUB_REPOSITORY is "your-username/ollama"
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # 1. Calculate Version Flags (Kept from original to ensure 'ollama -v' works)
   setup-environment:
     runs-on: ubuntu-latest
     outputs:
@@ -33,39 +28,34 @@ jobs:
       VERSION: ${{ steps.goflags.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
       - name: Set environment
         id: goflags
         run: |
-          # If triggered manually, we might not be on a tag. Default to sha if needed.
           VERSION=${GITHUB_REF_NAME#v}
           if [ "${{ github.ref_type }}" != "tag" ]; then
             VERSION="${VERSION}-$(git rev-parse --short HEAD)"
           fi
-          
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
           echo VERSION="${VERSION}" >>$GITHUB_OUTPUT
 
-  # 2. The Heavy Docker Build
   build-framework-image:
     needs: setup-environment
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # Needed to push to ghcr.io
+      packages: write
 
     steps:
-      # ROCm builds are huge. We MUST free space on the runner or the build will crash.
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
+      # 1. THE NUCLEAR OPTION: Manually delete massive toolchains
+      - name: Free Disk Space (Nuclear)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
 
       - uses: actions/checkout@v4
 
@@ -80,15 +70,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Tag as :rocm7-gfx1151
             type=raw,value=rocm7-${{ inputs.gpu_targets }}
-            # Tag as :framework-latest
             type=raw,value=framework-latest
 
       - name: Build and push Docker image
@@ -100,7 +88,6 @@ jobs:
           push: ${{ inputs.push_to_registry }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Mapping the Build Args you provided
           build-args: |
             ROCM7VERSION=${{ inputs.rocm_version }}
             AMDGPU_TARGETS=${{ inputs.gpu_targets }}
@@ -108,5 +95,6 @@ jobs:
             CGO_CFLAGS=-O3
             CGO_CXXFLAGS=-O3
             PARALLEL=4
+          # 2. KEY FIX: Import cache if it exists, but DO NOT export it (saves disk space)
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # cache-to is intentionally removed to prevent disk exhaustion
