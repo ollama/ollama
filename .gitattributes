@@ -15,6 +15,8 @@ ml/backend/**/*.cu linguist-vendored
 ml/backend/**/*.cuh linguist-vendored
 ml/backend/**/*.m linguist-vendored
 ml/backend/**/*.metal linguist-vendored
+ml/backend/**/*.comp linguist-vendored
+ml/backend/**/*.glsl linguist-vendored
 ml/backend/**/CMakeLists.txt linguist-vendored
 
 llama/build-info.cpp linguist-generated
