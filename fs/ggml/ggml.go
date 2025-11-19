@@ -240,6 +240,7 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"deepseek2",
 		"gemma3",
 		"gemma3n",
 		"gptoss", "gpt-oss",
