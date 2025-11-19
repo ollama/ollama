@@ -4,20 +4,32 @@
 
 # 🛸 K'UHUL MULTI HIVE OS
 
+### **The K'uhul Engine - Execution Core of the ASX Ecosystem**
+
 ![Status](https://img.shields.io/badge/Status-Active-00cc88?style=for-the-badge)
-![Ollama](https://img.shields.io/badge/Ollama-Multi--Agent-0099ff?style=for-the-badge)
-![ASX](https://img.shields.io/badge/ASX-Integration-9966ff?style=for-the-badge)
+![ASX](https://img.shields.io/badge/ASX-Execution_Core-9966ff?style=for-the-badge)
+![Ecosystem](https://img.shields.io/badge/Ecosystem-XJSON·KLH·SCXQ2-0099ff?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.9+-ffaa00?style=for-the-badge)
 
-</div>
+**The official execution core for the [ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework) ecosystem.**
+**Multi-agent AI orchestration with XJSON, KLH, SCXQ2, and Tape Runtime.**
 
-**An advanced multi-agent AI operating system powered by Ollama, integrated with the ASX Language Framework (XJSON, KLH, SCXQ2, Tape Runtime).**
+[🚀 Quick Start](#-quick-start) • [📦 Install](INSTALL.md) • [🌐 Ecosystem](ECOSYSTEM.md) • [📖 Docs](#-documentation)
+
+</div>
 
 ---
 
 ## 🌟 Overview
 
-K'uhul Multi Hive OS is a sophisticated multi-agent orchestration system that leverages Ollama's local LLM capabilities to create a "hive mind" of specialized AI agents working in harmony. Inspired by and integrated with the [ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework), it brings together:
+**K'uhul Multi Hive OS** is the **execution core** of the ASX Language Framework - a sophisticated multi-agent orchestration system that creates a "hive mind" of specialized AI agents working in harmony. As the **K'uhul Engine**, it serves as the runtime foundation for:
+
+### **ASX Ecosystem Components**
+- **[@xjson/klh-orchestrator](https://www.npmjs.com/package/@xjson/klh-orchestrator)** - Multi-hive coordination
+- **[@xjson/xjson-server](https://www.npmjs.com/package/@xjson/xjson-server)** - XJSON execution server
+- **[@xjson/asx-blocks-core](https://www.npmjs.com/package/@xjson/asx-blocks-core)** - Atomic UI/Logic blocks
+
+### **Core Capabilities**
 
 - **🐝 Multi-Agent Hive Architecture**: Queen + specialized worker agents
 - **⚡ Ollama Integration**: Local, private, powerful LLM execution
@@ -403,40 +415,89 @@ ollama serve
 
 ---
 
-## 🌟 Credits
+## 🌐 ASX Ecosystem
 
-- **ASX Language Framework**: [github.com/cannaseedus-bot/asx-language-framework](https://github.com/cannaseedus-bot/asx-language-framework)
-- **Ollama**: [ollama.ai](https://ollama.ai)
-- **FastAPI**: [fastapi.tiangolo.com](https://fastapi.tiangolo.com)
+K'uhul is the **execution core** of the ASX Language Framework ecosystem:
+
+### **Core Framework**
+- **[ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework)** - The official framework
+- **[K'uhul Repository](https://github.com/cannaseedus-bot/KUHUL)** - This project's official home
+
+### **NPM Packages**
+- **[@xjson/klh-orchestrator](https://www.npmjs.com/package/@xjson/klh-orchestrator)** - Multi-hive coordination
+- **[@xjson/xjson-server](https://www.npmjs.com/package/@xjson/xjson-server)** - XJSON execution server
+- **[@xjson/asx-blocks-core](https://www.npmjs.com/package/@xjson/asx-blocks-core)** - Atomic blocks
+
+### **Integration Guides**
+- **[ECOSYSTEM.md](ECOSYSTEM.md)** - Complete ASX integration guide
+- **[MIGRATION.md](MIGRATION.md)** - Moving to standalone repository
+
+---
+
+## 🌟 Credits & Acknowledgments
+
+**Built on:**
+- **[ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework)** - The foundation
+- **[Ollama](https://ollama.ai)** - Local LLM runtime
+- **[FastAPI](https://fastapi.tiangolo.com)** - Modern Python web framework
+
+**Ecosystem Components:**
+- XJSON - Executable JSON language
+- KLH - Hive orchestrator protocol
+- SCXQ2 - Symbolic compression engine
+- Tape Runtime - Modular execution containers
 
 ---
 
 ## 📄 License
 
-See [LICENSE](../LICENSE) file for details.
+MIT License - See [LICENSE](../LICENSE) file for details.
 
 ---
 
 ## 🚀 What's Next?
 
-1. **Try the Examples**: Start with simple queries and explore multi-agent responses
-2. **Upload Documents**: Build your knowledge base
-3. **Create XJSON Tapes**: Automate complex workflows
-4. **Join the Hive**: Contribute to the project
+### For Users
+1. 📖 **[Read ECOSYSTEM.md](ECOSYSTEM.md)** - Learn ASX integration
+2. 📥 **Upload Documents** - Build your knowledge base
+3. 🎯 **Create XJSON Tapes** - Automate complex workflows
+4. 🌐 **Scale with KLH** - Deploy multi-hive clusters
+
+### For Developers
+1. 🔌 **Integrate ASX Packages** - Use @xjson/* NPM packages
+2. 🛠️ **Build Custom Agents** - Extend the hive
+3. 📡 **Implement KP Protocol** - Connect to other hives
+4. 🤝 **Contribute** - Help build the future
 
 ---
 
-## 💬 Community
+## 💬 Community & Support
 
-- **Issues**: [GitHub Issues](https://github.com/cannaseedus-bot/devmicro/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/cannaseedus-bot/devmicro/discussions)
+### K'uhul Specific
+- **Issues**: [KUHUL Issues](https://github.com/cannaseedus-bot/KUHUL/issues)
+- **Discussions**: [KUHUL Discussions](https://github.com/cannaseedus-bot/KUHUL/discussions)
+
+### ASX Ecosystem
+- **Framework Repo**: [asx-language-framework](https://github.com/cannaseedus-bot/asx-language-framework)
+- **NPM Packages**: [@xjson](https://www.npmjs.com/org/xjson)
+- **Ollama Community**: [ollama.ai/docs](https://ollama.ai/docs)
 
 ---
 
 <div align="center">
 
-**🛸 Welcome to the K'uhul Hive 🐝**
+## 🛸 K'UHUL - THE HEART OF THE ASX ECOSYSTEM 🐝
+
+**Multi-Agent Intelligence • XJSON Runtime • KLH Orchestration • Quantum Torrent**
 
 *Where Multiple Agents Work as One*
+
+---
+
+[![ASX Framework](https://img.shields.io/badge/ASX-Framework-9966ff?style=for-the-badge)](https://github.com/cannaseedus-bot/asx-language-framework)
+[![NPM Packages](https://img.shields.io/badge/NPM-@xjson-0099ff?style=for-the-badge)](https://www.npmjs.com/org/xjson)
+[![K'uhul Repo](https://img.shields.io/badge/K'uhul-Repository-00cc88?style=for-the-badge)](https://github.com/cannaseedus-bot/KUHUL)
+
+**[⭐ Star on GitHub](https://github.com/cannaseedus-bot/KUHUL)** • **[📦 View on NPM](https://www.npmjs.com/package/@kuhul/multi-hive-os)** • **[📖 Read the Docs](https://github.com/cannaseedus-bot/KUHUL#readme)**
 
 </div>

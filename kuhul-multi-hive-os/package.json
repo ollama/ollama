@@ -1,0 +1,90 @@
+{
+  "name": "@kuhul/multi-hive-os",
+  "version": "1.0.0",
+  "description": "K'uhul Multi Hive OS - The execution core of the ASX Language Framework ecosystem. Multi-agent AI orchestration powered by Ollama with XJSON, KLH, SCXQ2, and Tape Runtime integration.",
+  "main": "integration/asx_bridge.py",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cannaseedus-bot/KUHUL.git"
+  },
+  "keywords": [
+    "kuhul",
+    "multi-agent",
+    "ai",
+    "ollama",
+    "asx",
+    "xjson",
+    "klh",
+    "scxq2",
+    "tape-runtime",
+    "hive",
+    "orchestration",
+    "llm",
+    "multi-hive",
+    "distributed-ai"
+  ],
+  "author": "ASX Framework",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/cannaseedus-bot/KUHUL/issues"
+  },
+  "homepage": "https://github.com/cannaseedus-bot/KUHUL#readme",
+  "engines": {
+    "node": ">=16.0.0",
+    "python": ">=3.9.0"
+  },
+  "peerDependencies": {
+    "@xjson/klh-orchestrator": "^1.0.0",
+    "@xjson/xjson-server": "^1.0.0",
+    "@xjson/asx-blocks-core": "^1.0.0"
+  },
+  "scripts": {
+    "start": "cd backend && python kuhul_server.py",
+    "start:linux": "./start_hive.sh",
+    "start:windows": "start_hive.bat",
+    "install:ollama": "curl -fsSL https://ollama.ai/install.sh | sh",
+    "pull:models": "ollama pull qwen2.5:latest && ollama pull qwen2.5-coder:latest && ollama pull llama3.2:latest && ollama pull mistral:latest",
+    "install:deps": "pip install -r backend/requirements.txt",
+    "test": "cd backend && python -m pytest",
+    "serve:frontend": "cd frontend && python -m http.server 8080"
+  },
+  "devDependencies": {},
+  "dependencies": {},
+  "python": {
+    "dependencies": [
+      "fastapi==0.109.0",
+      "uvicorn[standard]==0.27.0",
+      "aiohttp==3.9.1",
+      "python-multipart==0.0.6",
+      "pydantic==2.5.3"
+    ]
+  },
+  "ecosystem": {
+    "asx-framework": "https://github.com/cannaseedus-bot/asx-language-framework",
+    "packages": {
+      "klh-orchestrator": "https://www.npmjs.com/package/@xjson/klh-orchestrator",
+      "xjson-server": "https://www.npmjs.com/package/@xjson/xjson-server",
+      "asx-blocks-core": "https://www.npmjs.com/package/@xjson/asx-blocks-core"
+    }
+  },
+  "features": {
+    "multi-agent-orchestration": true,
+    "ollama-integration": true,
+    "xjson-runtime": true,
+    "klh-orchestration": true,
+    "scxq2-compression": true,
+    "tape-runtime": true,
+    "quantum-torrent": true,
+    "distributed-hive": true,
+    "rest-api": true,
+    "web-interface": true
+  },
+  "system-requirements": {
+    "cpu": "4+ cores",
+    "ram": "8GB minimum, 16GB recommended",
+    "storage": "10GB for models",
+    "ollama": "required",
+    "python": "3.9+"
+  }
+}
