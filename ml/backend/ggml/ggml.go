@@ -1378,6 +1378,10 @@ func inferShape(t *Tensor, shape []int) {
 }
 
 func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
+	if !C.ggml_is_contiguous(t.t) {
+		return t.Contiguous(ctx, shape...)
+	}
+
 	if slices.Contains(shape, -1) {
 		inferShape(t, shape)
 	}
