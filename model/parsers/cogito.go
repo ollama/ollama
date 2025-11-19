@@ -17,12 +17,9 @@ const (
 	CogitoCollectingContent
 	CogitoCollectingToolCalls
 	CogitoCollectingToolOutput
-	CogitoThinkingDoneEatingWhitespace
-	CogitoContentTransition
 )
 
 const (
-	cogitoThinkingOpenTag     = "<think>"
 	cogitoThinkingCloseTag    = "</think>"
 	cogitoToolCallsBeginTag   = "<｜tool▁calls▁begin｜>"
 	cogitoToolCallsEndTag     = "<｜tool▁calls▁end｜>"
@@ -33,16 +30,12 @@ const (
 	cogitoToolOutputEndTag    = "<｜tool▁output▁end｜>"
 	cogitoToolOutputsBeginTag = "<｜tool▁outputs▁begin｜>"
 	cogitoToolOutputsEndTag   = "<｜tool▁outputs▁end｜>"
-	cogitoEndOfSentenceTag    = "<｜end▁of▁sentence｜>"
-	cogitoAssistantTag        = "<｜Assistant｜>"
-	cogitoUserTag             = "<｜User｜>"
-	cogitoBeginOfSentenceTag  = "<｜begin▁of▁sentence｜>"
 )
 
 type CogitoParser struct {
-	state  CogitoParserState
-	buffer strings.Builder
-	tools  []api.Tool
+	state              CogitoParserState
+	buffer             strings.Builder
+	hasThinkingSupport bool
 }
 
 func (p *CogitoParser) HasToolSupport() bool {
@@ -50,90 +43,139 @@ func (p *CogitoParser) HasToolSupport() bool {
 }
 
 func (p *CogitoParser) HasThinkingSupport() bool {
-	return true
+	return p.hasThinkingSupport
 }
 
 func (p *CogitoParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
+	if !p.HasThinkingSupport() {
+		p.state = CogitoCollectingContent
+		return
+	}
+
 	if prefill && lastMessage.Content != "" {
 		p.state = CogitoCollectingContent
 		return
 	}
+
 	p.state = CogitoCollectingThinking
 }
 
 func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
-	p.tools = tools
 	p.setInitialState(lastMessage)
 	return tools
 }
 
+// Event types for cleaner parsing logic
+type cogitoEvent interface {
+	isCogitoEvent()
+}
+
+type cogitoEventThinkingContent struct {
+	content string
+}
+
+type cogitoEventContent struct {
+	content string
+}
+
+type cogitoEventToolCall struct {
+	toolCall api.ToolCall
+}
+
+func (cogitoEventThinkingContent) isCogitoEvent() {}
+func (cogitoEventContent) isCogitoEvent()         {}
+func (cogitoEventToolCall) isCogitoEvent()        {}
+
 func (p *CogitoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
+	events := p.parseEvents(done)
 
+	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
 	var thinkingSb strings.Builder
-	var toolCalls []api.ToolCall
-
-	for {
-		addedContent, addedThinking, addedCalls, keepGoing := p.processBuffer()
-
-		contentSb.WriteString(addedContent)
-		thinkingSb.WriteString(addedThinking)
-		toolCalls = append(toolCalls, addedCalls...)
-
-		if !keepGoing {
-			break
+	for _, event := range events {
+		switch event := event.(type) {
+		case cogitoEventToolCall:
+			toolCalls = append(toolCalls, event.toolCall)
+		case cogitoEventThinkingContent:
+			thinkingSb.WriteString(event.content)
+		case cogitoEventContent:
+			contentSb.WriteString(event.content)
 		}
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *CogitoParser) processBuffer() (content string, thinking string, calls []api.ToolCall, keepGoing bool) {
+func (p *CogitoParser) parseEvents(done bool) []cogitoEvent {
+	var all []cogitoEvent
+
+	keepLooping := true
+	for keepLooping {
+		var events []cogitoEvent
+		events, keepLooping = p.eat(done)
+		if len(events) > 0 {
+			all = append(all, events...)
+		}
+	}
+
+	return all
+}
+
+func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
+	var events []cogitoEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
-		return "", "", nil, false
+		return events, false
 	}
 
 	switch p.state {
 	case CogitoCollectingThinking:
-		if strings.HasPrefix(bufStr, cogitoThinkingOpenTag) {
-			if idx := strings.Index(bufStr, cogitoThinkingCloseTag); idx != -1 {
-				thinkContent := bufStr[len(cogitoThinkingOpenTag):idx]
-				thinkContent = strings.TrimRightFunc(thinkContent, unicode.IsSpace)
+		if strings.Contains(bufStr, cogitoThinkingCloseTag) { // thinking[</think>] -> content
+			split := strings.SplitN(bufStr, cogitoThinkingCloseTag, 2)
+			thinking := split[0]
+			thinking = strings.TrimRightFunc(thinking, unicode.IsSpace)
 
-				remaining := bufStr[idx+len(cogitoThinkingCloseTag):]
-				remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+			remaining := split[1]
+			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
 
-				p.buffer.Reset()
-				p.buffer.WriteString(remaining)
-				p.state = CogitoCollectingContent
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+			p.state = CogitoCollectingContent
 
-				return "", thinkContent, nil, true
+			if len(thinking) > 0 {
+				events = append(events, cogitoEventThinkingContent{content: thinking})
 			}
-			return "", "", nil, false
-		}
+			return events, true
+		} else if overlapLen := overlap(bufStr, cogitoThinkingCloseTag); overlapLen > 0 { // partial </think>
+			beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+			trailingLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingLen
 
-		p.state = CogitoCollectingContent
-		return "", "", nil, true
+			unambiguous := bufStr[:ambiguousStart]
+			ambiguous := bufStr[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, cogitoEventThinkingContent{content: unambiguous})
+			}
+			return events, false
+		} else { // otherwise its thinking content
+			whitespaceLen := trailingWhitespaceLen(bufStr)
+			ambiguousStart := len(bufStr) - whitespaceLen
+
+			unambiguous := bufStr[:ambiguousStart]
+			ambiguous := bufStr[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, cogitoEventThinkingContent{content: unambiguous})
+			}
+			return events, false
+		}
 
 	case CogitoCollectingContent:
-		for _, tag := range []string{cogitoEndOfSentenceTag, cogitoAssistantTag, cogitoUserTag, cogitoBeginOfSentenceTag} {
-			if idx := strings.Index(bufStr, tag); idx != -1 {
-				contentBefore := bufStr[:idx]
-				contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
-
-				remaining := bufStr[idx+len(tag):]
-				remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
-
-				p.buffer.Reset()
-				p.buffer.WriteString(remaining)
-
-				return contentBefore, "", nil, true
-			}
-		}
-
 		if idx := strings.Index(bufStr, cogitoToolCallsBeginTag); idx != -1 {
 			contentBefore := bufStr[:idx]
 			contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
@@ -143,7 +185,10 @@ func (p *CogitoParser) processBuffer() (content string, thinking string, calls [
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingToolCalls
 
-			return contentBefore, "", nil, true
+			if len(contentBefore) > 0 {
+				events = append(events, cogitoEventContent{content: contentBefore})
+			}
+			return events, true
 		}
 
 		if idx := strings.Index(bufStr, cogitoToolOutputsBeginTag); idx != -1 {
@@ -155,11 +200,18 @@ func (p *CogitoParser) processBuffer() (content string, thinking string, calls [
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingToolOutput
 
-			return contentBefore, "", nil, true
+			if len(contentBefore) > 0 {
+				events = append(events, cogitoEventContent{content: contentBefore})
+			}
+			return events, true
 		}
 
+		// No tags: emit everything as content and clear the buffer.
 		p.buffer.Reset()
-		return bufStr, "", nil, false
+		if len(bufStr) > 0 {
+			events = append(events, cogitoEventContent{content: bufStr})
+		}
+		return events, false
 
 	case CogitoCollectingToolCalls:
 		if idx := strings.Index(bufStr, cogitoToolCallBeginTag); idx != -1 {
@@ -174,7 +226,8 @@ func (p *CogitoParser) processBuffer() (content string, thinking string, calls [
 					p.buffer.Reset()
 					p.buffer.WriteString(remaining)
 
-					return "", "", []api.ToolCall{toolCall}, true
+					events = append(events, cogitoEventToolCall{toolCall: toolCall})
+					return events, true
 				} else {
 					slog.Warn("cogito tool call parsing failed", "error", err)
 				}
@@ -189,10 +242,10 @@ func (p *CogitoParser) processBuffer() (content string, thinking string, calls [
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingContent
 
-			return "", "", nil, true
+			return events, true
 		}
 
-		return "", "", nil, false
+		return events, false
 
 	case CogitoCollectingToolOutput:
 		if idx := strings.Index(bufStr, cogitoToolOutputBeginTag); idx != -1 {
@@ -204,7 +257,7 @@ func (p *CogitoParser) processBuffer() (content string, thinking string, calls [
 				p.buffer.Reset()
 				p.buffer.WriteString(remaining)
 
-				return "", "", nil, true
+				return events, true
 			}
 		}
 
@@ -216,13 +269,13 @@ func (p *CogitoParser) processBuffer() (content string, thinking string, calls [
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingContent
 
-			return "", "", nil, true
+			return events, true
 		}
 
-		return "", "", nil, false
+		return events, false
 	}
 
-	return "", "", nil, false
+	return events, false
 }
 
 func (p *CogitoParser) parseToolCallContent(content string) (api.ToolCall, error) {

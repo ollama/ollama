@@ -53,7 +53,7 @@ func ParserForName(name string) Parser {
 	case "harmony":
 		return harmony.NewHarmonyMessageHandler()
 	case "cogito":
-		return &CogitoParser{}
+		return &CogitoParser{} // so the parser
 	default:
 		return nil
 	}

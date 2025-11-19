@@ -26,7 +26,7 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name:             "thinking_only",
-			input:            "<think>This is thinking content.</think>This is response content.",
+			input:            "This is thinking content.</think>This is response content.",
 			expectedContent:  "This is response content.",
 			expectedThinking: "This is thinking content.",
 		},
@@ -61,7 +61,7 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name: "thinking_with_tool_call",
-			input: `<think>I need to check the weather.</think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+			input: `I need to check the weather.</think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
 			expectedContent:  "",
@@ -156,15 +156,15 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name: "thinking_with_multiline_content",
-			input: `<think>This is line 1
+			input: `This is line 1
 This is line 2
 This is line 3</think>Final response here.`,
 			expectedContent:  "Final response here.",
 			expectedThinking: "This is line 1\nThis is line 2\nThis is line 3",
 		},
 		{
-			name:             "empty_thinking_tags",
-			input:            "<think></think>This is content.",
+			name:             "no_thinking_simple",
+			input:            "This is content.",
 			expectedContent:  "This is content.",
 			expectedThinking: "",
 		},
@@ -179,7 +179,7 @@ This is line 3</think>Final response here.`,
 		},
 		{
 			name:             "prefill_with_thinking",
-			input:            "<think>Continuing thinking</think>Continuing content.",
+			input:            "Continuing thinking</think>Continuing content.",
 			expectedContent:  "Continuing content.",
 			expectedThinking: "Continuing thinking",
 			lastMessage: &api.Message{
@@ -190,7 +190,9 @@ This is line 3</think>Final response here.`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := &CogitoParser{}
+			// Use thinking-enabled parser for tests that expect thinking
+			hasThinking := tt.expectedThinking != ""
+			parser := &CogitoParser{hasThinkingSupport: hasThinking}
 			parser.Init(tt.tools, tt.lastMessage)
 
 			content, thinking, toolCalls, err := parser.Add(tt.input, true)
@@ -214,11 +216,11 @@ This is line 3</think>Final response here.`,
 }
 
 func TestCogitoParser_Streaming(t *testing.T) {
-	parser := &CogitoParser{}
+	parser := &CogitoParser{hasThinkingSupport: true}
 	parser.Init(nil, nil)
 
 	chunks := []string{
-		"<think>This is ",
+		"This is ",
 		"thinking content",
 		".</think>This is ",
 		"content.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test_tool\n```json\n{\"arg\":\"value\"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
@@ -273,9 +275,16 @@ func TestCogitoParser_HasToolSupport(t *testing.T) {
 }
 
 func TestCogitoParser_HasThinkingSupport(t *testing.T) {
-	parser := &CogitoParser{}
-	if !parser.HasThinkingSupport() {
-		t.Error("CogitoParser should support thinking")
+	// Test thinking-enabled parser
+	thinkingParser := &CogitoParser{hasThinkingSupport: true}
+	if !thinkingParser.HasThinkingSupport() {
+		t.Error("CogitoParser with hasThinkingSupport=true should support thinking")
+	}
+
+	// Test non-thinking parser
+	nonThinkingParser := &CogitoParser{hasThinkingSupport: false}
+	if nonThinkingParser.HasThinkingSupport() {
+		t.Error("CogitoParser with hasThinkingSupport=false should not support thinking")
 	}
 }
 
