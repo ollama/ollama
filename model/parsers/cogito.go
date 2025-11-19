@@ -89,7 +89,7 @@ func (cogitoEventToolCall) isCogitoEvent()        {}
 
 func (p *CogitoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents(done)
+	events := p.parseEvents()
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -108,13 +108,13 @@ func (p *CogitoParser) Add(s string, done bool) (content string, thinking string
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *CogitoParser) parseEvents(done bool) []cogitoEvent {
+func (p *CogitoParser) parseEvents() []cogitoEvent {
 	var all []cogitoEvent
 
 	keepLooping := true
 	for keepLooping {
 		var events []cogitoEvent
-		events, keepLooping = p.eat(done)
+		events, keepLooping = p.eat()
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -123,7 +123,7 @@ func (p *CogitoParser) parseEvents(done bool) []cogitoEvent {
 	return all
 }
 
-func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
+func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 	var events []cogitoEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -176,11 +176,11 @@ func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
 		}
 
 	case CogitoCollectingContent:
-		if idx := strings.Index(bufStr, cogitoToolCallsBeginTag); idx != -1 {
-			contentBefore := bufStr[:idx]
-			contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
+		if strings.Contains(bufStr, cogitoToolCallsBeginTag) { // content[<｜tool▁calls▁begin｜>] -> tool calls
+			split := strings.SplitN(bufStr, cogitoToolCallsBeginTag, 2)
+			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
+			remaining := split[1]
 
-			remaining := bufStr[idx+len(cogitoToolCallsBeginTag):]
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingToolCalls
@@ -189,13 +189,11 @@ func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
 				events = append(events, cogitoEventContent{content: contentBefore})
 			}
 			return events, true
-		}
+		} else if strings.Contains(bufStr, cogitoToolOutputsBeginTag) { // content[<｜tool▁outputs▁begin｜>] -> tool outputs
+			split := strings.SplitN(bufStr, cogitoToolOutputsBeginTag, 2)
+			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
+			remaining := split[1]
 
-		if idx := strings.Index(bufStr, cogitoToolOutputsBeginTag); idx != -1 {
-			contentBefore := bufStr[:idx]
-			contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
-
-			remaining := bufStr[idx+len(cogitoToolOutputsBeginTag):]
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingToolOutput
@@ -204,15 +202,13 @@ func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
 				events = append(events, cogitoEventContent{content: contentBefore})
 			}
 			return events, true
+		} else { // otherwise its content
+			p.buffer.Reset()
+			if len(bufStr) > 0 {
+				events = append(events, cogitoEventContent{content: bufStr})
+			}
+			return events, false
 		}
-
-		// No tags: emit everything as content and clear the buffer.
-		p.buffer.Reset()
-		if len(bufStr) > 0 {
-			events = append(events, cogitoEventContent{content: bufStr})
-		}
-		return events, false
-
 	case CogitoCollectingToolCalls:
 		if idx := strings.Index(bufStr, cogitoToolCallBeginTag); idx != -1 {
 			startIdx := idx + len(cogitoToolCallBeginTag)
@@ -279,42 +275,25 @@ func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
 }
 
 func (p *CogitoParser) parseToolCallContent(content string) (api.ToolCall, error) {
-	// Format: function<｜tool▁sep｜>tool_name\n```json\n{args}\n```
+	// Expected format: function<｜tool▁sep｜>tool_name\n```json\n{args}\n```
 	parts := strings.SplitN(content, cogitoToolSepTag, 2)
-	if len(parts) != 2 {
-		return api.ToolCall{}, errors.New("invalid tool call format: missing separator")
+	if len(parts) < 2 {
+		return api.ToolCall{}, errors.New("invalid format")
 	}
-
-	// Verify function type
-	functionType := strings.TrimSpace(parts[0])
-	if functionType != "function" {
-		return api.ToolCall{}, errors.New("invalid tool call format: expected 'function'")
-	}
-
 	nameAndArgs := parts[1]
 
-	// Find JSON block
-	jsonStart := strings.Index(nameAndArgs, "```json\n")
+	jsonStart := strings.Index(nameAndArgs, "\n```json\n")
 	if jsonStart == -1 {
-		jsonStart = strings.Index(nameAndArgs, "```json")
-		if jsonStart == -1 {
-			return api.ToolCall{}, errors.New("invalid tool call format: missing JSON block start")
-		}
-		jsonStart += len("```json")
-	} else {
-		jsonStart += len("```json\n")
+		return api.ToolCall{}, errors.New("invalid format")
 	}
+	toolName := strings.TrimSpace(nameAndArgs[:jsonStart])
+	jsonContent := nameAndArgs[jsonStart+len("\n```json\n"):]
 
-	jsonEnd := strings.Index(nameAndArgs[jsonStart:], "\n```")
+	jsonEnd := strings.Index(jsonContent, "\n```")
 	if jsonEnd == -1 {
-		jsonEnd = strings.Index(nameAndArgs[jsonStart:], "```")
-		if jsonEnd == -1 {
-			return api.ToolCall{}, errors.New("invalid tool call format: missing JSON block end")
-		}
+		return api.ToolCall{}, errors.New("invalid format")
 	}
-
-	argsJSON := nameAndArgs[jsonStart : jsonStart+jsonEnd]
-	toolName := strings.TrimSpace(nameAndArgs[:strings.Index(nameAndArgs, "```")])
+	argsJSON := jsonContent[:jsonEnd]
 
 	var args api.ToolCallFunctionArguments
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {

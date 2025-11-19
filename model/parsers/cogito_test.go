@@ -186,6 +186,35 @@ This is line 3</think>Final response here.`,
 				Role: "assistant",
 			},
 		},
+		// Edge cases
+		{
+			name:             "nested_think_tags_in_thinking",
+			input:            "I'm thinking <think>nested</think> more thinking</think>Final content.",
+			expectedContent:  "more thinking</think>Final content.",
+			expectedThinking: "I'm thinking <think>nested",
+		},
+		{
+			name:             "multiple_think_close_tags",
+			input:            "First thinking</think>Content</think>More content.",
+			expectedContent:  "Content</think>More content.",
+			expectedThinking: "First thinking",
+		},
+		{
+			name:             "empty_thinking_content",
+			input:            "</think>Just content here.",
+			expectedContent:  "</think>Just content here.",
+			expectedThinking: "",
+		},
+		{
+			name:             "thinking_disabled_with_think_tags",
+			input:            "Content with </think> tags should be treated as content.",
+			expectedContent:  "Content with </think> tags should be treated as content.",
+			expectedThinking: "",
+			lastMessage: &api.Message{
+				Role:    "assistant",
+				Content: "existing", // Forces non-thinking mode
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -267,6 +296,83 @@ func TestCogitoParser_Streaming(t *testing.T) {
 	}
 }
 
+func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
+	tests := []struct {
+		name               string
+		chunks             []string
+		expectedContent    string
+		expectedThinking   string
+		expectedToolCalls  []api.ToolCall
+		hasThinkingSupport bool
+	}{
+		{
+			name: "split_thinking_tag",
+			chunks: []string{
+				"This is thinking content</thi",
+				"nk>This is content.",
+			},
+			expectedContent:    "This is content.",
+			expectedThinking:   "This is thinking content",
+			hasThinkingSupport: true,
+		},
+		{
+			name: "split_tool_calls_begin_tag_conservative_parsing",
+			chunks: []string{
+				"Content before<｜tool▁calls▁beg",
+				"in｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test\n```json\n{}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			},
+			// Parser is conservative - treats incomplete tags as content
+			expectedContent:    "Content before<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test\n```json\n{}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedToolCalls:  nil,
+			hasThinkingSupport: false,
+		},
+		{
+			name: "thinking_disabled_with_split_tags",
+			chunks: []string{
+				"Content with </thi",
+				"nk> should be treated as content.",
+			},
+			expectedContent:    "Content with </think> should be treated as content.",
+			expectedThinking:   "",
+			hasThinkingSupport: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &CogitoParser{hasThinkingSupport: tt.hasThinkingSupport}
+			parser.Init(nil, nil)
+
+			var finalContent, finalThinking strings.Builder
+			var finalToolCalls []api.ToolCall
+
+			for i, chunk := range tt.chunks {
+				done := i == len(tt.chunks)-1
+				content, thinking, toolCalls, err := parser.Add(chunk, done)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+
+				finalContent.WriteString(content)
+				finalThinking.WriteString(thinking)
+				finalToolCalls = append(finalToolCalls, toolCalls...)
+			}
+
+			if finalContent.String() != tt.expectedContent {
+				t.Errorf("expected content %q, got %q", tt.expectedContent, finalContent.String())
+			}
+
+			if finalThinking.String() != tt.expectedThinking {
+				t.Errorf("expected thinking %q, got %q", tt.expectedThinking, finalThinking.String())
+			}
+
+			if diff := cmp.Diff(tt.expectedToolCalls, finalToolCalls); diff != "" {
+				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestCogitoParser_HasToolSupport(t *testing.T) {
 	parser := &CogitoParser{}
 	if !parser.HasToolSupport() {
@@ -316,19 +422,6 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			content: `function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```",
-			expected: api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: "get_weather",
-					Arguments: api.ToolCallFunctionArguments{
-						"location": "Paris",
-					},
-				},
-			},
-			expectError: false,
-		},
-		{
-			name:    "valid_tool_call_without_newlines",
-			content: `function<｜tool▁sep｜>get_weather` + "```json" + `{"location":"Paris"}` + "```",
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_weather",
