@@ -114,9 +114,9 @@ if [ "$OLLAMA_INSTALL_DIR/ollama-arm64-release/bin/ollama" != "$BINDIR/ollama" ]
     # Copy all the libraries to /usr/lib as the symbolic links as well as the environment
     # varaibles are not working for the libraries when invoked by the service
     # this needs further troubleshoot.
-    $SUDO cp $OLLAMA_INSTALL_DIR/ollama-arm64-release/lib/lib* /usr/lib/
-    $SUDO cp /usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib/lib* /usr/lib/
-#    install_aot_ggml_lib_link
+    # $SUDO cp $OLLAMA_INSTALL_DIR/ollama-arm64-release/lib/lib* /usr/lib/
+    # $SUDO cp /usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib/lib* /usr/lib/
+    install_aot_ggml_lib_link
 fi
 
 install_success() {
@@ -152,12 +152,13 @@ After=network-online.target
 
 [Service]
 ExecStart=$BINDIR/ollama serve
-User=ollama
-Group=ollama
+#User=ollama
+#Group=ollama
+Environment="HOME=/usr/share/ollama"
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
-#Environment="LD_LIBRARY_PATH=/usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib/:/usr/local/ollama-arm64-release/lib/:/usr/local/ollama-arm64-release/bin/"
+Environment="LD_LIBRARY_PATH=/usr/bin/tsi/v0.1.1.tsv40_11_05_2025/bin/aot-tests/lib/:/usr/local/ollama-arm64-release/lib/:/usr/local/ollama-arm64-release/bin/"
 [Install]
 WantedBy=default.target
 EOF

@@ -286,12 +286,12 @@ index 6792ba98..43c91d9f 100644
  
      struct ggml_backend_device {
 diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
-index bcae0901..c88fa972 100644
+index bcae0901..6c847278 100644
 --- a/ggml/src/ggml-backend-reg.cpp
 +++ b/ggml/src/ggml-backend-reg.cpp
 @@ -126,6 +126,18 @@ static dl_handle * dl_load_library(const fs::path & path) {
      SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
- 
+
      HMODULE handle = LoadLibraryW(path.wstring().c_str());
 +    if (!handle) {
 +        DWORD error_code = GetLastError();
@@ -305,22 +305,22 @@ index bcae0901..c88fa972 100644
 +            GGML_LOG_INFO("%s unable to load library %s: %s\n", __func__, path_str(path).c_str(), msg.c_str());
 +        }
 +    }
- 
+
      SetErrorMode(old_mode);
- 
+
 @@ -183,7 +195,7 @@ struct ggml_backend_reg_entry {
- 
+
  struct ggml_backend_registry {
      std::vector<ggml_backend_reg_entry> backends;
 -    std::vector<ggml_backend_dev_t> devices;
 +    std::vector<std::pair<ggml_backend_dev_t, int>> devices;
- 
+
      ggml_backend_registry() {
  #ifdef GGML_USE_CUDA
 @@ -239,7 +251,7 @@ struct ggml_backend_registry {
          }
      }
- 
+
 -    void register_backend(ggml_backend_reg_t reg, dl_handle_ptr handle = nullptr) {
 +    void register_backend(ggml_backend_reg_t reg, int score = -1, dl_handle_ptr handle = nullptr) {
          if (!reg) {
@@ -334,7 +334,7 @@ index bcae0901..c88fa972 100644
 +            register_device(ggml_backend_reg_dev_get(reg, i), score);
          }
      }
- 
+
 -    void register_device(ggml_backend_dev_t device) {
 +    void register_device(ggml_backend_dev_t device, int score = -1) {
  #ifndef NDEBUG
@@ -348,15 +348,15 @@ index bcae0901..c88fa972 100644
 +            }
 +        );
      }
- 
+
      ggml_backend_reg_t load_backend(const fs::path & path, bool silent) {
 @@ -302,7 +319,7 @@ struct ggml_backend_registry {
- 
+
          GGML_LOG_INFO("%s: loaded %s backend from %s\n", __func__, ggml_backend_reg_name(reg), path_str(path).c_str());
- 
+
 -        register_backend(reg, std::move(handle));
 +        register_backend(reg, score_fn ? score_fn() : -1, std::move(handle));
- 
+
          return reg;
      }
 @@ -325,7 +342,7 @@ struct ggml_backend_registry {
@@ -366,17 +366,46 @@ index bcae0901..c88fa972 100644
 -                            [reg](ggml_backend_dev_t dev) { return ggml_backend_dev_backend_reg(dev) == reg; }),
 +                            [reg](std::pair<ggml_backend_dev_t, int> dev) { return ggml_backend_dev_backend_reg(dev.first) == reg; }),
              devices.end());
- 
+
          // remove backend
 @@ -383,7 +400,7 @@ size_t ggml_backend_dev_count() {
- 
+
  ggml_backend_dev_t ggml_backend_dev_get(size_t index) {
      GGML_ASSERT(index < ggml_backend_dev_count());
 -    return get_reg().devices[index];
 +    return get_reg().devices[index].first;
  }
- 
+
  ggml_backend_dev_t ggml_backend_dev_by_name(const char * name) {
+@@ -605,19 +622,25 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
+     bool silent = false;
+ #endif
+
+-    ggml_backend_load_best("blas", silent, dir_path);
++/*    ggml_backend_load_best("blas", silent, dir_path);
+     ggml_backend_load_best("cann", silent, dir_path);
+     ggml_backend_load_best("cuda", silent, dir_path);
+     ggml_backend_load_best("hip", silent, dir_path);
+     ggml_backend_load_best("metal", silent, dir_path);
+-    ggml_backend_load_best("tsavorite", silent, dir_path);
+     ggml_backend_load_best("rpc", silent, dir_path);
+     ggml_backend_load_best("sycl", silent, dir_path);
+     ggml_backend_load_best("vulkan", silent, dir_path);
+     ggml_backend_load_best("opencl", silent, dir_path);
+     ggml_backend_load_best("hexagon", silent, dir_path);
+-    ggml_backend_load_best("musa", silent, dir_path);
++    ggml_backend_load_best("musa", silent, dir_path);*/
+     ggml_backend_load_best("cpu", silent, dir_path);
++    //ggml_backend_load_best("tsavorite", silent, dir_path);
++    // Construct full path for libggml-tsavorite.so
++    std::string tsavorite_path = std::string(dir_path) + "/libggml-tsavorite.so";
++
++    // Call ggml_backend_load with the full path
++    ggml_backend_load(tsavorite_path.c_str());
++
+     // check the environment variable GGML_BACKEND_PATH to load an out-of-tree backend
+     const char * backend_path = std::getenv("GGML_BACKEND_PATH");
+     if (backend_path) {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
 index d7d71c51..260ccba9 100644
 --- a/ggml/src/ggml-backend.cpp
@@ -3749,4 +3778,61 @@ index 00000000..8ef19b8c
 +} // extern "C"
 +
 +#endif // #ifdef _WIN32
-\ No newline at end of file
+diff --git a/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp b/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
+index 850d43e9..329f647c 100644
+--- a/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
++++ b/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
+@@ -21,6 +21,7 @@
+ #include <math.h>
+ #include <string>
+ #include <iostream>
++#include <filesystem>
+ #include "ggml-backend-impl.h"
+ #include "ggml-impl.h"
+ #include "ggml.h"
+@@ -40,7 +41,9 @@ static void ensure_tsi_runtime_initialized() {
+     std::string mainProfilerName = "OPU ";
+     tsirt::utils::TSIProfiler::initialize();
+     // TSI Run time Initalization
++    GGML_TSAVORITE_LOG_INFO("TSI initialize in registration\n");
+     tsi_initialize(NUM_OF_TXES, NULL);
++    GGML_TSAVORITE_LOG_INFO("TSI initialized in registration\n");
+     runtime_initialized = true;
+     GGML_TSAVORITE_LOG_INFO("Profiler and TSI runtime initialized early in registration\n");
+   }
+@@ -2251,10 +2254,32 @@ static struct ggml_backend_reg_i ggml_backend_tsavorite_reg_i = {
+
+
+ ggml_backend_reg_t ggml_backend_tsavorite_reg(void) {
+-  ggml_tsavorite_log_type_val = GGML_TSAVORITE_LOG_NONE;
++  const char *search_path = "/usr/share/ollama/ollama_init.txt";
++  ggml_tsavorite_log_type_val = GGML_TSAVORITE_LOG_ALL;
+   ggml_tsavorite_kernel_mode_flag = GGML_TSAVORITE_KERNEL_MODE_MLIR;
+   GGML_TSAVORITE_LOG_INFO("Start %s\n", __func__);
+-  ensure_tsi_runtime_initialized();
++  if (access(search_path, F_OK) != 0) {
++      GGML_LOG_DEBUG("%s: search path %s does not exist\n", __func__, search_path);
++      ensure_tsi_runtime_initialized();
++      // Ensure parent directory exists
++       // Open or create the file
++      FILE *ollama_init_file = fopen(search_path, "w+");
++      if (ollama_init_file == NULL) {
++          GGML_LOG_DEBUG("%s: Error creating or opening log file %s\n", __func__, search_path);
++          return NULL;
++      }
++
++      // Write "init complete" to the file
++      fprintf(ollama_init_file, "init complete\n");
++      fflush(ollama_init_file);
++      // You can write something or keep the handle for later
++      fclose(ollama_init_file);
++      fflush(stdout);
++  }
++  else{
++      GGML_LOG_DEBUG("%s: search path %s exist\n", __func__, search_path);
++      fflush(stdout);
++  }
+   g_ggml_backend_tsavorite_reg.iface = ggml_backend_tsavorite_reg_i;
+   g_ggml_backend_tsavorite_reg.context = NULL;
+   g_ggml_backend_tsavorite_device.iface = ggml_backend_tsavorite_device_i;
+
