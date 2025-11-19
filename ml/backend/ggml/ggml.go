@@ -314,7 +314,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			"altup_proj", "altup_unembd_proj",
 			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
 			createTensor(tensor{source: t}, output.bts, blocks)
-		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
+		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm.") || strings.HasPrefix(t.Name, "s."):
 			// TODO: assign vision tensors to the gpu if possible
 			createTensor(tensor{source: t}, output.bts, blocks)
 		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
@@ -499,7 +499,6 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range b.meta.Tensors().Items() {
-		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
@@ -1339,6 +1338,13 @@ func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1379,6 +1385,10 @@ func inferShape(t *Tensor, shape []int) {
 }
 
 func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
+	if !C.ggml_is_contiguous(t.t) {
+		return t.Contiguous(ctx, shape...)
+	}
+
 	if slices.Contains(shape, -1) {
 		inferShape(t, shape)
 	}
@@ -1568,6 +1578,16 @@ func (t *Tensor) GELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) QuickGELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
+	var tt *C.struct_ggml_tensor
+	if len(t2) > 0 {
+		tt = C.ggml_geglu_quick_split(ctx.(*Context).ctx, t.t, t2[0].(*Tensor).t)
+	} else {
+		tt = C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t)
+	}
+	return &Tensor{b: t.b, t: tt}
+}
+
 func (t *Tensor) SILU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	if len(t2) > 0 {
 		return &Tensor{
@@ -1722,6 +1742,23 @@ func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_sqrt(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Interpolate(ctx ml.Context, dims [4]int, samplingMode ml.SamplingMode) ml.Tensor {
+	var mode C.uint32_t
+	switch samplingMode {
+	case ml.SamplingModeNearest:
+		mode = C.GGML_SCALE_MODE_NEAREST
+	case ml.SamplingModeBilinear:
+		mode = C.GGML_SCALE_MODE_BILINEAR
+	default:
+		panic("unsupported interpolate mode")
+	}
+
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_interpolate(ctx.(*Context).ctx, t.t, C.int64_t(dims[0]), C.int64_t(dims[1]), C.int64_t(dims[2]), C.int64_t(dims[3]), mode),
 	}
 }
 

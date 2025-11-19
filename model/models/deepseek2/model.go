@@ -236,6 +236,11 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
+	if c.Uint("attention.key_length_mla") == 0 {
+		// non-MLA models aren't yet supported
+		return nil, model.ErrUnsupportedModel
+	}
+
 	layers := make([]Layer, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))

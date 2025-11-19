@@ -50,7 +50,7 @@ Subject: [PATCH] Vulkan MMQ Integer Dot Refactor and K-Quant support (#16536)
  create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_shmem_types.glsl
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 18b7cbccf..53b57c179 100644
+index 76c78c2ea..7669ed206 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -488,6 +488,7 @@ struct vk_device_struct {
