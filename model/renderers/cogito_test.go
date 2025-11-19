@@ -21,7 +21,8 @@ func TestCogitoRenderer(t *testing.T) {
 			messages: []api.Message{
 				{Role: "user", Content: "Hello, how are you?"},
 			},
-			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Hello, how are you?<｜Assistant｜>`,
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Hello, how are you?<｜Assistant｜>`,
 		},
 		{
 			name: "basic with system message",
@@ -29,6 +30,7 @@ func TestCogitoRenderer(t *testing.T) {
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Hello, how are you?"},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.
 
 You are a helpful assistant.<｜User｜>Hello, how are you?<｜Assistant｜>`,
@@ -40,7 +42,8 @@ You are a helpful assistant.<｜User｜>Hello, how are you?<｜Assistant｜>`,
 				{Role: "assistant", Content: "The capital of France is Paris."},
 				{Role: "user", Content: "Fantastic!"},
 			},
-			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>What is the capital of France?<｜Assistant｜>The capital of France is Paris.<｜end▁of▁sentence｜><｜User｜>Fantastic!<｜Assistant｜>`,
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>What is the capital of France?<｜Assistant｜>The capital of France is Paris.<｜end▁of▁sentence｜><｜User｜>Fantastic!<｜Assistant｜>`,
 		},
 		{
 			name: "thinking enabled without system",
@@ -82,6 +85,7 @@ You are a helpful assistant.
 			messages: []api.Message{
 				{Role: "user", Content: "What's the weather like?"},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			tools: []api.Tool{
 				{
 					Type: "function",
@@ -143,6 +147,7 @@ You have the following functions available:
 					},
 				},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>What's the weather in Paris?<｜Assistant｜>I'll check the weather in Paris for you.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜Assistant｜>`,
@@ -166,6 +171,7 @@ You have the following functions available:
 				},
 				{Role: "tool", Content: "Temperature: 22°C, Sunny"},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>What's the weather in Paris?<｜Assistant｜><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜><｜tool▁outputs▁end｜><｜Assistant｜>`,
@@ -198,6 +204,7 @@ You have the following functions available:
 				{Role: "tool", Content: "Paris: 22°C, Sunny"},
 				{Role: "tool", Content: "London: 18°C, Cloudy"},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Get weather for Paris and London<｜Assistant｜><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜>
@@ -379,6 +386,7 @@ You are a pirate chatbot who always responds in pirate speak!
 					},
 				},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Get weather for Paris<｜Assistant｜><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜Assistant｜>`,
@@ -406,6 +414,7 @@ You are a pirate chatbot who always responds in pirate speak!
 					},
 				},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Process complex data<｜Assistant｜><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>process_data
 ` + "```json\n" + `{"config":{"enabled":true,"tags":["important","urgent"],"threshold":0.95},"items":["item1","item2","item3"]}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜Assistant｜>`,
@@ -417,7 +426,8 @@ You are a pirate chatbot who always responds in pirate speak!
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: ""},
 			},
-			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Hello<｜Assistant｜><｜end▁of▁sentence｜><｜Assistant｜>`,
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Hello<｜Assistant｜><｜end▁of▁sentence｜><｜Assistant｜>`,
 		},
 		{
 			name: "thinking_with_empty_assistant_content",
@@ -438,6 +448,7 @@ You are Cogito, an AI assistant created by Deep Cogito, which is an AI research 
 				{Role: "system", Content: "Second instruction"},
 				{Role: "user", Content: "Hello"},
 			},
+			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.
 
 First instruction<｜User｜>Hello<｜Assistant｜>`,
@@ -448,7 +459,8 @@ First instruction<｜User｜>Hello<｜Assistant｜>`,
 				{Role: "user", Content: "What about <|special|> tokens and \"quotes\"?"},
 				{Role: "assistant", Content: "They're handled normally in content."},
 			},
-			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>What about <|special|> tokens and "quotes"?<｜Assistant｜>They're handled normally in content.<｜end▁of▁sentence｜><｜Assistant｜>`,
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>What about <|special|> tokens and "quotes"?<｜Assistant｜>They're handled normally in content.<｜end▁of▁sentence｜><｜Assistant｜>`,
 		},
 		{
 			name: "long_conversation_multiple_rounds",
@@ -459,7 +471,8 @@ First instruction<｜User｜>Hello<｜Assistant｜>`,
 				{Role: "assistant", Content: "Good, thanks!"},
 				{Role: "user", Content: "What's the weather?"},
 			},
-			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Hi<｜Assistant｜>Hello!<｜end▁of▁sentence｜><｜User｜>How are you?<｜Assistant｜>Good, thanks!<｜end▁of▁sentence｜><｜User｜>What's the weather?<｜Assistant｜>`,
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.<｜User｜>Hi<｜Assistant｜>Hello!<｜end▁of▁sentence｜><｜User｜>How are you?<｜Assistant｜>Good, thanks!<｜end▁of▁sentence｜><｜User｜>What's the weather?<｜Assistant｜>`,
 		},
 	}
 
