@@ -23,11 +23,13 @@ func Host() *url.URL {
 	defaultPort := "11434"
 
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
+	// Check config file for server URL if environment variable not set
 	if s == "" {
 		if cfg, err := config.Load(); err == nil && cfg.ServerURL != "" {
 			s = cfg.ServerURL
 		}
 	}
+	// Use default localhost if no configuration found
 	if s == "" {
 		s = "http://localhost:11434"
 	}

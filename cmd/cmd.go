@@ -1890,6 +1890,7 @@ func NewCLI() *cobra.Command {
 		}
 	}
 
+	// Add config command for managing user settings
 	configCmd := &cobra.Command{
 		Use:   "config [KEY] [VALUE]",
 		Short: "View or set configuration",

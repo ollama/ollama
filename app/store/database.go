@@ -1256,7 +1256,7 @@ func (db *database) clearUser() error {
 	return nil
 }
 
-// validateDBPath validates database file path
+// validateDBPath validates database file path for security
 func validateDBPath(dbPath string) error {
 	if dbPath == "" {
 		return fmt.Errorf("database path cannot be empty")
@@ -1276,7 +1276,7 @@ func validateDBPath(dbPath string) error {
 	return nil
 }
 
-// validateUser validates user data
+// validateUser validates user data for security
 func validateUser(user User) error {
 	if len(user.Name) > 255 {
 		return fmt.Errorf("name too long")

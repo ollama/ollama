@@ -10,6 +10,7 @@ import (
 	"github.com/ollama/ollama/config"
 )
 
+// ConfigHandler handles the 'ollama config' command for viewing and setting configuration values
 func ConfigHandler(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		cfg, err := config.Load()
@@ -30,12 +31,14 @@ func ConfigHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	key := args[0]
+	// Sanitize input by trimming whitespace
 	value := strings.TrimSpace(args[1])
 
 	if key != "server_url" {
 		return fmt.Errorf("unknown config key: %s", key)
 	}
 
+	// Validate server URL format and security
 	if err := validateServerURL(value); err != nil {
 		return err
 	}
@@ -54,6 +57,7 @@ func ConfigHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// validateServerURL validates server URL format and security requirements
 func validateServerURL(urlStr string) error {
 	parsed, err := url.Parse(urlStr)
 	if err != nil {

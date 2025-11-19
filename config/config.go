@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 )
 
+// Config holds user configuration settings
 type Config struct {
-	ServerURL string `json:"server_url,omitempty"`
+	ServerURL string `json:"server_url,omitempty"` // Custom server URL override
 }
 
+// configPath returns the path to the user's config file
 func configPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -18,6 +20,7 @@ func configPath() (string, error) {
 	return filepath.Join(home, ".ollama", "config.json"), nil
 }
 
+// Load reads the configuration from the user's config file
 func Load() (*Config, error) {
 	path, err := configPath()
 	if err != nil {
@@ -39,6 +42,7 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// Save writes the configuration to the user's config file
 func (c *Config) Save() error {
 	path, err := configPath()
 	if err != nil {
@@ -54,5 +58,6 @@ func (c *Config) Save() error {
 		return err
 	}
 
+	// Use restrictive permissions for security
 	return os.WriteFile(path, data, 0600)
 }

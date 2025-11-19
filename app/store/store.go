@@ -536,7 +536,7 @@ func (s *Store) Close() error {
 	}
 	return nil
 }
-// validateEnvPath validates environment variable paths
+// validateEnvPath validates environment variable paths for security
 func validateEnvPath(path string) string {
 	if path == "" {
 		return ""
@@ -558,7 +558,7 @@ func validateEnvPath(path string) string {
 	return cleanPath
 }
 
-// validateFilePath validates file paths
+// validateFilePath validates file paths for security
 func validateFilePath(path string) error {
 	if path == "" {
 		return fmt.Errorf("file path cannot be empty")
