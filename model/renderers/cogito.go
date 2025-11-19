@@ -16,8 +16,8 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 
 	defaultPrompt := "You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco."
 
-	// Determine if thinking is enabled from thinkValue or renderer config
-	enableThinking := r.isThinking || (thinkValue != nil && thinkValue.Bool())
+	// thinking is enabled: model must support it AND user must request it (true)
+	enableThinking := r.isThinking && (thinkValue != nil && thinkValue.Bool())
 
 	var systemPrompt string
 	var conversationMessages []api.Message
@@ -33,18 +33,18 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	if enableThinking {
 		finalSystemPrompt = "Enable deep thinking subroutine.\n\n" + defaultPrompt
 		if systemPrompt != "" {
-			finalSystemPrompt = finalSystemPrompt + "\n\n" + systemPrompt + "\n\n"
+			finalSystemPrompt += "\n\n" + systemPrompt + "\n\n"
 		}
 	} else {
 		finalSystemPrompt = defaultPrompt
 		if systemPrompt != "" {
-			finalSystemPrompt = finalSystemPrompt + "\n\n" + systemPrompt
+			finalSystemPrompt += "\n\n" + systemPrompt
 		}
 	}
 
 	if len(tools) > 0 {
 		if finalSystemPrompt != "" {
-			finalSystemPrompt = finalSystemPrompt + "\nYou have the following functions available:\n"
+			finalSystemPrompt += "\nYou have the following functions available:\n"
 			// {%- set ns.system_prompt = ns.system_prompt ~ '
 			// You have the following functions available:
 			// ' -%}
@@ -54,7 +54,7 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 
 		for _, tool := range tools {
 			toolJSON, _ := json.MarshalIndent(tool, "", "    ") // TODO(gguo): double check json format
-			finalSystemPrompt = finalSystemPrompt + "```json\n" + string(toolJSON) + "\n```\n"
+			finalSystemPrompt += "```json\n" + string(toolJSON) + "\n```\n"
 		}
 	}
 

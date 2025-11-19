@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 )
 
@@ -392,8 +393,8 @@ You are a pirate chatbot who always responds in pirate speak!
 							Function: api.ToolCallFunction{
 								Name: "process_data",
 								Arguments: api.ToolCallFunctionArguments{
-									"items": []interface{}{"item1", "item2", "item3"},
-									"config": map[string]interface{}{
+									"items": []any{"item1", "item2", "item3"},
+									"config": map[string]any{
 										"enabled":   true,
 										"threshold": 0.95,
 										"tags":      []string{"important", "urgent"},
@@ -461,7 +462,7 @@ First instruction<｜User｜>Hello<｜Assistant｜>`,
 		},
 	}
 
-	renderer := &CogitoRenderer{}
+	renderer := &CogitoRenderer{isThinking: true}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rendered, err := renderer.Render(tt.messages, tt.tools, tt.thinkValue)
