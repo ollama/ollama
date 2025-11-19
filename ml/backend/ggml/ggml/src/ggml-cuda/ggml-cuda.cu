@@ -3143,6 +3143,10 @@ static void update_cuda_graph_executable(ggml_backend_cuda_context * cuda_ctx) {
 static bool ggml_cuda_should_fuse_rope_set_rows(const ggml_tensor * rope,
                                                 const ggml_tensor * view,
                                                 const ggml_tensor * set_rows) {
+
+    if (rope->op != GGML_OP_ROPE || view->op != GGML_OP_VIEW || set_rows->op != GGML_OP_SET_ROWS) {
+        return false;
+    }
     // ne3 not tested
     if (rope->src[0]->ne[3] != 1) {
         return false;

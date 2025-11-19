@@ -1281,6 +1281,7 @@ struct llm_tokenizer_plamo2 : llm_tokenizer {
 
         // Build suffix list in lexicographical order of reversed strings
         std::vector<std::string> suffixes;
+        suffixes.reserve(suffix_to_score.size() + 1);
         for (const auto & pair : suffix_to_score) {
             suffixes.push_back(pair.first);
         }
