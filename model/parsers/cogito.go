@@ -15,21 +15,28 @@ type CogitoParserState int
 const (
 	CogitoCollectingThinking CogitoParserState = iota
 	CogitoCollectingContent
-	CogitoCollectingToolCall
+	CogitoCollectingToolCalls
 	CogitoCollectingToolOutput
 	CogitoThinkingDoneEatingWhitespace
-	CogitoToolCallDoneEatingWhitespace
-	CogitoToolOutputDoneEatingWhitespace
+	CogitoContentTransition
 )
 
 const (
-	cogitoThinkingOpenTag    = "<think>"
-	cogitoThinkingCloseTag   = "</think>"
-	cogitoToolCallBeginTag   = "<｜tool▁call▁begin｜>"
-	cogitoToolCallEndTag     = "<｜tool▁call▁end｜>"
-	cogitoToolSepTag         = "<｜tool▁sep｜>"
-	cogitoToolOutputBeginTag = "<｜tool▁output▁begin｜>"
-	cogitoToolOutputEndTag   = "<｜tool▁output▁end｜>"
+	cogitoThinkingOpenTag     = "<think>"
+	cogitoThinkingCloseTag    = "</think>"
+	cogitoToolCallsBeginTag   = "<｜tool▁calls▁begin｜>"
+	cogitoToolCallsEndTag     = "<｜tool▁calls▁end｜>"
+	cogitoToolCallBeginTag    = "<｜tool▁call▁begin｜>"
+	cogitoToolCallEndTag      = "<｜tool▁call▁end｜>"
+	cogitoToolSepTag          = "<｜tool▁sep｜>"
+	cogitoToolOutputBeginTag  = "<｜tool▁output▁begin｜>"
+	cogitoToolOutputEndTag    = "<｜tool▁output▁end｜>"
+	cogitoToolOutputsBeginTag = "<｜tool▁outputs▁begin｜>"
+	cogitoToolOutputsEndTag   = "<｜tool▁outputs▁end｜>"
+	cogitoEndOfSentenceTag    = "<｜end▁of▁sentence｜>"
+	cogitoAssistantTag        = "<｜Assistant｜>"
+	cogitoUserTag             = "<｜User｜>"
+	cogitoBeginOfSentenceTag  = "<｜begin▁of▁sentence｜>"
 )
 
 type CogitoParser struct {
@@ -61,256 +68,209 @@ func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message) []api.To
 	return tools
 }
 
-type cogitoEvent interface {
-	isCogitoEvent()
-}
-
-type cogitoEventThinkingContent struct {
-	content string
-}
-
-func (cogitoEventThinkingContent) isCogitoEvent() {}
-
-type cogitoEventContent struct {
-	content string
-}
-
-func (cogitoEventContent) isCogitoEvent() {}
-
-type cogitoEventToolCall struct {
-	name      string
-	arguments string
-}
-
-func (cogitoEventToolCall) isCogitoEvent() {}
-
-type cogitoEventToolOutput struct {
-	content string
-}
-
-func (cogitoEventToolOutput) isCogitoEvent() {}
-
 func (p *CogitoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents()
 
-	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
 	var thinkingSb strings.Builder
+	var toolCalls []api.ToolCall
 
-	for _, event := range events {
-		switch event := event.(type) {
-		case cogitoEventToolCall:
-			toolCall, err := p.parseToolCall(event)
-			if err != nil {
-				slog.Warn("cogito tool call parsing failed", "error", err)
-				return "", "", nil, err
-			}
-			toolCalls = append(toolCalls, toolCall)
-		case cogitoEventThinkingContent:
-			thinkingSb.WriteString(event.content)
-		case cogitoEventContent:
-			contentSb.WriteString(event.content)
-		case cogitoEventToolOutput:
-			// Tool outputs are handled separately and not included in content/thinking
+	for {
+		addedContent, addedThinking, addedCalls, keepGoing := p.processBuffer()
+
+		contentSb.WriteString(addedContent)
+		thinkingSb.WriteString(addedThinking)
+		toolCalls = append(toolCalls, addedCalls...)
+
+		if !keepGoing {
+			break
 		}
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *CogitoParser) parseEvents() []cogitoEvent {
-	var all []cogitoEvent
-
-	keepLooping := true
-	for keepLooping {
-		var events []cogitoEvent
-		events, keepLooping = p.eat()
-		if len(events) > 0 {
-			all = append(all, events...)
-		}
+func (p *CogitoParser) processBuffer() (content string, thinking string, calls []api.ToolCall, keepGoing bool) {
+	bufStr := p.buffer.String()
+	if bufStr == "" {
+		return "", "", nil, false
 	}
-
-	return all
-}
-
-func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
-	var events []cogitoEvent
 
 	switch p.state {
 	case CogitoCollectingThinking:
-		if strings.Contains(p.buffer.String(), cogitoThinkingCloseTag) {
-			before, after := p.splitAtTag(cogitoThinkingCloseTag, true)
-			events = append(events, cogitoEventThinkingContent{content: before})
-			p.state = CogitoThinkingDoneEatingWhitespace
-			p.buffer.WriteString(after)
-			return events, true
-		}
-		// Check for tool calls in thinking
-		if strings.Contains(p.buffer.String(), cogitoToolCallBeginTag) {
-			before, after := p.splitAtTag(cogitoToolCallBeginTag, false)
-			if len(before) > 0 {
-				events = append(events, cogitoEventThinkingContent{content: before})
+		if strings.HasPrefix(bufStr, cogitoThinkingOpenTag) {
+			if idx := strings.Index(bufStr, cogitoThinkingCloseTag); idx != -1 {
+				thinkContent := bufStr[len(cogitoThinkingOpenTag):idx]
+				thinkContent = strings.TrimRightFunc(thinkContent, unicode.IsSpace)
+
+				remaining := bufStr[idx+len(cogitoThinkingCloseTag):]
+				remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+
+				p.buffer.Reset()
+				p.buffer.WriteString(remaining)
+				p.state = CogitoCollectingContent
+
+				return "", thinkContent, nil, true
 			}
-			p.state = CogitoCollectingToolCall
-			p.buffer.WriteString(cogitoToolCallBeginTag + after)
-			return events, true
+			return "", "", nil, false
 		}
-		// Check for tool outputs in thinking
-		if strings.Contains(p.buffer.String(), cogitoToolOutputBeginTag) {
-			before, after := p.splitAtTag(cogitoToolOutputBeginTag, false)
-			if len(before) > 0 {
-				events = append(events, cogitoEventThinkingContent{content: before})
-			}
-			p.state = CogitoCollectingToolOutput
-			p.buffer.WriteString(cogitoToolOutputBeginTag + after)
-			return events, true
-		}
-		return nil, false
+
+		p.state = CogitoCollectingContent
+		return "", "", nil, true
 
 	case CogitoCollectingContent:
-		// Check for tool calls in content
-		if strings.Contains(p.buffer.String(), cogitoToolCallBeginTag) {
-			before, after := p.splitAtTag(cogitoToolCallBeginTag, false)
-			if len(before) > 0 {
-				events = append(events, cogitoEventContent{content: before})
+		for _, tag := range []string{cogitoEndOfSentenceTag, cogitoAssistantTag, cogitoUserTag, cogitoBeginOfSentenceTag} {
+			if idx := strings.Index(bufStr, tag); idx != -1 {
+				contentBefore := bufStr[:idx]
+				contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
+
+				remaining := bufStr[idx+len(tag):]
+				remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+
+				p.buffer.Reset()
+				p.buffer.WriteString(remaining)
+
+				return contentBefore, "", nil, true
 			}
-			p.state = CogitoCollectingToolCall
-			p.buffer.WriteString(cogitoToolCallBeginTag + after)
-			return events, true
 		}
-		// Check for tool outputs in content
-		if strings.Contains(p.buffer.String(), cogitoToolOutputBeginTag) {
-			before, after := p.splitAtTag(cogitoToolOutputBeginTag, false)
-			if len(before) > 0 {
-				events = append(events, cogitoEventContent{content: before})
-			}
-			p.state = CogitoCollectingToolOutput
-			p.buffer.WriteString(cogitoToolOutputBeginTag + after)
-			return events, true
-		}
-		// No special tags found, emit all content in buffer
-		content := p.buffer.String()
-		if content != "" {
+
+		if idx := strings.Index(bufStr, cogitoToolCallsBeginTag); idx != -1 {
+			contentBefore := bufStr[:idx]
+			contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
+
+			remaining := bufStr[idx+len(cogitoToolCallsBeginTag):]
 			p.buffer.Reset()
-			events = append(events, cogitoEventContent{content: content})
+			p.buffer.WriteString(remaining)
+			p.state = CogitoCollectingToolCalls
+
+			return contentBefore, "", nil, true
 		}
-		return events, false
 
-	case CogitoCollectingToolCall:
-		if strings.Contains(p.buffer.String(), cogitoToolCallEndTag) {
-			before, after := p.splitAtTag(cogitoToolCallEndTag, true)
-			toolCallContent := cogitoToolCallBeginTag + before + cogitoToolCallEndTag
+		if idx := strings.Index(bufStr, cogitoToolOutputsBeginTag); idx != -1 {
+			contentBefore := bufStr[:idx]
+			contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace)
 
-			// Parse the tool call
-			if event, err := p.parseRawToolCall(toolCallContent); err == nil {
-				events = append(events, event)
+			remaining := bufStr[idx+len(cogitoToolOutputsBeginTag):]
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+			p.state = CogitoCollectingToolOutput
+
+			return contentBefore, "", nil, true
+		}
+
+		p.buffer.Reset()
+		return bufStr, "", nil, false
+
+	case CogitoCollectingToolCalls:
+		if idx := strings.Index(bufStr, cogitoToolCallBeginTag); idx != -1 {
+			startIdx := idx + len(cogitoToolCallBeginTag)
+			if endIdx := strings.Index(bufStr[startIdx:], cogitoToolCallEndTag); endIdx != -1 {
+				toolCallContent := bufStr[startIdx : startIdx+endIdx]
+
+				if toolCall, err := p.parseToolCallContent(toolCallContent); err == nil {
+					remaining := bufStr[startIdx+endIdx+len(cogitoToolCallEndTag):]
+					remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+
+					p.buffer.Reset()
+					p.buffer.WriteString(remaining)
+
+					return "", "", []api.ToolCall{toolCall}, true
+				} else {
+					slog.Warn("cogito tool call parsing failed", "error", err)
+				}
 			}
-
-			p.state = CogitoToolCallDoneEatingWhitespace
-			p.buffer.WriteString(after)
-			return events, true
 		}
-		return nil, false
+
+		if idx := strings.Index(bufStr, cogitoToolCallsEndTag); idx != -1 {
+			remaining := bufStr[idx+len(cogitoToolCallsEndTag):]
+			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+			p.state = CogitoCollectingContent
+
+			return "", "", nil, true
+		}
+
+		return "", "", nil, false
 
 	case CogitoCollectingToolOutput:
-		if strings.Contains(p.buffer.String(), cogitoToolOutputEndTag) {
-			before, after := p.splitAtTag(cogitoToolOutputEndTag, true)
-			// Extract content between begin and end tags
-			if strings.HasPrefix(before, cogitoToolOutputBeginTag) {
-				content := strings.TrimPrefix(before, cogitoToolOutputBeginTag)
-				events = append(events, cogitoEventToolOutput{content: content})
+		if idx := strings.Index(bufStr, cogitoToolOutputBeginTag); idx != -1 {
+			startIdx := idx + len(cogitoToolOutputBeginTag)
+			if endIdx := strings.Index(bufStr[startIdx:], cogitoToolOutputEndTag); endIdx != -1 {
+				remaining := bufStr[startIdx+endIdx+len(cogitoToolOutputEndTag):]
+				remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+
+				p.buffer.Reset()
+				p.buffer.WriteString(remaining)
+
+				return "", "", nil, true
 			}
-
-			p.state = CogitoToolOutputDoneEatingWhitespace
-			p.buffer.WriteString(after)
-			return events, true
 		}
-		return nil, false
 
-	case CogitoThinkingDoneEatingWhitespace:
-		return p.eatLeadingWhitespaceAndTransitionTo(CogitoCollectingContent)
+		if idx := strings.Index(bufStr, cogitoToolOutputsEndTag); idx != -1 {
+			remaining := bufStr[idx+len(cogitoToolOutputsEndTag):]
+			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
 
-	case CogitoToolCallDoneEatingWhitespace:
-		return p.eatLeadingWhitespaceAndTransitionTo(CogitoCollectingContent)
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+			p.state = CogitoCollectingContent
 
-	case CogitoToolOutputDoneEatingWhitespace:
-		return p.eatLeadingWhitespaceAndTransitionTo(CogitoCollectingContent)
+			return "", "", nil, true
+		}
+
+		return "", "", nil, false
 	}
 
-	return nil, false
+	return "", "", nil, false
 }
 
-func (p *CogitoParser) eatLeadingWhitespaceAndTransitionTo(nextState CogitoParserState) ([]cogitoEvent, bool) {
-	trimmed := strings.TrimLeftFunc(p.buffer.String(), unicode.IsSpace)
-	p.buffer.Reset()
-	if trimmed == "" {
-		return nil, false
-	}
-	p.state = nextState
-	p.buffer.WriteString(trimmed)
-	return nil, true
-}
-
-func (p *CogitoParser) splitAtTag(tag string, trimAfter bool) (string, string) {
-	split := strings.SplitN(p.buffer.String(), tag, 2)
-	before := split[0]
-	before = strings.TrimRightFunc(before, unicode.IsSpace)
-	after := split[1]
-	if trimAfter {
-		after = strings.TrimLeftFunc(after, unicode.IsSpace)
-	}
-	p.buffer.Reset()
-	p.buffer.WriteString(after)
-	return before, after
-}
-
-func (p *CogitoParser) parseRawToolCall(raw string) (cogitoEventToolCall, error) {
-	content := strings.TrimPrefix(raw, cogitoToolCallBeginTag)
-	content = strings.TrimSuffix(content, cogitoToolCallEndTag)
-
+func (p *CogitoParser) parseToolCallContent(content string) (api.ToolCall, error) {
+	// Format: function<｜tool▁sep｜>tool_name\n```json\n{args}\n```
 	parts := strings.SplitN(content, cogitoToolSepTag, 2)
 	if len(parts) != 2 {
-		return cogitoEventToolCall{}, errors.New("invalid tool call format: missing separator")
+		return api.ToolCall{}, errors.New("invalid tool call format: missing separator")
 	}
 
 	// Verify function type
 	functionType := strings.TrimSpace(parts[0])
 	if functionType != "function" {
-		return cogitoEventToolCall{}, errors.New("invalid tool call format: expected 'function'")
+		return api.ToolCall{}, errors.New("invalid tool call format: expected 'function'")
 	}
 
-	name := strings.TrimSpace(parts[1])
+	nameAndArgs := parts[1]
 
 	// Find JSON block
-	jsonStart := strings.Index(name, "```json\n")
+	jsonStart := strings.Index(nameAndArgs, "```json\n")
 	if jsonStart == -1 {
-		return cogitoEventToolCall{}, errors.New("invalid tool call format: missing JSON block start")
+		jsonStart = strings.Index(nameAndArgs, "```json")
+		if jsonStart == -1 {
+			return api.ToolCall{}, errors.New("invalid tool call format: missing JSON block start")
+		}
+		jsonStart += len("```json")
+	} else {
+		jsonStart += len("```json\n")
 	}
 
-	jsonEnd := strings.Index(name[jsonStart+8:], "\n```")
+	jsonEnd := strings.Index(nameAndArgs[jsonStart:], "\n```")
 	if jsonEnd == -1 {
-		return cogitoEventToolCall{}, errors.New("invalid tool call format: missing JSON block end")
+		jsonEnd = strings.Index(nameAndArgs[jsonStart:], "```")
+		if jsonEnd == -1 {
+			return api.ToolCall{}, errors.New("invalid tool call format: missing JSON block end")
+		}
 	}
 
-	args := name[jsonStart+8 : jsonStart+8+jsonEnd]
-	name = name[:jsonStart]
+	argsJSON := nameAndArgs[jsonStart : jsonStart+jsonEnd]
+	toolName := strings.TrimSpace(nameAndArgs[:strings.Index(nameAndArgs, "```")])
 
-	return cogitoEventToolCall{
-		name:      strings.TrimSpace(name),
-		arguments: args,
-	}, nil
-}
-
-func (p *CogitoParser) parseToolCall(event cogitoEventToolCall) (api.ToolCall, error) {
 	var args api.ToolCallFunctionArguments
-	if err := json.Unmarshal([]byte(event.arguments), &args); err != nil {
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return api.ToolCall{}, err
 	}
 
 	return api.ToolCall{
 		Function: api.ToolCallFunction{
-			Name:      event.name,
+			Name:      toolName,
 			Arguments: args,
 		},
 	}, nil

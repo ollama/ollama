@@ -52,6 +52,8 @@ func ParserForName(name string) Parser {
 		return &PassthroughParser{}
 	case "harmony":
 		return harmony.NewHarmonyMessageHandler()
+	case "cogito":
+		return &CogitoParser{}
 	default:
 		return nil
 	}

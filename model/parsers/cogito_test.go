@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -31,9 +32,9 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name: "tool_call_simple",
-			input: `<｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+			input: `<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
-` + "```" + `<｜tool▁call▁end｜>`,
+` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
 			expectedToolCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -60,10 +61,10 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name: "thinking_with_tool_call",
-			input: `<think>I need to check the weather.</think><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+			input: `<think>I need to check the weather.</think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
-` + "```" + `<｜tool▁call▁end｜>The weather in Paris is sunny.`,
-			expectedContent:  "The weather in Paris is sunny.",
+` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
+			expectedContent:  "",
 			expectedThinking: "I need to check the weather.",
 			expectedToolCalls: []api.ToolCall{
 				{
@@ -91,12 +92,12 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name: "multiple_tool_calls",
-			input: `<｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+			input: `<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜>
 <｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"London"}
-` + "```" + `<｜tool▁call▁end｜>`,
+` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
 			expectedToolCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -131,9 +132,9 @@ func TestCogitoParser(t *testing.T) {
 		},
 		{
 			name: "complex_tool_arguments",
-			input: `<｜tool▁call▁begin｜>function<｜tool▁sep｜>process_data
+			input: `<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>process_data
 ` + "```json\n" + `{"items":["item1","item2"],"config":{"enabled":true,"threshold":0.95},"count":42}
-` + "```" + `<｜tool▁call▁end｜>`,
+` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
 			expectedToolCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -148,9 +149,8 @@ func TestCogitoParser(t *testing.T) {
 			},
 		},
 		{
-			name:  "tool_output_parsing",
-			input: `<｜tool▁output▁begin｜>{"temperature": 22, "condition": "sunny"}<｜tool▁output▁end｜>`,
-			// Tool outputs don't contribute to content/thinking/tool calls in this parser
+			name:             "tool_output_parsing",
+			input:            `<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>{"temperature": 22, "condition": "sunny"}<｜tool▁output▁end｜><｜tool▁outputs▁end｜>`,
 			expectedContent:  "",
 			expectedThinking: "",
 		},
@@ -217,15 +217,14 @@ func TestCogitoParser_Streaming(t *testing.T) {
 	parser := &CogitoParser{}
 	parser.Init(nil, nil)
 
-	// Stream input in chunks
 	chunks := []string{
 		"<think>This is ",
 		"thinking content",
 		".</think>This is ",
-		"content.<｜tool▁call▁begin｜>function<｜tool▁sep｜>test_tool\n```json\n{\"arg\":\"value\"}\n```<｜tool▁call▁end｜>",
+		"content.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test_tool\n```json\n{\"arg\":\"value\"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
 	}
 
-	var finalContent, finalThinking string
+	var finalContent, finalThinking strings.Builder
 	var finalToolCalls []api.ToolCall
 
 	for i, chunk := range chunks {
@@ -235,11 +234,9 @@ func TestCogitoParser_Streaming(t *testing.T) {
 			t.Fatalf("Add() error on chunk %d: %v", i, err)
 		}
 
-		if done {
-			finalContent = content
-			finalThinking = thinking
-			finalToolCalls = toolCalls
-		}
+		finalContent.WriteString(content)
+		finalThinking.WriteString(thinking)
+		finalToolCalls = append(finalToolCalls, toolCalls...)
 	}
 
 	expectedContent := "This is content."
@@ -255,12 +252,12 @@ func TestCogitoParser_Streaming(t *testing.T) {
 		},
 	}
 
-	if finalContent != expectedContent {
-		t.Errorf("expected content %q, got %q", expectedContent, finalContent)
+	if finalContent.String() != expectedContent {
+		t.Errorf("expected content %q, got %q", expectedContent, finalContent.String())
 	}
 
-	if finalThinking != expectedThinking {
-		t.Errorf("expected thinking %q, got %q", expectedThinking, finalThinking)
+	if finalThinking.String() != expectedThinking {
+		t.Errorf("expected thinking %q, got %q", expectedThinking, finalThinking.String())
 	}
 
 	if diff := cmp.Diff(expectedToolCalls, finalToolCalls); diff != "" {
