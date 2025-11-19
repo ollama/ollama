@@ -266,11 +266,9 @@ func (p *CogitoParser) splitAtTag(tag string, trimAfter bool) (string, string) {
 }
 
 func (p *CogitoParser) parseRawToolCall(raw string) (cogitoEventToolCall, error) {
-	// Expected format: <｜tool▁call▁begin｜>function<｜tool▁sep｜>{name}\n```json\n{args}\n```<｜tool▁call▁end｜>
 	content := strings.TrimPrefix(raw, cogitoToolCallBeginTag)
 	content = strings.TrimSuffix(content, cogitoToolCallEndTag)
 
-	// Split by separator to get function type and name
 	parts := strings.SplitN(content, cogitoToolSepTag, 2)
 	if len(parts) != 2 {
 		return cogitoEventToolCall{}, errors.New("invalid tool call format: missing separator")
