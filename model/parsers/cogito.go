@@ -186,7 +186,8 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 		}
 
 	case CogitoCollectingContent:
-		if strings.Contains(bufStr, cogitoToolCallsBeginTag) { // content[<｜tool▁calls▁begin｜>] -> tool calls
+		switch {
+		case strings.Contains(bufStr, cogitoToolCallsBeginTag): // content[<｜tool▁calls▁begin｜>] -> tool calls
 			split := strings.SplitN(bufStr, cogitoToolCallsBeginTag, 2)
 			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			remaining := split[1]
@@ -199,7 +200,7 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 				events = append(events, cogitoEventContent{content: contentBefore})
 			}
 			return events, true
-		} else if strings.Contains(bufStr, cogitoToolOutputsBeginTag) { // content[<｜tool▁outputs▁begin｜>] -> tool outputs
+		case strings.Contains(bufStr, cogitoToolOutputsBeginTag): // content[<｜tool▁outputs▁begin｜>] -> tool outputs
 			split := strings.SplitN(bufStr, cogitoToolOutputsBeginTag, 2)
 			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			remaining := split[1]
@@ -212,7 +213,7 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 				events = append(events, cogitoEventContent{content: contentBefore})
 			}
 			return events, true
-		} else { // otherwise its content
+		default: // otherwise its content
 			p.buffer.Reset()
 			if len(bufStr) > 0 {
 				events = append(events, cogitoEventContent{content: bufStr})

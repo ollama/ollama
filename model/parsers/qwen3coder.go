@@ -432,7 +432,7 @@ func transformToXML(raw string) string {
 		groups := qwenTagRegex.FindStringSubmatch(match)
 		tag := groups[1]
 		var escapedValue strings.Builder
-		xml.EscapeText(&escapedValue, []byte(groups[2]))
+		_ = xml.EscapeText(&escapedValue, []byte(groups[2])) // error is always nil for strings.Builder
 		return fmt.Sprintf(`<%s name="%s">`, tag, escapedValue.String())
 	})
 
