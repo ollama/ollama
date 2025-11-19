@@ -59,7 +59,7 @@ index 88ed79111..71ca60214 100644
      } else {
          if (sector < sections.v[0]) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 24129d5f8..e46972054 100644
+index 305b9d8ef..d68de8081 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -4009,14 +4009,14 @@ kernel void kernel_rope_multi(
