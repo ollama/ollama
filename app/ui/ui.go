@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -118,23 +117,7 @@ func (s *Server) log() *slog.Logger {
 
 // ollamaProxy creates a reverse proxy handler to the Ollama server
 func (s *Server) ollamaProxy() http.Handler {
-	ollamaHost := os.Getenv("OLLAMA_HOST")
-	if ollamaHost == "" {
-		ollamaHost = "http://127.0.0.1:11434"
-	}
-
-	if !strings.HasPrefix(ollamaHost, "http://") && !strings.HasPrefix(ollamaHost, "https://") {
-		ollamaHost = "http://" + ollamaHost
-	}
-
-	target, err := url.Parse(ollamaHost)
-	if err != nil {
-		s.log().Error("failed to parse OLLAMA_HOST", "error", err, "host", ollamaHost)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "failed to configure proxy", http.StatusInternalServerError)
-		})
-	}
-
+	target := envconfig.Host()
 	s.log().Info("configuring ollama proxy", "target", target.String())
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
