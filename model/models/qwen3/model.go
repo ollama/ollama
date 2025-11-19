@@ -74,7 +74,7 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
 	return sa.Output.Forward(ctx, attention)
 }

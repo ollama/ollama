@@ -2,13 +2,13 @@ package gptoss
 
 import (
 	"cmp"
-	"math"
 	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/attention"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -137,9 +137,9 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
-	attention := nn.AttentionWithSinks(ctx, query, key, value, attn.Sinks, 1/math.Sqrt(float64(opts.headDim())), cache)
-	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
-	return attn.Output.Forward(ctx, attention).Add(ctx, residual)
+	hiddenStates = nn.Attention(ctx, query, key, value, cache, attention.WithSinks(attn.Sinks))
+	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0)*hiddenStates.Dim(1), batchSize)
+	return attn.Output.Forward(ctx, hiddenStates).Add(ctx, residual)
 }
 
 type MLPBlock struct {

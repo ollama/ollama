@@ -1,7 +1,6 @@
 package mllama
 
 import (
-	"math"
 	"slices"
 
 	"github.com/ollama/ollama/fs"
@@ -34,8 +33,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.T
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	attention := nn.Attention(ctx, query, key, value, scaleFactor, cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, attention)
@@ -122,20 +120,7 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 	}
 
 	key, value, _ = cache.Get(ctx)
-
-	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-
-	query = query.Permute(ctx, 0, 2, 1, 3)
-	key = key.Permute(ctx, 0, 2, 1, 3)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
-	kq := key.MulmatFullPrec(ctx, query)
-
-	kq = kq.Scale(ctx, scaleFactor)
-	kq = kq.Softmax(ctx)
-
-	kqv := value.Mulmat(ctx, kq)
-	attention := kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	attention := nn.Attention(ctx, query, key, value, nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return ca.Output.Forward(ctx, attention)

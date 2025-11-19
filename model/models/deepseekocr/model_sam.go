@@ -1,11 +1,11 @@
 package deepseekocr
 
 import (
-	"math"
 	"slices"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/attention"
 )
 
 type samModel struct {
@@ -166,23 +166,13 @@ func (m *samAttention) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts samO
 
 	ctx.Forward(query, key, value)
 
-	query = query.Permute(ctx, 0, 2, 1, 3)
-	rh, rw := m.decomposedRelativePositions(ctx, query, []int{h, w}, []int{h, w})
+	rh, rw := m.decomposedRelativePositions(ctx, query.Permute(ctx, 0, 2, 1, 3), []int{h, w}, []int{h, w})
 	mask := rh.Repeat(ctx, 0, rw.Dim(0)).Add(ctx, rw)
 	mask = mask.Reshape(ctx, h*w, -1, opts.numHeads, b)
 
-	key = key.Permute(ctx, 0, 2, 1, 3)
-	scores := key.MulmatFullPrec(ctx, query)
-	scores = scores.Scale(ctx, 1/math.Sqrt(float64(opts.headDim())))
-
-	scores = scores.Add(ctx, mask)
-	scores = scores.Softmax(ctx)
-
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-	attention := value.Mulmat(ctx, scores)
-	attention = attention.Permute(ctx, 0, 2, 1, 3)
-	attention = attention.Contiguous(ctx, -1, w, h, b)
-	return m.Output.Forward(ctx, attention)
+	hiddenStates = nn.Attention(ctx, query, key, value, nil, attention.WithMask(mask))
+	hiddenStates = hiddenStates.Contiguous(ctx, -1, w, h, b)
+	return m.Output.Forward(ctx, hiddenStates)
 }
 
 type samMLP struct {

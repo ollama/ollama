@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"os"
 	"runtime"
 	"slices"
@@ -35,6 +36,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	"github.com/ollama/ollama/ml/nn/attention"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"golang.org/x/sync/errgroup"
 )
@@ -1848,4 +1850,90 @@ func (t *Tensor) ChunkSections(ctx ml.Context, dim int, sections ...int) []ml.Te
 		panic("sections do not sum to tensor dimension")
 	}
 	return s
+}
+
+func (t *Tensor) SDPA(ctx ml.Context, key, value ml.Tensor, fns ...func(*attention.Options)) ml.Tensor {
+	opts := attention.Options{
+		Scale: 1 / math.Sqrt(float64(t.Dim(0))),
+	}
+
+	for _, fn := range fns {
+		fn(&opts)
+	}
+
+	if !opts.Cached {
+		config := t.b.CacheConfig()
+		if config.PermutedV {
+			value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+		}
+
+		if opts.Mask != nil {
+			if padSize := int(pad(C.size_t(opts.Mask.Dim(1)), C.size_t(config.MaskBatchPadding))) - opts.Mask.Dim(1); padSize > 0 {
+				opts.Mask = opts.Mask.Pad(ctx, 0, padSize, 0, 0)
+			}
+
+			if opts.Mask.DType() != config.MaskDType {
+				opts.Mask = opts.Mask.Cast(ctx, config.MaskDType)
+			}
+		}
+	}
+
+	query := t.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
+
+	var mask *C.struct_ggml_tensor
+	if opts.Mask != nil {
+		mask = opts.Mask.(*Tensor).t
+	}
+
+	if t.b.flashAttention == ml.FlashAttentionEnabled {
+		value = value.Permute(ctx, 0, 2, 1, 3)
+
+		tt := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, mask, C.float(opts.Scale), 0, C.float(opts.LogitSoftcap))
+		C.ggml_flash_attn_ext_set_prec(tt, C.GGML_PREC_F32)
+		if opts.Sinks != nil {
+			C.ggml_flash_attn_ext_add_sinks(tt, opts.Sinks.(*Tensor).t)
+		}
+
+		var attention ml.Tensor = &Tensor{b: t.b, t: tt}
+		if opts.MLA != nil {
+			attention = attention.Permute(ctx, 0, 2, 1, 3)
+			attention = opts.MLA.Mulmat(ctx, attention)
+			attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+		}
+
+		return attention
+	}
+
+	scores := key.Mulmat(ctx, query)
+	C.ggml_mul_mat_set_prec(scores.(*Tensor).t, C.GGML_PREC_F32)
+	if opts.LogitSoftcap > 0 {
+		scores = scores.Scale(ctx, 1/float64(opts.LogitSoftcap)).Tanh(ctx).Scale(ctx, float64(opts.LogitSoftcap))
+	}
+
+	if opts.Cached {
+		scores = &Tensor{b: t.b, t: C.ggml_soft_max_ext(ctx.(*Context).ctx, scores.(*Tensor).t, mask, C.float(opts.Scale), 0)}
+	} else {
+		scores = scores.Scale(ctx, opts.Scale)
+		if opts.Mask != nil {
+			scores = scores.Add(ctx, opts.Mask)
+		}
+
+		scores = scores.Softmax(ctx)
+	}
+
+	if opts.Sinks != nil {
+		C.ggml_soft_max_add_sinks(scores.(*Tensor).t, opts.Sinks.(*Tensor).t)
+	}
+
+	if key.Dim(1) == value.Dim(2) && key.Dim(2) == value.Dim(1) {
+		value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+	}
+
+	attention := value.Mulmat(ctx, scores)
+	if opts.MLA != nil {
+		attention = opts.MLA.Mulmat(ctx, attention)
+	}
+
+	return attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 }

@@ -1,8 +1,6 @@
 package gemma3
 
 import (
-	"math"
-
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -28,7 +26,7 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 	key = key.Reshape(ctx, headDim, opts.numHeads, key.Dim(1), batchSize)
 	value = value.Reshape(ctx, headDim, opts.numHeads, value.Dim(1), batchSize)
 
-	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), nil)
+	attention := nn.Attention(ctx, query, key, value, nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
 
 	hiddenState = sa.Output.Forward(ctx, attention)

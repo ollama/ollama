@@ -79,7 +79,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs, posit
 		q = q.Mul(ctx, positionsScale)
 	}
 
-	kqv := nn.Attention(ctx, q, k, v, 1.0/math.Sqrt(float64(headDim)), cache)
+	kqv := nn.Attention(ctx, q, k, v, cache)
 	kqv = kqv.Reshape(ctx, headDim*opts.numHeads, batchSize)
 	return sa.Output.Forward(ctx, kqv)
 }

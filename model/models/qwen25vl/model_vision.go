@@ -8,6 +8,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/ml/nn/rope"
+	"github.com/ollama/ollama/ml/nn/attention"
 )
 
 func blockDiagonalMask(ctx ml.Context, seqLength int, bounds []int) ml.Tensor {
@@ -50,25 +51,9 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenStates, positions, 
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
-	// Scale factor for scaled dot-product attention
-	scale := 1.0 / math.Sqrt(float64(opts.headDim))
-
-	// Scaled dot-product attention
-	query = query.Permute(ctx, 0, 2, 1, 3)
-	key = key.Permute(ctx, 0, 2, 1, 3)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
-	kq := key.MulmatFullPrec(ctx, query)
-	kq = kq.Scale(ctx, scale)
-	if mask != nil {
-		kq = kq.Add(ctx, mask)
-	}
-	kq = kq.Softmax(ctx)
-	kqv := value.Mulmat(ctx, kq)
-	attention := kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2))
-
-	return sa.Output.Forward(ctx, attention)
+	hiddenStates = nn.Attention(ctx, query, key, value, nil, attention.WithMask(mask))
+	hiddenStates = hiddenStates.Reshape(ctx, opts.hiddenSize, hiddenStates.Dim(2))
+	return sa.Output.Forward(ctx, hiddenStates)
 }
 
 // VisionMLP implements the multi-layer perceptron

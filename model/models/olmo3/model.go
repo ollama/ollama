@@ -2,7 +2,6 @@ package olmo3
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -132,7 +131,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, m.numKVHeads, batchSize)
 
-	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, m.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, attention)

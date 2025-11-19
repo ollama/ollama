@@ -3,7 +3,6 @@ package qwen2
 import (
 	"cmp"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/ollama/ollama/fs"
@@ -48,7 +47,7 @@ func (attn Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor,
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
-	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
 
 	return attn.Output.Forward(ctx, attention)
