@@ -46,7 +46,8 @@ func (p *CogitoParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *CogitoParser) setInitialState(lastMessage *api.Message) {
+func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool) {
+	// Note: for cogito, if there is tools, then we don't want to be thinking
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 	if !p.HasThinkingSupport() {
 		p.state = CogitoCollectingContent
@@ -58,11 +59,16 @@ func (p *CogitoParser) setInitialState(lastMessage *api.Message) {
 		return
 	}
 
+	if len(tools) > 0 { // NOTE(gguo): so this should work assuming that the server/runner has set thinking to false
+		p.state = CogitoCollectingContent
+		return
+	}
+
 	p.state = CogitoCollectingThinking
 }
 
 func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
-	p.setInitialState(lastMessage)
+	p.setInitialState(lastMessage, tools)
 	return tools
 }
 
