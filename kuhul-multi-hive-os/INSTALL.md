@@ -6,12 +6,105 @@ Complete installation instructions for **Linux**, **macOS**, and **Windows**.
 
 ## 📋 Table of Contents
 
-1. [System Requirements](#system-requirements)
-2. [Linux Installation](#linux-installation)
-3. [macOS Installation](#macos-installation)
-4. [Windows Installation](#windows-installation)
-5. [Verification](#verification)
-6. [Troubleshooting](#troubleshooting)
+1. [NPM Installation (Recommended)](#npm-installation-recommended)
+2. [System Requirements](#system-requirements)
+3. [Linux Installation](#linux-installation)
+4. [macOS Installation](#macos-installation)
+5. [Windows Installation](#windows-installation)
+6. [Verification](#verification)
+7. [Troubleshooting](#troubleshooting)
+
+---
+
+## 📦 NPM Installation (Recommended)
+
+**The easiest way to install K'uhul is via NPM:**
+
+### Quick Install
+
+```bash
+# Install K'uhul globally
+npm install -g @kuhul/multi-hive-os
+
+# Or install locally in your project
+npm install @kuhul/multi-hive-os
+```
+
+### NPM + Ollama Setup
+
+```bash
+# 1. Install Ollama (if not already installed)
+# Linux/macOS:
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Windows: Download from https://ollama.ai
+
+# 2. Install K'uhul via NPM
+npm install -g @kuhul/multi-hive-os
+
+# 3. Pull at least one model
+ollama pull qwen2.5:latest
+
+# 4. Run K'uhul (if installed globally)
+kuhul start
+
+# Or if installed locally:
+npx kuhul start
+```
+
+### NPM Package Features
+
+When you install via NPM, you get:
+
+✅ **Global CLI**: Run `kuhul` commands from anywhere
+✅ **Easy Updates**: `npm update -g @kuhul/multi-hive-os`
+✅ **Node.js Integration**: Import K'uhul in your Node apps
+✅ **Package Management**: Use with package.json scripts
+
+### Using in Node.js Projects
+
+```javascript
+// Import K'uhul client
+const Kuhul = require('@kuhul/multi-hive-os');
+
+// Create a hive client
+const hive = new Kuhul.HiveClient({
+  host: 'http://localhost:8000'
+});
+
+// Query the hive
+async function queryHive() {
+  const result = await hive.query({
+    agent: 'queen',
+    message: 'Analyze system performance'
+  });
+  console.log(result.response);
+}
+
+queryHive();
+```
+
+### NPM Commands
+
+```bash
+# Start K'uhul server
+npm run start
+
+# Start with specific script (Linux/macOS)
+npm run start:linux
+
+# Start with specific script (Windows)
+npm run start:windows
+
+# Pull all recommended models
+npm run pull:models
+
+# Install Python dependencies
+npm run install:deps
+
+# Serve frontend
+npm run serve:frontend
+```
 
 ---
 

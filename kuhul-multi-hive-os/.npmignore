@@ -1,0 +1,100 @@
+# NPM Publish Ignore File
+# Controls what files are excluded when publishing to NPM
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Development files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+.env
+.env.*
+
+# Testing
+test/
+tests/
+__tests__/
+*.test.py
+*.test.js
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Documentation (keep README, LICENSE, INSTALL)
+MIGRATION.md
+PUBLISH.md
+
+# Python virtual environments
+venv/
+env/
+.venv/
+ENV/
+virtualenv/
+
+# Node modules (shouldn't be here but just in case)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Data directories (user data should never be published)
+kuhul_data/
+*_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Large media files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.zip
+*.tar.gz
+*.rar
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Scripts (keep startup scripts, exclude dev scripts)
+scripts/
+!scripts/README.md
+
+# Temporary files
+tmp/
+temp/
+*.tmp

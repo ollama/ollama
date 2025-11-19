@@ -93,7 +93,26 @@
 
 > **📦 For detailed installation instructions, see [INSTALL.md](INSTALL.md)**
 
-### One-Command Setup (Linux/macOS)
+### 🎯 Easiest: NPM Installation (Recommended)
+
+```bash
+# Install K'uhul globally via NPM
+npm install -g @kuhul/multi-hive-os
+
+# Install Ollama (if not already installed)
+curl -fsSL https://ollama.ai/install.sh | sh  # Linux/macOS
+# Or download from https://ollama.ai for Windows
+
+# Pull at least one model
+ollama pull qwen2.5:latest
+
+# Start K'uhul
+kuhul start
+
+# Access at http://localhost:8080
+```
+
+### Alternative: Git Clone (Linux/macOS)
 
 ```bash
 # 1. Install Ollama
@@ -103,13 +122,13 @@ curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull qwen2.5:latest
 
 # 3. Clone and start
-git clone https://github.com/cannaseedus-bot/devmicro.git
-cd devmicro/kuhul-multi-hive-os
+git clone https://github.com/cannaseedus-bot/KUHUL.git
+cd KUHUL
 pip install -r backend/requirements.txt
 ./start_hive.sh
 ```
 
-### Windows Quick Start
+### Alternative: Git Clone (Windows)
 
 ```cmd
 REM 1. Download Ollama from https://ollama.ai and install
@@ -118,8 +137,8 @@ REM 2. Pull at least one model
 ollama pull qwen2.5:latest
 
 REM 3. Clone and start
-git clone https://github.com/cannaseedus-bot/devmicro.git
-cd devmicro\kuhul-multi-hive-os
+git clone https://github.com/cannaseedus-bot/KUHUL.git
+cd KUHUL
 pip install -r backend\requirements.txt
 start_hive.bat
 ```
