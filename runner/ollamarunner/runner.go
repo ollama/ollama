@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"hash/maphash"
 	"image"
@@ -23,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/spf13/pflag"
 	"golang.org/x/image/bmp"
 	"golang.org/x/sync/semaphore"
 
@@ -330,6 +330,8 @@ type batchState struct {
 type Server struct {
 	// modelPath is the location of the model to be loaded
 	modelPath string
+
+	extraModelPaths []string
 
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
@@ -1168,6 +1170,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 // based on the given parameters
 func (s *Server) allocModel(
 	mpath string,
+	empath []string,
 	params ml.BackendParams,
 	loraPath []string,
 	parallel int,
@@ -1192,7 +1195,7 @@ func (s *Server) allocModel(
 	}()
 
 	var err error
-	s.model, err = model.New(mpath, params)
+	s.model, err = model.New(mpath, empath, params)
 	if err != nil {
 		return err
 	}
@@ -1295,7 +1298,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		s.batchSize = req.BatchSize
 
-		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		err := s.allocModel(s.modelPath, s.extraModelPaths, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
 		if err != nil {
 			s.closeModel()
 
@@ -1365,7 +1368,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		m, err = model.New(f.Name(), make([]string, 0), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
 			return
@@ -1382,13 +1385,14 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 }
 
 func Execute(args []string) error {
-	fs := flag.NewFlagSet("runner", flag.ExitOnError)
-	mpath := fs.String("model", "", "Path to model binary file")
+	fs := pflag.NewFlagSet("runner", pflag.ExitOnError)
+	mpath := fs.StringArray("model", []string{""}, "Path to model binary file. May repeatedly specified to provide other split of models binary.")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Runner usage\n")
+		// sadly pflag does not expose out(). Fallback to os.Stderr which should perform identically as we don't set fs.output
+		fmt.Fprintf(os.Stderr, "Runner usage\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -1401,8 +1405,9 @@ func Execute(args []string) error {
 	defer cancel()
 
 	server := &Server{
-		modelPath: *mpath,
-		status:    llm.ServerStatusLaunched,
+		modelPath:       (*mpath)[0],
+		extraModelPaths: (*mpath)[1:],
+		status:          llm.ServerStatusLaunched,
 	}
 
 	server.cond = sync.NewCond(&server.mu)

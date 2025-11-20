@@ -84,12 +84,13 @@ type LlamaServer interface {
 
 // llmServer is an instance of a runner hosting a single model
 type llmServer struct {
-	port      int
-	cmd       *exec.Cmd
-	done      chan error // Channel to signal when the process exits
-	status    *StatusWriter
-	options   api.Options
-	modelPath string
+	port            int
+	cmd             *exec.Cmd
+	done            chan error // Channel to signal when the process exits
+	status          *StatusWriter
+	options         api.Options
+	modelPath       string
+	extraModelPaths []string
 
 	loadRequest LoadRequest       // Parameters used to initialize the runner
 	mem         *ml.BackendMemory // Memory allocations for this model
@@ -109,7 +110,7 @@ type llmServer struct {
 type llamaServer struct {
 	llmServer
 
-	ggml *ggml.GGML
+	ggml *ggml.MetaGGML
 }
 
 type ollamaServer struct {
@@ -123,7 +124,7 @@ type ollamaServer struct {
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
+func LoadModel(model string, extraModels []string, maxArraySize int) (*ggml.MetaGGML, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -134,12 +135,36 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, err := ggml.Decode(f, maxArraySize)
-	return ggml, err
+	ggml1, err := ggml.Decode(f, maxArraySize)
+	if err != nil {
+		return nil, err
+	}
+	if ggml1.KV().GGUFSplitInfo() != nil {
+		loadedGgml := []ggml.GGML{*ggml1}
+		for i := range extraModels {
+			extraModel := extraModels[i]
+			f, err := os.Open(extraModel)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+
+			ggml1, err := ggml.Decode(f, maxArraySize)
+			if err != nil {
+				return nil, err
+			}
+			loadedGgml = append(loadedGgml, *ggml1)
+		}
+		metaggml := ggml.MakeMetaGGML(loadedGgml, append([]string{model}, extraModels...))
+		return &metaggml, nil
+	} else {
+		metaggml := ggml.MakeMetaGGML([]ggml.GGML{*ggml1}, []string{model})
+		return &metaggml, nil
+	}
 }
 
 // NewLlamaServer will run a server for the given GPUs
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, extraModelPaths []string, f *ggml.MetaGGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
@@ -155,7 +180,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}
 	if textProcessor == nil {
-		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
+		llamaModel, err = llama.LoadModelFromFile(modelPath, extraModelPaths, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
 		}
@@ -225,24 +250,26 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	cmd, port, err := StartRunner(
 		textProcessor != nil,
 		modelPath,
+		extraModelPaths,
 		gpuLibs,
 		status,
 		ml.GetVisibleDevicesEnv(gpus),
 	)
 
 	s := llmServer{
-		port:           port,
-		cmd:            cmd,
-		status:         status,
-		options:        opts,
-		modelPath:      modelPath,
-		loadRequest:    loadRequest,
-		llamaModel:     llamaModel,
-		llamaModelLock: &sync.Mutex{},
-		sem:            semaphore.NewWeighted(int64(numParallel)),
-		totalLayers:    f.KV().BlockCount() + 1,
-		loadStart:      time.Now(),
-		done:           make(chan error, 1),
+		port:            port,
+		cmd:             cmd,
+		status:          status,
+		options:         opts,
+		modelPath:       modelPath,
+		extraModelPaths: extraModelPaths,
+		loadRequest:     loadRequest,
+		llamaModel:      llamaModel,
+		llamaModelLock:  &sync.Mutex{},
+		sem:             semaphore.NewWeighted(int64(numParallel)),
+		totalLayers:     f.KV().BlockCount() + 1,
+		loadStart:       time.Now(),
+		done:            make(chan error, 1),
 	}
 
 	if err != nil {
@@ -279,7 +306,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 }
 
-func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
+func StartRunner(ollamaEngine bool, modelPath string, extraModelPaths []string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
 	var exe string
 	exe, err = os.Executable()
 	if err != nil {
@@ -308,6 +335,9 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	}
 	if modelPath != "" {
 		params = append(params, "--model", modelPath)
+	}
+	for i := range extraModelPaths {
+		params = append(params, "--model", extraModelPaths[i])
 	}
 	params = append(params, "--port", strconv.Itoa(port))
 
@@ -403,6 +433,10 @@ func (s *llmServer) ModelPath() string {
 	return s.modelPath
 }
 
+func (s *llmServer) ExtraModelPaths() []string {
+	return s.extraModelPaths
+}
+
 type LoadOperation int
 
 // The order of these constants are significant because we iterate over the operations. They
@@ -478,7 +512,7 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.loadRequest.Parallel, s.loadRequest.KvCacheType, s.loadRequest.FlashAttention)
 
 	// Use the size of one layer as a buffer
-	layers := s.ggml.Tensors().GroupLayers()
+	layers := s.ggml.Tensors.GroupLayers()
 	if blk0, ok := layers["blk.0"]; ok {
 		for i := range gpus {
 			gpus[i].FreeMemory -= blk0.Size() + kv[0]

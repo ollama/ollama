@@ -138,7 +138,7 @@ func (llm *gguf) numKV() uint64 {
 	}
 }
 
-func (llm *gguf) Decode(rs io.ReadSeeker) error {
+func (llm *gguf) Decode(rs io.ReadSeeker, mainKV ...KV) error {
 	// decode key-values
 	for i := 0; uint64(i) < llm.numKV(); i++ {
 		k, err := readGGUFString(llm, rs)
@@ -235,7 +235,11 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	// patch KV with parameter count
 	llm.kv["general.parameter_count"] = llm.parameters
 
-	alignment := llm.kv.Uint("general.alignment", 32)
+	alignment := llm.kv.Uint("general.alignment", 0xffffffff)
+	if alignment == 0xffffffff {
+		// try to get alignment from main shard instead.
+		alignment = append(mainKV, make(KV))[0].Uint("general.alignment", 32)
+	}
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {

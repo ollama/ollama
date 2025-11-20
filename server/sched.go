@@ -49,8 +49,8 @@ type Scheduler struct {
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
 
-	loadFn          func(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
-	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	loadFn          func(req *LlmRequest, f *ggml.MetaGGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
+	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, extraModelPaths []string, f *ggml.MetaGGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
@@ -196,7 +196,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 					// Load model for fitting
 					logutil.Trace("loading model metadata", "model", pending.model.ModelPath)
-					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
+					ggml, err := llm.LoadModel(pending.model.ModelPath, pending.model.ExtraModelPaths, 1024)
 					if err != nil {
 						pending.errCh <- err
 						break
@@ -389,7 +389,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
 // (if any). Returns whether the scheduler needs to evict a model to make this one fit.
-func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
+func (s *Scheduler) load(req *LlmRequest, f *ggml.MetaGGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
 	numParallel := max(int(envconfig.NumParallel()), 1)
 
 	// Embedding models should always be loaded with parallel=1
@@ -414,7 +414,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	if llama == nil {
 		var err error
-		llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
+		llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, req.model.ExtraModelPaths, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
