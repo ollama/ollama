@@ -24,12 +24,12 @@ index 99ae293cc..9a134b7af 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index 1c07e767a..0da3e065b 100644
+index dba8f4695..7e17032c7 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
 @@ -684,6 +684,9 @@ GGML_API void ggml_nvml_release();
  GGML_API int ggml_hip_mgmt_init();
- GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total);
+ GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu);
  GGML_API void ggml_hip_mgmt_release();
 +GGML_API int ggml_dxgi_pdh_init();
 +GGML_API int ggml_dxgi_pdh_get_device_memory(const char* luid, size_t *free, size_t *total, bool is_integrated_gpu);
@@ -38,7 +38,7 @@ index 1c07e767a..0da3e065b 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index d43d46d1d..df79f9f79 100644
+index 0103fd03a..9cc4ebdef 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -74,6 +74,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
