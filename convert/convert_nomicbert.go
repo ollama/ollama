@@ -149,11 +149,12 @@ func (p *nomicbertModel) KV(t *Tokenizer) ggml.KV {
 
 	// convert to phantom space tokens
 	for i, e := range t.Tokens {
-		if strings.HasPrefix(e, "[") && strings.HasSuffix(e, "]") {
-			// noop
-		} else if strings.HasPrefix(e, "##") {
+		switch {
+		case strings.HasPrefix(e, "[") && strings.HasSuffix(e, "]"):
+			// noop - keep special tokens as-is
+		case strings.HasPrefix(e, "##"):
 			t.Tokens[i] = e[2:]
-		} else {
+		default:
 			t.Tokens[i] = "\u2581" + e
 		}
 	}
@@ -164,7 +165,7 @@ func (p *nomicbertModel) KV(t *Tokenizer) ggml.KV {
 }
 
 func (p *nomicbertModel) Tensors(ts []Tensor) []*ggml.Tensor {
-	var out []*ggml.Tensor
+	out := make([]*ggml.Tensor, 0, len(ts))
 	for _, t := range ts {
 		if slices.Contains([]string{
 			"embeddings.position_ids",
