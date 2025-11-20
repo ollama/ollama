@@ -33,9 +33,8 @@ const (
 )
 
 type CogitoParser struct {
-	state              CogitoParserState
-	buffer             strings.Builder
-	hasThinkingSupport bool
+	state  CogitoParserState
+	buffer strings.Builder
 }
 
 func (p *CogitoParser) HasToolSupport() bool {
@@ -43,14 +42,14 @@ func (p *CogitoParser) HasToolSupport() bool {
 }
 
 func (p *CogitoParser) HasThinkingSupport() bool {
-	return p.hasThinkingSupport
+	return true
 }
 
 func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
 	// Check both model capability AND request preference
-	thinkingEnabled := p.HasThinkingSupport() && thinkValue != nil && thinkValue.Bool()
+	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
 	// thinkingEnabled should be set to false for tools
 
 	if !thinkingEnabled {

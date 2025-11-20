@@ -222,7 +222,7 @@ This is line 3</think>Final response here.`,
 		t.Run(tt.name, func(t *testing.T) {
 			// Use thinking-enabled parser for tests that expect thinking
 			hasThinking := tt.expectedThinking != ""
-			parser := &CogitoParser{hasThinkingSupport: true}                          // it has thinking support
+			parser := &CogitoParser{}                                                  // it has thinking support
 			parser.Init(tt.tools, tt.lastMessage, &api.ThinkValue{Value: hasThinking}) // but we should set it with the request that the user wants
 
 			content, thinking, toolCalls, err := parser.Add(tt.input, true)
@@ -246,8 +246,8 @@ This is line 3</think>Final response here.`,
 }
 
 func TestCogitoParser_Streaming(t *testing.T) {
-	parser := &CogitoParser{hasThinkingSupport: true}   // it has thinking support
-	parser.Init(nil, nil, &api.ThinkValue{Value: true}) // but we should set it with the request that the user wants
+	parser := &CogitoParser{}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
 
 	chunks := []string{
 		"This is ",
@@ -341,7 +341,7 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := &CogitoParser{hasThinkingSupport: true}
+			parser := &CogitoParser{}
 			parser.Init(nil, nil, &api.ThinkValue{Value: tt.hasThinkingSupport})
 
 			var finalContent, finalThinking strings.Builder
@@ -378,20 +378,6 @@ func TestCogitoParser_HasToolSupport(t *testing.T) {
 	parser := &CogitoParser{}
 	if !parser.HasToolSupport() {
 		t.Error("CogitoParser should support tools")
-	}
-}
-
-func TestCogitoParser_HasThinkingSupport(t *testing.T) {
-	// Test thinking-enabled parser
-	thinkingParser := &CogitoParser{hasThinkingSupport: true}
-	if !thinkingParser.HasThinkingSupport() {
-		t.Error("CogitoParser with hasThinkingSupport=true should support thinking")
-	}
-
-	// Test non-thinking parser
-	nonThinkingParser := &CogitoParser{hasThinkingSupport: false}
-	if nonThinkingParser.HasThinkingSupport() {
-		t.Error("CogitoParser with hasThinkingSupport=false should not support thinking")
 	}
 }
 
