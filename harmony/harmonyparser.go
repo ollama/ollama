@@ -388,9 +388,9 @@ func NewFunctionNameMap() *FunctionNameMap {
 	}
 }
 
-// Init initializes the handler with tools and optional last message
+// Init initializes the handler with tools, optional last message, and think value
 // Implements the Parser interface
-func (h *HarmonyMessageHandler) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (h *HarmonyMessageHandler) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	// Initialize the harmony parser
 	if h.HarmonyParser == nil {
 		h.HarmonyParser = &HarmonyParser{

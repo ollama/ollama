@@ -10,7 +10,7 @@ type mockParser struct {
 	name string
 }
 
-func (m *mockParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (m *mockParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	return tools
 }
 
