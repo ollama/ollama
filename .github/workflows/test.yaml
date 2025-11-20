@@ -228,7 +228,7 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v9
         with:
-          only-new-issues: true
+          args: --new-from-merge-base ${{ github.base_ref }}
 
   patches:
     runs-on: ubuntu-latest
