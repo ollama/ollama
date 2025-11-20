@@ -11,7 +11,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 )
 
-type nomicBertMoEModel struct {
+type nomicbertModel struct {
 	ModelParameters
 	NLayers               uint32  `json:"n_layers"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
@@ -26,17 +26,18 @@ type nomicBertMoEModel struct {
 	normalizeEmbeddings   bool
 	PoolingType           uint32
 
+	// MoE parameters (only present in v2 models)
 	NumExperts      uint32 `json:"num_local_experts"`
 	NumExpertsUsed  uint32 `json:"num_experts_per_tok"`
 	MoEEveryNLayers uint32 `json:"moe_every_n_layers"`
 }
 
 var (
-	_ ModelConverter = (*nomicBertMoEModel)(nil)
-	_ moreParser     = (*nomicBertMoEModel)(nil)
+	_ ModelConverter = (*nomicbertModel)(nil)
+	_ moreParser     = (*nomicbertModel)(nil)
 )
 
-func (p *nomicBertMoEModel) parseMore(fsys fs.FS) error {
+func (p *nomicbertModel) parseMore(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "modules.json")
 	if err != nil {
 		return err
@@ -86,54 +87,61 @@ func (p *nomicBertMoEModel) parseMore(fsys fs.FS) error {
 	return nil
 }
 
-func (p *nomicBertMoEModel) KV(t *Tokenizer) ggml.KV {
+func (p *nomicbertModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "nomic-bert-moe"
-	kv["nomic-bert-moe.attention.causal"] = false
-	kv["nomic-bert-moe.pooling_type"] = p.PoolingType
-	kv["nomic-bert-moe.normalize_embeddings"] = p.normalizeEmbeddings
+	
+	// Determine architecture based on MoE parameters (following qwen3 pattern)
+	arch := "nomic-bert"
+	if p.MoEEveryNLayers > 0 {
+		arch += "-moe"
+	}
+	
+	kv["general.architecture"] = arch
+	kv[arch+".attention.causal"] = false
+	kv[arch+".pooling_type"] = p.PoolingType
+	kv[arch+".normalize_embeddings"] = p.normalizeEmbeddings
 
-	kv["nomic-bert-moe.block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers)
+	kv[arch+".block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers)
 
 	if contextLength := p.MaxPositionEmbeddings; contextLength > 0 {
-		kv["nomic-bert-moe.context_length"] = contextLength
+		kv[arch+".context_length"] = contextLength
 	}
 
 	if embeddingLength := p.HiddenSize; embeddingLength > 0 {
-		kv["nomic-bert-moe.embedding_length"] = p.HiddenSize
+		kv[arch+".embedding_length"] = p.HiddenSize
 	}
 
 	if feedForwardLength := p.IntermediateSize; feedForwardLength > 0 {
-		kv["nomic-bert-moe.feed_forward_length"] = p.IntermediateSize
+		kv[arch+".feed_forward_length"] = p.IntermediateSize
 	}
 
 	if headCount := p.NumAttentionHeads; headCount > 0 {
-		kv["nomic-bert-moe.attention.head_count"] = p.NumAttentionHeads
+		kv[arch+".attention.head_count"] = p.NumAttentionHeads
 	}
 
 	if kvHeadCount := p.NumKeyValueHeads; kvHeadCount > 0 {
-		kv["nomic-bert-moe.attention.head_count_kv"] = p.NumKeyValueHeads
+		kv[arch+".attention.head_count_kv"] = p.NumKeyValueHeads
 	}
 
 	if layerNormEpsilon := cmp.Or(p.LayerNormEPS, p.LayerNormEpsilon); layerNormEpsilon > 0 {
-		kv["nomic-bert-moe.attention.layer_norm_epsilon"] = layerNormEpsilon
+		kv[arch+".attention.layer_norm_epsilon"] = layerNormEpsilon
 	}
 
 	if p.RopeFreqBase > 0 {
-		kv["nomic-bert-moe.rope.freq_base"] = p.RopeFreqBase
+		kv[arch+".rope.freq_base"] = p.RopeFreqBase
 	}
 
-	// MoE specific parameters
+	// MoE specific parameters (only if MoE is enabled)
 	if p.NumExperts > 0 {
-		kv["nomic-bert-moe.expert_count"] = p.NumExperts
+		kv[arch+".expert_count"] = p.NumExperts
 	}
 
 	if p.NumExpertsUsed > 0 {
-		kv["nomic-bert-moe.expert_used_count"] = p.NumExpertsUsed
+		kv[arch+".expert_used_count"] = p.NumExpertsUsed
 	}
 
 	if p.MoEEveryNLayers > 0 {
-		kv["nomic-bert-moe.moe_every_n_layers"] = p.MoEEveryNLayers
+		kv[arch+".moe_every_n_layers"] = p.MoEEveryNLayers
 	}
 
 	kv["tokenizer.ggml.model"] = "bert"
@@ -155,7 +163,7 @@ func (p *nomicBertMoEModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *nomicBertMoEModel) Tensors(ts []Tensor) []*ggml.Tensor {
+func (p *nomicbertModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 	for _, t := range ts {
 		if slices.Contains([]string{
@@ -177,7 +185,7 @@ func (p *nomicBertMoEModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	return out
 }
 
-func (nomicBertMoEModel) Replacements() []string {
+func (nomicbertModel) Replacements() []string {
 	return []string{
 		"encoder.layer", "blk",
 		"encoder.layers", "blk",
