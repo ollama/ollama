@@ -9,6 +9,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/ml"
 	"golang.org/x/sync/semaphore"
 )
@@ -277,4 +278,126 @@ func TestLLMServerCompletionFormat(t *testing.T) {
 		Format:  nil, // missing format
 	}, nil)
 	checkValid(err)
+}
+
+func TestBuildGPULayersFromOverride_Basic(t *testing.T) {
+	// totalLayers = blocks + 1. With totalLayers=5 -> blocks in [0..4].
+	totalLayers := 5
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu0"}},
+		{DeviceID: ml.DeviceID{ID: "gpu1"}},
+	}
+	ov := &envconfig.Override{
+		ModelName:     "dummy",
+		NumGPULayers:  4,        // assign last 4 layers: indices 0..3 with our simplified test
+		TensorSplit:   []int{1,1}, // even split across 2 GPUs
+	}
+
+	gl := buildGPULayersFromOverride(totalLayers, gpus, ov)
+	if gl == nil || gl.Sum() == 0 {
+		t.Fatalf("expected non-empty GPULayersList, got %#v", gl)
+	}
+
+	// Expect gpu0 to get first half (layers 0,1) and gpu1 to get (2,3)
+	want := ml.GPULayersList{
+		{DeviceID: gpus[0].DeviceID, Layers: []int{0, 1}},
+		{DeviceID: gpus[1].DeviceID, Layers: []int{2, 3}},
+	}
+	if gl.Hash() != want.Hash() {
+		t.Errorf("override mapping = %v, want %v", gl, want)
+	}
+}
+
+func TestBuildGPULayersFromOverride_TooManySplits(t *testing.T) {
+	totalLayers := 5
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu0"}},
+		{DeviceID: ml.DeviceID{ID: "gpu1"}},
+	}
+	ov := &envconfig.Override{
+		ModelName:    "dummy",
+		NumGPULayers: 4,
+		TensorSplit:  []int{1, 1, 1}, // 3 entries, only 2 GPUs
+	}
+	gl := buildGPULayersFromOverride(totalLayers, gpus, ov)
+	if gl != nil {
+		t.Fatalf("expected nil due to too many tensor-split entries, got %v", gl)
+	}
+}
+
+func TestBuildGPULayersFromOverride_ZeroTotalSplit(t *testing.T) {
+	totalLayers := 5
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu0"}},
+		{DeviceID: ml.DeviceID{ID: "gpu1"}},
+	}
+	ov := &envconfig.Override{
+		ModelName:    "dummy",
+		NumGPULayers: 4,
+		TensorSplit:  []int{0, 0}, // totals to zero
+	}
+	gl := buildGPULayersFromOverride(totalLayers, gpus, ov)
+	if gl != nil {
+		t.Fatalf("expected nil due to zero/invalid tensor-split total, got %v", gl)
+	}
+}
+
+func TestMaybeApplyOverride_Applies(t *testing.T) {
+	// Model with 5 total layers (blocks 0..4).
+	s := &llmServer{
+		totalLayers: 5,
+		options:     api.Options{},
+		override: &envconfig.Override{
+			ModelName:    "dummy",
+			NumGPULayers: 4,
+			TensorSplit:  []int{1, 1},
+		},
+	}
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu0"}},
+		{DeviceID: ml.DeviceID{ID: "gpu1"}},
+	}
+	// Heuristic layout (will be replaced)
+	heuristic := ml.GPULayersList{
+		{DeviceID: gpus[1].DeviceID, Layers: []int{0, 1}},
+	}
+	got, ok := s.maybeApplyOverride(gpus, heuristic)
+	if !ok {
+		t.Fatalf("expected override to be applied")
+	}
+	// Expect override mapping (even split)
+	want := ml.GPULayersList{
+		{DeviceID: gpus[0].DeviceID, Layers: []int{0, 1}},
+		{DeviceID: gpus[1].DeviceID, Layers: []int{2, 3}},
+	}
+	if got.Hash() != want.Hash() {
+		t.Errorf("maybeApplyOverride = %v, want %v", got, want)
+	}
+	// options.NumGPU should align with override.NumGPULayers
+	if s.options.NumGPU != s.override.NumGPULayers {
+		t.Errorf("options.NumGPU = %d, want %d", s.options.NumGPU, s.override.NumGPULayers)
+	}
+}
+
+func TestMaybeApplyOverride_RejectsTooManySplits(t *testing.T) {
+	s := &llmServer{
+		totalLayers: 5,
+		options:     api.Options{},
+		override: &envconfig.Override{
+			ModelName:    "dummy",
+			NumGPULayers: 4,
+			TensorSplit:  []int{1, 1, 1}, // 3 entries, 2 GPUs -> reject
+		},
+	}
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu0"}},
+		{DeviceID: ml.DeviceID{ID: "gpu1"}},
+	}
+	heuristic := ml.GPULayersList{
+		{DeviceID: gpus[1].DeviceID, Layers: []int{0, 1}},
+	}
+	got, ok := s.maybeApplyOverride(gpus, heuristic)
+	if ok || got.Hash() != heuristic.Hash() {
+		t.Fatalf("expected override to be ignored and heuristic preserved; got=%v ok=%v", got, ok)
+	}
 }

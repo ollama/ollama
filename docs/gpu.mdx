@@ -163,4 +163,34 @@ To select specific Vulkan GPU(s), you can set the environment variable
 `GGML_VK_VISIBLE_DEVICES` to one or more numeric IDs on the Ollama server as
 described in the [FAQ](faq.md#how-do-i-configure-ollama-server). If you
 encounter any problems with Vulkan based GPUs, you can disable all Vulkan GPUs
-by setting `GGML_VK_VISIBLE_DEVICES=-1` 
+by setting `GGML_VK_VISIBLE_DEVICES=-1`
+
+
+## Advanced: Manually overriding multi-GPU layer split
+
+By default, Ollama decides how many layers to offload to each GPU based on free
+memory and other heuristics. For some large models and specific hardware mixes you may
+prefer a `manual split`.
+
+Set the environment variable `OLLAMA_OVERRIDE_CONFIG` to an INI file (or place one at
+`~/.ollama.ini`) and add a section for the model’s `short name` with a `tensor-split`
+value:
+
+```ini
+[llama3:70b]
+tensor-split=18,21,21,21
+```
+
+The list represents proportions for each visible GPU, in order. The sum of
+the values determines how many of the last layers will be offloaded to GPU VRAM
+(`n_gpu_layers = sum(tensor-split)`). The assignment is proportional across devices:
+larger numbers get more of those last layers.
+
+**Constraints**
+
+- The number of values must be ≤ the number of visible GPUs.
+- All values must be non-negative integers.
+- If invalid or not present for the model, Ollama falls back to its heuristics.
+
+This feature is intended for expert tuning when the automatic split under-utilizes
+your GPUs for a given model/context configuration.
