@@ -89,13 +89,13 @@ func (p *nomicbertModel) parseMore(fsys fs.FS) error {
 
 func (p *nomicbertModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
-	
+
 	// Determine architecture based on MoE parameters (following qwen3 pattern)
 	arch := "nomic-bert"
 	if p.MoEEveryNLayers > 0 {
 		arch += "-moe"
 	}
-	
+
 	kv["general.architecture"] = arch
 	kv[arch+".attention.causal"] = false
 	kv[arch+".pooling_type"] = p.PoolingType
