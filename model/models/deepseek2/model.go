@@ -236,11 +236,6 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	if c.Uint("attention.key_length_mla") == 0 {
-		// non-MLA models aren't yet supported
-		return nil, model.ErrUnsupportedModel
-	}
-
 	layers := make([]Layer, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
@@ -259,6 +254,30 @@ func New(c fs.Config) (model.Model, error) {
 	keyLength := int(cmp.Or(c.Uint("attention.key_length_mla"), c.Uint("attention.key_length")))
 	valueLength := int(cmp.Or(c.Uint("attention.value_length_mla"), c.Uint("attention.value_length")))
 
+	var pre []string
+	switch c.String("tokenizer.ggml.pre") {
+	case "deepseek-v3":
+		pre = []string{
+			// Split regex into multiple parts (according to DeepSeek3's regex)
+			"\\p{N}{1,3}",
+			`[一-龥぀-ゟ゠-ヿ]+`,
+			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+		}
+	case "deepseek-llm":
+		// TODO: these models haven't been vetted so skip for now
+		// pre = []string{
+		// 	"[\r\n]",
+		// 	"\\s?[A-Za-zµÀ-ÖØ-öø-ƺƼ-ƿǄ-ʓʕ-ʯͰ-ͳͶͷͻ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-ՖႠ-ჅᎠ-Ᏽᏸ-ᏽᲐ-ᲺᲽ-Ჿᴀ-ᴫᵫ-ᵷᵹ-ᶚḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℴℹℼ-ℿⅅ-ⅉⅎↃↄⰀ-ⱻⱾ-ⳤⳫ-ⳮⳲⳳꙀ-ꙭꚀ-ꚛꜢ-ꝯꝱ-ꞇꞋ-ꞎꭰ-ꮿﬀ-ﬆﬓ-ﬗＡ-Ｚａ-ｚ𐐀-𐑏𐒰-𐓓𐓘-𐓻𐲀-𐲲𐳀-𐳲𑢠-𑣟𞤀-𞥃]+",
+		// 	"\\s?[!-/:-~！-／：-～‘-‟　-。]+",
+		// 	"\\s+$",
+		// 	"[一-龥ࠀ-一가-퟿]+",
+		// 	"[0-9]",
+		// }
+		fallthrough
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			&model.Vocabulary{
@@ -273,10 +292,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
-			// Split regex into multiple parts (according to DeepSeek3's regex)
-			"\\p{N}{1,3}",
-			`[一-龥぀-ゟ゠-ヿ]+`,
-			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+			pre...,
 		),
 		Layers: layers,
 		Options: &Options{
