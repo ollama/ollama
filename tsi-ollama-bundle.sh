@@ -1,10 +1,15 @@
 
 set -e
-make -f Makefile.sync checkout
-cd llama/vendor
-git apply ../patches/tsi-consolidated-patches.patch
-cd ../../
-make -f Makefile.sync ml/backend/ggml/ggml
+# Apply patches if the patches have not been applied and the firt arugment is patch otherwise just build
+if [ "$1" == "patch" ]
+then
+    make -f Makefile.sync checkout
+    cd llama/vendor
+    git apply ../patches/tsi-consolidated-patches.patch
+    cd ../../
+    make -f Makefile.sync ml/backend/ggml/ggml
+fi
+
 cd llama/vendor
 #Ensure prerequisites are met as follows
 echo 'updating submodule'

@@ -3779,18 +3779,23 @@ index 00000000..8ef19b8c
 +
 +#endif // #ifdef _WIN32
 diff --git a/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp b/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
-index 850d43e9..329f647c 100644
+index 850d43e9..3e8b5283 100644
 --- a/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
 +++ b/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
-@@ -21,6 +21,7 @@
+@@ -21,6 +21,12 @@
  #include <math.h>
  #include <string>
  #include <iostream>
 +#include <filesystem>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <pthread.h>
++#include <stdbool.h>
++#include <stdio.h>
  #include "ggml-backend-impl.h"
  #include "ggml-impl.h"
  #include "ggml.h"
-@@ -40,7 +41,9 @@ static void ensure_tsi_runtime_initialized() {
+@@ -40,7 +46,9 @@ static void ensure_tsi_runtime_initialized() {
      std::string mainProfilerName = "OPU ";
      tsirt::utils::TSIProfiler::initialize();
      // TSI Run time Initalization
@@ -3800,39 +3805,53 @@ index 850d43e9..329f647c 100644
      runtime_initialized = true;
      GGML_TSAVORITE_LOG_INFO("Profiler and TSI runtime initialized early in registration\n");
    }
-@@ -2251,10 +2254,32 @@ static struct ggml_backend_reg_i ggml_backend_tsavorite_reg_i = {
+@@ -2249,14 +2257,47 @@ static struct ggml_backend_reg_i ggml_backend_tsavorite_reg_i = {
+     /* .get_proc_address = */ NULL,
+ };
 
++#define SHM_NAME "/ollama_init_shm"
++
++typedef struct {
++  bool init_done;
++} shared_state_t;
++
++static shared_state_t *state = NULL;
++
++static void init_shared_state() {
++  int fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
++  if (fd == -1) {
++      perror("shm_open");
++      return;
++  }
++  ftruncate(fd, sizeof(shared_state_t));
++
++  state = (shared_state_t *) mmap(NULL, sizeof(shared_state_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  if (state == MAP_FAILED) {
++      perror("mmap");
++      return;
++  }
++}
 
  ggml_backend_reg_t ggml_backend_tsavorite_reg(void) {
--  ggml_tsavorite_log_type_val = GGML_TSAVORITE_LOG_NONE;
-+  const char *search_path = "/usr/share/ollama/ollama_init.txt";
-+  ggml_tsavorite_log_type_val = GGML_TSAVORITE_LOG_ALL;
+   ggml_tsavorite_log_type_val = GGML_TSAVORITE_LOG_NONE;
    ggml_tsavorite_kernel_mode_flag = GGML_TSAVORITE_KERNEL_MODE_MLIR;
    GGML_TSAVORITE_LOG_INFO("Start %s\n", __func__);
 -  ensure_tsi_runtime_initialized();
-+  if (access(search_path, F_OK) != 0) {
-+      GGML_LOG_DEBUG("%s: search path %s does not exist\n", __func__, search_path);
-+      ensure_tsi_runtime_initialized();
-+      // Ensure parent directory exists
-+       // Open or create the file
-+      FILE *ollama_init_file = fopen(search_path, "w+");
-+      if (ollama_init_file == NULL) {
-+          GGML_LOG_DEBUG("%s: Error creating or opening log file %s\n", __func__, search_path);
-+          return NULL;
-+      }
 +
-+      // Write "init complete" to the file
-+      fprintf(ollama_init_file, "init complete\n");
-+      fflush(ollama_init_file);
-+      // You can write something or keep the handle for later
-+      fclose(ollama_init_file);
-+      fflush(stdout);
++  init_shared_state();
++
++  if (state->init_done == true) {
++      GGML_LOG_DEBUG("%s: Initialization already done, calling tsi_initialize...\n", __func__);
++      ensure_tsi_runtime_initialized();
++  } else {
++      state->init_done = true;
++      GGML_LOG_DEBUG("%s: Initialization not done, proceeding...\n", __func__);
 +  }
-+  else{
-+      GGML_LOG_DEBUG("%s: search path %s exist\n", __func__, search_path);
-+      fflush(stdout);
-+  }
++
    g_ggml_backend_tsavorite_reg.iface = ggml_backend_tsavorite_reg_i;
    g_ggml_backend_tsavorite_reg.context = NULL;
++  g_ggml_backend_tsavorite_reg.api_version = GGML_BACKEND_API_VERSION;
    g_ggml_backend_tsavorite_device.iface = ggml_backend_tsavorite_device_i;
+   g_ggml_backend_tsavorite_device.reg = &g_ggml_backend_tsavorite_reg;
+   g_ggml_backend_tsavorite_device.context = &g_ggml_ctx_dev_main;
 
