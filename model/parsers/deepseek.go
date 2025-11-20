@@ -250,7 +250,7 @@ func (p *DeepSeekParser) eat() ([]deepseekEvent, bool) {
 		if idx := strings.Index(bufStr, deepseekToolOutputEndTag); idx != -1 {
 			toolOutputContent := bufStr[:idx]
 			remaining := bufStr[idx+len(deepseekToolOutputEndTag):]
-			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+			// Don't trim whitespace - preserve spaces after tool output tags
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)

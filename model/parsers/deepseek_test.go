@@ -86,7 +86,7 @@ func TestDeepSeekParser(t *testing.T) {
 		{
 			name:            "tool_output",
 			input:           "Here's the weather: <｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜> Hope that helps!",
-			expectedContent: "Here's the weather: Temperature: 22°C, SunnyHope that helps!",
+			expectedContent: "Here's the weather: Temperature: 22°C, Sunny Hope that helps!",
 			hasThinking:     false,
 		},
 		{
@@ -139,7 +139,121 @@ func TestDeepSeekParser(t *testing.T) {
 		{
 			name:            "multiple_tool_outputs",
 			input:           "Results: <｜tool▁output▁begin｜>Paris: 22°C<｜tool▁output▁end｜> and <｜tool▁output▁begin｜>London: 18°C<｜tool▁output▁end｜>",
-			expectedContent: "Results: Paris: 22°Cand London: 18°C",
+			expectedContent: "Results: Paris: 22°C and London: 18°C",
+			hasThinking:     false,
+		},
+		{
+			name:            "unicode_content",
+			input:           "مرحبا بالعالم! 你好世界! 🌍",
+			expectedContent: "مرحبا بالعالم! 你好世界! 🌍",
+			hasThinking:     false,
+		},
+		{
+			name:            "emoji_passthrough",
+			input:           "Task completed ✅ 🎉",
+			expectedContent: "Task completed ✅ 🎉",
+			hasThinking:     false,
+		},
+		{
+			name:            "emoji_after_tool_call",
+			input:           "I'll help you.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{\"location\":\"Tokyo\"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>完成 ✅",
+			expectedContent: "I'll help you.完成 ✅",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "Tokyo",
+						},
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:            "newlines_and_whitespace",
+			input:           "Line 1\n\nLine 3\t\tTabbed content",
+			expectedContent: "Line 1\n\nLine 3\t\tTabbed content",
+			hasThinking:     false,
+		},
+		{
+			name:             "thinking_with_unicode",
+			input:            "我在思考这个问题...</think>答案是42。",
+			expectedThinking: "我在思考这个问题...",
+			expectedContent:  "答案是42。",
+			hasThinking:      true,
+		},
+		{
+			name:            "tool_call_with_unicode_args",
+			input:           "Searching for information.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>search<｜tool▁sep｜>{\"query\":\"北京天气\",\"language\":\"中文\"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedContent: "Searching for information.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: api.ToolCallFunctionArguments{
+							"query":    "北京天气",
+							"language": "中文",
+						},
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:            "tool_output_with_unicode",
+			input:           "天气信息: <｜tool▁output▁begin｜>北京: 25°C, 晴天<｜tool▁output▁end｜> 希望对您有帮助!",
+			expectedContent: "天气信息: 北京: 25°C, 晴天 希望对您有帮助!",
+			hasThinking:     false,
+		},
+		{
+			name:            "mixed_content_with_special_chars",
+			input:           "Price: $100 & tax @ 10% = $110 <｜tool▁output▁begin｜>Total: $110<｜tool▁output▁end｜> (final)",
+			expectedContent: "Price: $100 & tax @ 10% = $110 Total: $110 (final)",
+			hasThinking:     false,
+		},
+		{
+			name:            "tool_call_with_special_chars",
+			input:           "Processing data.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>execute_command<｜tool▁sep｜>{\"command\":\"ls && echo \\\"done\\\"\",\"path\":\"/home/user\"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedContent: "Processing data.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "execute_command",
+						Arguments: api.ToolCallFunctionArguments{
+							"command": "ls && echo \"done\"",
+							"path":    "/home/user",
+						},
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:             "thinking_with_special_chars",
+			input:            "Let me calculate: 2+2=4 & 3*3=9...</think>The results are correct!",
+			expectedThinking: "Let me calculate: 2+2=4 & 3*3=9...",
+			expectedContent:  "The results are correct!",
+			hasThinking:      true,
+		},
+		{
+			name:            "empty_tool_call_args",
+			input:           "Pinging server.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>ping<｜tool▁sep｜>{}<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedContent: "Pinging server.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "ping",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:            "empty_tool_output",
+			input:           "Checking status: <｜tool▁output▁begin｜><｜tool▁output▁end｜> No output received.",
+			expectedContent: "Checking status:  No output received.",
 			hasThinking:     false,
 		},
 	}
@@ -213,6 +327,62 @@ func TestDeepSeekParser_Streaming(t *testing.T) {
 			expectedThinking: "Thinking about this...",
 			expectedContent:  "Done thinking.",
 			hasThinking:      true,
+		},
+		{
+			name:            "streaming_tool_output",
+			chunks:          []string{"Weather info: ", "<｜tool▁output▁begin｜>", "25°C, Sunny", "<｜tool▁output▁end｜>", " Enjoy!"},
+			expectedContent: "Weather info: 25°C, Sunny Enjoy!",
+			hasThinking:     false,
+		},
+		{
+			name:            "streaming_with_split_tags",
+			chunks:          []string{"Content before ", "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>test", "<｜tool▁sep｜>{}", "<｜tool▁call▁end｜><｜tool▁calls▁end｜>", " after"},
+			expectedContent: "Content before  after",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "test",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:             "streaming_thinking_with_split_end_tag",
+			chunks:           []string{"Thinking content", "</th", "ink>", "Regular content"},
+			expectedThinking: "Thinking content",
+			expectedContent:  "Regular content",
+			hasThinking:      true,
+		},
+		{
+			name:            "streaming_unicode_content",
+			chunks:          []string{"مرحبا ", "بالعالم! ", "你好", "世界!"},
+			expectedContent: "مرحبا بالعالم! 你好世界!",
+			hasThinking:     false,
+		},
+		{
+			name:            "streaming_multiple_tool_outputs",
+			chunks:          []string{"Results: ", "<｜tool▁output▁begin｜>", "Paris: 22°C", "<｜tool▁output▁end｜>", " and ", "<｜tool▁output▁begin｜>", "London: 18°C", "<｜tool▁output▁end｜>"},
+			expectedContent: "Results: Paris: 22°C and London: 18°C",
+			hasThinking:     false,
+		},
+		{
+			name:            "streaming_tool_call_with_split_json",
+			chunks:          []string{"Processing.", "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>calc<｜tool▁sep｜>{\"x\":", "42,\"y\":", "24}<｜tool▁call▁end｜><｜tool▁calls▁end｜>"},
+			expectedContent: "Processing.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "calc",
+						Arguments: api.ToolCallFunctionArguments{
+							"x": float64(42),
+							"y": float64(24),
+						},
+					},
+				},
+			},
+			hasThinking: false,
 		},
 	}
 
@@ -342,6 +512,55 @@ func TestDeepSeekParser_parseToolCallContent(t *testing.T) {
 			},
 		},
 		{
+			name:    "empty_arguments",
+			content: "ping<｜tool▁sep｜>{}",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "ping",
+					Arguments: api.ToolCallFunctionArguments{},
+				},
+			},
+		},
+		{
+			name:    "unicode_in_tool_name",
+			content: "获取天气<｜tool▁sep｜>{\"城市\":\"北京\"}",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "获取天气",
+					Arguments: api.ToolCallFunctionArguments{
+						"城市": "北京",
+					},
+				},
+			},
+		},
+		{
+			name:    "special_chars_in_arguments",
+			content: "execute<｜tool▁sep｜>{\"command\":\"ls && echo \\\"done\\\"\",\"path\":\"/home/user\"}",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "execute",
+					Arguments: api.ToolCallFunctionArguments{
+						"command": "ls && echo \"done\"",
+						"path":    "/home/user",
+					},
+				},
+			},
+		},
+		{
+			name:    "numeric_arguments",
+			content: "calculate<｜tool▁sep｜>{\"x\":3.14,\"y\":42,\"enabled\":true}",
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "calculate",
+					Arguments: api.ToolCallFunctionArguments{
+						"x":       3.14,
+						"y":       float64(42),
+						"enabled": true,
+					},
+				},
+			},
+		},
+		{
 			name:        "invalid_format_no_separator",
 			content:     "get_weather{\"location\":\"Paris\"}",
 			expectError: true,
@@ -349,6 +568,24 @@ func TestDeepSeekParser_parseToolCallContent(t *testing.T) {
 		{
 			name:        "invalid_json",
 			content:     "get_weather<｜tool▁sep｜>{invalid json}",
+			expectError: true,
+		},
+		{
+			name:        "empty_tool_name",
+			content:     "<｜tool▁sep｜>{\"arg\":\"value\"}",
+			expectError: false, // This should work, just empty name
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "",
+					Arguments: api.ToolCallFunctionArguments{
+						"arg": "value",
+					},
+				},
+			},
+		},
+		{
+			name:        "missing_json_part",
+			content:     "tool_name<｜tool▁sep｜>",
 			expectError: true,
 		},
 	}
@@ -409,6 +646,55 @@ func TestDeepSeekParser_EdgeCases(t *testing.T) {
 			name:            "thinking_disabled_with_think_tags",
 			input:           "Some content</think>More content",
 			expectedContent: "Some content</think>More content",
+			hasThinking:     false,
+		},
+		{
+			name:            "malformed_tool_call_missing_sep",
+			input:           "Testing.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>bad_tool{\"arg\":\"value\"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedContent: "Testing.",
+			hasThinking:     false,
+		},
+		{
+			name:            "malformed_tool_call_invalid_json",
+			input:           "Testing.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>bad_tool<｜tool▁sep｜>{invalid json}<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedContent: "Testing.",
+			hasThinking:     false,
+		},
+		{
+			name:            "partial_tool_tag_at_end",
+			input:           "Content with partial <｜tool▁calls▁",
+			expectedContent: "Content with partial <｜tool▁calls▁",
+			hasThinking:     false,
+		},
+		{
+			name:            "partial_think_tag_at_end",
+			input:           "Thinking content</th",
+			expectedContent: "Thinking content</th",
+			hasThinking:     false,
+		},
+		{
+			name:             "partial_think_tag_at_end_with_thinking",
+			input:            "Thinking content</th",
+			expectedThinking: "Thinking content",
+			expectedContent:  "",
+			hasThinking:      true,
+		},
+		{
+			name:            "whitespace_only_content",
+			input:           "   \n\t   ",
+			expectedContent: "   \n\t   ",
+			hasThinking:     false,
+		},
+		{
+			name:            "tool_output_with_newlines",
+			input:           "Output:\n<｜tool▁output▁begin｜>Line 1\nLine 2\nLine 3<｜tool▁output▁end｜>\nDone.",
+			expectedContent: "Output:\nLine 1\nLine 2\nLine 3\nDone.",
+			hasThinking:     false,
+		},
+		{
+			name:            "consecutive_tool_calls",
+			input:           "First.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool1<｜tool▁sep｜>{}<｜tool▁call▁end｜><｜tool▁calls▁end｜>Second.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool2<｜tool▁sep｜>{}<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+			expectedContent: "First.",
 			hasThinking:     false,
 		},
 	}
