@@ -3779,7 +3779,7 @@ index 00000000..8ef19b8c
 +
 +#endif // #ifdef _WIN32
 diff --git a/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp b/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
-index 850d43e9..47a452af 100644
+index 850d43e9..3e8b5283 100644
 --- a/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
 +++ b/ggml/src/ggml-tsavorite/ggml-tsavorite.cpp
 @@ -21,6 +21,12 @@
@@ -3805,14 +3805,13 @@ index 850d43e9..47a452af 100644
      runtime_initialized = true;
      GGML_TSAVORITE_LOG_INFO("Profiler and TSI runtime initialized early in registration\n");
    }
-@@ -2249,14 +2257,61 @@ static struct ggml_backend_reg_i ggml_backend_tsavorite_reg_i = {
+@@ -2249,14 +2257,47 @@ static struct ggml_backend_reg_i ggml_backend_tsavorite_reg_i = {
      /* .get_proc_address = */ NULL,
  };
 
 +#define SHM_NAME "/ollama_init_shm"
 +
 +typedef struct {
-+  pthread_mutex_t mutex;
 +  bool init_done;
 +} shared_state_t;
 +
@@ -3831,17 +3830,6 @@ index 850d43e9..47a452af 100644
 +      perror("mmap");
 +      return;
 +  }
-+
-+  // Initialize mutex only once (first process)
-+  static bool mutex_initialized = false;
-+  if (!mutex_initialized) {
-+      pthread_mutexattr_t attr;
-+      pthread_mutexattr_init(&attr);
-+      pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-+      pthread_mutex_init(&state->mutex, &attr);
-+      pthread_mutexattr_destroy(&attr);
-+      mutex_initialized = true;
-+  }
 +}
 
  ggml_backend_reg_t ggml_backend_tsavorite_reg(void) {
@@ -3852,7 +3840,6 @@ index 850d43e9..47a452af 100644
 +
 +  init_shared_state();
 +
-+  pthread_mutex_lock(&state->mutex);
 +  if (state->init_done == true) {
 +      GGML_LOG_DEBUG("%s: Initialization already done, calling tsi_initialize...\n", __func__);
 +      ensure_tsi_runtime_initialized();
@@ -3860,7 +3847,6 @@ index 850d43e9..47a452af 100644
 +      state->init_done = true;
 +      GGML_LOG_DEBUG("%s: Initialization not done, proceeding...\n", __func__);
 +  }
-+  pthread_mutex_unlock(&state->mutex);
 +
    g_ggml_backend_tsavorite_reg.iface = ggml_backend_tsavorite_reg_i;
    g_ggml_backend_tsavorite_reg.context = NULL;
