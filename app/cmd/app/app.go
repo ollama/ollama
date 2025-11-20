@@ -467,7 +467,6 @@ func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
 		handleConnectURLScheme()
 	} else {
 		if wv.webview != nil {
-			fmt.Println("XXX showing window")
 			showWindow(wv.webview.Window())
 		}
 	}
