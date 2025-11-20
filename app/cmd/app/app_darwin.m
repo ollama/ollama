@@ -24,27 +24,14 @@ bool firstTimeRun,startHidden; // Set in run before initialization
     for (NSURL *url in urls) {
         if ([url.scheme isEqualToString:@"ollama"]) {
             NSString *path = url.path;
-            if (!path || [path isEqualToString:@""]) {
-                // For URLs like ollama://settings (without triple slash),
-                // the "settings" part is parsed as the host, not the path.
-                // We need to convert it to a path by prepending "/"
-                if (url.host && ![url.host isEqualToString:@""]) {
-                    path = [@"/" stringByAppendingString:url.host];
-                } else {
-                    path = @"/";
-                }
-            }
-            
-            if ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"]) {
+
+            if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
             } else {
                 // Set app to be active and visible
                 [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
                 [NSApp activateIgnoringOtherApps:YES];
-                
-                // Open the path with the UI
-                [self uiRequest:path];
             }
             
             break;

@@ -398,7 +398,7 @@ func checkUserLoggedIn(uiServerPort int) bool {
 func handleConnectURLScheme() {
 	if checkUserLoggedIn(uiServerPort) {
 		slog.Info("user is already logged in, opening app instead")
-		sendUIRequestMessage("")
+		showWindow(wv.webview.Window())
 		return
 	}
 
@@ -466,6 +466,9 @@ func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage("")
+		if wv.webview != nil {
+			fmt.Println("XXX showing window")
+			showWindow(wv.webview.Window())
+		}
 	}
 }

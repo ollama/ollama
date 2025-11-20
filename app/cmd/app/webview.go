@@ -466,11 +466,9 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		w.webview = wv
 		w.webview.Navigate(url)
 	} else {
-		if path != "" {
-			w.webview.Eval(fmt.Sprintf(`
+		w.webview.Eval(fmt.Sprintf(`
 			history.pushState({}, '', '%s');
 		`, path))
-		}
 		showWindow(w.webview.Window())
 	}
 
