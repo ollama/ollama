@@ -10,11 +10,11 @@ filesystems for paths that include wide characters
  1 file changed, 39 insertions(+)
 
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index f2abf8852..c984e6282 100644
+index abdb778f7..baad5fca2 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
-@@ -28,6 +28,19 @@
- #include <numeric>
+@@ -24,6 +24,19 @@
+ #include <array>
  #include <functional>
  
 +#if defined(_WIN32)
@@ -30,10 +30,10 @@ index f2abf8852..c984e6282 100644
 +#endif
 +#endif
 +
- struct clip_logger_state g_logger_state = {GGML_LOG_LEVEL_CONT, clip_log_callback_default, NULL};
+ struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
  
  enum ffn_op_type {
-@@ -2774,7 +2787,29 @@ struct clip_model_loader {
+@@ -3246,7 +3259,29 @@ struct clip_model_loader {
          {
              std::vector<uint8_t> read_buf;
  
@@ -63,7 +63,7 @@ index f2abf8852..c984e6282 100644
              if (!fin) {
                  throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
              }
-@@ -2801,7 +2836,11 @@ struct clip_model_loader {
+@@ -3273,7 +3308,11 @@ struct clip_model_loader {
                      ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
                  }
              }

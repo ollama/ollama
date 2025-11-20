@@ -500,13 +500,15 @@ inline static int32x4_t ggml_vec_dot(int32x4_t acc, int8x16_t a, int8x16_t b) {
 
 #endif
 
-#if defined(__loongarch_asx)
+#if defined(__loongarch_sx)
 /* float type data load instructions */
 static __m128 __lsx_vreplfr2vr_s(const float val) {
     v4f32 res = {val, val, val, val};
     return (__m128)res;
 }
+#endif
 
+#if defined(__loongarch_asx)
 static __m256 __lasx_xvreplfr2vr_s(const float val) {
     v8f32 res = {val, val, val, val, val, val, val, val};
     return (__m256)res;

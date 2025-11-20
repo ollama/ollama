@@ -77,6 +77,7 @@ enum llm_type {
     LLM_TYPE_16B,
     LLM_TYPE_20B,
     LLM_TYPE_22B,
+    LLM_TYPE_26B,
     LLM_TYPE_27B,
     LLM_TYPE_30B,
     LLM_TYPE_32B,
@@ -115,6 +116,7 @@ enum llm_type {
     LLM_TYPE_30B_A3B,
     LLM_TYPE_100B_A6B,
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
+    LLM_TYPE_230B_A10B, // Minimax M2
     LLM_TYPE_235B_A22B,
     LLM_TYPE_300B_A47B, // Ernie MoE big
     LLM_TYPE_355B_A32B, // GLM-4.5
@@ -234,6 +236,7 @@ struct llama_layer {
     struct ggml_tensor * wk_enc    = nullptr;
     struct ggml_tensor * wv_enc    = nullptr;
     struct ggml_tensor * wo_enc    = nullptr;
+    struct ggml_tensor * wqkv_gate = nullptr;
 
     // attention bias
     struct ggml_tensor * bq   = nullptr;
@@ -385,6 +388,13 @@ struct llama_layer {
     // openai-moe
     struct ggml_tensor * attn_sinks = nullptr;
 
+    // cogvlm
+    struct ggml_tensor * visexp_attn_wqkv = nullptr;
+    struct ggml_tensor * visexp_attn_wo   = nullptr;
+    struct ggml_tensor * visexp_ffn_gate  = nullptr;
+    struct ggml_tensor * visexp_ffn_down  = nullptr;
+    struct ggml_tensor * visexp_ffn_up    = nullptr;
+
     // xIELU activation parameters for Apertus
     struct ggml_tensor * ffn_act_alpha_n = nullptr;
     struct ggml_tensor * ffn_act_alpha_p = nullptr;
@@ -503,9 +513,8 @@ struct llama_model {
 
     ggml_tensor * get_rope_factors(const llama_cparams & cparams, int il) const;
 
-    // note: can mutate `cparams`
     // TODO: move this to new llm_arch_model_i interface
-    llama_memory_i * create_memory(const llama_memory_params & params, llama_cparams & cparams) const;
+    llama_memory_i * create_memory(const llama_memory_params & params, const llama_cparams & cparams) const;
 
     // TODO: move this to new llm_arch_model_i interface
     ggml_cgraph * build_graph(const llm_graph_params & params) const;

@@ -83,6 +83,7 @@ extern "C" {
         LLAMA_ROPE_TYPE_NORM   = 0,
         LLAMA_ROPE_TYPE_NEOX   = GGML_ROPE_TYPE_NEOX,
         LLAMA_ROPE_TYPE_MROPE  = GGML_ROPE_TYPE_MROPE,
+        LLAMA_ROPE_TYPE_IMROPE = GGML_ROPE_TYPE_IMROPE,
         LLAMA_ROPE_TYPE_VISION = GGML_ROPE_TYPE_VISION,
     };
 
@@ -460,7 +461,11 @@ extern "C" {
     LLAMA_API bool llama_supports_gpu_offload(void);
     LLAMA_API bool llama_supports_rpc        (void);
 
+    // NOTE: After creating a llama_context, it is recommended to query the actual values using these functions
+    //       In some cases the requested values via llama_context_params may differ from the actual values used by the context
+    //       ref: https://github.com/ggml-org/llama.cpp/pull/17046#discussion_r2503085732
     LLAMA_API uint32_t llama_n_ctx      (const struct llama_context * ctx);
+    LLAMA_API uint32_t llama_n_ctx_seq  (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_batch    (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_ubatch   (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_seq_max  (const struct llama_context * ctx);
@@ -481,6 +486,7 @@ extern "C" {
 
     LLAMA_API int32_t llama_model_n_ctx_train(const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_embd     (const struct llama_model * model);
+    LLAMA_API int32_t llama_model_n_embd_inp (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_layer    (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_head     (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_head_kv  (const struct llama_model * model);
@@ -584,7 +590,7 @@ extern "C" {
     LLAMA_API int32_t llama_adapter_meta_val_str_by_index(const struct llama_adapter_lora * adapter, int32_t i, char * buf, size_t buf_size);
 
     // Manually free a LoRA adapter
-    // Note: loaded adapters will be free when the associated model is deleted
+    // NOTE: loaded adapters will be free when the associated model is deleted
     LLAMA_API void llama_adapter_lora_free(struct llama_adapter_lora * adapter);
 
     // Get the invocation tokens if the current lora is an alora
@@ -1110,8 +1116,6 @@ extern "C" {
     //        // sample from the logits of the last token in the batch
     //        const llama_token id = llama_sampler_sample(smpl, ctx, -1);
     //
-    //        // accepting the token updates the internal state of certain samplers (e.g. grammar, repetition, etc.)
-    //        llama_sampler_accept(smpl, id);
     //        ...
     //    }
     //

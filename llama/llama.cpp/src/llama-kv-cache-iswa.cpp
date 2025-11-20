@@ -45,7 +45,9 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
 
     const uint32_t size_base = kv_size;
 
-    uint32_t size_swa = std::min(size_base, GGML_PAD(hparams.n_swa*(unified ? n_seq_max : 1) + n_ubatch, n_pad));
+    // note: the SWA cache is always padded to 256 for performance
+    //       https://github.com/ggml-org/llama.cpp/issues/17037
+    uint32_t size_swa = GGML_PAD(std::min(size_base, hparams.n_swa*(unified ? n_seq_max : 1) + n_ubatch), 256);
 
     // when using full-size SWA cache, we set the SWA cache size to be equal to the base cache size
     if (swa_full) {
