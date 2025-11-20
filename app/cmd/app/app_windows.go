@@ -147,7 +147,7 @@ func handleURLSchemeRequest(urlScheme string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage("/")
+		sendUIRequestMessage("")
 	}
 }
 
