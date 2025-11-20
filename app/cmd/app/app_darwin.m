@@ -260,7 +260,7 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 }
 
 - (void)openHelp:(id)sender {
-    NSURL *url = [NSURL URLWithString:@"https://github.com/ollama/ollama/tree/main/docs"];
+    NSURL *url = [NSURL URLWithString:@"https://docs.ollama.com/"];
     [[NSWorkspace sharedWorkspace] openURL:url];
 }
 
