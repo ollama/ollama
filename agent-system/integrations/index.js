@@ -40,12 +40,15 @@ class IntegrationsManager {
             // Initialize MCP
             await this.initializeMCP();
 
-            // Initialize Smart Agent
+            // Initialize Smart Agent with progress callback
             this.smartAgent = new SmartAgent({
                 logger: this.logger,
                 callOllama: this.callOllama,
                 toolSystem: this.toolSystem,
-                browserAutomation: this.mcpIntegration?.browserAutomation
+                browserAutomation: this.mcpIntegration?.browserAutomation,
+                onProgress: async (userId, progress) => {
+                    await this.sendProgressToUser(userId, progress);
+                }
             });
             this.logger.info('Smart agent initialized');
 
@@ -181,6 +184,38 @@ User: ${message}
 Respond helpfully:`;
 
         return await this.callOllama('researcher', prompt);
+    }
+
+    /**
+     * Send progress update to user
+     */
+    async sendProgressToUser(userId, progress) {
+        // Find which platform this user is on
+        for (const [platform, adapter] of this.messageGateway.adapters) {
+            const session = this.messageGateway.getSession(platform, userId);
+            if (session) {
+                try {
+                    // Format progress message with emoji indicators
+                    const emoji = {
+                        'thinking': '🤔',
+                        'planning': '📋',
+                        'executing': '⚙️',
+                        'error': '⚠️',
+                        'success': '✅'
+                    }[progress.type] || '💭';
+
+                    await adapter.sendTypingIndicator(userId);
+
+                    // For longer operations, send actual progress message
+                    if (progress.type === 'executing') {
+                        await adapter.sendMessage(userId, `${emoji} ${progress.message}`);
+                    }
+                } catch (error) {
+                    this.logger.warn(`Failed to send progress to ${userId}:`, error.message);
+                }
+                break;
+            }
+        }
     }
 
     /**

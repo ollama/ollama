@@ -17,6 +17,25 @@ class SmartAgent {
         this.toolSystem = options.toolSystem;
         this.browserAutomation = options.browserAutomation;
         this.userContext = new Map();  // userId → context
+        this.pendingConfirmations = new Map();  // userId → pending action
+        this.progressCallback = options.onProgress || null;  // For real-time updates
+    }
+
+    /**
+     * Set progress callback for real-time feedback
+     */
+    setProgressCallback(callback) {
+        this.progressCallback = callback;
+    }
+
+    /**
+     * Send progress update to user
+     */
+    async sendProgress(userId, message, type = 'thinking') {
+        if (this.progressCallback) {
+            await this.progressCallback(userId, { type, message });
+        }
+        this.logger.info(`[${type}] ${message}`);
     }
 
     /**
@@ -30,19 +49,31 @@ class SmartAgent {
         context.lastMessage = message;
         context.history = session.history || [];
 
+        // Check for pending confirmation
+        if (this.pendingConfirmations.has(userId)) {
+            return await this.handleConfirmationResponse(message, userId, context);
+        }
+
         try {
             // Step 1: Understand what the user wants
+            await this.sendProgress(userId, 'Understanding your request...', 'thinking');
             const intent = await this.analyzeIntent(message, context);
             this.logger.info(`Intent: ${intent.type} - ${intent.summary}`);
 
             // Step 2: Plan the approach
+            await this.sendProgress(userId, 'Planning how to help...', 'planning');
             const plan = await this.createPlan(intent, context);
             this.logger.info(`Plan: ${plan.steps.length} steps`);
 
-            // Step 3: Execute the plan
-            const result = await this.executePlan(plan, context);
+            // Step 3: Check if confirmation needed for risky actions
+            if (this.requiresConfirmation(intent, plan)) {
+                return await this.requestConfirmation(userId, intent, plan, context);
+            }
 
-            // Step 4: Formulate response
+            // Step 4: Execute the plan with progress updates
+            const result = await this.executePlanWithProgress(plan, context, userId);
+
+            // Step 5: Formulate response
             const response = await this.formulateResponse(result, intent, context);
 
             // Update context
@@ -56,6 +87,162 @@ class SmartAgent {
             this.logger.error('Smart agent error:', error);
             return `I encountered an issue: ${error.message}. Could you rephrase or provide more details?`;
         }
+    }
+
+    /**
+     * Check if action requires user confirmation
+     */
+    requiresConfirmation(intent, plan) {
+        // Actions that modify external state should be confirmed
+        const riskyTypes = ['booking', 'purchase', 'email', 'calendar', 'payment'];
+        const riskyActions = ['send_email', 'add_calendar', 'browser_click', 'submit'];
+
+        if (riskyTypes.includes(intent.type)) {
+            return true;
+        }
+
+        // Check if plan contains risky steps
+        for (const step of plan.steps) {
+            if (riskyActions.some(action =>
+                step.type?.includes(action) || step.action?.includes(action) || step.tool?.includes(action)
+            )) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Request user confirmation before proceeding
+     */
+    async requestConfirmation(userId, intent, plan, context) {
+        const planSummary = plan.steps
+            .filter(s => s.description)
+            .map((s, i) => `${i + 1}. ${s.description}`)
+            .join('\n');
+
+        const confirmationMessage = `I understand you want to: **${intent.summary}**
+
+Here's my plan:
+${planSummary}
+
+${plan.warnings?.length ? `\n⚠️ Note: ${plan.warnings.join(', ')}\n` : ''}
+**Should I proceed?** (Reply "yes" to confirm, or tell me what to change)`;
+
+        // Store pending confirmation
+        this.pendingConfirmations.set(userId, {
+            intent,
+            plan,
+            context,
+            timestamp: Date.now()
+        });
+
+        return confirmationMessage;
+    }
+
+    /**
+     * Handle user's response to confirmation request
+     */
+    async handleConfirmationResponse(message, userId, context) {
+        const pending = this.pendingConfirmations.get(userId);
+
+        // Clear pending after 5 minutes
+        if (Date.now() - pending.timestamp > 300000) {
+            this.pendingConfirmations.delete(userId);
+            return "The previous request has expired. Please tell me again what you'd like to do.";
+        }
+
+        const response = message.toLowerCase().trim();
+
+        // User confirmed
+        if (['yes', 'y', 'ok', 'sure', 'go ahead', 'proceed', 'confirm', 'do it'].includes(response)) {
+            this.pendingConfirmations.delete(userId);
+
+            await this.sendProgress(userId, 'Got it! Starting now...', 'executing');
+
+            // Execute the plan
+            const result = await this.executePlanWithProgress(pending.plan, pending.context, userId);
+            return await this.formulateResponse(result, pending.intent, pending.context);
+        }
+
+        // User cancelled
+        if (['no', 'n', 'cancel', 'stop', 'nevermind', 'never mind'].includes(response)) {
+            this.pendingConfirmations.delete(userId);
+            return "No problem, I've cancelled that. Let me know if you need anything else!";
+        }
+
+        // User wants changes - treat as new request with context
+        this.pendingConfirmations.delete(userId);
+        context.lastIntent = pending.intent;
+        return await this.handleRequest(message, { ...context, history: context.history });
+    }
+
+    /**
+     * Execute plan with progress updates
+     */
+    async executePlanWithProgress(plan, context, userId) {
+        const results = [];
+        const totalSteps = plan.steps.length;
+
+        for (let i = 0; i < totalSteps; i++) {
+            const step = plan.steps[i];
+            const stepNum = i + 1;
+
+            // Send progress update
+            const progressMsg = step.description || `Step ${stepNum} of ${totalSteps}`;
+            await this.sendProgress(userId, `[${stepNum}/${totalSteps}] ${progressMsg}`, 'executing');
+
+            try {
+                const result = await this.executeStepWithTimeout(step, context, results);
+                results.push({
+                    step: i,
+                    type: step.type,
+                    success: true,
+                    result
+                });
+
+                // If step asks for clarification, stop here
+                if (step.type === 'ask_clarification' || step.type === 'ask_user') {
+                    break;
+                }
+
+            } catch (error) {
+                this.logger.error(`Step ${stepNum} failed:`, error);
+
+                await this.sendProgress(userId, `Step ${stepNum} encountered an issue: ${error.message}`, 'error');
+
+                results.push({
+                    step: i,
+                    type: step.type,
+                    success: false,
+                    error: error.message
+                });
+
+                // Continue if step is optional
+                if (!step.optional) {
+                    break;
+                }
+            }
+        }
+
+        return {
+            plan,
+            results,
+            success: results.every(r => r.success || plan.steps[r.step]?.optional)
+        };
+    }
+
+    /**
+     * Execute step with timeout
+     */
+    async executeStepWithTimeout(step, context, previousResults, timeout = 30000) {
+        return Promise.race([
+            this.executeStep(step, context, previousResults),
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Step timed out')), timeout)
+            )
+        ]);
     }
 
     /**
@@ -221,53 +408,6 @@ Keep it practical - prefer fewer steps. Don't overcomplicate.`;
         return {
             steps: [{ type: 'chat_response', intent }],
             estimatedTime: 'instant'
-        };
-    }
-
-    /**
-     * Execute the plan
-     */
-    async executePlan(plan, context) {
-        const results = [];
-
-        for (let i = 0; i < plan.steps.length; i++) {
-            const step = plan.steps[i];
-            this.logger.info(`Executing step ${i + 1}: ${step.description || step.type}`);
-
-            try {
-                const result = await this.executeStep(step, context, results);
-                results.push({
-                    step: i,
-                    type: step.type,
-                    success: true,
-                    result
-                });
-
-                // If step asks for clarification, stop here
-                if (step.type === 'ask_clarification' || step.type === 'ask_user') {
-                    break;
-                }
-
-            } catch (error) {
-                this.logger.error(`Step ${i + 1} failed:`, error);
-                results.push({
-                    step: i,
-                    type: step.type,
-                    success: false,
-                    error: error.message
-                });
-
-                // Continue if step is optional
-                if (!step.optional) {
-                    break;
-                }
-            }
-        }
-
-        return {
-            plan,
-            results,
-            success: results.every(r => r.success || plan.steps[r.step]?.optional)
         };
     }
 
