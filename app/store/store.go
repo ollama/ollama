@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -121,6 +122,9 @@ func NewChat(id string) *Chat {
 }
 
 type Settings struct {
+	// ServerURL specifies the Ollama server URL (e.g., http://localhost:11434)
+	ServerURL string
+
 	// Expose is a boolean that indicates if the ollama server should
 	// be exposed to the network
 	Expose bool
@@ -181,25 +185,51 @@ type Store struct {
 }
 
 var defaultDBPath = func() string {
+	var basePath string
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")
+		basePath = validateEnvPath(os.Getenv("LOCALAPPDATA"))
+		if basePath == "" {
+			basePath = "C:\\Users\\Default\\AppData\\Local"
+		}
+		return filepath.Join(basePath, "Ollama", "db.sqlite")
 	case "darwin":
-		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "db.sqlite")
+		basePath = validateEnvPath(os.Getenv("HOME"))
+		if basePath == "" {
+			basePath = "/tmp"
+		}
+		return filepath.Join(basePath, "Library", "Application Support", "Ollama", "db.sqlite")
 	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
+		basePath = validateEnvPath(os.Getenv("HOME"))
+		if basePath == "" {
+			basePath = "/tmp"
+		}
+		return filepath.Join(basePath, ".ollama", "db.sqlite")
 	}
 }()
 
 // legacyConfigPath is the path to the old config.json file
 var legacyConfigPath = func() string {
+	var basePath string
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "config.json")
+		basePath = validateEnvPath(os.Getenv("LOCALAPPDATA"))
+		if basePath == "" {
+			basePath = "C:\\Users\\Default\\AppData\\Local"
+		}
+		return filepath.Join(basePath, "Ollama", "config.json")
 	case "darwin":
-		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "config.json")
+		basePath = validateEnvPath(os.Getenv("HOME"))
+		if basePath == "" {
+			basePath = "/tmp"
+		}
+		return filepath.Join(basePath, "Library", "Application Support", "Ollama", "config.json")
 	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "config.json")
+		basePath = validateEnvPath(os.Getenv("HOME"))
+		if basePath == "" {
+			basePath = "/tmp"
+		}
+		return filepath.Join(basePath, ".ollama", "config.json")
 	}
 }()
 
@@ -219,7 +249,7 @@ func (s *Store) ensureDB() error {
 	s.dbMu.Lock()
 	defer s.dbMu.Unlock()
 
-	// Double-check after acquiring lock
+	// Double-check after acquiring lock to prevent race condition
 	if s.db != nil {
 		return nil
 	}
@@ -266,13 +296,26 @@ func (s *Store) ensureDB() error {
 func (s *Store) migrateFromConfig(database *database) error {
 	configPath := legacyConfigPath
 
+	// Validate config path
+	if err := validateFilePath(configPath); err != nil {
+		return fmt.Errorf("invalid config path: %w", err)
+	}
+
 	// Check if config.json exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// No config to migrate, mark as migrated
 		return database.setConfigMigrated(true)
 	}
 
-	// Read the config file
+	// Read the config file with size limit
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return fmt.Errorf("stat config file: %w", err)
+	}
+	if info.Size() > 1024*1024 { // 1MB limit
+		return fmt.Errorf("config file too large")
+	}
+	
 	b, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read legacy config: %w", err)
@@ -491,5 +534,46 @@ func (s *Store) Close() error {
 	if s.db != nil {
 		return s.db.Close()
 	}
+	return nil
+}
+// validateEnvPath validates environment variable paths for security
+func validateEnvPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	
+	// Clean the path
+	cleanPath := filepath.Clean(path)
+	
+	// Check for path traversal
+	if strings.Contains(path, "..") {
+		return ""
+	}
+	
+	// Ensure it's an absolute path
+	if !filepath.IsAbs(cleanPath) {
+		return ""
+	}
+	
+	return cleanPath
+}
+
+// validateFilePath validates file paths for security
+func validateFilePath(path string) error {
+	if path == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+	
+	// Clean and validate path
+	cleanPath := filepath.Clean(path)
+	if cleanPath != path {
+		return fmt.Errorf("invalid path characters")
+	}
+	
+	// Check for path traversal
+	if strings.Contains(path, "..") {
+		return fmt.Errorf("path traversal not allowed")
+	}
+	
 	return nil
 }
