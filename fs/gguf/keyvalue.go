@@ -11,7 +11,7 @@ type KeyValue struct {
 }
 
 func (kv KeyValue) Valid() bool {
-	return kv.Key != "" && kv.Value.value != nil
+	return kv.Key != "" && kv.value != nil
 }
 
 type Value struct {

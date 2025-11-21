@@ -196,11 +196,9 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 					if tt.expectNumImages > 0 && response.DebugInfo.ImageCount != tt.expectNumImages {
 						t.Errorf("expected image count %d, got %d", tt.expectNumImages, response.DebugInfo.ImageCount)
 					}
-				} else {
+				} else if w.Code != http.StatusOK {
 					// When debug is disabled, it should attempt normal processing
-					if w.Code != http.StatusOK {
-						t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-					}
+					t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 				}
 			})
 		}
@@ -401,11 +399,9 @@ func TestChatDebugRenderOnly(t *testing.T) {
 					if tt.expectNumImages > 0 && response.DebugInfo.ImageCount != tt.expectNumImages {
 						t.Errorf("expected image count %d, got %d", tt.expectNumImages, response.DebugInfo.ImageCount)
 					}
-				} else {
+				} else if w.Code != http.StatusOK {
 					// When debug is disabled, it should attempt normal processing
-					if w.Code != http.StatusOK {
-						t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-					}
+					t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 				}
 			})
 		}

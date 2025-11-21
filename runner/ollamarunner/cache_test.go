@@ -2,7 +2,6 @@ package ollamarunner
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -511,7 +510,7 @@ type mockCache struct {
 // Implement only the methods needed for the test
 func (m *mockCache) Remove(seq int, beginIndex, endIndex int32) error {
 	if m.shouldFail {
-		return fmt.Errorf("mock cache removal error")
+		return errors.New("mock cache removal error")
 	}
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -203,7 +204,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	if err := client.Create(cmd.Context(), req, fn); err != nil {
 		if strings.Contains(err.Error(), "path or Modelfile are required") {
-			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+			return errors.New("the ollama server must be updated to use `ollama create` with this client")
 		}
 		return err
 	}
@@ -990,7 +991,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				var v string
 				switch vData := resp.ModelInfo[k].(type) {
 				case bool:
-					v = fmt.Sprintf("%t", vData)
+					v = strconv.FormatBool(vData)
 				case string:
 					v = vData
 				case float64:
@@ -1204,9 +1205,7 @@ func (r runOptions) Copy() runOptions {
 	var opts map[string]any
 	if r.Options != nil {
 		opts = make(map[string]any, len(r.Options))
-		for k, v := range r.Options {
-			opts[k] = v
-		}
+		maps.Copy(opts, r.Options)
 	}
 
 	var think *api.ThinkValue
@@ -1330,12 +1329,12 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		cancel()
 	}()
 
-	var state *displayResponseState = &displayResponseState{}
+	state := &displayResponseState{}
 	var thinkingContent strings.Builder
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
-	var thinkTagOpened bool = false
-	var thinkTagClosed bool = false
+	thinkTagOpened := false
+	thinkTagClosed := false
 
 	role := "assistant"
 
@@ -1463,10 +1462,10 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		cancel()
 	}()
 
-	var state *displayResponseState = &displayResponseState{}
+	state := &displayResponseState{}
 	var thinkingContent strings.Builder
-	var thinkTagOpened bool = false
-	var thinkTagClosed bool = false
+	thinkTagOpened := false
+	thinkTagClosed := false
 
 	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
 
@@ -1634,7 +1633,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !(strings.Contains(err.Error(), " refused") || strings.Contains(err.Error(), "could not connect")) {
+		if !strings.Contains(err.Error(), " refused") && !strings.Contains(err.Error(), "could not connect") {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
@@ -1952,13 +1951,13 @@ func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicit
 }
 
 func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {
-	out := ""
+	var sb strings.Builder
 	formatExplanation := ""
 	formatValues := ""
 	if !plainText {
 		formatExplanation = readline.ColorGrey + readline.ColorBold
 		formatValues = readline.ColorDefault
-		out += formatExplanation
+		sb.WriteString(formatExplanation)
 	}
 	for i, toolCall := range toolCalls {
 		argsAsJSON, err := json.Marshal(toolCall.Function.Arguments)
@@ -1966,13 +1965,13 @@ func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {
 			return ""
 		}
 		if i > 0 {
-			out += "\n"
+			sb.WriteString("\n")
 		}
 		// all tool calls are unexpected since we don't currently support registering any in the CLI
-		out += fmt.Sprintf("  Model called a non-existent function '%s()' with arguments: %s", formatValues+toolCall.Function.Name+formatExplanation, formatValues+string(argsAsJSON)+formatExplanation)
+		fmt.Fprintf(&sb, "  Model called a non-existent function '%s()' with arguments: %s", formatValues+toolCall.Function.Name+formatExplanation, formatValues+string(argsAsJSON)+formatExplanation)
 	}
 	if !plainText {
-		out += readline.ColorDefault
+		sb.WriteString(readline.ColorDefault)
 	}
-	return out
+	return sb.String()
 }

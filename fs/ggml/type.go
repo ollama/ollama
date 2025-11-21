@@ -136,8 +136,8 @@ func (t FileType) Value() uint32 {
 	return uint32(t)
 }
 
-func (ftype FileType) ToTensorType() TensorType {
-	switch ftype {
+func (t FileType) ToTensorType() TensorType {
+	switch t {
 	case FileTypeF32:
 		return TensorTypeF32
 	case FileTypeF16:
@@ -177,7 +177,7 @@ func (ftype FileType) ToTensorType() TensorType {
 	case fileTypeMXFP4:
 		return TensorTypeMXFP4
 	default:
-		slog.Warn("unsupported file type", "type", ftype)
+		slog.Warn("unsupported file type", "type", t)
 		return 0 // F32
 	}
 }

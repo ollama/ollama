@@ -442,7 +442,7 @@ func TestReadImage_FileNotFound(t *testing.T) {
 func TestOptionsMapCreation(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
-	options := make(map[string]interface{})
+	options := make(map[string]any)
 	if *fOpt.maxTokens > 0 {
 		options["num_predict"] = *fOpt.maxTokens
 	}

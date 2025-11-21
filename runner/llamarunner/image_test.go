@@ -1,6 +1,7 @@
 package llamarunner
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestImageCache(t *testing.T) {
 
 	// Empty cache
 	result, err := cache.findImage(0x5adb61d31933a946)
-	if err != errImageNotFound {
+	if !errors.Is(err, errImageNotFound) {
 		t.Errorf("found result in empty cache: result %v, err %v", result, err)
 	}
 

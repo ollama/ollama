@@ -146,7 +146,7 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 func modelForArch(c fs.Config) (Model, error) {
 	arch := c.Architecture()
 	if pooling.Type(c.Uint("pooling_type")) != pooling.TypeNone {
-		arch = arch + "_embed"
+		arch += "_embed"
 	}
 
 	f, ok := models[arch]
@@ -175,9 +175,10 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				tagsCopy = append(tagsCopy, parseTag(tag))
 			}
 
-			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
+			switch {
+			case tt == reflect.TypeFor[Base]():
 				vv.Set(reflect.ValueOf(base))
-			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
+			case tt == reflect.TypeFor[ml.Tensor]():
 				var fn func([]Tag, string, string) [][]string
 				fn = func(tags []Tag, prefix, suffix string) (fullNames [][]string) {
 					if len(tags) > 0 {
@@ -217,9 +218,9 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 						break
 					}
 				}
-			} else if tt.Kind() == reflect.Pointer || tt.Kind() == reflect.Interface {
+			case tt.Kind() == reflect.Pointer || tt.Kind() == reflect.Interface:
 				setPointer(base, vv, tagsCopy)
-			} else if tt.Kind() == reflect.Slice || tt.Kind() == reflect.Array {
+			case tt.Kind() == reflect.Slice || tt.Kind() == reflect.Array:
 				for i := range vv.Len() {
 					vvv := vv.Index(i)
 					if vvv.Kind() == reflect.Pointer || vvv.Kind() == reflect.Interface {

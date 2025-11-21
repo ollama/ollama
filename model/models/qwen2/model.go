@@ -2,6 +2,7 @@ package qwen2
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -130,7 +131,7 @@ func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor
 func New(c fs.Config) (model.Model, error) {
 	// This model currently only supports the gpt2 tokenizer
 	if c.String("tokenizer.ggml.model") == "llama" {
-		return nil, fmt.Errorf("unsupported tokenizer: llama")
+		return nil, errors.New("unsupported tokenizer: llama")
 	}
 	// detect library/qwen model(s) which are incompatible
 	if strings.HasPrefix(c.String("general.name"), "Qwen2-beta") {

@@ -198,7 +198,7 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	_, err = os.Stat(filepath.Dir(stageFilename))
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(stageFilename), 0o755); err != nil {
-			return fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
+			return fmt.Errorf("create ollama dir %s: %w", filepath.Dir(stageFilename), err)
 		}
 	}
 
@@ -218,7 +218,7 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 
 	if err := VerifyDownload(); err != nil {
 		_ = os.Remove(stageFilename)
-		return fmt.Errorf("%s - %s", resp.Request.URL.String(), err)
+		return fmt.Errorf("%s - %w", resp.Request.URL.String(), err)
 	}
 	UpdateDownloaded = true
 	return nil

@@ -178,14 +178,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Cache = make([]uint64, blocks+1)
 
 	// create list of buffer types for each gpu
-	var gpuDeviceBufferTypes []deviceBufferType
+	gpuDeviceBufferTypes := make([]deviceBufferType, len(gpus))
 	requiredMemory.GPUs = make([]ml.DeviceMemory, len(gpus))
 	for i, d := range gpus {
 		bt := C.ggml_backend_dev_buffer_type(d)
-		gpuDeviceBufferTypes = append(gpuDeviceBufferTypes, deviceBufferType{
+		gpuDeviceBufferTypes[i] = deviceBufferType{
 			d:   d,
 			bts: append([]C.ggml_backend_buffer_type_t{bt}, cpuDeviceBufferType.bts...),
-		})
+		}
 
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
@@ -354,8 +354,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
 
 	// create backends and buffer types used for the compute graph scheduler
-	var schedBackends []C.ggml_backend_t
-	var schedBufts []C.ggml_backend_buffer_type_t
+	schedBackends := make([]C.ggml_backend_t, 0, len(cpus)+len(accels)+len(gpus))
+	schedBufts := make([]C.ggml_backend_buffer_type_t, 0, len(cpus)+len(accels)+len(gpus))
 	for _, d := range append(gpus, append(accels, cpus...)...) {
 		b := backends[d]
 		bt := C.ggml_backend_get_default_buffer_type(b)

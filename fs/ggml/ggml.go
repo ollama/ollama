@@ -300,9 +300,9 @@ func (s Tensors) Items(prefix ...string) []*Tensor {
 	return items
 }
 
-func (ts Tensors) GroupLayers() map[string]Layer {
+func (s Tensors) GroupLayers() map[string]Layer {
 	layers := make(map[string]Layer)
-	for _, t := range ts.items {
+	for _, t := range s.items {
 		parts := strings.Split(t.Name, ".")
 		if index := slices.IndexFunc(parts, func(s string) bool { return s == "blk" || s == "mm" }); index != -1 {
 			if len(parts) > index+2 {

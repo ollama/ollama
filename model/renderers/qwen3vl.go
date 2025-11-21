@@ -98,7 +98,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		if multiStepTool && message.Role == "user" {
 			// Check if content starts with <tool_response> and ends with </tool_response>
 			content := r.renderContent(message)
-			if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
+			if !strings.HasPrefix(content, "<tool_response>") || !strings.HasSuffix(content, "</tool_response>") {
 				multiStepTool = false
 				lastQueryIndex = i
 			}

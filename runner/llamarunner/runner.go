@@ -577,10 +577,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			if seq.logprobs {
 				origLogprobsLen := len(seq.pendingLogprobs)
 				numTokensRemoved := origLen - newLen
-				newLogprobsLen := origLogprobsLen - numTokensRemoved
-				if newLogprobsLen < 0 {
-					newLogprobsLen = 0
-				}
+				newLogprobsLen := max(origLogprobsLen-numTokensRemoved, 0)
 				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
 			}
 
@@ -998,7 +995,6 @@ func Execute(args []string) error {
 
 	log.Println("Server listening on", addr)
 	if err := httpServer.Serve(listener); err != nil {
-		log.Fatal("server error:", err)
 		return err
 	}
 
