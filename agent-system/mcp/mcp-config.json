@@ -1,0 +1,62 @@
+{
+  "servers": {
+    "puppeteer": {
+      "description": "Browser automation for web interactions",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-puppeteer"],
+      "env": {},
+      "autoReconnect": true,
+      "enabled": true
+    },
+    "filesystem": {
+      "description": "File system operations in allowed directories",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "${ALLOWED_PATHS}"],
+      "env": {},
+      "autoReconnect": true,
+      "enabled": false
+    },
+    "google-calendar": {
+      "description": "Google Calendar integration for scheduling",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-google-calendar"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_CREDENTIALS_PATH}"
+      },
+      "autoReconnect": true,
+      "enabled": false
+    },
+    "brave-search": {
+      "description": "Web search via Brave Search API",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      },
+      "autoReconnect": true,
+      "enabled": false
+    },
+    "memory": {
+      "description": "Persistent memory/knowledge graph for the agent",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-memory"],
+      "env": {},
+      "autoReconnect": true,
+      "enabled": false
+    },
+    "sqlite": {
+      "description": "SQLite database operations",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-sqlite", "--db-path", "${SQLITE_DB_PATH}"],
+      "env": {},
+      "autoReconnect": true,
+      "enabled": false
+    }
+  },
+  "settings": {
+    "autoStartEnabled": true,
+    "connectionTimeout": 30000,
+    "maxReconnectAttempts": 3,
+    "healthCheckInterval": 60000
+  }
+}

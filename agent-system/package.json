@@ -1,19 +1,24 @@
 {
   "name": "agent-terminal-system",
-  "version": "1.0.0",
-  "description": "Multi-agent system powered by Ollama with learning capabilities",
+  "version": "2.0.0",
+  "description": "Multi-agent system powered by Ollama with MCP integration and messaging",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "start:with-ollama": "./start-with-ollama.sh",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "start:telegram": "ENABLE_TELEGRAM=true node server.js",
+    "mcp:test": "node mcp/test-mcp.js"
   },
   "keywords": [
     "ollama",
     "ai",
     "agents",
     "learning",
-    "terminal"
+    "terminal",
+    "mcp",
+    "telegram",
+    "automation"
   ],
   "author": "",
   "license": "MIT",
@@ -29,14 +34,20 @@
     "express-session": "^1.18.2",
     "helmet": "^8.1.0",
     "isomorphic-dompurify": "^2.31.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "nodemailer": "^6.9.7",
     "opossum": "^9.0.0",
     "p-retry": "^5.1.2",
     "puppeteer": "^21.11.0",
     "socket.io": "^4.6.1",
     "tmp-promise": "^3.0.3",
+    "twilio": "^4.23.0",
     "winston": "^3.18.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

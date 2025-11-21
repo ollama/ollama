@@ -23,6 +23,7 @@ const TaskPlanner = require('./task-planner');
 const ToolSystem = require('./tool-system');
 const WorkflowOrchestrator = require('./workflow-orchestrator');
 const EnhancedTools = require('./enhanced-tools');
+const IntegrationsManager = require('./integrations');
 const puppeteer = require('puppeteer');
 const crypto = require('crypto');
 const { exec, spawn } = require('child_process');
@@ -3704,21 +3705,51 @@ app.get('/ready', (req, res) => {
     res.json({ ready: true });
 });
 
+// Global integrations manager
+let integrationsManager = null;
+
 // Start server
 async function start() {
     await loadData();
 
+    // Initialize integrations (MCP, Telegram, etc.)
+    try {
+        integrationsManager = new IntegrationsManager({
+            logger,
+            toolSystem: getToolSystem(),
+            callOllama,
+            agents,
+            workflowOrchestrator: getWorkflowOrchestrator()
+        });
+
+        await integrationsManager.initialize();
+        integrationsManager.addRoutes(app);
+
+        logger.info('Integrations initialized successfully');
+    } catch (error) {
+        logger.warn('Integrations initialization failed (non-critical):', error.message);
+        logger.warn('Server will run without MCP/Telegram features');
+    }
+
     server.listen(PORT, () => {
+        const telegramStatus = integrationsManager?.getStatus()?.telegram ? 'Enabled' : 'Disabled';
+        const mcpStatus = integrationsManager?.getStatus()?.mcp?.initialized ? 'Enabled' : 'Disabled';
+
         logger.info(`
-╔═══════════════════════════════════════════╗
-║   AGENT TERMINAL SYSTEM - SERVER ONLINE   ║
-╚═══════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════╗
+║   AGENT TERMINAL SYSTEM v2.0 - SERVER ONLINE      ║
+║   Now with MCP + Messaging Integration!           ║
+╚═══════════════════════════════════════════════════╝
 
 Server running on: http://localhost:${PORT}
 Ollama API: ${OLLAMA_API}
 
 Agents loaded: ${Object.keys(agents).length}
 User interactions: ${userProfile.interactions}
+
+=== INTEGRATIONS ===
+MCP Integration: ${mcpStatus}
+Telegram Bot: ${telegramStatus}
 
 Ready to learn and assist!
         `);
@@ -3735,6 +3766,13 @@ async function gracefulShutdown(signal) {
     });
 
     try {
+        // Shutdown integrations (MCP, Telegram, etc.)
+        if (integrationsManager) {
+            logger.info('Shutting down integrations...');
+            await integrationsManager.shutdown();
+            logger.info('✓ Integrations shutdown complete');
+        }
+
         // Save all data
         logger.info('Saving data...');
         await saveData();
