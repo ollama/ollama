@@ -26,6 +26,7 @@
     "@tavily/core": "^0.5.12",
     "ajv": "^8.17.1",
     "axios": "^1.6.0",
+    "better-sqlite3": "^9.4.3",
     "dompurify": "^3.3.0",
     "dotenv": "^16.6.1",
     "duck-duck-scrape": "^2.2.7",

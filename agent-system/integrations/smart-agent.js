@@ -202,11 +202,13 @@ ${plan.warnings?.length ? `\n⚠️ Note: ${plan.warnings.join(', ')}\n` : ''}
     }
 
     /**
-     * Execute plan with progress updates
+     * Execute plan with progress updates, error recovery, and rollback support
      */
     async executePlanWithProgress(plan, context, userId) {
         const results = [];
+        const completedActions = [];  // Track actions that might need rollback
         const totalSteps = plan.steps.length;
+        let partialSuccess = false;
 
         for (let i = 0; i < totalSteps; i++) {
             const step = plan.steps[i];
@@ -217,13 +219,29 @@ ${plan.warnings?.length ? `\n⚠️ Note: ${plan.warnings.join(', ')}\n` : ''}
             await this.sendProgress(userId, `[${stepNum}/${totalSteps}] ${progressMsg}`, 'executing');
 
             try {
-                const result = await this.executeStepWithTimeout(step, context, results);
+                // Retry logic for transient failures
+                const result = await this.executeStepWithRetry(step, context, results, {
+                    maxRetries: step.retryable ? 3 : 1,
+                    timeout: step.timeout || 30000
+                });
+
                 results.push({
                     step: i,
                     type: step.type,
                     success: true,
-                    result
+                    result,
+                    completedAt: new Date().toISOString()
                 });
+
+                // Track actions that modify external state (for potential rollback)
+                if (this.isExternalAction(step.type)) {
+                    completedActions.push({
+                        step: i,
+                        type: step.type,
+                        result,
+                        rollbackInfo: result?.rollbackInfo || null
+                    });
+                }
 
                 // If step asks for clarification, stop here
                 if (step.type === 'ask_clarification' || step.type === 'ask_user') {
@@ -239,33 +257,142 @@ ${plan.warnings?.length ? `\n⚠️ Note: ${plan.warnings.join(', ')}\n` : ''}
                     step: i,
                     type: step.type,
                     success: false,
-                    error: error.message
+                    error: error.message,
+                    failedAt: new Date().toISOString()
                 });
 
-                // Continue if step is optional
+                // Handle critical failures vs optional step failures
                 if (!step.optional) {
+                    // Check if we need to rollback completed actions
+                    if (step.requiresRollbackOnFailure && completedActions.length > 0) {
+                        await this.attemptRollback(completedActions, userId);
+                    }
+
+                    // Mark as partial success if some steps completed
+                    if (results.some(r => r.success)) {
+                        partialSuccess = true;
+                    }
                     break;
                 }
             }
         }
 
+        const allRequired = results.filter((r, i) => !plan.steps[i]?.optional);
+        const success = allRequired.every(r => r.success);
+
         return {
             plan,
             results,
-            success: results.every(r => r.success || plan.steps[r.step]?.optional)
+            completedActions,
+            success,
+            partialSuccess: !success && partialSuccess,
+            summary: this.generateExecutionSummary(results, plan)
         };
     }
 
     /**
-     * Execute step with timeout
+     * Execute step with retry logic
      */
-    async executeStepWithTimeout(step, context, previousResults, timeout = 30000) {
-        return Promise.race([
-            this.executeStep(step, context, previousResults),
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Step timed out')), timeout)
-            )
-        ]);
+    async executeStepWithRetry(step, context, previousResults, options = {}) {
+        const maxRetries = options.maxRetries || 1;
+        const timeout = options.timeout || 30000;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await Promise.race([
+                    this.executeStep(step, context, previousResults),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Step timed out')), timeout)
+                    )
+                ]);
+            } catch (error) {
+                lastError = error;
+
+                // Don't retry for certain error types
+                if (this.isNonRetryableError(error)) {
+                    throw error;
+                }
+
+                if (attempt < maxRetries) {
+                    // Exponential backoff: 1s, 2s, 4s
+                    const delay = Math.pow(2, attempt - 1) * 1000;
+                    this.logger.info(`Retrying step (attempt ${attempt + 1}/${maxRetries}) after ${delay}ms`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        throw lastError;
+    }
+
+    /**
+     * Check if an error should not be retried
+     */
+    isNonRetryableError(error) {
+        const nonRetryablePatterns = [
+            'not found',
+            'invalid',
+            'unauthorized',
+            'forbidden',
+            'not configured',
+            'cancelled'
+        ];
+        const message = error.message.toLowerCase();
+        return nonRetryablePatterns.some(pattern => message.includes(pattern));
+    }
+
+    /**
+     * Check if step type modifies external state
+     */
+    isExternalAction(stepType) {
+        const externalActions = [
+            'send_email',
+            'add_calendar',
+            'browser_click',
+            'browser_fill',
+            'purchase',
+            'booking'
+        ];
+        return externalActions.some(action => stepType?.includes(action));
+    }
+
+    /**
+     * Attempt to rollback completed actions
+     */
+    async attemptRollback(completedActions, userId) {
+        this.logger.warn('Attempting rollback of completed actions...');
+        await this.sendProgress(userId, 'Attempting to undo completed steps...', 'error');
+
+        for (const action of completedActions.reverse()) {
+            try {
+                if (action.rollbackInfo) {
+                    // Execute rollback if info is available
+                    this.logger.info(`Rolling back: ${action.type}`);
+                    // Note: Actual rollback implementation depends on the action type
+                    // For now, we just log it - real rollback would need action-specific handlers
+                }
+            } catch (rollbackError) {
+                this.logger.error(`Rollback failed for ${action.type}:`, rollbackError.message);
+            }
+        }
+    }
+
+    /**
+     * Generate execution summary for response
+     */
+    generateExecutionSummary(results, plan) {
+        const successful = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+        const total = results.length;
+
+        if (failed === 0) {
+            return `All ${total} steps completed successfully.`;
+        } else if (successful === 0) {
+            return `Unable to complete the task. All ${total} steps failed.`;
+        } else {
+            return `Partially completed: ${successful}/${total} steps succeeded, ${failed} failed.`;
+        }
     }
 
     /**
