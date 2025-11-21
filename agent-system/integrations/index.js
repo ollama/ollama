@@ -11,6 +11,7 @@ const TelegramAdapter = require('./telegram-bot');
 const SmartAgent = require('./smart-agent');
 const PersonalKnowledgeBase = require('../personalization/knowledge-base');
 const SystemMonitor = require('../monitoring');
+const CommandSystem = require('../commands');
 
 class IntegrationsManager {
     constructor(options = {}) {
@@ -25,6 +26,7 @@ class IntegrationsManager {
         this.telegramAdapter = null;
         this.smartAgent = null;
         this.knowledgeBase = null;
+        this.commandSystem = null;
         this.monitor = new SystemMonitor({ logger: this.logger });
         this.initialized = false;
     }
@@ -59,6 +61,9 @@ class IntegrationsManager {
                 }
             });
             this.logger.info('Smart agent initialized with knowledge base');
+
+            // Initialize Command System
+            await this.initializeCommandSystem();
 
             // Initialize Messaging
             await this.initializeMessaging();
@@ -106,6 +111,21 @@ class IntegrationsManager {
 
         await this.knowledgeBase.initialize();
         this.logger.info(`Knowledge base ready: ${this.knowledgeBase.getStats().documents} documents, ${this.knowledgeBase.getStats().facts} facts`);
+    }
+
+    /**
+     * Initialize Command System
+     */
+    async initializeCommandSystem() {
+        this.commandSystem = new CommandSystem({
+            logger: this.logger,
+            smartAgent: this.smartAgent,
+            knowledgeBase: this.knowledgeBase,
+            monitor: this.monitor
+        });
+
+        await this.commandSystem.initialize();
+        this.logger.info(`Command system ready: ${this.commandSystem.userCommands.size} custom commands`);
     }
 
     /**
@@ -177,12 +197,40 @@ class IntegrationsManager {
         const { message, session, platform, userId } = request;
 
         this.logger.info(`Processing message from ${platform}:${userId}: ${message.substring(0, 50)}...`);
+        this.monitor.increment('messages', 'received');
 
         try {
-            // Use the smart agent for ALL requests
+            // Check for commands first (messages starting with /)
+            if (this.commandSystem && message.trim().startsWith('/')) {
+                const cmdResult = await this.commandSystem.processMessage(message, {
+                    userId,
+                    platform,
+                    session
+                });
+
+                // If command returns an expansion, process it through SmartAgent
+                if (cmdResult && typeof cmdResult === 'object' && cmdResult.type === 'expand') {
+                    this.logger.info(`Command expanded to: ${cmdResult.text}`);
+                    // Process the expanded command through SmartAgent
+                    if (this.smartAgent) {
+                        const response = await this.smartAgent.handleRequest(cmdResult.text, session);
+                        this.monitor.increment('messages', 'processed');
+                        return this.cleanResponse(response);
+                    }
+                }
+
+                // If command returned a direct response, return it
+                if (cmdResult !== null) {
+                    this.monitor.increment('messages', 'processed');
+                    return this.cleanResponse(cmdResult);
+                }
+            }
+
+            // Use the smart agent for ALL non-command requests
             // It will analyze intent, plan, and execute automatically
             if (this.smartAgent) {
                 const response = await this.smartAgent.handleRequest(message, session);
+                this.monitor.increment('messages', 'processed');
                 return this.cleanResponse(response);
             }
 
@@ -191,6 +239,7 @@ class IntegrationsManager {
 
         } catch (error) {
             this.logger.error('Error processing message:', error);
+            this.monitor.increment('messages', 'errors');
             throw error;
         }
     }
