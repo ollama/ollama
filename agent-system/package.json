@@ -8,7 +8,12 @@
     "start:with-ollama": "./start-with-ollama.sh",
     "dev": "nodemon server.js",
     "start:telegram": "ENABLE_TELEGRAM=true node server.js",
+    "cli": "node cli.js",
+    "monitor": "node cli.js",
     "mcp:test": "node mcp/test-mcp.js"
+  },
+  "bin": {
+    "agent-cli": "./cli.js"
   },
   "keywords": [
     "ollama",
