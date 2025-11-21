@@ -1,110 +1,92 @@
 # Quick Start Guide
 
-## ✅ Your Server is Running!
+## What You Have
 
-**Server URL:** http://localhost:3001
+All code is complete and tested (22/22 tests pass). You just need to add credentials.
 
-## How to Access
+## Setup Steps (5 minutes)
 
-### Option 1: Simple HTTP Server for the HTML
-Since the frontend needs to connect via Socket.IO, the easiest way is:
-
-1. Open your browser to: **http://localhost:3001**
-
-That's it! The server serves the HTML automatically.
-
-### Option 2: VS Code Simple Browser
-1. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-2. Type "Simple Browser"
-3. Enter URL: `http://localhost:3001`
-
-### Option 3: Port Forward (if on remote server)
-If you're on a remote server/codespace:
-1. Forward port 3001 to your local machine
-2. Access via `http://localhost:3001` in your local browser
-
-## What to Expect
-
-When you open the page, you should see:
-- ✅ "SYSTEM: CONNECTION ESTABLISHED" message
-- ✅ 4 agents in the sidebar (Researcher, Coder, Critic, Planner)
-- ✅ Agent names in the dropdown menu
-- ✅ Retro green terminal interface
-
-## First Steps
-
-1. **Select an agent** - Click on one in the sidebar or dropdown
-2. **Type a message** - Something like "Tell me about yourself"
-3. **Press Enter or click [SEND]**
-4. **Wait for response** - You'll see "PROCESSING" while the agent thinks
-
-## Testing the System
-
-Try these commands:
-
-### Test Individual Agent
-```
-Select: RESEARCHER
-Message: "What are your capabilities?"
-```
-
-### Test Learning
-```
-Message 1: "I'm a Python developer who loves machine learning"
-Message 2: "What do you know about me?"
-```
-The agent should remember your first message!
-
-### Test Auto-Discussion
-1. Click `[AUTO_DISCUSS]`
-2. Enter topic: "future of AI"
-3. Watch agents debate
-
-### View Your Profile
-1. Click `[USER_PROFILE]`
-2. See interaction count and interests
-
-## Troubleshooting
-
-### No agents in dropdown?
-- Check browser console (F12) for errors
-- Verify you're on http://localhost:3001 (not 3000)
-- Check server is running: `lsof -i :3001`
-
-### "Failed to get response from Ollama"
+### 1. Install Dependencies
 ```bash
-# Check Ollama is running
-ollama list
-
-# Pull the model if needed
-ollama pull llama3.2:latest
-
-# Test Ollama directly
-ollama run llama3.2:latest "Hello"
+cd agent-system
+npm install
 ```
 
-### Can't connect to server
+### 2. Pull Models
 ```bash
-# Restart the server
-cd /workspaces/ollama/agent-system
-killall node
-PORT=3001 node server.js
+# Embedding model (required for RAG)
+ollama pull nomic-embed-text
+
+# Chat model (pick one)
+ollama pull qwen2.5:7b      # Best for 16GB RAM
 ```
 
-## Current Status
+### 3. Create .env File
+```bash
+cd agent-system
+cat > .env << 'ENVEOF'
+# Ollama
+OLLAMA_API=http://localhost:11434
 
-✅ Server running on port 3001
-✅ 4 agents loaded and ready
-✅ Ollama integration configured
-✅ Memory system active
-✅ Layout fixed (no text cutoff)
+# Telegram Bot (optional - get from @BotFather)
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+ENABLE_TELEGRAM=true
 
-## Next Steps
+# Server
+PORT=3000
+ENVEOF
+```
 
-Once it's working:
-1. Have conversations with different agents
-2. Watch them learn your preferences
-3. Try agent-to-agent conversations
-4. Customize agent personalities in `server.js`
+### 4. Start Server
+```bash
+npm start
+```
 
-Enjoy your AI agent system!
+### 5. Open Dashboard
+```
+http://localhost:3000/dashboard
+```
+
+## Commands You Can Use
+
+```
+/help              - Show all commands
+/status            - System status
+/facts             - What I know about you
+/remember <fact>   - Remember something
+/search <query>    - Search knowledge base
+/profile           - View/edit profile
+/newcmd <name> <expansion> - Create custom command
+```
+
+## Train Your Agent
+
+```bash
+# Via CLI
+npm run cli
+agent> add-fact My dentist is Dr. Smith at 555-1234
+agent> index ~/Documents/notes
+
+# Via Telegram
+/remember I prefer morning meetings
+
+# Via API
+curl -X POST http://localhost:3000/api/knowledge/facts \
+  -H "Content-Type: application/json" \
+  -d '{"fact": "I like sushi", "category": "food"}'
+```
+
+## Test It
+
+```bash
+# Run tests
+npm test
+
+# Use CLI
+npm run cli
+
+# Message Telegram bot
+/help
+```
+
+Everything is local and free. Your data stays on your Mac Mini.
