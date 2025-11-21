@@ -102,7 +102,10 @@ ${c('bright', 'Other:')}
     }
 
     prompt() {
+        if (this.rl.closed) return;
+
         this.rl.question(c('cyan', '\nagent> '), async (input) => {
+            if (input === null) return; // EOF
             await this.handleCommand(input.trim());
             this.prompt();
         });
@@ -492,10 +495,21 @@ Free:      ${data.health.system?.memory?.free || 0} MB
 
 // Run CLI
 const cli = new AgentCLI();
-cli.start();
+cli.start().catch(err => {
+    // Ignore readline close errors when running non-interactively
+    if (err.code !== 'ERR_USE_AFTER_CLOSE') {
+        console.error('CLI error:', err.message);
+    }
+});
 
 // Handle Ctrl+C
 process.on('SIGINT', () => {
+    cli.cleanup();
+    process.exit(0);
+});
+
+// Handle stdin close (when piped)
+process.stdin.on('close', () => {
     cli.cleanup();
     process.exit(0);
 });
