@@ -10,6 +10,7 @@ const MessageGateway = require('./message-gateway');
 const TelegramAdapter = require('./telegram-bot');
 const SmartAgent = require('./smart-agent');
 const PersonalKnowledgeBase = require('../personalization/knowledge-base');
+const SystemMonitor = require('../monitoring');
 
 class IntegrationsManager {
     constructor(options = {}) {
@@ -24,6 +25,7 @@ class IntegrationsManager {
         this.telegramAdapter = null;
         this.smartAgent = null;
         this.knowledgeBase = null;
+        this.monitor = new SystemMonitor({ logger: this.logger });
         this.initialized = false;
     }
 
@@ -61,8 +63,17 @@ class IntegrationsManager {
             // Initialize Messaging
             await this.initializeMessaging();
 
+            // Register components with monitor
+            this.monitor.registerComponents({
+                knowledgeBase: this.knowledgeBase,
+                mcpIntegration: this.mcpIntegration,
+                telegramAdapter: this.telegramAdapter,
+                smartAgent: this.smartAgent
+            });
+
             this.initialized = true;
             this.logger.info('All integrations initialized successfully');
+            this.monitor.logActivity('system', 'System initialized');
 
             return this.getStatus();
         } catch (error) {
@@ -458,6 +469,9 @@ Respond helpfully:`;
             }
             res.json(this.knowledgeBase.userProfile);
         });
+
+        // Add monitoring routes
+        this.monitor.addRoutes(app);
 
         this.logger.info('Integration routes added to Express app');
     }
