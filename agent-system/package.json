@@ -10,6 +10,7 @@
     "start:telegram": "ENABLE_TELEGRAM=true node server.js",
     "cli": "node cli.js",
     "monitor": "node cli.js",
+    "test": "node test-system.js",
     "mcp:test": "node mcp/test-mcp.js"
   },
   "bin": {
