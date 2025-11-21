@@ -1,6 +1,42 @@
-# MCP + Telegram Integration Setup Guide
+# Personal AI Agent Setup Guide
 
-This guide explains how to set up the new MCP (Model Context Protocol) and Telegram messaging integration for your Ollama agent system.
+This guide explains how to set up your personal AI agent with Telegram messaging and MCP integration.
+
+## What Can Your Agent Do?
+
+Your agent is a **general-purpose assistant** that can handle virtually any request:
+
+### Everyday Tasks
+- "Book a table at The Ivy for Saturday night"
+- "Find a plumber near me who's available tomorrow"
+- "What's the weather like this weekend?"
+- "Remind me to call mom at 5pm"
+
+### Research & Information
+- "Compare iPhone 15 vs Samsung S24"
+- "What are the best cafes near Kings Cross?"
+- "Summarize the latest news about AI"
+- "How do I fix a leaking tap?"
+
+### Productivity
+- "Add a meeting with John tomorrow at 2pm to my calendar"
+- "Send an email to my boss saying I'll be late"
+- "What's on my calendar this week?"
+- "Draft a thank you note for the interview"
+
+### Shopping & Bookings
+- "Find the cheapest flight to Paris next month"
+- "Book a haircut at Still salon for Saturday"
+- "Order flowers for delivery tomorrow"
+- "Compare prices for a Nintendo Switch"
+
+### Learning & Help
+- "Explain quantum computing simply"
+- "Help me write a cover letter"
+- "What's a good recipe for chicken curry?"
+- "Translate 'hello' to Japanese"
+
+The agent analyzes your request, plans the necessary steps, and uses tools (browser, search, email, calendar) to accomplish the task.
 
 ## Architecture Overview
 

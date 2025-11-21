@@ -8,7 +8,7 @@
 const MCPIntegration = require('../mcp');
 const MessageGateway = require('./message-gateway');
 const TelegramAdapter = require('./telegram-bot');
-const { workflowTemplates, findMatchingWorkflow, extractWorkflowParams } = require('../workflows/workflow-templates');
+const SmartAgent = require('./smart-agent');
 
 class IntegrationsManager {
     constructor(options = {}) {
@@ -21,6 +21,7 @@ class IntegrationsManager {
         this.mcpIntegration = null;
         this.messageGateway = null;
         this.telegramAdapter = null;
+        this.smartAgent = null;
         this.initialized = false;
     }
 
@@ -38,6 +39,15 @@ class IntegrationsManager {
         try {
             // Initialize MCP
             await this.initializeMCP();
+
+            // Initialize Smart Agent
+            this.smartAgent = new SmartAgent({
+                logger: this.logger,
+                callOllama: this.callOllama,
+                toolSystem: this.toolSystem,
+                browserAutomation: this.mcpIntegration?.browserAutomation
+            });
+            this.logger.info('Smart agent initialized');
 
             // Initialize Messaging
             await this.initializeMessaging();
@@ -136,15 +146,15 @@ class IntegrationsManager {
         this.logger.info(`Processing message from ${platform}:${userId}: ${message.substring(0, 50)}...`);
 
         try {
-            // Check for workflow triggers
-            const workflow = findMatchingWorkflow(message);
-
-            if (workflow) {
-                return await this.executeWorkflow(message, workflow, session);
+            // Use the smart agent for ALL requests
+            // It will analyze intent, plan, and execute automatically
+            if (this.smartAgent) {
+                const response = await this.smartAgent.handleRequest(message, session);
+                return this.cleanResponse(response);
             }
 
-            // Otherwise, use standard agent chat
-            return await this.standardAgentChat(message, session);
+            // Fallback if smart agent not available
+            return await this.fallbackChat(message, session);
 
         } catch (error) {
             this.logger.error('Error processing message:', error);
@@ -153,138 +163,32 @@ class IntegrationsManager {
     }
 
     /**
-     * Execute a matched workflow
+     * Fallback chat when smart agent unavailable
      */
-    async executeWorkflow(message, { key, workflow }, session) {
-        this.logger.info(`Executing workflow: ${workflow.name}`);
-
-        // Extract parameters from message
-        const params = extractWorkflowParams(message, workflow);
-
-        // Add user context
-        params.userEmail = session.metadata?.email || session.preferences?.email;
-        params.userName = session.metadata?.firstName || session.metadata?.username;
-        params.userId = session.userId;
-
-        // Check for missing required params
-        const missingParams = (workflow.requiredParams || []).filter(p => !params[p]);
-
-        if (missingParams.length > 0) {
-            // Ask for missing params
-            return `I'd like to help you with that! Could you please provide:\n\n` +
-                missingParams.map(p => `- ${p}`).join('\n');
-        }
-
-        // Execute workflow
-        if (this.workflowOrchestrator) {
-            const result = await this.workflowOrchestrator.startWorkflow({
-                name: workflow.name,
-                description: workflow.description,
-                steps: workflow.steps,
-                initialContext: params
-            });
-
-            // Wait for completion or timeout
-            const finalResult = await this.waitForWorkflow(result.id);
-
-            if (finalResult.status === 'completed') {
-                return this.formatWorkflowResult(finalResult);
-            } else {
-                return `Sorry, I encountered an issue: ${finalResult.errors.join(', ')}`;
-            }
-        }
-
-        // Fallback to simple agent response
-        return await this.standardAgentChat(message, session);
-    }
-
-    /**
-     * Wait for workflow completion
-     */
-    async waitForWorkflow(workflowId, timeout = 120000) {
-        const startTime = Date.now();
-
-        while (Date.now() - startTime < timeout) {
-            const workflow = this.workflowOrchestrator.getWorkflow(workflowId);
-
-            if (!workflow || workflow.status !== 'running') {
-                return workflow;
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-
-        return { status: 'timeout', errors: ['Workflow timed out'] };
-    }
-
-    /**
-     * Format workflow result for user
-     */
-    formatWorkflowResult(workflow) {
-        const lastResult = workflow.results[workflow.results.length - 1];
-
-        if (lastResult && lastResult.result) {
-            if (typeof lastResult.result === 'string') {
-                return lastResult.result;
-            }
-            if (lastResult.result.response) {
-                return lastResult.result.response;
-            }
-        }
-
-        return `Completed: ${workflow.name}\n\nResults: ${workflow.results.length} steps executed successfully.`;
-    }
-
-    /**
-     * Standard agent chat (no workflow)
-     */
-    async standardAgentChat(message, session) {
-        // Build context from history
+    async fallbackChat(message, session) {
         const historyContext = session.history
-            .slice(-10)
+            .slice(-6)
             .map(h => `${h.role}: ${h.content}`)
             .join('\n');
 
-        // Get tool documentation
-        const toolDocs = this.mcpIntegration ?
-            this.mcpIntegration.generateToolDocumentation() : '';
+        const prompt = `You are a helpful AI assistant.
 
-        // Create enhanced prompt
-        const systemPrompt = `You are a helpful AI assistant with access to various tools and capabilities.
+Conversation:
+${historyContext}
 
-You can:
-- Browse websites and interact with them
-- Search the web
-- Send emails (if configured)
-- Execute code
-- Manage files
+User: ${message}
 
-When a user asks you to do something that requires tools, use them appropriately.
+Respond helpfully:`;
 
-${toolDocs}
-
-Conversation context:
-${historyContext}`;
-
-        // Call the agent
-        const response = await this.callOllama('researcher', message, null, [
-            { role: 'system', content: systemPrompt }
-        ]);
-
-        // Check for tool calls in response
-        if (this.toolSystem && response.includes('[TOOL:')) {
-            const toolResults = await this.toolSystem.executeToolCalls(response);
-            const enhancedResponse = this.toolSystem.replaceToolCalls(response, toolResults);
-            return this.cleanResponse(enhancedResponse);
-        }
-
-        return this.cleanResponse(response);
+        return await this.callOllama('researcher', prompt);
     }
 
     /**
      * Clean up response for messaging
      */
     cleanResponse(response) {
+        if (!response) return "I'm not sure how to respond to that.";
+
         // Remove excessive whitespace
         let cleaned = response.replace(/\n{3,}/g, '\n\n').trim();
 

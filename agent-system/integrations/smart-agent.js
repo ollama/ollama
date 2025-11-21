@@ -1,0 +1,557 @@
+/**
+ * Smart Agent
+ *
+ * A general-purpose AI agent that can handle any request by:
+ * 1. Understanding the user's intent
+ * 2. Planning the necessary steps
+ * 3. Executing using available tools
+ * 4. Adapting based on results
+ *
+ * This replaces rigid workflow templates with intelligent planning.
+ */
+
+class SmartAgent {
+    constructor(options = {}) {
+        this.logger = options.logger || console;
+        this.callOllama = options.callOllama;
+        this.toolSystem = options.toolSystem;
+        this.browserAutomation = options.browserAutomation;
+        this.userContext = new Map();  // userId → context
+    }
+
+    /**
+     * Main entry point - handle any user request
+     */
+    async handleRequest(message, session) {
+        const userId = session.userId;
+
+        // Get or create user context
+        let context = this.userContext.get(userId) || this.createContext(session);
+        context.lastMessage = message;
+        context.history = session.history || [];
+
+        try {
+            // Step 1: Understand what the user wants
+            const intent = await this.analyzeIntent(message, context);
+            this.logger.info(`Intent: ${intent.type} - ${intent.summary}`);
+
+            // Step 2: Plan the approach
+            const plan = await this.createPlan(intent, context);
+            this.logger.info(`Plan: ${plan.steps.length} steps`);
+
+            // Step 3: Execute the plan
+            const result = await this.executePlan(plan, context);
+
+            // Step 4: Formulate response
+            const response = await this.formulateResponse(result, intent, context);
+
+            // Update context
+            context.lastIntent = intent;
+            context.lastPlan = plan;
+            this.userContext.set(userId, context);
+
+            return response;
+
+        } catch (error) {
+            this.logger.error('Smart agent error:', error);
+            return `I encountered an issue: ${error.message}. Could you rephrase or provide more details?`;
+        }
+    }
+
+    /**
+     * Create initial context for a user
+     */
+    createContext(session) {
+        return {
+            userId: session.userId,
+            platform: session.platform,
+            preferences: session.preferences || {},
+            metadata: session.metadata || {},
+            knownInfo: {},  // Things we've learned about the user
+            activeTask: null,
+            history: []
+        };
+    }
+
+    /**
+     * Analyze user intent
+     */
+    async analyzeIntent(message, context) {
+        const historyContext = context.history.slice(-6).map(h =>
+            `${h.role}: ${h.content}`
+        ).join('\n');
+
+        const prompt = `Analyze this user message and determine their intent.
+
+Previous conversation:
+${historyContext || 'None'}
+
+Current message: "${message}"
+
+Known user info: ${JSON.stringify(context.knownInfo)}
+
+Respond with JSON only:
+{
+    "type": "one of: question, task, booking, search, email, calendar, purchase, reminder, information, conversation, clarification, other",
+    "summary": "brief description of what user wants",
+    "entities": {
+        "date": "extracted date if any",
+        "time": "extracted time if any",
+        "location": "extracted location if any",
+        "person": "extracted person/business name if any",
+        "service": "extracted service type if any",
+        "item": "extracted item if any",
+        "amount": "extracted amount/price if any",
+        "email": "extracted email if any",
+        "phone": "extracted phone if any",
+        "url": "extracted URL if any"
+    },
+    "requiresAction": true/false,
+    "requiresWebBrowsing": true/false,
+    "requiresEmail": true/false,
+    "requiresCalendar": true/false,
+    "confidence": 0.0-1.0,
+    "clarificationNeeded": "what info is missing, or null",
+    "followUp": true/false
+}`;
+
+        const response = await this.callOllama('planner', prompt);
+
+        try {
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+        } catch (e) {
+            this.logger.warn('Failed to parse intent JSON, using defaults');
+        }
+
+        // Fallback intent
+        return {
+            type: 'conversation',
+            summary: message,
+            entities: {},
+            requiresAction: false,
+            requiresWebBrowsing: false,
+            confidence: 0.5,
+            clarificationNeeded: null,
+            followUp: false
+        };
+    }
+
+    /**
+     * Create execution plan based on intent
+     */
+    async createPlan(intent, context) {
+        // If clarification needed, return simple ask plan
+        if (intent.clarificationNeeded) {
+            return {
+                steps: [{
+                    type: 'ask_clarification',
+                    question: intent.clarificationNeeded
+                }],
+                estimatedTime: 'instant'
+            };
+        }
+
+        // If no action required (just conversation), return chat plan
+        if (!intent.requiresAction && !intent.requiresWebBrowsing) {
+            return {
+                steps: [{
+                    type: 'chat_response',
+                    intent: intent
+                }],
+                estimatedTime: 'instant'
+            };
+        }
+
+        // For complex tasks, ask the AI to plan
+        const availableTools = this.getToolDescriptions();
+
+        const prompt = `Create a step-by-step plan to accomplish this task.
+
+User wants: ${intent.summary}
+Intent type: ${intent.type}
+Extracted info: ${JSON.stringify(intent.entities)}
+
+Available tools:
+${availableTools}
+
+Create a practical plan. Respond with JSON only:
+{
+    "steps": [
+        {
+            "type": "tool_call | browser_action | agent_think | ask_user | send_email | add_calendar",
+            "description": "what this step does",
+            "tool": "tool name if applicable",
+            "params": {},
+            "dependsOn": [step indices this depends on],
+            "optional": true/false
+        }
+    ],
+    "estimatedTime": "quick/medium/long",
+    "warnings": ["any potential issues"],
+    "alternatives": "backup approach if primary fails"
+}
+
+Keep it practical - prefer fewer steps. Don't overcomplicate.`;
+
+        const response = await this.callOllama('planner', prompt);
+
+        try {
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+        } catch (e) {
+            this.logger.warn('Failed to parse plan JSON');
+        }
+
+        // Fallback: simple web search plan for tasks
+        if (intent.requiresWebBrowsing) {
+            return {
+                steps: [
+                    { type: 'browser_action', description: 'Search the web', action: 'search', query: intent.summary },
+                    { type: 'agent_think', description: 'Analyze results and respond' }
+                ],
+                estimatedTime: 'medium'
+            };
+        }
+
+        return {
+            steps: [{ type: 'chat_response', intent }],
+            estimatedTime: 'instant'
+        };
+    }
+
+    /**
+     * Execute the plan
+     */
+    async executePlan(plan, context) {
+        const results = [];
+
+        for (let i = 0; i < plan.steps.length; i++) {
+            const step = plan.steps[i];
+            this.logger.info(`Executing step ${i + 1}: ${step.description || step.type}`);
+
+            try {
+                const result = await this.executeStep(step, context, results);
+                results.push({
+                    step: i,
+                    type: step.type,
+                    success: true,
+                    result
+                });
+
+                // If step asks for clarification, stop here
+                if (step.type === 'ask_clarification' || step.type === 'ask_user') {
+                    break;
+                }
+
+            } catch (error) {
+                this.logger.error(`Step ${i + 1} failed:`, error);
+                results.push({
+                    step: i,
+                    type: step.type,
+                    success: false,
+                    error: error.message
+                });
+
+                // Continue if step is optional
+                if (!step.optional) {
+                    break;
+                }
+            }
+        }
+
+        return {
+            plan,
+            results,
+            success: results.every(r => r.success || plan.steps[r.step]?.optional)
+        };
+    }
+
+    /**
+     * Execute a single step
+     */
+    async executeStep(step, context, previousResults) {
+        switch (step.type) {
+            case 'ask_clarification':
+            case 'ask_user':
+                return { needsInput: true, question: step.question || step.description };
+
+            case 'chat_response':
+                return { type: 'chat', intent: step.intent };
+
+            case 'tool_call':
+                return await this.executeToolCall(step, context);
+
+            case 'browser_action':
+                return await this.executeBrowserAction(step, context);
+
+            case 'agent_think':
+                return await this.agentThink(step, context, previousResults);
+
+            case 'send_email':
+                return await this.executeSendEmail(step, context);
+
+            case 'add_calendar':
+                return await this.executeAddCalendar(step, context);
+
+            case 'web_search':
+                return await this.executeWebSearch(step, context);
+
+            default:
+                return { type: 'unknown', step };
+        }
+    }
+
+    /**
+     * Execute a tool call
+     */
+    async executeToolCall(step, context) {
+        const tool = this.toolSystem.tools.get(step.tool);
+        if (!tool) {
+            throw new Error(`Tool not found: ${step.tool}`);
+        }
+
+        const result = await tool.handler(step.params || {});
+        return result;
+    }
+
+    /**
+     * Execute browser action
+     */
+    async executeBrowserAction(step, context) {
+        if (!this.browserAutomation) {
+            throw new Error('Browser automation not available');
+        }
+
+        const sessionId = context.userId;
+
+        switch (step.action) {
+            case 'navigate':
+                return await this.browserAutomation.navigate(step.url, sessionId);
+
+            case 'search':
+                // Use web search tool instead
+                const searchTool = this.toolSystem.tools.get('web_search');
+                if (searchTool) {
+                    return await searchTool.handler({ query: step.query });
+                }
+                // Fallback to Google search via browser
+                const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(step.query)}`;
+                return await this.browserAutomation.navigate(searchUrl, sessionId);
+
+            case 'click':
+                return await this.browserAutomation.click(step.selector, sessionId);
+
+            case 'fill':
+                return await this.browserAutomation.fill(step.selector, step.value, sessionId);
+
+            case 'extract':
+                return await this.browserAutomation.extract(step.selector, {}, sessionId);
+
+            case 'screenshot':
+                return await this.browserAutomation.screenshot(sessionId);
+
+            case 'get_page_info':
+                const text = await this.browserAutomation.getPageText(sessionId);
+                const forms = await this.browserAutomation.getFormFields(sessionId);
+                const clickables = await this.browserAutomation.getClickableElements(sessionId);
+                return { text, forms, clickables };
+
+            default:
+                throw new Error(`Unknown browser action: ${step.action}`);
+        }
+    }
+
+    /**
+     * Let the agent think/analyze
+     */
+    async agentThink(step, context, previousResults) {
+        const resultsContext = previousResults.map((r, i) =>
+            `Step ${i + 1} (${r.type}): ${JSON.stringify(r.result).substring(0, 500)}`
+        ).join('\n\n');
+
+        const prompt = `Analyze these results and determine the next action or final response.
+
+Task: ${context.lastIntent?.summary || context.lastMessage}
+
+Results so far:
+${resultsContext}
+
+What should we do next? If we have enough information, provide the final answer.
+If we need more information, specify what action to take.`;
+
+        return await this.callOllama('researcher', prompt);
+    }
+
+    /**
+     * Execute web search
+     */
+    async executeWebSearch(step, context) {
+        const searchTool = this.toolSystem.tools.get('web_search');
+        if (searchTool) {
+            return await searchTool.handler({ query: step.query });
+        }
+        throw new Error('Web search tool not available');
+    }
+
+    /**
+     * Send email
+     */
+    async executeSendEmail(step, context) {
+        const emailTool = this.toolSystem.tools.get('send_email');
+        if (!emailTool) {
+            throw new Error('Email not configured');
+        }
+
+        return await emailTool.handler({
+            to: step.to,
+            subject: step.subject,
+            body: step.body
+        });
+    }
+
+    /**
+     * Add calendar event
+     */
+    async executeAddCalendar(step, context) {
+        const calendarTool = this.toolSystem.tools.get('mcp_google_calendar_create_event');
+        if (!calendarTool) {
+            // Return instruction for manual addition
+            return {
+                success: false,
+                manual: true,
+                message: `Calendar not configured. Please add manually: ${step.title} on ${step.date} at ${step.time}`
+            };
+        }
+
+        return await calendarTool.handler({
+            title: step.title,
+            start: step.start,
+            end: step.end,
+            location: step.location,
+            description: step.description
+        });
+    }
+
+    /**
+     * Formulate final response to user
+     */
+    async formulateResponse(executionResult, intent, context) {
+        const { results, success } = executionResult;
+        const lastResult = results[results.length - 1];
+
+        // If asking for clarification
+        if (lastResult?.result?.needsInput) {
+            return lastResult.result.question;
+        }
+
+        // If simple chat response
+        if (lastResult?.type === 'chat_response') {
+            return await this.generateChatResponse(intent, context);
+        }
+
+        // If agent thinking produced a response
+        if (lastResult?.type === 'agent_think' && typeof lastResult.result === 'string') {
+            return lastResult.result;
+        }
+
+        // For complex results, summarize
+        const prompt = `Summarize these results into a helpful response for the user.
+
+User asked: ${context.lastMessage}
+Intent: ${intent.summary}
+
+Execution results:
+${results.map((r, i) => `${i + 1}. ${r.type}: ${r.success ? 'Success' : 'Failed'} - ${JSON.stringify(r.result).substring(0, 300)}`).join('\n')}
+
+Overall success: ${success}
+
+Provide a clear, concise response. If something failed, explain what happened and suggest alternatives.
+Keep it conversational and helpful.`;
+
+        return await this.callOllama('researcher', prompt);
+    }
+
+    /**
+     * Generate simple chat response
+     */
+    async generateChatResponse(intent, context) {
+        const historyContext = context.history.slice(-6).map(h =>
+            `${h.role}: ${h.content}`
+        ).join('\n');
+
+        const systemPrompt = `You are a helpful personal AI assistant. You can:
+- Search the web and find information
+- Browse websites and interact with them
+- Book appointments and make reservations
+- Manage calendars and set reminders
+- Send emails
+- Help with research and analysis
+- Answer questions on any topic
+
+Be conversational, helpful, and concise. If you need to do something that requires tools, say so.`;
+
+        const prompt = `${systemPrompt}
+
+Conversation:
+${historyContext}
+
+User: ${context.lastMessage}
+
+Respond helpfully:`;
+
+        return await this.callOllama('researcher', prompt);
+    }
+
+    /**
+     * Get descriptions of available tools
+     */
+    getToolDescriptions() {
+        const tools = this.toolSystem?.getAvailableTools() || [];
+
+        const descriptions = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
+
+        return `
+BROWSER TOOLS:
+- browser_navigate: Go to a URL
+- browser_click: Click an element
+- browser_fill: Fill a form field
+- browser_extract: Extract data from page
+- browser_get_text: Get page text content
+- browser_get_forms: Get form fields on page
+- browser_get_clickables: Get clickable elements
+- browser_screenshot: Take screenshot
+
+REGISTERED TOOLS:
+${descriptions}
+
+ACTIONS:
+- web_search: Search the web
+- send_email: Send an email (if configured)
+- add_calendar: Add calendar event (if configured)
+`;
+    }
+
+    /**
+     * Update user's known info
+     */
+    updateKnownInfo(userId, key, value) {
+        const context = this.userContext.get(userId);
+        if (context) {
+            context.knownInfo[key] = value;
+        }
+    }
+
+    /**
+     * Get user context
+     */
+    getContext(userId) {
+        return this.userContext.get(userId);
+    }
+}
+
+module.exports = SmartAgent;
