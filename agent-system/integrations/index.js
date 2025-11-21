@@ -9,6 +9,7 @@ const MCPIntegration = require('../mcp');
 const MessageGateway = require('./message-gateway');
 const TelegramAdapter = require('./telegram-bot');
 const SmartAgent = require('./smart-agent');
+const PersonalKnowledgeBase = require('../personalization/knowledge-base');
 
 class IntegrationsManager {
     constructor(options = {}) {
@@ -22,6 +23,7 @@ class IntegrationsManager {
         this.messageGateway = null;
         this.telegramAdapter = null;
         this.smartAgent = null;
+        this.knowledgeBase = null;
         this.initialized = false;
     }
 
@@ -40,17 +42,21 @@ class IntegrationsManager {
             // Initialize MCP
             await this.initializeMCP();
 
-            // Initialize Smart Agent with progress callback
+            // Initialize Personal Knowledge Base
+            await this.initializeKnowledgeBase();
+
+            // Initialize Smart Agent with progress callback and knowledge base
             this.smartAgent = new SmartAgent({
                 logger: this.logger,
                 callOllama: this.callOllama,
                 toolSystem: this.toolSystem,
                 browserAutomation: this.mcpIntegration?.browserAutomation,
+                knowledgeBase: this.knowledgeBase,
                 onProgress: async (userId, progress) => {
                     await this.sendProgressToUser(userId, progress);
                 }
             });
-            this.logger.info('Smart agent initialized');
+            this.logger.info('Smart agent initialized with knowledge base');
 
             // Initialize Messaging
             await this.initializeMessaging();
@@ -76,6 +82,19 @@ class IntegrationsManager {
 
         await this.mcpIntegration.initialize();
         this.logger.info('MCP integration ready');
+    }
+
+    /**
+     * Initialize Personal Knowledge Base
+     */
+    async initializeKnowledgeBase() {
+        this.knowledgeBase = new PersonalKnowledgeBase({
+            logger: this.logger,
+            callOllama: this.callOllama
+        });
+
+        await this.knowledgeBase.initialize();
+        this.logger.info(`Knowledge base ready: ${this.knowledgeBase.getStats().documents} documents, ${this.knowledgeBase.getStats().facts} facts`);
     }
 
     /**
@@ -243,7 +262,8 @@ Respond helpfully:`;
             initialized: this.initialized,
             mcp: this.mcpIntegration ? this.mcpIntegration.getStatus() : null,
             messaging: this.messageGateway ? this.messageGateway.getStats() : null,
-            telegram: this.telegramAdapter ? this.telegramAdapter.isRunning() : false
+            telegram: this.telegramAdapter ? this.telegramAdapter.isRunning() : false,
+            knowledgeBase: this.knowledgeBase ? this.knowledgeBase.getStats() : null
         };
     }
 
@@ -289,6 +309,154 @@ Respond helpfully:`;
             } catch (error) {
                 res.status(500).json({ error: error.message });
             }
+        });
+
+        // ==========================================
+        // KNOWLEDGE BASE ENDPOINTS
+        // ==========================================
+
+        // Knowledge base stats
+        app.get('/api/knowledge/stats', (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            res.json(this.knowledgeBase.getStats());
+        });
+
+        // Get facts summary
+        app.get('/api/knowledge/facts', (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            res.json({
+                summary: this.knowledgeBase.getFactsSummary(),
+                count: this.knowledgeBase.facts.size
+            });
+        });
+
+        // Index a single file
+        app.post('/api/knowledge/index/file', async (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const { filePath } = req.body;
+                if (!filePath) {
+                    return res.status(400).json({ error: 'filePath is required' });
+                }
+                const docId = await this.knowledgeBase.indexFile(filePath);
+                res.json({ success: true, docId });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Index a directory
+        app.post('/api/knowledge/index/directory', async (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const { dirPath, extensions } = req.body;
+                if (!dirPath) {
+                    return res.status(400).json({ error: 'dirPath is required' });
+                }
+                const docIds = await this.knowledgeBase.indexDirectory(dirPath, extensions);
+                res.json({ success: true, indexed: docIds.length, docIds });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Index emails
+        app.post('/api/knowledge/index/emails', async (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const { emailsPath } = req.body;
+                if (!emailsPath) {
+                    return res.status(400).json({ error: 'emailsPath is required' });
+                }
+                const count = await this.knowledgeBase.indexEmails(emailsPath);
+                res.json({ success: true, indexed: count });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Index text directly (notes, etc.)
+        app.post('/api/knowledge/index/text', async (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const { text, metadata } = req.body;
+                if (!text) {
+                    return res.status(400).json({ error: 'text is required' });
+                }
+                const docId = await this.knowledgeBase.indexText(text, metadata);
+                res.json({ success: true, docId });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Store a fact manually
+        app.post('/api/knowledge/facts', async (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const { fact, category, confidence } = req.body;
+                if (!fact) {
+                    return res.status(400).json({ error: 'fact is required' });
+                }
+                const factId = await this.knowledgeBase.storeFact(fact, { category, confidence });
+                res.json({ success: true, factId });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Search knowledge base
+        app.get('/api/knowledge/search', (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const { query, limit } = req.query;
+                if (!query) {
+                    return res.status(400).json({ error: 'query parameter is required' });
+                }
+                const documents = this.knowledgeBase.search(query, parseInt(limit) || 5);
+                const facts = this.knowledgeBase.searchFacts(query, parseInt(limit) || 10);
+                res.json({ documents, facts });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Update user profile
+        app.post('/api/knowledge/profile', async (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            try {
+                const updates = req.body;
+                await this.knowledgeBase.updateProfile(updates);
+                res.json({ success: true, profile: this.knowledgeBase.userProfile });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get user profile
+        app.get('/api/knowledge/profile', (req, res) => {
+            if (!this.knowledgeBase) {
+                return res.status(503).json({ error: 'Knowledge base not initialized' });
+            }
+            res.json(this.knowledgeBase.userProfile);
         });
 
         this.logger.info('Integration routes added to Express app');

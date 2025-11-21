@@ -16,9 +16,18 @@ class SmartAgent {
         this.callOllama = options.callOllama;
         this.toolSystem = options.toolSystem;
         this.browserAutomation = options.browserAutomation;
+        this.knowledgeBase = options.knowledgeBase || null;  // Personal knowledge base for RAG
         this.userContext = new Map();  // userId → context
         this.pendingConfirmations = new Map();  // userId → pending action
         this.progressCallback = options.onProgress || null;  // For real-time updates
+    }
+
+    /**
+     * Set the knowledge base (can be set after construction)
+     */
+    setKnowledgeBase(knowledgeBase) {
+        this.knowledgeBase = knowledgeBase;
+        this.logger.info('Knowledge base connected to SmartAgent');
     }
 
     /**
@@ -55,6 +64,20 @@ class SmartAgent {
         }
 
         try {
+            // Step 0: Get relevant personal context from knowledge base
+            let personalContext = '';
+            if (this.knowledgeBase) {
+                try {
+                    personalContext = await this.knowledgeBase.getRelevantContext(message);
+                    if (personalContext) {
+                        context.personalContext = personalContext;
+                        this.logger.info(`Retrieved personal context: ${personalContext.length} chars`);
+                    }
+                } catch (kbError) {
+                    this.logger.warn('Failed to get personal context:', kbError.message);
+                }
+            }
+
             // Step 1: Understand what the user wants
             await this.sendProgress(userId, 'Understanding your request...', 'thinking');
             const intent = await this.analyzeIntent(message, context);
@@ -268,11 +291,15 @@ ${plan.warnings?.length ? `\n⚠️ Note: ${plan.warnings.join(', ')}\n` : ''}
             `${h.role}: ${h.content}`
         ).join('\n');
 
+        // Include personal context from knowledge base
+        const personalInfo = context.personalContext || '';
+
         const prompt = `Analyze this user message and determine their intent.
 
 Previous conversation:
 ${historyContext || 'None'}
 
+${personalInfo ? `Personal context about the user:\n${personalInfo}\n` : ''}
 Current message: "${message}"
 
 Known user info: ${JSON.stringify(context.knownInfo)}
@@ -624,7 +651,10 @@ Keep it conversational and helpful.`;
             `${h.role}: ${h.content}`
         ).join('\n');
 
-        const systemPrompt = `You are a helpful personal AI assistant. You can:
+        // Include personal context if available
+        const personalInfo = context.personalContext || '';
+
+        const systemPrompt = `You are a helpful personal AI assistant. You know your user personally and can:
 - Search the web and find information
 - Browse websites and interact with them
 - Book appointments and make reservations
@@ -633,18 +663,35 @@ Keep it conversational and helpful.`;
 - Help with research and analysis
 - Answer questions on any topic
 
-Be conversational, helpful, and concise. If you need to do something that requires tools, say so.`;
+Be conversational, helpful, and concise. Use what you know about the user to give personalized responses.`;
 
         const prompt = `${systemPrompt}
 
+${personalInfo ? `What I know about this user:\n${personalInfo}\n` : ''}
 Conversation:
 ${historyContext}
 
 User: ${context.lastMessage}
 
-Respond helpfully:`;
+Respond helpfully and personally:`;
 
         return await this.callOllama('researcher', prompt);
+    }
+
+    /**
+     * Learn from conversation (extract and store facts)
+     */
+    async learnFromConversation(messages, userId) {
+        if (!this.knowledgeBase) return;
+
+        try {
+            const facts = await this.knowledgeBase.extractFactsFromConversation(messages);
+            if (facts.length > 0) {
+                this.logger.info(`Learned ${facts.length} new facts about user ${userId}`);
+            }
+        } catch (error) {
+            this.logger.warn('Failed to learn from conversation:', error.message);
+        }
     }
 
     /**
