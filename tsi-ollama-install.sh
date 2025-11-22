@@ -154,6 +154,7 @@ After=network-online.target
 ExecStart=$BINDIR/ollama serve
 #User=ollama
 #Group=ollama
+Environment="OLLAMA_HOST=0.0.0.0"
 Environment="HOME=/usr/share/ollama"
 Restart=always
 RestartSec=3
