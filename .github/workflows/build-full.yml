@@ -1,4 +1,4 @@
-name: Build Ollama (CUDA + Vulkan - Bypass Network Error)
+name: Build Ollama (Final Fix - Bypass ROCm)
 
 on:
   schedule:
@@ -17,19 +17,14 @@ jobs:
       packages: write
 
     steps:
-      # 1. 【必须】强力清理磁盘
-      # GitHub 免费空间只有 14GB，不清理装不下 CUDA+Vulkan
+      # 1. 强力清理磁盘 (必须)
       - name: Free Disk Space (Manual)
         run: |
-          echo "清理前空间："
-          df -h
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
-          echo "清理后空间："
-          df -h
 
       # 2. 拉取官方代码
       - name: Checkout Official Upstream
@@ -38,26 +33,26 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【关键】修改 Dockerfile 绕过网络错误
-      # 逻辑：官方 Dockerfile 的 rocm 阶段依赖的源在 GitHub 上连不通。
-      # 我们保留 CUDA，只把 rocm 相关的 COPY 注释掉。
-      # 这样 Docker 就不会去构建 rocm 阶段，自然就不会报错了。
+      # 3. 【真正的修复】暴力注释 ROCm 依赖
       - name: Patch Dockerfile
         run: |
-          echo "正在修改 Dockerfile..."
+          echo "=== 修改前检查 ==="
+          grep "COPY --from=rocm" Dockerfile || true
           
-          # 1. 使用 sed 正则表达式，注释掉所有从 rocm 阶段复制文件的行
-          # 无论是 COPY --from=rocm 还是 COPY --from=rocm-6 都会被注释
-          sed -i 's/^COPY --from=rocm/# COPY --from=rocm/' Dockerfile
+          echo "正在执行暴力修复..."
           
-          # 2. 强制添加 Vulkan 环境变量 (为了你的 AMD 核显)
+          # 1. 关键修正：去掉 ^ 符号，允许匹配前面的空格
+          # 只要这一行包含 "COPY --from=rocm"，就给它前面加个井号注释掉
+          sed -i 's/.*COPY --from=rocm.*/# &/' Dockerfile
+          
+          # 2. 防止官方把名字改成 rocm-6，再加一道保险
+          sed -i 's/.*COPY --from=rocm-6.*/# &/' Dockerfile
+          
+          # 3. 强制开启 Vulkan
           sed -i '/FROM ubuntu:24.04 AS default/a ENV OLLAMA_VULKAN=1' Dockerfile
           
-          echo "=== 验证：CUDA 依然保留 ==="
-          grep "COPY --from=cuda" Dockerfile
-          
-          echo "=== 验证：ROCm 已被注释 ==="
-          grep "COPY --from=rocm" Dockerfile
+          echo "=== 修改后检查（应该看到前面有 # 号）==="
+          grep "COPY --from=rocm" Dockerfile || true
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
@@ -85,5 +80,4 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
-          # 必须禁用 GHA 缓存导出，否则会把硬盘撑爆导致失败
           no-cache: false
