@@ -1,4 +1,4 @@
-name: Build Ollama (Clean Base Fix)
+name: Build Ollama (Final Fix - Dependencies Completed)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 强力清理磁盘 (必须)
+      # 1. 强力清理磁盘
       - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -33,13 +33,8 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【核心修复】Python 脚本重构 Dockerfile
-      # 逻辑：
-      # 1. 替换基础镜像：把坏掉的 rocm/dev-almalinux-8 换成 almalinux:8 (纯净官方版)
-      # 2. 注入依赖：手动安装 gcc-toolset-10, wget, git, cmake (补全缺失工具)
-      # 3. 添加 NVIDIA 源：保证 CUDA 能正常编译
-      # 4. 强制 Vulkan：保证你的核显能用
-      - name: Patch Dockerfile with Python
+      # 3. 【补全所有依赖】更换基础镜像 + 开启 PowerTools + 预装 Python/Ninja
+      - name: Patch Dockerfile with Complete Dependencies
         shell: python
         run: |
           import re
@@ -48,23 +43,27 @@ jobs:
           with open("Dockerfile", "r") as f:
               content = f.read()
           
-          # === 步骤 1: 替换基础镜像 ===
-          # 将报错的 rocm 镜像换成官方 almalinux:8
+          # === 修复 1: 替换基础镜像 ===
           content = re.sub(
               r"FROM --platform=linux/amd64 rocm/dev-almalinux-8.*? AS base-amd64",
               "FROM --platform=linux/amd64 almalinux:8 AS base-amd64",
               content
           )
           
-          # === 步骤 2: 重写 RUN 命令 (补全工具 + 修复源) ===
-          # 上次报错是因为缺 wget/tar，这次我们全部补齐
+          # === 修复 2: 注入全套依赖 (关键修正！) ===
+          # 1. dnf-command(config-manager): 为了能用 config-manager
+          # 2. powertools: 为了能装 ninja-build
+          # 3. python3: 为了 vulkan 脚本
+          # 4. ninja-build: 提前装好，防止后面报错
+          # 5. NVIDIA repo: 后面 CUDA 需要
           new_run_cmd = """RUN dnf install -y 'dnf-command(config-manager)' epel-release \\
               && dnf config-manager --set-enabled appstream \\
-              && dnf install -y gcc-toolset-10 git make wget tar xz cmake \\
+              && dnf config-manager --set-enabled powertools \\
+              && dnf install -y gcc-toolset-10 git make wget tar xz cmake python3 ninja-build \\
               && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \\
               && dnf clean all"""
           
-          # 使用正则替换掉那个巨长的、报错的 yum install 命令
+          # 替换原来的命令
           content = re.sub(
               r"RUN yum install.*?cuda-rhel8\.repo", 
               new_run_cmd, 
@@ -72,13 +71,11 @@ jobs:
               flags=re.DOTALL
           )
           
-          # === 步骤 3: 强制开启 Vulkan ===
+          # === 修复 3: 强制开启 Vulkan ===
           if "ENV OLLAMA_VULKAN=1" not in content:
               content = content.replace("FROM ubuntu:24.04 AS default", "FROM ubuntu:24.04 AS default\nENV OLLAMA_VULKAN=1")
 
-          # === 步骤 4: 屏蔽 ROCm 阶段的 COPY ===
-          # 虽然换了 base 镜像，但我们没有手动编译 ROCm 库，所以 COPY --from=rocm 会失败
-          # 必须把它们注释掉，反正你不用 AMD 独显
+          # === 修复 4: 屏蔽 ROCm 复制 ===
           lines = content.splitlines()
           final_lines = []
           for line in lines:
@@ -92,9 +89,8 @@ jobs:
           print(">>> Writing fixed Dockerfile...")
           with open("Dockerfile", "w") as f:
               f.write(content)
-              
-          print(">>> Dockerfile fixed! Top 20 lines:")
-          print(content[:1000])
+
+          print(">>> Done! Dependencies patched.")
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
