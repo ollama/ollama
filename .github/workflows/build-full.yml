@@ -1,32 +1,64 @@
-version: '3.8'
+name: Build Official Ollama (Full)
 
-services:
-  ollama:
-    # 替换为你刚才编译的镜像地址
-    image: ghcr.io/你的用户名/ollama:latest
-    container_name: ollama
-    restart: always
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./ollama_data:/root/.ollama
-    
-    # 关键环境参数：强制开启 Vulkan
-    environment:
-      - OLLAMA_VULKAN=1
-      # 如果你的核显较新(680M/780M)可能需要这个，老核显(Vega)通常不需要，但加了无害
-      # - HSA_OVERRIDE_GFX_VERSION=10.3.0 
-    
-    # 关键硬件挂载
-    devices:
-      - /dev/kfd:/dev/kfd
-      - /dev/dri:/dev/dri
-    
-    # 可选：如果你用 Portainer 或需要特权模式来访问硬件
-    # privileged: true 
-    
-    # 内存锁防止 swapping (可选，提升性能)
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+on:
+  # 每天北京时间早上 6 点自动检查更新并编译
+  schedule:
+    - cron: '0 22 * * *'
+  # 允许手动点按钮触发
+  workflow_dispatch:
+
+env:
+  # 镜像仓库地址 (GitHub Container Registry)
+  REGISTRY: ghcr.io
+  # 你的 GitHub 用户名 (自动获取，不需要改)
+  USERNAME: ${{ github.actor }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # 关键：赋予 GITHUB_TOKEN 写包的权限
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # 1. 直接拉取 Ollama 官方原版最新代码
+      # (这样你的 Fork 就算不更新，编译出来的也是官方最新的)
+      - name: Checkout Official Upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ollama/ollama
+          ref: main
+
+      # 2. 登录 GitHub 镜像仓库 (使用内置 Token，无需设置 Secrets)
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 设置 Docker 环境
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 4. 转换用户名为小写 (Docker 镜像名必须全小写)
+      - name: Lowercase Username
+        run: |
+          echo "OWNER_LC=${USERNAME,,}" >> ${GITHUB_ENV}
+
+      # 5. 编译并推送 (原汁原味，不改任何 Dockerfile)
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          # 使用默认 Dockerfile
+          file: Dockerfile
+          push: true
+          # 目标镜像名：ghcr.io/用户名/ollama:latest
+          tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
+          # 依然指定 amd64 平台
+          platforms: linux/amd64
+          # 启用缓存加速
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
