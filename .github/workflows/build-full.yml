@@ -1,4 +1,4 @@
-name: Build Ollama (Final Fix - Bypass ROCm)
+name: Build Ollama (Fixed Base Image)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 强力清理磁盘 (必须)
+      # 1. 强力清理磁盘
       - name: Free Disk Space (Manual)
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -33,26 +33,51 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【真正的修复】暴力注释 ROCm 依赖
-      - name: Patch Dockerfile
+      # 3. 【绝对修复】使用 Python 重写 Dockerfile
+      # 之前的 sed 容易失效，Python 文本替换最稳妥
+      # 逻辑：
+      # 1. 读取 Dockerfile
+      # 2. 找到那个报错的 RUN yum install ... 命令块
+      # 3. 把它替换成一个简化版：只安装 gcc-toolset-10，不加坏掉的 Rocky 源
+      # 4. 强制开启 Vulkan
+      - name: Fix Dockerfile with Python
+        shell: python
         run: |
-          echo "=== 修改前检查 ==="
-          grep "COPY --from=rocm" Dockerfile || true
+          import re
           
-          echo "正在执行暴力修复..."
+          print("正在读取 Dockerfile...")
+          with open("Dockerfile", "r") as f:
+              content = f.read()
           
-          # 1. 关键修正：去掉 ^ 符号，允许匹配前面的空格
-          # 只要这一行包含 "COPY --from=rocm"，就给它前面加个井号注释掉
-          sed -i 's/.*COPY --from=rocm.*/# &/' Dockerfile
+          # 定义那个报错的命令片段（正则匹配）
+          # 我们匹配从 'RUN yum install -y yum-utils' 开始，直到 'cuda-rhel8.repo' 结束的整段
+          # re.DOTALL 让 . 可以匹配换行符
+          broken_chunk_pattern = re.compile(r"RUN yum install -y yum-utils.*?cuda-rhel8\.repo", re.DOTALL)
           
-          # 2. 防止官方把名字改成 rocm-6，再加一道保险
-          sed -i 's/.*COPY --from=rocm-6.*/# &/' Dockerfile
+          # 定义修复后的命令
+          # 我们移除 broken 的 Rocky 源，移除特定版本号，直接用默认源安装
+          fixed_chunk = """RUN yum install -y yum-utils \\
+              && dnf install -y ccache gcc-toolset-10-gcc gcc-toolset-10-gcc-c++ gcc-toolset-10-binutils \\
+              && dnf install -y ccache \\
+              && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo"""
           
-          # 3. 强制开启 Vulkan
-          sed -i '/FROM ubuntu:24.04 AS default/a ENV OLLAMA_VULKAN=1' Dockerfile
-          
-          echo "=== 修改后检查（应该看到前面有 # 号）==="
-          grep "COPY --from=rocm" Dockerfile || true
+          if broken_chunk_pattern.search(content):
+              print("找到报错的代码块，正在替换...")
+              new_content = broken_chunk_pattern.sub(fixed_chunk, content)
+              
+              # 顺便加上 Vulkan 环境变量
+              new_content = new_content.replace("FROM ubuntu:24.04 AS default", "FROM ubuntu:24.04 AS default\nENV OLLAMA_VULKAN=1")
+              
+              with open("Dockerfile", "w") as f:
+                  f.write(new_content)
+              print("Dockerfile 修复完成！")
+          else:
+              print("错误：没找到目标代码块！可能官方更新了 Dockerfile。")
+              exit(1)
+
+      # 验证修改结果
+      - name: Verify Dockerfile
+        run: grep "gcc-toolset-10" Dockerfile
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
