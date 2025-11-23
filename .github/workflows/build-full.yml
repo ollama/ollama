@@ -1,4 +1,4 @@
-name: Build Ollama (CUDA + Vulkan - Surgical Fix)
+name: Build Ollama (Rebuild Foundation)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 强力清理磁盘 (CUDA + Vulkan 编译需要巨大空间，这步不能省)
+      # 1. 清理磁盘 (必须保留)
       - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -26,58 +26,52 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
 
-      # 2. 拉取官方源码
+      # 2. 拉取官方代码
       - name: Checkout Official Upstream
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【精准手术】保留 CUDA，剔除 ROCm
-      # 使用 Python 脚本确保万无一失，解决 sed 匹配不到空格的问题
-      - name: Patch Dockerfile with Python
+      # 3. 【核心修复】替换掉坏掉的地基命令
+      # 使用 Python 精准替换，不依赖 fragile 的 sed
+      - name: Fix Dockerfile Foundation
         shell: python
         run: |
-          import sys
+          import re
           
-          print("--- 开始修改 Dockerfile ---")
-          lines = []
-          with open("Dockerfile", "r") as f:
-              lines = f.readlines()
-          
-          with open("Dockerfile", "w") as f:
-              for line in lines:
-                  # 1. 只要这一行试图从 rocm 阶段复制文件，就给它注释掉
-                  # 这会切断依赖链，导致 Docker 直接跳过 base-amd64 阶段（那个报错的 yum）
-                  # 无论是 "COPY --from=rocm" 还是 "COPY --from=rocm-6" 都会被命中
-                  if "COPY --from=rocm" in line:
-                      print(f"注释掉 ROCm 依赖: {line.strip()}")
-                      f.write(f"# {line}")
-                  
-                  # 2. 找到最终的 Ubuntu 阶段，注入 Vulkan 环境变量
-                  elif "FROM ubuntu:24.04 AS default" in line:
-                      f.write(line)
-                      f.write("ENV OLLAMA_VULKAN=1\n")
-                      print("已注入 ENV OLLAMA_VULKAN=1")
-                  
-                  # 3. 其他行（包括 COPY --from=cuda ...）原样保留！
-                  else:
-                      f.write(line)
-          
-          print("--- 修改完成，正在检查 Dockerfile 关键部分 ---")
-          
-          # 打印出来让你确认 CUDA 还在，ROCm 没了
+          print("正在读取 Dockerfile...")
           with open("Dockerfile", "r") as f:
               content = f.read()
-              if "COPY --from=cuda" in content:
-                  print("✅ 确认：CUDA 依赖已保留")
-              else:
-                  print("❌ 警告：CUDA 依赖不见了！(不应该发生)")
-                  
-              if "# COPY --from=rocm" in content:
-                  print("✅ 确认：ROCm 依赖已注释")
-              else:
-                  print("❌ 警告：ROCm 依赖未被注释！(可能导致编译失败)")
+          
+          # 1. 定义那个报错的 RUN 命令块的特征
+          # 它试图添加 rockylinux.org 的源，这在 GitHub 上是连不通的
+          # 我们用正则找到从 "RUN yum install" 开始到 "cuda-rhel8.repo" 结束的一大段
+          bad_run_block = re.compile(r"RUN yum install.*?cuda-rhel8\.repo", re.DOTALL)
+          
+          # 2. 定义一个新的、健康的命令块
+          # 我们直接从系统默认源安装 gcc-toolset-10，不去连那个坏掉的 Rocky Vault
+          # 并且只添加 NVIDIA 的源（这是通的）
+          good_run_block = """RUN dnf install -y 'dnf-command(config-manager)' \\
+              && dnf install -y gcc-toolset-10 git make \\
+              && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo"""
+          
+          # 3. 执行替换
+          if bad_run_block.search(content):
+              print("✅ 找到了报错的构建命令，正在替换为修复版...")
+              new_content = bad_run_block.sub(good_run_block, content)
+              
+              # 4. 顺便注入 Vulkan 环境变量
+              new_content = new_content.replace("FROM ubuntu:24.04 AS default", "FROM ubuntu:24.04 AS default\nENV OLLAMA_VULKAN=1")
+              
+              with open("Dockerfile", "w") as f:
+                  f.write(new_content)
+              print("Dockerfile 地基修复完成！")
+          else:
+              print("❌ 严重错误：没找到预期的 RUN 命令，官方 Dockerfile 可能改了结构。")
+              print("当前文件内容前 20 行：")
+              print(content[:1000])
+              exit(1)
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
@@ -105,5 +99,4 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
-          # 禁用缓存导出，防止磁盘爆满
           no-cache: false
