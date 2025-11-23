@@ -1,36 +1,46 @@
-name: Build Official Ollama (Full)
+name: Build Official Ollama (Full with Max Space)
 
 on:
-  # 每天北京时间早上 6 点自动检查更新并编译
   schedule:
     - cron: '0 22 * * *'
-  # 允许手动点按钮触发
   workflow_dispatch:
 
 env:
-  # 镜像仓库地址 (GitHub Container Registry)
   REGISTRY: ghcr.io
-  # 你的 GitHub 用户名 (自动获取，不需要改)
   USERNAME: ${{ github.actor }}
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    # 关键：赋予 GITHUB_TOKEN 写包的权限
     permissions:
       contents: read
       packages: write
 
     steps:
-      # 1. 直接拉取 Ollama 官方原版最新代码
-      # (这样你的 Fork 就算不更新，编译出来的也是官方最新的)
+      # -------------------------------------------------------
+      # [新增步骤] 强力清理磁盘空间
+      # 这会删除预装的安卓开发包、DotNet等，腾出约 30GB+ 空间
+      # -------------------------------------------------------
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space-action@v1.3.1
+        with:
+          # 删除不需要的预装软件
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+          
+      # 1. 拉取代码
       - name: Checkout Official Upstream
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
 
-      # 2. 登录 GitHub 镜像仓库 (使用内置 Token，无需设置 Secrets)
+      # 2. 登录镜像库
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
@@ -38,27 +48,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 设置 Docker 环境
+      # 3. 设置 Docker
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 4. 转换用户名为小写 (Docker 镜像名必须全小写)
+      # 4. 转小写用户名
       - name: Lowercase Username
         run: |
           echo "OWNER_LC=${USERNAME,,}" >> ${GITHUB_ENV}
 
-      # 5. 编译并推送 (原汁原味，不改任何 Dockerfile)
+      # 5. 编译并推送
+      # 注意：Ollama 完整版编译极慢，可能需要 40-60 分钟
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
-          # 使用默认 Dockerfile
           file: Dockerfile
           push: true
-          # 目标镜像名：ghcr.io/用户名/ollama:latest
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
-          # 依然指定 amd64 平台
           platforms: linux/amd64
-          # 启用缓存加速
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # 禁用缓存导出到 GHA，因为缓存本身也会占用大量磁盘空间导致再次爆满
+          # 我们只利用 Buildx 内部缓存
+          no-cache: false
