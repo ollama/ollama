@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  ollama:
+    # 替换为你刚才编译的镜像地址
+    image: ghcr.io/你的用户名/ollama:latest
+    container_name: ollama
+    restart: always
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    
+    # 关键环境参数：强制开启 Vulkan
+    environment:
+      - OLLAMA_VULKAN=1
+      # 如果你的核显较新(680M/780M)可能需要这个，老核显(Vega)通常不需要，但加了无害
+      # - HSA_OVERRIDE_GFX_VERSION=10.3.0 
+    
+    # 关键硬件挂载
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 可选：如果你用 Portainer 或需要特权模式来访问硬件
+    # privileged: true 
+    
+    # 内存锁防止 swapping (可选，提升性能)
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
