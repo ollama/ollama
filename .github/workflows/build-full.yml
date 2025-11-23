@@ -1,4 +1,4 @@
-name: Build Official Ollama (Full with Max Space)
+name: Build Official Ollama (Full with Manual Clean)
 
 on:
   schedule:
@@ -17,30 +17,28 @@ jobs:
       packages: write
 
     steps:
-      # -------------------------------------------------------
-      # [新增步骤] 强力清理磁盘空间
-      # 这会删除预装的安卓开发包、DotNet等，腾出约 30GB+ 空间
-      # -------------------------------------------------------
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space-action@v1.3.1
-        with:
-          # 删除不需要的预装软件
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-          
-      # 1. 拉取代码
+      # 1. [修复] 手动清理磁盘空间 (不依赖外部插件)
+      # 这一步会通过删除预装的 Android SDK, .NET, Haskell 等腾出约 25GB+ 空间
+      - name: Free Disk Space (Manual)
+        run: |
+          echo "Before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "After cleanup:"
+          df -h
+
+      # 2. 拉取官方代码
       - name: Checkout Official Upstream
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
 
-      # 2. 登录镜像库
+      # 3. 登录 GitHub 镜像库
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
@@ -48,17 +46,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 设置 Docker
+      # 4. 设置 Docker 环境
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 4. 转小写用户名
+      # 5. 用户名转小写
       - name: Lowercase Username
         run: |
           echo "OWNER_LC=${USERNAME,,}" >> ${GITHUB_ENV}
 
-      # 5. 编译并推送
-      # 注意：Ollama 完整版编译极慢，可能需要 40-60 分钟
+      # 6. 编译并推送
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -67,6 +64,5 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
-          # 禁用缓存导出到 GHA，因为缓存本身也会占用大量磁盘空间导致再次爆满
-          # 我们只利用 Buildx 内部缓存
+          # 禁用 GHA 缓存导出，防止缓存文件再次撑爆硬盘
           no-cache: false
