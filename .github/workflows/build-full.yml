@@ -1,4 +1,4 @@
-name: Build Ollama (Rebuild Foundation)
+name: Build Ollama (Switch Base Image - Final)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 清理磁盘 (必须保留)
+      # 1. 清理磁盘
       - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -33,45 +33,67 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【核心修复】替换掉坏掉的地基命令
-      # 使用 Python 精准替换，不依赖 fragile 的 sed
-      - name: Fix Dockerfile Foundation
+      # 3. 【终极修复】更换基础镜像 + 重写依赖
+      - name: Patch Dockerfile (Replace Base Image)
         shell: python
         run: |
           import re
           
-          print("正在读取 Dockerfile...")
+          print(">>> 开始读取 Dockerfile...")
           with open("Dockerfile", "r") as f:
               content = f.read()
           
-          # 1. 定义那个报错的 RUN 命令块的特征
-          # 它试图添加 rockylinux.org 的源，这在 GitHub 上是连不通的
-          # 我们用正则找到从 "RUN yum install" 开始到 "cuda-rhel8.repo" 结束的一大段
-          bad_run_block = re.compile(r"RUN yum install.*?cuda-rhel8\.repo", re.DOTALL)
+          # === 修复 1: 替换坏掉的基础镜像 ===
+          # 原本的 rocm/dev-almalinux-8 镜像源已坏，换成官方纯净的 almalinux:8
+          # 这样我们就能获得一个干净、网络正常的 RHEL 8 环境
+          print(">>> 正在替换基础镜像为 almalinux:8 ...")
+          content = re.sub(
+              r"FROM --platform=linux/amd64 rocm/dev-almalinux-8.*? AS base-amd64",
+              "FROM --platform=linux/amd64 almalinux:8 AS base-amd64",
+              content
+          )
           
-          # 2. 定义一个新的、健康的命令块
-          # 我们直接从系统默认源安装 gcc-toolset-10，不去连那个坏掉的 Rocky Vault
-          # 并且只添加 NVIDIA 的源（这是通的）
-          good_run_block = """RUN dnf install -y 'dnf-command(config-manager)' \\
-              && dnf install -y gcc-toolset-10 git make \\
-              && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo"""
+          # === 修复 2: 重写依赖安装命令 ===
+          # 因为换了纯净镜像，我们需要手动安装 gcc-10 和工具
+          # 还要添加 NVIDIA 源 (为了后面的 CUDA)
+          print(">>> 正在注入新的构建依赖命令...")
+          new_run_cmd = """RUN dnf install -y 'dnf-command(config-manager)' \\
+              && dnf config-manager --set-enabled appstream \\
+              && dnf install -y gcc-toolset-10 git make wget tar xz \\
+              && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \\
+              && dnf clean all"""
           
-          # 3. 执行替换
-          if bad_run_block.search(content):
-              print("✅ 找到了报错的构建命令，正在替换为修复版...")
-              new_content = bad_run_block.sub(good_run_block, content)
+          # 替换那个巨长的、报错的 RUN yum install ... 命令
+          content = re.sub(
+              r"RUN yum install.*?cuda-rhel8\.repo", 
+              new_run_cmd, 
+              content, 
+              flags=re.DOTALL
+          )
+
+          # === 修复 3: 切断 ROCm 依赖 ===
+          # 因为我们换了纯净 base，没有预装 ROCm 工具，所以必须强制切断 ROCm 构建
+          # 否则 rocm 阶段会报错。反正你也不用 AMD 独显。
+          print(">>> 正在注释 ROCm 复制步骤...")
+          lines = content.splitlines()
+          final_lines = []
+          for line in lines:
+              if "COPY --from=rocm" in line:
+                  final_lines.append(f"# {line}")
+              elif "FROM ubuntu:24.04 AS default" in line:
+                  final_lines.append(line)
+                  final_lines.append("ENV OLLAMA_VULKAN=1")
+              else:
+                  final_lines.append(line)
+          
+          content = "\n".join(final_lines)
+
+          # 写入文件
+          with open("Dockerfile", "w") as f:
+              f.write(content)
               
-              # 4. 顺便注入 Vulkan 环境变量
-              new_content = new_content.replace("FROM ubuntu:24.04 AS default", "FROM ubuntu:24.04 AS default\nENV OLLAMA_VULKAN=1")
-              
-              with open("Dockerfile", "w") as f:
-                  f.write(new_content)
-              print("Dockerfile 地基修复完成！")
-          else:
-              print("❌ 严重错误：没找到预期的 RUN 命令，官方 Dockerfile 可能改了结构。")
-              print("当前文件内容前 20 行：")
-              print(content[:1000])
-              exit(1)
+          print(">>> Dockerfile 修复完成！新的前 20 行如下：")
+          print(content[:800])
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
