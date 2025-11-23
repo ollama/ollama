@@ -1,4 +1,4 @@
-name: Build Ollama (Slim Version - CUDA12 + Vulkan)
+name: Build Ollama (Nuclear Slim - Single Layer)
 
 on:
   schedule:
@@ -17,105 +17,109 @@ jobs:
       packages: write
 
     steps:
-      # 1. 【生存关键】强力释放磁盘空间
-      # 删除预装的大型开发包，能腾出约 30GB 空间，防止 build 3小时后炸盘
-      - name: Free Disk Space (Aggressive)
+      # 1. 【极限清理】腾出所有可能的空间
+      - name: Maximize Disk Space
         run: |
-          echo "清理前空间："
+          echo ">>> 清理前空间："
           df -h
+          # 删除预装的大型软件
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
+          # 清理 Docker 现有镜像
           sudo docker image prune --all --force
-          echo "清理后空间："
+          echo ">>> 清理后空间："
           df -h
 
-      # 2. 拉取官方代码
-      - name: Checkout Official Upstream
+      # 2. 拉取代码 (仅拉取最近一次提交，不拉取历史记录)
+      - name: Checkout Source
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
+          fetch-depth: 1  # 关键：浅克隆，节省空间
 
-      # 3. 【手术瘦身】修复网络 + 砍掉多余架构
-      - name: Patch Dockerfile (Slim & Fix)
-        shell: python
+      # 3. 【生成单层极简 Dockerfile】
+      - name: Generate Slim Dockerfile
         run: |
-          import re
-          
-          print(">>> 读取 Dockerfile...")
-          with open("Dockerfile", "r") as f:
-              content = f.read()
-          
-          # === 修复 1: 替换基础镜像 (解决 yum 网络报错) ===
-          content = re.sub(
-              r"FROM --platform=linux/amd64 rocm/dev-almalinux-8.*? AS base-amd64",
-              "FROM --platform=linux/amd64 almalinux:8 AS base-amd64",
-              content
-          )
-          
-          # === 修复 2: 补全依赖 (解决 ninja/python 缺失) ===
-          # 注意：这里只安装必要的，尽量减少体积
-          new_run_cmd = """RUN dnf install -y 'dnf-command(config-manager)' epel-release \\
-              && dnf config-manager --set-enabled appstream \\
-              && dnf config-manager --set-enabled powertools \\
-              && dnf install -y gcc-toolset-10 git make wget tar xz cmake python3 ninja-build \\
-              && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \\
-              && dnf clean all"""
-          
-          content = re.sub(
-              r"RUN yum install.*?cuda-rhel8\.repo", 
-              new_run_cmd, 
-              content, 
-              flags=re.DOTALL
-          )
+          cat <<EOF > Dockerfile
+          # === 第一阶段：构建环境 ===
+          # 使用 NVIDIA 官方开发镜像，自带 CUDA 12 编译器，无需额外下载巨大的 SDK
+          FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS builder
 
-          # === 瘦身 1: 注入 Vulkan 变量 ===
-          if "ENV OLLAMA_VULKAN=1" not in content:
-              content = content.replace("FROM ubuntu:24.04 AS default", "FROM ubuntu:24.04 AS default\nENV OLLAMA_VULKAN=1")
+          # 设置 Go 版本
+          ENV GO_VERSION=1.22.8
 
-          # === 瘦身 2: 砍掉无用架构 (节省巨大空间) ===
-          lines = content.splitlines()
-          final_lines = []
-          for line in lines:
-              # 1. 屏蔽 ROCm (A卡独显) - 你不需要
-              if "COPY --from=rocm" in line:
-                  final_lines.append(f"# {line}")
-              
-              # 2. 屏蔽 JetPack (ARM开发板) - 巨大且无用
-              elif "COPY --from=jetpack" in line:
-                  final_lines.append(f"# {line}")
-              
-              # 3. 屏蔽 CUDA 11 (只留最新的 CUDA 12) - 节省空间关键！
-              # 如果不屏蔽这个，就要多下载几个G的 SDK
-              elif "COPY --from=cuda-11" in line:
-                  final_lines.append(f"# {line}")
-              
-              else:
-                  final_lines.append(line)
-          
-          content = "\n".join(final_lines)
-          
-          print(">>> 写入 Dockerfile...")
-          with open("Dockerfile", "w") as f:
-              f.write(content)
-              
-          print(">>> Dockerfile 已瘦身完毕。保留：CUDA12, Vulkan, CPU。")
+          # 【关键】将所有安装步骤合并为一层，避免中间层占用空间
+          # 1. 安装基础工具 (curl, git, cmake, gcc)
+          # 2. 安装 Vulkan 开发库 (为了 AMD 核显)
+          # 3. 安装 Go 语言
+          # 4. 清理 apt 缓存 (rm -rf /var/lib/apt/lists/*)
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              curl git cmake build-essential \
+              libvulkan-dev vulkan-tools libvulkan1 \
+              && rm -rf /var/lib/apt/lists/* \
+              && curl -L https://go.dev/dl/go\${GO_VERSION}.linux-amd64.tar.gz -o go.tar.gz \
+              && tar -C /usr/local -xzf go.tar.gz \
+              && rm go.tar.gz
 
-      # 4. 登录 GitHub 镜像库
-      - name: Log in to the Container registry
+          ENV PATH=\$PATH:/usr/local/go/bin
+          
+          # 设置工作目录
+          WORKDIR /go/src/github.com/ollama/ollama
+
+          # 复制当前目录下的所有文件到容器
+          COPY . .
+
+          # 【关键】编译设置
+          # 强制开启 Vulkan，同时因为身处 NVIDIA 容器，CUDA 会被自动编译
+          ENV OLLAMA_VULKAN=1
+          ENV CGO_ENABLED=1
+
+          # 开始编译
+          # generate 会编译 llama.cpp，这是最耗时和耗空间的一步
+          # build 生成最终二进制
+          RUN go generate ./... && \
+              go build -trimpath -ldflags "-s -w" -o /bin/ollama .
+
+          # === 第二阶段：运行时环境 (极小) ===
+          FROM ubuntu:22.04
+
+          # 安装运行时依赖 (只装必要的库，不装开发工具)
+          # 包含 Vulkan Loader 和 CA 证书
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              ca-certificates \
+              libvulkan1 \
+              && rm -rf /var/lib/apt/lists/*
+
+          # 仅从构建阶段复制编译好的二进制文件 (几百 MB)
+          COPY --from=builder /bin/ollama /bin/ollama
+
+          ENV OLLAMA_HOST=0.0.0.0:11434
+          ENV OLLAMA_VULKAN=1
+          EXPOSE 11434
+
+          ENTRYPOINT ["/bin/ollama"]
+          CMD ["serve"]
+          EOF
+
+          echo ">>> Dockerfile 生成完毕："
+          cat Dockerfile
+
+      # 4. 登录
+      - name: Log in to Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5. 设置 Docker 环境
+      # 5. 设置 Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 6. 用户名转小写
+      # 6. 转小写用户名
       - name: Lowercase Username
         run: |
           echo "OWNER_LC=${USERNAME,,}" >> ${GITHUB_ENV}
@@ -129,5 +133,6 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
-          # 关键：禁用缓存导出，防止把这 30G 空间又吃回去
-          no-cache: false
+          # 【生死攸关】禁用缓存！
+          # 因为之前的缓存可能已经把硬盘占满了，这次我们完全不读写外部缓存，只靠本地瞬时空间
+          no-cache: true
