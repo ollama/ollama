@@ -1,4 +1,4 @@
-name: Build Ollama (Switch Base Image - Final)
+name: Build Official Ollama (Bypass Broken ROCm Only)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 清理磁盘
+      # 1. 必须清理磁盘 (官方构建非常占空间)
       - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -26,74 +26,55 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
 
-      # 2. 拉取官方代码
+      # 2. 拉取官方源码
       - name: Checkout Official Upstream
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【终极修复】更换基础镜像 + 重写依赖
-      - name: Patch Dockerfile (Replace Base Image)
+      # 3. 【核心修正】只修改 Dockerfile 的引用，不改基础镜像
+      # 逻辑：
+      # 读取官方 Dockerfile，找到所有 "COPY --from=rocm" 的行，加上 # 注释。
+      # 这样 Docker 构建引擎发现最终产物不需要 ROCm，就会自动跳过那个报错的 base-amd64 阶段。
+      # 剩下的 CUDA、Vulkan、CPU 全部保留官方原样。
+      - name: Modify Dockerfile
         shell: python
         run: |
-          import re
+          print("正在处理 Dockerfile...")
           
-          print(">>> 开始读取 Dockerfile...")
           with open("Dockerfile", "r") as f:
-              content = f.read()
+              lines = f.readlines()
           
-          # === 修复 1: 替换坏掉的基础镜像 ===
-          # 原本的 rocm/dev-almalinux-8 镜像源已坏，换成官方纯净的 almalinux:8
-          # 这样我们就能获得一个干净、网络正常的 RHEL 8 环境
-          print(">>> 正在替换基础镜像为 almalinux:8 ...")
-          content = re.sub(
-              r"FROM --platform=linux/amd64 rocm/dev-almalinux-8.*? AS base-amd64",
-              "FROM --platform=linux/amd64 almalinux:8 AS base-amd64",
-              content
-          )
+          new_lines = []
+          rocm_cut_count = 0
           
-          # === 修复 2: 重写依赖安装命令 ===
-          # 因为换了纯净镜像，我们需要手动安装 gcc-10 和工具
-          # 还要添加 NVIDIA 源 (为了后面的 CUDA)
-          print(">>> 正在注入新的构建依赖命令...")
-          new_run_cmd = """RUN dnf install -y 'dnf-command(config-manager)' \\
-              && dnf config-manager --set-enabled appstream \\
-              && dnf install -y gcc-toolset-10 git make wget tar xz \\
-              && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \\
-              && dnf clean all"""
-          
-          # 替换那个巨长的、报错的 RUN yum install ... 命令
-          content = re.sub(
-              r"RUN yum install.*?cuda-rhel8\.repo", 
-              new_run_cmd, 
-              content, 
-              flags=re.DOTALL
-          )
-
-          # === 修复 3: 切断 ROCm 依赖 ===
-          # 因为我们换了纯净 base，没有预装 ROCm 工具，所以必须强制切断 ROCm 构建
-          # 否则 rocm 阶段会报错。反正你也不用 AMD 独显。
-          print(">>> 正在注释 ROCm 复制步骤...")
-          lines = content.splitlines()
-          final_lines = []
           for line in lines:
+              # 1. 检测是否是复制 ROCm 文件的行 (忽略空格)
               if "COPY --from=rocm" in line:
-                  final_lines.append(f"# {line}")
-              elif "FROM ubuntu:24.04 AS default" in line:
-                  final_lines.append(line)
-                  final_lines.append("ENV OLLAMA_VULKAN=1")
-              else:
-                  final_lines.append(line)
-          
-          content = "\n".join(final_lines)
-
-          # 写入文件
-          with open("Dockerfile", "w") as f:
-              f.write(content)
+                  # 注释掉这一行
+                  new_lines.append(f"# {line}")
+                  rocm_cut_count += 1
+                  print(f"已屏蔽 ROCm 依赖: {line.strip()}")
               
-          print(">>> Dockerfile 修复完成！新的前 20 行如下：")
-          print(content[:800])
+              # 2. 检测最终阶段，注入 Vulkan 环境变量
+              elif "FROM ubuntu:24.04 AS default" in line:
+                  new_lines.append(line)
+                  new_lines.append("ENV OLLAMA_VULKAN=1\n")
+                  print("已注入 ENV OLLAMA_VULKAN=1")
+              
+              # 3. 其他行完全保留 (包括 CUDA)
+              else:
+                  new_lines.append(line)
+          
+          if rocm_cut_count == 0:
+              print("❌ 错误：没有找到 ROCm 相关的行，脚本可能失效！")
+              exit(1)
+              
+          with open("Dockerfile", "w") as f:
+              f.writelines(new_lines)
+              
+          print(f"✅ 处理完成，共屏蔽了 {rocm_cut_count} 处 ROCm 依赖。")
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
