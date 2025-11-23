@@ -1,4 +1,4 @@
-name: Build Ollama (Fixed Base Image)
+name: Build Ollama (CUDA + Vulkan - Surgical Fix)
 
 on:
   schedule:
@@ -17,8 +17,8 @@ jobs:
       packages: write
 
     steps:
-      # 1. 强力清理磁盘
-      - name: Free Disk Space (Manual)
+      # 1. 强力清理磁盘 (CUDA + Vulkan 编译需要巨大空间，这步不能省)
+      - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
@@ -26,58 +26,58 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
 
-      # 2. 拉取官方代码
+      # 2. 拉取官方源码
       - name: Checkout Official Upstream
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【绝对修复】使用 Python 重写 Dockerfile
-      # 之前的 sed 容易失效，Python 文本替换最稳妥
-      # 逻辑：
-      # 1. 读取 Dockerfile
-      # 2. 找到那个报错的 RUN yum install ... 命令块
-      # 3. 把它替换成一个简化版：只安装 gcc-toolset-10，不加坏掉的 Rocky 源
-      # 4. 强制开启 Vulkan
-      - name: Fix Dockerfile with Python
+      # 3. 【精准手术】保留 CUDA，剔除 ROCm
+      # 使用 Python 脚本确保万无一失，解决 sed 匹配不到空格的问题
+      - name: Patch Dockerfile with Python
         shell: python
         run: |
-          import re
+          import sys
           
-          print("正在读取 Dockerfile...")
+          print("--- 开始修改 Dockerfile ---")
+          lines = []
+          with open("Dockerfile", "r") as f:
+              lines = f.readlines()
+          
+          with open("Dockerfile", "w") as f:
+              for line in lines:
+                  # 1. 只要这一行试图从 rocm 阶段复制文件，就给它注释掉
+                  # 这会切断依赖链，导致 Docker 直接跳过 base-amd64 阶段（那个报错的 yum）
+                  # 无论是 "COPY --from=rocm" 还是 "COPY --from=rocm-6" 都会被命中
+                  if "COPY --from=rocm" in line:
+                      print(f"注释掉 ROCm 依赖: {line.strip()}")
+                      f.write(f"# {line}")
+                  
+                  # 2. 找到最终的 Ubuntu 阶段，注入 Vulkan 环境变量
+                  elif "FROM ubuntu:24.04 AS default" in line:
+                      f.write(line)
+                      f.write("ENV OLLAMA_VULKAN=1\n")
+                      print("已注入 ENV OLLAMA_VULKAN=1")
+                  
+                  # 3. 其他行（包括 COPY --from=cuda ...）原样保留！
+                  else:
+                      f.write(line)
+          
+          print("--- 修改完成，正在检查 Dockerfile 关键部分 ---")
+          
+          # 打印出来让你确认 CUDA 还在，ROCm 没了
           with open("Dockerfile", "r") as f:
               content = f.read()
-          
-          # 定义那个报错的命令片段（正则匹配）
-          # 我们匹配从 'RUN yum install -y yum-utils' 开始，直到 'cuda-rhel8.repo' 结束的整段
-          # re.DOTALL 让 . 可以匹配换行符
-          broken_chunk_pattern = re.compile(r"RUN yum install -y yum-utils.*?cuda-rhel8\.repo", re.DOTALL)
-          
-          # 定义修复后的命令
-          # 我们移除 broken 的 Rocky 源，移除特定版本号，直接用默认源安装
-          fixed_chunk = """RUN yum install -y yum-utils \\
-              && dnf install -y ccache gcc-toolset-10-gcc gcc-toolset-10-gcc-c++ gcc-toolset-10-binutils \\
-              && dnf install -y ccache \\
-              && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo"""
-          
-          if broken_chunk_pattern.search(content):
-              print("找到报错的代码块，正在替换...")
-              new_content = broken_chunk_pattern.sub(fixed_chunk, content)
-              
-              # 顺便加上 Vulkan 环境变量
-              new_content = new_content.replace("FROM ubuntu:24.04 AS default", "FROM ubuntu:24.04 AS default\nENV OLLAMA_VULKAN=1")
-              
-              with open("Dockerfile", "w") as f:
-                  f.write(new_content)
-              print("Dockerfile 修复完成！")
-          else:
-              print("错误：没找到目标代码块！可能官方更新了 Dockerfile。")
-              exit(1)
-
-      # 验证修改结果
-      - name: Verify Dockerfile
-        run: grep "gcc-toolset-10" Dockerfile
+              if "COPY --from=cuda" in content:
+                  print("✅ 确认：CUDA 依赖已保留")
+              else:
+                  print("❌ 警告：CUDA 依赖不见了！(不应该发生)")
+                  
+              if "# COPY --from=rocm" in content:
+                  print("✅ 确认：ROCm 依赖已注释")
+              else:
+                  print("❌ 警告：ROCm 依赖未被注释！(可能导致编译失败)")
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
@@ -105,4 +105,5 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
+          # 禁用缓存导出，防止磁盘爆满
           no-cache: false
