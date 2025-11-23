@@ -1,4 +1,4 @@
-name: Build Official Ollama (Full - Fix Repo Error)
+name: Build Official Ollama (Full - Fix Dependencies)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 强力清理磁盘 (必须保留，否则编译到一半会爆盘)
+      # 1. 强力清理磁盘
       - name: Free Disk Space (Manual)
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -33,24 +33,26 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【精准修复】只修改报错的软件源链接，保留 CUDA
-      - name: Patch Dockerfile to Fix Broken Repo
+      # 3. 【深度修复】修复仓库链接 + 移除版本号限制
+      - name: Patch Dockerfile Dependencies
         run: |
-          echo "正在修复 Dockerfile 中失效的 Rocky Linux 源..."
+          echo "正在修复 Dockerfile..."
           
-          # 1. 替换失效的 rockylinux 链接为 echo (跳过该步骤)
-          # 原理：这一行是导致 exit code 1 的元凶，我们用 echo 占位，避免破坏 shell 脚本的 && 结构
+          # Fix 1: 跳过坏掉的 Rocky Linux 仓库链接
           sed -i 's|yum-config-manager --add-repo https://dl.rockylinux.org/.*|echo "Skipping broken repo" \\|' Dockerfile
-          
-          # 2. 顺便把那个可能失效的 GPG key 导入也屏蔽掉，防止报错
           sed -i 's|rpm --import https://dl.rockylinux.org/.*|echo "Skipping broken key" \\|' Dockerfile
           
-          # 3. 强制开启 Vulkan (确保你的核显能用)
-          # 我们把环境变量加在最后，保证生效
+          # Fix 2: 移除导致报错的特定版本号后缀
+          # 把 "gcc-toolset-10-gcc-10.2.1-8.2.el8" 变成 "gcc-toolset-10-gcc"
+          # 这样 dnf 就会自动安装系统里有的最新版，而不是死磕那个不存在的旧版
+          sed -i 's/-10.2.1-8.2.el8//g' Dockerfile
+          sed -i 's/-2.35-11.el8//g' Dockerfile
+          
+          # Fix 3: 强制开启 Vulkan
           sed -i '/FROM ubuntu:24.04 AS default/a ENV OLLAMA_VULKAN=1' Dockerfile
           
-          echo "=== 检查修改后的 Dockerfile 头部 ==="
-          head -n 20 Dockerfile
+          echo "=== 修改后的关键行检查 ==="
+          grep "dnf install" Dockerfile
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
@@ -69,7 +71,7 @@ jobs:
         run: |
           echo "OWNER_LC=${USERNAME,,}" >> ${GITHUB_ENV}
 
-      # 7. 编译并推送 (保留完整版！)
+      # 7. 编译并推送
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -78,4 +80,4 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
-          no-cache: false 
+          no-cache: false
