@@ -1,4 +1,4 @@
-name: Build Official Ollama (Full - Fix Dependencies)
+name: Build Ollama (CUDA + Vulkan - No Broken ROCm)
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
       packages: write
 
     steps:
-      # 1. 强力清理磁盘
+      # 1. 强力清理磁盘 (必须保留)
       - name: Free Disk Space (Manual)
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -33,26 +33,27 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      # 3. 【深度修复】修复仓库链接 + 移除版本号限制
-      - name: Patch Dockerfile Dependencies
+      # 3. 【精准手术】保留 CUDA，切除坏掉的 ROCm
+      - name: Patch Dockerfile
         run: |
-          echo "正在修复 Dockerfile..."
+          echo "正在修改 Dockerfile..."
           
-          # Fix 1: 跳过坏掉的 Rocky Linux 仓库链接
-          sed -i 's|yum-config-manager --add-repo https://dl.rockylinux.org/.*|echo "Skipping broken repo" \\|' Dockerfile
-          sed -i 's|rpm --import https://dl.rockylinux.org/.*|echo "Skipping broken key" \\|' Dockerfile
+          # === 关键修改：切除 ROCm ===
+          # 原理：只要最终镜像不 COPY rocm，Docker 就根本不会去构建那个报错的 base-amd64 阶段
+          # 我们把 COPY --from=rocm 注释掉，这样构建过程会直接跳过 yum install 错误
           
-          # Fix 2: 移除导致报错的特定版本号后缀
-          # 把 "gcc-toolset-10-gcc-10.2.1-8.2.el8" 变成 "gcc-toolset-10-gcc"
-          # 这样 dnf 就会自动安装系统里有的最新版，而不是死磕那个不存在的旧版
-          sed -i 's/-10.2.1-8.2.el8//g' Dockerfile
-          sed -i 's/-2.35-11.el8//g' Dockerfile
+          # 处理官方 Dockerfile 可能的两种写法 (rocm 或 rocm-6)
+          sed -i 's/^COPY --from=rocm/# COPY --from=rocm/' Dockerfile
           
-          # Fix 3: 强制开启 Vulkan
+          # === 关键保留：CUDA 和 Vulkan 都不动 ===
+          # 我们不碰 COPY --from=cuda，所以 N 卡驱动会被完整保留
+          
+          # === 关键增强：强制开启 Vulkan ===
+          # 确保你的 AMD 核显能跑
           sed -i '/FROM ubuntu:24.04 AS default/a ENV OLLAMA_VULKAN=1' Dockerfile
           
-          echo "=== 修改后的关键行检查 ==="
-          grep "dnf install" Dockerfile
+          echo "=== 检查修改后的 Dockerfile 末尾（确认 rocm 被注释）==="
+          grep "COPY --from=" Dockerfile
 
       # 4. 登录 GitHub 镜像库
       - name: Log in to the Container registry
