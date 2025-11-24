@@ -1,4 +1,4 @@
-name: Build Ollama (Nuclear Slim - Single Layer)
+name: Build Ollama (Final Fix - Copy GPU Libs)
 
 on:
   schedule:
@@ -17,45 +17,38 @@ jobs:
       packages: write
 
     steps:
-      # 1. 【极限清理】腾出所有可能的空间
+      # 1. 强力清理磁盘 (必须保留，防止炸盘)
       - name: Maximize Disk Space
         run: |
           echo ">>> 清理前空间："
           df -h
-          # 删除预装的大型软件
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          # 清理 Docker 现有镜像
           sudo docker image prune --all --force
           echo ">>> 清理后空间："
           df -h
 
-      # 2. 拉取代码 (仅拉取最近一次提交，不拉取历史记录)
+      # 2. 拉取代码 (浅克隆)
       - name: Checkout Source
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
-          fetch-depth: 1  # 关键：浅克隆，节省空间
+          fetch-depth: 1
 
-      # 3. 【生成单层极简 Dockerfile】
-      - name: Generate Slim Dockerfile
+      # 3. 生成 Dockerfile (修复了漏拷文件的 BUG)
+      - name: Generate Fixed Dockerfile
         run: |
           cat <<EOF > Dockerfile
           # === 第一阶段：构建环境 ===
-          # 使用 NVIDIA 官方开发镜像，自带 CUDA 12 编译器，无需额外下载巨大的 SDK
-          FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS builder
+          # 使用 NVIDIA 官方开发镜像 (自带 CUDA 环境)
+          FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
 
-          # 设置 Go 版本
           ENV GO_VERSION=1.22.8
-
-          # 【关键】将所有安装步骤合并为一层，避免中间层占用空间
-          # 1. 安装基础工具 (curl, git, cmake, gcc)
-          # 2. 安装 Vulkan 开发库 (为了 AMD 核显)
-          # 3. 安装 Go 语言
-          # 4. 清理 apt 缓存 (rm -rf /var/lib/apt/lists/*)
+          
+          # 安装构建依赖：Vulkan, CMake, Go, 基础工具
           RUN apt-get update && apt-get install -y --no-install-recommends \
               curl git cmake build-essential \
               libvulkan-dev vulkan-tools libvulkan1 \
@@ -65,47 +58,48 @@ jobs:
               && rm go.tar.gz
 
           ENV PATH=\$PATH:/usr/local/go/bin
-          
-          # 设置工作目录
           WORKDIR /go/src/github.com/ollama/ollama
-
-          # 复制当前目录下的所有文件到容器
           COPY . .
 
-          # 【关键】编译设置
-          # 强制开启 Vulkan，同时因为身处 NVIDIA 容器，CUDA 会被自动编译
+          # 【编译参数】
+          # 1. 强制开启 Vulkan
+          # 2. 因为环境里有 nvcc，CUDA 也会自动被检测并编译
           ENV OLLAMA_VULKAN=1
           ENV CGO_ENABLED=1
 
-          # 开始编译
-          # generate 会编译 llama.cpp，这是最耗时和耗空间的一步
-          # build 生成最终二进制
+          # 【核心步骤】编译
+          # go generate 会调用 CMake 编译 llama.cpp，并把结果放在 dist/ 目录下
           RUN go generate ./... && \
               go build -trimpath -ldflags "-s -w" -o /bin/ollama .
 
-          # === 第二阶段：运行时环境 (极小) ===
+          # === 第二阶段：运行时环境 ===
           FROM ubuntu:22.04
 
-          # 安装运行时依赖 (只装必要的库，不装开发工具)
-          # 包含 Vulkan Loader 和 CA 证书
+          # 安装运行时依赖
           RUN apt-get update && apt-get install -y --no-install-recommends \
               ca-certificates \
               libvulkan1 \
               && rm -rf /var/lib/apt/lists/*
 
-          # 仅从构建阶段复制编译好的二进制文件 (几百 MB)
+          # 1. 复制主程序
           COPY --from=builder /bin/ollama /bin/ollama
+          
+          # 【关键修复】复制编译好的 GPU 驱动库！
+          # 上一个版本就是漏了这一行，导致只有 100MB
+          COPY --from=builder /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama
 
           ENV OLLAMA_HOST=0.0.0.0:11434
           ENV OLLAMA_VULKAN=1
+          # 将库路径加入加载列表，确保程序能找到
+          ENV LD_LIBRARY_PATH=/lib/ollama:\$LD_LIBRARY_PATH
+          
           EXPOSE 11434
 
           ENTRYPOINT ["/bin/ollama"]
           CMD ["serve"]
           EOF
 
-          echo ">>> Dockerfile 生成完毕："
-          cat Dockerfile
+          echo ">>> Dockerfile 生成完毕 (已包含 GPU Libs Copy)"
 
       # 4. 登录
       - name: Log in to Registry
@@ -133,6 +127,4 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER_LC }}/ollama:latest
           platforms: linux/amd64
-          # 【生死攸关】禁用缓存！
-          # 因为之前的缓存可能已经把硬盘占满了，这次我们完全不读写外部缓存，只靠本地瞬时空间
           no-cache: true
