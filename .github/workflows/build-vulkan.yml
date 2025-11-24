@@ -14,17 +14,19 @@ jobs:
       packages: write
     
     steps:
-      - name: Maximize Disk Space
+      - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo docker system prune -af --volumes
-          df -h
 
       - name: Checkout
         uses: actions/checkout@v4
         with:
           repository: ollama/ollama
           ref: main
+
+      - name: Lowercase Username
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
       - name: Modify Dockerfile
         run: |
@@ -40,24 +42,16 @@ jobs:
           while i < len(lines):
               line = lines[i]
               
-              # 替换 base-amd64，添加重试和容错
               if 'FROM --platform=linux/amd64 rocm/dev-almalinux' in line and 'AS base-amd64' in line:
                   output.append('FROM --platform=linux/amd64 ubuntu:24.04 AS base-amd64\n')
                   i += 1
                   while i < len(lines) and not lines[i].startswith('FROM'):
                       i += 1
-                  # 添加容错的 apt 安装
-                  output.append('RUN for i in 1 2 3; do \\\n')
-                  output.append('        apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false && break || sleep 5; \\\n')
-                  output.append('    done && \\\n')
-                  output.append('    apt-get install -y --no-install-recommends \\\n')
-                  output.append('        git build-essential gcc g++ curl wget ccache ca-certificates \\\n')
-                  output.append('        gnupg software-properties-common rsync python3 ninja-build pkg-config && \\\n')
+                  output.append('RUN for i in 1 2 3; do apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false && break || sleep 5; done && \\\n')
+                  output.append('    apt-get install -y --no-install-recommends git build-essential gcc g++ curl wget ccache ca-certificates gnupg software-properties-common rsync python3 ninja-build pkg-config && \\\n')
                   output.append('    wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \\\n')
                   output.append('    wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \\\n')
-                  output.append('    for i in 1 2 3; do \\\n')
-                  output.append('        apt-get update && apt-get install -y vulkan-sdk && break || sleep 5; \\\n')
-                  output.append('    done && \\\n')
+                  output.append('    for i in 1 2 3; do apt-get update && apt-get install -y vulkan-sdk && break || sleep 5; done && \\\n')
                   output.append('    rm -rf /var/lib/apt/lists/*\n')
                   continue
               
@@ -108,12 +102,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan
+          tags: type=raw,value=latest
+
       - name: Build
         uses: docker/build-push-action@v5
         timeout-minutes: 240
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/ollama-vulkan:latest
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Summary
+        if: success()
+        run: echo "✅ ghcr.io/${{ env.OWNER_LC }}/ollama-vulkan:latest" >> $GITHUB_STEP_SUMMARY
