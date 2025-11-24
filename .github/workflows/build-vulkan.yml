@@ -1,4 +1,4 @@
-name: Build Ollama Vulkan (Skip ROCm)
+name: Build Ollama Vulkan Only
 
 on:
   schedule:
@@ -21,7 +21,6 @@ jobs:
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
           df -h
 
@@ -32,83 +31,107 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Modify Dockerfile - Remove ROCm and CUDA
+      - name: Create Python Script to Modify Dockerfile
         run: |
-          # 备份原始文件
-          cp Dockerfile Dockerfile.original
+          cat > modify_dockerfile.py << 'PYTHON_SCRIPT'
+          import re
           
-          # 1. 完全移除 ROCm base 阶段（导致磁盘写入错误的根源）
-          sed -i '/^FROM.*rocm.*AS base-amd64/,/^FROM/ {
-            /^FROM.*rocm.*AS base-amd64/c\
-# ROCm base removed - using Ubuntu instead\
-FROM ubuntu:24.04 AS base-amd64\
-RUN apt-get update && apt-get install -y git build-essential
-            /^FROM/!d
-          }' Dockerfile
+          with open('Dockerfile', 'r') as f:
+              content = f.read()
           
-          # 2. 完全移除 ROCm 构建阶段
-          sed -i '/^FROM.*AS rocm-6$/,/^FROM/{
-            /^FROM.*AS rocm-6$/,/^FROM/c\
-# ROCm build stage removed\
-FROM scratch AS rocm-6
-          }' Dockerfile
+          # 1. 替换 ROCm base 为简单的 Ubuntu（避免磁盘错误）
+          content = re.sub(
+              r'FROM --platform=linux/amd64 rocm/dev-almalinux.*AS base-amd64.*?(?=\nFROM)',
+              'FROM --platform=linux/amd64 ubuntu:24.04 AS base-amd64\n',
+              content,
+              flags=re.DOTALL
+          )
           
-          # 3. 移除 CUDA 构建阶段（注释掉以加快构建）
-          sed -i '/^FROM.*cuda.*AS cuda-12/,/^FROM/{
-            /^FROM.*cuda.*AS cuda-12/,/^FROM/{
-              /^FROM.*cuda.*AS cuda-12/!{
-                /^FROM/!s/^/# /
-              }
-            }
-          }' Dockerfile
+          # 2. 注释掉 CUDA 12 构建阶段的内容（保留 FROM 行）
+          content = re.sub(
+              r'(FROM.*cuda.*AS cuda-12\n)(.*?)(?=\nFROM)',
+              lambda m: m.group(1) + '# ' + m.group(2).replace('\n', '\n# '),
+              content,
+              flags=re.DOTALL
+          )
           
-          sed -i '/^FROM.*cuda.*AS cuda-13/,/^FROM/{
-            /^FROM.*cuda.*AS cuda-13/,/^FROM/{
-              /^FROM.*cuda.*AS cuda-13/!{
-                /^FROM/!s/^/# /
-              }
-            }
-          }' Dockerfile
+          # 3. 注释掉 CUDA 13 构建阶段的内容
+          content = re.sub(
+              r'(FROM.*cuda.*AS cuda-13\n)(.*?)(?=\nFROM)',
+              lambda m: m.group(1) + '# ' + m.group(2).replace('\n', '\n# '),
+              content,
+              flags=re.DOTALL
+          )
           
-          # 4. 移除 JetPack 阶段
-          sed -i '/^FROM.*jetpack.*AS jetpack/,/^FROM/{
-            /^FROM.*jetpack.*AS jetpack/,/^FROM/{
-              /^FROM.*jetpack.*AS jetpack/!{
-                /^FROM/!s/^/# /
-              }
-            }
-          }' Dockerfile
+          # 4. 注释掉 ROCm 6 构建阶段的内容
+          content = re.sub(
+              r'(FROM.*AS rocm-6\n)(.*?)(?=\nFROM)',
+              lambda m: m.group(1) + '# ' + m.group(2).replace('\n', '\n# '),
+              content,
+              flags=re.DOTALL
+          )
           
-          # 5. 在 amd64/arm64 阶段注释掉 CUDA/ROCm/JetPack 的 COPY
-          sed -i 's/^COPY --from=cuda-12/# COPY --from=cuda-12/g' Dockerfile
-          sed -i 's/^COPY --from=cuda-13/# COPY --from=cuda-13/g' Dockerfile
-          sed -i 's/^COPY --from=jetpack-5/# COPY --from=jetpack-5/g' Dockerfile
-          sed -i 's/^COPY --from=jetpack-6/# COPY --from=jetpack-6/g' Dockerfile
+          # 5. 注释掉 JetPack 构建阶段
+          content = re.sub(
+              r'(FROM.*jetpack.*AS jetpack-.*?\n)(.*?)(?=\nFROM)',
+              lambda m: m.group(1) + '# ' + m.group(2).replace('\n', '\n# '),
+              content,
+              flags=re.DOTALL
+          )
           
-          # 6. 移除 rocm scratch 阶段
-          sed -i '/^FROM scratch AS rocm$/,/^FROM/{
-            /^FROM scratch AS rocm$/,/^FROM/c\
-# ROCm scratch removed\
-FROM scratch AS rocm
-          }' Dockerfile
+          # 6. 在 amd64 scratch 阶段注释掉 CUDA COPY
+          content = re.sub(
+              r'^(COPY --from=cuda-12.*)',
+              r'# \1',
+              content,
+              flags=re.MULTILINE
+          )
+          content = re.sub(
+              r'^(COPY --from=cuda-13.*)',
+              r'# \1',
+              content,
+              flags=re.MULTILINE
+          )
           
-          # 7. 确保 FLAVOR 默认为 amd64（而不是 rocm）
-          sed -i 's/^ARG FLAVOR=.*/ARG FLAVOR=amd64/' Dockerfile
+          # 7. 在 arm64 scratch 阶段注释掉 CUDA 和 JetPack COPY
+          content = re.sub(
+              r'^(COPY --from=jetpack.*)',
+              r'# \1',
+              content,
+              flags=re.MULTILINE
+          )
           
-          echo "=== Dockerfile 修改完成 ==="
-          echo "=== 检查关键部分 ==="
+          # 8. 注释掉整个 rocm scratch 阶段
+          content = re.sub(
+              r'(FROM scratch AS rocm\n)(.*?)(?=\nFROM)',
+              lambda m: m.group(1) + '# ' + m.group(2).replace('\n', '\n# '),
+              content,
+              flags=re.DOTALL
+          )
           
-          echo "--- base-amd64 阶段 ---"
-          grep -A 3 "FROM.*base-amd64" Dockerfile || echo "Not found"
+          with open('Dockerfile', 'w') as f:
+              f.write(content)
           
-          echo "--- rocm-6 阶段 ---"
-          grep -A 2 "AS rocm-6" Dockerfile || echo "Not found"
+          print("=== Dockerfile 修改完成 ===")
+          PYTHON_SCRIPT
+
+      - name: Run Modification Script
+        run: |
+          python3 modify_dockerfile.py
+
+      - name: Verify Modifications
+        run: |
+          echo "=== 检查 base-amd64 ==="
+          grep -A 2 "AS base-amd64" Dockerfile
           
-          echo "--- amd64 scratch 阶段 ---"
-          grep -A 5 "FROM.*scratch AS amd64" Dockerfile || echo "Not found"
+          echo "=== 检查 vulkan 构建是否保留 ==="
+          grep -A 1 "AS vulkan" Dockerfile
           
-          echo "--- vulkan COPY ---"
-          grep "COPY --from=vulkan" Dockerfile || echo "Not found"
+          echo "=== 检查 amd64 scratch 阶段 ==="
+          grep -A 5 "FROM.*scratch AS amd64" Dockerfile
+          
+          echo "=== 检查 COPY vulkan ==="
+          grep "COPY.*vulkan" Dockerfile
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -132,7 +155,6 @@ FROM scratch AS rocm
           tags: |
             type=raw,value=latest
             type=raw,value={{date 'YYYYMMDD'}}
-            type=sha,prefix={{date 'YYYYMMDD'}}-
 
       - name: Build and Push
         uses: docker/build-push-action@v5
@@ -156,31 +178,20 @@ FROM scratch AS rocm
         run: |
           echo "## 🎉 Ollama Vulkan 构建成功" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 镜像信息" >> $GITHUB_STEP_SUMMARY
-          echo "- **构建方式:** 官方 Dockerfile (移除 ROCm/CUDA，仅保留 CPU + Vulkan)" >> $GITHUB_STEP_SUMMARY
-          echo "- **仓库:** \`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **支持:** CPU + Vulkan" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 镜像" >> $GITHUB_STEP_SUMMARY
+          echo "\`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🏷️ 镜像标签" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🚀 AMD GPU 使用" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 使用" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --device=/dev/dri --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d --device=/dev/dri --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
           echo "  -v ollama:/root/.ollama -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -e OLLAMA_VULKAN=1 --name ollama \\" >> $GITHUB_STEP_SUMMARY
           echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload Modified Dockerfile
+      - name: Upload Dockerfile for Debugging
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: modified-dockerfile
-          path: |
-            Dockerfile
-            Dockerfile.original
+          path: Dockerfile
