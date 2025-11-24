@@ -18,10 +18,7 @@ jobs:
     steps:
       - name: Free Up Disk Space
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo docker system prune -af --volumes
           df -h
 
@@ -30,161 +27,116 @@ jobs:
         with:
           repository: ollama/ollama
           ref: main
-          fetch-depth: 1
 
-      - name: Create Python Script to Modify Dockerfile
+      - name: Modify Dockerfile with Python
         run: |
-          cat > modify_dockerfile.py << 'EOF'
-          import re
-          
+          cat > modify.py << 'PYEND'
           with open('Dockerfile', 'r') as f:
               lines = f.readlines()
           
           output = []
-          skip_until_next_from = False
-          in_base_amd64 = False
+          i = 0
+          skip_until_from = False
           
-          for i, line in enumerate(lines):
-              # 1. 替换 ROCm base 为 Ubuntu
-              if 'FROM --platform=linux/amd64 rocm/dev-almalinux-8' in line and 'AS base-amd64' in line:
+          while i < len(lines):
+              line = lines[i]
+              
+              # 1. 替换 base-amd64 的 FROM
+              if 'FROM --platform=linux/amd64 rocm/dev-almalinux' in line and 'AS base-amd64' in line:
                   output.append('FROM --platform=linux/amd64 ubuntu:24.04 AS base-amd64\n')
-                  in_base_amd64 = True
+                  i += 1
+                  # 跳过紧接着的所有 RUN、ENV（ROCm 特定的）
+                  while i < len(lines):
+                      if lines[i].startswith('FROM'):
+                          break
+                      i += 1
+                  # 添加 Ubuntu 版本的基础安装
+                  output.append('RUN apt-get update && apt-get install -y wget git build-essential curl ca-certificates python3 ninja-build && rm -rf /var/lib/apt/lists/*\n')
+                  output.append('ARG VULKANVERSION\n')
+                  output.append('RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vk.tar.xz && tar xf /tmp/vk.tar.xz && /${VULKANVERSION}/vulkansdk -j 4 vulkan-headers shaderc && cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ && cp -r /${VULKANVERSION}/x86_64/lib/* /usr/local/lib/ && rm -rf /tmp/vk.tar.xz /${VULKANVERSION}\n')
                   continue
               
-              # 在 base-amd64 阶段，跳过 ROCm 相关的 RUN 命令，替换为简单安装
-              if in_base_amd64:
-                  if line.startswith('RUN yum'):
-                      # 跳过整个 yum 安装块
-                      j = i
-                      while j < len(lines) and not lines[j].startswith('FROM'):
-                          if 'cuda-rhel8.repo' in lines[j]:
-                              break
-                          j += 1
-                      # 添加替换的简单安装
-                      output.append('RUN apt-get update && apt-get install -y git build-essential curl ca-certificates && rm -rf /var/lib/apt/lists/*\n')
-                      # 跳到 yum 块结束
-                      for k in range(i, j+1):
-                          lines[k] = ''  # 标记为已处理
-                      continue
-                  elif line.startswith('ENV PATH=') and 'gcc-toolset' in line:
-                      continue  # 跳过 ROCm 特定的 ENV
-                  elif line.startswith('FROM'):
-                      in_base_amd64 = False
-              
-              # 2. 将 CUDA 构建阶段替换为 scratch
-              if 'FROM' in line and 'nvidia/cuda' in line and ('AS cuda-12' in line or 'AS cuda-13' in line):
-                  stage_name = line.split('AS')[1].strip()
-                  output.append(f'FROM scratch AS {stage_name}\n')
-                  skip_until_next_from = True
+              # 2. 替换大镜像为 scratch
+              if 'FROM' in line and 'nvidia/cuda' in line and 'AS cuda-' in line:
+                  stage = line.split('AS')[1].strip()
+                  output.append(f'FROM scratch AS {stage}\n')
+                  skip_until_from = True
+                  i += 1
                   continue
               
-              # 3. 将 ROCm 构建阶段替换为 scratch
               if 'FROM' in line and 'AS rocm-6' in line:
                   output.append('FROM scratch AS rocm-6\n')
-                  skip_until_next_from = True
+                  skip_until_from = True
+                  i += 1
                   continue
               
-              # 4. 将 JetPack 阶段替换为 scratch
-              if 'FROM' in line and 'jetpack' in line and ('AS jetpack-5' in line or 'AS jetpack-6' in line):
-                  stage_name = line.split('AS')[1].strip()
-                  output.append(f'FROM scratch AS {stage_name}\n')
-                  skip_until_next_from = True
+              if 'FROM' in line and 'jetpack' in line and 'AS jetpack-' in line:
+                  stage = line.split('AS')[1].strip()
+                  output.append(f'FROM scratch AS {stage}\n')
+                  skip_until_from = True
+                  i += 1
                   continue
               
-              # 跳过被替换为 scratch 的阶段的所有内容
-              if skip_until_next_from:
+              if skip_until_from:
                   if line.startswith('FROM'):
-                      skip_until_next_from = False
+                      skip_until_from = False
                   else:
+                      i += 1
                       continue
               
-              # 5. 注释掉 CUDA COPY
-              if line.startswith('COPY --from=cuda-12') or line.startswith('COPY --from=cuda-13'):
+              # 3. 注释 CUDA/JetPack/ROCm COPY
+              if line.startswith('COPY --from=cuda-') or line.startswith('COPY --from=jetpack-') or line.startswith('COPY --from=rocm-6'):
                   output.append('# ' + line)
+                  i += 1
                   continue
               
-              # 6. 注释掉 JetPack COPY
-              if line.startswith('COPY --from=jetpack-5') or line.startswith('COPY --from=jetpack-6'):
-                  output.append('# ' + line)
-                  continue
-              
-              # 7. 注释掉 ROCm COPY
-              if line.startswith('COPY --from=rocm-6'):
-                  output.append('# ' + line)
-                  continue
-              
-              # 保留其他所有行
-              if line:  # 只添加非空行
-                  output.append(line)
+              output.append(line)
+              i += 1
           
           with open('Dockerfile', 'w') as f:
               f.writelines(output)
+          PYEND
           
-          print("=== Dockerfile 修改完成 ===")
-          EOF
+          python3 modify.py
 
-      - name: Run Python Script
-        run: python3 modify_dockerfile.py
-
-      - name: Verify Modifications
+      - name: Verify
         run: |
-          echo "=== base-amd64 ==="
-          grep -A 3 "AS base-amd64" Dockerfile
-          
-          echo "=== cuda-12 ==="
-          grep -A 1 "AS cuda-12" Dockerfile
-          
-          echo "=== amd64 stage ==="
-          sed -n '/FROM.*scratch AS amd64/,/^FROM/p' Dockerfile | head -10
+          echo "=== base-amd64 ===" 
+          grep -A 5 "AS base-amd64" Dockerfile
+          echo "=== cuda-12 ===" 
+          grep "AS cuda-12" Dockerfile
 
-      - name: Set up Docker Buildx
+      - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: Login
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase Username
-        run: |
-          echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+      - name: Lowercase
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
-      - name: Extract Metadata
+      - name: Meta
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan
-          tags: |
-            type=raw,value=latest
-            type=raw,value={{date 'YYYYMMDD'}}
+          tags: type=raw,value=latest
 
-      - name: Build and Push
+      - name: Build
         uses: docker/build-push-action@v5
         timeout-minutes: 240
         with:
           context: .
-          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Summary
         if: success()
         run: |
-          echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
-          echo "\`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d --device=/dev/dri --device=/dev/kfd -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_VULKAN=1 --name ollama ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload Dockerfile
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: modified-dockerfile
-          path: Dockerfile
+          echo "✅ \`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
