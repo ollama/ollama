@@ -18,20 +18,12 @@ jobs:
     steps:
       - name: Free Up Disk Space
         run: |
-          echo "=== 清理前 ==="
-          df -h
-          
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache
           sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          
-          sudo apt-get clean
           sudo docker system prune -af
-          
-          echo "=== 清理后 ==="
           df -h
 
       - name: Checkout Ollama Source
@@ -41,69 +33,61 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Create Minimal Vulkan-Only Dockerfile
+      - name: Create Vulkan-Only Dockerfile
         run: |
           cat > Dockerfile.vulkan << 'DOCKERFILE'
           ARG GOLANG_VERSION=1.23.4
           ARG CMAKE_VERSION=3.31.2
           
-          # CPU 构建阶段
-          FROM ubuntu:24.04 AS cpu-builder
+          # 基础阶段 - 安装 CMake
+          FROM ubuntu:24.04 AS base
           ARG CMAKE_VERSION
           
           RUN apt-get update && \
-              apt-get install -y git build-essential curl ccache ca-certificates && \
+              apt-get install -y git build-essential curl ccache ca-certificates rsync && \
               curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 && \
               rm -rf /var/lib/apt/lists/*
           
-          WORKDIR /build
-          COPY CMakeLists.txt CMakePresets.json ./
+          ENV LDFLAGS=-s
+          
+          # CPU 构建阶段
+          FROM base AS cpu
+          
+          COPY CMakeLists.txt CMakePresets.json .
           COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
           ARG PARALLEL=4
           RUN --mount=type=cache,target=/root/.ccache \
               cmake --preset CPU && \
               cmake --build --parallel ${PARALLEL} --preset CPU && \
-              cmake --install build --component CPU --strip && \
-              ls -la /build/dist/lib/ollama/ || echo "检查路径失败"
+              cmake --install build --component CPU --strip
           
           # Vulkan 构建阶段
-          FROM ubuntu:24.04 AS vulkan
-          ARG CMAKE_VERSION
+          FROM base AS vulkan
           
           RUN apt-get update && \
-              apt-get install -y git build-essential curl ccache ca-certificates wget gnupg software-properties-common && \
+              apt-get install -y wget gnupg software-properties-common && \
               wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
               wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
               apt-get update && \
               apt-get install -y vulkan-sdk && \
-              curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 && \
               rm -rf /var/lib/apt/lists/*
           
-          WORKDIR /build
-          COPY CMakeLists.txt CMakePresets.json ./
+          COPY CMakeLists.txt CMakePresets.json .
           COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
           ARG PARALLEL=2
           RUN --mount=type=cache,target=/root/.ccache \
               cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
               cmake --build --parallel ${PARALLEL} --preset Vulkan && \
-              cmake --install build --component Vulkan --strip && \
-              ls -la /build/dist/lib/ollama/ || echo "检查路径失败"
+              cmake --install build --component Vulkan --strip
           
-          # Go 构建阶段
-          FROM ubuntu:24.04 AS build
+          # Go 构建阶段 - 关键：需要先有 CPU 库
+          FROM base AS build
           ARG GOLANG_VERSION
-          ARG CMAKE_VERSION
-          
-          RUN apt-get update && \
-              apt-get install -y git build-essential curl ca-certificates rsync && \
-              rm -rf /var/lib/apt/lists/*
           
           RUN git config --global user.email "builder@ollama.local" && \
               git config --global user.name "Ollama Builder"
-          
-          RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
           
           RUN curl -fsSL https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz | tar xz -C /usr/local
           
@@ -113,6 +97,9 @@ jobs:
           WORKDIR /go/src/github.com/ollama/ollama
           COPY . .
           
+          # 关键：从 CPU 阶段复制已编译的库，Go 编译时需要这些
+          COPY --from=cpu /dist dist
+          
           RUN make -f Makefile.sync clean sync
           RUN go mod download
           
@@ -120,6 +107,11 @@ jobs:
           RUN --mount=type=cache,target=/root/.cache/go-build \
               go generate ./... && \
               go build -trimpath -ldflags="-s -w" -o /bin/ollama .
+          
+          # 组装阶段 - 收集所有库
+          FROM scratch AS libs
+          COPY --from=cpu /dist/lib/ollama /lib/ollama
+          COPY --from=vulkan /dist/lib/ollama /lib/ollama
           
           # 最终镜像
           FROM ubuntu:24.04
@@ -133,12 +125,8 @@ jobs:
               apt-get clean && \
               rm -rf /var/lib/apt/lists/*
           
-          # 复制二进制
           COPY --from=build /bin/ollama /usr/bin/ollama
-          
-          # 复制库文件 - 使用通配符确保路径正确
-          COPY --from=cpu-builder /build/dist/lib/ollama/* /usr/lib/ollama/
-          COPY --from=vulkan /build/dist/lib/ollama/* /usr/lib/ollama/
+          COPY --from=libs /lib /usr/lib
           
           ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           ENV LD_LIBRARY_PATH=/usr/lib/ollama
@@ -192,11 +180,8 @@ jobs:
       - name: Summary
         if: success()
         run: |
-          echo "## 🎉 Ollama Vulkan 构建成功" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**镜像:** \`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**使用:**" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
+          echo "\`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker run -d --device=/dev/dri --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
           echo "  -v ollama:/root/.ollama -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
