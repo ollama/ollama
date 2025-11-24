@@ -16,14 +16,24 @@ jobs:
       packages: write
     
     steps:
-      - name: Free Up Disk Space
+      - name: Free Up Maximum Disk Space
         run: |
+          echo "=== 清理前 ==="
+          df -h
+          
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache
           sudo rm -rf /usr/local/share/boost
-          sudo docker system prune -af
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/az
+          
+          sudo apt-get clean
+          sudo docker system prune -af --volumes
+          
+          echo "=== 清理后 ==="
           df -h
 
       - name: Checkout Ollama Source
@@ -33,109 +43,90 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Create Vulkan-Only Dockerfile
+      - name: Aggressively Modify Dockerfile
         run: |
-          cat > Dockerfile.vulkan << 'DOCKERFILE'
-          ARG GOLANG_VERSION=1.23.4
-          ARG CMAKE_VERSION=3.31.2
+          cp Dockerfile Dockerfile.backup
           
-          # 基础阶段 - 安装 CMake
-          FROM ubuntu:24.04 AS base
-          ARG CMAKE_VERSION
+          # 1. 替换 base-amd64 为简单的 Ubuntu（避免下载 ROCm）
+          sed -i 's|FROM --platform=linux/amd64 rocm/dev-almalinux-8:.*AS base-amd64|FROM --platform=linux/amd64 ubuntu:24.04 AS base-amd64|' Dockerfile
+          sed -i '/^FROM --platform=linux\/amd64 ubuntu:24.04 AS base-amd64/,/^FROM/{
+            /^RUN yum/,/cuda-rhel8.repo/c\
+RUN apt-get update && apt-get install -y git build-essential curl ca-certificates && rm -rf /var/lib/apt/lists/*
+            /^ENV PATH=.*gcc-toolset.*/d
+          }' Dockerfile
           
-          RUN apt-get update && \
-              apt-get install -y git build-essential curl ccache ca-certificates rsync && \
-              curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 && \
-              rm -rf /var/lib/apt/lists/*
+          # 2. 将所有 CUDA 构建阶段替换为 scratch（不下载镜像）
+          sed -i 's|^FROM --platform=.* nvidia/cuda:.* AS cuda-12$|FROM scratch AS cuda-12|' Dockerfile
+          sed -i 's|^FROM --platform=.* nvidia/cuda:.* AS cuda-13$|FROM scratch AS cuda-13|' Dockerfile
           
-          ENV LDFLAGS=-s
+          # 3. 将 ROCm 构建阶段替换为 scratch
+          sed -i 's|^FROM --platform=.* rocm/.* AS rocm-6$|FROM scratch AS rocm-6|' Dockerfile
           
-          # CPU 构建阶段
-          FROM base AS cpu
+          # 4. 将 JetPack 阶段替换为 scratch
+          sed -i 's|^FROM --platform=.* nvcr.io/nvidia/l4t-jetpack:.* AS jetpack-5$|FROM scratch AS jetpack-5|' Dockerfile
+          sed -i 's|^FROM --platform=.* nvcr.io/nvidia/l4t-jetpack:.* AS jetpack-6$|FROM scratch AS jetpack-6|' Dockerfile
           
-          COPY CMakeLists.txt CMakePresets.json .
-          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+          # 5. 注释掉这些 scratch 阶段后面的所有内容（它们现在是空的）
+          # CUDA 12
+          sed -i '/^FROM scratch AS cuda-12$/,/^FROM/{
+            /^FROM scratch AS cuda-12$/!{
+              /^FROM/!s/^/# /
+            }
+          }' Dockerfile
           
-          ARG PARALLEL=4
-          RUN --mount=type=cache,target=/root/.ccache \
-              cmake --preset CPU && \
-              cmake --build --parallel ${PARALLEL} --preset CPU && \
-              cmake --install build --component CPU --strip
+          # CUDA 13
+          sed -i '/^FROM scratch AS cuda-13$/,/^FROM/{
+            /^FROM scratch AS cuda-13$/!{
+              /^FROM/!s/^/# /
+            }
+          }' Dockerfile
           
-          # Vulkan 构建阶段
-          FROM base AS vulkan
+          # ROCm 6
+          sed -i '/^FROM scratch AS rocm-6$/,/^FROM/{
+            /^FROM scratch AS rocm-6$/!{
+              /^FROM/!s/^/# /
+            }
+          }' Dockerfile
           
-          RUN apt-get update && \
-              apt-get install -y wget gnupg software-properties-common && \
-              wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
-              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
-              apt-get update && \
-              apt-get install -y vulkan-sdk && \
-              rm -rf /var/lib/apt/lists/*
+          # JetPack 5
+          sed -i '/^FROM scratch AS jetpack-5$/,/^FROM/{
+            /^FROM scratch AS jetpack-5$/!{
+              /^FROM/!s/^/# /
+            }
+          }' Dockerfile
           
-          COPY CMakeLists.txt CMakePresets.json .
-          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+          # JetPack 6
+          sed -i '/^FROM scratch AS jetpack-6$/,/^FROM/{
+            /^FROM scratch AS jetpack-6$/!{
+              /^FROM/!s/^/# /
+            }
+          }' Dockerfile
           
-          ARG PARALLEL=2
-          RUN --mount=type=cache,target=/root/.ccache \
-              cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
-              cmake --build --parallel ${PARALLEL} --preset Vulkan && \
-              cmake --install build --component Vulkan --strip
+          # 6. 注释掉 amd64 阶段的 CUDA COPY
+          sed -i 's|^COPY --from=cuda-12 dist/lib/ollama|# COPY --from=cuda-12 dist/lib/ollama|' Dockerfile
+          sed -i 's|^COPY --from=cuda-13 dist/lib/ollama|# COPY --from=cuda-13 dist/lib/ollama|' Dockerfile
           
-          # Go 构建阶段 - 关键：需要先有 CPU 库
-          FROM base AS build
-          ARG GOLANG_VERSION
+          # 7. 注释掉 arm64 阶段的所有 CUDA/JetPack COPY
+          sed -i 's|^COPY --from=jetpack-5|# COPY --from=jetpack-5|' Dockerfile
+          sed -i 's|^COPY --from=jetpack-6|# COPY --from=jetpack-6|' Dockerfile
           
-          RUN git config --global user.email "builder@ollama.local" && \
-              git config --global user.name "Ollama Builder"
+          # 8. 注释掉 rocm scratch 阶段的 COPY
+          sed -i '/^FROM scratch AS rocm$/,/^FROM/{
+            s|^COPY --from=rocm-6|# COPY --from=rocm-6|
+          }' Dockerfile
           
-          RUN curl -fsSL https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz | tar xz -C /usr/local
+          echo "=== 检查关键修改 ==="
+          echo "--- base-amd64 ---"
+          grep -A 3 "AS base-amd64" Dockerfile
           
-          ENV PATH=/usr/local/go/bin:$PATH
-          ENV CGO_ENABLED=1
+          echo "--- cuda-12 (应该是 FROM scratch) ---"
+          grep -A 1 "AS cuda-12" Dockerfile
           
-          WORKDIR /go/src/github.com/ollama/ollama
-          COPY . .
+          echo "--- cuda-13 (应该是 FROM scratch) ---"
+          grep -A 1 "AS cuda-13" Dockerfile
           
-          # 关键：从 CPU 阶段复制已编译的库，Go 编译时需要这些
-          COPY --from=cpu /dist dist
-          
-          RUN make -f Makefile.sync clean sync
-          RUN go mod download
-          
-          ARG GOFLAGS="'-ldflags=-w -s'"
-          RUN --mount=type=cache,target=/root/.cache/go-build \
-              go generate ./... && \
-              go build -trimpath -ldflags="-s -w" -o /bin/ollama .
-          
-          # 组装阶段 - 收集所有库
-          FROM scratch AS libs
-          COPY --from=cpu /dist/lib/ollama /lib/ollama
-          COPY --from=vulkan /dist/lib/ollama /lib/ollama
-          
-          # 最终镜像
-          FROM ubuntu:24.04
-          
-          RUN apt-get update && \
-              apt-get install -y ca-certificates wget gnupg && \
-              wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
-              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
-              apt-get update && \
-              apt-get install -y libvulkan1 vulkan-tools && \
-              apt-get clean && \
-              rm -rf /var/lib/apt/lists/*
-          
-          COPY --from=build /bin/ollama /usr/bin/ollama
-          COPY --from=libs /lib /usr/lib
-          
-          ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          ENV LD_LIBRARY_PATH=/usr/lib/ollama
-          ENV OLLAMA_HOST=0.0.0.0:11434
-          
-          EXPOSE 11434
-          ENTRYPOINT ["/usr/bin/ollama"]
-          CMD ["serve"]
-          DOCKERFILE
+          echo "--- amd64 stage (CUDA 应该被注释) ---"
+          sed -n '/FROM.*scratch AS amd64/,/^FROM/p' Dockerfile
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -165,26 +156,25 @@ jobs:
         timeout-minutes: 240
         with:
           context: .
-          file: ./Dockerfile.vulkan
+          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            GOLANG_VERSION=1.23.4
-            CMAKE_VERSION=3.31.2
-            PARALLEL=2
 
       - name: Summary
         if: success()
         run: |
           echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
           echo "\`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d --device=/dev/dri --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -v ollama:/root/.ollama -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -e OLLAMA_VULKAN=1 --name ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Dockerfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modified-dockerfile
+          path: |
+            Dockerfile
+            Dockerfile.backup
