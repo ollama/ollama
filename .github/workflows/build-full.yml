@@ -1,4 +1,4 @@
-name: Build Ollama (Final Correct Version)
+name: Build Ollama (Fix Syntax and Copy Libs)
 
 on:
   schedule:
@@ -17,8 +17,8 @@ jobs:
       packages: write
 
     steps:
-      # 1. 清理磁盘 (为了安全起见保留)
-      - name: Free Disk Space
+      # 1. 清理空间 (保持之前的逻辑)
+      - name: Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
@@ -26,7 +26,7 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
 
-      # 2. 拉取代码
+      # 2. 拉取代码 (浅克隆)
       - name: Checkout Source
         uses: actions/checkout@v4
         with:
@@ -34,9 +34,8 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      # 3. 生成 Dockerfile
-      # 核心逻辑：使用 NVIDIA 镜像，手动运行 cmake preset 编译 Vulkan 和 CUDA
-      - name: Generate Correct Dockerfile
+      # 3. 生成 Dockerfile (修复语法错误，移除注释)
+      - name: Generate Fixed Dockerfile
         run: |
           cat <<EOF > Dockerfile
           FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS builder
@@ -47,44 +46,27 @@ jobs:
           WORKDIR /go/src/github.com/ollama/ollama
           COPY . .
 
-          # === 超级复合命令：安装依赖 -> 编译驱动 -> 编译主程序 -> 清理 ===
-          # 这样写是为了让 Docker 只产生一个图层，防止磁盘爆炸
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-              curl git build-essential libvulkan-dev vulkan-tools libvulkan1 \
+          # 核心命令：安装依赖 -> 安装CMake/Go -> 编译Vulkan -> 编译CUDA -> 编译主程序
+          # 注意：这里没有任何注释，防止语法错误
+          RUN apt-get update && apt-get install -y --no-install-recommends curl git build-essential libvulkan-dev vulkan-tools libvulkan1 \
               && rm -rf /var/lib/apt/lists/* \
-              \
-              # 1. 安装新版 CMake (系统自带的可能太老)
               && curl -L https://github.com/Kitware/CMake/releases/download/v\${CMAKE_VERSION}/cmake-\${CMAKE_VERSION}-linux-x86_64.tar.gz | tar -xz -C /usr/local --strip-components=1 \
-              \
-              # 2. 安装 Go
               && curl -L https://go.dev/dl/go\${GO_VERSION}.linux-amd64.tar.gz | tar -xz -C /usr/local \
               && export PATH=\$PATH:/usr/local/go/bin \
-              \
-              # 3. 编译 Vulkan 后端 (关键！手动调用官方预设，生成到 dist 目录)
               && cmake --preset 'Vulkan' \
               && cmake --build --parallel --preset 'Vulkan' \
               && cmake --install build --component Vulkan --strip \
-              \
-              # 4. 编译 CUDA 12 后端 (利用环境自带的 CUDA)
               && cmake --preset 'CUDA 12' \
               && cmake --build --parallel --preset 'CUDA 12' \
               && cmake --install build --component CUDA --strip \
-              \
-              # 5. 编译 Go 主程序
+              && go generate ./... \
               && go build -trimpath -ldflags "-s -w" -o /bin/ollama .
 
-          # === 运行时环境 ===
           FROM ubuntu:22.04
 
-          # 安装 Vulkan Loader
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-              ca-certificates libvulkan1 && rm -rf /var/lib/apt/lists/*
+          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libvulkan1 && rm -rf /var/lib/apt/lists/*
 
-          # 复制主程序
           COPY --from=builder /bin/ollama /bin/ollama
-          
-          # 【关键】复制编译好的驱动库
-          # 上一步的 cmake --install 保证了这些文件一定在 dist/lib/ollama 下
           COPY --from=builder /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama
 
           ENV OLLAMA_HOST=0.0.0.0:11434
@@ -113,7 +95,7 @@ jobs:
         run: |
           echo "OWNER_LC=${USERNAME,,}" >> ${GITHUB_ENV}
 
-      # 7. 编译并推送 (禁用缓存，防止历史残留)
+      # 7. 编译并推送
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
