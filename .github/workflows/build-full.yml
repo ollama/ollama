@@ -2,7 +2,7 @@ name: Build Ollama with CUDA 12 and Vulkan Support
 
 on:
   schedule:
-    - cron: '0 22 * * *'  # 每天 UTC 22:00 (北京时间早上 6:00)
+    - cron: '0 22 * * *'
   workflow_dispatch:
 
 env:
@@ -19,11 +19,9 @@ jobs:
       - name: Check for updates
         id: check
         run: |
-          # 获取 ollama 主分支最新 commit
           LATEST_SHA=$(curl -s https://api.github.com/repos/${{ env.OLLAMA_REPO }}/commits/main | jq -r '.sha')
           echo "Latest commit: $LATEST_SHA"
           
-          # 检查是否已经构建过这个版本
           IMAGE_EXISTS=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://ghcr.io/v2/${{ github.repository_owner }}/ollama/manifests/$LATEST_SHA" \
             -o /dev/null -w "%{http_code}")
@@ -68,14 +66,13 @@ jobs:
           
           ARG GO_VERSION=1.23.4
           ARG CMAKE_VERSION=3.28.3
-          ARG VULKAN_SDK_VERSION=1.4.321.1
           
           ENV DEBIAN_FRONTEND=noninteractive
           ENV PATH=/usr/local/go/bin:$PATH
           
           WORKDIR /build
           
-          # 安装基础依赖
+          # 安装基础依赖和 Vulkan SDK
           RUN apt-get update && \
               apt-get install -y --no-install-recommends \
                 ca-certificates \
@@ -83,10 +80,14 @@ jobs:
                 git \
                 build-essential \
                 wget \
-                libvulkan-dev \
-                vulkan-tools \
-                libvulkan1 \
-                pkg-config && \
+                pkg-config \
+                make \
+                gnupg \
+                software-properties-common && \
+              wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
+              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+              apt-get update && \
+              apt-get install -y --no-install-recommends vulkan-sdk && \
               rm -rf /var/lib/apt/lists/*
           
           # 安装 CMake
@@ -100,9 +101,17 @@ jobs:
           # 复制源代码
           COPY . .
           
+          # 同步依赖 (关键步骤!)
+          RUN make -f Makefile.sync clean sync
+          
+          # 编译 CPU 库 (基础库)
+          RUN cmake --preset CPU && \
+              cmake --build --parallel --preset CPU && \
+              cmake --install build --component CPU --strip
+          
           # 编译 Vulkan 后端
-          RUN cmake --preset 'Vulkan' && \
-              cmake --build --parallel --preset 'Vulkan' && \
+          RUN cmake --preset Vulkan && \
+              cmake --build --parallel --preset Vulkan && \
               cmake --install build --component Vulkan --strip
           
           # 编译 CUDA 12 后端
@@ -114,14 +123,22 @@ jobs:
           RUN go generate ./... && \
               go build -trimpath -ldflags "-s -w" -o /build/bin/ollama .
           
-          # 最终镜像
+          # 最终运行镜像
           FROM ubuntu:22.04
           
           ENV DEBIAN_FRONTEND=noninteractive
           
+          # 安装运行时依赖
           RUN apt-get update && \
               apt-get install -y --no-install-recommends \
                 ca-certificates \
+                gnupg \
+                software-properties-common \
+                wget && \
+              wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
+              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+              apt-get update && \
+              apt-get install -y --no-install-recommends \
                 libvulkan1 \
                 vulkan-tools && \
               rm -rf /var/lib/apt/lists/*
@@ -133,7 +150,6 @@ jobs:
           # 设置环境变量
           ENV OLLAMA_HOST=0.0.0.0:11434
           ENV LD_LIBRARY_PATH=/lib/ollama
-          ENV OLLAMA_VULKAN=1
           
           EXPOSE 11434
           
@@ -179,18 +195,58 @@ jobs:
 
       - name: Create Release Summary
         run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** ${{ needs.check-updates.outputs.commit_sha || github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tags:** " >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" | sed 's/^/  - /' >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 使用方法" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 镜像信息" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ needs.check-updates.outputs.commit_sha || github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **构建时间:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏷️ 镜像标签" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 使用方法" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 拉取镜像" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker pull ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 使用 CUDA" >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d --gpus all -v ollama:/root/.ollama -p 11434:11434 ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 使用 Vulkan (AMD 核显)" >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d --device=/dev/dri -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_VULKAN=1 ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 使用 NVIDIA GPU (CUDA 12)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d --gpus all \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 使用 AMD/Intel 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --device=/dev/dri \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 验证 GPU 加速" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# 进入容器" >> $GITHUB_STEP_SUMMARY
+          echo "docker exec -it ollama bash" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 查看 Vulkan 设备 (AMD/Intel)" >> $GITHUB_STEP_SUMMARY
+          echo "vulkaninfo --summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 运行模型测试" >> $GITHUB_STEP_SUMMARY
+          echo "ollama run llama3.2:1b" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 注意事项" >> $GITHUB_STEP_SUMMARY
+          echo "- Vulkan 支持目前是**实验性功能**" >> $GITHUB_STEP_SUMMARY
+          echo "- 必须设置 \`OLLAMA_VULKAN=1\` 环境变量才能启用 Vulkan" >> $GITHUB_STEP_SUMMARY
+          echo "- AMD GPU 需要安装 AMDGPU 驱动或 Mesa Vulkan 驱动" >> $GITHUB_STEP_SUMMARY
+          echo "- 某些模型可能在 Vulkan 后端遇到兼容性问题" >> $GITHUB_STEP_SUMMARY
