@@ -1,4 +1,4 @@
-name: Build Ollama with CUDA and Vulkan Support
+name: Ollama Official + Vulkan
 
 on:
   schedule:
@@ -7,344 +7,72 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  OLLAMA_REPO: ollama/ollama
 
 jobs:
-  check-updates:
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-      commit_sha: ${{ steps.check.outputs.commit_sha }}
-    steps:
-      - name: Check for updates
-        id: check
-        run: |
-          LATEST_SHA=$(curl -s https://api.github.com/repos/${{ env.OLLAMA_REPO }}/commits/main | jq -r '.sha')
-          echo "Latest commit: $LATEST_SHA"
-          
-          IMAGE_EXISTS=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://ghcr.io/v2/${{ github.repository_owner }}/ollama/manifests/$LATEST_SHA" \
-            -o /dev/null -w "%{http_code}")
-          
-          if [ "$IMAGE_EXISTS" = "200" ]; then
-            echo "Image already exists for commit $LATEST_SHA"
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          else
-            echo "New commit found, will build"
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "commit_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
-          fi
-
-  build-and-push:
-    needs: check-updates
-    if: needs.check-updates.outputs.should_build == 'true' || github.event_name == 'workflow_dispatch'
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Maximize Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          df -h
-
-      - name: Checkout Ollama Source
+      - name: Checkout Ollama
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.OLLAMA_REPO }}
+          repository: ollama/ollama
           ref: main
-          fetch-depth: 1
 
-      - name: Generate Dockerfile
+      - name: Create Dockerfile
         run: |
-          cat > Dockerfile << 'DOCKERFILE'
-          ARG GOLANG_VERSION=1.23.4
-          ARG CMAKE_VERSION=3.28.3
-          # 使用 CUDA 13 以支持最新的 GPU 架构
-          ARG CUDA_VERSION_MAJOR=13
-          ARG CUDA_VERSION=13.0.1
-          ARG VULKAN_SDK_VERSION=1.4.321.1
-          
-          # ==================== CPU 库构建阶段 ====================
-          FROM ubuntu:24.04 AS cpu-builder
-          ARG CMAKE_VERSION
-          
-          ENV DEBIAN_FRONTEND=noninteractive
-          
-          RUN apt-get update && \
-              apt-get install -y --no-install-recommends \
-                git \
-                build-essential \
-                curl \
-                ccache \
-                ca-certificates && \
-              rm -rf /var/lib/apt/lists/*
-          
-          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
-              tar xz -C /usr/local --strip-components=1
-          
-          WORKDIR /build
-          COPY CMakeLists.txt CMakePresets.json ./
-          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-          
-          RUN --mount=type=cache,target=/root/.ccache \
-              cmake --preset CPU && \
-              cmake --build --parallel --preset CPU && \
-              cmake --install build --component CPU --strip
-          
-          # ==================== Vulkan 库构建阶段 ====================
+          cat > Dockerfile << 'EOF'
+          # 轻量级 Vulkan 编译阶段
           FROM ubuntu:24.04 AS vulkan-builder
-          ARG CMAKE_VERSION
-          ARG VULKAN_SDK_VERSION
-          
-          ENV DEBIAN_FRONTEND=noninteractive
           
           RUN apt-get update && \
-              apt-get install -y --no-install-recommends \
-                git \
-                build-essential \
-                curl \
-                ccache \
-                ca-certificates \
-                wget \
-                gnupg \
-                software-properties-common && \
+              apt-get install -y git build-essential curl ccache wget gnupg && \
               wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
               wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
-              apt-get update && \
-              apt-get install -y --no-install-recommends vulkan-sdk && \
-              rm -rf /var/lib/apt/lists/*
-          
-          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
-              tar xz -C /usr/local --strip-components=1
+              apt-get update && apt-get install -y vulkan-sdk && \
+              curl -fsSL "https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz" | \
+                tar xz -C /usr/local --strip-components=1
           
           WORKDIR /build
           COPY CMakeLists.txt CMakePresets.json ./
           COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
-          RUN --mount=type=cache,target=/root/.ccache \
-              cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
-              cmake --build --parallel --preset Vulkan && \
+          # 单线程编译避免超时
+          RUN cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
+              cmake --build --preset Vulkan --parallel 1 && \
               cmake --install build --component Vulkan --strip
           
-          # ==================== CUDA 13 库构建阶段 ====================
-          FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS cuda-builder
-          ARG CMAKE_VERSION
-          ARG CUDA_VERSION_MAJOR
+          # 最终镜像
+          FROM ollama/ollama:latest
           
           RUN apt-get update && \
-              apt-get install -y --no-install-recommends \
-                git \
-                build-essential \
-                curl \
-                ccache \
-                ca-certificates && \
-              rm -rf /var/lib/apt/lists/*
-          
-          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
-              tar xz -C /usr/local --strip-components=1
-          
-          WORKDIR /build
-          COPY CMakeLists.txt CMakePresets.json ./
-          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-          
-          # 使用 CUDA 13 preset
-          RUN --mount=type=cache,target=/root/.ccache \
-              cmake --preset "CUDA ${CUDA_VERSION_MAJOR}" -DOLLAMA_RUNNER_DIR="cuda_v${CUDA_VERSION_MAJOR}" && \
-              cmake --build --parallel --preset "CUDA ${CUDA_VERSION_MAJOR}" && \
-              cmake --install build --component CUDA --strip
-          
-          # ==================== Go 二进制构建阶段 ====================
-          FROM ubuntu:24.04 AS go-builder
-          ARG GOLANG_VERSION
-          ARG CMAKE_VERSION
-          
-          ENV DEBIAN_FRONTEND=noninteractive
-          
-          RUN apt-get update && \
-              apt-get install -y --no-install-recommends \
-                git \
-                build-essential \
-                curl \
-                ca-certificates \
-                rsync && \
-              rm -rf /var/lib/apt/lists/*
-          
-          RUN git config --global user.email "builder@ollama.local" && \
-              git config --global user.name "Ollama Builder"
-          
-          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
-              tar xz -C /usr/local --strip-components=1
-          
-          RUN curl -fsSL "https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz" | \
-              tar xz -C /usr/local
-          
-          ENV PATH=/usr/local/go/bin:$PATH
-          ENV GOPATH=/go
-          ENV CGO_ENABLED=1
-          
-          WORKDIR /build
-          COPY . .
-          
-          RUN make -f Makefile.sync clean sync
-          RUN go mod download
-          RUN go generate ./... && \
-              go build -trimpath -ldflags="-s -w" -o /bin/ollama .
-          
-          # ==================== 最终运行镜像 ====================
-          FROM ubuntu:24.04
-          
-          ENV DEBIAN_FRONTEND=noninteractive
-          
-          RUN apt-get update && \
-              apt-get install -y --no-install-recommends \
-                ca-certificates \
-                wget \
-                gnupg && \
+              apt-get install -y wget gnupg && \
               wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
               wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
-              apt-get update && \
-              apt-get install -y --no-install-recommends \
-                libvulkan1 \
-                vulkan-tools && \
-              apt-get clean && \
+              apt-get update && apt-get install -y libvulkan1 vulkan-tools && \
               rm -rf /var/lib/apt/lists/*
           
-          COPY --from=go-builder /bin/ollama /usr/bin/ollama
-          COPY --from=cpu-builder /build/dist/lib/ollama /usr/lib/ollama
-          COPY --from=vulkan-builder /build/dist/lib/ollama /usr/lib/ollama
-          COPY --from=cuda-builder /build/dist/lib/ollama /usr/lib/ollama
-          
-          ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama
-          ENV NVIDIA_VISIBLE_DEVICES=all
-          ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-          ENV OLLAMA_HOST=0.0.0.0:11434
-          
-          EXPOSE 11434
-          
-          ENTRYPOINT ["/usr/bin/ollama"]
-          CMD ["serve"]
-          DOCKERFILE
+          COPY --from=vulkan-builder /build/dist/lib/ollama/vulkan /usr/lib/ollama/vulkan
+          EOF
 
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase Username
-        run: |
-          echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> ${GITHUB_ENV}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ needs.check-updates.outputs.commit_sha || github.sha }}
-            type=raw,value={{date 'YYYYMMDD'}}
-
-      - name: Build and Push Docker Image
+      - name: Build and Push
         uses: docker/build-push-action@v5
+        timeout-minutes: 180
         with:
           context: .
-          file: ./Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
+          tags: ghcr.io/${{ github.repository_owner }}/ollama:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            GOLANG_VERSION=1.23.4
-            CMAKE_VERSION=3.28.3
-            CUDA_VERSION_MAJOR=13
-            CUDA_VERSION=13.0.1
-
-      - name: Create Release Summary
-        run: |
-          echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 镜像信息" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ needs.check-updates.outputs.commit_sha || github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **构建时间:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "- **支持:** CUDA 13.0, Vulkan, CPU" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🏷️ 镜像标签" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🚀 使用方法" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 1. 拉取镜像" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 2. 使用 NVIDIA GPU (CUDA 13)" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d --gpus all \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 3. 使用 AMD 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --device=/dev/dri \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 4. 使用 Intel 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --device=/dev/dri \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
-          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔧 验证和测试" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# 进入容器" >> $GITHUB_STEP_SUMMARY
-          echo "docker exec -it ollama bash" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 查看已安装的库" >> $GITHUB_STEP_SUMMARY
-          echo "ls -la /usr/lib/ollama/" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 查看 Vulkan 设备" >> $GITHUB_STEP_SUMMARY
-          echo "vulkaninfo --summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 测试小模型" >> $GITHUB_STEP_SUMMARY
-          echo "ollama run llama3.2:1b" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📝 重要提示" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **CUDA 13**: 支持最新的 NVIDIA GPU (包括 RTX 40 系列)" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **Vulkan**: 支持 AMD 和 Intel 核显/独显" >> $GITHUB_STEP_SUMMARY
-          echo "- ⚠️ Vulkan 需要设置 \`OLLAMA_VULKAN=1\` 环境变量" >> $GITHUB_STEP_SUMMARY
-          echo "- ⚠️ AMD 需要: \`--device=/dev/kfd --device=/dev/dri\`" >> $GITHUB_STEP_SUMMARY
-          echo "- ⚠️ Intel 需要: \`--device=/dev/dri\`" >> $GITHUB_STEP_SUMMARY
-          echo "- 💡 选择特定 GPU: 设置 \`GGML_VK_VISIBLE_DEVICES=0\`" >> $GITHUB_STEP_SUMMARY
-          echo "- 💡 查看日志: \`docker logs -f ollama\`" >> $GITHUB_STEP_SUMMARY
