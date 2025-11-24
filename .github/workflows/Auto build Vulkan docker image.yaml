@@ -1,0 +1,249 @@
+name: Build Ollama Vulkan (Auto)
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '强制构建'
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+      latest_version: ${{ steps.get_latest.outputs.version }}
+    steps:
+      - name: Get Latest Version
+        id: get_latest
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/ollama/ollama/releases/latest | jq -r '.tag_name')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 最新版本: $VERSION"
+
+      - name: Check Current Version
+        id: get_current
+        continue-on-error: true
+        run: |
+          CURRENT=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://ghcr.io/v2/${GITHUB_REPOSITORY_OWNER,,}/ollama-vulkan/tags/list" 2>/dev/null | \
+            jq -r '.tags[]? | select(startswith("v"))' | sort -V | tail -1)
+          
+          [ -z "$CURRENT" ] && CURRENT="none"
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "ℹ️  当前版本: $CURRENT"
+
+      - name: Compare
+        id: compare
+        run: |
+          LATEST="${{ steps.get_latest.outputs.version }}"
+          CURRENT="${{ steps.get_current.outputs.current }}"
+          FORCE="${{ github.event.inputs.force_build }}"
+          
+          if [ "$FORCE" == "true" ] || [ "$LATEST" != "$CURRENT" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "✅ 需要构建"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "⏭️  跳过构建"
+          fi
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo docker system prune -af --volumes
+
+      - name: Checkout Ollama
+        uses: actions/checkout@v4
+        with:
+          repository: ollama/ollama
+          ref: ${{ needs.check-version.outputs.latest_version }}
+          fetch-depth: 0  # 获取完整 Git 历史，保留版本信息
+
+      - name: Lowercase Username
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+
+      - name: Modify Dockerfile with Version Injection
+        run: |
+          cat > modify.py << 'EOF'
+          import re
+          
+          with open('Dockerfile', 'r') as f:
+              lines = f.readlines()
+          
+          output = []
+          i = 0
+          skip = False
+          in_cpu = False
+          in_build_stage = False
+          
+          while i < len(lines):
+              line = lines[i]
+              
+              # === base-amd64 替换 ===
+              if 'FROM --platform=linux/amd64 rocm/dev-almalinux' in line and 'AS base-amd64' in line:
+                  output.append('FROM --platform=linux/amd64 ubuntu:24.04 AS base-amd64\n')
+                  i += 1
+                  while i < len(lines) and not lines[i].startswith('FROM'):
+                      i += 1
+                  output.append('RUN for i in 1 2 3; do apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false && break || sleep 5; done && \\\n')
+                  output.append('    apt-get install -y --no-install-recommends git build-essential gcc g++ curl wget ccache ca-certificates gnupg software-properties-common rsync python3 ninja-build pkg-config && \\\n')
+                  output.append('    wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \\\n')
+                  output.append('    wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \\\n')
+                  output.append('    for i in 1 2 3; do apt-get update && apt-get install -y vulkan-sdk && break || sleep 5; done && \\\n')
+                  output.append('    rm -rf /var/lib/apt/lists/*\n')
+                  continue
+              
+              # === 检测 build 阶段（Go 编译阶段）===
+              if 'FROM' in line and 'AS build' in line:
+                  in_build_stage = True
+                  output.append(line)
+                  i += 1
+                  continue
+              
+              # === 在 build 阶段注入版本参数 ===
+              if in_build_stage:
+                  # 在 WORKDIR 之后、go build 之前注入 VERSION ARG
+                  if line.startswith('WORKDIR'):
+                      output.append(line)
+                      # 检查下一行是否已经有 ARG VERSION
+                      if i + 1 < len(lines) and 'ARG VERSION' not in lines[i + 1]:
+                          output.append('ARG VERSION\n')
+                          output.append('ARG GOFLAGS\n')
+                      i += 1
+                      continue
+                  
+                  # 修改 go build 命令，注入版本号
+                  if 'go build' in line and 'ollama' in line:
+                      # 保留原有的 ldflags，添加版本信息
+                      modified_line = line.rstrip()
+                      if '-ldflags' in modified_line:
+                          # 在现有 ldflags 中添加版本
+                          modified_line = re.sub(
+                              r'-ldflags=["\']([^"\']*)["\']',
+                              r'-ldflags="\1 -X=github.com/ollama/ollama/version.Version=${VERSION}"',
+                              modified_line
+                          )
+                      else:
+                          # 添加新的 ldflags
+                          modified_line = modified_line.replace(
+                              'go build',
+                              'go build -ldflags="-X=github.com/ollama/ollama/version.Version=${VERSION}"'
+                          )
+                      output.append(modified_line + '\n')
+                      i += 1
+                      continue
+                  
+                  if line.startswith('FROM'):
+                      in_build_stage = False
+              
+              # === cpu 阶段删除 dnf ===
+              if line.startswith('FROM') and 'AS cpu' in line:
+                  in_cpu = True
+              elif in_cpu and line.startswith('FROM'):
+                  in_cpu = False
+              
+              if in_cpu and (line.startswith('RUN dnf') or ('ENV PATH=' in line and 'gcc-toolset' in line)):
+                  i += 1
+                  continue
+              
+              # === 替换大镜像为 scratch ===
+              if 'FROM' in line and (('nvidia/cuda' in line and 'AS cuda-' in line) or 'AS rocm-6' in line or ('jetpack' in line)):
+                  stage = line.split('AS')[1].strip()
+                  output.append(f'FROM scratch AS {stage}\n')
+                  skip = True
+                  i += 1
+                  continue
+              
+              if skip:
+                  if line.startswith('FROM'):
+                      skip = False
+                  else:
+                      i += 1
+                      continue
+              
+              # === 注释 CUDA/ROCm COPY ===
+              if line.startswith('COPY --from=cuda-') or line.startswith('COPY --from=jetpack-') or line.startswith('COPY --from=rocm-6'):
+                  output.append('# ' + line)
+                  i += 1
+                  continue
+              
+              output.append(line)
+              i += 1
+          
+          with open('Dockerfile', 'w') as f:
+              f.writelines(output)
+          
+          print("✅ Dockerfile 修改完成（包含版本注入）")
+          EOF
+          
+          python3 modify.py
+
+      - name: Verify Modified Dockerfile
+        run: |
+          echo "=== 检查 build 阶段的版本注入 ==="
+          sed -n '/FROM.*AS build/,/^FROM/p' Dockerfile | grep -A 10 "WORKDIR\|ARG VERSION\|go build"
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.check-version.outputs.latest_version }}
+
+      - name: Build and Push with Version
+        uses: docker/build-push-action@v5
+        timeout-minutes: 240
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ needs.check-version.outputs.latest_version }}
+            GOFLAGS='-ldflags=-w -s'
+          labels: |
+            org.opencontainers.image.version=${{ needs.check-version.outputs.latest_version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify Version in Image
+        if: success()
+        run: |
+          echo "🔍 验证镜像版本"
+          VERSION=$(docker run --rm ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest ollama --version 2>&1 || echo "获取失败")
+          echo "镜像版本: $VERSION"
+          echo "预期版本: ${{ needs.check-version.outputs.latest_version }}"
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🎉 构建完成
+          - **预期版本**: \`${{ needs.check-version.outputs.latest_version }}\`
+          - **实际版本**: \`$VERSION\`
+          - **镜像**: \`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`
+          EOF
