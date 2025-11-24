@@ -62,74 +62,149 @@ jobs:
       - name: Generate Dockerfile
         run: |
           cat > Dockerfile << 'DOCKERFILE'
-          FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
-          
-          ARG GO_VERSION=1.23.4
+          ARG GOLANG_VERSION=1.23.4
           ARG CMAKE_VERSION=3.28.3
+          ARG CUDA_VERSION=12.6.3
+          ARG VULKAN_SDK_VERSION=1.4.321.1
+          
+          # ==================== CPU 库构建阶段 ====================
+          FROM --platform=linux/amd64 ubuntu:24.04 AS cpu-builder
+          ARG CMAKE_VERSION
+          ARG GOLANG_VERSION
           
           ENV DEBIAN_FRONTEND=noninteractive
-          ENV PATH=/usr/local/go/bin:$PATH
           
-          WORKDIR /build
-          
-          # 安装基础依赖和 Vulkan SDK
           RUN apt-get update && \
               apt-get install -y --no-install-recommends \
-                ca-certificates \
-                curl \
                 git \
                 build-essential \
+                curl \
+                ccache \
+                ca-certificates && \
+              rm -rf /var/lib/apt/lists/*
+          
+          # 安装 CMake
+          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
+              tar xz -C /usr/local --strip-components=1
+          
+          COPY CMakeLists.txt CMakePresets.json .
+          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+          
+          # 构建 CPU 库
+          RUN --mount=type=cache,target=/root/.ccache \
+              cmake --preset CPU && \
+              cmake --build --parallel --preset CPU && \
+              cmake --install build --component CPU --strip
+          
+          # ==================== Vulkan 库构建阶段 ====================
+          FROM --platform=linux/amd64 ubuntu:24.04 AS vulkan-builder
+          ARG CMAKE_VERSION
+          ARG VULKAN_SDK_VERSION
+          
+          ENV DEBIAN_FRONTEND=noninteractive
+          
+          RUN apt-get update && \
+              apt-get install -y --no-install-recommends \
+                git \
+                build-essential \
+                curl \
+                ccache \
+                ca-certificates \
                 wget \
-                pkg-config \
-                make \
                 gnupg \
-                software-properties-common \
-                rsync && \
+                software-properties-common && \
               wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
-              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
               apt-get update && \
               apt-get install -y --no-install-recommends vulkan-sdk && \
               rm -rf /var/lib/apt/lists/*
           
-          # 配置 git (make sync 需要)
-          RUN git config --global user.email "builder@ollama.local" && \
-              git config --global user.name "Ollama Builder"
-          
           # 安装 CMake
-          RUN curl -L "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
-              tar -xz -C /usr/local --strip-components=1
+          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
+              tar xz -C /usr/local --strip-components=1
           
-          # 安装 Go
-          RUN curl -L "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | \
-              tar -xz -C /usr/local
+          COPY CMakeLists.txt CMakePresets.json .
+          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
-          # 复制源代码
-          COPY . .
-          
-          # 同步依赖 (关键步骤!)
-          RUN make -f Makefile.sync clean sync
-          
-          # 编译 CPU 库 (基础库)
-          RUN cmake --preset CPU && \
-              cmake --build --parallel --preset CPU && \
-              cmake --install build --component CPU --strip
-          
-          # 编译 Vulkan 后端
-          RUN cmake --preset Vulkan && \
+          # 构建 Vulkan 库
+          RUN --mount=type=cache,target=/root/.ccache \
+              cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
               cmake --build --parallel --preset Vulkan && \
               cmake --install build --component Vulkan --strip
           
-          # 编译 CUDA 12 后端
-          RUN cmake --preset 'CUDA 12' && \
+          # ==================== CUDA 12 库构建阶段 ====================
+          FROM --platform=linux/amd64 nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS cuda-12-builder
+          ARG CMAKE_VERSION
+          
+          RUN apt-get update && \
+              apt-get install -y --no-install-recommends \
+                git \
+                build-essential \
+                curl \
+                ccache \
+                ca-certificates && \
+              rm -rf /var/lib/apt/lists/*
+          
+          # 安装 CMake
+          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
+              tar xz -C /usr/local --strip-components=1
+          
+          COPY CMakeLists.txt CMakePresets.json .
+          COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+          
+          # 构建 CUDA 12 库
+          RUN --mount=type=cache,target=/root/.ccache \
+              cmake --preset 'CUDA 12' -DOLLAMA_RUNNER_DIR="cuda_v12" && \
               cmake --build --parallel --preset 'CUDA 12' && \
               cmake --install build --component CUDA --strip
           
-          # 编译 Ollama 主程序
-          RUN go generate ./... && \
-              go build -trimpath -ldflags "-s -w" -o /build/bin/ollama .
+          # ==================== Go 二进制构建阶段 ====================
+          FROM --platform=linux/amd64 ubuntu:24.04 AS go-builder
+          ARG GOLANG_VERSION
+          ARG CMAKE_VERSION
           
-          # 最终运行镜像
-          FROM ubuntu:22.04
+          ENV DEBIAN_FRONTEND=noninteractive
+          
+          RUN apt-get update && \
+              apt-get install -y --no-install-recommends \
+                git \
+                build-essential \
+                curl \
+                ca-certificates \
+                rsync && \
+              rm -rf /var/lib/apt/lists/*
+          
+          # 配置 Git
+          RUN git config --global user.email "builder@ollama.local" && \
+              git config --global user.name "Ollama Builder"
+          
+          # 安装 CMake (Go generate 需要)
+          RUN curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
+              tar xz -C /usr/local --strip-components=1
+          
+          # 安装 Go
+          RUN curl -fsSL "https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz" | \
+              tar xz -C /usr/local
+          
+          ENV PATH=/usr/local/go/bin:$PATH
+          ENV GOPATH=/go
+          ENV CGO_ENABLED=1
+          
+          WORKDIR /build
+          COPY . .
+          
+          # 同步依赖
+          RUN make -f Makefile.sync clean sync
+          
+          # 下载 Go 依赖
+          RUN go mod download
+          
+          # 生成代码并编译
+          RUN go generate ./... && \
+              go build -trimpath -ldflags="-s -w" -o /bin/ollama .
+          
+          # ==================== 最终运行镜像 ====================
+          FROM ubuntu:24.04
           
           ENV DEBIAN_FRONTEND=noninteractive
           
@@ -137,28 +212,35 @@ jobs:
           RUN apt-get update && \
               apt-get install -y --no-install-recommends \
                 ca-certificates \
-                gnupg \
-                software-properties-common \
-                wget && \
+                wget \
+                gnupg && \
               wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
-              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+              wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
               apt-get update && \
               apt-get install -y --no-install-recommends \
                 libvulkan1 \
                 vulkan-tools && \
+              apt-get clean && \
               rm -rf /var/lib/apt/lists/*
           
-          # 复制编译好的文件
-          COPY --from=builder /build/bin/ollama /bin/ollama
-          COPY --from=builder /build/dist/lib/ollama /lib/ollama
+          # 复制二进制文件
+          COPY --from=go-builder /bin/ollama /usr/bin/ollama
+          
+          # 复制库文件
+          COPY --from=cpu-builder /build/dist/lib/ollama /usr/lib/ollama
+          COPY --from=vulkan-builder /build/dist/lib/ollama /usr/lib/ollama
+          COPY --from=cuda-12-builder /build/dist/lib/ollama /usr/lib/ollama
           
           # 设置环境变量
+          ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama
+          ENV NVIDIA_VISIBLE_DEVICES=all
+          ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
           ENV OLLAMA_HOST=0.0.0.0:11434
-          ENV LD_LIBRARY_PATH=/lib/ollama
           
           EXPOSE 11434
           
-          ENTRYPOINT ["/bin/ollama"]
+          ENTRYPOINT ["/usr/bin/ollama"]
           CMD ["serve"]
           DOCKERFILE
 
@@ -197,6 +279,10 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            GOLANG_VERSION=1.23.4
+            CMAKE_VERSION=3.28.3
+            CUDA_VERSION=12.6.3
 
       - name: Create Release Summary
         run: |
@@ -205,6 +291,7 @@ jobs:
           echo "### 📦 镜像信息" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ needs.check-updates.outputs.commit_sha || github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **构建时间:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **支持:** CUDA 12.6, Vulkan, CPU" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🏷️ 镜像标签" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -213,12 +300,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🚀 使用方法" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 拉取镜像" >> $GITHUB_STEP_SUMMARY
+          echo "#### 1. 拉取镜像" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker pull ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 使用 NVIDIA GPU (CUDA 12)" >> $GITHUB_STEP_SUMMARY
+          echo "#### 2. 使用 NVIDIA GPU (CUDA 12)" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker run -d --gpus all \\" >> $GITHUB_STEP_SUMMARY
           echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
@@ -227,7 +314,19 @@ jobs:
           echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 使用 AMD/Intel 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
+          echo "#### 3. 使用 AMD 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --device=/dev/dri \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 4. 使用 Intel 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
           echo "  --device=/dev/dri \\" >> $GITHUB_STEP_SUMMARY
@@ -243,16 +342,16 @@ jobs:
           echo "# 进入容器" >> $GITHUB_STEP_SUMMARY
           echo "docker exec -it ollama bash" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 查看 Vulkan 设备 (AMD/Intel)" >> $GITHUB_STEP_SUMMARY
+          echo "# 查看 Vulkan 设备" >> $GITHUB_STEP_SUMMARY
           echo "vulkaninfo --summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# 运行模型测试" >> $GITHUB_STEP_SUMMARY
+          echo "# 测试模型" >> $GITHUB_STEP_SUMMARY
           echo "ollama run llama3.2:1b" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📝 注意事项" >> $GITHUB_STEP_SUMMARY
-          echo "- Vulkan 支持目前是**实验性功能**" >> $GITHUB_STEP_SUMMARY
-          echo "- 必须设置 \`OLLAMA_VULKAN=1\` 环境变量才能启用 Vulkan" >> $GITHUB_STEP_SUMMARY
-          echo "- AMD GPU 需要安装 AMDGPU 驱动或 Mesa Vulkan 驱动" >> $GITHUB_STEP_SUMMARY
-          echo "- 某些模型可能在 Vulkan 后端遇到兼容性问题" >> $GITHUB_STEP_SUMMARY
-          echo "- 可用 \`GGML_VK_VISIBLE_DEVICES\` 环境变量选择特定 GPU" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 重要提示" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Vulkan 是实验性功能**，必须设置 \`OLLAMA_VULKAN=1\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. **AMD GPU**: 需要 \`--device=/dev/kfd --device=/dev/dri\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Intel GPU**: 只需要 \`--device=/dev/dri\`" >> $GITHUB_STEP_SUMMARY
+          echo "4. 使用 \`GGML_VK_VISIBLE_DEVICES\` 选择特定 GPU" >> $GITHUB_STEP_SUMMARY
+          echo "5. 确保主机已安装对应的 Vulkan 驱动" >> $GITHUB_STEP_SUMMARY
