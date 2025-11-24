@@ -1,8 +1,6 @@
 name: Build Ollama Vulkan Only
 
 on:
-  schedule:
-    - cron: '0 22 * * *'
   workflow_dispatch:
 
 env:
@@ -16,7 +14,7 @@ jobs:
       packages: write
     
     steps:
-      - name: Free Disk Space
+      - name: Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo docker system prune -af --volumes
@@ -28,7 +26,7 @@ jobs:
           repository: ollama/ollama
           ref: main
 
-      - name: Modify Dockerfile Completely
+      - name: Modify Dockerfile
         run: |
           cat > modify.py << 'EOF'
           with open('Dockerfile', 'r') as f:
@@ -37,66 +35,42 @@ jobs:
           output = []
           i = 0
           skip = False
-          in_cpu_stage = False
-          in_vulkan_stage = False
+          in_cpu = False
           
           while i < len(lines):
               line = lines[i]
               
-              # ===== 修改 1: base-amd64 替换为 Ubuntu =====
+              # 替换 base-amd64，添加重试和容错
               if 'FROM --platform=linux/amd64 rocm/dev-almalinux' in line and 'AS base-amd64' in line:
                   output.append('FROM --platform=linux/amd64 ubuntu:24.04 AS base-amd64\n')
                   i += 1
                   while i < len(lines) and not lines[i].startswith('FROM'):
                       i += 1
-                  # 添加完整的 Ubuntu 依赖
-                  output.append('RUN apt-get update && apt-get install -y \\\n')
-                  output.append('    git build-essential gcc g++ make curl wget ccache ca-certificates \\\n')
-                  output.append('    gnupg software-properties-common rsync python3 python3-pip \\\n')
-                  output.append('    ninja-build pkg-config && \\\n')
+                  # 添加容错的 apt 安装
+                  output.append('RUN for i in 1 2 3; do \\\n')
+                  output.append('        apt-get update --allow-releaseinfo-change -o Acquire::Check-Valid-Until=false && break || sleep 5; \\\n')
+                  output.append('    done && \\\n')
+                  output.append('    apt-get install -y --no-install-recommends \\\n')
+                  output.append('        git build-essential gcc g++ curl wget ccache ca-certificates \\\n')
+                  output.append('        gnupg software-properties-common rsync python3 ninja-build pkg-config && \\\n')
                   output.append('    wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \\\n')
                   output.append('    wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \\\n')
-                  output.append('    apt-get update && apt-get install -y vulkan-sdk && \\\n')
+                  output.append('    for i in 1 2 3; do \\\n')
+                  output.append('        apt-get update && apt-get install -y vulkan-sdk && break || sleep 5; \\\n')
+                  output.append('    done && \\\n')
                   output.append('    rm -rf /var/lib/apt/lists/*\n')
                   continue
               
-              # ===== 修改 2: 检测进入 cpu 阶段 =====
               if line.startswith('FROM') and 'AS cpu' in line:
-                  in_cpu_stage = True
-                  output.append(line)
+                  in_cpu = True
+              elif in_cpu and line.startswith('FROM'):
+                  in_cpu = False
+              
+              if in_cpu and (line.startswith('RUN dnf') or ('ENV PATH=' in line and 'gcc-toolset' in line)):
                   i += 1
                   continue
               
-              # 在 cpu 阶段，删除所有 dnf 命令和 gcc-toolset ENV
-              if in_cpu_stage:
-                  if line.startswith('FROM'):
-                      in_cpu_stage = False
-                  elif line.startswith('RUN dnf') or line.startswith('ENV PATH=') and 'gcc-toolset' in line:
-                      # 跳过 dnf 安装和 gcc-toolset 的 ENV
-                      i += 1
-                      continue
-              
-              # ===== 修改 3: 检测进入 vulkan 阶段 =====
-              if line.startswith('FROM') and 'AS vulkan' in line:
-                  in_vulkan_stage = True
-                  output.append(line)
-                  i += 1
-                  continue
-              
-              # 在 vulkan 阶段，删除所有 dnf 命令（如果有）
-              if in_vulkan_stage:
-                  if line.startswith('FROM'):
-                      in_vulkan_stage = False
-                  elif line.startswith('RUN dnf'):
-                      i += 1
-                      continue
-              
-              # ===== 修改 4-8: 替换大镜像为 scratch =====
-              if 'FROM' in line and (
-                  ('nvidia/cuda' in line and 'AS cuda-' in line) or
-                  'AS rocm-6' in line or
-                  ('jetpack' in line and 'AS jetpack-' in line)
-              ):
+              if 'FROM' in line and (('nvidia/cuda' in line and 'AS cuda-' in line) or 'AS rocm-6' in line or ('jetpack' in line)):
                   stage = line.split('AS')[1].strip()
                   output.append(f'FROM scratch AS {stage}\n')
                   skip = True
@@ -110,10 +84,7 @@ jobs:
                       i += 1
                       continue
               
-              # ===== 修改 9-11: 注释 CUDA/JetPack/ROCm COPY =====
-              if (line.startswith('COPY --from=cuda-') or 
-                  line.startswith('COPY --from=jetpack-') or 
-                  line.startswith('COPY --from=rocm-6')):
+              if line.startswith('COPY --from=cuda-') or line.startswith('COPY --from=jetpack-') or line.startswith('COPY --from=rocm-6'):
                   output.append('# ' + line)
                   i += 1
                   continue
@@ -123,25 +94,9 @@ jobs:
           
           with open('Dockerfile', 'w') as f:
               f.writelines(output)
-          
-          print(f"✅ 修改完成: {len(lines)} -> {len(output)} 行")
           EOF
           
           python3 modify.py
-
-      - name: Verify All Changes
-        run: |
-          echo "===== 1. base-amd64 ====="
-          sed -n '/AS base-amd64/,/^FROM/p' Dockerfile | head -15
-          
-          echo "===== 2. cpu 阶段（不应该有 dnf） ====="
-          sed -n '/FROM.*AS cpu/,/^FROM/p' Dockerfile | head -10
-          
-          echo "===== 3. cuda-12 ====="
-          grep -A 1 "AS cuda-12" Dockerfile
-          
-          echo "===== 4. amd64 阶段（CUDA 应该被注释） ====="
-          sed -n '/FROM.*scratch AS amd64/,/^FROM/p' Dockerfile | head -8
 
       - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
@@ -153,40 +108,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase
-        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
-
-      - name: Meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan
-          tags: |
-            type=raw,value=latest
-            type=raw,value={{date 'YYYYMMDD'}}
-
       - name: Build
         uses: docker/build-push-action@v5
         timeout-minutes: 240
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/ollama-vulkan:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Summary
-        if: success()
-        run: |
-          echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
-          echo "\`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d --device=/dev/dri --device=/dev/kfd -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_VULKAN=1 --name ollama ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama-vulkan:latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dockerfile
-          path: Dockerfile
