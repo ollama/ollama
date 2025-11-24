@@ -43,12 +43,11 @@ jobs:
 
       - name: Create Minimal Vulkan-Only Dockerfile
         run: |
-          # 从官方 Dockerfile 提取 CPU、Vulkan、Go 构建阶段
           cat > Dockerfile.vulkan << 'DOCKERFILE'
           ARG GOLANG_VERSION=1.23.4
           ARG CMAKE_VERSION=3.31.2
           
-          # CPU 构建阶段（从官方 Dockerfile 复制）
+          # CPU 构建阶段
           FROM ubuntu:24.04 AS cpu-builder
           ARG CMAKE_VERSION
           
@@ -57,16 +56,18 @@ jobs:
               curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 && \
               rm -rf /var/lib/apt/lists/*
           
-          COPY CMakeLists.txt CMakePresets.json .
+          WORKDIR /build
+          COPY CMakeLists.txt CMakePresets.json ./
           COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
           ARG PARALLEL=4
           RUN --mount=type=cache,target=/root/.ccache \
               cmake --preset CPU && \
               cmake --build --parallel ${PARALLEL} --preset CPU && \
-              cmake --install build --component CPU --strip
+              cmake --install build --component CPU --strip && \
+              ls -la /build/dist/lib/ollama/ || echo "检查路径失败"
           
-          # Vulkan 构建阶段（从官方 Dockerfile 复制并修改）
+          # Vulkan 构建阶段
           FROM ubuntu:24.04 AS vulkan
           ARG CMAKE_VERSION
           
@@ -79,16 +80,18 @@ jobs:
               curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 && \
               rm -rf /var/lib/apt/lists/*
           
-          COPY CMakeLists.txt CMakePresets.json .
+          WORKDIR /build
+          COPY CMakeLists.txt CMakePresets.json ./
           COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
           ARG PARALLEL=2
           RUN --mount=type=cache,target=/root/.ccache \
               cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
               cmake --build --parallel ${PARALLEL} --preset Vulkan && \
-              cmake --install build --component Vulkan --strip
+              cmake --install build --component Vulkan --strip && \
+              ls -la /build/dist/lib/ollama/ || echo "检查路径失败"
           
-          # Go 构建阶段（从官方 Dockerfile 复制）
+          # Go 构建阶段
           FROM ubuntu:24.04 AS build
           ARG GOLANG_VERSION
           ARG CMAKE_VERSION
@@ -130,9 +133,12 @@ jobs:
               apt-get clean && \
               rm -rf /var/lib/apt/lists/*
           
+          # 复制二进制
           COPY --from=build /bin/ollama /usr/bin/ollama
-          COPY --from=cpu-builder /build/dist/lib/ollama /usr/lib/ollama
-          COPY --from=vulkan /build/dist/lib/ollama /usr/lib/ollama
+          
+          # 复制库文件 - 使用通配符确保路径正确
+          COPY --from=cpu-builder /build/dist/lib/ollama/* /usr/lib/ollama/
+          COPY --from=vulkan /build/dist/lib/ollama/* /usr/lib/ollama/
           
           ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           ENV LD_LIBRARY_PATH=/usr/lib/ollama
