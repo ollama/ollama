@@ -83,12 +83,17 @@ jobs:
                 pkg-config \
                 make \
                 gnupg \
-                software-properties-common && \
+                software-properties-common \
+                rsync && \
               wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
               wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
               apt-get update && \
               apt-get install -y --no-install-recommends vulkan-sdk && \
               rm -rf /var/lib/apt/lists/*
+          
+          # 配置 git (make sync 需要)
+          RUN git config --global user.email "builder@ollama.local" && \
+              git config --global user.name "Ollama Builder"
           
           # 安装 CMake
           RUN curl -L "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | \
@@ -250,3 +255,4 @@ jobs:
           echo "- 必须设置 \`OLLAMA_VULKAN=1\` 环境变量才能启用 Vulkan" >> $GITHUB_STEP_SUMMARY
           echo "- AMD GPU 需要安装 AMDGPU 驱动或 Mesa Vulkan 驱动" >> $GITHUB_STEP_SUMMARY
           echo "- 某些模型可能在 Vulkan 后端遇到兼容性问题" >> $GITHUB_STEP_SUMMARY
+          echo "- 可用 \`GGML_VK_VISIBLE_DEVICES\` 环境变量选择特定 GPU" >> $GITHUB_STEP_SUMMARY
