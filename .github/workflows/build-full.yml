@@ -15,6 +15,13 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Maximize Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo docker image prune --all --force
+
       - name: Checkout Ollama
         uses: actions/checkout@v4
         with:
@@ -33,13 +40,14 @@ jobs:
               wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list && \
               apt-get update && apt-get install -y vulkan-sdk && \
               curl -fsSL "https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz" | \
-                tar xz -C /usr/local --strip-components=1
+                tar xz -C /usr/local --strip-components=1 && \
+              rm -rf /var/lib/apt/lists/*
           
           WORKDIR /build
           COPY CMakeLists.txt CMakePresets.json ./
           COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
           
-          # 单线程编译避免超时
+          # 单线程编译避免超时和内存溢出
           RUN cmake --preset Vulkan -DOLLAMA_RUNNER_DIR="vulkan" && \
               cmake --build --preset Vulkan --parallel 1 && \
               cmake --install build --component Vulkan --strip
@@ -63,9 +71,13 @@ jobs:
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase Username
+        run: |
+          echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
       - name: Build and Push
         uses: docker/build-push-action@v5
@@ -73,6 +85,73 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/ollama:latest
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Create Summary
+        if: success()
+        run: |
+          echo "## 🎉 构建成功" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 镜像信息" >> $GITHUB_STEP_SUMMARY
+          echo "- **镜像:** \`${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **基础:** ollama/ollama:latest (含 CUDA 11/12/13)" >> $GITHUB_STEP_SUMMARY
+          echo "- **新增:** Vulkan 支持" >> $GITHUB_STEP_SUMMARY
+          echo "- **大小:** ~3.5GB" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 使用方法" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 拉取镜像" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### NVIDIA GPU (CUDA - 自动)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d --gpus all \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### AMD 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --device=/dev/dri --device=/dev/kfd \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Intel 核显 (Vulkan)" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker run -d \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --device=/dev/dri \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -v ollama:/root/.ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -p 11434:11434 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  -e OLLAMA_VULKAN=1 \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --name ollama \\" >> $GITHUB_STEP_SUMMARY
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/ollama:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 验证" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# 查看 Vulkan 库" >> $GITHUB_STEP_SUMMARY
+          echo "docker exec ollama ls -lh /usr/lib/ollama/vulkan/" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 查看 Vulkan 设备" >> $GITHUB_STEP_SUMMARY
+          echo "docker exec ollama vulkaninfo --summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 测试运行" >> $GITHUB_STEP_SUMMARY
+          echo "docker exec -it ollama ollama run llama3.2:1b" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💡 提示" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 自动支持 NVIDIA GPU (CUDA 11/12/13)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 支持 AMD/Intel GPU (需设置 OLLAMA_VULKAN=1)" >> $GITHUB_STEP_SUMMARY
+          echo "- ⚠️ 单线程编译 Vulkan，构建时间约 2-3 小时" >> $GITHUB_STEP_SUMMARY
+          echo "- 📌 选择特定 GPU: \`GGML_VK_VISIBLE_DEVICES=0\`" >> $GITHUB_STEP_SUMMARY
