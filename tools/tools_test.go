@@ -1033,6 +1033,7 @@ func TestFindArguments(t *testing.T) {
 		name   string
 		buffer []byte
 		want   map[string]any
+		tool   string
 	}{
 		{
 			name:   "empty string",
@@ -1274,11 +1275,45 @@ func TestFindArguments(t *testing.T) {
 				"items": []any{"{", "}", map[string]any{"key": "value"}},
 			},
 		},
+		{
+			name:   "stringified arguments",
+			buffer: []byte(`{"name": "get_temperature", "arguments": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "stringified parameters",
+			buffer: []byte(`{"name": "get_temperature", "parameters": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "simple tool call",
+			tool:   "get_temperature",
+			buffer: []byte(`{"get_temperature": {"format": "fahrenheit", "location": "San Francisco, CA"}}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "stringified simple tool call",
+			tool:   "get_temperature",
+			buffer: []byte(`{"get_temperature": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := findArguments(tt.buffer)
+			got, _ := findArguments(&api.Tool{Function: api.ToolFunction{Name: tt.tool}}, tt.buffer)
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)

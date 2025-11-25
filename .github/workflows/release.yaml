@@ -15,44 +15,56 @@ jobs:
     environment: release
     outputs:
       GOFLAGS: ${{ steps.goflags.outputs.GOFLAGS }}
+      VERSION: ${{ steps.goflags.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
       - name: Set environment
         id: goflags
         run: |
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
+          echo VERSION="${GITHUB_REF_NAME#v}" >>$GITHUB_OUTPUT
 
   darwin-build:
-    runs-on: macos-13-xlarge
+    runs-on: macos-14-xlarge
     environment: release
     needs: setup-environment
-    strategy:
-      matrix:
-        os: [darwin]
-        arch: [amd64, arm64]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+      VERSION: ${{ needs.setup-environment.outputs.VERSION }}
+      APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APPLE_ID: ${{ vars.APPLE_ID }}
+      MACOS_SIGNING_KEY: ${{ secrets.MACOS_SIGNING_KEY }}
+      MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
+      CGO_CFLAGS: '-mmacosx-version-min=14.0 -O3'
+      CGO_CXXFLAGS: '-mmacosx-version-min=14.0 -O3'
+      CGO_LDFLAGS: '-mmacosx-version-min=14.0 -O3'
     steps:
       - uses: actions/checkout@v4
+      - run: |
+          echo $MACOS_SIGNING_KEY | base64 --decode > certificate.p12
+          security create-keychain -p password build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p password build.keychain
+          security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: |
-          go build -o dist/ .
-        env:
-          GOOS: ${{ matrix.os }}
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 1
-          CGO_CPPFLAGS: '-mmacosx-version-min=11.3'
-      - if: matrix.arch == 'amd64'
+          ./scripts/build_darwin.sh
+      - name: Log build results
         run: |
-          cmake --preset CPU -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64
-          cmake --build --parallel --preset CPU
-          cmake --install build --component CPU --strip --parallel 8
+          ls -l dist/
       - uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.os }}-${{ matrix.arch }}
-          path: dist/*
+          name: bundles-darwin
+          path: |
+            dist/*.tgz
+            dist/*.zip
+            dist/*.dmg
 
   windows-depends:
     strategy:
@@ -65,7 +77,26 @@ jobs:
             arch: amd64
             preset: 'CUDA 12'
             install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
             cuda-version: '12.8'
+            flags: ''
+          - os: windows
+            arch: amd64
+            preset: 'CUDA 13'
+            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.0'
             flags: ''
           - os: windows
             arch: amd64
@@ -73,6 +104,13 @@ jobs:
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             rocm-version: '6.2'
             flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+            runner_dir: 'rocm'
+          - os: windows
+            arch: amd64
+            preset: Vulkan
+            install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
+            flags: ''
+            runner_dir: 'vulkan'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -82,13 +120,14 @@ jobs:
         run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ')
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan')
         id: cache-install
         uses: actions/cache/restore@v4
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\VulkanSDK
           key: ${{ matrix.install }}
       - if: startsWith(matrix.preset, 'CUDA ')
         name: Install CUDA ${{ matrix.cuda-version }}
@@ -96,7 +135,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-            $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev") | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
+            $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
           }
 
@@ -118,6 +157,18 @@ jobs:
           echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: matrix.preset == 'Vulkan'
+        name: Install Vulkan ${{ matrix.rocm-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
+          }
+          
+          $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
+          echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
       - if: matrix.preset == 'CPU'
         run: |
           echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -128,6 +179,7 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\VulkanSDK
           key: ${{ matrix.install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -138,11 +190,15 @@ jobs:
         run: |
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
-          cmake --build --parallel --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
+          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
+          cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
+          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
+          Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
+      - name: Log build results
+        run: |
+          gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
       - uses: actions/upload-artifact@v4
         with:
           name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
@@ -153,19 +209,20 @@ jobs:
       matrix:
         os: [windows]
         arch: [amd64, arm64]
+        include:
+        - os: windows
+          arch: amd64
+          llvmarch: x86_64
+        - os: windows
+          arch: arm64
+          llvmarch: aarch64
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: [setup-environment]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+      VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
-      - name: Install AMD64 system dependencies
-        if: matrix.arch == 'amd64'
-        run: |
-          $ErrorActionPreference = "Stop"
-          Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
-          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install ARM64 system dependencies
         if: matrix.arch == 'arm64'
         run: |
@@ -175,24 +232,100 @@ jobs:
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.arm64.exe -OutFile "${{ runner.temp }}\vc_redist.arm64.exe"
+          Start-Process -FilePath "${{ runner.temp }}\vc_redist.arm64.exe" -ArgumentList @("/install", "/quiet", "/norestart") -NoNewWindow -Wait
+
           choco install -y --no-progress git gzip
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
-          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
-          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
-          echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install clang and gcc-compat
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-${{ matrix.llvmarch }}.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt*").path
+          echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify gcc is actually clang
+        run: |
+          $ErrorActionPreference='Continue'
+          $version=& gcc -v 2>&1
+          $version=$version -join "`n"
+          echo "gcc is $version"
+          if ($version -notmatch 'clang') {
+            echo "ERROR: GCC must be clang for proper utf16 handling"
+            exit 1
+          }
+          $ErrorActionPreference='Stop'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - run: |
-          go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
+          ./scripts/build_windows ollama app
+      - name: Log build results
+        run: |
+          gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
       - uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            dist\${{ matrix.os }}-${{ matrix.arch }}\*.exe
+            dist\*
+
+  windows-app:
+    runs-on: windows
+    environment: release
+    needs: [windows-build, windows-depends]
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+      VERSION: ${{ needs.setup-environment.outputs.VERSION }}
+      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ollama
+          credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
+      - run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
+          Start-Process "${{ runner.temp }}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
+
+          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${{ runner.temp }}\plugin.zip"
+          Expand-Archive -Path "${{ runner.temp }}\plugin.zip" -DestinationPath "${{ runner.temp }}\plugin\"
+          & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
+
+          echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: depends-windows*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-windows*
+          path: dist
+          merge-multiple: true
+      - name: Log dist contents after download
+        run: |
+          gci -path .\dist -recurse
+      - run: |
+          ./scripts/build_windows.ps1 deps sign installer zip
+      - name: Log contents after build
+        run: |
+          gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-windows
+          path: |
+            dist/*.zip
+            dist/OllamaSetup.exe
 
   linux-build:
     strategy:
@@ -232,7 +365,8 @@ jobs:
             case "$COMPONENT" in
               bin/ollama)                echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/cuda_sbsa)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
@@ -251,7 +385,7 @@ jobs:
           done
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
+          name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
             *.tgz
 
@@ -345,17 +479,28 @@ jobs:
           docker buildx imagetools inspect ${{ vars.DOCKER_REPO }}:${{ steps.metadata.outputs.version }}
         working-directory: ${{ runner.temp }}
 
-  # Trigger downstream release process
-  trigger:
+  # Final release process
+  release:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-build, windows-depends, linux-build]
+    needs: [darwin-build, windows-app, linux-build]
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundles-*
+          path: dist
+          merge-multiple: true
+      - name: Log dist contents
+        run: |
+          ls -l dist/
+      - name: Generate checksum file
+        run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
+        working-directory: dist
       - name: Create or update Release for tag
         run: |
           RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
@@ -372,12 +517,17 @@ jobs:
               --generate-notes \
               --prerelease
           fi
-      - name: Trigger downstream release process
+      - name: Upload release artifacts
         run: |
-          curl -L \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.RELEASE_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/ollama/${{ vars.RELEASE_REPO }}/dispatches \
-            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\", \"origin\": \"${GITHUB_REPOSITORY}\", \"publish\": \"1\"}}"
+          pids=()
+          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.exe dist/*.dmg ; do
+            echo "Uploading $payload"
+            gh release upload ${GITHUB_REF_NAME} $payload --clobber &
+            pids[$!]=$!
+            sleep 1
+          done
+          echo "Waiting for uploads to complete"
+          for pid in "${pids[*]}"; do
+            wait $pid
+          done
+          echo "done"

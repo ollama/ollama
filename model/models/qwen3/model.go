@@ -3,6 +3,7 @@ package qwen3
 import (
 	"cmp"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -15,11 +16,17 @@ import (
 )
 
 type Options struct {
-	hiddenSize, numHeads, numKVHeads int
-	eps                              float32
-	ropeBase, ropeScale              float32
+	hiddenSize,
+	numHeads,
+	numKVHeads,
+	keyLength,
+	valueLength int
 
-	keyLength, valueLength int
+	eps,
+	ropeBase,
+	ropeScale float32
+	ropeType              string
+	originalContextLength int
 
 	numExperts, numExpertsUsed int
 	normTopKProb               bool
@@ -29,11 +36,24 @@ func (o Options) headDim() int {
 	return cmp.Or(o.keyLength, o.valueLength, o.hiddenSize/o.numHeads)
 }
 
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	opts := []func(*rope.Options){rope.WithTypeNeoX()}
+	if o.ropeType == "yarn" {
+		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
+		opts = append(opts,
+			rope.WithOriginalContextLength(o.originalContextLength),
+			rope.WithExtrapolationFactor(1.),
+			rope.WithAttentionFactor(attnFactor),
+		)
+	}
+	return fast.RoPE(ctx, states, positions, o.headDim(), o.ropeBase, 1./o.ropeScale, opts...)
+}
+
 type Attention struct {
-	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Query     *nn.Linear  `gguf:"attn_q"`
-	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
+	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Key       *nn.Linear  `gguf:"attn_k"`
+	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
 	Value     *nn.Linear  `gguf:"attn_v"`
 	Output    *nn.Linear  `gguf:"attn_output"`
 }
@@ -52,8 +72,8 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 	query = sa.QueryNorm.Forward(ctx, query, opts.eps)
 	key = sa.KeyNorm.Forward(ctx, key, opts.eps)
 
-	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
-	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
+	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
 	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
@@ -65,10 +85,10 @@ type MLP interface {
 }
 
 type sparse struct {
-	Router *nn.Linear `gguf:"ffn_gate_inp"`
-	Gate   *nn.Linear `gguf:"ffn_gate_exps"`
-	Up     *nn.Linear `gguf:"ffn_up_exps"`
-	Down   *nn.Linear `gguf:"ffn_down_exps"`
+	Router *nn.Linear      `gguf:"ffn_gate_inp"`
+	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
 func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
@@ -87,13 +107,9 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
-	upStates := mlp.Up.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates, selectedExperts).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates, selectedExperts))
 
-	hiddenStates = mlp.Gate.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
-	hiddenStates = hiddenStates.SILU(ctx)
-	hiddenStates = hiddenStates.Mul(ctx, upStates)
-
-	experts := mlp.Down.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
+	experts := mlp.Down.Forward(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)
 
 	nextStates := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
@@ -111,7 +127,8 @@ type dense struct {
 }
 
 func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *Options) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).
+		SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
@@ -154,29 +171,39 @@ type Model struct {
 	*Options
 }
 
-// Forward implements model.Model.
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	hiddenStates, err := m.forward(ctx, batch)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.Output.Forward(ctx, hiddenStates), nil
+}
+
+// Forward implements model.Model.
+func (m *Model) forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	for i, layer := range m.Layers {
-		m.Cache.SetLayer(i)
+		if m.Cache != nil {
+			m.Cache.SetLayer(i)
+		}
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
 	}
 
-	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
-	return m.Output.Forward(ctx, hiddenStates), nil
+	return m.OutputNorm.Forward(ctx, hiddenStates, m.eps), nil
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.headDim(), m.ropeBase, m.ropeScale, rope.WithTypeNeoX()), nil
+	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 var _ model.Model = (*Model)(nil)
@@ -184,7 +211,7 @@ var _ model.Model = (*Model)(nil)
 func New(c fs.Config) (model.Model, error) {
 	layers := make([]Layer, c.Uint("block_count"))
 	for i := range layers {
-		if c.String("general.architecture") == "qwen3moe" {
+		if strings.HasSuffix(c.String("general.architecture"), "moe") {
 			layers[i].MLP = &sparse{}
 		} else {
 			layers[i].MLP = &dense{}
@@ -193,7 +220,6 @@ func New(c fs.Config) (model.Model, error) {
 
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
-			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -206,20 +232,23 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		Layers: layers,
 		Options: &Options{
-			hiddenSize:     int(c.Uint("embedding_length")),
-			numHeads:       int(c.Uint("attention.head_count")),
-			numKVHeads:     int(c.Uint("attention.head_count_kv")),
-			keyLength:      int(c.Uint("attention.key_length")),
-			valueLength:    int(c.Uint("attention.value_length")),
-			eps:            c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:       c.Float("rope.freq_base"),
-			ropeScale:      c.Float("rope.freq_scale", 1),
-			numExperts:     int(c.Uint("expert_count")),
-			numExpertsUsed: int(c.Uint("expert_used_count")),
-			normTopKProb:   c.Bool("norm_top_k_prob", true),
+			hiddenSize:            int(c.Uint("embedding_length")),
+			numHeads:              int(c.Uint("attention.head_count")),
+			numKVHeads:            int(c.Uint("attention.head_count_kv")),
+			keyLength:             int(c.Uint("attention.key_length")),
+			valueLength:           int(c.Uint("attention.value_length")),
+			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
+			ropeType:              c.String("rope.scaling.type"),
+			ropeBase:              c.Float("rope.freq_base"),
+			ropeScale:             c.Float("rope.scaling.factor", 1),
+			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
+			numExperts:            int(c.Uint("expert_count")),
+			numExpertsUsed:        int(c.Uint("expert_used_count")),
+			normTopKProb:          c.Bool("norm_top_k_prob", true),
 		},
 	}
 
@@ -230,4 +259,5 @@ func New(c fs.Config) (model.Model, error) {
 func init() {
 	model.Register("qwen3", New)
 	model.Register("qwen3moe", New)
+	model.Register("qwen3_embed", newEmbed)
 }

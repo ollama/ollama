@@ -1,30 +1,17 @@
 package harmony
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
-	"github.com/ollama/ollama/template"
 )
 
 type harmonyParserState int
-
-func ShouldUseHarmony(modelFamily string, template *template.Template) bool {
-	if slices.Contains([]string{"gptoss", "gpt-oss"}, modelFamily) {
-		// heuristic to check whether the template expects to be parsed via harmony:
-		// search for harmony tags that are nearly always used
-		if template.Contains("<|start|>") && template.Contains("<|end|>") {
-			return true
-		}
-	}
-
-	return false
-}
 
 const (
 	harmonyParserState_LookingForMessageStart harmonyParserState = iota
@@ -89,28 +76,18 @@ func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
 }
 
-func Prefill(lastMessage api.Message) string {
-	if lastMessage.Role != "assistant" {
-		return ""
+func (s *HarmonyParser) AddImplicitStartOrPrefill(lastMessage *api.Message) {
+	if lastMessage != nil && lastMessage.Role == "assistant" {
+		// handle prefilling conditions
+		if lastMessage.Content != "" {
+			s.acc.WriteString("<|start|>assistant<|channel|>final<|message|>")
+			return
+		} else if lastMessage.Thinking != "" {
+			s.acc.WriteString("<|start|>assistant<|channel|>analysis<|message|>")
+			return
+		}
 	}
-
-	switch {
-	case strings.TrimSpace(lastMessage.Content) != "":
-		return "<|start|>assistant<|channel|>final<|message|>"
-	case strings.TrimSpace(lastMessage.Thinking) != "":
-		return "<|start|>assistant<|channel|>analysis<|message|>"
-	default:
-		return ""
-	}
-}
-
-// AddImplicitStartOrPrefill adds an implicit start tag or prefill string if provided
-func (s *HarmonyParser) AddImplicitStartOrPrefill(prefillString string) {
-	if strings.TrimSpace(prefillString) != "" {
-		s.acc.WriteString(prefillString)
-	} else {
-		s.AddImplicitStart()
-	}
+	s.AddImplicitStart()
 }
 
 func (s *HarmonyParser) AddContent(content string) []HarmonyEvent {
@@ -289,6 +266,8 @@ type HarmonyMessageHandler struct {
 	state           harmonyMessageState
 	HarmonyParser   *HarmonyParser
 	FunctionNameMap *FunctionNameMap
+	toolAccumulator *HarmonyToolCallAccumulator
+	convertedTools  map[string]struct{}
 }
 
 // NewHarmonyMessageHandler creates a new message handler
@@ -301,6 +280,7 @@ func NewHarmonyMessageHandler() *HarmonyMessageHandler {
 			HeaderEndTag:    "<|message|>",
 		},
 		FunctionNameMap: NewFunctionNameMap(),
+		convertedTools:  make(map[string]struct{}),
 	}
 }
 
@@ -408,8 +388,85 @@ func NewFunctionNameMap() *FunctionNameMap {
 	}
 }
 
+// Init initializes the handler with tools, optional last message, and think value
+// Implements the Parser interface
+func (h *HarmonyMessageHandler) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	// Initialize the harmony parser
+	if h.HarmonyParser == nil {
+		h.HarmonyParser = &HarmonyParser{
+			MessageStartTag: "<|start|>",
+			MessageEndTag:   "<|end|>",
+			HeaderEndTag:    "<|message|>",
+		}
+	}
+
+	// Handle prefill for chat mode
+	if lastMessage != nil {
+		h.HarmonyParser.AddImplicitStartOrPrefill(lastMessage)
+	} else {
+		h.HarmonyParser.AddImplicitStart()
+	}
+
+	// Initialize tool accumulator
+	h.toolAccumulator = h.CreateToolParser()
+
+	// Process tools and return renamed versions
+	if len(tools) == 0 {
+		return tools
+	}
+
+	processedTools := make([]api.Tool, len(tools))
+	copy(processedTools, tools)
+	for i, tool := range processedTools {
+		if tool.Function.Name != "" {
+			processedTools[i].Function.Name = h.FunctionNameMap.ConvertAndAdd(tool.Function.Name)
+			h.convertedTools[tool.Function.Name] = struct{}{}
+		}
+	}
+	return processedTools
+}
+
+// Add implements the Parser interface - processes streamed content and extracts content, thinking, and tool calls
+func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
+	content, thinking, toolContent := h.AddContent(s, h.toolAccumulator)
+	if toolContent != "" {
+		h.toolAccumulator.Add(toolContent)
+	}
+
+	// tool calls always happen one at a time, and always at the end of a message,
+	// so for simplicity we defer parsing them until we know we're done
+	if done {
+		toolName, raw := h.toolAccumulator.Drain()
+		if toolName != nil {
+			name := strings.TrimPrefix(*toolName, "functions.")
+			name = h.FunctionNameMap.OriginalFromConverted(name)
+			var args api.ToolCallFunctionArguments
+			if err := json.Unmarshal([]byte(raw), &args); err != nil {
+				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
+			}
+			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
+		}
+	}
+
+	return content, thinking, calls, nil
+}
+
+// HasToolSupport implements the Parser interface
+func (h *HarmonyMessageHandler) HasToolSupport() bool {
+	return true
+}
+
+// HasThinkingSupport implements the Parser interface
+func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
+	return true
+}
+
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {
 	harmonyFunctionName := m.deriveName(userFunctionName)
+	// built-in functions should not be renamed
+	if userFunctionName == "browser.open" || userFunctionName == "browser.search" || userFunctionName == "browser.find" || userFunctionName == "python" {
+		harmonyFunctionName = userFunctionName
+	}
 	m.userToHarmony[userFunctionName] = harmonyFunctionName
 	m.harmonyToUser[harmonyFunctionName] = userFunctionName
 	return harmonyFunctionName

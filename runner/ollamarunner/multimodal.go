@@ -86,6 +86,9 @@ func (m multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Ten
 		computeCtx.Forward(tensors...)
 		entry.data = make([][]float32, len(entry.mm))
 
+		// Multimodal processing is computationally intensive, so treat it similarly to a large batch
+		computeCtx.SetBatchSize(512)
+
 		if !reserve {
 			computeCtx.Compute(tensors...)
 
@@ -102,7 +105,7 @@ func (m multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Ten
 	for i, t := range entry.mm {
 		if in == t.Tensor {
 			if !reserve {
-				return ctx.Input().FromFloatSlice(entry.data[i], t.Tensor.Shape()...), nil
+				return ctx.Input().FromFloats(entry.data[i], t.Tensor.Shape()...), nil
 			} else {
 				return ctx.Input().Empty(t.Tensor.DType(), t.Tensor.Shape()...), nil
 			}

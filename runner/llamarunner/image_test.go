@@ -3,16 +3,18 @@ package llamarunner
 import (
 	"reflect"
 	"testing"
+
+	"github.com/ollama/ollama/llama"
 )
 
 func TestImageCache(t *testing.T) {
 	cache := ImageContext{images: make([]imageCache, 4)}
 
-	valA := [][]float32{{0.1, 0.2}, {0.3}}
-	valB := [][]float32{{0.4}, {0.5}, {0.6}}
-	valC := [][]float32{{0.7}}
-	valD := [][]float32{{0.8}}
-	valE := [][]float32{{0.9}}
+	valA := []llama.MtmdChunk{{Embed: []float32{0.1, 0.2}}, {Embed: []float32{0.3}}}
+	valB := []llama.MtmdChunk{{Embed: []float32{0.4}}, {Embed: []float32{0.5}}, {Embed: []float32{0.6}}}
+	valC := []llama.MtmdChunk{{Embed: []float32{0.7}}}
+	valD := []llama.MtmdChunk{{Embed: []float32{0.8}}}
+	valE := []llama.MtmdChunk{{Embed: []float32{0.9}}}
 
 	// Empty cache
 	result, err := cache.findImage(0x5adb61d31933a946)

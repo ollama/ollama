@@ -7,7 +7,7 @@
 #include "ggml-cpu.h"
 #include "traits.h"
 
-#if defined(__gnu_linux__)
+#if defined(__linux__)
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
@@ -149,6 +149,7 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
         if (op->op == GGML_OP_MUL_MAT && is_contiguous_2d(op->src[0]) &&  // src0 must be contiguous
             is_contiguous_2d(op->src[1]) &&                               // src1 must be contiguous
             op->src[0]->buffer && op->src[0]->buffer->buft == ggml_backend_amx_buffer_type() &&
+            op->src[0]->ne[0] % (TILE_K * 2 * 32) == 0 && // TODO: not sure if correct (https://github.com/ggml-org/llama.cpp/pull/16315)
             op->ne[0] % (TILE_N * 2) == 0 &&                              // out_features is 32x
             (qtype_has_amx_kernels(op->src[0]->type) || (op->src[0]->type == GGML_TYPE_F16))) {
             // src1 must be host buffer
@@ -186,7 +187,7 @@ static size_t ggml_backend_amx_buffer_type_get_alloc_size(ggml_backend_buffer_ty
 #define XFEATURE_XTILEDATA      18
 
 static bool ggml_amx_init() {
-#if defined(__gnu_linux__)
+#if defined(__linux__)
     if (syscall(SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA)) {
         fprintf(stderr, "AMX is not ready to be used!\n");
         return false;
@@ -194,6 +195,8 @@ static bool ggml_amx_init() {
     return true;
 #elif defined(_WIN32)
     return true;
+#else
+    return false;
 #endif
 }
 

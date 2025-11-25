@@ -242,11 +242,16 @@ func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
 		"gemma3",
 		"gemma3n",
-		"mistral3",
+		"gptoss", "gpt-oss",
 		"llama4",
+		"mistral3",
 		"mllama",
 		"qwen25vl",
-		"gptoss", "gpt-oss",
+		"qwen3", "qwen3moe",
+		"qwen3vl", "qwen3vlmoe",
+		"deepseekocr",
+		"deepseek2",
+		"nomic-bert",
 	}, kv.Architecture())
 }
 
@@ -795,87 +800,23 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	return
 }
 
-func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
-	if llm.KV().Uint("vision.block_count") == 0 {
-		return
-	}
-
-	for name, layer := range llm.Tensors().GroupLayers() {
-		if name == "v" || strings.HasPrefix(name, "v.") {
-			for _, tensor := range layer {
-				weights += tensor.Size()
-			}
-		}
-	}
-
-	imageSize := uint64(llm.KV().Uint("vision.image_size"))
-	patchSize := uint64(llm.KV().Uint("vision.patch_size"))
-	if patchSize == 0 {
-		slog.Warn("unknown patch size for vision model")
-		return
-	}
-
-	numChannels := uint64(llm.KV().Uint("vision.num_channels"))
-
-	numPatches := (imageSize / patchSize) * (imageSize / patchSize)
-	if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-		numPatches++
-	}
-
-	headCount := uint64(llm.KV().Uint("vision.attention.head_count"))
-	embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
-
-	switch llm.KV().Architecture() {
-	case "mllama":
-		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
-
-		maxNumTiles := uint64(llm.KV().Uint("vision.max_num_tiles"))
-
-		graphSize = 4 * (8 +
-			imageSize*imageSize*numChannels*maxNumTiles +
-			embeddingLength*numPatches*maxNumTiles +
-			9*embeddingLength*numPaddedPatches*maxNumTiles +
-			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
-	case "gemma3", "mistral3":
-		graphSize = 4 * (imageSize*imageSize*numChannels +
-			embeddingLength*patchSize +
-			numPatches*numPatches*headCount)
-	case "qwen25vl":
-		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
-
-		numPatches := maxPixels / (patchSize * patchSize)
-
-		graphSize = 4 * (maxPixels*numChannels + // Original image storage
-			// Normalized pixels
-			maxPixels*numChannels +
-			// Patches storage (numPatches * channels * patchSize^2)
-			numPatches*numChannels*patchSize*patchSize +
-			// Self-attention calculations
-			numPatches*numPatches*headCount +
-			// Additional buffer for processing
-			embeddingLength*numPatches)
-	case "llama4":
-		// vision graph is computed independently in the same schedule
-		// and is negligible compared to the worst case text graph
-	}
-
-	return weights, graphSize
-}
-
 // SupportsKVCacheType checks if the requested cache type is supported
 func (f GGML) SupportsKVCacheType(cacheType string) bool {
-	if arch := f.KV().Architecture(); slices.Contains([]string{"gptoss", "gpt-oss"}, arch) {
-		// gpt-oss uses attention with sinks which does not support quantized cache types
-		slog.Warn("model only supports non-quantized cache types ", "mode", arch)
-		return cacheType == "f16"
+	if cacheType == "" || cacheType == "f16" {
+		return true
 	}
-	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
+
+	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
+		return false
+	}
+
+	if arch := f.KV().Architecture(); slices.Contains([]string{"gemma2"}, arch) {
 		return false
 	}
 
@@ -888,7 +829,10 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"gemma3",
 		"gptoss", "gpt-oss",
+		"qwen3", "qwen3moe",
+		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
 }
 

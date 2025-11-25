@@ -114,6 +114,9 @@ message(STATUS "GGML_SYSTEM_ARCH: ${GGML_SYSTEM_ARCH}")
 
 if (NOT MSVC)
     if (GGML_STATIC)
+        if (UNIX AND NOT APPLE)
+            set(CMAKE_FIND_LIBRARY_SUFFIXES ".a;.so")
+        endif()
         add_link_options(-static)
         if (MINGW)
             add_link_options(-static-libgcc -static-libstdc++)
@@ -142,6 +145,9 @@ endif()
 # which was introduced in POSIX.1-2008, forcing us to go higher
 if (CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
     add_compile_definitions(_XOPEN_SOURCE=700)
+elseif (CMAKE_SYSTEM_NAME MATCHES "AIX")
+    # Don't define _XOPEN_SOURCE.  We need _ALL_SOURCE, which is the default,
+    # in order to define _SC_PHYS_PAGES.
 else()
     add_compile_definitions(_XOPEN_SOURCE=600)
 endif()
@@ -203,6 +209,9 @@ add_library(ggml-base
             ggml-threading.h
             ggml-quants.c
             ggml-quants.h
+            mem_hip.cpp
+            mem_nvml.cpp
+            mem_dxgi_pdh.cpp
             gguf.cpp)
 
 target_include_directories(ggml-base PRIVATE .)
@@ -301,6 +310,10 @@ function(ggml_add_cpu_backend_variant tag_name)
         foreach (feat ${ARGN})
             set(GGML_INTERNAL_${feat} ON)
         endforeach()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
+        foreach (feat ${ARGN})
+            set(GGML_INTERNAL_${feat} ON)
+        endforeach()
     endif()
 
     ggml_add_cpu_backend_variant_impl(${tag_name})
@@ -363,6 +376,14 @@ if (GGML_CPU_ALL_VARIANTS)
         else()
             message(FATAL_ERROR "Unsupported PowerPC target OS: ${CMAKE_SYSTEM_NAME}")
         endif()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
+        if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+            ggml_add_cpu_backend_variant(s390x_z15  Z15 VXE)
+            # ggml_add_cpu_backend_variant(s390x_z16  Z16 VXE)
+            # ggml_add_cpu_backend_variant(s390x_z17  Z17 VXE)
+        else()
+            message(FATAL_ERROR "Unsupported s390x target OS: ${CMAKE_SYSTEM_NAME}")
+        endif()
     else()
         message(FATAL_ERROR "GGML_CPU_ALL_VARIANTS not yet supported with ${GGML_SYSTEM_ARCH} on ${CMAKE_SYSTEM_NAME}")
     endif()
@@ -380,7 +401,9 @@ ggml_add_backend(RPC)
 ggml_add_backend(SYCL)
 ggml_add_backend(Vulkan)
 ggml_add_backend(WebGPU)
+ggml_add_backend(zDNN)
 ggml_add_backend(OpenCL)
+ggml_add_backend(Hexagon)
 
 foreach (target ggml-base ggml)
     target_include_directories(${target} PUBLIC    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include> $<INSTALL_INTERFACE:include>)
