@@ -58,7 +58,7 @@ index 639d551a2..e5c446d1d 100644
  GGML_API size_t gguf_type_size(enum gguf_type type);
  GGML_API struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_params params);
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 53b57c179..b2855b078 100644
+index 7669ed206..63a762ec2 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -387,12 +387,76 @@ static constexpr uint32_t num_argsort_pipelines = 11;

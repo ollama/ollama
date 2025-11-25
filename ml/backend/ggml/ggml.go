@@ -314,7 +314,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			"altup_proj", "altup_unembd_proj",
 			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
 			createTensor(tensor{source: t}, output.bts, blocks)
-		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
+		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm.") || strings.HasPrefix(t.Name, "s."):
 			// TODO: assign vision tensors to the gpu if possible
 			createTensor(tensor{source: t}, output.bts, blocks)
 		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
@@ -499,7 +499,6 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range b.meta.Tensors().Items() {
-		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
@@ -1137,13 +1136,6 @@ func (t *Tensor) Cast(ctx ml.Context, dtype ml.DType) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
-	}
-}
-
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1346,6 +1338,13 @@ func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1386,6 +1385,10 @@ func inferShape(t *Tensor, shape []int) {
 }
 
 func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
+	if !C.ggml_is_contiguous(t.t) {
+		return t.Contiguous(ctx, shape...)
+	}
+
 	if slices.Contains(shape, -1) {
 		inferShape(t, shape)
 	}
@@ -1575,6 +1578,16 @@ func (t *Tensor) GELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) QuickGELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
+	var tt *C.struct_ggml_tensor
+	if len(t2) > 0 {
+		tt = C.ggml_geglu_quick_split(ctx.(*Context).ctx, t.t, t2[0].(*Tensor).t)
+	} else {
+		tt = C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t)
+	}
+	return &Tensor{b: t.b, t: tt}
+}
+
 func (t *Tensor) SILU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	if len(t2) > 0 {
 		return &Tensor{
@@ -1632,21 +1645,7 @@ func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
-	var tt *C.struct_ggml_tensor
-	switch len(strides) {
-	case 0:
-		tt = C.ggml_set_1d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset))
-	case 1:
-		tt = C.ggml_set_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset), C.size_t(strides[0]))
-	default:
-		panic("unsupported number of dimensions")
-	}
-
-	return &Tensor{b: t.b, t: tt}
-}
-
-func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, scale float64) ml.Tensor {
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64) ml.Tensor {
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
 		kqMask = mask.(*Tensor).t
@@ -1663,6 +1662,16 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 			C.ggml_flash_attn_ext_add_sinks(kqv, sinks.(*Tensor).t)
 		}
 		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32)
+
+		if vmla != nil {
+			var cur ml.Tensor = &Tensor{b: t.b, t: kqv}
+			cur = cur.Permute(ctx, 0, 2, 1, 3)
+			cur = vmla.Mulmat(ctx, cur)
+			cur = cur.Permute(ctx, 0, 2, 1, 3)
+			cur = cur.Contiguous(ctx)
+			kqv = cur.(*Tensor).t
+		}
+
 		return &Tensor{b: t.b, t: kqv}
 	} else {
 		kq := key.MulmatFullPrec(ctx, query)
@@ -1675,6 +1684,10 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 		}
 
 		kqv := value.Mulmat(ctx, kq)
+		if vmla != nil {
+			kqv = vmla.Mulmat(ctx, kqv)
+		}
+
 		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
 }
@@ -1732,9 +1745,82 @@ func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+func (t *Tensor) Interpolate(ctx ml.Context, dims [4]int, samplingMode ml.SamplingMode) ml.Tensor {
+	var mode C.uint32_t
+	switch samplingMode {
+	case ml.SamplingModeNearest:
+		mode = C.GGML_SCALE_MODE_NEAREST
+	case ml.SamplingModeBilinear:
+		mode = C.GGML_SCALE_MODE_BILINEAR
+	default:
+		panic("unsupported interpolate mode")
+	}
+
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
+		t: C.ggml_interpolate(ctx.(*Context).ctx, t.t, C.int64_t(dims[0]), C.int64_t(dims[1]), C.int64_t(dims[2]), C.int64_t(dims[3]), mode),
 	}
+}
+
+// Slice returns a view of the tensor sliced along dim from low to high in step steps.
+// Slice panics if the dimension is invalid or the slice parameters are out of range.
+// If dim=0 and step>1, the tensor is a copy rather than a view to ensure proper shape.
+func (t *Tensor) Slice(ctx ml.Context, dim int, low, high, step int) ml.Tensor {
+	if dim < 0 || dim >= C.GGML_MAX_DIMS {
+		panic("invalid dimension")
+	} else if low < 0 || high > t.Dim(dim) || low >= high || step < 1 {
+		panic("invalid slice parameters")
+	}
+
+	if dim == 0 && step > 1 {
+		// dim=0,step>1 is a special case so handle it here first
+		return t.View(ctx,
+			low*t.Stride(0), 1,
+			step*t.Stride(0), (high-low+1)/step,
+			t.Stride(1), t.Dim(1),
+			// preserve dim 3 by merging it into dim 2
+			t.Stride(2), t.Dim(2)*t.Dim(3),
+		).Contiguous(ctx, (high-low+1)/step, t.Dim(1), t.Dim(2), t.Dim(3))
+	}
+
+	args := []int{
+		low * t.Stride(dim), t.Dim(0),
+		t.Stride(1), t.Dim(1),
+		t.Stride(2), t.Dim(2),
+		t.Stride(3), t.Dim(3),
+	}
+
+	if step == 1 {
+		args[dim*2+1] = high - low
+		return t.View(ctx, args[0], args[1:]...)
+	} else {
+		args[dim*2] = step * t.Stride(dim)
+		args[dim*2+1] = (high - low + 1) / step
+		return t.View(ctx, args[0], args[1:]...)
+	}
+}
+
+// Chunk the tensor into chunk sized tensors along dim. Each sub-tensor is a view of
+// the original.
+func (t *Tensor) Chunk(ctx ml.Context, dim, chunk int) []ml.Tensor {
+	sections := make([]int, 0, t.Dim(dim)/chunk+1)
+	for rest := t.Dim(dim); rest > 0; rest -= chunk {
+		sections = append(sections, min(chunk, rest))
+	}
+	return t.ChunkSections(ctx, dim, sections...)
+}
+
+// ChunkSections split the tensor into section sized tensors along dim. Each sub-tensor is a
+// view of the original. The size of the dim must equal the sum of sections.
+func (t *Tensor) ChunkSections(ctx ml.Context, dim int, sections ...int) []ml.Tensor {
+	var offset int
+	s := make([]ml.Tensor, len(sections))
+	for i, section := range sections {
+		s[i] = t.Slice(ctx, dim, offset, offset+section, 1)
+		offset += section
+	}
+	if offset != t.Dim(dim) {
+		panic("sections do not sum to tensor dimension")
+	}
+	return s
 }

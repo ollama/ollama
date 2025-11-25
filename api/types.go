@@ -366,6 +366,9 @@ type TokenLogprob struct {
 
 	// Logprob is the log probability of this token.
 	Logprob float64 `json:"logprob"`
+
+	// Bytes contains the raw byte representation of the token
+	Bytes []int `json:"bytes,omitempty"`
 }
 
 // Logprob contains log probability information for a generated token.
