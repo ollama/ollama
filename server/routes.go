@@ -2186,7 +2186,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 
-					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done {
+					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
 					} else {
@@ -2228,6 +2228,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					} else if res.Message.Thinking != "" {
 						// don't return
 					} else {
+						if len(res.Logprobs) > 0 && !r.Done {
+							logprobRes := res
+							logprobRes.Message.Content = ""
+							logprobRes.Message.ToolCalls = nil
+							ch <- logprobRes
+						}
 						if r.Done {
 							res.Message.Content = toolParser.Content()
 							ch <- res
