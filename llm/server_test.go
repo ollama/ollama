@@ -26,10 +26,11 @@ func TestLLMServerFitGPU(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name:     "No GPU",
-			layers:   []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
-			numGPU:   -1,
-			expected: ml.GPULayersList{},
+			name:        "No GPU",
+			layers:      []int{50 * format.MebiByte, 50 * format.MebiByte, 50 * format.MebiByte},
+			numGPU:      -1,
+			expected:    ml.GPULayersList{},
+			requireFull: true, // Should not try to evict even though we can't load any layers
 		},
 		{
 			name:     "Full single GPU",
