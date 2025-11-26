@@ -157,6 +157,32 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
 		}
+		// Sort baseLayers here to ensure that split model will be correctly ordered
+		slices.SortStableFunc(baseLayers, func(a, b *layerGGML) int {
+			var aScore, bScore int
+			if a.GGML == nil {
+				// chat template and parameter can be added here. use very big number to move them at last
+				aScore = 0x7fffffff
+			} else {
+				aSplit := a.GGML.KV().GGUFSplitInfo()
+				if aSplit == nil {
+					aScore = -1
+				} else {
+					aScore = int(aSplit.No)
+				}
+			}
+			if b.GGML == nil {
+				bScore = 0x7fffffff
+			} else {
+				bSplit := b.GGML.KV().GGUFSplitInfo()
+				if bSplit == nil {
+					bScore = -1
+				} else {
+					bScore = int(bSplit.No)
+				}
+			}
+			return cmp.Compare(aScore, bScore)
+		})
 
 		var adapterLayers []*layerGGML
 		if !remote && r.Adapters != nil {
