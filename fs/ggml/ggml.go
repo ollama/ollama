@@ -10,7 +10,6 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -36,8 +35,8 @@ type MetaGGML struct {
 }
 
 type GGUFSplitInfo struct {
-	no    uint32
-	count uint32
+	No    uint16
+	Count uint16
 }
 
 type KV map[string]any
@@ -64,13 +63,14 @@ func (kv KV) FileType() FileType {
 }
 
 func (kv KV) GGUFSplitInfo() *GGUFSplitInfo {
-	no := kv.Uint("split.no", 0xffffffff)
-	if no == 0xffffffff {
+	no, found := keyValue(kv, "split.no", uint16(0))
+	if !found {
 		return nil
 	}
+	count, _ := keyValue(kv, "split.count", uint16(0))
 	return &GGUFSplitInfo{
-		no:    no,
-		count: kv.Uint("split.count"),
+		No:    no,
+		Count: count,
 	}
 }
 
@@ -642,16 +642,16 @@ func MakeMetaGGML(ggmls []GGML, ggmlPaths []string) MetaGGML {
 	type wrapper struct {
 		ggml   GGML
 		path   string
-		weight int64
+		weight int
 	}
 	var wrappers []wrapper
 	for i := range ggmls {
 		iSplitInfo := ggmls[i].KV().GGUFSplitInfo()
-		var weight int64 = 0
+		var weight int = 0
 		if iSplitInfo == nil {
 			weight = -1
 		} else {
-			weight = int64((*iSplitInfo).no)
+			weight = int((*iSplitInfo).No)
 		}
 		wrappers = append(wrappers, wrapper{
 			ggml:   ggmls[i],
@@ -659,8 +659,8 @@ func MakeMetaGGML(ggmls []GGML, ggmlPaths []string) MetaGGML {
 			weight: weight,
 		})
 	}
-	sort.SliceStable(wrappers, func(i, j int) bool {
-		return wrappers[i].weight < wrappers[j].weight
+	slices.SortStableFunc(wrappers, func(a, b wrapper) int {
+		return cmp.Compare(a.weight, b.weight)
 	})
 	metaGgml := MetaGGML{}
 	for i := range wrappers {
