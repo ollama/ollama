@@ -17,6 +17,45 @@ func TestDeepSeekRenderer(t *testing.T) {
 		expected   string
 	}{
 		{
+			name: "debug multi-turn conversation",
+			messages: []api.Message{
+				{Role: "user", Content: "hey!"},
+				{Role: "assistant", Content: "Hey there! 👋 How's it going?"},
+				{Role: "user", Content: "how are you?"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>hey!<｜Assistant｜></think>Hey there! 👋 How's it going?<｜end▁of▁sentence｜><｜User｜>how are you?<｜Assistant｜><think>`,
+		},
+		{
+			name: "historical message with thinking field",
+			messages: []api.Message{
+				{Role: "user", Content: "hello"},
+				{
+					Role:     "assistant",
+					Thinking: "The user is greeting me, I should respond politely.",
+					Content:  "Hello! How can I help you today?",
+				},
+				{Role: "user", Content: "thanks"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>hello<｜Assistant｜></think>Hello! How can I help you today?<｜end▁of▁sentence｜><｜User｜>thanks<｜Assistant｜></think>`,
+		},
+		{
+			name: "conversation with thinking enabled",
+			messages: []api.Message{
+				{Role: "user", Content: "hey!"},
+				{
+					Role: "assistant",
+					Content: `Hey there! 😊 How's your day going? What can I help you with today - whether it's answering 
+questions, brainstorming ideas, or just having a chat?!`,
+				},
+				{Role: "user", Content: "chat"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: `<｜begin▁of▁sentence｜><｜User｜>hey!<｜Assistant｜></think>Hey there! 😊 How's your day going? What can I help you with today - whether it's answering 
+questions, brainstorming ideas, or just having a chat?!<｜end▁of▁sentence｜><｜User｜>chat<｜Assistant｜><think>`,
+		},
+		{
 			name: "basic user message",
 			messages: []api.Message{
 				{Role: "user", Content: "Hello, how are you?"},
@@ -279,6 +318,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			rendered, err := renderer.Render(tt.messages, tt.tools, tt.thinkValue)
 			if err != nil {
 				t.Fatalf("Render() error = %v", err)
+			}
+			if tt.name == "debug multi-turn conversation" {
+				t.Logf("Actual rendered output: %q", rendered)
 			}
 			if diff := cmp.Diff(tt.expected, rendered); diff != "" {
 				t.Errorf("Render() mismatch (-want +got):\n%s", diff)

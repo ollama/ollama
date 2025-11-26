@@ -71,20 +71,17 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 				sb.WriteString("<｜tool▁calls▁end｜><｜end▁of▁sentence｜>")
 			} else {
 				if isLastUser {
-					sb.WriteString("<｜Assistant｜>")
-					if enableThinking {
-						sb.WriteString("<think>")
-					} else {
-						sb.WriteString("</think>")
-					}
+					sb.WriteString("<｜Assistant｜></think>")
 				}
 				isLastUser = false
 
 				content := message.Content
+
 				if isToolContext {
 					sb.WriteString(content + "<｜end▁of▁sentence｜>")
 					isToolContext = false
 				} else {
+					// Remove any existing </think> tags from content (matching Jinja behavior)
 					if strings.Contains(content, "</think>") {
 						parts := strings.SplitN(content, "</think>", 2)
 						if len(parts) > 1 {
