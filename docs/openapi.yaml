@@ -2,12 +2,15 @@ openapi: 3.1.0
 info:
   title: Ollama API
   version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
   description: |
     OpenAPI specification for the Ollama HTTP API
-
 servers:
   - url: http://localhost:11434
-    description: Local Ollama instance
+    description: Ollama
+security: []
 components:
   securitySchemes:
     bearerAuth:
@@ -93,8 +96,11 @@ components:
           type: boolean
           default: true
         think:
-          type: boolean
-          description: When true, returns separate thinking output in addition to content
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [high, medium, low]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
         raw:
           type: boolean
           description: When true, returns the raw response from the model without any prompt templating
@@ -105,6 +111,12 @@ components:
           description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
         options:
           $ref: "#/components/schemas/ModelOptions"
+        logprobs:
+          type: boolean
+          description: Whether to return log probabilities of the output tokens
+        top_logprobs:
+          type: integer
+          description: Number of most likely tokens to return at each token position when logprobs are enabled
     GenerateResponse:
       type: object
       properties:
@@ -144,6 +156,11 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
     GenerateStreamEvent:
       type: object
       properties:
@@ -271,13 +288,22 @@ components:
           type: boolean
           default: true
         think:
-          type: boolean
-          description: When true, returns separate thinking output in addition to content
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [high, medium, low]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
         keep_alive:
           oneOf:
             - type: string
             - type: number
           description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
+        logprobs:
+          type: boolean
+          description: Whether to return log probabilities of the output tokens
+        top_logprobs:
+          type: integer
+          description: Number of most likely tokens to return at each token position when logprobs are enabled
     ChatResponse:
       type: object
       properties:
@@ -310,7 +336,6 @@ components:
               type: array
               items:
                 type: string
-              nullable: true
               description: Optional base64-encoded images in the response
         done:
           type: boolean
@@ -336,6 +361,11 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
     ChatStreamEvent:
       type: object
       properties:
@@ -367,7 +397,6 @@ components:
               type: array
               items:
                 type: string
-              nullable: true
               description: Partial base64-encoded images, when present
         done:
           type: boolean
@@ -543,6 +572,9 @@ components:
         license:
           type: string
           description: The license of the model
+        modified_at:
+          type: string
+          description: Last modified timestamp in ISO 8601 format
         details:
           type: object
           description: High-level model details
@@ -622,6 +654,9 @@ components:
         size_vram:
           type: integer
           description: VRAM usage in bytes
+        context_length:
+          type: integer
+          description: Context length for the running model
     PsResponse:
       type: object
       properties:
@@ -693,6 +728,41 @@ components:
         version:
           type: string
           description: Version of Ollama
+    TokenLogprob:
+      type: object
+      description: Log probability information for a single token alternative
+      properties:
+        token:
+          type: string
+          description: The text representation of the token
+        logprob:
+          type: number
+          description: The log probability of this token
+        bytes:
+          type: array
+          items:
+            type: integer
+          description: The raw byte representation of the token
+    Logprob:
+      type: object
+      description: Log probability information for a generated token
+      properties:
+        token:
+          type: string
+          description: The text representation of the token
+        logprob:
+          type: number
+          description: The log probability of this token
+        bytes:
+          type: array
+          items:
+            type: integer
+          description: The raw byte representation of the token
+        top_logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenLogprob"
+          description: Most likely tokens and their log probabilities at this position
     ErrorResponse:
       type: object
       properties:
@@ -1275,6 +1345,9 @@ paths:
             example:
               source: gemma3
               destination: gemma3-backup
+      responses:
+        "200":
+          description: Model successfully copied
   /api/pull:
     post:
       summary: Pull a model
@@ -1382,16 +1455,7 @@ paths:
               model: gemma3
       responses:
         "200":
-          description: Deletion status updates.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StatusResponse"
-              example:
-                status: "success"
-            application/x-ndjson:
-              schema:
-                $ref: "#/components/schemas/StatusEvent"
+          description: Model successfully deleted
   /api/version:
     get:
       summary: Get version
