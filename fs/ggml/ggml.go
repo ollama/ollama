@@ -663,18 +663,22 @@ func MakeMetaGGML(ggmls []GGML, ggmlPaths []string) MetaGGML {
 		return cmp.Compare(a.weight, b.weight)
 	})
 	metaGgml := MetaGGML{}
+	var param_counts uint64 = 0
 	for i := range wrappers {
+		param_counts += wrappers[i].ggml.KV().ParameterCount()
 		if i == 0 {
 			kv := maps.Clone(wrappers[i].ggml.KV())
 			// remove the keys contained in split gguf files. add more if needed.
 			delete(kv, "slice.no")
 			delete(kv, "slice.count")
 			delete(kv, "slice.tensors.count")
+			delete(kv, "general.parameter_count")
 			metaGgml.kv = kv
 		}
 		metaGgml.Shards = append(metaGgml.Shards, wrappers[i].ggml)
 		metaGgml.ShardPaths = append(metaGgml.ShardPaths, wrappers[i].path)
 	}
+	metaGgml.kv["general.parameter_count"] = param_counts
 	ft, _ := BuildForeignTensors(metaGgml.Shards, metaGgml.ShardPaths)
 	metaGgml.Tensors = *ft
 	return metaGgml
