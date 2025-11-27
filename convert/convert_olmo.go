@@ -60,7 +60,7 @@ func (p *olmoModel) KV(t *Tokenizer) ggml.KV {
 }
 
 func (p *olmoModel) Tensors(ts []Tensor) []*ggml.Tensor {
-	var out []*ggml.Tensor
+	out := make([]*ggml.Tensor, 0, len(ts))
 	for _, t := range ts {
 		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
