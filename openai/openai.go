@@ -20,6 +20,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+const maxRemoteVideoBytes int64 = 50 * 1024 * 1024 // 50MB guard for remote video fetches
+
 var finishReasonToolCalls = "tool_calls"
 
 type Error struct {
@@ -534,9 +536,17 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 							return nil, fmt.Errorf("failed to fetch video: HTTP %d", resp.StatusCode)
 						}
 
-						vid, err = io.ReadAll(resp.Body)
+						if resp.ContentLength > 0 && resp.ContentLength > maxRemoteVideoBytes {
+							return nil, fmt.Errorf("remote video too large: %d bytes (max %d bytes)", resp.ContentLength, maxRemoteVideoBytes)
+						}
+
+						limitedBody := io.LimitReader(resp.Body, maxRemoteVideoBytes+1)
+						vid, err = io.ReadAll(limitedBody)
 						if err != nil {
 							return nil, fmt.Errorf("failed to read video data: %w", err)
+						}
+						if int64(len(vid)) > maxRemoteVideoBytes {
+							return nil, fmt.Errorf("remote video too large (max %d bytes)", maxRemoteVideoBytes)
 						}
 					} else {
 						// Handle base64-encoded video
