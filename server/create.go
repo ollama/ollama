@@ -41,6 +41,23 @@ var (
 	errFilePath                = errors.New("file path must be relative")
 )
 
+func broadcastKV(main *ggml.GGML, subs ...*ggml.GGML) {
+	// broadcast KV value towards other shards. Only for manifest purpose
+	ggmls := []ggml.GGML{*main}
+	for i := range subs {
+		ggmls = append(ggmls, *subs[i])
+	}
+	metaggml := ggml.MakeMetaGGML(ggmls, make([]string, len(ggmls)))
+	mainKV := main.KV()
+	mainKV["general.parameter_count"] = metaggml.KV().ParameterCount()
+	for i := range subs {
+		subKV := subs[i].KV()
+		for k, v := range metaggml.KV() {
+			subKV[k] = v
+		}
+	}
+}
+
 func (s *Server) CreateHandler(c *gin.Context) {
 	config := &ConfigV2{
 		OS:           "linux",
@@ -158,6 +175,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			return
 		}
 		// Sort baseLayers here to ensure that split model will be correctly ordered
+		splitsFoundWhileSorting := false
 		slices.SortStableFunc(baseLayers, func(a, b *layerGGML) int {
 			var aScore, bScore int
 			if a.GGML == nil {
@@ -181,8 +199,23 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					bScore = int(bSplit.No)
 				}
 			}
+			if aScore > -1 && aScore < 0x7fffffff && bScore > -1 && bScore < 0x7fffffff {
+				splitsFoundWhileSorting = true
+			}
 			return cmp.Compare(aScore, bScore)
 		})
+		if splitsFoundWhileSorting {
+			ggmlPtrs := make([]*ggml.GGML, 0, len(baseLayers))
+			for _, layer := range baseLayers {
+				if layer.GGML != nil && layer.GGML.KV().GGUFSplitInfo() != nil {
+					// only gguf splits should be included
+					ggmlPtrs = append(ggmlPtrs, layer.GGML)
+				}
+			}
+			if len(ggmlPtrs) > 1 {
+				broadcastKV(ggmlPtrs[0], ggmlPtrs[1:]...)
+			}
+		}
 
 		var adapterLayers []*layerGGML
 		if !remote && r.Adapters != nil {
