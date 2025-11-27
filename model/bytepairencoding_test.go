@@ -277,7 +277,7 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 		b.Run("split"+strconv.Itoa(n), func(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
-				slices.Collect(tokenizer.split(string(bts)))
+				_ = slices.Collect(tokenizer.split(string(bts)))
 			}
 		})
 	}
