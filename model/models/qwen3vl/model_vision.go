@@ -166,10 +166,17 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 	positionEmbeds = positionEmbeds.Mul(ctx, weights)
 	positionEmbeds = positionEmbeds.Reshape(ctx, n, -1, 4)
 
-	positionEmbeds = positionEmbeds.View(ctx, 0, n, positionEmbeds.Stride(1), totalPositions).
-		Add(ctx, positionEmbeds.View(ctx, 1*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions)).
-		Add(ctx, positionEmbeds.View(ctx, 2*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions)).
-		Add(ctx, positionEmbeds.View(ctx, 3*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions))
+	positionEmbedsSlices := []ml.Tensor{
+		positionEmbeds.View(ctx, 0, n, positionEmbeds.Stride(1), totalPositions),
+		positionEmbeds.View(ctx, 1*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions),
+		positionEmbeds.View(ctx, 2*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions),
+		positionEmbeds.View(ctx, 3*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), totalPositions),
+	}
+
+	positionEmbeds = positionEmbedsSlices[0].
+		Add(ctx, positionEmbedsSlices[1]).
+		Add(ctx, positionEmbedsSlices[2]).
+		Add(ctx, positionEmbedsSlices[3])
 
 	// Reshape and permute position embeddings, handling temporal dimension for videos
 	//
