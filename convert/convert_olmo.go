@@ -9,15 +9,17 @@ import (
 type olmoModel struct {
 	ModelParameters
 
-	HiddenSize            uint32  `json:"hidden_size"`
-	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
-	IntermediateSize      uint32  `json:"intermediate_size"`
-	NumAttentionHeads     uint32  `json:"num_attention_heads"`
-	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
-	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
-	RMSNormEPS            float32 `json:"rms_norm_eps"`
-	RopeTheta             float32 `json:"rope_theta"`
-	ClampKQV              float32 `json:"f_clamp_kqv"`
+	HiddenSize            uint32   `json:"hidden_size"`
+	NumHiddenLayers       uint32   `json:"num_hidden_layers"`
+	IntermediateSize      uint32   `json:"intermediate_size"`
+	NumAttentionHeads     uint32   `json:"num_attention_heads"`
+	NumKeyValueHeads      uint32   `json:"num_key_value_heads"`
+	MaxPositionEmbeddings uint32   `json:"max_position_embeddings"`
+	RMSNormEPS            float32  `json:"rms_norm_eps"`
+	RopeTheta             float32  `json:"rope_theta"`
+	ClampKQV              float32  `json:"f_clamp_kqv"`
+	SlidingWindow         uint32   `json:"sliding_window"`
+	LayerTypes            []string `json:"layer_types"`
 }
 
 var _ ModelConverter = (*olmoModel)(nil)
@@ -44,6 +46,14 @@ func (p *olmoModel) KV(t *Tokenizer) ggml.KV {
 
 	if p.ClampKQV > 0 {
 		kv["olmo.attention.clamp_kqv"] = p.ClampKQV
+	}
+
+	if p.SlidingWindow > 0 {
+		kv["olmo.attention.sliding_window"] = p.SlidingWindow
+	}
+
+	if len(p.LayerTypes) > 0 {
+		kv["olmo.attention.layer_types"] = p.LayerTypes
 	}
 
 	return kv
