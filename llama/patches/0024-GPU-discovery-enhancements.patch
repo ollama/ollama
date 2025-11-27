@@ -20,10 +20,10 @@ fix vulkan PCI ID and ID handling
  ggml/src/ggml-cuda/vendors/hip.h     |   3 +
  ggml/src/ggml-impl.h                 |   8 +
  ggml/src/ggml-metal/ggml-metal.cpp   |   2 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 209 +++++++++++--
- ggml/src/mem_hip.cpp                 | 452 +++++++++++++++++++++++++++
- ggml/src/mem_nvml.cpp                | 209 +++++++++++++
- 9 files changed, 926 insertions(+), 30 deletions(-)
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 209 +++++++++--
+ ggml/src/mem_hip.cpp                 | 529 +++++++++++++++++++++++++++
+ ggml/src/mem_nvml.cpp                | 209 +++++++++++
+ 9 files changed, 1003 insertions(+), 30 deletions(-)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
@@ -58,7 +58,7 @@ index f9a6587f1..03f359ae9 100644
  
  target_include_directories(ggml-base PRIVATE .)
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index c9333689f..41b00af83 100644
+index c9333689f..f1a20e7fe 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -261,6 +261,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -111,7 +111,7 @@ index c9333689f..41b00af83 100644
 +    if (ggml_hip_mgmt_init() == 0) {
 +        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total);
 +        if (status == 0) {
-+            GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
++            GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
 +            ggml_hip_mgmt_release();
 +            return;
 +        }
@@ -243,7 +243,7 @@ index 05ff6a5a6..032dee76d 100644
          /* .async                 = */ true,
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 3a6bbe564..d2c278a35 100644
+index 3a6bbe564..ca02ea079 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -229,6 +229,7 @@ class vk_memory_logger;
@@ -337,7 +337,7 @@ index 3a6bbe564..d2c278a35 100644
 +            if (ggml_hip_mgmt_init() == 0) {
 +                int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total);
 +                if (status == 0) {
-+                    GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
++                    GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
 +                    ggml_hip_mgmt_release();
 +                    return;
 +                }
@@ -548,11 +548,12 @@ index 3a6bbe564..d2c278a35 100644
          }
 diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
 new file mode 100644
-index 000000000..5a7f5d465
+index 000000000..c1949b899
 --- /dev/null
 +++ b/ggml/src/mem_hip.cpp
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,529 @@
 +#include "ggml.h"
++#include "ggml-impl.h"
 +
 +#ifdef _WIN32
 +// AMD Device Library eXtra (ADLX)
@@ -570,7 +571,6 @@ index 000000000..5a7f5d465
 +// Unused function parameters are commented out to avoid unnecessary type
 +// definitions.
 +
-+#include "ggml-impl.h"
 +#include <filesystem>
 +#include <mutex>
 +
@@ -990,15 +990,92 @@ index 000000000..5a7f5d465
 +
 +#else // #ifdef _WIN32
 +
++#include <fstream>
++#include <iostream>
++#include <sstream>
++#include <string>
++#include <vector>
++#include <filesystem>
++
++#include <sys/stat.h>
++#include <dirent.h>
++#include <unistd.h>
++#include <glob.h>
++namespace fs = std::filesystem;
++
 +extern "C" {
 +
-+// TODO Linux implementation of accurate VRAM reporting
 +int ggml_hip_mgmt_init() {
-+    return -1;
++    return 0;
 +}
 +void ggml_hip_mgmt_release() {}
 +int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
-+    return -1;
++    GGML_LOG_INFO("%s searching for device %s\n", __func__, id);
++    const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
++    const std::string drmTotalMemoryFile = "mem_info_vram_total";
++    const std::string drmUsedMemoryFile = "mem_info_vram_used";
++    const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
++
++    glob_t glob_result;
++    glob(drmDeviceGlob.c_str(), GLOB_NOSORT, NULL, &glob_result);
++
++    for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
++        const char* device_file = glob_result.gl_pathv[i];
++        std::ifstream file(device_file);
++        if (!file.is_open()) {
++            std::cerr << "Failed to open sysfs node" << std::endl;
++            globfree(&glob_result);
++            return 1;
++        }
++
++        std::string line;
++        while (std::getline(file, line)) {
++            // Check for PCI_SLOT_NAME label
++            if (line.find(drmUeventPCISlotLabel) == 0) {
++                std::istringstream iss(line.substr(drmUeventPCISlotLabel.size()));
++                std::string pciSlot;
++                iss >> pciSlot;
++                if (pciSlot == std::string(id)) {
++                    std::string dir = fs::path(device_file).parent_path().string();
++
++                    std::string totalFile = dir + "/" + drmTotalMemoryFile;
++                    std::ifstream totalFileStream(totalFile.c_str());
++                    if (!totalFileStream.is_open()) {
++                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
++                        file.close();
++                        globfree(&glob_result);
++                        return 1;
++                    }
++
++                    uint64_t memory;
++                    totalFileStream >> memory;
++                    *total = memory;
++
++                    std::string usedFile = dir + "/" + drmUsedMemoryFile;
++                    std::ifstream usedFileStream(usedFile.c_str());
++                    if (!usedFileStream.is_open()) {
++                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
++                        file.close();
++                        globfree(&glob_result);
++                        return 1;
++                    }
++
++                    uint64_t memoryUsed;
++                    usedFileStream >> memoryUsed;
++                    *free = memory - memoryUsed;
++
++                    file.close();
++                    globfree(&glob_result);
++                    return 0;
++                }
++            }
++        }
++
++        file.close();
++    }
++    GGML_LOG_DEBUG("%s unable to find matching device\n", __func__);
++    globfree(&glob_result);
++    return 1;
 +}
 +
 +} // extern "C"

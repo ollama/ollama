@@ -1,41 +1,77 @@
-run:
-  timeout: 5m
+version: "2"
 linters:
+  default: none
   enable:
     - asasalint
     - bidichk
     - bodyclose
     - containedctx
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - exptostd
     - gocheckcompilerdirectives
-    - gofmt
-    - gofumpt
-    - gosimple
+    - gocritic
     - govet
     - ineffassign
     - intrange
     - makezero
     - misspell
+    - modernize
     - nilerr
+    - nilnil
     - nolintlint
     - nosprintfhostport
+    - perfsprint
+    - prealloc
+    - sloglint
     - staticcheck
     - unconvert
+    - unused
+    - usestdlibvars
     - usetesting
     - wastedassign
     - whitespace
-  disable:
-    - usestdlibvars
-    - errcheck
-linters-settings:
-  staticcheck:
-    checks:
-      - all
-      - -SA1019 # omit Deprecated check
-severity:
-  default-severity: error
-  rules:
-    - linters:
-        - gofmt
-        - goimports
-        - intrange
-      severity: info
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+    perfsprint:
+      strconcat: false
+      concat-loop: false
+    staticcheck:
+      checks:
+        - all
+        # Using a deprecated function, variable, constant or field.
+        # https://staticcheck.dev/docs/checks/#SA1019
+        - -SA1019
+        # Incorrect or missing package comment.
+        # https://staticcheck.dev/docs/checks/#ST1000
+        - -ST1000
+        # Poorly chosen identifier.
+        # https://staticcheck.dev/docs/checks/#ST1003
+        - -ST1003
+        # The documentation of an exported function should start with the function's name.
+        # https://staticcheck.dev/docs/checks/#ST1020
+        - -ST1020
+        # The documentation of an exported type should start with type's name.
+        # https://staticcheck.dev/docs/checks/#ST1021
+        - -ST1021
+        # The documentation of an exported variable or constant should start with variable's name.
+        # https://staticcheck.dev/docs/checks/#ST1022
+        - -ST1022
+    usestdlibvars:
+      http-method: false
+      http-status-code: false
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule

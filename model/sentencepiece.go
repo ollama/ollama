@@ -181,7 +181,7 @@ func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
-	if addSpecial && len(ids) > 0 {
+	if addSpecial {
 		ids = spm.vocab.addSpecials(ids)
 	}
 

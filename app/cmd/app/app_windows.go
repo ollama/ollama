@@ -138,7 +138,7 @@ func (app *appCallbacks) HandleURLScheme(urlScheme string) {
 
 // handleURLSchemeRequest processes URL scheme requests from other instances
 func handleURLSchemeRequest(urlScheme string) {
-	isConnect, uiPath, err := parseURLScheme(urlScheme)
+	isConnect, err := parseURLScheme(urlScheme)
 	if err != nil {
 		slog.Error("failed to parse URL scheme request", "url", urlScheme, "error", err)
 		return
@@ -147,7 +147,7 @@ func handleURLSchemeRequest(urlScheme string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage(uiPath)
+		sendUIRequestMessage("/")
 	}
 }
 

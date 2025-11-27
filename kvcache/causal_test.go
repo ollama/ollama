@@ -207,11 +207,11 @@ func TestSWAMem(t *testing.T) {
 			inShape:       []int{1, 1, 2},
 			seqs:          []int{0, 0},
 			pos:           []int32{4, 5},
-			expected:      []float32{4, 5, 6},
-			expectedShape: []int{1, 1, 3},
+			expected:      []float32{5, 2, 3, 4, 6},
+			expectedShape: []int{1, 1, 5},
 			expectedMask: []float32{
-				0, 0, x,
-				x, 0, 0,
+				0, x, x, 0, x,
+				0, x, x, x, 0,
 			},
 		},
 	}
@@ -319,6 +319,8 @@ func TestRemove(t *testing.T) {
 
 	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
+	x := float32(math.Inf(-1))
+
 	tests := []testCase{
 		{
 			name:          "FirstBatch",
@@ -328,7 +330,12 @@ func TestRemove(t *testing.T) {
 			pos:           []int32{0, 1, 0, 1},
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
-			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
+			expectedMask: []float32{
+				0, x, x, x,
+				0, 0, x, x,
+				x, x, 0, x,
+				x, x, 0, 0,
+			},
 		},
 	}
 
@@ -346,9 +353,12 @@ func TestRemove(t *testing.T) {
 			inShape:       []int{1, 1, 2},
 			seqs:          []int{0, 1},
 			pos:           []int32{1, 2},
-			expected:      []float32{1, 2, 3, 4, 5, 6},
-			expectedShape: []int{1, 1, 6},
-			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), 0},
+			expected:      []float32{1, 5, 3, 4, 6},
+			expectedShape: []int{1, 1, 5},
+			expectedMask: []float32{
+				0, 0, x, x, x,
+				x, x, 0, 0, 0,
+			},
 		},
 	}
 
@@ -366,59 +376,12 @@ func TestRemove(t *testing.T) {
 			inShape:       []int{1, 1, 2},
 			seqs:          []int{0, 0},
 			pos:           []int32{1, 2},
-			expected:      []float32{7, 8, 3, 4, 4},
-			expectedShape: []int{1, 1, 5},
-			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0},
-		},
-	}
-
-	testCache(t, backend, cache, tests)
-}
-
-func TestDefrag(t *testing.T) {
-	backend := &testBackend{}
-	cache := NewCausalCache(func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-		return key.Add(ctx, shift), nil
-	})
-	defer cache.Close()
-
-	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
-
-	tests := []testCase{
-		{
-			name:          "FirstBatch",
-			in:            []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-			inShape:       []int{1, 1, 16},
-			seqs:          []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-			pos:           []int32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-			expected:      []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-			expectedShape: []int{1, 1, 16},
-			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		},
-	}
-
-	testCache(t, backend, cache, tests)
-
-	err := cache.Remove(0, 2, 4)
-	if err != nil {
-		panic(err)
-	}
-
-	err = cache.Remove(0, 13, math.MaxInt32)
-	if err != nil {
-		panic(err)
-	}
-
-	tests = []testCase{
-		{
-			name:          "Defrag",
-			in:            []float32{17, 18, 19},
-			inShape:       []int{1, 1, 3},
-			seqs:          []int{0, 0, 0},
-			pos:           []int32{16, 17, 18},
-			expected:      []float32{1, 2, 12, 13, 3, 4, 5, 6, 7, 8, 9, 10, 11, 17, 18, 19},
-			expectedShape: []int{1, 1, 16},
-			expectedMask:  []float32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+			expected:      []float32{7, 4, 3, 4, 6, 8},
+			expectedShape: []int{1, 1, 6},
+			expectedMask: []float32{
+				0, 0, x, x, x, x,
+				0, 0, x, x, x, 0,
+			},
 		},
 	}
 
@@ -770,6 +733,15 @@ func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return out
 }
 
+func (t *testTensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
+	return &testTensor{
+		dtype:       t.dtype,
+		elementSize: t.elementSize,
+		data:        t.data,
+		shape:       shape,
+	}
+}
+
 func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	offset /= t.elementSize
 
@@ -778,6 +750,8 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
 		s = []int{shape[0]}
+	case 3:
+		s = []int{shape[0], shape[2]}
 	case 5:
 		s = []int{shape[0], shape[2], shape[4]}
 	default:
@@ -790,6 +764,86 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	view.data = t.data[offset : offset+len(view.data)]
 
 	return view
+}
+
+func (t *testTensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tensor {
+	dst := t
+	srcTensor := src.(*testTensor)
+	idxTensor := idxs.(*testTensor)
+
+	shapeTo4D := func(shape []int) [4]int {
+		out := [4]int{1, 1, 1, 1}
+		for i := 0; i < len(shape) && i < 4; i++ {
+			out[i] = shape[i]
+		}
+		return out
+	}
+
+	computeStrides := func(shape [4]int) [4]int {
+		out := [4]int{1, 1, 1, 1}
+		for i := 1; i < 4; i++ {
+			out[i] = out[i-1] * shape[i-1]
+		}
+		return out
+	}
+
+	dstShape4D := shapeTo4D(dst.shape)
+	srcShape4D := shapeTo4D(srcTensor.shape)
+	idxShape4D := shapeTo4D(idxTensor.shape)
+
+	if dstShape4D[0] != srcShape4D[0] || dstShape4D[2] != srcShape4D[2] || dstShape4D[3] != srcShape4D[3] {
+		panic("SetRows requires matching tensor shapes")
+	}
+
+	if srcShape4D[1] != idxShape4D[0] {
+		panic("SetRows rows/index mismatch")
+	}
+
+	if srcShape4D[2]%idxShape4D[1] != 0 || srcShape4D[3]%idxShape4D[2] != 0 {
+		panic("SetRows cannot broadcast indices")
+	}
+
+	if idxShape4D[3] != 1 {
+		panic("SetRows expects 1D or 2D index tensors")
+	}
+
+	dstStride := computeStrides(dstShape4D)
+	srcStride := computeStrides(srcShape4D)
+	idxStride := computeStrides(idxShape4D)
+
+	numColumns := srcShape4D[0]
+	numRows := srcShape4D[1]
+
+	for dim3Index := range dstShape4D[3] {
+		for dim2Index := range dstShape4D[2] {
+			idxDim2 := 0
+			idxDim3 := 0
+			if idxShape4D[1] > 0 {
+				idxDim2 = dim2Index % idxShape4D[1]
+			}
+			if idxShape4D[2] > 0 {
+				idxDim3 = dim3Index % idxShape4D[2]
+			}
+
+			idxBase := idxDim3*idxStride[2] + idxDim2*idxStride[1]
+			srcBase := dim3Index*srcStride[3] + dim2Index*srcStride[2]
+			dstBase := dim3Index*dstStride[3] + dim2Index*dstStride[2]
+
+			for row := range numRows {
+				idx := int(idxTensor.data[idxBase+row*idxStride[0]])
+				if idx < 0 || idx >= dstShape4D[1] {
+					panic("SetRows index out of range")
+				}
+
+				srcOffset := srcBase + row*srcStride[1]
+				dstOffset := dstBase + idx*dstStride[1]
+
+				copy(dst.data[dstOffset:dstOffset+numColumns], srcTensor.data[srcOffset:srcOffset+numColumns])
+			}
+		}
+	}
+
+	return dst
 }
 
 func (t *testTensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {

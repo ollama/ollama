@@ -121,30 +121,9 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 	var query, key, value ml.Tensor
 	if attn.QKV != nil {
 		qkv := attn.QKV.Forward(ctx, hiddenStates)
-
-		// query = qkv[..., : num_attention_heads * head_dim].reshape(batch_size, num_attention_heads, head_dim)
-		query = qkv.View(ctx,
-			0,
-			opts.headDim(), qkv.Stride(0)*opts.headDim(),
-			opts.numHeads, qkv.Stride(1),
-			batchSize,
-		)
-
-		// key = qkv[..., num_attention_heads * head_dim:(num_attention_heads + num_key_value_heads) * head_dim].reshape(batch_size, num_key_value_heads, head_dim)
-		key = qkv.View(ctx,
-			qkv.Stride(0)*opts.headDim()*opts.numHeads,
-			opts.headDim(), qkv.Stride(0)*opts.headDim(),
-			opts.numKVHeads, qkv.Stride(1),
-			batchSize,
-		)
-
-		// value = qkv[..., (num_attention_heads  + num_key_value_heads) * head_dim:].reshape(batch_size, num_key_value_heads, head_dim)
-		value = qkv.View(ctx,
-			qkv.Stride(0)*opts.headDim()*(opts.numHeads+opts.numKVHeads),
-			opts.headDim(), qkv.Stride(0)*opts.headDim(),
-			opts.numKVHeads, qkv.Stride(1),
-			batchSize,
-		)
+		qkv = qkv.Reshape(ctx, opts.headDim(), -1, batchSize)
+		chunks := qkv.ChunkSections(ctx, 1, opts.numHeads, opts.numKVHeads, opts.numKVHeads)
+		query, key, value = chunks[0], chunks[1], chunks[2]
 	} else {
 		query = attn.Query.Forward(ctx, hiddenStates)
 		query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
@@ -195,15 +174,8 @@ func (mlp *MLPBlock) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Optio
 	var gate, up ml.Tensor
 	if mlp.GateUp != nil {
 		hiddenStates = mlp.GateUp.Forward(ctx, hiddenStates, selectedExperts)
-		hiddenStates = hiddenStates.Reshape(ctx, 2, hiddenStates.Dim(0)/2, hiddenStates.Dim(1), hiddenStates.Dim(2))
-
-		dimStride := []int{hiddenStates.Dim(0) / 2, hiddenStates.Stride(1), hiddenStates.Dim(1), hiddenStates.Stride(2), hiddenStates.Dim(2), hiddenStates.Stride(3), hiddenStates.Dim(3)}
-
-		gate = hiddenStates.View(ctx, 0, dimStride...)
-		gate = gate.Contiguous(ctx, gate.Dim(0)*gate.Dim(1), gate.Dim(2), gate.Dim(3))
-
-		up = hiddenStates.View(ctx, hiddenStates.Stride(0), dimStride...)
-		up = up.Contiguous(ctx, up.Dim(0)*up.Dim(1), up.Dim(2), up.Dim(3))
+		gate = hiddenStates.Slice(ctx, 0, 0, hiddenStates.Dim(0), 2)
+		up = hiddenStates.Slice(ctx, 0, 1, hiddenStates.Dim(0), 2)
 	} else {
 		gate = mlp.Gate.Forward(ctx, hiddenStates, selectedExperts)
 		up = mlp.Up.Forward(ctx, hiddenStates, selectedExperts)
