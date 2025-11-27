@@ -30,6 +30,8 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
+	layerTypes []string
+
 	Options
 }
 
@@ -69,6 +71,7 @@ func New(c fs.Config) (model.Model, error) {
 	m := Model{
 		TextProcessor: processor,
 		Layers:        make([]Layer, c.Uint("block_count")),
+		layerTypes:    c.Strings("attention.layer_types"),
 		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
@@ -82,7 +85,14 @@ func New(c fs.Config) (model.Model, error) {
 		},
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.Shift)
+	if slidingWindow := c.Uint("attention.sliding_window"); slidingWindow > 0 {
+		m.Cache = kvcache.NewWrapperCache(
+			kvcache.NewSWACache(int32(slidingWindow), m.Shift),
+			kvcache.NewCausalCache(m.Shift),
+		)
+	} else {
+		m.Cache = kvcache.NewCausalCache(m.Shift)
+	}
 
 	return &m, nil
 }
@@ -169,6 +179,14 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
+
+		if wc, ok := m.Cache.(*kvcache.WrapperCache); ok && len(m.layerTypes) > i {
+			if m.layerTypes[i] == "full_attention" {
+				wc.SetLayerType(1)
+			} else {
+				wc.SetLayerType(0)
+			}
+		}
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
