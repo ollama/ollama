@@ -4,7 +4,7 @@ ARG FLAVOR=${TARGETARCH}
 ARG PARALLEL=8
 
 ARG ROCM6VERSION=6.4.4
-ARG ROCM7VERSION=7.1
+ARG ROCM7VERSION=7.1.1
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
@@ -147,7 +147,7 @@ FROM base AS vulkan
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'Vulkan' \
         && cmake --build --parallel --preset 'Vulkan' \
-        && cmake --install build --component Vulkan --strip --parallel 8 
+        && cmake --install build --component Vulkan --strip --parallel 8
 
 
 FROM base AS build
@@ -196,7 +196,7 @@ RUN apt-get update \
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama:/usr/lib/ollama/rocm_v7
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama:/usr/lib/ollama/rocm
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
