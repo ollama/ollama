@@ -125,10 +125,20 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		supportedMu := sync.Mutex{}
 		supported := make(map[string]map[string]map[string]int) // [Library][libDir][ID] = pre-deletion devices index
 		for i := range devices {
+			libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
 			if !devices[i].NeedsInitValidation() {
+				// No need to validate, add to the supported map
+				supportedMu.Lock()
+				if _, ok := supported[devices[i].Library]; !ok {
+					supported[devices[i].Library] = make(map[string]map[string]int)
+				}
+				if _, ok := supported[devices[i].Library][libDir]; !ok {
+					supported[devices[i].Library][libDir] = make(map[string]int)
+				}
+				supported[devices[i].Library][libDir][devices[i].ID] = i
+				supportedMu.Unlock()
 				continue
 			}
-			libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
 			slog.Debug("verifying if device is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "id", devices[i].ID, "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
