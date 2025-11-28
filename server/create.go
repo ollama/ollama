@@ -39,6 +39,8 @@ var (
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
 	errFilePath                = errors.New("file path must be relative")
+	errIncompleteShardedGGUF   = errors.New("missing some GGUF splits")
+	errExtraShardedGGUF        = errors.New("extra GGUF splits found")
 )
 
 func broadcastKV(main *ggml.GGML, subs ...*ggml.GGML) {
@@ -56,6 +58,76 @@ func broadcastKV(main *ggml.GGML, subs ...*ggml.GGML) {
 			subKV[k] = v
 		}
 	}
+}
+
+func baseLayerSortNCheckSan(baseLayers *[]*layerGGML) error {
+	slices.SortStableFunc(*baseLayers, func(a, b *layerGGML) int {
+		var aScore, bScore int
+		if a.GGML == nil {
+			// chat template and parameter can be added here. use very big number to move them at last
+			aScore = 0x7fffffff
+		} else {
+			aSplit := a.GGML.KV().GGUFSplitInfo()
+			if aSplit == nil {
+				aScore = -1
+			} else {
+				aScore = int(aSplit.No)
+			}
+		}
+		if b.GGML == nil {
+			bScore = 0x7fffffff
+		} else {
+			bSplit := b.GGML.KV().GGUFSplitInfo()
+			if bSplit == nil {
+				bScore = -1
+			} else {
+				bScore = int(bSplit.No)
+			}
+		}
+		return cmp.Compare(aScore, bScore)
+	})
+	// sanity check for layers
+	{
+		ggmlPtrs := make([]*ggml.GGML, 0, len(*baseLayers))
+		firstSplitCount := -1
+		foundSplitNos := make([]uint16, 0)
+		for i, layer := range *baseLayers {
+			if i == 0 {
+				if layer.GGML == nil {
+					// First item should be GGUF after sorting
+					return errNoFilesProvided
+				}
+			}
+			if layer.GGML != nil && layer.GGML.KV().GGUFSplitInfo() != nil {
+				if firstSplitCount == -1 {
+					if layer.GGML.KV().GGUFSplitInfo().No != 0 {
+						return errIncompleteShardedGGUF
+					}
+					firstSplitCount = int(layer.GGML.KV().GGUFSplitInfo().Count)
+					foundSplitNos = append(foundSplitNos, layer.KV().GGUFSplitInfo().No)
+				} else if firstSplitCount != int(layer.KV().GGUFSplitInfo().Count) {
+					return errExtraShardedGGUF
+				} else {
+					if foundSplitNos[len(foundSplitNos)-1] == layer.KV().GGUFSplitInfo().No {
+						return errExtraShardedGGUF
+					} else if foundSplitNos[len(foundSplitNos)-1] != layer.KV().GGUFSplitInfo().No-1 {
+						return errIncompleteShardedGGUF
+					} else {
+						foundSplitNos = append(foundSplitNos, layer.KV().GGUFSplitInfo().No)
+					}
+				}
+				// only gguf splits should be included
+				ggmlPtrs = append(ggmlPtrs, layer.GGML)
+			}
+		}
+		if firstSplitCount != -1 && len(foundSplitNos) != firstSplitCount {
+			return errIncompleteShardedGGUF
+		}
+		if len(ggmlPtrs) > 1 {
+			broadcastKV(ggmlPtrs[0], ggmlPtrs[1:]...)
+		}
+	}
+	return nil
 }
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -175,45 +247,11 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			return
 		}
 		// Sort baseLayers here to ensure that split model will be correctly ordered
-		splitsFoundWhileSorting := false
-		slices.SortStableFunc(baseLayers, func(a, b *layerGGML) int {
-			var aScore, bScore int
-			if a.GGML == nil {
-				// chat template and parameter can be added here. use very big number to move them at last
-				aScore = 0x7fffffff
-			} else {
-				aSplit := a.GGML.KV().GGUFSplitInfo()
-				if aSplit == nil {
-					aScore = -1
-				} else {
-					aScore = int(aSplit.No)
-				}
-			}
-			if b.GGML == nil {
-				bScore = 0x7fffffff
-			} else {
-				bSplit := b.GGML.KV().GGUFSplitInfo()
-				if bSplit == nil {
-					bScore = -1
-				} else {
-					bScore = int(bSplit.No)
-				}
-			}
-			if aScore > -1 && aScore < 0x7fffffff && bScore > -1 && bScore < 0x7fffffff {
-				splitsFoundWhileSorting = true
-			}
-			return cmp.Compare(aScore, bScore)
-		})
-		if splitsFoundWhileSorting {
-			ggmlPtrs := make([]*ggml.GGML, 0, len(baseLayers))
-			for _, layer := range baseLayers {
-				if layer.GGML != nil && layer.GGML.KV().GGUFSplitInfo() != nil {
-					// only gguf splits should be included
-					ggmlPtrs = append(ggmlPtrs, layer.GGML)
-				}
-			}
-			if len(ggmlPtrs) > 1 {
-				broadcastKV(ggmlPtrs[0], ggmlPtrs[1:]...)
+		if !remote {
+			err := baseLayerSortNCheckSan(&baseLayers)
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
 			}
 		}
 
