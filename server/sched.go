@@ -196,7 +196,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 					// Load model for fitting
 					logutil.Trace("loading model metadata", "model", pending.model.ModelPath)
-					ggml, err := llm.LoadModel(pending.model.ModelPath, pending.model.ExtraModelPaths, 1024)
+					ggml, err := llm.LoadModel(pending.model.ModelPath, pending.model.ExtraModelPaths, 1024, false)
 					if err != nil {
 						pending.errCh <- err
 						break

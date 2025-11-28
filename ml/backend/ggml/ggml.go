@@ -133,7 +133,11 @@ func New(modelPath string, extraModelPaths []string, params ml.BackendParams) (m
 	}
 	var meta fsggml.MetaGGML
 	if smallmeta.KV().GGUFSplitInfo() != nil {
+		if smallmeta.KV().GGUFSplitInfo().No != 0 {
+			return nil, errors.New("not the first split of model")
+		}
 		loadedGgml := []fsggml.GGML{*smallmeta}
+		visitedSplitNo := []uint16{smallmeta.KV().GGUFSplitInfo().No}
 		for i := range extraModelPaths {
 			extraModel := extraModelPaths[i]
 			f, err := os.Open(extraModel)
@@ -146,7 +150,20 @@ func New(modelPath string, extraModelPaths []string, params ml.BackendParams) (m
 			if err != nil {
 				return nil, err
 			}
+			if smallmeta.KV().GGUFSplitInfo() == nil {
+				return nil, errors.New("non-split gguf in extra model paths while main model path is split gguf")
+			}
+			visitedSplitNo = append(visitedSplitNo, smallmeta.KV().GGUFSplitInfo().No)
 			loadedGgml = append(loadedGgml, *smallmeta)
+		}
+		if len(visitedSplitNo) != int(smallmeta.KV().GGUFSplitInfo().Count) {
+			return nil, errors.New("mismatch split gguf count")
+		}
+		slices.Sort(visitedSplitNo)
+		for i := 0; i < len(visitedSplitNo)-1; i++ {
+			if visitedSplitNo[i] != visitedSplitNo[i+1]-1 {
+				return nil, errors.New("repeated or skipped split found")
+			}
 		}
 		meta = fsggml.MakeMetaGGML(loadedGgml, append([]string{modelPath}, extraModelPaths...))
 	} else {

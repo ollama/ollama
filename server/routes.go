@@ -1187,7 +1187,7 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.ForeignTensors, er
 	if verbose {
 		maxArraySize = -1
 	}
-	data, err := llm.LoadModel(digest, make([]string, 0), maxArraySize)
+	data, err := llm.LoadModel(digest, make([]string, 0), maxArraySize, true)
 	if err != nil {
 		return nil, make(ggml.ForeignTensors, 0), err
 	}

@@ -132,7 +132,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vra
 	})
 
 	model := &Model{Name: modelName, ModelPath: p}
-	f, err := llm.LoadModel(model.ModelPath, make([]string, 0), 0)
+	f, err := llm.LoadModel(model.ModelPath, make([]string, 0), 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}

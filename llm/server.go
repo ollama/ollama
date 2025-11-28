@@ -124,7 +124,7 @@ type ollamaServer struct {
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func LoadModel(model string, extraModels []string, maxArraySize int) (*ggml.MetaGGML, error) {
+func LoadModel(model string, extraModels []string, maxArraySize int, reliefSplitConstrain bool) (*ggml.MetaGGML, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,11 @@ func LoadModel(model string, extraModels []string, maxArraySize int) (*ggml.Meta
 		return nil, err
 	}
 	if ggml1.KV().GGUFSplitInfo() != nil {
+		if ggml1.KV().GGUFSplitInfo().No != 0 {
+			return nil, errors.New("not the first split of model")
+		}
 		loadedGgml := []ggml.GGML{*ggml1}
+		visitedSplitNo := []uint16{ggml1.KV().GGUFSplitInfo().No}
 		for i := range extraModels {
 			extraModel := extraModels[i]
 			f, err := os.Open(extraModel)
@@ -153,7 +157,22 @@ func LoadModel(model string, extraModels []string, maxArraySize int) (*ggml.Meta
 			if err != nil {
 				return nil, err
 			}
+			if ggml1.KV().GGUFSplitInfo() == nil {
+				return nil, errors.New("non-split gguf in extra model paths while main model path is split gguf")
+			}
+			visitedSplitNo = append(visitedSplitNo, ggml1.KV().GGUFSplitInfo().No)
 			loadedGgml = append(loadedGgml, *ggml1)
+		}
+		if !reliefSplitConstrain {
+			if len(visitedSplitNo) != int(ggml1.KV().GGUFSplitInfo().Count) {
+				return nil, errors.New("mismatch split gguf count")
+			}
+			slices.Sort(visitedSplitNo)
+			for i := 0; i < len(visitedSplitNo)-1; i++ {
+				if visitedSplitNo[i] != visitedSplitNo[i+1]-1 {
+					return nil, errors.New("repeated or skipped split found")
+				}
+			}
 		}
 		metaggml := ggml.MakeMetaGGML(loadedGgml, append([]string{model}, extraModels...))
 		return &metaggml, nil
