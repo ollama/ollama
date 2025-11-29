@@ -5,6 +5,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -482,7 +483,8 @@ func (db *database) cleanupOrphanedData() error {
 }
 
 func duplicateColumnError(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
+	var sqlite3Err sqlite3.Error
+	if errors.As(err, &sqlite3Err) {
 		return sqlite3Err.Code == sqlite3.ErrError &&
 			strings.Contains(sqlite3Err.Error(), "duplicate column name")
 	}
@@ -490,7 +492,8 @@ func duplicateColumnError(err error) bool {
 }
 
 func columnNotExists(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
+	var sqlite3Err sqlite3.Error
+	if errors.As(err, &sqlite3Err) {
 		return sqlite3Err.Code == sqlite3.ErrError &&
 			strings.Contains(sqlite3Err.Error(), "no such column")
 	}
@@ -586,8 +589,8 @@ func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Cha
 		&browserState,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("chat not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("chat not found")
 		}
 		return nil, fmt.Errorf("query chat: %w", err)
 	}
@@ -752,7 +755,7 @@ func (db *database) updateLastMessage(chatID string, msg Message) error {
 		return fmt.Errorf("get rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("no message found to update")
+		return errors.New("no message found to update")
 	}
 
 	_, err = tx.Exec("DELETE FROM attachments WHERE message_id = ?", messageID)

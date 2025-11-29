@@ -90,9 +90,8 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 }
 
 func (p *mistral3Model) Tensors(ts []Tensor) []*ggml.Tensor {
-	var out []*ggml.Tensor
-
-	for _, t := range ts {
+	out := make([]*ggml.Tensor, len(ts))
+	for i, t := range ts {
 		if !strings.HasPrefix(t.Name(), "v.") {
 			if strings.HasSuffix(t.Name(), ".attn_q.weight") ||
 				strings.HasSuffix(t.Name(), ".attn_k.weight") {
@@ -100,12 +99,12 @@ func (p *mistral3Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			}
 		}
 
-		out = append(out, &ggml.Tensor{
+		out[i] = &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
-		})
+		}
 	}
 
 	return out
@@ -145,9 +144,9 @@ func (p *mistral3Model) Replacements() []string {
 }
 
 func (p *mistral3Model) repack(name string, data []float32, shape []uint64) ([]float32, error) {
-	var dims []int
-	for _, dim := range shape {
-		dims = append(dims, int(dim))
+	dims := make([]int, len(shape))
+	for i, dim := range shape {
+		dims[i] = int(dim)
 	}
 
 	var heads uint32

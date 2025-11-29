@@ -459,10 +459,7 @@ func TestLogprobsWithStopSequences(t *testing.T) {
 
 			origLogprobsLen := len(logprobs)
 			numTokensRemoved := origLen - newLen
-			newLogprobsLen := origLogprobsLen - numTokensRemoved
-			if newLogprobsLen < 0 {
-				newLogprobsLen = 0
-			}
+			newLogprobsLen := max(origLogprobsLen-numTokensRemoved, 0)
 			logprobs = logprobs[:newLogprobsLen]
 
 			// Verify responses were truncated correctly

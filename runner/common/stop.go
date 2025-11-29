@@ -39,21 +39,15 @@ func TruncateStop(pieces []string, stop string) ([]string, bool) {
 
 	joined = joined[:index]
 
-	// Split truncated string back into pieces of original lengths
-	lengths := make([]int, len(pieces))
-	for i, piece := range pieces {
-		lengths[i] = len(piece)
-	}
-
-	var result []string
+	result := make([]string, 0, len(pieces))
 	tokenTruncated := false
 	start := 0
-	for _, length := range lengths {
+	for _, piece := range pieces {
 		if start >= len(joined) {
 			break
 		}
 
-		end := start + length
+		end := start + len(piece)
 		if end > len(joined) {
 			end = len(joined)
 			tokenTruncated = true

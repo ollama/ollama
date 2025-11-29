@@ -801,10 +801,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			if seq.logprobs {
 				origLogprobsLen := len(seq.pendingLogprobs)
 				numTokensRemoved := origLen - newLen
-				newLogprobsLen := origLogprobsLen - numTokensRemoved
-				if newLogprobsLen < 0 {
-					newLogprobsLen = 0
-				}
+				newLogprobsLen := max(origLogprobsLen-numTokensRemoved, 0)
 				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
 			}
 
@@ -1242,7 +1239,7 @@ func (s *Server) loadModel() {
 			s.progress = progress
 		})
 	if err != nil {
-		panic(fmt.Errorf("failed to load model: %v", err))
+		panic(fmt.Errorf("failed to load model: %w", err))
 	}
 
 	s.status = llm.ServerStatusReady
@@ -1432,7 +1429,6 @@ func Execute(args []string) error {
 
 	log.Println("Server listening on", addr)
 	if err := httpServer.Serve(listener); err != nil {
-		log.Fatal("server error:", err)
 		return err
 	}
 

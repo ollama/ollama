@@ -22,8 +22,8 @@ func (p *gemma2Adapter) KV(baseKV ggml.KV) ggml.KV {
 }
 
 func (p *gemma2Adapter) Tensors(ts []Tensor) []*ggml.Tensor {
-	var out []*ggml.Tensor
-	for _, t := range ts {
+	out := make([]*ggml.Tensor, len(ts))
+	for i, t := range ts {
 		shape := t.Shape()
 		if (strings.HasSuffix(t.Name(), "weight.lora_a") && shape[0] > shape[1]) ||
 			(strings.HasSuffix(t.Name(), "weight.lora_b") && shape[0] < shape[1]) {
@@ -31,12 +31,12 @@ func (p *gemma2Adapter) Tensors(ts []Tensor) []*ggml.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		out = append(out, &ggml.Tensor{
+		out[i] = &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
-		})
+		}
 	}
 
 	return out

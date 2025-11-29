@@ -107,7 +107,7 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error)
 
 	patches, err := p.createPatches(normalizedPixels, resizedHeight, resizedWidth, grid)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create patches: %v", err)
+		return nil, nil, fmt.Errorf("failed to create patches: %w", err)
 	}
 
 	// Return patches and grid dimensions

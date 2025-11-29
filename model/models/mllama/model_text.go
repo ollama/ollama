@@ -223,8 +223,8 @@ func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, cros
 }
 
 func newTextModel(c fs.Config) *TextModel {
-	var decoderLayers []TextDecoderLayer
-	for i := range c.Uint("block_count") {
+	decoderLayers := make([]TextDecoderLayer, c.Uint("block_count"))
+	for i := range decoderLayers {
 		var textDecoderLayer TextDecoderLayer
 		if slices.Contains(c.Ints("attention.cross_attention_layers"), int32(i)) {
 			textDecoderLayer = &TextCrossAttentionDecoderLayer{}
@@ -232,7 +232,7 @@ func newTextModel(c fs.Config) *TextModel {
 			textDecoderLayer = &TextSelfAttentionDecoderLayer{}
 		}
 
-		decoderLayers = append(decoderLayers, textDecoderLayer)
+		decoderLayers[i] = textDecoderLayer
 	}
 
 	return &TextModel{

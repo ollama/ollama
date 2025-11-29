@@ -44,14 +44,14 @@ func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
 }
 
 func (p *commandrModel) Tensors(ts []Tensor) []*ggml.Tensor {
-	var out []*ggml.Tensor
-	for _, t := range ts {
-		out = append(out, &ggml.Tensor{
+	out := make([]*ggml.Tensor, len(ts))
+	for i, t := range ts {
+		out[i] = &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
-		})
+		}
 	}
 
 	return out

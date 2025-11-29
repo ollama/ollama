@@ -20,7 +20,7 @@ func parseTag(tmpl *template.Template) string {
 		return "{"
 	}
 
-	tc := findToolCallNode(tmpl.Tree.Root.Nodes)
+	tc := findToolCallNode(tmpl.Root.Nodes)
 	if tc == nil {
 		return "{"
 	}

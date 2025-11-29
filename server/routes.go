@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -129,7 +130,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	}
 
 	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
-		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
+		return nil, nil, nil, errors.New("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {
@@ -361,11 +362,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
 		}
-	} else {
-		if req.Think != nil && req.Think.Bool() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
-			return
-		}
+	} else if req.Think != nil && req.Think.Bool() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
@@ -649,10 +648,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	truncate := true
-	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
-	}
+	truncate := req.Truncate == nil || *req.Truncate
 
 	var input []string
 
@@ -825,9 +821,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	var e []float64
-	for _, v := range embedding {
-		e = append(e, float64(v))
+	e := make([]float64, len(embedding))
+	for i, v := range embedding {
+		e[i] = float64(v)
 	}
 
 	resp := api.EmbeddingResponse{
@@ -1139,9 +1135,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		if m.Options == nil {
 			m.Options = make(map[string]any)
 		}
-		for k, v := range req.Options {
-			m.Options[k] = v
-		}
+		maps.Copy(m.Options, req.Options)
 	}
 
 	var sb strings.Builder
@@ -1212,7 +1206,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 		return
 	}
 
-	models := []api.ListModelResponse{}
+	models := make([]api.ListModelResponse, 0, len(ms))
 	for n, m := range ms {
 		var cf ConfigV2
 
@@ -1811,13 +1805,13 @@ func (s *Server) PsHandler(c *gin.Context) {
 			ExpiresAt: v.expiresAt,
 		}
 		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx
+			mr.ContextLength = v.NumCtx
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
 		// calculate the time w/ the sessionDuration instead.
 		var epoch time.Time
-		if v.expiresAt == epoch {
+		if v.expiresAt.Equal(epoch) {
 			mr.ExpiresAt = time.Now().Add(v.sessionDuration)
 		}
 
@@ -2000,11 +1994,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
 		}
-	} else {
-		if req.Think != nil && req.Think.Bool() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
-			return
-		}
+	} else if req.Think != nil && req.Think.Bool() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)

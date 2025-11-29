@@ -82,7 +82,7 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 		content string
 	}
 
-	var ts []t
+	ts := make([]t, 0, len(atm))
 	for content, id := range atm {
 		ts = append(ts, t{id, content})
 	}

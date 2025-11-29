@@ -386,7 +386,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		}
 		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			// Path is likely outside the root
-			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+			return nil, fmt.Errorf("%w: %w: %s", errFilePath, err, fp)
 		}
 
 		blobPath, err := GetBlobsPath(digest)
@@ -456,15 +456,15 @@ func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
 			return l.KV(), nil
 		}
 	}
-	return ggml.KV{}, fmt.Errorf("no base model was found")
+	return ggml.KV{}, errors.New("no base model was found")
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
-	var layers []Layer
-	for _, layer := range baseLayers {
+	layers := make([]Layer, len(baseLayers))
+	for i, layer := range baseLayers {
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
-			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
+			if quantType != "" && layer.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
 				want, err := ggml.ParseFileType(quantType)
 				if err != nil {
 					return err
@@ -480,13 +480,13 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 					}
 				}
 			}
-			config.ModelFormat = cmp.Or(config.ModelFormat, layer.GGML.Name())
+			config.ModelFormat = cmp.Or(config.ModelFormat, layer.Name())
 			config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGML.KV().Architecture())
 			config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.GGML.KV().ParameterCount()))
 			config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())
 			config.ModelFamilies = append(config.ModelFamilies, layer.GGML.KV().Architecture())
 		}
-		layers = append(layers, layer.Layer)
+		layers[i] = layer.Layer
 	}
 
 	if r.Template != "" {
@@ -678,10 +678,10 @@ func removeLayer(layers []Layer, mediatype string) []Layer {
 func setTemplate(layers []Layer, t string) ([]Layer, error) {
 	layers = removeLayer(layers, "application/vnd.ollama.image.template")
 	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
+		return nil, fmt.Errorf("%w: %w", errBadTemplate, err)
 	}
 	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
+		return nil, fmt.Errorf("%w: %w", errBadTemplate, err)
 	}
 
 	blob := strings.NewReader(t)

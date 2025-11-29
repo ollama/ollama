@@ -111,7 +111,7 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	for name, mxfp4 := range mxfp4s {
 		dims := mxfp4.blocks.Shape()
 		if !strings.HasSuffix(name, ".weight") {
-			name = name + ".weight"
+			name += ".weight"
 		}
 		if strings.Contains(name, "ffn_down_exps") {
 			out = append(out, &ggml.Tensor{

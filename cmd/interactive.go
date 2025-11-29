@@ -130,7 +130,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
-	var thinkExplicitlySet bool = opts.Think != nil
+	thinkExplicitlySet := opts.Think != nil
 
 	for {
 		line, err := scanner.Readline()
@@ -410,7 +410,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					if resp.Parameters == "" {
 						fmt.Println("  No additional parameters were specified for this model.")
 					} else {
-						for _, l := range strings.Split(resp.Parameters, "\n") {
+						for l := range strings.SplitSeq(resp.Parameters, "\n") {
 							fmt.Printf("  %s\n", l)
 						}
 					}
@@ -576,9 +576,8 @@ func extractFileNames(input string) []string {
 
 func extractFileData(input string) (string, []api.ImageData, error) {
 	filePaths := extractFileNames(input)
-	var imgs []api.ImageData
-
-	for _, fp := range filePaths {
+	imgs := make([]api.ImageData, len(filePaths))
+	for i, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
@@ -591,7 +590,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, data)
+		imgs[i] = data
 	}
 	return strings.TrimSpace(input), imgs, nil
 }

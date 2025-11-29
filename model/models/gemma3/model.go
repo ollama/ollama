@@ -96,15 +96,15 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	f32s, err := m.ImageProcessor.ProcessImage(image)
+	f32s, err := m.ProcessImage(image)
 	if err != nil {
 		return nil, err
 	}
 
 	pixelValues := ctx.Input().FromFloats(f32s,
-		m.ImageProcessor.imageSize,
-		m.ImageProcessor.imageSize,
-		m.ImageProcessor.numChannels,
+		m.imageSize,
+		m.imageSize,
+		m.numChannels,
 	)
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)

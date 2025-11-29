@@ -205,12 +205,12 @@ func (q queue) Less(i, j int) bool {
 
 func (q queue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
 
-func (q *queue) Push(x interface{}) {
+func (q *queue) Push(x any) {
 	item := x.(*candidate)
 	*q = append(*q, item)
 }
 
-func (q *queue) Pop() interface{} {
+func (q *queue) Pop() any {
 	old := *q
 	n := len(old)
 	item := old[n-1]
@@ -231,7 +231,7 @@ func (spm SentencePiece) Decode(ids []int32) (string, error) {
 		if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
 			byteVal, err := strconv.ParseUint(data[1:5], 0, 8)
 			if err != nil {
-				return "", fmt.Errorf("failed to parse hex byte: %v", err)
+				return "", fmt.Errorf("failed to parse hex byte: %w", err)
 			}
 
 			if err := sb.WriteByte(byte(byteVal)); err != nil {

@@ -274,7 +274,7 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 							return args, true
 						}
 						if argsStr, ok := obj[name].(string); ok {
-							var argsData map[string]interface{}
+							var argsData map[string]any
 							if err := json.Unmarshal([]byte(argsStr), &argsData); err == nil {
 								return argsData, ok
 							}

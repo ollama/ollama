@@ -326,16 +326,10 @@ MESSAGE system`,
 				return
 			}
 
-			switch tt.err.(type) {
-			case *ParserError:
-				var pErr *ParserError
-				if errors.As(err, &pErr) {
-					// got the correct type of error
-					return
-				}
-			}
-
 			if errors.Is(err, tt.err) {
+				return
+			} else if pErr := (*ParserError)(nil); errors.As(err, &pErr) {
+				// got the correct type of error
 				return
 			}
 
@@ -1089,7 +1083,7 @@ func TestFilesForModel(t *testing.T) {
 				if err == nil {
 					t.Error("Expected error, but got none")
 				}
-				if tt.expectErrType != nil && err != tt.expectErrType {
+				if tt.expectErrType != nil && !errors.Is(err, tt.expectErrType) {
 					t.Errorf("Expected error type %v, got %v", tt.expectErrType, err)
 				}
 				return
