@@ -61,11 +61,43 @@ curl -X POST http://localhost:5678/webhook/ollama-webhook \
 
 ### Ollama Server URL
 
-By default, the workflows connect to `http://localhost:11434`. To change this:
+By default, the workflows connect to `http://localhost:11434`. To change the Ollama server URL:
+
+#### Method 1: Edit in n8n UI
 
 1. Open the workflow in n8n
-2. Click on the HTTP Request node
-3. Update the URL to point to your Ollama server
+2. Click on the HTTP Request node (e.g., "Ollama Chat API" or "Ollama Generate API")
+3. Find the **URL** field
+4. Change `http://localhost:11434` to your Ollama server address
+5. Click **Save** to apply changes
+
+#### Method 2: Edit the JSON file directly
+
+Before importing, edit the workflow JSON file:
+
+1. Open the `.json` file in a text editor
+2. Find all occurrences of `http://localhost:11434`
+3. Replace with your Ollama server URL (e.g., `http://192.168.1.100:11434` or `http://ollama.example.com:11434`)
+4. Save the file and import into n8n
+
+**Example URLs:**
+- Local: `http://localhost:11434`
+- LAN server: `http://192.168.1.100:11434`
+- Docker: `http://host.docker.internal:11434`
+- Remote: `https://ollama.example.com:11434`
+
+#### Verify Connection
+
+Test your Ollama server is reachable:
+
+```bash
+curl http://YOUR_OLLAMA_URL/api/version
+```
+
+Expected response:
+```json
+{"version": "0.5.1"}
+```
 
 ### Model Selection
 
