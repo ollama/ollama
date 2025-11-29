@@ -123,7 +123,7 @@ func TestIntellect3ParserToolCallsOnly(t *testing.T) {
 			desc: "tool call streaming",
 			chunks: []string{
 				"Checking<tool_call><function=get_wea",
-				"ther>\n<parameter=location>\nNew York\n</param",
+				"ther>\n<parameter=location>\nNew York\n</param", //nolint:all
 				"eter>\n<parameter=unit>\nfahrenheit\n</parameter>\n</function></tool_call>Done",
 			},
 			wantText: "CheckingDone",
