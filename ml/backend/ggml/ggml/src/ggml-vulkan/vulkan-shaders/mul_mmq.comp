@@ -211,7 +211,9 @@ void main() {
             const uint iqs = loadr_a;
 
             [[unroll]] for (uint k_step = 0; k_step < BK_STEP; k_step++) {
-                block_a_to_shmem(k_step * BM + buf_ib, ib + k_step, iqs);
+                if (block + k_step * BK < end_k) {
+                    block_a_to_shmem(k_step * BM + buf_ib, ib + k_step, iqs);
+                }
             }
         }
         [[unroll]] for (uint l = 0; loadc_b + l < BN; l += loadstride_b) {
@@ -226,7 +228,7 @@ void main() {
             const uint iqs = loadr_b;
 
             [[unroll]] for (uint k_step = 0; k_step < BK_STEP; k_step++) {
-                block_b_to_shmem(k_step * BN + buf_ib, ib + k_step, iqs);
+                block_b_to_shmem(k_step * BN + buf_ib, ib + k_step, iqs, block + k_step * BK < end_k);
             }
         }
 
