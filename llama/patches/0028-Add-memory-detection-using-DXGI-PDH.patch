@@ -6,13 +6,13 @@ Subject: [PATCH] Add memory detection using DXGI + PDH
 ---
  ggml/src/CMakeLists.txt              |   1 +
  ggml/src/ggml-impl.h                 |   3 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp |  29 ++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |  26 ++-
  ggml/src/mem_dxgi_pdh.cpp            | 297 +++++++++++++++++++++++++++
- 4 files changed, 327 insertions(+), 3 deletions(-)
+ 4 files changed, 325 insertions(+), 2 deletions(-)
  create mode 100644 ggml/src/mem_dxgi_pdh.cpp
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 03f359ae9..4b3e5efb5 100644
+index 5d323983c..33952a2d2 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -211,6 +211,7 @@ add_library(ggml-base
@@ -22,9 +22,9 @@ index 03f359ae9..4b3e5efb5 100644
 +            mem_dxgi_pdh.cpp
              gguf.cpp)
  
- target_include_directories(ggml-base PRIVATE .)
+ set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index 44ae76d66..639d551a2 100644
+index 1c07e767a..0da3e065b 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
 @@ -684,6 +684,9 @@ GGML_API void ggml_nvml_release();
@@ -38,10 +38,10 @@ index 44ae76d66..639d551a2 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ca02ea079..c12b069e5 100644
+index a49fb8cb5..662aa1a6e 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -73,6 +73,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
+@@ -74,6 +74,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
  #define VK_KHR_SHADER_BFLOAT16_EXTENSION_NAME                        "VK_KHR_shader_bfloat16"
  #define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR ((VkStructureType)1000141000)
  #define VK_COMPONENT_TYPE_BFLOAT16_KHR                               ((VkComponentTypeKHR)1000141000)
@@ -49,7 +49,7 @@ index ca02ea079..c12b069e5 100644
  
  typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
      VkStructureType                       sType;
-@@ -12802,6 +12803,7 @@ struct ggml_backend_vk_device_context {
+@@ -13541,6 +13542,7 @@ struct ggml_backend_vk_device_context {
      std::string pci_id;
      std::string id;
      std::string uuid;
@@ -57,8 +57,8 @@ index ca02ea079..c12b069e5 100644
      int major;
      int minor;
      int driver_major;
-@@ -12817,8 +12819,22 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
-     vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
+@@ -13559,6 +13561,20 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+     
      vk::PhysicalDeviceProperties2 props2;
      vkdev.getProperties2(&props2);
 +    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s\n", ctx->uuid.c_str());
@@ -76,22 +76,17 @@ index ca02ea079..c12b069e5 100644
 +        ggml_dxgi_pdh_release();
 +    }
  
--    if (!ctx->is_integrated_gpu)
-+    if (!ctx->is_integrated_gpu) 
+     if (!is_integrated_gpu)
      {
-         // Use vendor specific management libraries for best VRAM reporting if available
-         switch (props2.properties.vendorID) {
-@@ -12846,8 +12862,8 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
-             break;
-         }
+@@ -13590,7 +13606,6 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
      }
--    // else fallback to memory budget if supported
+     // else fallback to memory budget if supported
  
-+    // else fallback to memory budget if supported
-     *total = 0;
-     *free = 0;
-     vk::PhysicalDeviceMemoryBudgetPropertiesEXT mem_budget_props;
-@@ -13500,7 +13516,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+-
+     if (membudget_supported) {
+         memprops.pNext = &budgetprops;
+     }
+@@ -14254,7 +14269,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                      /* .reg     = */ reg,
                      /* .context = */ ctx,
                  });
@@ -99,7 +94,7 @@ index ca02ea079..c12b069e5 100644
                  // Gather additional information about the device
                  int dev_idx = vk_instance.device_indices[i];
                  vk::PhysicalDeviceProperties props1;
-@@ -13523,6 +13538,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -14277,6 +14291,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                      }
                  }
                  ctx->uuid = oss.str();
