@@ -39,7 +39,96 @@ var (
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
 	errFilePath                = errors.New("file path must be relative")
+	errIncompleteShardedGGUF   = errors.New("missing some GGUF splits")
+	errExtraShardedGGUF        = errors.New("extra GGUF splits found")
 )
+
+func broadcastKV(main *ggml.GGML, subs ...*ggml.GGML) {
+	// broadcast KV value towards other shards. Only for manifest purpose
+	ggmls := []ggml.GGML{*main}
+	for i := range subs {
+		ggmls = append(ggmls, *subs[i])
+	}
+	metaggml := ggml.MakeMetaGGML(ggmls, make([]string, len(ggmls)))
+	mainKV := main.KV()
+	mainKV["general.parameter_count"] = metaggml.KV().ParameterCount()
+	for i := range subs {
+		subKV := subs[i].KV()
+		for k, v := range metaggml.KV() {
+			subKV[k] = v
+		}
+	}
+}
+
+func baseLayerSortNCheckSan(baseLayers *[]*layerGGML) error {
+	slices.SortStableFunc(*baseLayers, func(a, b *layerGGML) int {
+		var aScore, bScore int
+		if a.GGML == nil {
+			// chat template and parameter can be added here. use very big number to move them at last
+			aScore = 0x7fffffff
+		} else {
+			aSplit := a.GGML.KV().GGUFSplitInfo()
+			if aSplit == nil {
+				aScore = -1
+			} else {
+				aScore = int(aSplit.No)
+			}
+		}
+		if b.GGML == nil {
+			bScore = 0x7fffffff
+		} else {
+			bSplit := b.GGML.KV().GGUFSplitInfo()
+			if bSplit == nil {
+				bScore = -1
+			} else {
+				bScore = int(bSplit.No)
+			}
+		}
+		return cmp.Compare(aScore, bScore)
+	})
+	// sanity check for layers
+	{
+		ggmlPtrs := make([]*ggml.GGML, 0, len(*baseLayers))
+		firstSplitCount := -1
+		foundSplitNos := make([]uint16, 0)
+		for i, layer := range *baseLayers {
+			if i == 0 {
+				if layer.GGML == nil {
+					// First item should be GGUF after sorting
+					return errNoFilesProvided
+				}
+			}
+			if layer.GGML != nil && layer.GGML.KV().GGUFSplitInfo() != nil {
+				if firstSplitCount == -1 {
+					if layer.GGML.KV().GGUFSplitInfo().No != 0 {
+						return errIncompleteShardedGGUF
+					}
+					firstSplitCount = int(layer.GGML.KV().GGUFSplitInfo().Count)
+					foundSplitNos = append(foundSplitNos, layer.KV().GGUFSplitInfo().No)
+				} else if firstSplitCount != int(layer.KV().GGUFSplitInfo().Count) {
+					return errExtraShardedGGUF
+				} else {
+					if foundSplitNos[len(foundSplitNos)-1] == layer.KV().GGUFSplitInfo().No {
+						return errExtraShardedGGUF
+					} else if foundSplitNos[len(foundSplitNos)-1] != layer.KV().GGUFSplitInfo().No-1 {
+						return errIncompleteShardedGGUF
+					} else {
+						foundSplitNos = append(foundSplitNos, layer.KV().GGUFSplitInfo().No)
+					}
+				}
+				// only gguf splits should be included
+				ggmlPtrs = append(ggmlPtrs, layer.GGML)
+			}
+		}
+		if firstSplitCount != -1 && len(foundSplitNos) != firstSplitCount {
+			return errIncompleteShardedGGUF
+		}
+		if len(ggmlPtrs) > 1 {
+			broadcastKV(ggmlPtrs[0], ggmlPtrs[1:]...)
+		}
+	}
+	return nil
+}
 
 func (s *Server) CreateHandler(c *gin.Context) {
 	config := &ConfigV2{
@@ -156,6 +245,14 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		} else {
 			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
+		}
+		// Sort baseLayers here to ensure that split model will be correctly ordered
+		if !remote {
+			err := baseLayerSortNCheckSan(&baseLayers)
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
 		}
 
 		var adapterLayers []*layerGGML
@@ -644,9 +741,20 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 	mediatype := "application/vnd.ollama.image.model"
 	if f.KV().Kind() == "adapter" {
 		mediatype = "application/vnd.ollama.image.adapter"
-	} else if (f.KV().Uint("block_count") == 0 && f.KV().Uint("vision.block_count") > 0) || f.KV().Kind() == "projector" {
-		// if a model has vision.block_count but not block_count, it is a standalone vision model
+	} else if f.KV().Kind() == "projector" {
+		// Explicit projector type (legacy models)
 		mediatype = "application/vnd.ollama.image.projector"
+	} else if f.KV().Uint("block_count") == 0 && f.KV().Uint("vision.block_count") > 0 {
+		// Vision-only file: could be a legacy projector or part of a split model
+		splitCount := f.KV().Uint("split.count")
+		if splitCount > 1 {
+			// Part of split model - treat as extra model file, not projector
+			slog.Debug("detected vision split shard", "split.count", splitCount)
+			mediatype = "application/vnd.ollama.image.model"
+		} else {
+			// Standalone vision model (legacy projector)
+			mediatype = "application/vnd.ollama.image.projector"
+		}
 	}
 
 	layer, err := NewLayerFromLayer(digest, mediatype, blob.Name())

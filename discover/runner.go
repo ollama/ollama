@@ -436,6 +436,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map
 	cmd, port, err := llm.StartRunner(
 		true, // ollama engine
 		"",   // no model
+		make([]string, 0),
 		ollamaLibDirs,
 		out,
 		extraEnvs,
