@@ -20,14 +20,17 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"text/template"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
+	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -962,5 +965,83 @@ func TestWaitForStream(t *testing.T) {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestHandleToolParsing(t *testing.T) {
+	// 1. Setup Mock Data
+	chunks := []struct {
+		content  string
+		logprobs int
+		done     bool
+	}{
+		{content: `{ "loc"`, logprobs: 5, done: false},
+		{content: `: "Taipei"`, logprobs: 8, done: false},
+		{content: ` }`, logprobs: 1, done: true},
+	}
+
+	toolList := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "test",
+				Description: "A test function",
+				Parameters: api.ToolFunctionParameters{
+					Type:     "object",
+					Required: []string{},
+				},
+			},
+		},
+	}
+
+	// Template object
+	tmplString := `{{ .Tools }}`
+	tmpl, err := template.New("tool_template").Parse(tmplString)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	parser := tools.NewParser(tmpl, toolList)
+
+	ch := make(chan any, 10)
+
+	// Execute
+	totalLogprobs := 0
+
+	for _, chunk := range chunks {
+		r := llm.CompletionResponse{
+			Content:  chunk.content,
+			Done:     chunk.done,
+			Logprobs: make([]llm.Logprob, chunk.logprobs),
+		}
+
+		apiLogprobs := make([]api.Logprob, chunk.logprobs)
+
+		res := api.ChatResponse{
+			Message:  api.Message{Content: chunk.content},
+			Logprobs: apiLogprobs,
+		}
+
+		handleToolParsing(r, res, parser, ch)
+	}
+	close(ch)
+
+	// Verify
+	chunkCount := 0
+	for msg := range ch {
+		chunkCount++
+		if resp, ok := msg.(api.ChatResponse); ok {
+			// Check logprobs length
+			totalLogprobs += len(resp.Logprobs)
+
+			if len(resp.Logprobs) > 1 && resp.Done == false && resp.Message.Content != "" {
+			}
+		}
+	}
+
+	// Expecting all logprobs to be preserved
+	expectedLogprobs := 5 + 8 + 1
+	if totalLogprobs != expectedLogprobs {
+		t.Errorf("Expected %d logprobs, got %d. Intermediate chunks were likely dropped.", expectedLogprobs, totalLogprobs)
 	}
 }

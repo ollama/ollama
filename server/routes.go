@@ -2216,30 +2216,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				if len(req.Tools) > 0 {
-					toolCalls, content := toolParser.Add(res.Message.Content)
-					if len(content) > 0 {
-						res.Message.Content = content
-					} else if len(toolCalls) > 0 {
-						for i := range toolCalls {
-							toolCalls[i].ID = toolCallId()
-						}
-						res.Message.ToolCalls = toolCalls
-						res.Message.Content = ""
-					} else if res.Message.Thinking != "" {
-						// don't return
-					} else {
-						if len(res.Logprobs) > 0 && !r.Done {
-							logprobRes := res
-							logprobRes.Message.Content = ""
-							logprobRes.Message.ToolCalls = nil
-							ch <- logprobRes
-						}
-						if r.Done {
-							res.Message.Content = toolParser.Content()
-							ch <- res
-						}
-						return
-					}
+					handleToolParsing(r, res, toolParser, ch)
 				}
 
 				ch <- res
@@ -2381,4 +2358,44 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+// handleToolParsing handles the interaction with the tool parser.
+// It ensures that intermediate chunks containing logprobs are not dropped while buffering.
+func handleToolParsing(
+	r llm.CompletionResponse,
+	res api.ChatResponse,
+	toolParser *tools.Parser,
+	ch chan any,
+) {
+	toolCalls, content := toolParser.Add(res.Message.Content)
+	if len(content) > 0 {
+		res.Message.Content = content
+	} else if len(toolCalls) > 0 {
+		for i := range toolCalls {
+			toolCalls[i].ID = toolCallId()
+		}
+		res.Message.ToolCalls = toolCalls
+		res.Message.Content = ""
+	} else if res.Message.Thinking != "" {
+		// don't return, fall through to send
+	} else {
+		// If content is buffered by the parser but we have logprobs, send them.
+		if len(res.Logprobs) > 0 && !r.Done {
+			logprobRes := res
+			logprobRes.Message.Content = ""
+			logprobRes.Message.ToolCalls = nil
+			// Create a copy of logprobs to avoid race conditions if needed,
+			// though here we are just passing value/slice header.
+			ch <- logprobRes
+		}
+
+		if r.Done {
+			res.Message.Content = toolParser.Content()
+			ch <- res
+		}
+		return
+	}
+
+	ch <- res
 }
