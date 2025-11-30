@@ -54,6 +54,7 @@ benchstat -col /name gemma.bench
 ## Command Line Options
 
 | Option  	| Description | Default |
+|----------|-------------|---------|
 | -model	| Comma-separated list of models to benchmark	| (required)		|
 | -epochs	| Number of iterations per model		| 1			|
 | -max-tokens	| Maximum tokens for model response		| 0 (unlimited)		|
