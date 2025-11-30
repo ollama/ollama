@@ -16,7 +16,7 @@ Certain API endpoints stream responses by default, such as `/api/generate`. Thes
 
 ## Disabling streaming
 
-Streaming can be disabled by providing `{"stream": false}` in the request body for any endpoint that support streaming. This will cause responses to be returned in the `application/json` format instead:
+Streaming can be disabled by providing `{"stream": false}` in the request body for any endpoint that supports streaming. This will cause responses to be returned in the `application/json` format instead:
 
 ```json
 {"model":"gemma3","created_at":"2025-10-26T17:15:24.166576Z","response":"That's a fantastic question!","done":true}
