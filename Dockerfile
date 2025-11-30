@@ -61,9 +61,18 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-11
 ARG CUDA11VERSION=11.8
-RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-} \
+RUN dnf install -y \
+    cuda-minimal-build-${CUDA11VERSION//./-} \
+    cuda-cudart-devel-${CUDA11VERSION//./-} \
+    cuda-nvcc-${CUDA11VERSION//./-} \
+    libcublas-devel-${CUDA11VERSION//./-} \
+    libcufft-devel-${CUDA11VERSION//./-} \
+    libcurand-devel-${CUDA11VERSION//./-} \
+    libcusolver-devel-${CUDA11VERSION//./-} \
+    libcusparse-devel-${CUDA11VERSION//./-} \
     && dnf update -y --security \
-    && dnf clean all
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 ARG PARALLEL
 COPY CMakeLists.txt CMakePresets.json .
@@ -75,9 +84,18 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-12
 ARG CUDA12VERSION=12.8
-RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-} \
+RUN dnf install -y \
+    cuda-minimal-build-${CUDA12VERSION//./-} \
+    cuda-cudart-devel-${CUDA12VERSION//./-} \
+    cuda-nvcc-${CUDA12VERSION//./-} \
+    libcublas-devel-${CUDA12VERSION//./-} \
+    libcufft-devel-${CUDA12VERSION//./-} \
+    libcurand-devel-${CUDA12VERSION//./-} \
+    libcusolver-devel-${CUDA12VERSION//./-} \
+    libcusparse-devel-${CUDA12VERSION//./-} \
     && dnf update -y --security \
-    && dnf clean all
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 ARG PARALLEL
 COPY CMakeLists.txt CMakePresets.json .
@@ -90,9 +108,18 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-13
 ARG CUDA13VERSION=13.0
-RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
+RUN dnf install -y \
+    cuda-minimal-build-${CUDA13VERSION//./-} \
+    cuda-cudart-devel-${CUDA13VERSION//./-} \
+    cuda-nvcc-${CUDA13VERSION//./-} \
+    libcublas-devel-${CUDA13VERSION//./-} \
+    libcufft-devel-${CUDA13VERSION//./-} \
+    libcurand-devel-${CUDA13VERSION//./-} \
+    libcusolver-devel-${CUDA13VERSION//./-} \
+    libcusparse-devel-${CUDA13VERSION//./-} \
     && dnf update -y --security \
-    && dnf clean all
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 ARG PARALLEL
 COPY CMakeLists.txt CMakePresets.json .
