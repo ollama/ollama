@@ -2,8 +2,9 @@
 
 #include "../llama-model.h"
 #include "../llama-graph.h"
-#include "../llama-memory-recurrent.h"
 
+// TODO: remove in follow-up PR - move to .cpp files
+#include "../llama-memory-recurrent.h"
 #include <cmath>
 
 struct llm_graph_context_mamba : public llm_graph_context {
@@ -421,7 +422,56 @@ struct llm_build_qwen3vl : public llm_graph_context {
 struct llm_build_qwen3vlmoe : public llm_graph_context {
     llm_build_qwen3vlmoe(const llama_model & model, const llm_graph_params & params);
 };
+struct llm_build_qwen3next : public llm_graph_context_mamba {
+    llm_build_qwen3next(const llama_model & model, const llm_graph_params & params);
+private:
+    ggml_tensor * build_layer_attn(
+    llm_graph_input_attn_kv * inp_attn,
+                ggml_tensor * cur,
+                ggml_tensor * inp_pos,
+                        int   il);
 
+    ggml_tensor * build_layer_attn_linear(
+         llm_graph_input_rs * inp,
+                ggml_tensor * cur,
+                ggml_tensor * causal_mask,
+                ggml_tensor * identity,
+                        int   il);
+
+    ggml_tensor * build_layer_ffn(
+                ggml_tensor * cur,
+                        int   il);
+
+    ggml_tensor * build_delta_net_recurrent(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * g,
+                ggml_tensor * beta,
+                ggml_tensor * state,
+                ggml_tensor * causal_mask,
+                ggml_tensor * identity,
+                        int   il);
+
+    ggml_tensor * build_delta_net_chunking(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * g,
+                ggml_tensor * beta,
+                ggml_tensor * state,
+                ggml_tensor * causal_mask,
+                ggml_tensor * identity,
+                        int   il);
+
+    ggml_tensor * build_norm_gated(
+                ggml_tensor * input,
+                ggml_tensor * weights,
+                ggml_tensor * gate,
+                        int   layer);
+
+    const llama_model & model;
+};
 
 struct llm_build_qwen : public llm_graph_context {
     llm_build_qwen(const llama_model & model, const llm_graph_params & params);
@@ -429,6 +479,10 @@ struct llm_build_qwen : public llm_graph_context {
 
 struct llm_build_refact : public llm_graph_context {
     llm_build_refact(const llama_model & model, const llm_graph_params & params);
+};
+
+struct llm_build_rnd1 : public llm_graph_context {
+    llm_build_rnd1(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_rwkv6 : public llm_build_rwkv6_base {

@@ -9,31 +9,6 @@
 #if defined(DATA_A_Q4_0) || defined(DATA_A_Q4_1)
 // 2-byte loads for Q4_0 blocks (18 bytes)
 // 4-byte loads for Q4_1 blocks (20 bytes)
-i32vec2 repack(uint ib, uint iqs) {
-#ifdef DATA_A_Q4_0
-    const u16vec2 quants = u16vec2(data_a_packed16[ib].qs[iqs * 2    ],
-                                   data_a_packed16[ib].qs[iqs * 2 + 1]);
-    const uint32_t vui = pack32(quants);
-    return i32vec2( vui       & 0x0F0F0F0F,
-                   (vui >> 4) & 0x0F0F0F0F);
-#else // DATA_A_Q4_1
-    const uint32_t vui = data_a_packed32[ib].qs[iqs];
-    return i32vec2( vui       & 0x0F0F0F0F,
-                   (vui >> 4) & 0x0F0F0F0F);
-#endif
-}
-
-#ifdef DATA_A_Q4_0
-ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(da * (float(q_sum) * dsb.x - (8 / sum_divisor) * dsb.y));
-}
-#else // DATA_A_Q4_1
-ACC_TYPE mul_q8_1(const int32_t q_sum, const vec2 dma, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(float(q_sum) * dma.x * dsb.x + dma.y * dsb.y / sum_divisor);
-}
-#endif
-
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
 #ifdef DATA_A_Q4_0
     buf_a[buf_ib].qs[iqs] = pack32(u16vec2(data_a_packed16[ib].qs[iqs * 2],
@@ -73,42 +48,17 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
         q_sum += dotPacked4x8EXT(qs_a.y, qs_b1);
     }
 
-    return mul_q8_1(q_sum, cache_a[ib_a].dm, cache_b.ds, 1);
+#ifdef DATA_A_Q4_0
+    return ACC_TYPE(float(cache_a[ib_a].dm) * (float(q_sum) * float(cache_b.ds.x) - 8.0 * float(cache_b.ds.y)));
+#else // DATA_A_Q4_1
+    return ACC_TYPE(float(q_sum) * float(cache_a[ib_a].dm.x) * float(cache_b.ds.x) + float(cache_a[ib_a].dm.y) * float(cache_b.ds.y));
+#endif
 }
-#endif // MMQ_SHMEM
+#endif
 
-#elif defined(DATA_A_Q5_0) || defined(DATA_A_Q5_1)
+#if defined(DATA_A_Q5_0) || defined(DATA_A_Q5_1)
 // 2-byte loads for Q5_0 blocks (22 bytes)
 // 4-byte loads for Q5_1 blocks (24 bytes)
-i32vec2 repack(uint ib, uint iqs) {
-    const u16vec2 quants = u16vec2(data_a_packed16[ib].qs[iqs * 2    ],
-                                   data_a_packed16[ib].qs[iqs * 2 + 1]);
-    const uint32_t vui = pack32(quants);
-#ifdef DATA_A_Q5_0
-    const int32_t qh = int32_t((uint32_t(data_a_packed16[ib].qh[1]) << 16 | data_a_packed16[ib].qh[0]) >> (4 * iqs));
-#else // DATA_A_Q5_1
-    const int32_t qh = int32_t(data_a_packed32[ib].qh >> (4 * iqs));
-#endif
-    const int32_t v0 = int32_t(vui & 0x0F0F0F0F)
-                     | ((qh & 0xF) * 0x02040810) & 0x10101010; // (0,1,2,3) -> (4,12,20,28)
-
-    const int32_t v1 = int32_t((vui >> 4) & 0x0F0F0F0F)
-                     | (((qh >> 16) & 0xF) * 0x02040810) & 0x10101010; // (16,17,18,19) -> (4,12,20,28)
-
-    return i32vec2(v0, v1);
-}
-
-#ifdef DATA_A_Q5_0
-ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(da * (float(q_sum) * dsb.x - (16 / sum_divisor) * dsb.y));
-}
-#else // DATA_A_Q5_1
-ACC_TYPE mul_q8_1(const int32_t q_sum, const vec2 dma, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(float(q_sum) * dma.x * dsb.x + dma.y * dsb.y / sum_divisor);
-}
-#endif
-
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
 #ifdef DATA_A_Q5_0
     buf_a[buf_ib].qs[iqs] = pack32(u16vec2(data_a_packed16[ib].qs[iqs * 2],
@@ -154,23 +104,16 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
         q_sum += dotPacked4x8EXT(qs_a1, qs_b1);
     }
 
-    return mul_q8_1(q_sum, cache_a[ib_a].dm, cache_b.ds, 1);
+#ifdef DATA_A_Q5_0
+    return ACC_TYPE(float(cache_a[ib_a].dm) * (float(q_sum) * float(cache_b.ds.x) - 16.0 * float(cache_b.ds.y)));
+#else // DATA_A_Q5_1
+    return ACC_TYPE(float(q_sum) * float(cache_a[ib_a].dm.x) * float(cache_b.ds.x) + float(cache_a[ib_a].dm.y) * float(cache_b.ds.y));
+#endif
 }
-#endif // MMQ_SHMEM
 #endif
 
 #if defined(DATA_A_Q8_0)
 // 2-byte loads for Q8_0 blocks (34 bytes)
-int32_t repack(uint ib, uint iqs) {
-    return pack32(i16vec2(data_a_packed16[ib].qs[iqs * 2    ],
-                          data_a_packed16[ib].qs[iqs * 2 + 1]));
-}
-
-ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(float(q_sum) * da * dsb.x);
-}
-
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     buf_a[buf_ib].qs[iqs] = pack32(i16vec2(data_a_packed16[ib].qs[iqs * 2],
                                            data_a_packed16[ib].qs[iqs * 2 + 1]));
@@ -197,28 +140,12 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
         q_sum += dotPacked4x8EXT(qs_a, qs_b);
     }
 
-    return mul_q8_1(q_sum, cache_a[ib_a].dm, cache_b.ds, 1);
+    return ACC_TYPE(float(q_sum) * float(cache_a[ib_a].dm) * float(cache_b.ds.x));
 }
-#endif // MMQ_SHMEM
 #endif
 
 #if defined(DATA_A_MXFP4)
 // 1-byte loads for mxfp4 blocks (17 bytes)
-i32vec2 repack(uint ib, uint iqs) {
-    const uint32_t quants = pack32(u8vec4(data_a[ib].qs[iqs * 4    ],
-                                          data_a[ib].qs[iqs * 4 + 1],
-                                          data_a[ib].qs[iqs * 4 + 2],
-                                          data_a[ib].qs[iqs * 4 + 3]));
-
-    return i32vec2( quants       & 0x0F0F0F0F,
-                   (quants >> 4) & 0x0F0F0F0F);
-}
-
-ACC_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(da * dsb.x * float(q_sum));
-}
-
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     const uint32_t qs = pack32(u8vec4(data_a[ib].qs[iqs * 4    ],
                                       data_a[ib].qs[iqs * 4 + 1],
@@ -252,37 +179,14 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
         q_sum += dotPacked4x8EXT(qs_a, cache_b.qs[iqs]);
     }
 
-    return mul_q8_1(q_sum, cache_a[ib_a].d, cache_b.ds, 1);
+    return ACC_TYPE(float(cache_a[ib_a].d) * float(cache_b.ds.x) * float(q_sum));
 }
-#endif // MMQ_SHMEM
 #endif
 
 // For k-quants, ib and iqs still assume 32-wide blocks, but k-quants are 256-wide
 // iqs still refers to a 32-bit integer, meaning 0..7 for 32-wide quants
 #if defined(DATA_A_Q2_K)
 // 4-byte loads for Q2_K blocks (84 bytes)
-int32_t repack(uint ib, uint iqs) {
-    const uint ib_k = ib / 8;
-    const uint iqs_k = (ib % 8) * 8 + iqs;
-
-    const uint qs_idx = (iqs_k / 32) * 8 + (iqs_k % 8);
-    const uint qs_shift = ((iqs_k % 32) / 8) * 2;
-
-    return int32_t((data_a_packed32[ib_k].qs[qs_idx] >> qs_shift) & 0x03030303);
-}
-
-uint8_t get_scale(uint ib, uint iqs) {
-    const uint ib_k = ib / 8;
-    const uint iqs_k = (ib % 8) * 8 + iqs;
-
-    return data_a[ib_k].scales[iqs_k / 4];
-}
-
-ACC_TYPE mul_q8_1(const int32_t sum_d, const int32_t sum_m, const vec2 dma, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(dsb.x * (dma.x * float(sum_d) - dma.y * float(sum_m)));
-}
-
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     const uint ib_k = ib / 8;
     const uint iqs_k = (ib % 8) * 8 + iqs * QUANT_R_MMQ;
@@ -326,14 +230,12 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
         sum_m += dotPacked4x8EXT(scale_m, cache_b.qs[iqs]);
     }
 
-    return mul_q8_1(sum_d, sum_m, cache_a[ib_a].dm, cache_b.ds, 1);
+    return ACC_TYPE(float(cache_b.ds.x) * (float(cache_a[ib_a].dm.x) * float(sum_d) - float(cache_a[ib_a].dm.y) * float(sum_m)));
 }
-#endif // MMQ_SHMEM
 #endif
 
 #if defined(DATA_A_Q3_K)
 // 2-byte loads for Q3_K blocks (110 bytes)
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     const uint ib_k = ib / 8;
     const uint hm_idx = iqs * QUANT_R_MMQ;
@@ -394,18 +296,12 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
     }
     result += float(cache_a[ib_a].d_scales[1]) * float(q_sum);
 
-    return ACC_TYPE(cache_b.ds.x * result);
+    return ACC_TYPE(float(cache_b.ds.x) * result);
 }
-#endif // MMQ_SHMEM
 #endif
 
 #if defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
 // 4-byte loads for Q4_K blocks (144 bytes) and Q5_K blocks (176 bytes)
-ACC_TYPE mul_q8_1(const int32_t q_sum, const vec2 dma, const vec2 dsb, const int32_t sum_divisor) {
-    return ACC_TYPE(dsb.x * dma.x * float(q_sum) - dma.y * dsb.y);
-}
-
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     const uint ib_k = ib / 8;
     const uint iqs_k = (ib % 8) * 8 + iqs * QUANT_R_MMQ;
@@ -426,7 +322,6 @@ void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     buf_a[buf_ib].qs[iqs] = int32_t(((data_a_packed32[ib_k].qs[qs_idx] >> qs_shift) & 0x0F0F0F0F) |
                                    (((data_a_packed32[ib_k].qh[qh_idx] >> qh_shift) & 0x01010101) << 4));
 #endif
-
 
     if (iqs == 0) {
         // Scale index
@@ -464,49 +359,12 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
         q_sum += dotPacked4x8EXT(qs_a, cache_b.qs[iqs]);
     }
 
-    return mul_q8_1(q_sum, cache_a[ib_a].dm, cache_b.ds, 1);
-}
-#endif // MMQ_SHMEM
-#endif
-
-#ifdef MMQ_SHMEM
-void block_b_to_shmem(const uint buf_ib, const uint ib, const uint iqs, const bool is_in_bounds) {
-    if (is_in_bounds) {
-        const uint ib_outer = ib / 4;
-        const uint ib_inner = ib % 4;
-
-        if (iqs == 0) {
-            buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(data_b[ib_outer].ds[ib_inner]);
-        }
-
-        const ivec4 values = data_b[ib_outer].qs[ib_inner * 2 + iqs];
-        buf_b[buf_ib].qs[iqs * 4    ] = values.x;
-        buf_b[buf_ib].qs[iqs * 4 + 1] = values.y;
-        buf_b[buf_ib].qs[iqs * 4 + 2] = values.z;
-        buf_b[buf_ib].qs[iqs * 4 + 3] = values.w;
-    } else {
-        if (iqs == 0) {
-            buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(0.0f);
-        }
-
-        buf_b[buf_ib].qs[iqs * 4    ] = 0;
-        buf_b[buf_ib].qs[iqs * 4 + 1] = 0;
-        buf_b[buf_ib].qs[iqs * 4 + 2] = 0;
-        buf_b[buf_ib].qs[iqs * 4 + 3] = 0;
-    }
-}
-
-void block_b_to_registers(const uint ib) {
-    cache_b.ds = buf_b[ib].ds;
-    [[unroll]] for (uint iqs = 0; iqs < BK / 4; iqs++) {
-        cache_b.qs[iqs] = buf_b[ib].qs[iqs];
-    }
+    return ACC_TYPE(float(cache_b.ds.x) * float(cache_a[ib_a].dm.x) * float(q_sum) - float(cache_a[ib_a].dm.y) * float(cache_b.ds.y));
 }
 #endif
 
 #if defined(DATA_A_Q6_K)
 // 2-byte loads for Q6_K blocks (210 bytes)
-#ifdef MMQ_SHMEM
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
     const uint ib_k = ib / 8;
     const uint iqs_k = (ib % 8) * 8 + iqs;
@@ -558,32 +416,39 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
     }
     result += float(cache_a[ib_a].d_scales[1]) * float(q_sum);
 
-    return ACC_TYPE(cache_b.ds.x * result);
-}
-#endif // MMQ_SHMEM
-#endif
-
-#if defined(DATA_A_Q4_0) || defined(DATA_A_Q5_0) || defined(DATA_A_Q8_0) || defined(DATA_A_IQ1_S) || defined(DATA_A_IQ2_XXS) || defined(DATA_A_IQ2_XS) || defined(DATA_A_IQ2_S) || defined(DATA_A_IQ3_XXS) || defined(DATA_A_IQ3_S) || defined(DATA_A_IQ4_XS) || defined(DATA_A_IQ4_NL)
-FLOAT_TYPE get_d(uint ib) {
-    return FLOAT_TYPE(data_a[ib].d);
+    return ACC_TYPE(float(cache_b.ds.x) * result);
 }
 #endif
 
-#if defined(DATA_A_MXFP4)
-FLOAT_TYPE get_d(uint ib) {
-    return FLOAT_TYPE(e8m0_to_fp32(data_a[ib].e));
-}
-#endif
+void block_b_to_shmem(const uint buf_ib, const uint ib, const uint iqs, const bool is_in_bounds) {
+    if (is_in_bounds) {
+        const uint ib_outer = ib / 4;
+        const uint ib_inner = ib % 4;
 
-#if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1)
-FLOAT_TYPE_VEC2 get_dm(uint ib) {
-    return FLOAT_TYPE_VEC2(data_a_packed32[ib].dm);
-}
-#endif
+        if (iqs == 0) {
+            buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(data_b[ib_outer].ds[ib_inner]);
+        }
 
-#if defined(DATA_A_Q2_K)
-FLOAT_TYPE_VEC2 get_dm(uint ib) {
-    const uint ib_k = ib / 8;
-    return FLOAT_TYPE_VEC2(data_a_packed32[ib_k].dm);
+        const ivec4 values = data_b[ib_outer].qs[ib_inner * 2 + iqs];
+        buf_b[buf_ib].qs[iqs * 4    ] = values.x;
+        buf_b[buf_ib].qs[iqs * 4 + 1] = values.y;
+        buf_b[buf_ib].qs[iqs * 4 + 2] = values.z;
+        buf_b[buf_ib].qs[iqs * 4 + 3] = values.w;
+    } else {
+        if (iqs == 0) {
+            buf_b[buf_ib].ds = FLOAT_TYPE_VEC2(0.0f);
+        }
+
+        buf_b[buf_ib].qs[iqs * 4    ] = 0;
+        buf_b[buf_ib].qs[iqs * 4 + 1] = 0;
+        buf_b[buf_ib].qs[iqs * 4 + 2] = 0;
+        buf_b[buf_ib].qs[iqs * 4 + 3] = 0;
+    }
 }
-#endif
+
+void block_b_to_registers(const uint ib) {
+    cache_b.ds = buf_b[ib].ds;
+    [[unroll]] for (uint iqs = 0; iqs < BK / 4; iqs++) {
+        cache_b.qs[iqs] = buf_b[ib].qs[iqs];
+    }
+}

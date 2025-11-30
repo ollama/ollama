@@ -12,7 +12,7 @@ Subject: [PATCH] add argsort and cuda copy for i32
  5 files changed, 268 insertions(+), 12 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index b6209588d..1b639bc03 100644
+index 2745fc54e..40666bab6 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -7846,6 +7846,45 @@ static void ggml_compute_forward_argsort_f32(
@@ -73,7 +73,7 @@ index b6209588d..1b639bc03 100644
              {
                  GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
-index 3722cf3ab..69a351d03 100644
+index da9652c3b..b82be371c 100644
 --- a/ggml/src/ggml-cuda/argsort.cu
 +++ b/ggml/src/ggml-cuda/argsort.cu
 @@ -168,13 +168,107 @@ static void argsort_f32_i32_cuda_bitonic(const float *   x,
@@ -220,11 +220,11 @@ index 3722cf3ab..69a351d03 100644
 +    }
  }
 diff --git a/ggml/src/ggml-cuda/cpy-utils.cuh b/ggml/src/ggml-cuda/cpy-utils.cuh
-index e621cb981..597c0c8b3 100644
+index 7697c292d..00d773dd3 100644
 --- a/ggml/src/ggml-cuda/cpy-utils.cuh
 +++ b/ggml/src/ggml-cuda/cpy-utils.cuh
 @@ -215,3 +215,9 @@ template<typename src_t, typename dst_t>
- static __device__ void cpy_1_flt(const char * cxi, char * cdsti) {
+ static __device__ void cpy_1_scalar(const char * cxi, char * cdsti) {
      *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);
  }
 +
@@ -234,10 +234,10 @@ index e621cb981..597c0c8b3 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index c1afde962..02d423ca0 100644
+index c4ceb4fc5..0e53ecc39 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -349,6 +349,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -352,6 +352,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
@@ -281,21 +281,21 @@ index c1afde962..02d423ca0 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -458,6 +495,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
-         } else {
-             ggml_cpy_flt_cuda<half, float>          (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+@@ -481,6 +518,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+             ggml_cpy_scalar_cuda<half, float>
+                 (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
          }
 +    } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_I32) {
 +        // TODO consider converting to template
 +        ggml_cpy_i32_i32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
      } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_BF16) {
          if (can_be_transposed) {
-             ggml_cpy_flt_cuda<nv_bfloat16, nv_bfloat16, true> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+             ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 59e576170..305b9d8ef 100644
+index 73b45c762..aed013a9d 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4718,8 +4718,77 @@ kernel void kernel_argsort_f32_i32(
+@@ -4721,8 +4721,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  

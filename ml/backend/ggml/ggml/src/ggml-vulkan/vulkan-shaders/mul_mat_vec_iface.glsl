@@ -5,13 +5,15 @@
 #define MAT_VEC_FUSION_FLAGS_SCALE0 0x4
 #define MAT_VEC_FUSION_FLAGS_SCALE1 0x8
 
-#ifndef MMQ
 layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
 #if defined(A_TYPE_VEC4)
 layout (binding = 0) readonly buffer AV4 {A_TYPE_VEC4 data_a_v4[];};
 #endif
-#else
-layout (binding = 0) readonly buffer A {A_TYPE_PACKED16 data_a[];};
+#if defined(A_TYPE_PACKED16)
+layout (binding = 0) readonly buffer A_PACKED16 {A_TYPE_PACKED16 data_a_packed16[];};
+#endif
+#if defined(A_TYPE_PACKED32)
+layout (binding = 0) readonly buffer A_PACKED32 {A_TYPE_PACKED32 data_a_packed32[];};
 #endif
 
 layout (binding = 1) readonly buffer B {B_TYPE data_b[];};

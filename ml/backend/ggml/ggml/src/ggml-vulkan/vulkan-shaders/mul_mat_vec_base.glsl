@@ -13,8 +13,6 @@
 
 #include "mul_mat_vec_iface.glsl"
 
-#include "dequant_funcs.glsl"
-
 layout (push_constant) uniform parameter
 {
     uint ncols;

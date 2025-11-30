@@ -4,7 +4,8 @@
 
 llm_build_deepseek2::llm_build_deepseek2(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
-    bool is_lite = (hparams.n_layer == 27);
+    // lite variants include DeepSeek-V2-Lite, GigaChat3-10B-A1.8B
+    bool is_lite = (hparams.n_layer == 27 || hparams.n_layer == 26);
 
     const bool is_mla = (hparams.n_embd_head_k_mla != 0 && hparams.n_embd_head_v_mla != 0);
 
