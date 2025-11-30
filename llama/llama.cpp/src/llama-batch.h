@@ -17,6 +17,16 @@ struct llama_ubatch {
         return b_equal_seqs != 0;
     }
 
+    // typical for M-RoPE cases:
+    //   0 - sequantial position of the tokens/embeddings in the sequence
+    //   1 - y position in the image
+    //   2 - x position in the image
+    //   3 - other
+    bool is_pos_2d() const {
+        // TODO @ngxson : we may need to check for model arch when more models use >1 positions
+        return n_pos >= 3;
+    }
+
     uint32_t b_equal_seqs; // note: this is a boolean, but we use an int32_t for alignment
                            //       otherwise address sanitizer complains
     // TODO: whole_seqs for embeddings?
@@ -25,6 +35,7 @@ struct llama_ubatch {
     uint32_t n_seq_tokens; // tokens per sequence set
     uint32_t n_seqs;       // sequence sets in the ubatch
     uint32_t n_seqs_unq;   // unique sequence ids in the ubatch
+    uint32_t n_pos;        // number of position inputs for each token/embedding
 
     // seq_id_unq: unique sequence ids in the ubatch
     // seq_idx:    indices of the unique sequence ids in the ubatch in [0, n_seqs_unq)
@@ -33,7 +44,7 @@ struct llama_ubatch {
     //                          // size               | idx | val
     llama_token  *  token;      // [n_tokens]         | i   | id, token
     float        *  embd;       // [n_embd, n_tokens] | i   | embd
-    llama_pos    *  pos;        // [n_tokens]         | i   | pos
+    llama_pos    *  pos;        // [n_tokens*n_pos]   | i   | pos
     int32_t      *  n_seq_id;   // [n_tokens]         | i   | -
     llama_seq_id ** seq_id;     // [n_tokens]         | s   | s0, s1, seq_id
     llama_seq_id *  seq_id_unq; // [n_seqs_unq]       | s   | seq_id

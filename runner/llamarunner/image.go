@@ -51,8 +51,34 @@ func (c *ImageContext) Free(modelPath string) {
 		return
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Clear image cache to prevent stale data
+	c.ClearCacheUnsafe()
+
 	if c.mtmd != nil {
 		c.mtmd.Free()
+		c.mtmd = nil
+	}
+}
+
+// ClearCache clears all cached image embeddings (thread-safe)
+func (c *ImageContext) ClearCache() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ClearCacheUnsafe()
+}
+
+// ClearCacheUnsafe clears cache without locking (caller must hold mu)
+func (c *ImageContext) ClearCacheUnsafe() {
+	for i := range c.images {
+		c.images[i].key = 0
+		c.images[i].val = nil
+		c.images[i].lastUsed = time.Time{}
 	}
 }
 
@@ -70,6 +96,7 @@ func (c *ImageContext) MultimodalTokenize(llamaContext *llama.Context, data []by
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Try to find cached embeddings first
 	chunks, err := c.findImage(hash)
 	if err != nil {
 		if c.mtmd != nil {
@@ -93,11 +120,35 @@ func (c *ImageContext) BatchSize(configuredBatchSize int) int {
 		return 0
 	}
 
+	// For M-RoPE models (Qwen2-VL, Qwen3-VL), we need a larger batch to fit
+	// entire images. The max image size is typically 2048x2048 pixels, which
+	// with patch_size=16 and merge=2 gives (2048/16/2)^2 = 4096 tokens for
+	// a square image. Non-square images can be larger (e.g., 53x76 = 4028).
+	// Use 8192 to be safe for large images.
+	if c.UsesMRoPE() {
+		const mropeBatchSize = 8192
+		if configuredBatchSize < mropeBatchSize {
+			slog.Info("M-RoPE batch size increased for large images", "configured", configuredBatchSize, "actual", mropeBatchSize)
+			return mropeBatchSize
+		}
+	}
+
 	return configuredBatchSize
 }
 
 func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
-	return llamaContext.Model().NEmbd()
+	// For multimodal models, use NEmbdInp() which returns the vision projector
+	// embedding dimension (e.g., 8192 for qwen3vl) instead of NEmbd() which
+	// returns the text model dimension (e.g., 2048 for qwen3vl)
+	return llamaContext.Model().NEmbdInp()
+}
+
+// UsesMRoPE returns true if the vision model requires M-RoPE (Qwen2-VL, Qwen3-VL)
+func (c *ImageContext) UsesMRoPE() bool {
+	if c == nil || c.mtmd == nil {
+		return false
+	}
+	return c.mtmd.UsesMRoPE()
 }
 
 type imageCache struct {
@@ -117,7 +168,7 @@ var errImageNotFound = errors.New("image not found in cache")
 func (c *ImageContext) findImage(hash uint64) ([]llama.MtmdChunk, error) {
 	for i := range c.images {
 		if c.images[i].key == hash {
-			slog.Debug("loading image embeddings from cache", "entry", i)
+			slog.Info("image cache HIT", "entry", i, "hash", hash)
 			c.images[i].lastUsed = time.Now()
 			return c.images[i].val, nil
 		}
@@ -142,7 +193,7 @@ func (c *ImageContext) addImage(hash uint64, embed []llama.MtmdChunk) {
 		}
 	}
 
-	slog.Debug("storing image embeddings in cache", "entry", bestImage, "used", c.images[bestImage].lastUsed)
+	slog.Info("image cache MISS - encoding and storing", "entry", bestImage, "hash", hash)
 	c.images[bestImage].key = hash
 	c.images[bestImage].val = embed
 	c.images[bestImage].lastUsed = time.Now()

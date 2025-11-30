@@ -17,7 +17,7 @@ struct mmf_ids_data {
 
 void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst);
 
-bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const int64_t * scr0_ne, const int src1_ncols, bool mul_mat_id);
+bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const int64_t * scr0_ne, const size_t * src0_nb, const int src1_ncols, bool mul_mat_id);
 
 template <typename T, int rows_per_block, int cols_per_block, int nwarps, bool has_ids>
 __launch_bounds__(ggml_cuda_get_physical_warp_size()*nwarps, 1)
@@ -28,9 +28,19 @@ static __global__ void mul_mat_f(
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-    typedef tile<16, 8, T>     tile_A;
-    typedef tile< 8, 8, T>     tile_B;
-    typedef tile<16, 8, float> tile_C;
+    constexpr bool I_16_supported = tile<16, 8, T>::supported() && tile<16, 8, float>::supported();
+    constexpr bool I_32_supported = tile<32, 8, T>::supported() && tile<32, 8, float>::supported();
+
+    if (!I_16_supported && !I_32_supported) {
+        NO_DEVICE_CODE;
+        return;
+    }
+
+    constexpr int I_preferred = I_16_supported ? 16 : 32; // For Turing MMA both work but 16 is ~1% faster.
+
+    typedef tile<I_preferred, 8, T>     tile_A;
+    typedef tile<8,           8, T>     tile_B;
+    typedef tile<I_preferred, 8, float> tile_C;
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int tile_k_padded = warp_size + 4;
@@ -232,7 +242,6 @@ static __global__ void mul_mat_f(
 #endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 }
 
-
 //This kernel is for larger batch sizes of mul_mat_id
 template <typename T, int rows_per_block, int cols_per_block, int nwarps>
 __launch_bounds__(ggml_cuda_get_physical_warp_size()*nwarps, 1)
@@ -245,9 +254,19 @@ static __global__ void mul_mat_f_ids(
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
         const uint3 sis1_fd, const uint3 nch_fd) {
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-    typedef tile<16, 8, T>     tile_A;
-    typedef tile< 8, 8, T>     tile_B;
-    typedef tile<16, 8, float> tile_C;
+    constexpr bool I_16_supported = tile<16, 8, T>::supported() && tile<16, 8, float>::supported();
+    constexpr bool I_32_supported = tile<32, 8, T>::supported() && tile<32, 8, float>::supported();
+
+    if (!I_16_supported && !I_32_supported) {
+        NO_DEVICE_CODE;
+        return;
+    }
+
+    constexpr int I_preferred = I_16_supported ? 16 : 32; // For Turing MMA both work butr 16 is ~1% faster.
+
+    typedef tile<I_preferred, 8, T>     tile_A;
+    typedef tile<8,           8, T>     tile_B;
+    typedef tile<I_preferred, 8, float> tile_C;
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int tile_k_padded = warp_size + 4;
@@ -533,7 +552,8 @@ void mul_mat_f_cuda(
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
         const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         cudaStream_t stream, const mmf_ids_data * ids_data) {
-    typedef tile<16, 8, T>     tile_A;
+    typedef tile<16, 8, T>     tile_A_16;
+    typedef tile<32, 8, T>     tile_A_32;
     typedef tile< 8, 8, T>     tile_B;
 
     GGML_ASSERT(ncols_x      % 2 == 0);
@@ -544,7 +564,8 @@ void mul_mat_f_cuda(
     const int64_t channel_ratio = nchannels_dst / nchannels_x;
     const int64_t sample_ratio  = nsamples_dst  / nsamples_x;
 
-    const int device = ggml_cuda_get_device();
+    const int device    = ggml_cuda_get_device();
+    const int cc        = ggml_cuda_info().devices[device].cc;
     const int warp_size = ggml_cuda_info().devices[device].warp_size;
 
     int64_t nwarps_best     = 1;
@@ -559,7 +580,7 @@ void mul_mat_f_cuda(
     }
 
     constexpr int rows_per_block = MMF_ROWS_PER_BLOCK;
-    const int nbytes_shared_iter = nwarps_best * tile_A::I * (warp_size + 4) * 4;
+    const int nbytes_shared_iter = nwarps_best * (volta_mma_available(cc) ? tile_A_32::I : tile_A_16::I) * (warp_size + 4) * 4;
     const int nbytes_shared_combine = GGML_PAD(cols_per_block, tile_B::I) * (nwarps_best*rows_per_block + 4) * 4;
     const int nbytes_shared = std::max(nbytes_shared_iter, nbytes_shared_combine);
     const int nbytes_slotmap = ids ? GGML_PAD(cols_per_block, 16) * sizeof(int) : 0;

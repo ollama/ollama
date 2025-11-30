@@ -32,8 +32,65 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
-#define LOG_INF(...) fprintf(stdout, __VA_ARGS__)
-#define LOG_ERR(...) fprintf(stderr, __VA_ARGS__)
+//
+// internal logging functions
+//
+
+struct mtmd_helper_logger {
+    ggml_log_callback default_callback = [](ggml_log_level level, const char * text, void * user_data) {
+        (void) level;
+        (void) user_data;
+        fputs(text, stderr);
+        fflush(stderr);
+    };
+
+    ggml_log_callback log_callback = default_callback;
+    void * log_callback_user_data;
+
+    void log_v(enum ggml_log_level level, const char * format, va_list args) {
+        if (format == NULL) {
+            return;
+        }
+        va_list args_copy;
+        va_copy(args_copy, args);
+        char buffer[128];
+        int len = vsnprintf(buffer, 128, format, args);
+        if (len < 128) {
+            log_callback(level, buffer, log_callback_user_data);
+        } else {
+            char * buffer2 = (char *) calloc(len + 1, sizeof(char));
+            vsnprintf(buffer2, len + 1, format, args_copy);
+            buffer2[len] = 0;
+            log_callback(level, buffer2, log_callback_user_data);
+            free(buffer2);
+        }
+        va_end(args_copy);
+    }
+
+    void log(enum ggml_log_level level, const char * format, ...) {
+        va_list args;
+        va_start(args, format);
+        log_v(level, format, args);
+        va_end(args);
+    }
+} g_logger;
+
+#define LOG_INF(...) g_logger.log(GGML_LOG_LEVEL_INFO,  __VA_ARGS__)
+#define LOG_WRN(...) g_logger.log(GGML_LOG_LEVEL_WARN,  __VA_ARGS__)
+#define LOG_ERR(...) g_logger.log(GGML_LOG_LEVEL_ERROR, __VA_ARGS__)
+
+void mtmd_helper_log_set(ggml_log_callback log_callback, void * user_data) {
+    if (log_callback == nullptr) {
+        log_callback = g_logger.default_callback;
+    }
+    g_logger.log_callback = log_callback;
+    g_logger.log_callback_user_data = user_data;
+    mtmd_log_set(log_callback, user_data);
+}
+
+//
+// helper functions
+//
 
 size_t mtmd_helper_get_n_tokens(const mtmd_input_chunks * chunks) {
     size_t n_tokens = 0;
@@ -182,7 +239,7 @@ int32_t mtmd_helper_decode_image_chunk(
     }
 
     const llama_model * model = llama_get_model(lctx);
-    int n_mmproj_embd = llama_model_n_embd(model);
+    int n_mmproj_embd = llama_model_n_embd_inp(model);
     int n_pos_per_embd = mtmd_decode_use_mrope(ctx) ? 4 : 1;
 
     int32_t n_tokens = mtmd_input_chunk_get_n_tokens(chunk);
@@ -325,7 +382,7 @@ int32_t mtmd_helper_eval_chunks(mtmd_context * ctx,
                                 llama_pos * new_n_past) {
     size_t n_chunks = mtmd_input_chunks_size(chunks);
     if (n_chunks == 0) {
-        LOG_ERR("no chunks to eval\n");
+        LOG_WRN("no chunks to eval\n");
         return 0;
     }
 
