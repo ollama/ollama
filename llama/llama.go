@@ -305,9 +305,9 @@ func LoadModelFromFile(modelPath string, extraModelPaths []string, params ModelP
 	defer C.free(unsafe.Pointer(mp))
 	splitPaths = append(splitPaths, mp)
 	for i := range extraModelPaths {
-		mp := C.CString(extraModelPaths[i])
-		defer C.free(unsafe.Pointer(mp))
-		splitPaths = append(splitPaths, mp)
+		extraMP := C.CString(extraModelPaths[i])
+		defer C.free(unsafe.Pointer(extraMP))
+		splitPaths = append(splitPaths, extraMP)
 	}
 
 	m := Model{c: C.llama_model_load_from_splits(&splitPaths[0], C.size_t(len(splitPaths)), cparams)}
@@ -556,7 +556,9 @@ func (b *Batch) AddImageMRoPE(embeddings []float32, pos0 int, nx int, ny int, lo
 		}
 	}
 
-	// Update n_tokens FIRST so we know the final count
+	// CRITICAL ORDERING: Update n_tokens FIRST so we know the final count.
+	// The M-RoPE position stride below depends on nTokensFinal, so do NOT
+	// move position-setting before this line or decoding will fail.
 	b.c.n_tokens = C.int(nTokensFinal)
 
 	// Now set M-RoPE positions with correct stride (nTokensFinal)
