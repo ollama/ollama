@@ -24,7 +24,7 @@ func setup(tb testing.TB) ml.Context {
 		tb.Fatal(err)
 	}
 
-	b, err := ml.NewBackend(f.Name(), ml.BackendParams{AllocMemory: true})
+	b, err := ml.NewBackend(f.Name(), make([]string, 0), ml.BackendParams{AllocMemory: true})
 	if err != nil {
 		tb.Fatal(err)
 	}
