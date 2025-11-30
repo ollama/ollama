@@ -19,6 +19,8 @@ ml/backend/**/*.comp linguist-vendored
 ml/backend/**/*.glsl linguist-vendored
 ml/backend/**/CMakeLists.txt linguist-vendored
 
+app/webview linguist-vendored
+
 llama/build-info.cpp linguist-generated
 ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.s linguist-generated
 
