@@ -44,7 +44,7 @@ static void argsort_f32_i32_cuda_cub(ggml_cuda_pool & pool,
     const dim3 offset_grid((nrows + block_size - 1) / block_size);
     init_offsets<<<offset_grid, block_size, 0, stream>>>(d_offsets, ncols, nrows);
 
-    cudaMemcpyAsync(temp_keys, x, ncols * nrows * sizeof(float), cudaMemcpyDeviceToDevice, stream);
+    CUDA_CHECK(cudaMemcpyAsync(temp_keys, x, ncols * nrows * sizeof(float), cudaMemcpyDeviceToDevice, stream));
 
     size_t temp_storage_bytes = 0;
 

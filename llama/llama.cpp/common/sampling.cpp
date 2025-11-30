@@ -3,9 +3,10 @@
 #include "common.h"
 #include "log.h"
 
-#include <cmath>
-#include <unordered_map>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <unordered_map>
 
 // the ring buffer works similarly to std::deque, but with a fixed capacity
 // TODO: deduplicate with llama-impl.h
@@ -112,6 +113,13 @@ struct common_sampler {
 
     llama_token_data_array cur_p;
 
+    void reset() {
+        prev.clear();
+
+        llama_sampler_reset(grmr);
+        llama_sampler_reset(chain);
+    }
+
     void set_logits(struct llama_context * ctx, int idx) {
         const auto * logits = llama_get_logits_ith(ctx, idx);
 
@@ -128,6 +136,12 @@ struct common_sampler {
 
         cur_p = { cur.data(), cur.size(), -1, false };
     }
+
+    common_time_meas tm() {
+        return common_time_meas(t_total_us, params.no_perf);
+    }
+
+    mutable int64_t t_total_us = 0;
 };
 
 std::string common_params_sampling::print() const {
@@ -298,6 +312,8 @@ void common_sampler_free(struct common_sampler * gsmpl) {
 }
 
 void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool accept_grammar) {
+    const auto tm = gsmpl->tm();
+
     if (accept_grammar) {
         llama_sampler_accept(gsmpl->grmr, token);
     }
@@ -308,9 +324,7 @@ void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, boo
 }
 
 void common_sampler_reset(struct common_sampler * gsmpl) {
-    llama_sampler_reset(gsmpl->grmr);
-
-    llama_sampler_reset(gsmpl->chain);
+    gsmpl->reset();
 }
 
 struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
@@ -327,16 +341,54 @@ struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
 void common_perf_print(const struct llama_context * ctx, const struct common_sampler * gsmpl) {
     // TODO: measure grammar performance
 
+    const double t_sampling_ms = gsmpl ? 1e-3*gsmpl->t_total_us : 0;
+
+    llama_perf_sampler_data data_smpl;
+    llama_perf_context_data data_ctx;
+
+    memset(&data_smpl, 0, sizeof(data_smpl));
+    memset(&data_ctx,  0, sizeof(data_ctx));
+
     if (gsmpl) {
-        llama_perf_sampler_print(gsmpl->chain);
+        auto & data = data_smpl;
+
+        data = llama_perf_sampler(gsmpl->chain);
+
+        // note: the sampling time includes the samplers time + extra time spent in common/sampling
+        LOG_INF("%s:    sampling time = %10.2f ms\n", __func__, t_sampling_ms);
+        LOG_INF("%s:    samplers time = %10.2f ms / %5d tokens\n", __func__, data.t_sample_ms, data.n_sample);
     }
+
     if (ctx) {
-        llama_perf_context_print(ctx);
+        auto & data = data_ctx;
+
+        data = llama_perf_context(ctx);
+
+        const double t_end_ms = 1e-3 * ggml_time_us();
+
+        const double t_total_ms = t_end_ms - data.t_start_ms;
+        const double t_unacc_ms = t_total_ms - (t_sampling_ms + data.t_p_eval_ms + data.t_eval_ms);
+        const double t_unacc_pc = 100.0 * t_unacc_ms /  t_total_ms;
+
+        LOG_INF("%s:        load time = %10.2f ms\n", __func__, data.t_load_ms);
+        LOG_INF("%s: prompt eval time = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)\n",
+                __func__, data.t_p_eval_ms, data.n_p_eval, data.t_p_eval_ms / data.n_p_eval, 1e3 / data.t_p_eval_ms * data.n_p_eval);
+        LOG_INF("%s:        eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)\n",
+                __func__, data.t_eval_ms, data.n_eval, data.t_eval_ms / data.n_eval, 1e3 / data.t_eval_ms * data.n_eval);
+        LOG_INF("%s:       total time = %10.2f ms / %5d tokens\n", __func__, (t_end_ms - data.t_start_ms), (data.n_p_eval + data.n_eval));
+        LOG_INF("%s: unaccounted time = %10.2f ms / %5.1f %%      (total - sampling - prompt eval - eval) / (total)\n", __func__, t_unacc_ms, t_unacc_pc);
+        LOG_INF("%s:    graphs reused = %10d\n", __func__, data.n_reused);
+
         llama_memory_breakdown_print(ctx);
     }
 }
 
 llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
+    llama_synchronize(ctx);
+
+    // start measuring sampling time after the llama_context synchronization in order to not measure any ongoing async operations
+    const auto tm = gsmpl->tm();
+
     gsmpl->set_logits(ctx, idx);
 
     auto & grmr  = gsmpl->grmr;
@@ -428,6 +480,8 @@ uint32_t common_sampler_get_seed(const struct common_sampler * gsmpl) {
 // helpers
 
 llama_token_data_array * common_sampler_get_candidates(struct common_sampler * gsmpl, bool do_sort) {
+    const auto tm = gsmpl->tm();
+
     auto * res = &gsmpl->cur_p;
 
     if (do_sort && !res->sorted) {

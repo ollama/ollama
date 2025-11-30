@@ -7794,7 +7794,7 @@ void ggml_compute_forward_timestep_embedding(
 // ggml_compute_forward_argsort
 
 template<enum ggml_sort_order order>
-struct argsort_cmp {
+struct cmp_argsort {
     const float * data;
     bool operator()(int32_t a, int32_t b) const {
         if constexpr (order == GGML_SORT_ORDER_ASC) {
@@ -7833,11 +7833,11 @@ static void ggml_compute_forward_argsort_f32(
 
         switch (order) {
             case GGML_SORT_ORDER_ASC:
-                std::sort(dst_data, dst_data + ne0, argsort_cmp<GGML_SORT_ORDER_ASC>{src_data});
+                std::sort(dst_data, dst_data + ne0, cmp_argsort<GGML_SORT_ORDER_ASC>{src_data});
                 break;
 
             case GGML_SORT_ORDER_DESC:
-                std::sort(dst_data, dst_data + ne0, argsort_cmp<GGML_SORT_ORDER_DESC>{src_data});
+                std::sort(dst_data, dst_data + ne0, cmp_argsort<GGML_SORT_ORDER_DESC>{src_data});
                 break;
 
             default:
@@ -7899,6 +7899,72 @@ void ggml_compute_forward_argsort(
         case GGML_TYPE_I32:
             {
                 ggml_compute_forward_argsort_i32(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+
+// ggml_compute_forward_top_k
+
+struct cmp_top_k {
+    const float * data;
+    bool operator()(int32_t a, int32_t b) const {
+        return data[a] > data[b];
+    }
+};
+
+static void ggml_compute_forward_top_k_f32(
+    const ggml_compute_params * params,
+    ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    GGML_TENSOR_UNARY_OP_LOCALS
+
+    GGML_ASSERT(nb0 == sizeof(float));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t nr = ggml_nrows(src0);
+
+    const int top_k = ne0;
+
+    int32_t * tmp = (int32_t *) params->wdata + (ne00 + CACHE_LINE_SIZE_F32) * ith;
+
+    for (int64_t i = ith; i < nr; i += nth) {
+        const float * src_data = (float *)((char *) src0->data + i*nb01);
+
+        for (int64_t j = 0; j < ne00; j++) {
+            tmp[j] = j;
+        }
+
+        std::partial_sort(tmp, tmp + top_k, tmp + ne00, cmp_top_k{src_data});
+
+        int32_t * dst_data = (int32_t *)((char *) dst->data + i*nb1);
+
+        std::copy(tmp, tmp + top_k, dst_data);
+
+        // emphasize that the order is not important
+        if (top_k > 1) {
+            std::swap(dst_data[0], dst_data[1]);
+        }
+    }
+}
+
+void ggml_compute_forward_top_k(
+    const ggml_compute_params * params,
+    ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_top_k_f32(params, dst);
             } break;
         default:
             {
@@ -9739,13 +9805,13 @@ static void ggml_compute_forward_solve_tri_f32(const struct ggml_compute_params 
         for (int64_t i00 = 0; i00 < n; ++i00) {
             float sum = 0.0f;
             for (int64_t t = 0; t < i00; ++t) {
-                sum += A_batch[i00 * n + t] * X_batch[i01 * n + t];
+                sum += A_batch[i00 * n + t] * X_batch[t * k + i01];
             }
 
             const float diag = A_batch[i00 * n + i00];
-            GGML_ASSERT(diag != 0.0f && "Zero diagonal in triangular matrix");
+            assert(diag != 0.0f && "Zero diagonal in triangular matrix");
 
-            X_batch[i01 * n + i00] = (B_batch[i00 * k + i01] - sum) / diag;
+            X_batch[i00 * k + i01] = (B_batch[i00 * k + i01] - sum) / diag;
         }
     }
 }

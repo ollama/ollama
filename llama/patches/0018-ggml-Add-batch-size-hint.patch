@@ -58,7 +58,7 @@ index 6792ba986..0f5b03cef 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 50ffc1e8e..4eea1e370 100644
+index ff41c7712..f511e8d76 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -348,14 +348,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
@@ -97,7 +97,7 @@ index 50ffc1e8e..4eea1e370 100644
                  for (int b = 0; b < src_backend_id; b++) {
                      if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
                          SET_CAUSE(tensor, "1.off");
-@@ -1550,7 +1552,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1556,7 +1558,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          }
  
          if (!sched->callback_eval) {
@@ -106,7 +106,7 @@ index 50ffc1e8e..4eea1e370 100644
              if (ec != GGML_STATUS_SUCCESS) {
                  return ec;
              }
-@@ -1572,7 +1574,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1578,7 +1580,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
  
                  struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
  
@@ -115,7 +115,7 @@ index 50ffc1e8e..4eea1e370 100644
                  if (ec != GGML_STATUS_SUCCESS) {
                      return ec;
                  }
-@@ -1651,6 +1653,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1657,6 +1659,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
  
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
@@ -123,7 +123,7 @@ index 50ffc1e8e..4eea1e370 100644
  
      ggml_backend_sched_reset(sched);
  
-@@ -1682,6 +1685,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+@@ -1688,6 +1691,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
      free(sched);
  }
  
@@ -178,10 +178,10 @@ index 3191faaa4..32f14c811 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d7d913107..d2af661be 100644
+index e803f4af6..78fb2d8b3 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2880,7 +2880,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+@@ -2885,7 +2885,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
  
  #ifdef USE_CUDA_GRAPH
  static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
@@ -190,7 +190,7 @@ index d7d913107..d2af661be 100644
  
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
  
-@@ -2913,24 +2913,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+@@ -2918,24 +2918,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
  #endif
          }
  
@@ -241,7 +241,7 @@ index d7d913107..d2af661be 100644
          }
  
          if (!use_cuda_graph) {
-@@ -3599,7 +3609,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+@@ -3679,7 +3689,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
      }
  }
  
@@ -250,7 +250,7 @@ index d7d913107..d2af661be 100644
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
      ggml_cuda_set_device(cuda_ctx->device);
-@@ -3637,7 +3647,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3717,7 +3727,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      if (use_cuda_graph) {
          cuda_graph_update_required = is_cuda_graph_update_required(cuda_ctx, cgraph);
  
@@ -260,10 +260,10 @@ index d7d913107..d2af661be 100644
          // Disable CUDA graphs (from the next token) if the use-case is demanding too many consecutive graph updates.
          if (use_cuda_graph && cuda_graph_update_required) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 179a3e081..2de16bb3b 100644
+index 8fc1c2fb5..ba95b4acc 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -415,10 +415,12 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
+@@ -419,10 +419,12 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
      GGML_UNUSED(dst);
  }
  
@@ -278,10 +278,10 @@ index 179a3e081..2de16bb3b 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index db27a4b7c..42e75a147 100644
+index 83cdec29e..a36c6560c 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -12978,7 +12978,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13103,7 +13103,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -290,7 +290,7 @@ index db27a4b7c..42e75a147 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -13192,6 +13192,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -13320,6 +13320,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);

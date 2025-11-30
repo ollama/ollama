@@ -224,6 +224,10 @@ if (GGML_BACKEND_DL)
     target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
 endif()
 
+if (GGML_SCHED_NO_REALLOC)
+    target_compile_definitions(ggml-base PUBLIC GGML_SCHED_NO_REALLOC)
+endif()
+
 add_library(ggml
             ggml-backend-reg.cpp)
 add_library(ggml::ggml ALIAS ggml)
@@ -273,10 +277,13 @@ function(ggml_add_backend_library backend)
     endif()
 
     # Set versioning properties for all backend libraries
-    set_target_properties(${backend} PROPERTIES
-        VERSION ${GGML_VERSION}
-        SOVERSION ${GGML_VERSION_MAJOR}
-    )
+    # Building a MODULE library with a version is not supported on macOS (https://gitlab.kitware.com/cmake/cmake/-/issues/20782)
+    if (NOT (APPLE AND GGML_BACKEND_DL))
+        set_target_properties(${backend} PROPERTIES
+            VERSION ${GGML_VERSION}
+            SOVERSION ${GGML_VERSION_MAJOR}
+        )
+    endif()
 
     if(NOT GGML_AVAILABLE_BACKENDS)
         set(GGML_AVAILABLE_BACKENDS "${backend}"
@@ -328,6 +335,14 @@ function(ggml_add_cpu_backend_variant tag_name)
         endforeach()
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         foreach (feat VXE2 NNPA)
+            set(GGML_INTERNAL_${feat} OFF)
+        endforeach()
+
+        foreach (feat ${ARGN})
+            set(GGML_INTERNAL_${feat} ON)
+        endforeach()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "riscv64")
+        foreach (feat RVV)
             set(GGML_INTERNAL_${feat} OFF)
         endforeach()
 
@@ -402,6 +417,13 @@ if (GGML_CPU_ALL_VARIANTS)
             ggml_add_cpu_backend_variant(z16    Z16 VXE2 NNPA)
         else()
             message(FATAL_ERROR "Unsupported s390x target OS: ${CMAKE_SYSTEM_NAME}")
+        endif()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "riscv64")
+        if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+            ggml_add_cpu_backend_variant(riscv64_0)
+            ggml_add_cpu_backend_variant(riscv64_v   RVV)
+        else()
+            message(FATAL_ERROR "Unsupported RISC-V target OS: ${CMAKE_SYSTEM_NAME}")
         endif()
     else()
         message(FATAL_ERROR "GGML_CPU_ALL_VARIANTS not yet supported with ${GGML_SYSTEM_ARCH} on ${CMAKE_SYSTEM_NAME}")

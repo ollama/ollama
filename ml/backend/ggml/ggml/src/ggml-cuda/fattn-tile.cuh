@@ -609,7 +609,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
             float KQ_sum_add = 0.0f;
 #pragma unroll
             for (int i0 = 0; i0 < nbatch_fa; i0 += np*warp_size) {
-                const float val = !oob_check || i0 + (threadIdx.y % np)*warp_size + threadIdx.x < k_VKQ_sup ?
+                const float val = !oob_check || i0 + (threadIdx.y % np)*warp_size + threadIdx.x < static_cast<uint32_t>(k_VKQ_sup) ?
                     expf(KQ_acc[(i0/(np*warp_size))*cpw + jc] - KQ_max[jc]) : 0.0f;
                 KQ_sum_add += val;
                 tmp[i0/(np*warp_size)][jc1] = val;

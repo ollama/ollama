@@ -9,6 +9,8 @@ llm_build_lfm2::llm_build_lfm2(const llama_model & model, const llm_graph_params
     ggml_tensor * cur = build_inp_embd(model.tok_embd);
     cb(cur, "model.embed_tokens", -1);
 
+    ggml_build_forward_expand(gf, cur);
+
     ggml_tensor * inp_pos     = build_inp_pos();
     auto *        inp_hybrid  = build_inp_mem_hybrid();
     ggml_tensor * inp_out_ids = build_inp_out_ids();
@@ -40,12 +42,12 @@ llm_build_lfm2::llm_build_lfm2(const llama_model & model, const llm_graph_params
         cur = ggml_add(ctx0, cur, ffn_out);
     }
 
-    cur = build_norm(cur, model.tok_norm, NULL, LLM_NORM_RMS, -1);
-    cb(cur, "model.embedding_norm", -1);
+    cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
+    cb(cur, "result_norm", -1);
     res->t_embd = cur;
 
     cur = build_lora_mm(model.output, cur);
-    cb(cur, "lm_head", -1);
+    cb(cur, "result_output", -1);
 
     res->t_logits = cur;
 

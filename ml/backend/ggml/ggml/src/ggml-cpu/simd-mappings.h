@@ -160,18 +160,18 @@ inline static float ggml_lookup_fp16_to_fp32(ggml_fp16_t f) {
 #define GGML_F32xt                        svfloat32_t
 #define GGML_F32xt_ZERO                   svdup_n_f32(0.0f)
 #define GGML_F32xt_SET1(x)                svdup_n_f32(x)
-#define GGML_F32xt_LOAD_IMPL(pg, a, ...)  svld1_f32(pg, a)
-#define GGML_F32xt_LOAD(...)              GGML_F32xt_LOAD_IMPL(DEFAULT_PG, __VA_ARGS__)
-#define GGML_F32xt_STORE_IMPL(pg,a,b)     svst1_f32(pg, a, b)
-#define GGML_F32xt_STORE(...)             GGML_F32xt_STORE_IMPL(DEFAULT_PG, __VA_ARGS__)
+#define GGML_F32xt_LOAD_IMPL(pg, a)       svld1_f32(pg, a)
+#define GGML_F32xt_LOAD(a)                GGML_F32xt_LOAD_IMPL(DEFAULT_PG, a)
+#define GGML_F32xt_STORE_IMPL(pg, a, b)   svst1_f32(pg, a, b)
+#define GGML_F32xt_STORE(a, b)            GGML_F32xt_STORE_IMPL(DEFAULT_PG, a, b)
 #define GGML_F32xt_FMA_IMPL(pg, a, b, c)  svmad_f32_m(pg, b, c, a)
-#define GGML_F32xt_FMA(...)               GGML_F32xt_FMA_IMPL(DEFAULT_PG, __VA_ARGS__)
+#define GGML_F32xt_FMA(a, b, c)           GGML_F32xt_FMA_IMPL(DEFAULT_PG, a, b, c)
 #define GGML_F32xt_ADD_IMPL(pg, a, b)     svadd_f32_m(pg, a, b)
-#define GGML_F32xt_ADD(...)               GGML_F32xt_ADD_IMPL(DEFAULT_PG, __VA_ARGS__)
+#define GGML_F32xt_ADD(a, b)              GGML_F32xt_ADD_IMPL(DEFAULT_PG, a, b)
 #define GGML_F32xt_MUL_IMPL(pg, a, b)     svmul_f32_m(pg, a, b)
-#define GGML_F32xt_MUL(...)               GGML_F32xt_MUL_IMPL(DEFAULT_PG, __VA_ARGS__)
+#define GGML_F32xt_MUL(a, b)              GGML_F32xt_MUL_IMPL(DEFAULT_PG, a, b)
 #define GGML_F32xt_REDUCE_ONE_IMPL(pg, a) svaddv(pg, a)
-#define GGML_F32xt_REDUCE_ONE(...)        GGML_F32xt_REDUCE_ONE_IMPL(DEFAULT_PG, __VA_ARGS__)
+#define GGML_F32xt_REDUCE_ONE(a)          GGML_F32xt_REDUCE_ONE_IMPL(DEFAULT_PG, a)
 #define GGML_F32xt_REDUCE_IMPL(pg, res, sum1, sum2, sum3, sum4, sum5, sum6, sum7, sum8)  \
 {                                                      \
     sum1 = svadd_f32_m(DEFAULT_PG, sum1, sum2);        \
@@ -183,7 +183,8 @@ inline static float ggml_lookup_fp16_to_fp32(ggml_fp16_t f) {
     sum1 = svadd_f32_m(DEFAULT_PG, sum1, sum5);        \
     (res) = (ggml_float) GGML_F32xt_REDUCE_ONE(sum1);  \
 }
-#define GGML_F32xt_REDUCE(...) GGML_F32xt_REDUCE_IMPL(DEFAULT_PG, __VA_ARGS__)
+#define GGML_F32xt_REDUCE(res, sum1, sum2, sum3, sum4, sum5, sum6, sum7, sum8)  \
+        GGML_F32xt_REDUCE_IMPL(DEFAULT_PG, res, sum1, sum2, sum3, sum4, sum5, sum6, sum7, sum8)
 
 #define GGML_F32_VEC        GGML_F32xt
 #define GGML_F32_VEC_ZERO   GGML_F32xt_ZERO
@@ -206,11 +207,11 @@ inline static float ggml_lookup_fp16_to_fp32(ggml_fp16_t f) {
 #define GGML_F32Cxt_STORE(dst_ptr, src_vec) svst1_f16(DEFAULT_PG16, (__fp16 *)(dst_ptr), (src_vec))
 
 #define GGML_F32Cxt_FMA_IMPL(pg, a, b, c)   svmad_f16_x(pg, b, c, a)
-#define GGML_F32Cxt_FMA(...)                GGML_F32Cxt_FMA_IMPL(DEFAULT_PG16, __VA_ARGS__)
+#define GGML_F32Cxt_FMA(a, b, c)            GGML_F32Cxt_FMA_IMPL(DEFAULT_PG16, a, b, c)
 #define GGML_F32Cxt_ADD_IMPL(pg, a, b)      svadd_f16_x(pg, a, b)
-#define GGML_F32Cxt_ADD(...)                GGML_F32Cxt_ADD_IMPL(DEFAULT_PG16, __VA_ARGS__)
+#define GGML_F32Cxt_ADD(a, b)               GGML_F32Cxt_ADD_IMPL(DEFAULT_PG16, a, b)
 #define GGML_F32Cxt_MUL_IMPL(pg, a, b)      svmul_f16_x(pg, a, b)
-#define GGML_F32Cxt_MUL(...)                GGML_F32Cxt_MUL_IMPL(DEFAULT_PG16, __VA_ARGS__)
+#define GGML_F32Cxt_MUL(a, b)               GGML_F32Cxt_MUL_IMPL(DEFAULT_PG16, a, b)
 #define GGML_F32Cxt_REDUCE                  GGML_F16xt_REDUCE_MIXED
 
 #define GGML_F16x_VEC                GGML_F32Cxt
@@ -224,7 +225,7 @@ inline static float ggml_lookup_fp16_to_fp32(ggml_fp16_t f) {
 #define GGML_F16x_VEC_REDUCE         GGML_F32Cxt_REDUCE
 
 #define GGML_F16xt_REDUCE_ONE_IMPL(pg, a) svaddv_f16(pg, a)
-#define GGML_F16xt_REDUCE_ONE(...)        GGML_F16xt_REDUCE_ONE_IMPL(DEFAULT_PG16, __VA_ARGS__)
+#define GGML_F16xt_REDUCE_ONE(a)          GGML_F16xt_REDUCE_ONE_IMPL(DEFAULT_PG16, a)
 
 #define GGML_F16xt_REDUCE_MIXED_IMPL(pg16, res, sum1, sum2, sum3, sum4)  \
 {                                                      \
@@ -234,7 +235,8 @@ inline static float ggml_lookup_fp16_to_fp32(ggml_fp16_t f) {
     __fp16 sum_f16 = svaddv_f16(pg16, sum1);           \
     (res) = (ggml_float) sum_f16;                      \
 }
-#define GGML_F16xt_REDUCE_MIXED(...) GGML_F16xt_REDUCE_MIXED_IMPL(DEFAULT_PG16, __VA_ARGS__)
+#define GGML_F16xt_REDUCE_MIXED(res, sum1, sum2, sum3, sum4)  \
+        GGML_F16xt_REDUCE_MIXED_IMPL(DEFAULT_PG16, res, sum1, sum2, sum3, sum4)
 
 // F16 NEON
 

@@ -1000,12 +1000,20 @@ struct clip_graph {
                 cur = ggml_mul_mat(ctx0, layer.qkv_w, cur);
                 cur = ggml_add(ctx0, cur, layer.qkv_b);
 
-                ggml_tensor * Qcur = ggml_view_3d(ctx0, cur, d_head, n_head, n_pos, d_head*sizeof(float),
-                    cur->nb[1], 0);
-                ggml_tensor * Kcur = ggml_view_3d(ctx0, cur, d_head, n_head, n_pos, d_head*sizeof(float),
-                    cur->nb[1], n_embd * sizeof(float));
-                ggml_tensor * Vcur = ggml_view_3d(ctx0, cur, d_head, n_head, n_pos, d_head*sizeof(float),
-                    cur->nb[1], 2 * n_embd * sizeof(float));
+                ggml_tensor * Qcur = ggml_view_3d(ctx0, cur, d_head, n_head, n_pos,
+                        /* nb1    */ ggml_row_size(cur->type, d_head),
+                        /* nb2    */ cur->nb[1],
+                        /* offset */ 0);
+
+                ggml_tensor * Kcur = ggml_view_3d(ctx0, cur, d_head, n_head, n_pos,
+                        /* nb1    */ ggml_row_size(cur->type, d_head),
+                        /* nb2    */ cur->nb[1],
+                        /* offset */ ggml_row_size(cur->type, n_embd));
+
+                ggml_tensor * Vcur = ggml_view_3d(ctx0, cur, d_head, n_head, n_pos,
+                        /* nb1    */ ggml_row_size(cur->type, d_head),
+                        /* nb2    */ cur->nb[1],
+                        /* offset */ ggml_row_size(cur->type, 2 * n_embd));
 
                 cb(Qcur, "Qcur", il);
                 cb(Kcur, "Kcur", il);
@@ -1188,10 +1196,11 @@ struct clip_graph {
             cb(K, "resampler_K", -1);
             cb(V, "resampler_V", -1);
 
+            float resampler_kq_scale = 1.0f/ sqrtf(float(d_head));
             embeddings = build_attn(
                 model.mm_model_attn_o_w,
                 model.mm_model_attn_o_b,
-                Q, K, V, nullptr, kq_scale, -1);
+                Q, K, V, nullptr, resampler_kq_scale, -1);
             cb(embeddings, "resampler_attn_out", -1);
         }
         // layernorm

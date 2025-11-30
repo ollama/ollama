@@ -6,7 +6,7 @@
 
 // bump if necessary
 #define LLAMA_MAX_LAYERS  512
-#define LLAMA_MAX_EXPERTS 384  // Kimi-K2
+#define LLAMA_MAX_EXPERTS 512 // Qwen3 Next
 
 enum llama_expert_gating_func_type {
     LLAMA_EXPERT_GATING_FUNC_TYPE_NONE           = 0,
