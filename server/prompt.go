@@ -56,6 +56,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		if m.ProjectorPaths != nil {
 			for _, m := range msgs[i:] {
 				ctxLen += imageNumTokens * len(m.Images)
+				ctxLen += imageNumTokens * len(m.Videos)
 			}
 		}
 
@@ -92,6 +93,24 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			images = append(images, imgData)
 		}
+
+		// Process videos similarly to images
+		for _, v := range msg.Videos {
+			vidData := llm.ImageData{
+				ID:   len(images),
+				Data: v,
+			}
+
+			vidTag := fmt.Sprintf("[video-%d]", vidData.ID)
+			if !strings.Contains(prompt, "[video]") {
+				prefix += vidTag
+			} else {
+				prompt = strings.Replace(prompt, "[video]", vidTag, 1)
+			}
+
+			images = append(images, vidData)
+		}
+
 		msgs[currMsgIdx+cnt].Content = prefix + prompt
 	}
 

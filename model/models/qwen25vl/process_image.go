@@ -114,6 +114,69 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error)
 	return patches, grid, nil
 }
 
+// ExtractVideoFrames extracts frames from video data using the shared imageproc utility
+func (p *ImageProcessor) ExtractVideoFrames(videoData []byte) ([]image.Image, error) {
+	// Use default video extraction config
+	config := imageproc.DefaultVideoConfig()
+	return imageproc.ExtractVideoFrames(videoData, config)
+}
+
+// ProcessVideoFrames processes multiple video frames with temporal awareness
+// This function handles the complete video processing pipeline:
+// 1. Resizes all frames to optimal dimensions
+// 2. Normalizes pixel values
+// 3. Creates temporal patches with temporalPatchSize grouping
+func (p *ImageProcessor) ProcessVideoFrames(frames []image.Image) ([]float32, *Grid, error) {
+	if len(frames) == 0 {
+		return nil, nil, fmt.Errorf("no frames to process")
+	}
+
+	// Get dimensions from first frame and calculate smart resize
+	firstFrame := frames[0]
+	origWidth := firstFrame.Bounds().Dx()
+	origHeight := firstFrame.Bounds().Dy()
+
+	resizedHeight, resizedWidth := p.SmartResize(origHeight, origWidth)
+
+	// Calculate grid dimensions with temporal component
+	// Temporal dimension is based on grouping frames by temporalPatchSize
+	numFrames := len(frames)
+	grid := &Grid{
+		Height:   resizedHeight / p.patchSize,
+		Width:    resizedWidth / p.patchSize,
+		Temporal: (numFrames + p.temporalPatchSize - 1) / p.temporalPatchSize,
+	}
+
+	// Process all frames and collect pixels
+	allPixels := make([]float32, 0, numFrames*resizedHeight*resizedWidth*p.numChannels)
+	for _, frame := range frames {
+		// Composite frame (remove alpha channel)
+		frame = imageproc.Composite(frame)
+
+		// Resize frame
+		resizedImg := imageproc.Resize(frame, image.Point{X: resizedWidth, Y: resizedHeight}, imageproc.ResizeBilinear)
+
+		// Normalize pixels
+		normalizedPixels := imageproc.Normalize(
+			resizedImg,
+			[3]float32{p.imageMean[0], p.imageMean[1], p.imageMean[2]},
+			[3]float32{p.imageStd[0], p.imageStd[1], p.imageStd[2]},
+			true, // rescale
+			true, // channelFirst
+		)
+
+		allPixels = append(allPixels, normalizedPixels...)
+	}
+
+	// Create patches with temporal dimension
+	patches, err := p.createPatchesWithTemporal(allPixels, resizedHeight, resizedWidth, numFrames, grid)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create temporal patches: %v", err)
+	}
+
+	return patches, grid, nil
+}
+
 func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid *Grid) ([]float32, error) {
 	channels := p.numChannels
 	patchSize := p.patchSize
@@ -171,6 +234,102 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 									currentFrameOffset := channelOffset + (tp * frameSize)
 									copy(result[currentFrameOffset:currentFrameOffset+frameSize],
 										result[firstFrameOffset:firstFrameOffset+frameSize])
+								}
+							}
+						}
+
+						patchIndex++
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// createPatchesWithTemporal creates patches from video frames with temporal grouping
+// This function properly handles multiple temporal frames rather than duplicating a single frame
+//
+// Architecture: Qwen2.5-VL uses temporal patches with temporalPatchSize=2 (pairs of consecutive frames)
+// Input format: pixels are arranged as [frame0_CHW, frame1_CHW, frame2_CHW, ...]
+// Output format: patches organized as [temporal_groups × spatial_patches × temporal_patch_data]
+//
+// Each patch contains:
+// - channels × temporalPatchSize × patchSize × patchSize values
+// - temporalPatchSize=2 means each patch contains data from 2 consecutive frames
+// - Spatial patches are created from 2×2 merging (mergeSize=2)
+func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, width, numFrames int, grid *Grid) ([]float32, error) {
+	channels := p.numChannels
+	patchSize := p.patchSize
+	mergeSize := p.mergeSize
+	temporalPatchSize := p.temporalPatchSize
+
+	// Calculate output dimensions
+	numPatches := grid.Temporal * grid.Height * grid.Width
+	patchDim := channels * temporalPatchSize * patchSize * patchSize
+
+	result := make([]float32, numPatches*patchDim)
+	patchIndex := 0
+
+	// Iterate over temporal groups
+	for t := range grid.Temporal {
+		// Get frames for this temporal patch
+		frameStart := t * temporalPatchSize
+		frameEnd := frameStart + temporalPatchSize
+		if frameEnd > numFrames {
+			frameEnd = numFrames
+		}
+
+		// Iterate over spatial grid with 2x2 merging
+		for h := range grid.Height {
+			for w := range grid.Width {
+				// Handle the 2x2 merged patches
+				for mh := range mergeSize {
+					for mw := range mergeSize {
+						baseOffset := patchIndex * patchDim
+
+						// Extract patch data for each temporal frame in this group
+						for tf := frameStart; tf < frameEnd; tf++ {
+							temporalIdx := tf - frameStart
+							frameOffset := tf * channels * height * width
+
+							for c := range channels {
+								channelOffset := baseOffset + (c * temporalPatchSize * patchSize * patchSize) + (temporalIdx * patchSize * patchSize)
+
+								for py := range patchSize {
+									for px := range patchSize {
+										// Calculate source pixel coordinates
+										y := (h+mh)*patchSize + py
+										x := (w+mw)*patchSize + px
+
+										// Source index in input tensor (CHW format, frame-major)
+										srcIdx := frameOffset + c*height*width + y*width + x
+
+										// Destination index in patch
+										dstIdx := channelOffset + (py * patchSize) + px
+
+										if srcIdx < len(pixels) && dstIdx < len(result) {
+											result[dstIdx] = pixels[srcIdx]
+										}
+									}
+								}
+							}
+						}
+
+						// If we have fewer frames than temporalPatchSize, pad with zeros or last frame
+						// For last temporal group, if frameEnd < frameStart + temporalPatchSize
+						if frameEnd < frameStart+temporalPatchSize {
+							lastFrameIdx := frameEnd - 1 - frameStart
+							for tf := frameEnd; tf < frameStart+temporalPatchSize; tf++ {
+								temporalIdx := tf - frameStart
+								for c := range channels {
+									channelOffset := baseOffset + (c * temporalPatchSize * patchSize * patchSize)
+									srcOffset := channelOffset + (lastFrameIdx * patchSize * patchSize)
+									dstOffset := channelOffset + (temporalIdx * patchSize * patchSize)
+									frameSize := patchSize * patchSize
+									// Pad with last frame data
+									copy(result[dstOffset:dstOffset+frameSize], result[srcOffset:srcOffset+frameSize])
 								}
 							}
 						}
