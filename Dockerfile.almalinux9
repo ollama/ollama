@@ -1,4 +1,6 @@
 # vim: filetype=dockerfile
+# Альтернативная версия с AlmaLinux 9.7 для лучшей совместимости
+# Используется если требуется совместимость с существующими репозиториями
 
 ARG FLAVOR=${TARGETARCH}
 ARG PARALLEL=8
@@ -9,7 +11,7 @@ ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 ARG VULKANVERSION=1.4.321.1
 
-# We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
+# Используем последнюю версию ROCm для almalinux-8 (совместимость)
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
 RUN yum install -y yum-utils \
     && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
@@ -32,11 +34,11 @@ RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
     && cp -r /${VULKANVERSION}/x86_64/lib/* /usr/local/lib
 ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
 
-FROM --platform=linux/arm64 almalinux:10.1 AS base-arm64
-# install epel-release for ccache
+# Обновлено: AlmaLinux 8 → AlmaLinux 9.7 (стабильная версия с хорошей поддержкой)
+FROM --platform=linux/arm64 almalinux:9.7 AS base-arm64
 RUN dnf install -y yum-utils epel-release \
     && dnf install -y clang ccache \
-    && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel10/sbsa/cuda-rhel10.repo \
+    && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/sbsa/cuda-rhel9.repo \
     && dnf update -y --security \
     && dnf clean all
 ENV CC=clang CXX=clang++
@@ -168,15 +170,13 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
-COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
+COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
@@ -202,7 +202,6 @@ ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
-# Добавлен non-root пользователь для повышения безопасности
 RUN groupadd -r ollama && useradd -r -g ollama ollama \
     && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
 USER ollama

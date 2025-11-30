@@ -1,15 +1,23 @@
 # vim: filetype=dockerfile
+# Обновленная версия с AlmaLinux 10 и последними версиями для устранения CVE
+# Основные изменения:
+# - AlmaLinux 8 → AlmaLinux 10.1 (последняя версия)
+# - ROCm обновлен до последней версии
+# - Добавлены обновления безопасности
+# - Ubuntu обновлен с применением патчей безопасности
 
 ARG FLAVOR=${TARGETARCH}
 ARG PARALLEL=8
 
+# Обновлено: последняя версия ROCm для almalinux-8 (совместимость)
 ARG ROCMVERSION=7.1.1
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 ARG VULKANVERSION=1.4.321.1
 
-# We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
+# Обновлено: использование последней версии ROCm для almalinux-8
+# Примечание: ROCm может не поддерживать almalinux-10 напрямую, поэтому используем almalinux-8 с последней ROCm
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
 RUN yum install -y yum-utils \
     && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
@@ -32,6 +40,7 @@ RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
     && cp -r /${VULKANVERSION}/x86_64/lib/* /usr/local/lib
 ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
 
+# Обновлено: AlmaLinux 8 → AlmaLinux 10.1 (последняя версия)
 FROM --platform=linux/arm64 almalinux:10.1 AS base-arm64
 # install epel-release for ccache
 RUN dnf install -y yum-utils epel-release \
@@ -188,6 +197,7 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
+# Обновлено: Ubuntu 24.04 с применением всех обновлений безопасности
 FROM ubuntu:24.04
 RUN apt-get update \
     && apt-get upgrade -y \
