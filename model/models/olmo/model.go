@@ -30,13 +30,10 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	layerTypes []string
-
 	Options
 }
 
 func New(c fs.Config) (model.Model, error) {
-	var processor model.TextProcessor
 	vocabulary := model.Vocabulary{
 		Values: c.Strings("tokenizer.ggml.tokens"),
 		Scores: c.Floats("tokenizer.ggml.scores"),
@@ -51,27 +48,21 @@ func New(c fs.Config) (model.Model, error) {
 		),
 	}
 
-	switch c.String("tokenizer.ggml.model") {
-	case "gpt2":
-		var pretokenizers []string
-		switch c.String("tokenizer.ggml.pre") {
-		case "default":
-		default:
-			pretokenizers = []string{
-				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-			}
-		}
-		processor = model.NewBytePairEncoding(&vocabulary, pretokenizers...)
-	case "llama":
-		processor = model.NewSentencePiece(&vocabulary)
-	default:
+	if c.String("tokenizer.ggml.model") != "gpt2" {
 		return nil, model.ErrUnsupportedTokenizer
 	}
+
+	var pretokenizers []string
+	if c.String("tokenizer.ggml.pre") != "default" {
+		pretokenizers = []string{
+			"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+		}
+	}
+	processor := model.NewBytePairEncoding(&vocabulary, pretokenizers...)
 
 	m := Model{
 		TextProcessor: processor,
 		Layers:        make([]Layer, c.Uint("block_count")),
-		layerTypes:    c.Strings("attention.layer_types"),
 		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
@@ -98,11 +89,13 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 type SelfAttention struct {
-	Query       *nn.Linear `gguf:"attn_q"`
-	Key         *nn.Linear `gguf:"attn_k"`
-	Value       *nn.Linear `gguf:"attn_v"`
-	Output      *nn.Linear `gguf:"attn_output"`
-	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
+	Query       *nn.Linear  `gguf:"attn_q"`
+	Key         *nn.Linear  `gguf:"attn_k"`
+	Value       *nn.Linear  `gguf:"attn_v"`
+	Output      *nn.Linear  `gguf:"attn_output"`
+	QNorm       *nn.RMSNorm `gguf:"attn_q_norm"`
+	KNorm       *nn.RMSNorm `gguf:"attn_k_norm"`
+	RopeFactors ml.Tensor   `gguf:"rope_freqs.weight"`
 }
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -111,15 +104,20 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 	ropeDim := cmp.Or(opts.ropeDim, headDim)
 
 	query := sa.Query.Forward(ctx, hiddenState)
+	if sa.QNorm != nil {
+		query = sa.QNorm.Forward(ctx, query, opts.eps)
+	}
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
 
 	key := sa.Key.Forward(ctx, hiddenState)
+	if sa.KNorm != nil {
+		key = sa.KNorm.Forward(ctx, key, opts.eps)
+	}
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	// Apply RoPE (Rotary Position Embeddings) - OLMo uses NeoX-style rotation
 	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 
@@ -144,18 +142,15 @@ func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
-// Layer represents a single transformer layer in OLMo
 type Layer struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	SelfAttention *SelfAttention
-	MLPNorm       *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP           *MLP
+	SelfAttention     *SelfAttention
+	PostAttentionNorm *nn.RMSNorm `gguf:"post_attention_norm"`
+	MLP               *MLP
+	PostFFWNorm       *nn.RMSNorm `gguf:"post_ffw_norm"`
 }
 
 func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenState
-
-	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positions, cache, opts)
 
 	if outputs != nil {
@@ -164,12 +159,18 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso
 	}
 
 	hiddenState = hiddenState.Add(ctx, residual)
+	if l.PostAttentionNorm != nil {
+		hiddenState = l.PostAttentionNorm.Forward(ctx, hiddenState, opts.eps)
+	}
+
 	residual = hiddenState
-
-	hiddenState = l.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
+	hiddenState = hiddenState.Add(ctx, residual)
+	if l.PostFFWNorm != nil {
+		hiddenState = l.PostFFWNorm.Forward(ctx, hiddenState, opts.eps)
+	}
 
-	return hiddenState.Add(ctx, residual)
+	return hiddenState
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
@@ -179,14 +180,6 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
-
-		if wc, ok := m.Cache.(*kvcache.WrapperCache); ok && len(m.layerTypes) > i {
-			if m.layerTypes[i] == "full_attention" {
-				wc.SetLayerType(1)
-			} else {
-				wc.SetLayerType(0)
-			}
-		}
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
