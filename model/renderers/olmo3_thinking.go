@@ -8,24 +8,24 @@ import (
 )
 
 const (
-	olmo3DefaultSystemMessage = "You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai."
-	olmo3NoFunctionsMessage   = " You do not currently have access to any functions."
+	olmo3ThinkingDefaultSystemMessage = "You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai."
+	olmo3ThinkingNoFunctionsMessage   = " You do not currently have access to any functions."
 )
 
-type Olmo3Renderer struct{}
+type Olmo3ThinkingRenderer struct{}
 
-type olmo3ToolCall struct {
-	ID       string            `json:"id,omitempty"`
-	Type     string            `json:"type,omitempty"`
-	Function olmo3ToolCallFunc `json:"function"`
+type olmo3ThinkingToolCall struct {
+	ID       string                    `json:"id,omitempty"`
+	Type     string                    `json:"type,omitempty"`
+	Function olmo3ThinkingToolCallFunc `json:"function"`
 }
 
-type olmo3ToolCallFunc struct {
+type olmo3ThinkingToolCallFunc struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
 	var systemMessage *api.Message
@@ -40,7 +40,7 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 		filteredMessages = append(filteredMessages, message)
 	}
 
-	systemContent := olmo3DefaultSystemMessage
+	systemContent := olmo3ThinkingDefaultSystemMessage
 	if systemMessage != nil {
 		systemContent = systemMessage.Content
 	}
@@ -49,7 +49,7 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 	sb.WriteString(systemContent)
 
 	if len(tools) > 0 {
-		functionsJSON, err := olmo3MarshalWithSpaces(tools)
+		functionsJSON, err := olmo3ThinkingMarshalWithSpaces(tools)
 		if err != nil {
 			return "", err
 		}
@@ -57,7 +57,7 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 		sb.WriteString(string(functionsJSON))
 		sb.WriteString("</functions>")
 	} else {
-		sb.WriteString(olmo3NoFunctionsMessage)
+		sb.WriteString(olmo3ThinkingNoFunctionsMessage)
 		sb.WriteString(" <functions></functions>")
 	}
 	sb.WriteString("<|im_end|>\n")
@@ -79,22 +79,22 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 			}
 
 			if len(message.ToolCalls) > 0 {
-				olmo3Calls := make([]olmo3ToolCall, len(message.ToolCalls))
+				toolCalls := make([]olmo3ThinkingToolCall, len(message.ToolCalls))
 				for j, tc := range message.ToolCalls {
 					argsJSON, err := json.Marshal(tc.Function.Arguments)
 					if err != nil {
 						return "", err
 					}
-					olmo3Calls[j] = olmo3ToolCall{
+					toolCalls[j] = olmo3ThinkingToolCall{
 						ID:   tc.ID,
 						Type: "function",
-						Function: olmo3ToolCallFunc{
+						Function: olmo3ThinkingToolCallFunc{
 							Name:      tc.Function.Name,
 							Arguments: string(argsJSON),
 						},
 					}
 				}
-				toolCallsJSON, err := olmo3MarshalWithSpaces(olmo3Calls)
+				toolCallsJSON, err := olmo3ThinkingMarshalWithSpaces(toolCalls)
 				if err != nil {
 					return "", err
 				}
@@ -129,20 +129,20 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 	return sb.String(), nil
 }
 
-func olmo3MarshalWithSpaces(v any) ([]byte, error) {
+func olmo3ThinkingMarshalWithSpaces(v any) ([]byte, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	return olmo3AddJSONSpaces(data), nil
+	return olmo3ThinkingAddJSONSpaces(data), nil
 }
 
-func olmo3AddJSONSpaces(data []byte) []byte {
+func olmo3ThinkingAddJSONSpaces(data []byte) []byte {
 	var result []byte
 	inString := false
 	escaped := false
 
-	for i := 0; i < len(data); i++ {
+	for i := range data {
 		c := data[i]
 
 		if escaped {

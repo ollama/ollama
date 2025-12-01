@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 )
 
-func TestOlmo3Renderer(t *testing.T) {
+func TestOlmo3ThinkingRenderer(t *testing.T) {
 	tests := []struct {
 		name     string
 		msgs     []api.Message
@@ -211,7 +212,7 @@ func TestOlmo3Renderer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := (&Olmo3Renderer{}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Olmo3ThinkingRenderer{}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -222,7 +223,7 @@ func TestOlmo3Renderer(t *testing.T) {
 	}
 }
 
-func TestOlmo3AddJSONSpaces(t *testing.T) {
+func TestOlmo3ThinkingAddJSONSpaces(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -262,9 +263,9 @@ func TestOlmo3AddJSONSpaces(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := string(olmo3AddJSONSpaces([]byte(tt.input)))
+			result := string(olmo3ThinkingAddJSONSpaces([]byte(tt.input)))
 			if result != tt.expected {
-				t.Errorf("olmo3AddJSONSpaces(%q) = %q, want %q", tt.input, result, tt.expected)
+				t.Errorf("olmo3ThinkingAddJSONSpaces(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
