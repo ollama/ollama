@@ -10,6 +10,7 @@ ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.10
 ARG VULKANVERSION=1.4.321.1
+ARG UBUNTU_VERSION=24.04
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -228,7 +229,6 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-ARG UBUNTU_VERSION=25.04
 FROM --platform=${TARGETOS}/${TARGETARCH} ubuntu:${UBUNTU_VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
