@@ -2,12 +2,70 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"text/template"
 
 	"github.com/ollama/ollama/api"
 )
+
+// Plugin represents a pluggable extension for Ollama
+type Plugin interface {
+	Name() string
+	Description() string
+	Execute(ctx context.Context, input interface{}) (interface{}, error)
+}
+
+// PluginManager manages loaded plugins
+type PluginManager struct {
+	plugins map[string]Plugin
+}
+
+func NewPluginManager() *PluginManager {
+	return &PluginManager{
+		plugins: make(map[string]Plugin),
+	}
+}
+
+func (pm *PluginManager) Register(plugin Plugin) {
+	pm.plugins[plugin.Name()] = plugin
+}
+
+func (pm *PluginManager) Get(name string) Plugin {
+	return pm.plugins[name]
+}
+
+func (pm *PluginManager) List() []string {
+	var names []string
+	for name := range pm.plugins {
+		names = append(names, name)
+	}
+	return names
+}
+
+// SampleQuantizationPlugin is an example plugin for custom quantization
+type SampleQuantizationPlugin struct{}
+
+func (p *SampleQuantizationPlugin) Name() string {
+	return "sample-quantization"
+}
+
+func (p *SampleQuantizationPlugin) Description() string {
+	return "Demonstrates custom model quantization"
+}
+
+func (p *SampleQuantizationPlugin) Execute(ctx context.Context, input interface{}) (interface{}, error) {
+	// Example: input is a model path, output is quantized model
+	modelPath, ok := input.(string)
+	if !ok {
+		return nil, errors.New("input must be a string model path")
+	}
+	// Simulate quantization
+	return fmt.Sprintf("Quantized model at %s", modelPath), nil
+}
 
 type toolsState int
 

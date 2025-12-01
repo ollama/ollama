@@ -154,3 +154,10 @@ func (c *EncoderCache) Remove(seq int, beginIndex, endIndex int32) error {
 
 	return nil
 }
+
+// Evict removes the least recently used entries to free memory
+// For encoder cache, this is a no-op since it doesn't support multiple sequences
+func (c *EncoderCache) Evict(count int) error {
+	// Encoder cache doesn't support eviction as it doesn't manage multiple entries
+	return nil
+}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -127,6 +128,17 @@ type GenerateRequest struct {
 	TopLogprobs int `json:"top_logprobs,omitempty"`
 }
 
+// Validate checks the GenerateRequest for basic input validation
+func (r *GenerateRequest) Validate() error {
+	if strings.TrimSpace(r.Model) == "" {
+		return errors.New("model is required")
+	}
+	if len(r.Prompt) > 100000 { // reasonable limit to prevent abuse
+		return errors.New("prompt too long")
+	}
+	return nil
+}
+
 // ChatRequest describes a request sent by [Client.Chat].
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
@@ -175,6 +187,28 @@ type ChatRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+}
+
+// Validate checks the ChatRequest for basic input validation
+func (r *ChatRequest) Validate() error {
+	if strings.TrimSpace(r.Model) == "" {
+		return errors.New("model is required")
+	}
+	if len(r.Messages) == 0 {
+		return errors.New("messages are required")
+	}
+	for i, msg := range r.Messages {
+		if strings.TrimSpace(msg.Role) == "" {
+			return fmt.Errorf("message %d: role is required", i)
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			return fmt.Errorf("message %d: content is required", i)
+		}
+		if len(msg.Content) > 100000 {
+			return fmt.Errorf("message %d: content too long", i)
+		}
+	}
+	return nil
 }
 
 type Tools []Tool

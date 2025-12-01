@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
@@ -80,6 +81,7 @@ type Causal struct {
 type cacheCell struct {
 	pos       int32
 	sequences []int
+	lastUsed  time.Time
 }
 
 type cellRange struct {
@@ -219,7 +221,7 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 			seq := batch.Sequences[i]
 			loc := int(locs[i])
 
-			c.cells[loc] = cacheCell{pos: pos, sequences: []int{seq}}
+			c.cells[loc] = cacheCell{pos: pos, sequences: []int{seq}, lastUsed: time.Now()}
 
 			seqRange, ok := c.cellRanges[seq]
 			if !ok {
@@ -456,6 +458,11 @@ func (c *Causal) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 		)
 	}
 
+	// Update lastUsed for accessed cells
+	for i := c.curCellRange.min; i <= c.curCellRange.max; i++ {
+		c.cells[i].lastUsed = time.Now()
+	}
+
 	return key, value, c.curMask
 }
 
@@ -675,5 +682,29 @@ func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Causal) Evict(count int) error {
+	// Full LRU eviction: remove least recently used free cells
+	var freeCells []int
+	for i, cell := range c.cells {
+		if len(cell.sequences) == 0 {
+			freeCells = append(freeCells, i)
+		}
+	}
+	// Sort by lastUsed ascending (oldest first)
+	slices.SortFunc(freeCells, func(a, b int) int {
+		return c.cells[a].lastUsed.Compare(c.cells[b].lastUsed)
+	})
+	// Remove oldest free cells
+	removed := 0
+	for _, idx := range freeCells {
+		if removed >= count {
+			break
+		}
+		c.cells = append(c.cells[:idx-removed], c.cells[idx-removed+1:]...)
+		removed++
+	}
 	return nil
 }

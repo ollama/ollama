@@ -264,6 +264,9 @@ type GenerateResponseFunc func(GenerateResponse) error
 // be populated with prompt details. fn is called for each response (there may
 // be multiple responses, e.g. in case streaming is enabled).
 func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn GenerateResponseFunc) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
 	return c.stream(ctx, http.MethodPost, "/api/generate", req, func(bts []byte) error {
 		var resp GenerateResponse
 		if err := json.Unmarshal(bts, &resp); err != nil {
@@ -284,6 +287,9 @@ type ChatResponseFunc func(ChatResponse) error
 // fn is called for each response (there may be multiple responses, e.g. if case
 // streaming is enabled).
 func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
 	return c.stream(ctx, http.MethodPost, "/api/chat", req, func(bts []byte) error {
 		var resp ChatResponse
 		if err := json.Unmarshal(bts, &resp); err != nil {

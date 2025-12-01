@@ -577,3 +577,32 @@ func TestAPIChatLogprobs(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIValidation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	// Test invalid model name
+	req := api.GenerateRequest{
+		Model: "",
+		Prompt: "test",
+	}
+
+	err := client.Generate(ctx, &req, func(api.GenerateResponse) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "model is required") {
+		t.Errorf("expected validation error for empty model, got %v", err)
+	}
+
+	// Test invalid chat messages
+	chatReq := api.ChatRequest{
+		Model:    "test",
+		Messages: []api.Message{},
+	}
+
+	err = client.Chat(ctx, &chatReq, func(api.ChatResponse) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "messages are required") {
+		t.Errorf("expected validation error for empty messages, got %v", err)
+	}
+}

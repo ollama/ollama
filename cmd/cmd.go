@@ -1710,9 +1710,11 @@ func NewCLI() *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
 		Short:   "Create a model",
+		Long:    "Create a model from a Modelfile. The Modelfile defines the model configuration, including base model, parameters, system prompts, and templates.",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CreateHandler,
+		Example: "  ollama create mymodel -f Modelfile\n  ollama create quantized-model -f Modelfile -q q4_K_M",
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")

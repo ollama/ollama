@@ -16,6 +16,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"net/netip"
 	"net/url"
 	"os"
@@ -78,9 +79,10 @@ var lowVRAMThreshold uint64 = 20 * format.GibiByte
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr    net.Addr
-	sched   *Scheduler
-	lowVRAM bool
+	addr          net.Addr
+	sched         *Scheduler
+	lowVRAM       bool
+	pluginManager *tools.PluginManager
 }
 
 func init() {
@@ -187,6 +189,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
+
+	// Sanitize user input
+	req.Prompt = sanitizeInput(req.Prompt)
+	req.System = sanitizeInput(req.System)
 
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
@@ -1495,7 +1501,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/push", s.PushHandler)
 	r.HEAD("/api/tags", s.ListHandler)
 	r.GET("/api/tags", s.ListHandler)
-	r.POST("/api/show", s.ShowHandler)
+	r.POST("/api/show", s.AccessControlMiddleware(), s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
 
 	r.POST("/api/me", s.WhoamiHandler)
@@ -1523,6 +1529,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/v1/embeddings", middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
+
+	r.GET("/api/plugins", s.ListPluginsHandler)
+	r.POST("/api/plugins/:name/execute", s.ExecutePluginHandler)
+
+	// Profiling endpoints
+	r.GET("/debug/pprof/*action", gin.WrapH(http.DefaultServeMux))
 
 	if rc != nil {
 		// wrap old with new
@@ -1571,7 +1583,13 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	s := &Server{addr: ln.Addr()}
+	s := &Server{
+		addr:          ln.Addr(),
+		pluginManager: tools.NewPluginManager(),
+	}
+
+	// Register sample plugins
+	s.pluginManager.Register(&tools.SampleQuantizationPlugin{})
 
 	var rc *ollama.Registry
 	if useClient2 {
@@ -2375,4 +2393,64 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+func (s *Server) ListPluginsHandler(c *gin.Context) {
+	plugins := s.pluginManager.List()
+	c.JSON(http.StatusOK, gin.H{"plugins": plugins})
+}
+
+func (s *Server) ExecutePluginHandler(c *gin.Context) {
+	name := c.Param("name")
+	plugin := s.pluginManager.Get(name)
+	if plugin == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
+		return
+	}
+
+	var input interface{}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+		return
+	}
+
+	result, err := plugin.Execute(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"result": result})
+}
+
+// AccessControlMiddleware checks model access permissions
+func (s *Server) AccessControlMiddleware() gin.HandlerFunc {
+	ac := auth.NewAccessControl()
+	// For demo, grant access to all for "user1"
+	ac.GrantAccess("user1", "*")
+
+	return func(c *gin.Context) {
+		// Extract user from context or header (placeholder)
+		user := c.GetHeader("X-User")
+		if user == "" {
+			user = "anonymous"
+		}
+
+		model := c.Param("model")
+		if model != "" && !ac.CheckAccess(user, model) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// sanitizeInput removes potentially harmful content from user input
+func sanitizeInput(input string) string {
+	// Basic sanitization: remove null bytes, control characters
+	input = strings.ReplaceAll(input, "\x00", "")
+	// Add more sanitization as needed
+	return input
 }

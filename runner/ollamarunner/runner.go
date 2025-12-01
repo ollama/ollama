@@ -1365,7 +1365,32 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		// TODO: Improve GPU utilization by detecting multiple GPUs and distributing layers
+		// Currently uses single GPU with default layer allocation
+		gpuLayers := req.GPULayers
+		if len(gpuLayers) == 0 {
+			// Auto-detect GPUs
+			if gpuCount := detectGPUCount(); gpuCount > 1 {
+				// Distribute layers across GPUs, e.g., split evenly
+				layersPerGPU := req.NumLayer / gpuCount
+				for i := 0; i < gpuCount; i++ {
+					start := i * layersPerGPU
+					end := start + layersPerGPU
+					if i == gpuCount-1 {
+						end = req.NumLayer
+					}
+					gpuLayers = append(gpuLayers, ml.GPULayers{Device: i, Layers: []int{start, end}})
+				}
+			} else {
+				gpuLayers = ml.GPULayersList{{}}
+			}
+		}
+		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: gpuLayers})
+		if err != nil && len(gpuLayers) > 0 {
+			// Graceful degradation: fall back to CPU if GPU fails
+			slog.Warn("GPU initialization failed, falling back to CPU", "error", err)
+			m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		}
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
 			return
@@ -1437,4 +1462,11 @@ func Execute(args []string) error {
 	}
 
 	return nil
+}
+
+// detectGPUCount detects the number of available GPUs
+func detectGPUCount() int {
+	// TODO: Implement actual GPU detection using CUDA or Vulkan APIs
+	// For now, return 1 as placeholder
+	return 1
 }

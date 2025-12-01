@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 // currentSchemaVersion defines the current database schema version.
@@ -482,19 +480,11 @@ func (db *database) cleanupOrphanedData() error {
 }
 
 func duplicateColumnError(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
-		return sqlite3Err.Code == sqlite3.ErrError &&
-			strings.Contains(sqlite3Err.Error(), "duplicate column name")
-	}
-	return false
+	return strings.Contains(err.Error(), "duplicate column name")
 }
 
 func columnNotExists(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
-		return sqlite3Err.Code == sqlite3.ErrError &&
-			strings.Contains(sqlite3Err.Error(), "no such column")
-	}
-	return false
+	return strings.Contains(err.Error(), "no such column")
 }
 
 func (db *database) getAllChats() ([]Chat, error) {

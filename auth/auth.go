@@ -83,3 +83,31 @@ func Sign(ctx context.Context, bts []byte) (string, error) {
 	// signature is <pubkey>:<signature>
 	return fmt.Sprintf("%s:%s", bytes.TrimSpace(parts[1]), base64.StdEncoding.EncodeToString(signedData.Blob)), nil
 }
+
+// AccessControl manages model access permissions
+type AccessControl struct {
+	allowedUsers map[string][]string // user -> allowed models
+}
+
+func NewAccessControl() *AccessControl {
+	return &AccessControl{
+		allowedUsers: make(map[string][]string),
+	}
+}
+
+func (ac *AccessControl) GrantAccess(user, model string) {
+	ac.allowedUsers[user] = append(ac.allowedUsers[user], model)
+}
+
+func (ac *AccessControl) CheckAccess(user, model string) bool {
+	models, exists := ac.allowedUsers[user]
+	if !exists {
+		return false
+	}
+	for _, m := range models {
+		if m == model || m == "*" {
+			return true
+		}
+	}
+	return false
+}

@@ -10,9 +10,22 @@ help:
 	@echo "    apply-patches        Apply patches to local repository"
 	@echo "    format-patches       Format patches from local repository"
 	@echo "    clean                Clean local repository"
+	@echo "    debug                Build with debug tags for profiling"
+	@echo "    profile              Run profiling tools on the binary"
 	@echo
 	@echo "Example:"
 	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean apply-patches sync"
+
+.PHONY: debug
+debug:
+	go build -tags debug .
+
+.PHONY: profile
+profile: debug
+	@echo "Built with debug tags. Run the binary with profiling enabled:"
+	@echo "  ./ollama serve &"
+	@echo "  go tool pprof http://localhost:6060/debug/pprof/profile"
+	@echo "Or use OLLAMA_DEBUG=1 for verbose logging"
 
 .PHONY: sync
 sync: llama/build-info.cpp ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal

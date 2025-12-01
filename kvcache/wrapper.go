@@ -108,3 +108,12 @@ func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {
 
 	return nil
 }
+
+func (c *WrapperCache) Evict(count int) error {
+	for _, cache := range c.caches {
+		if err := cache.Evict(count); err != nil {
+			return err
+		}
+	}
+	return nil
+}

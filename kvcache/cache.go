@@ -74,4 +74,7 @@ type Cache interface {
 	// If an error occurs, the entire context for the sequence should be
 	// removed by calling Remove(seq, 0, math.MaxInt32)
 	Remove(seq int, beginIndex, endIndex int32) error
+
+	// Evict removes the least recently used entries to free memory
+	Evict(count int) error
 }
