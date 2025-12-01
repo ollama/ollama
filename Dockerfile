@@ -231,8 +231,12 @@ COPY --from=build /bin/ollama /bin/ollama
 FROM --platform=${TARGETOS}/${TARGETARCH} ubuntu:24.04
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends ca-certificates libvulkan1 openssl libssl3 \
-    && apt-get upgrade -y openssl libssl3 ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates libvulkan1 openssl libssl3 \
+        libpam0g coreutils gnupg2 libgcrypt20 tar passwd \
+    && apt-get upgrade -y \
+        openssl libssl3 ca-certificates \
+        libpam0g coreutils gnupg2 libgcrypt20 tar passwd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && update-ca-certificates
