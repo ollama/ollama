@@ -65,6 +65,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		}
 
 		slog.Info("discovering available GPUs...")
+		detectIncompatibleLibraries()
 
 		// Warn if any user-overrides are set which could lead to incorrect GPU discovery
 		overrideWarnings()
@@ -485,5 +486,18 @@ func overrideWarnings() {
 	}
 	if anyFound {
 		slog.Warn("if GPUs are not correctly discovered, unset and try again")
+	}
+}
+
+func detectIncompatibleLibraries() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	basePath, err := exec.LookPath("ggml-base.dll")
+	if err != nil || basePath == "" {
+		return
+	}
+	if !strings.HasPrefix(basePath, ml.LibOllamaPath) {
+		slog.Warn("potentially incompatible library detected in PATH", "location", basePath)
 	}
 }
