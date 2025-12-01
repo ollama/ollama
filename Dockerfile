@@ -242,7 +242,7 @@ RUN apt-get update \
         libssl3 \
         libvulkan1 \
         openssl \
-        shadow \
+        passwd \
         tar \
     && apt-get install -y --only-upgrade \
         coreutils \
@@ -251,7 +251,7 @@ RUN apt-get update \
         libpam0g \
         libssl3 \
         openssl \
-        shadow \
+        passwd \
         tar \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives \
