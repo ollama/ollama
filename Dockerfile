@@ -1,5 +1,7 @@
 # vim: filetype=dockerfile
 
+ARG TARGETOS=linux
+ARG TARGETARCH
 ARG FLAVOR=${TARGETARCH}
 ARG PARALLEL=8
 
@@ -226,7 +228,7 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-FROM ubuntu:24.04
+FROM --platform=${TARGETOS}/${TARGETARCH} ubuntu:24.04
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates libvulkan1 openssl libssl3 \
