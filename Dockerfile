@@ -265,6 +265,8 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 # Добавлен non-root пользователь для повышения безопасности
 RUN groupadd -r ollama && useradd -r -g ollama ollama \
+    && mkdir -p /home/ollama \
+    && chown -R ollama:ollama /home/ollama \
     && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
 USER ollama
 EXPOSE 11434
