@@ -228,17 +228,33 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-FROM --platform=${TARGETOS}/${TARGETARCH} ubuntu:24.04
+ARG UBUNTU_VERSION=25.04
+FROM --platform=${TARGETOS}/${TARGETARCH} ubuntu:${UBUNTU_VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get upgrade -y \
+    && apt-get dist-upgrade -y \
     && apt-get install -y --no-install-recommends \
-        ca-certificates libvulkan1 openssl libssl3 \
-        libpam0g coreutils gnupg2 libgcrypt20 tar passwd \
-    && apt-get upgrade -y \
-        openssl libssl3 ca-certificates \
-        libpam0g coreutils gnupg2 libgcrypt20 tar passwd \
+        ca-certificates \
+        coreutils \
+        gnupg2 \
+        libgcrypt20 \
+        libpam0g \
+        libssl3 \
+        libvulkan1 \
+        openssl \
+        shadow \
+        tar \
+    && apt-get install -y --only-upgrade \
+        coreutils \
+        gnupg2 \
+        libgcrypt20 \
+        libpam0g \
+        libssl3 \
+        openssl \
+        shadow \
+        tar \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives \
     && update-ca-certificates
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
