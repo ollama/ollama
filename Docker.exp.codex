@@ -9,7 +9,8 @@
 
 ARG CUDA_IMAGE=nvidia/cuda:12.6.2-devel-ubuntu22.04
 ARG RUNTIME_IMAGE=nvidia/cuda:12.6.2-runtime-ubuntu22.04
-ARG CMAKEVERSION=4.2.0
+ARG CMAKEVERSION=3.31.4
+ARG CMAKE_ARCH=x86_64
 ARG PARALLEL=8
 
 FROM --platform=linux/amd64 ${CUDA_IMAGE} AS build
@@ -24,7 +25,7 @@ RUN apt-get update \
         ninja-build \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz \
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-${CMAKE_ARCH}.tar.gz \
     | tar xz -C /usr/local --strip-components 1
 
 WORKDIR /workspace/ollama
