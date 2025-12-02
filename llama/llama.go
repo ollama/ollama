@@ -257,50 +257,50 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 }
 
 func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
-	cparams := C.llama_model_default_params()
-	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
-	cparams.main_gpu = C.int32_t(params.MainGpu)
-	cparams.use_mmap = C.bool(params.UseMmap)
-	cparams.vocab_only = C.bool(params.VocabOnly)
+cparams := C.llama_model_default_params()
+cparams.n_gpu_layers = C.int(params.NumGpuLayers)
+cparams.main_gpu = C.int32_t(params.MainGpu)
+cparams.use_mmap = C.bool(params.UseMmap)
+cparams.vocab_only = C.bool(params.VocabOnly)
 
-	var devices []C.ggml_backend_dev_t
-	for _, llamaID := range params.Devices {
-		devices = append(devices, C.ggml_backend_dev_get(C.size_t(llamaID)))
-	}
-	if len(devices) > 0 {
-		devices = append(devices, C.ggml_backend_dev_t(C.NULL))
-		devicesData := &devices[0]
+var devices []C.ggml_backend_dev_t
+for _, llamaID := range params.Devices {
+devices = append(devices, C.ggml_backend_dev_get(C.size_t(llamaID)))
+}
+if len(devices) > 0 {
+devices = append(devices, C.ggml_backend_dev_t(C.NULL))
+devicesData := &devices[0]
 
-		var devicesPin runtime.Pinner
-		devicesPin.Pin(devicesData)
-		defer devicesPin.Unpin()
+var devicesPin runtime.Pinner
+devicesPin.Pin(devicesData)
+defer devicesPin.Unpin()
 
-		cparams.devices = devicesData
-	}
+cparams.devices = devicesData
+}
 
-	if len(params.TensorSplit) > 0 {
-		tensorSplitData := &params.TensorSplit[0]
+if len(params.TensorSplit) > 0 {
+tensorSplitData := &params.TensorSplit[0]
 
-		var tensorSplitPin runtime.Pinner
-		tensorSplitPin.Pin(tensorSplitData)
-		defer tensorSplitPin.Unpin()
+var tensorSplitPin runtime.Pinner
+tensorSplitPin.Pin(tensorSplitData)
+defer tensorSplitPin.Unpin()
 
-		cparams.tensor_split = (*C.float)(unsafe.Pointer(tensorSplitData))
-	}
+cparams.tensor_split = (*C.float)(unsafe.Pointer(tensorSplitData))
+}
 
-	if params.Progress != nil {
-		handle := cgo.NewHandle(params.Progress)
-		defer handle.Delete()
+if params.Progress != nil {
+handle := cgo.NewHandle(params.Progress)
+defer handle.Delete()
 
-		var handlePin runtime.Pinner
-		handlePin.Pin(&handle)
-		defer handlePin.Unpin()
+var handlePin runtime.Pinner
+handlePin.Pin(&handle)
+defer handlePin.Unpin()
 
-		cparams.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
-		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
-	}
+cparams.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
+cparams.progress_callback_user_data = unsafe.Pointer(&handle)
+}
 
-	m := Model{c: C.llama_model_load_from_file(C.CString(modelPath), cparams)}
+m := Model{c: C.llama_model_load_from_file(C.CString(modelPath), cparams)}
 	if m.c == nil {
 		return nil, fmt.Errorf("unable to load model: %s", modelPath)
 	}
@@ -322,6 +322,14 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 	}
 
 	return &c, nil
+}
+
+// Free releases the llama context resources
+func (c *Context) Free() {
+	if c != nil && c.c != nil {
+		C.llama_free(c.c)
+		c.c = nil
+	}
 }
 
 func (m *Model) NumVocab() int {
@@ -365,17 +373,41 @@ type Batch struct {
 	batchSize int
 	maxSeq    int
 	embedSize int
+	// M-RoPE support: when nPosPerEmbd > 1, pos array has nPosPerEmbd positions per token
+	nPosPerEmbd int
+	// Managed position array for M-RoPE (Go-managed memory)
+	mropePos []C.llama_pos
 }
 
 // Creates a new batch for either word tokens or image embeddings (if embedSize is non-zero).
 // Batches cannot contain both types at the same time. batchSize is the maximum number of entries
 // that can be added per sequence
 func NewBatch(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
+	return newBatchInternal(batchSize, maxSeq, embedSize, 1)
+}
+
+// NewBatchMRoPE creates a batch with M-RoPE support (4 position values per token).
+// This is required for models like Qwen3-VL that use Multi-dimensional Rotary Position Embedding.
+func NewBatchMRoPE(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
+	return newBatchInternal(batchSize, maxSeq, embedSize, 4)
+}
+
+func newBatchInternal(batchSize int, maxSeq int, embedSize int, nPosPerEmbd int) (*Batch, error) {
+	allocSize := batchSize * maxSeq
+
 	b := Batch{
-		c:         C.llama_batch_init(C.int(batchSize*maxSeq), C.int(embedSize), C.int(maxSeq)),
-		batchSize: batchSize,
-		maxSeq:    maxSeq,
-		embedSize: embedSize,
+		c:           C.llama_batch_init(C.int(allocSize), C.int(embedSize), C.int(maxSeq)),
+		batchSize:   batchSize,
+		maxSeq:      maxSeq,
+		embedSize:   embedSize,
+		nPosPerEmbd: nPosPerEmbd,
+	}
+
+	// For M-RoPE, we need 4x the position space
+	if nPosPerEmbd > 1 {
+		b.mropePos = make([]C.llama_pos, allocSize*nPosPerEmbd)
+		// Point the batch's pos to our managed array
+		b.c.pos = &b.mropePos[0]
 	}
 
 	// Check to see if any of the allocations in llama_batch_init() failed
@@ -385,7 +417,7 @@ func NewBatch(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
 
 	if nilPointer {
 		C.llama_batch_free(b.c)
-		return nil, fmt.Errorf("unable to allocate batch (batchSize=%v maxSeq=%v embedSize=%v)", batchSize, maxSeq, embedSize)
+		return nil, fmt.Errorf("unable to allocate batch (batchSize=%v maxSeq=%v embedSize=%v nPosPerEmbd=%v)", batchSize, maxSeq, embedSize, nPosPerEmbd)
 	}
 
 	return &b, nil
@@ -417,7 +449,22 @@ func (b *Batch) Add(token int, embed []float32, pos int, logits bool, seqIds ...
 	} else {
 		copy(unsafe.Slice((*float32)(b.c.embd), b.allocSize()*b.embedSize)[int(b.c.n_tokens)*b.embedSize:], embed)
 	}
-	unsafe.Slice(b.c.pos, b.allocSize())[b.c.n_tokens] = C.llama_pos(pos)
+
+	// Handle position(s)
+	if b.nPosPerEmbd == 1 {
+		// Standard: 1 position per token
+		unsafe.Slice(b.c.pos, b.allocSize())[b.c.n_tokens] = C.llama_pos(pos)
+	} else {
+		// M-RoPE: set all 4 positions to the same value for non-image tokens
+		// Layout: [temporal...][y...][x...][unused...]
+		n := int(b.c.n_tokens)
+		allocSz := b.allocSize()
+		b.mropePos[n] = C.llama_pos(pos)           // temporal
+		b.mropePos[n+allocSz] = C.llama_pos(pos)   // y (same as temporal for text)
+		b.mropePos[n+allocSz*2] = C.llama_pos(pos) // x (same as temporal for text)
+		b.mropePos[n+allocSz*3] = 0                // unused
+	}
+
 	unsafe.Slice(b.c.n_seq_id, b.allocSize())[b.c.n_tokens] = C.int(len(seqIds))
 
 	for i, s := range seqIds {
@@ -431,6 +478,102 @@ func (b *Batch) Add(token int, embed []float32, pos int, logits bool, seqIds ...
 	}
 
 	b.c.n_tokens += 1
+}
+
+// AddImageMRoPE adds image embeddings with M-RoPE 2D position encoding.
+// This method adds ALL embeddings from an image at once, setting up the 2D grid positions
+// required for models like Qwen3-VL.
+// Parameters:
+//   - embeddings: flattened array of all embeddings (nx * ny * embedSize floats)
+//   - pos0: starting position in the sequence
+//   - nx, ny: grid dimensions of the image (nx * ny = number of image tokens)
+//   - logitsLast: if true, only the last token will have logits=true
+//   - seqIds: sequence IDs for all tokens
+func (b *Batch) AddImageMRoPE(embeddings []float32, pos0 int, nx int, ny int, logitsLast bool, seqIds ...int) {
+	if b.nPosPerEmbd != 4 {
+		// Fallback: add embeddings one by one with sequential positions
+		numTokens := nx * ny
+		for i := range numTokens {
+			isLast := logitsLast && (i == numTokens-1)
+			embed := embeddings[i*b.embedSize : (i+1)*b.embedSize]
+			b.Add(0, embed, pos0+i, isLast, seqIds...)
+		}
+		return
+	}
+
+	// M-RoPE: set 2D positions for image tokens
+	// Following the pattern from mtmd-helper.cpp set_position_mrope_2d()
+	//
+	// IMPORTANT: For M-RoPE, llama_decode expects positions organized as:
+	//   pos[i                 ] = temporal position for token i
+	//   pos[i + n_tokens      ] = y position for token i
+	//   pos[i + n_tokens * 2  ] = x position for token i
+	//   pos[i + n_tokens * 3  ] = 0 (unused)
+	// where n_tokens is the FINAL number of tokens in the batch after adding these.
+	//
+	// We must set positions using n_tokens as stride, not allocSize.
+	
+	numImageTokens := nx * ny
+	nTokensStart := int(b.c.n_tokens)
+	nTokensFinal := nTokensStart + numImageTokens
+	allocSz := b.allocSize()
+
+	// First, add all embeddings
+	for y := 0; y < ny; y++ {
+		for x := 0; x < nx; x++ {
+			i := y*nx + x
+			tokenIdx := nTokensStart + i
+
+			// Copy embedding for this token
+			srcStart := i * b.embedSize
+			dstStart := tokenIdx * b.embedSize
+			copy(unsafe.Slice((*float32)(b.c.embd), allocSz*b.embedSize)[dstStart:dstStart+b.embedSize],
+				embeddings[srcStart:srcStart+b.embedSize])
+
+			// Set other batch fields
+			unsafe.Slice(b.c.n_seq_id, allocSz)[tokenIdx] = C.int(len(seqIds))
+			for j, s := range seqIds {
+				unsafe.Slice((unsafe.Slice(b.c.seq_id, allocSz)[tokenIdx]), C.int(len(seqIds)))[j] = C.int32_t(s)
+			}
+
+			// Only last token gets logits if requested
+			isLast := logitsLast && (i == numImageTokens-1)
+			if isLast {
+				unsafe.Slice(b.c.logits, allocSz)[tokenIdx] = 1
+			} else {
+				unsafe.Slice(b.c.logits, allocSz)[tokenIdx] = 0
+			}
+		}
+	}
+
+	// CRITICAL ORDERING: Update n_tokens FIRST so we know the final count.
+	// The M-RoPE position stride below depends on nTokensFinal, so do NOT
+	// move position-setting before this line or decoding will fail.
+	b.c.n_tokens = C.int(nTokensFinal)
+
+	// Now set M-RoPE positions with correct stride (nTokensFinal)
+	// The position array layout must be:
+	//   [0..nTokensFinal-1] = temporal positions
+	//   [nTokensFinal..2*nTokensFinal-1] = y positions  
+	//   [2*nTokensFinal..3*nTokensFinal-1] = x positions
+	//   [3*nTokensFinal..4*nTokensFinal-1] = zeros
+	for y := 0; y < ny; y++ {
+		for x := 0; x < nx; x++ {
+			i := y*nx + x
+			tokenIdx := nTokensStart + i
+			
+			// Set M-RoPE positions with nTokensFinal as stride
+			b.mropePos[tokenIdx] = C.llama_pos(pos0)                              // temporal
+			b.mropePos[tokenIdx+nTokensFinal] = C.llama_pos(pos0 + y)             // row (y)
+			b.mropePos[tokenIdx+nTokensFinal*2] = C.llama_pos(pos0 + x)           // column (x)
+			b.mropePos[tokenIdx+nTokensFinal*3] = 0                               // unused
+		}
+	}
+}
+
+// IsMRoPE returns true if this batch is configured for M-RoPE (4 positions per token)
+func (b *Batch) IsMRoPE() bool {
+	return b.nPosPerEmbd == 4
 }
 
 func (b *Batch) Clear() {
@@ -519,6 +662,10 @@ func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
 }
 
+func (m *Model) NEmbdInp() int {
+	return int(C.llama_model_n_embd_inp(m.c))
+}
+
 // vision processing
 type MtmdContext struct {
 	c *C.struct_mtmd_context
@@ -543,9 +690,19 @@ func (c *MtmdContext) Free() {
 	C.mtmd_free(c.c)
 }
 
+// UsesMRoPE returns true if the model requires M-RoPE (Multi-dimensional Rotary Position Embedding)
+// This is the case for Qwen2-VL and Qwen3-VL models
+func (c *MtmdContext) UsesMRoPE() bool {
+	return bool(C.mtmd_decode_use_mrope(c.c))
+}
+
 type MtmdChunk struct {
 	Embed  []float32
 	Tokens []int
+	// Nx and Ny are the grid dimensions for image embeddings (used for M-RoPE)
+	// Only valid when Embed is set. Nx * Ny should equal len(Embed)/embedSize
+	Nx int
+	Ny int
 }
 
 func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]MtmdChunk, error) {
@@ -566,12 +723,15 @@ func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]
 		return nil, errors.New("unable to tokenize mtmd embedding from image")
 	}
 	nChunks := C.mtmd_input_chunks_size(ic)
-	numEmbed := llamaContext.Model().NEmbd()
+	// For multimodal models, use NEmbdInp() which returns the vision projector
+	// embedding dimension (e.g., 8192 for qwen3vl) instead of NEmbd() which
+	// returns the text model dimension (e.g., 2048 for qwen3vl)
+	numEmbed := llamaContext.Model().NEmbdInp()
+	usesMRoPE := c.UsesMRoPE()
 	outChunks := make([]MtmdChunk, 0)
 	for i := range int(nChunks) {
 		chunk := C.mtmd_input_chunks_get(ic, C.size_t(i))
 		numTokens := int(C.mtmd_input_chunk_get_n_tokens(chunk))
-		slog.Debug("chunk tokens", "index", i, "numTokens", numTokens)
 
 		if C.mtmd_input_chunk_get_type(chunk) == C.MTMD_INPUT_CHUNK_TYPE_TEXT {
 			// If this is a text chunk, add the tokens
@@ -586,31 +746,50 @@ func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]
 		} else {
 			// Otherwise, encode the image chunk to embeddings
 
+			// Get image grid dimensions for M-RoPE (nx * ny = numTokens)
+			nx, ny := 0, 0
+			imageTokens := C.mtmd_input_chunk_get_tokens_image(chunk)
+			if imageTokens != nil {
+				nx = int(C.mtmd_image_tokens_get_nx(imageTokens))
+				ny = int(C.mtmd_image_tokens_get_ny(imageTokens))
+			}
+
 			// Encode the chunk
 			if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
 				return nil, errors.New("unable to encode mtmd image chunk")
 			}
 
 			// Get the embeddings for this chunk
-			chunkEmbed := make([][]float32, numTokens)
 			chunkEmbd := C.mtmd_get_output_embd(c.c)
 			if nil == chunkEmbd {
 				return nil, errors.New("no mtmd image embedding")
 			}
 
-			// Extend the embedding array for each token
+			// Copy all embeddings for this image chunk
 			s := unsafe.Slice((*float32)(chunkEmbd), numTokens*numEmbed)
-			rows := make([]float32, len(s))
-			copy(rows, s)
-			for i := range numTokens {
-				chunkEmbed[i] = rows[i*numEmbed : (i+1)*numEmbed]
-			}
-			for _, e := range chunkEmbed {
-				outChunks = append(outChunks, MtmdChunk{Embed: e})
+			allEmbeds := make([]float32, len(s))
+			copy(allEmbeds, s)
+
+			// For M-RoPE models, keep all embeddings together in one chunk
+			// so we can calculate 2D positions correctly in the runner
+			if usesMRoPE && nx > 0 && ny > 0 {
+				// Store all embeddings in a single chunk with grid dimensions
+				outChunks = append(outChunks, MtmdChunk{
+					Embed: allEmbeds,
+					Nx:    nx,
+					Ny:    ny,
+				})
+			} else {
+				// For non-M-RoPE models, create separate chunks for each embedding
+				// (original behavior for backward compatibility)
+				for j := range numTokens {
+					outChunks = append(outChunks, MtmdChunk{
+						Embed: allEmbeds[j*numEmbed : (j+1)*numEmbed],
+					})
+				}
 			}
 		}
 	}
-	slog.Debug("image tokenization chunks", "totalChunks", len(outChunks))
 	return outChunks, nil
 }
 
@@ -787,3 +966,4 @@ func (g *Grammar) Accept(token int32) {
 
 	C.grammar_accept(g.c, C.llama_token(token))
 }
+
