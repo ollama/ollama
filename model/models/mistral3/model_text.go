@@ -16,6 +16,9 @@ type TextOptions struct {
 	hiddenSize, numHeads, numKVHeads int
 	headDim, ropeDim                 int
 	eps, ropeBase, ropeScale         float32
+	llama4Scaling                    bool
+	ropeOrigPosEmbeddings            int
+	ropeScalingBeta                  float32
 }
 
 type TextModel struct {
@@ -34,7 +37,7 @@ type SelfAttention struct {
 	Output *nn.Linear `gguf:"attn_output"`
 }
 
-func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
+func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs, positionsScale ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
 
@@ -48,6 +51,10 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+
+	if opts.llama4Scaling {
+		q = q.Mul(ctx, positionsScale)
+	}
 
 	kqv := nn.Attention(ctx, q, k, v, 1.0/math.Sqrt(float64(headDim)), cache)
 	kqv = kqv.Reshape(ctx, headDim*opts.numHeads, batchSize)
@@ -76,11 +83,11 @@ type Layer struct {
 	MLP           *MLP
 }
 
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, positionsScale, outputs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positionIDs, cache, opts)
+	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positionIDs, positionsScale, cache, opts)
 
 	// In the final layer (outputs != nil), optimize by pruning to just the token positions
 	// we need logits for.
@@ -97,7 +104,7 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 	return hiddenState.Add(ctx, residual)
 }
 
-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
+func (m *TextModel) Forward(ctx ml.Context, inputs, positions, positionsScale, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
 
 	// image embeddings
@@ -114,7 +121,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 			lastLayerOutputs = outputs
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, cache, m.TextOptions)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, positionsScale, lastLayerOutputs, cache, m.TextOptions)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
@@ -125,14 +132,17 @@ func newTextModel(c fs.Config) *TextModel {
 	return &TextModel{
 		Layers: make([]Layer, c.Uint("block_count")),
 		TextOptions: &TextOptions{
-			hiddenSize: int(c.Uint("embedding_length")),
-			numHeads:   int(c.Uint("attention.head_count")),
-			numKVHeads: int(c.Uint("attention.head_count_kv")),
-			headDim:    int(c.Uint("attention.key_length")),
-			ropeDim:    int(c.Uint("rope.dimension_count")),
-			eps:        c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.scaling.factor", 1),
+			hiddenSize:            int(c.Uint("embedding_length")),
+			numHeads:              int(c.Uint("attention.head_count")),
+			numKVHeads:            int(c.Uint("attention.head_count_kv")),
+			headDim:               int(c.Uint("attention.key_length")),
+			ropeDim:               int(c.Uint("rope.dimension_count")),
+			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
+			ropeBase:              c.Float("rope.freq_base"),
+			ropeScale:             c.Float("rope.scaling.factor", 1),
+			llama4Scaling:         c.Bool("rope.llama4_scaling", false),
+			ropeOrigPosEmbeddings: int(c.Uint("rope.orig_max_pos_embedding")),
+			ropeScalingBeta:       c.Float("rope.scaling_beta"),
 		},
 	}
 }
