@@ -29,7 +29,7 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 	var sb strings.Builder
 
 	var systemMessage *api.Message
-	var filteredMessages []api.Message
+	filteredMessages := make([]api.Message, 0, len(messages))
 	for i, message := range messages {
 		if message.Role == "system" {
 			if systemMessage == nil {
@@ -138,7 +138,7 @@ func olmo3ThinkingMarshalWithSpaces(v any) ([]byte, error) {
 }
 
 func olmo3ThinkingAddJSONSpaces(data []byte) []byte {
-	var result []byte
+	result := make([]byte, 0, len(data))
 	inString := false
 	escaped := false
 
