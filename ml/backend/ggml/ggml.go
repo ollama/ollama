@@ -1645,7 +1645,29 @@ func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	}
 }
 
-func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64) ml.Tensor {
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64, cacheConfigApplied bool) ml.Tensor {
+	// If the cache didn't help us with required transformations, do them here
+	if !cacheConfigApplied {
+		cacheConfig := t.b.CacheConfig()
+
+		// Padding key and value to CachePadding is a performance optimization, not a requirement, so we don't do it if it wasn't done by the caller
+
+		if cacheConfig.PermutedV {
+			value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+		}
+
+		if mask != nil {
+			padSize := int(pad(C.size_t(mask.Dim(1)), C.size_t(cacheConfig.MaskBatchPadding))) - mask.Dim(1)
+			if padSize > 0 {
+				mask = mask.Pad(ctx, 0, padSize, 0, 0)
+			}
+
+			if mask.DType() != cacheConfig.MaskDType {
+				mask = mask.Cast(ctx, cacheConfig.MaskDType)
+			}
+		}
+	}
+
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
 		kqMask = mask.(*Tensor).t
