@@ -1,0 +1,60 @@
+# Experimental CUDA 12 build focused on linux/amd64 only.
+#
+# Research summary (images with current vendor security baselines and no known CVE findings
+# in the corresponding registries at the time of writing):
+# - nvidia/cuda:12.6.2-devel-ubuntu22.04 (monthly CVE remediations; devel toolchain included)
+# - nvidia/cuda:12.6.2-runtime-ubuntu22.04 (runtime-only footprint for final image)
+# Using these tags avoids EOL bases while keeping CUDA 12 support on a maintained Ubuntu LTS
+# stack and leveraging NVIDIA's regularly patched images.
+
+ARG CUDA_IMAGE=nvidia/cuda:12.6.2-devel-ubuntu22.04
+ARG RUNTIME_IMAGE=nvidia/cuda:12.6.2-runtime-ubuntu22.04
+ARG CMAKEVERSION=3.31.2
+ARG CMAKE_ARCH=x86_64
+ARG PARALLEL=8
+
+FROM --platform=linux/amd64 ${CUDA_IMAGE} AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        ninja-build \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-${CMAKE_ARCH}.tar.gz \
+    | tar xz -C /usr/local --strip-components 1
+
+WORKDIR /workspace/ollama
+COPY go.mod go.sum ./
+RUN GO_VERSION=$(awk '/^go/ { print $2 }' go.mod) \
+    && curl -fsSL https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz \
+    | tar xz -C /usr/local
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+COPY CMakeLists.txt CMakePresets.json ./
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN cmake --preset "CUDA 12" \
+    && cmake --build --preset "CUDA 12" --parallel ${PARALLEL} \
+    && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/ollama ./cmd/ollama
+
+FROM --platform=linux/amd64 ${RUNTIME_IMAGE} AS runtime
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system ollama \
+    && useradd --system --gid ollama --create-home --home-dir /home/ollama --shell /usr/sbin/nologin ollama
+COPY --from=build /usr/local/bin/ollama /usr/local/bin/ollama
+COPY --from=build /workspace/ollama/dist /usr/local/lib/ollama
+RUN chown -R ollama:ollama /usr/local/bin/ollama /usr/local/lib/ollama
+USER ollama
+ENTRYPOINT ["/usr/local/bin/ollama"]
+CMD ["serve"]
