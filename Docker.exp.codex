@@ -51,7 +51,7 @@ RUN cmake --preset "CUDA 12" \
     && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/ollama ./cmd/ollama
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/ollama .
 
 FROM --platform=linux/amd64 ${RUNTIME_IMAGE} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
