@@ -6,6 +6,8 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+const intellect3DefaultSystemMessage = "You are INTELLECT-3, a helpful assistant developed by Prime Intellect, that can interact with a computer to solve tasks."
+
 type Intellect3Renderer struct{}
 
 func (r *Intellect3Renderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
@@ -27,6 +29,11 @@ func (r *Intellect3Renderer) Render(messages []api.Message, tools []api.Tool, th
 
 	if systemMessage != "" || len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
+
+		// Use default system message when tools present but no user system message
+		if systemMessage == "" && len(tools) > 0 {
+			systemMessage = intellect3DefaultSystemMessage
+		}
 
 		sb.WriteString(systemMessage)
 
@@ -87,15 +94,15 @@ func (r *Intellect3Renderer) Render(messages []api.Message, tools []api.Tool, th
 		switch message.Role {
 		case "assistant":
 			if len(message.ToolCalls) > 0 {
-				sb.WriteString(imStartTag + "assistant")
+				sb.WriteString(imStartTag + "assistant\n")
 
 				// Add thinking tags if present
 				if message.Thinking != "" {
-					sb.WriteString("\n<think>" + strings.TrimSpace(message.Thinking) + "</think>")
+					sb.WriteString("<think>" + strings.TrimSpace(message.Thinking) + "</think>\n")
 				}
 
 				if message.Content != "" {
-					sb.WriteString("\n" + strings.TrimSpace(message.Content) + "\n")
+					sb.WriteString(strings.TrimSpace(message.Content) + "\n")
 				}
 
 				for _, toolCall := range message.ToolCalls {
@@ -108,20 +115,16 @@ func (r *Intellect3Renderer) Render(messages []api.Message, tools []api.Tool, th
 				}
 				sb.WriteString("<|im_end|>\n")
 			} else {
-				sb.WriteString(imStartTag + "assistant")
+				sb.WriteString(imStartTag + "assistant\n")
 
 				// Add thinking tags if present
 				if message.Thinking != "" {
-					sb.WriteString("\n<think>" + strings.TrimSpace(message.Thinking) + "</think>")
+					sb.WriteString("<think>" + strings.TrimSpace(message.Thinking) + "</think>\n")
 				}
 
 				// Add content if present
 				if message.Content != "" {
-					if message.Thinking != "" {
-						sb.WriteString("\n" + strings.TrimSpace(message.Content))
-					} else {
-						sb.WriteString("\n" + message.Content)
-					}
+					sb.WriteString(message.Content)
 				}
 
 				if !prefill {
@@ -129,10 +132,6 @@ func (r *Intellect3Renderer) Render(messages []api.Message, tools []api.Tool, th
 				}
 			}
 		case "tool":
-			// consecutive tool responses should share a single `<im_start>user`, but
-			// have their own <tool_response> tags
-
-			// only start a new user block if this is the first tool response
 			if i == 0 || filteredMessages[i-1].Role != "tool" {
 				sb.WriteString(imStartTag + "user\n")
 			}
@@ -141,7 +140,6 @@ func (r *Intellect3Renderer) Render(messages []api.Message, tools []api.Tool, th
 			sb.WriteString(message.Content)
 			sb.WriteString("\n</tool_response>\n")
 
-			// close the user block only if this is the last tool response
 			if i == len(filteredMessages)-1 || filteredMessages[i+1].Role != "tool" {
 				sb.WriteString(imEndTag + "\n")
 			}
