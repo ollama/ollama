@@ -70,7 +70,6 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
 
-	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
 	var thinkingSb strings.Builder
 	for _, event := range events {
@@ -81,7 +80,7 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
 			}
-			toolCalls = append(toolCalls, toolCall)
+			calls = append(calls, toolCall)
 		case qwenEventThinkingContent:
 			thinkingSb.WriteString(event.content)
 		case qwenEventContent:
@@ -91,7 +90,7 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 		}
 	}
 
-	return contentSb.String(), thinkingSb.String(), toolCalls, nil
+	return contentSb.String(), thinkingSb.String(), calls, nil
 }
 
 func (p *Qwen3VLParser) parseEvents() []qwenEvent {
@@ -113,19 +112,6 @@ func (p *Qwen3VLParser) parseEvents() []qwenEvent {
 	return all
 }
 
-func splitAtTag(p *Qwen3VLParser, tag string, trimAfter bool) (string, string) {
-	split := strings.SplitN(p.buffer.String(), tag, 2)
-	before := split[0]
-	before = strings.TrimRightFunc(before, unicode.IsSpace)
-	after := split[1]
-	if trimAfter {
-		after = strings.TrimLeftFunc(after, unicode.IsSpace)
-	}
-	p.buffer.Reset()
-	p.buffer.WriteString(after)
-	return before, after // return events
-}
-
 func (p *Qwen3VLParser) eatLeadingWhitespaceAndTransitionTo(nextState qwenParserState) ([]qwenEvent, bool) {
 	trimmed := strings.TrimLeftFunc(p.buffer.String(), unicode.IsSpace)
 	p.buffer.Reset()
@@ -144,7 +130,7 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 	case CollectingContent:
 		if strings.Contains(p.buffer.String(), toolOpenTag) {
 			// events = emitContentBeforeTag(p, events, toolOpenTag)
-			before, _ := splitAtTag(p, toolOpenTag, false)
+			before, _ := splitAtTag(&p.buffer, toolOpenTag, false)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
@@ -195,7 +181,7 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 		}
 	case CollectingThinkingContent:
 		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
-			thinking, remaining := splitAtTag(p, thinkingCloseTag, true)
+			thinking, remaining := splitAtTag(&p.buffer, thinkingCloseTag, true)
 			if len(thinking) > 0 {
 				events = append(events, qwenEventThinkingContent{content: thinking})
 			}

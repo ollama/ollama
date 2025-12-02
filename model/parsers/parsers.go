@@ -1,6 +1,9 @@
 package parsers
 
 import (
+	"strings"
+	"unicode"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/harmony"
 )
@@ -38,16 +41,17 @@ func ParserForName(name string) Parser {
 	if parser, ok := registry.constructors[name]; ok {
 		return parser()
 	}
+	var p Parser
+
 	switch name {
 	case "qwen3-coder":
-		parser := &Qwen3CoderParser{}
-		return parser
+		p = &Qwen3CoderParser{}
 	case "qwen3-vl-instruct":
-		parser := &Qwen3VLParser{hasThinkingSupport: false}
-		return parser
+		p = &Qwen3VLParser{hasThinkingSupport: false}
 	case "qwen3-vl-thinking":
-		parser := &Qwen3VLParser{hasThinkingSupport: true}
-		return parser
+		p = &Qwen3VLParser{hasThinkingSupport: true}
+	case "ministral":
+		p = &MinistralParser{hasThinkingSupport: false}
 	case "passthrough":
 		return &PassthroughParser{}
 	case "harmony":
@@ -57,6 +61,7 @@ func ParserForName(name string) Parser {
 	default:
 		return nil
 	}
+	return p
 }
 
 type PassthroughParser struct{}
@@ -75,4 +80,21 @@ func (p *PassthroughParser) HasToolSupport() bool {
 
 func (p *PassthroughParser) HasThinkingSupport() bool {
 	return false
+}
+
+func splitAtTag(sb *strings.Builder, tag string, trimAfter bool) (string, string) {
+	split := strings.SplitN(sb.String(), tag, 2)
+	if len(split) == 1 {
+		sb.Reset()
+		return split[0], ""
+	}
+	before := split[0]
+	before = strings.TrimRightFunc(before, unicode.IsSpace)
+	after := split[1]
+	if trimAfter {
+		after = strings.TrimLeftFunc(after, unicode.IsSpace)
+	}
+	sb.Reset()
+	sb.WriteString(after)
+	return before, after // return events
 }
