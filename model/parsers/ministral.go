@@ -85,8 +85,13 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 		}
 	case ministralCollectingThinkingContent:
 		if strings.Contains(p.buffer.String(), "[/THINK]") {
+			thinkingContent, after := splitAtTag(&p.buffer, "[/THINK]", true)
 			p.state = ministralCollectingContent
-			return "", "", calls, nil
+			if after != "" {
+				p.buffer.Reset()
+				return after, thinkingContent, calls, nil
+			}
+			return "", thinkingContent, calls, nil
 		} else {
 			p.buffer.Reset()
 			return "", s, calls, nil
