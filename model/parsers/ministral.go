@@ -22,8 +22,6 @@ type MinistralParser struct {
 	buffer             strings.Builder
 	tools              []api.Tool
 	hasThinkingSupport bool
-	toolName           string
-	toolArgs           string
 	currentTool        *api.Tool
 }
 
