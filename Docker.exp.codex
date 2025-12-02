@@ -9,8 +9,8 @@
 
 ARG CUDA_IMAGE=nvidia/cuda:12.6.2-devel-ubuntu22.04
 ARG RUNTIME_IMAGE=nvidia/cuda:12.6.2-runtime-ubuntu22.04
-ARG CMAKEVERSION=3.31.2
-ARG CMAKE_ARCH=x86_64
+ARG CMAKEVERSION=3.31.5
+ARG TARGETARCH=amd64
 ARG PARALLEL=8
 
 FROM --platform=linux/amd64 ${CUDA_IMAGE} AS build
@@ -25,13 +25,18 @@ RUN apt-get update \
         ninja-build \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-${CMAKE_ARCH}.tar.gz \
+RUN case "${TARGETARCH}" in \
+        amd64) cmake_arch=x86_64 ;; \
+        arm64) cmake_arch=aarch64 ;; \
+        *) cmake_arch=${TARGETARCH} ;; \
+    esac \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-${cmake_arch}.tar.gz \
     | tar xz -C /usr/local --strip-components 1
 
 WORKDIR /workspace/ollama
 COPY go.mod go.sum ./
 RUN GO_VERSION=$(awk '/^go/ { print $2 }' go.mod) \
-    && curl -fsSL https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz \
+    && curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz \
     | tar xz -C /usr/local
 ENV PATH="/usr/local/go/bin:${PATH}"
 
