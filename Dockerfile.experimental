@@ -1,0 +1,97 @@
+ARG CMAKEVERSION=3.31.10
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=12.8.0
+
+# Builder stage using NVIDIA's devel image (likely cleaner than rocm/dev-almalinux-8)
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS base
+ARG CMAKEVERSION
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install CMake manually to ensure version compatibility
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-x86_64.tar.gz | tar xz -C /usr/local --strip-components 1
+
+# CPU Backend Builder
+FROM base AS cpu
+ARG PARALLEL=1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'CPU' \
+    && cmake --build --parallel ${PARALLEL} --preset 'CPU' \
+    && cmake --install build --component CPU --strip --parallel ${PARALLEL}
+
+# CUDA 12 Backend Builder
+FROM base AS cuda-12
+ARG PARALLEL=1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+# The devel image has the toolkit, so we can just build
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'CUDA 12' \
+    && cmake --build --parallel ${PARALLEL} --preset 'CUDA 12' \
+    && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
+
+# Go Binary Builder
+FROM base AS build
+WORKDIR /go/src/github.com/ollama/ollama
+COPY go.mod go.sum .
+# Extract Go version from go.mod and install
+RUN GO_VERSION=$(awk '/^go/ { print $2 }' go.mod) && \
+    curl -fsSL https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download && go mod tidy
+COPY . .
+ENV CGO_ENABLED=1
+# Build the binary
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -buildmode=pie -o /bin/ollama .
+
+# Final Stage
+FROM ubuntu:${UBUNTU_VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Security updates and runtime dependencies
+RUN apt-get update \
+    && apt-get dist-upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgcc1 \
+        libstdc++6 \
+        coreutils \
+        gnupg2 \
+        libgcrypt20 \
+        libpam0g \
+        libssl3 \
+        passwd \
+        tar \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Setup user
+RUN groupadd -r ollama && useradd -r -g ollama ollama \
+    && mkdir -p /home/ollama \
+    && chown -R ollama:ollama /home/ollama
+
+# Copy binaries and libraries
+COPY --from=build /bin/ollama /usr/bin/ollama
+COPY --from=cpu /go/src/github.com/ollama/ollama/dist/lib/ollama /usr/lib/ollama
+COPY --from=cuda-12 /go/src/github.com/ollama/ollama/dist/lib/ollama /usr/lib/ollama
+
+# Env vars
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV OLLAMA_HOST=0.0.0.0:11434
+
+USER ollama
+EXPOSE 11434
+ENTRYPOINT ["/usr/bin/ollama"]
+CMD ["serve"]
