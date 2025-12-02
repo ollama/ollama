@@ -9,7 +9,7 @@
 
 ARG CUDA_IMAGE=nvidia/cuda:12.6.2-devel-ubuntu22.04
 ARG RUNTIME_IMAGE=nvidia/cuda:12.6.2-runtime-ubuntu22.04
-ARG CMAKEVERSION=3.31.10
+ARG CMAKEVERSION=4.2.0
 ARG PARALLEL=8
 
 FROM --platform=linux/amd64 ${CUDA_IMAGE} AS build
