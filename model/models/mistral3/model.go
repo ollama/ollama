@@ -3,7 +3,6 @@ package mistral3
 import (
 	"bytes"
 	"image"
-	"math"
 	"slices"
 
 	"github.com/ollama/ollama/fs"
@@ -156,15 +155,6 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	}
 
 	return result, nil
-}
-
-func (m *TextModel) getScale(ctx ml.Context, positions []int32) ml.Tensor {
-	posScale := make([]float32, len(positions))
-	for n, pos := range positions {
-		interval := math.Floor(float64(pos) / float64(m.ropeOrigPosEmbeddings))
-		posScale[n] = float32(1.0 + float64(m.ropeScalingBeta)*math.Log(1.0+interval))
-	}
-	return ctx.Input().FromFloats(posScale, 1, 1, len(posScale))
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {

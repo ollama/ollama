@@ -16,7 +16,6 @@ type TextOptions struct {
 	hiddenSize, numHeads, numKVHeads int
 	headDim, ropeDim                 int
 	eps, ropeBase, ropeScale         float32
-	llama4Scaling                    bool
 	ropeOrigPosEmbeddings            int
 	ropeScalingBeta                  float32
 }
@@ -52,7 +51,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs, posit
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	if opts.llama4Scaling {
+	if opts.ropeOrigPosEmbeddings > 0 {
 		q = q.Mul(ctx, positionsScale)
 	}
 
@@ -128,6 +127,15 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, positionsScale, o
 	return m.Output.Forward(ctx, hiddenState)
 }
 
+func (m *TextModel) getScale(ctx ml.Context, positions []int32) ml.Tensor {
+	posScale := make([]float32, len(positions))
+	for n, pos := range positions {
+		interval := math.Floor(float64(pos) / float64(m.ropeOrigPosEmbeddings))
+		posScale[n] = float32(1.0 + float64(m.ropeScalingBeta)*math.Log(1.0+interval))
+	}
+	return ctx.Input().FromFloats(posScale, 1, 1, len(posScale))
+}
+
 func newTextModel(c fs.Config) *TextModel {
 	return &TextModel{
 		Layers: make([]Layer, c.Uint("block_count")),
@@ -140,8 +148,7 @@ func newTextModel(c fs.Config) *TextModel {
 			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:              c.Float("rope.freq_base"),
 			ropeScale:             c.Float("rope.scaling.factor", 1),
-			llama4Scaling:         c.Bool("rope.llama4_scaling", false),
-			ropeOrigPosEmbeddings: int(c.Uint("rope.orig_max_pos_embedding")),
+			ropeOrigPosEmbeddings: int(c.Uint("rope.scaling.original_context_length")),
 			ropeScalingBeta:       c.Float("rope.scaling_beta"),
 		},
 	}

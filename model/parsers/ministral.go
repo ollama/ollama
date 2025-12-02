@@ -50,7 +50,7 @@ func (p *MinistralParser) setInitialState(lastMessage *api.Message) {
 	p.state = ministralCollectingThinkingContent
 }
 
-func (p *MinistralParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *MinistralParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.setInitialState(lastMessage)
 	return tools
@@ -76,9 +76,20 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 				return before, "", calls, nil
 			}
 			p.state = ministralCollectingToolName
+		} else if strings.Contains(p.buffer.String(), "[THINK]") {
+			p.state = ministralCollectingThinkingContent
+			return "", "", calls, nil
 		} else {
 			p.buffer.Reset()
 			return s, "", calls, nil
+		}
+	case ministralCollectingThinkingContent:
+		if strings.Contains(p.buffer.String(), "[/THINK]") {
+			p.state = ministralCollectingContent
+			return "", "", calls, nil
+		} else {
+			p.buffer.Reset()
+			return "", s, calls, nil
 		}
 	case ministralCollectingToolName:
 		if strings.Contains(p.buffer.String(), "[ARGS]") {

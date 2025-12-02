@@ -74,8 +74,7 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.rope.freq_base"] = cmp.Or(p.TextModel.RopeTheta, p.TextModel.RopeParameters.RopeTheta)
 
 	if p.TextModel.RopeParameters.OrigMaxPositionEmbeddings > 0 {
-		kv["mistral3.rope.llama4_scaling"] = true
-		kv["mistral3.rope.orig_max_pos_embedding"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
+		kv["mistral3.rope.scaling.original_context_length"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
 		kv["mistral3.rope.scaling_beta"] = p.TextModel.RopeParameters.ScalingBeta
 	}
 
