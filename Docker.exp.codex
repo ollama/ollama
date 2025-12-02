@@ -49,7 +49,11 @@ RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system ollama \
+    && useradd --system --gid ollama --create-home --home-dir /home/ollama --shell /usr/sbin/nologin ollama
 COPY --from=build /usr/local/bin/ollama /usr/local/bin/ollama
 COPY --from=build /workspace/ollama/dist /usr/local/lib/ollama
+RUN chown -R ollama:ollama /usr/local/bin/ollama /usr/local/lib/ollama
+USER ollama
 ENTRYPOINT ["/usr/local/bin/ollama"]
 CMD ["serve"]
