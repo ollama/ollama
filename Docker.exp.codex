@@ -14,6 +14,10 @@ ARG CMAKE_ARCH=x86_64
 ARG PARALLEL=8
 
 FROM --platform=linux/amd64 ${CUDA_IMAGE} AS build
+ARG CMAKEVERSION
+ARG CMAKE_ARCH
+ARG PARALLEL
+
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get upgrade -y \
