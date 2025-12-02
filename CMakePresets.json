@@ -31,7 +31,7 @@
       "name": "CUDA 12",
       "inherits": [ "CUDA" ],
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "50;52;60;61;70;75;80;86;89;90;90a;120",
+        "CMAKE_CUDA_ARCHITECTURES": "50;52;60;61;70;75;80;86;89;90;90a",
         "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2",
         "OLLAMA_RUNNER_DIR": "cuda_v12"
       }
