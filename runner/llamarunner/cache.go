@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"time"
 
 	"github.com/ollama/ollama/llama"
@@ -86,6 +85,11 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 	if !cachePrompt {
 		numPast = 0
 	}
+
+	// Note: We no longer clear KV cache for embeddings here.
+	// The image embedding cache (ImageContext) handles caching separately,
+	// and clearing KV cache was causing performance issues without benefit
+	// since M-RoPE positions are computed correctly.
 
 	slot.InUse = true
 	slot.lastUsed = time.Now()
@@ -189,7 +193,11 @@ func countCommonPrefix(a []input, b []input) int {
 			break
 		}
 
-		if !reflect.DeepEqual(a[i], b[i]) {
+		// For embeddings, we need to be more careful about comparison
+		// because float32 embeddings can have minor numerical differences
+		// between encoding runs. Only match if both are tokens (not embeddings)
+		// or if the embeddings are exactly the same pointer (from cache).
+		if !inputsEqual(a[i], b[i]) {
 			break
 		}
 
@@ -197,6 +205,31 @@ func countCommonPrefix(a []input, b []input) int {
 	}
 
 	return count
+}
+
+// inputsEqual compares two inputs. For tokens, it's a simple comparison.
+// For embeddings, we're conservative - only consider them equal if they're
+// the exact same slice (same backing array) to avoid issues with numerical
+// differences between encoding runs.
+func inputsEqual(a, b input) bool {
+	// If either has an embedding, be conservative about matching
+	if a.embed != nil || b.embed != nil {
+		// Only match if both have embeddings AND they point to the same memory
+		// This happens when using cached embeddings
+		if a.embed != nil && b.embed != nil && len(a.embed) == len(b.embed) {
+			// Check if they share the same backing array (fast path for cached)
+			if len(a.embed) > 0 && &a.embed[0] == &b.embed[0] {
+				return true
+			}
+			// For different slices, don't consider them equal even if values match
+			// This avoids issues with numerical precision in GPU operations
+			return false
+		}
+		return false
+	}
+	
+	// For tokens, simple comparison
+	return a.token == b.token
 }
 
 func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
