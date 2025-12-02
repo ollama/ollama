@@ -424,6 +424,33 @@ func (s *Server) allNil() bool {
 	return true
 }
 
+// cleanup frees all resources held by the server.
+// This method should be called when shutting down or when handling close operations.
+func (s *Server) cleanup() {
+	// Free image context resources
+	if s.image != nil {
+		s.image.Free(s.modelPath)
+		s.image = nil
+	}
+
+	// Free input cache
+	if s.cache != nil {
+		s.cache = nil
+	}
+
+	// Free llama context
+	if s.lc != nil {
+		s.lc.Free()
+		s.lc = nil
+	}
+
+	// Free model
+	if s.model != nil {
+		llama.FreeModel(s.model)
+		s.model = nil
+	}
+}
+
 func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
 	logprobs := seq.pendingLogprobs
@@ -1133,28 +1160,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		go s.loadModel(params, s.modelPath, s.extraModelPaths, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
 
 	case llm.LoadOperationClose:
-		// Free image context resources
-		if s.image != nil {
-			s.image.Free(s.modelPath)
-			s.image = nil
-		}
-		
-		// Free input cache
-		if s.cache != nil {
-			s.cache = nil
-		}
-		
-		// Free llama context
-		if s.lc != nil {
-			s.lc.Free()
-			s.lc = nil
-		}
-		
-		// Free model
-		if s.model != nil {
-			llama.FreeModel(s.model)
-			s.model = nil
-		}
+		s.cleanup()
 
 		if err := json.NewEncoder(w).Encode(&llm.LoadResponse{}); err != nil {
 			http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
@@ -1171,7 +1177,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 func Execute(args []string) error {
 	fs := pflag.NewFlagSet("runner", pflag.ExitOnError)
-	mpath := fs.StringArray("model", []string{""}, "Path to model binary file. May repeatedly specified to provide other split of models binary.")
+	mpaths := fs.StringArray("model", []string{""}, "Path to model binary file. May be repeatedly specified to provide other splits of model binaries.")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
@@ -1189,8 +1195,8 @@ func Execute(args []string) error {
 	llama.BackendInit()
 
 	server := &Server{
-		modelPath:       (*mpath)[0],
-		extraModelPaths: (*mpath)[1:],
+		modelPath:       (*mpaths)[0],
+		extraModelPaths: (*mpaths)[1:],
 		status:          llm.ServerStatusLaunched,
 	}
 
@@ -1206,30 +1212,9 @@ func Execute(args []string) error {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		
-		// Free image context and cache
-		if server.image != nil {
-			server.image.Free(server.modelPath)
-			server.image = nil
-		}
-		
-		// Free input cache
-		if server.cache != nil {
-			server.cache = nil
-		}
-		
-		// Free llama context
-		if server.lc != nil {
-			server.lc.Free()
-			server.lc = nil
-		}
-		
-		// Free model
-		if server.model != nil {
-			llama.FreeModel(server.model)
-			server.model = nil
-		}
-
+		server.mu.Lock()
+		server.cleanup()
+		server.mu.Unlock()
 		cancel()
 		os.Exit(0)
 	}()

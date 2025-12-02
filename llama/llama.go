@@ -389,6 +389,9 @@ type Batch struct {
 	mropePos []C.llama_pos
 }
 
+// mropePositionDimensions is the number of position dimensions for M-RoPE (temporal, y, x, unused)
+const mropePositionDimensions = 4
+
 // Creates a new batch for either word tokens or image embeddings (if embedSize is non-zero).
 // Batches cannot contain both types at the same time. batchSize is the maximum number of entries
 // that can be added per sequence
@@ -399,7 +402,7 @@ func NewBatch(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
 // NewBatchMRoPE creates a batch with M-RoPE support (4 position values per token).
 // This is required for models like Qwen3-VL that use Multi-dimensional Rotary Position Embedding.
 func NewBatchMRoPE(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
-	return newBatchInternal(batchSize, maxSeq, embedSize, 4)
+	return newBatchInternal(batchSize, maxSeq, embedSize, mropePositionDimensions)
 }
 
 func newBatchInternal(batchSize int, maxSeq int, embedSize int, nPosPerEmbd int) (*Batch, error) {
