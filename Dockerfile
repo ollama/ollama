@@ -228,27 +228,24 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-# ============ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 вместо Ubuntu 24.04 ============
+# ============ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (исправленная) ============
 FROM --platform=${TARGETOS}/${TARGETARCH} almalinux:8
 
-# Установка зависимостей и обновление безопасности
-RUN dnf install -y \
+# Установка минимального набора зависимостей для Ollama
+RUN microdnf install -y \
         ca-certificates \
         openssl \
         openssl-libs \
         glibc \
         libgcrypt \
-        pam \
+        libpam \
         coreutils \
         gnupg2 \
         tar \
-        passwd \
         shadow-utils \
-    # Обновление всех пакетов безопасности
-    && dnf update -y --security \
-    && dnf update -y openssl openssl-libs ca-certificates \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf
+    # Обновление безопасности
+    && microdnf update -y \
+    && microdnf clean all
 
 # Копирование бинарников и библиотек из стадии сборки
 COPY --from=archive /bin /usr/bin
@@ -261,8 +258,8 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 
-# Создание non-root пользователя для безопасности
-RUN groupadd -r ollama && useradd -r -g ollama ollama \
+# Создание non-root пользователя
+RUN groupadd -r ollama && useradd -r -g ollama -s /bin/false ollama \
     && mkdir -p /home/ollama \
     && chown -R ollama:ollama /home/ollama \
     && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
