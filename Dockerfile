@@ -226,9 +226,10 @@ COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
 # ============ ✅ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (OpenSSL 1.1.x) ============
+# ✅ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (БЕЗ PYTHON)
 FROM --platform=${TARGETOS}/${TARGETARCH} almalinux:8
 
-# ✅ Минимальные зависимости (без libpam, без Python)
+# ✅ Минимальные зависимости (БЕЗ Python/setuptools)
 RUN dnf install -y \
         ca-certificates \
         openssl \
@@ -240,7 +241,10 @@ RUN dnf install -y \
         shadow-utils \
     && dnf update -y \
     && dnf clean all \
-    && rm -rf /var/cache/dnf
+    && rm -rf /var/cache/dnf \
+    # ✅ Удаляем Python и setuptools, если установлены
+    && (dnf remove -y python3-setuptools python3-pip python3 || true) \
+    && rm -rf /usr/lib/python* /usr/local/lib/python*
 
 # ✅ КОПИРУЕМ ТОЛЬКО необходимое (без Python/setuptools из /bin)
 COPY --from=archive /bin/ollama /usr/bin/ollama
