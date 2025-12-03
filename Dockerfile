@@ -238,7 +238,6 @@ RUN dnf install -y \
         openssl-libs \
         glibc \
         libgcrypt \
-        libpam \
         gnupg2 \
         tar \
         shadow-utils \
