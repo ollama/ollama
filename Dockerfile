@@ -10,8 +10,9 @@ ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.10
 ARG VULKANVERSION=1.4.321.1
+ARG UBUNTU_VERSION=24.04
 
-# We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
+# ============ БАЗОВЫЕ СТАДИИ (БЕЗ ИЗМЕНЕНИЙ) ============
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
 RUN yum install -y yum-utils \
     && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
@@ -36,7 +37,6 @@ RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
 ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
 
 FROM --platform=linux/arm64 almalinux:10 AS base-arm64
-# install epel-release for ccache
 RUN dnf install -y yum-utils epel-release \
     && dnf install -y clang ccache openssl openssl-libs ca-certificates \
     && dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel10/sbsa/cuda-rhel10.repo \
@@ -50,6 +50,7 @@ ARG CMAKEVERSION
 RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 ENV LDFLAGS=-s
 
+# ============ СТАДИИ СБОРКИ (БЕЗ ИЗМЕНЕНИЙ) ============
 FROM base AS cpu
 RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ \
     && dnf update -y --security \
@@ -114,7 +115,6 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel ${PARALLEL} --preset 'CUDA 12' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
 
-
 FROM base AS cuda-13
 ARG CUDA13VERSION=13.0
 RUN dnf install -y \
@@ -139,7 +139,6 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 13' \
         && cmake --build --parallel ${PARALLEL} --preset 'CUDA 13' \
         && cmake --install build --component CUDA --strip --parallel ${PARALLEL}
-
 
 FROM base AS rocm-6
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
@@ -190,7 +189,6 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel --preset 'Vulkan' \
         && cmake --install build --component Vulkan --strip --parallel 8 
 
-
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
 COPY go.mod go.sum .
@@ -207,14 +205,13 @@ ARG CGO_CXXFLAGS
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
+# ============ ✅ ИСПРАВЛЕННЫЕ СТАДИИ ============
 FROM --platform=linux/amd64 scratch AS amd64
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
@@ -223,39 +220,44 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
+# ✅ ИСПРАВЛЕННАЯ archive стадия (без RUN, только COPY)
 FROM ${FLAVOR} AS archive
-ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-# Удалить Python-зависимости
-RUN find /bin /lib /usr -name "*.pyc" -delete 2>/dev/null || true \
-    && find /bin /lib /usr -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true \
-    && rm -rf /usr/lib/python* /usr/local/lib/python* 2>/dev/null || true
-
-# Берем АльмаЛинукс8
+# ============ ✅ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (OpenSSL 1.1.x) ============
 FROM --platform=${TARGETOS}/${TARGETARCH} almalinux:8
 
-RUN dnf install -y ca-certificates openssl openssl-libs glibc libgcrypt gnupg2 tar shadow-utils \
+# ✅ Минимальные зависимости (без libpam, без Python)
+RUN dnf install -y \
+        ca-certificates \
+        openssl \
+        openssl-libs \
+        glibc \
+        libgcrypt \
+        gnupg2 \
+        tar \
+        shadow-utils \
     && dnf update -y \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-# Копировать ТОЛЬКО бинарник Ollama (не весь /bin)
+# ✅ КОПИРУЕМ ТОЛЬКО необходимое (без Python/setuptools из /bin)
 COPY --from=archive /bin/ollama /usr/bin/ollama
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Библиотеки Ollama
 COPY --from=archive /lib/ollama /usr/lib/ollama
 
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+# GPU переменные окружения
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 
+# Non-root пользователь
 RUN groupadd -r ollama && useradd -r -g ollama -s /sbin/nologin ollama \
     && mkdir -p /home/ollama \
-    && chown -R ollama:ollama /home/ollama /usr/lib/ollama /usr/bin/ollama
+    && chown -R ollama:ollama /home/ollama \
+    && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
 
 USER ollama
 EXPOSE 11434
