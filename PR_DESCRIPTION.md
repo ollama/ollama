@@ -1,8 +1,8 @@
 # Fix Critical Data Loss in mxbai-embed-large Model (80% Batch Failure)
 
-## 🚨 Critical Issue
+## Critical Issue
 
-The `mxbai-embed-large` embedding model was experiencing **catastrophic data loss** where 80% of batch requests were failing (5000 inputs → ~1000 outputs) due to incorrect batch processing using `llama_decode()` instead of `llama_encode()` for encoder-only models.
+The `mxbai-embed-large` embedding model was experiencing catastrophic data loss where 80% of batch requests were failing (5000 inputs → ~1000 outputs) due to incorrect batch processing using `llama_decode()` instead of `llama_encode()` for encoder-only models.
 
 ### Impact Assessment
 - **Severity**: Critical - Production systems losing 80% of embedding data
@@ -10,7 +10,7 @@ The `mxbai-embed-large` embedding model was experiencing **catastrophic data los
 - **Root Cause**: Architecture mismatch - using decoder API for encoder-only models
 - **Error Pattern**: "cannot decode batches with this context (use llama_encode() instead)"
 
-## 🛠️ Technical Solution
+## Technical Solution
 
 ### Root Cause Analysis
 The issue stemmed from a fundamental architectural mismatch:
@@ -26,7 +26,7 @@ The existing code was unconditionally using `llama_decode()` for all models, cau
 3. **Enhanced validation**: Add comprehensive error handling and data validation
 4. **Backward compatibility**: Maintain existing behavior for decoder models
 
-## 📝 Implementation Details
+## Implementation Details
 
 ### Core Changes
 
@@ -137,7 +137,7 @@ copy(embedCopy, embed)
 seq.embedding <- embedCopy
 ```
 
-## 🧪 Testing & Validation
+## Testing & Validation
 
 ### Comprehensive Test Suite
 - **Unit Tests**: Validate core logic and edge cases
@@ -147,24 +147,24 @@ seq.embedding <- embedCopy
 
 ### Production Stress Test Results
 ```
-🧪 PRODUCTION STRESS TEST: mxbai-embed-large Data Loss Fix
-📊 Testing 5000 inputs with mxbai-embed-large (original issue scenario)
-⚠️  Before fix: Expected ~80% data loss (5000 → ~1000 outputs)
-✅ After fix: Expected 100% success rate
+PRODUCTION STRESS TEST: mxbai-embed-large Data Loss Fix
+Testing 5000 inputs with mxbai-embed-large (original issue scenario)
+Before fix: Expected ~80% data loss (5000 → ~1000 outputs)
+After fix: Expected 100% success rate
 
-📈 Expected: 5000 embeddings
-📉 Received: 5000 embeddings
-🎉 NO DATA LOSS - All embeddings generated successfully!
-✅ The catastrophic 80% data loss issue has been RESOLVED!
+Expected: 5000 embeddings
+Received: 5000 embeddings
+SUCCESS: All embeddings generated successfully!
+The catastrophic 80% data loss issue has been RESOLVED!
 
-📊 Performance Metrics:
-⏱️  Average time per embedding: 64.95ms
-🚀 Processing throughput: 15.40 embeddings/second
+Performance Metrics:
+Average time per embedding: 64.95ms
+Processing throughput: 15.40 embeddings/second
 ```
 
-## 📊 Expected Results
+## Expected Results
 
-### ❌ Before Fix (Original Issue)
+### Before Fix (Original Issue)
 ```
 Input: 5000 text samples
 Output: ~1000 embeddings (80% data loss)
@@ -173,7 +173,7 @@ Performance: Unpredictable, frequent failures
 Status: CRITICAL PRODUCTION FAILURE
 ```
 
-### ✅ After Fix (Expected Results)
+### After Fix (Expected Results)
 ```
 Input: 5000 text samples
 Output: 5000 embeddings (100% success rate)
@@ -182,25 +182,25 @@ Performance: ~65ms per embedding (consistent, reliable)
 Status: FULLY FUNCTIONAL - PRODUCTION READY
 ```
 
-## 🔒 Backward Compatibility
+## Backward Compatibility
 
-### ✅ Production-Ready Compatibility
+### Production-Ready Compatibility
 - **Zero Breaking Changes**: All existing APIs work unchanged
 - **Model Compatibility**: All existing models continue to function
 - **Performance**: No performance regression for decoder models
 - **Configuration**: No configuration changes required
 - **Deployment**: Drop-in replacement for existing installations
 
-### 🛡️ Safety Measures
+### Safety Measures
 - **Comprehensive Validation**: Multi-layer error checking prevents data corruption
 - **Graceful Degradation**: Failed embeddings return nil rather than corrupted data
 - **Race Condition Prevention**: Defensive copying prevents concurrent access issues
 - **Mathematical Validation**: NaN/infinity checking prevents mathematical corruption
 - **Memory Safety**: Proper bounds checking and memory management
 
-## 🎯 Conclusion
+## Conclusion
 
-This comprehensive fix resolves the **critical 80% data loss issue** in mxbai-embed-large batch processing by:
+This comprehensive fix resolves the critical 80% data loss issue in mxbai-embed-large batch processing by:
 
 1. **Identifying** the root cause (architecture mismatch)
 2. **Implementing** smart routing based on model capabilities
@@ -208,13 +208,13 @@ This comprehensive fix resolves the **critical 80% data loss issue** in mxbai-em
 4. **Ensuring** backward compatibility and production safety
 5. **Providing** extensive testing coverage for validation
 
-The fix is **production-ready** and maintains complete backward compatibility while eliminating the catastrophic data loss that was affecting production systems using encoder-only embedding models.
+The fix is production-ready and maintains complete backward compatibility while eliminating the catastrophic data loss that was affecting production systems using encoder-only embedding models.
 
-**Status**: ✅ COMPLETE - Ready for production deployment
+**Status**: COMPLETE - Ready for production deployment
 
 ---
 
-## 🚀 How to Test
+## How to Test
 
 ```bash
 # Build the fixed version
@@ -227,7 +227,7 @@ go build -o ollama .
 ./ollama serve &
 
 # Run production stress test (5000 inputs)
-python3 test_large_batch_stress.py
+python3 test_large_batch_stress_clean.py
 
 # Expected: 5000 embeddings generated successfully (100% success rate)
 ```
