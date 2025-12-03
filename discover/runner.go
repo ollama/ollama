@@ -65,6 +65,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		}
 
 		slog.Info("discovering available GPUs...")
+		detectIncompatibleLibraries()
 
 		// Warn if any user-overrides are set which could lead to incorrect GPU discovery
 		overrideWarnings()
@@ -97,6 +98,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					slog.Debug("skipping available library at user's request", "requested", requested, "libDir", dir)
 					continue
 				} else if jetpack != "" && filepath.Base(dir) != "cuda_"+jetpack {
+					continue
+				} else if jetpack == "" && strings.Contains(filepath.Base(dir), "cuda_jetpack") {
+					slog.Debug("jetpack not detected (set JETSON_JETPACK or OLLAMA_LLM_LIBRARY to override), skipping", "libDir", dir)
 					continue
 				} else if !envconfig.EnableVulkan() && strings.Contains(filepath.Base(dir), "vulkan") {
 					slog.Info("experimental Vulkan support disabled.  To enable, set OLLAMA_VULKAN=1")
@@ -482,5 +486,18 @@ func overrideWarnings() {
 	}
 	if anyFound {
 		slog.Warn("if GPUs are not correctly discovered, unset and try again")
+	}
+}
+
+func detectIncompatibleLibraries() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	basePath, err := exec.LookPath("ggml-base.dll")
+	if err != nil || basePath == "" {
+		return
+	}
+	if !strings.HasPrefix(basePath, ml.LibOllamaPath) {
+		slog.Warn("potentially incompatible library detected in PATH", "location", basePath)
 	}
 }
