@@ -228,38 +228,37 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-# ============ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (исправленная) ============
+# ============ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (полный образ, dnf) ============
 FROM --platform=${TARGETOS}/${TARGETARCH} almalinux:8
 
-# Установка минимального набора зависимостей для Ollama
-RUN microdnf install -y \
+# Минимальные зависимости для Ollama + обновление безопасности
+RUN dnf install -y \
         ca-certificates \
         openssl \
         openssl-libs \
         glibc \
         libgcrypt \
         libpam \
-        coreutils \
         gnupg2 \
         tar \
         shadow-utils \
-    # Обновление безопасности
-    && microdnf update -y \
-    && microdnf clean all
+    && dnf update -y \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 
-# Копирование бинарников и библиотек из стадии сборки
+# Копирование бинарников и библиотек
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
 
-# Переменные окружения для NVIDIA GPU
+# GPU переменные окружения
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 
-# Создание non-root пользователя
-RUN groupadd -r ollama && useradd -r -g ollama -s /bin/false ollama \
+# Non-root пользователь
+RUN groupadd -r ollama && useradd -r -g ollama -s /sbin/nologin ollama \
     && mkdir -p /home/ollama \
     && chown -R ollama:ollama /home/ollama \
     && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
