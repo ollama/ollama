@@ -204,12 +204,10 @@ export async function* sendMessage(
     data: uint8ArrayToBase64(att.data),
   }));
 
-  // Only send think parameter when actually requesting thinking
-  // Don't send false as it causes issues with some providers
+  // Send think parameter when it's explicitly set (true, false, or a non-empty string).
   const shouldSendThink =
     think !== undefined &&
-    ((typeof think === "boolean" && think) ||
-      (typeof think === "string" && think !== ""));
+    (typeof think === "boolean" || (typeof think === "string" && think !== ""));
 
   const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
     method: "POST",
