@@ -227,7 +227,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		modelPath,
 		gpuLibs,
 		status,
-		ml.GetVisibleDevicesEnv(gpus),
+		ml.GetVisibleDevicesEnv(gpus, false),
 	)
 
 	s := llmServer{
