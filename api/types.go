@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -308,9 +309,9 @@ func (tp ToolProperty) ToTypeScriptType() string {
 		return mapToTypeScriptType(tp.Type[0])
 	}
 
-	var types []string
-	for _, t := range tp.Type {
-		types = append(types, mapToTypeScriptType(t))
+	types := make([]string, len(tp.Type))
+	for i, t := range tp.Type {
+		types[i] = mapToTypeScriptType(t)
 	}
 	return strings.Join(types, " | ")
 }
@@ -783,7 +784,7 @@ func (m *Metrics) Summary() {
 
 func (opts *Options) FromMap(m map[string]any) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
-	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
+	typeOpts := reflect.TypeFor[Options]()    // types of the fields in the options struct
 
 	// build map of json struct tags to their types
 	jsonOpts := make(map[string]reflect.StructField)
@@ -854,8 +855,7 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 				field.Set(reflect.ValueOf(slice))
 			case reflect.Pointer:
-				var b bool
-				if field.Type() == reflect.TypeOf(&b) {
+				if field.Type() == reflect.TypeFor[*bool]() {
 					val, ok := val.(bool)
 					if !ok {
 						return fmt.Errorf("option %q must be of type boolean", key)
@@ -906,7 +906,7 @@ func DefaultOptions() Options {
 // ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low")
 type ThinkValue struct {
 	// Value can be a bool or string
-	Value interface{}
+	Value any
 }
 
 // IsValid checks if the ThinkValue is valid
@@ -999,7 +999,7 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
+	return errors.New("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
 }
 
 // MarshalJSON implements json.Marshaler
@@ -1018,7 +1018,7 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 	if d.Duration < 0 {
 		return []byte("-1"), nil
 	}
-	return []byte("\"" + d.Duration.String() + "\""), nil
+	return []byte("\"" + d.String() + "\""), nil
 }
 
 func (d *Duration) UnmarshalJSON(b []byte) (err error) {
@@ -1045,7 +1045,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 			d.Duration = time.Duration(math.MaxInt64)
 		}
 	default:
-		return fmt.Errorf("Unsupported type: '%s'", reflect.TypeOf(v))
+		return fmt.Errorf("unsupported type: '%s'", reflect.TypeOf(v))
 	}
 
 	return nil
@@ -1055,7 +1055,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 func FormatParams(params map[string][]string) (map[string]any, error) {
 	opts := Options{}
 	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
-	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
+	typeOpts := reflect.TypeFor[Options]()     // types of the fields in the options struct
 
 	// build map of json struct tags to their types
 	jsonOpts := make(map[string]reflect.StructField)
@@ -1102,8 +1102,7 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
-					var b bool
-					if field.Type() == reflect.TypeOf(&b) {
+					if field.Type() == reflect.TypeFor[*bool]() {
 						boolVal, err := strconv.ParseBool(vals[0])
 						if err != nil {
 							return nil, fmt.Errorf("invalid bool value %s", vals)

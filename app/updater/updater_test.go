@@ -22,9 +22,7 @@ func TestIsNewReleaseAvailable(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/update.json" {
-			w.Write([]byte(
-				fmt.Sprintf(`{"version": "9.9.9", "url": "%s"}`,
-					server.URL+"/9.9.9/"+Installer)))
+			fmt.Fprintf(w, `{"version": "9.9.9", "url": "%s"}`, server.URL+"/9.9.9/"+Installer)
 			// TODO - wire up the redirects to mimic real behavior
 		} else {
 			slog.Debug("unexpected request", "url", r.URL)
@@ -67,17 +65,16 @@ func TestBackgoundChecker(t *testing.T) {
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/update.json" {
-			w.Write([]byte(
-				fmt.Sprintf(`{"version": "9.9.9", "url": "%s"}`,
-					server.URL+"/9.9.9/"+Installer)))
+		switch r.URL.Path {
+		case "/update.json":
+			fmt.Fprintf(w, `{"version": "9.9.9", "url": "%s"}`, server.URL+"/9.9.9/"+Installer)
 			// TODO - wire up the redirects to mimic real behavior
-		} else if r.URL.Path == "/9.9.9/"+Installer {
+		case "/9.9.9/" + Installer:
 			buf := &bytes.Buffer{}
 			zw := zip.NewWriter(buf)
 			zw.Close()
 			io.Copy(w, buf)
-		} else {
+		default:
 			slog.Debug("unexpected request", "url", r.URL)
 		}
 	}))

@@ -666,7 +666,7 @@ func TestSchedNeedsReload(t *testing.T) {
 	req.opts.NumBatch = 1234
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.opts.NumBatch = runner.Options.NumBatch
+	req.opts.NumBatch = runner.NumBatch
 	llm.pingResp = errors.New("foo")
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)

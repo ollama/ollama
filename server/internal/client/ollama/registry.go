@@ -1184,11 +1184,11 @@ func parseChunk[S ~string | ~[]byte](s S) (blob.Chunk, error) {
 	}
 	start, err := strconv.ParseInt(startPart, 10, 64)
 	if err != nil {
-		return blob.Chunk{}, fmt.Errorf("chunks: invalid start to %q: %v", s, err)
+		return blob.Chunk{}, fmt.Errorf("chunks: invalid start to %q: %w", s, err)
 	}
 	end, err := strconv.ParseInt(endPart, 10, 64)
 	if err != nil {
-		return blob.Chunk{}, fmt.Errorf("chunks: invalid end to %q: %v", s, err)
+		return blob.Chunk{}, fmt.Errorf("chunks: invalid end to %q: %w", s, err)
 	}
 	if start > end {
 		return blob.Chunk{}, fmt.Errorf("chunks: invalid range %q: start > end", s)

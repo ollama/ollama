@@ -74,7 +74,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			return "", nil, errors.New("this model only supports one image while more than one image requested")
 		}
 
-		var prefix string
+		var prefix strings.Builder
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
@@ -85,14 +85,14 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
 			if !strings.Contains(prompt, "[img]") {
-				prefix += imgTag
+				prefix.WriteString(imgTag)
 			} else {
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
 			}
 
 			images = append(images, imgData)
 		}
-		msgs[currMsgIdx+cnt].Content = prefix + prompt
+		msgs[currMsgIdx+cnt].Content = prefix.String() + prompt
 	}
 
 	// truncate any messages that do not fit into the context window

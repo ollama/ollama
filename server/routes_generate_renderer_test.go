@@ -93,7 +93,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
 
-	mock.CompletionResponse.Content = "Hi!"
+	mock.Content = "Hi!"
 
 	t.Run("chat-like flow uses renderer", func(t *testing.T) {
 		// Test that when using messages (chat-like flow), the built-in renderer is used
@@ -109,12 +109,12 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 
 		// The qwen3-coder renderer produces output with <|im_start|> and <|im_end|> tags
 		// When messages are built internally from prompt, it should use the renderer
-		if !strings.Contains(mock.CompletionRequest.Prompt, "<|im_start|>") {
-			t.Errorf("expected prompt to contain <|im_start|> from qwen3-coder renderer, got: %s", mock.CompletionRequest.Prompt)
+		if !strings.Contains(mock.Prompt, "<|im_start|>") {
+			t.Errorf("expected prompt to contain <|im_start|> from qwen3-coder renderer, got: %s", mock.Prompt)
 		}
 
-		if !strings.Contains(mock.CompletionRequest.Prompt, "<|im_end|>") {
-			t.Errorf("expected prompt to contain <|im_end|> from qwen3-coder renderer, got: %s", mock.CompletionRequest.Prompt)
+		if !strings.Contains(mock.Prompt, "<|im_end|>") {
+			t.Errorf("expected prompt to contain <|im_end|> from qwen3-coder renderer, got: %s", mock.Prompt)
 		}
 	})
 
@@ -132,12 +132,12 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 		}
 
 		// Should contain the system message and use renderer format
-		if !strings.Contains(mock.CompletionRequest.Prompt, "<|im_start|>system") {
-			t.Errorf("expected prompt to contain system message with renderer format, got: %s", mock.CompletionRequest.Prompt)
+		if !strings.Contains(mock.Prompt, "<|im_start|>system") {
+			t.Errorf("expected prompt to contain system message with renderer format, got: %s", mock.Prompt)
 		}
 
-		if !strings.Contains(mock.CompletionRequest.Prompt, "You are a helpful coding assistant.") {
-			t.Errorf("expected prompt to contain system message content, got: %s", mock.CompletionRequest.Prompt)
+		if !strings.Contains(mock.Prompt, "You are a helpful coding assistant.") {
+			t.Errorf("expected prompt to contain system message content, got: %s", mock.Prompt)
 		}
 	})
 
@@ -155,12 +155,12 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 		}
 
 		// Should NOT use the renderer format when custom template is provided
-		if strings.Contains(mock.CompletionRequest.Prompt, "<|im_start|>") {
-			t.Errorf("expected prompt to NOT use renderer when custom template provided, got: %s", mock.CompletionRequest.Prompt)
+		if strings.Contains(mock.Prompt, "<|im_start|>") {
+			t.Errorf("expected prompt to NOT use renderer when custom template provided, got: %s", mock.Prompt)
 		}
 
 		// Should just be the raw prompt from the template
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "Write a hello world function"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "Write a hello world function"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -191,12 +191,12 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 		}
 
 		// Should NOT use the renderer format when suffix is provided
-		if strings.Contains(mock.CompletionRequest.Prompt, "<|im_start|>") {
-			t.Errorf("expected prompt to NOT use renderer when suffix provided, got: %s", mock.CompletionRequest.Prompt)
+		if strings.Contains(mock.Prompt, "<|im_start|>") {
+			t.Errorf("expected prompt to NOT use renderer when suffix provided, got: %s", mock.Prompt)
 		}
 
 		// Should use the suffix template format
-		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "<PRE> def add( <SUF>    return c <MID>"); diff != "" {
+		if diff := cmp.Diff(mock.Prompt, "<PRE> def add( <SUF>    return c <MID>"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})

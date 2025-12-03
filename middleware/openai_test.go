@@ -845,19 +845,17 @@ func TestListMiddleware(t *testing.T) {
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
 
-		var expected, actual map[string]any
-		err := json.Unmarshal([]byte(tc.resp), &expected)
-		if err != nil {
+		var want, got map[string]any
+		if err := json.Unmarshal([]byte(tc.resp), &want); err != nil {
 			t.Fatalf("failed to unmarshal expected response: %v", err)
 		}
 
-		err = json.Unmarshal(resp.Body.Bytes(), &actual)
-		if err != nil {
+		if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
 			t.Fatalf("failed to unmarshal actual response: %v", err)
 		}
 
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("response does not match (-want +got):\n%s", diff)
 		}
 	}
 }

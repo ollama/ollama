@@ -61,7 +61,7 @@ func (c *ImageContext) MultimodalTokenize(llamaContext *llama.Context, data []by
 		return nil, nil
 	}
 
-	if len(data) <= 0 {
+	if len(data) == 0 {
 		return nil, errors.New("received zero length image")
 	}
 

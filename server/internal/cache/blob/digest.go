@@ -60,7 +60,7 @@ func (d Digest) String() string {
 }
 
 func (d Digest) Short() string {
-	return fmt.Sprintf("%x", d.sum[:4])
+	return hex.EncodeToString(d.sum[:4])
 }
 
 func (d Digest) Sum() [32]byte {

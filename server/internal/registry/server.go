@@ -251,7 +251,7 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 type progressUpdateJSON struct {
 	Error     string      `json:"error,omitempty,omitzero"`
 	Status    string      `json:"status,omitempty,omitzero"`
-	Digest    blob.Digest `json:"digest,omitempty,omitzero"`
+	Digest    blob.Digest `json:"digest,omitzero"`
 	Total     int64       `json:"total,omitempty,omitzero"`
 	Completed int64       `json:"completed,omitempty,omitzero"`
 }

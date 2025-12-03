@@ -5,6 +5,7 @@ package store
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func (i *Image) Bytes() ([]byte, error) {
 // ImgBytes reads image data from the specified file path
 func ImgBytes(path string) ([]byte, error) {
 	if path == "" {
-		return nil, fmt.Errorf("empty image path")
+		return nil, errors.New("empty image path")
 	}
 
 	data, err := os.ReadFile(path)

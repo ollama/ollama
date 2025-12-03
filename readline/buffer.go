@@ -3,6 +3,7 @@ package readline
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/mattn/go-runewidth"
@@ -297,7 +298,7 @@ func (b *Buffer) drawRemaining() {
 		remaining := (remainingText[len(currLine):])
 		var totalLines int
 		var displayLength int
-		var lineLength int = currLineSpace
+		lineLength := currLineSpace
 
 		for _, c := range remaining {
 			if displayLength == 0 || (displayLength+runewidth.RuneWidth(c))%b.LineWidth < displayLength%b.LineWidth {
@@ -515,13 +516,13 @@ func (b *Buffer) StringN(n int) string {
 }
 
 func (b *Buffer) StringNM(n, m int) string {
-	var s string
+	var sb strings.Builder
 	if m == 0 {
 		m = b.Buf.Size()
 	}
 	for cnt := n; cnt < m; cnt++ {
 		c, _ := b.Buf.Get(cnt)
-		s += string(c)
+		sb.WriteRune(c)
 	}
-	return s
+	return sb.String()
 }

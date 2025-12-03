@@ -53,7 +53,7 @@ func New(c fs.Config) (model.Model, error) {
 		MultiModalProjector: newMultiModalProjector(c),
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.TextModel.Shift)
+	m.Cache = kvcache.NewCausalCache(m.Shift)
 
 	return m, nil
 }
@@ -109,12 +109,12 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	f32s, size, err := m.ImageProcessor.ProcessImage(image)
+	f32s, size, err := m.ProcessImage(image)
 	if err != nil {
 		return nil, err
 	}
 
-	pixelValues := ctx.Input().FromFloats(f32s, size.X, size.Y, m.ImageProcessor.numChannels)
+	pixelValues := ctx.Input().FromFloats(f32s, size.X, size.Y, m.numChannels)
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
 	features, size := m.MultiModalProjector.Forward(ctx, visionOutputs, size)

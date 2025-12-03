@@ -142,7 +142,7 @@ var junkName Name
 
 func BenchmarkParseName(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		junkName = Parse("h/n/m:t")
 	}
 }

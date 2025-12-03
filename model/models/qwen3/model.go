@@ -203,7 +203,7 @@ func (m *Model) forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 var _ model.Model = (*Model)(nil)

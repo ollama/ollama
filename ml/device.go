@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/maphash"
 	"io"
@@ -218,7 +219,7 @@ type BackendMemory struct {
 }
 
 func (m BackendMemory) LogValue() slog.Value {
-	var attrs []slog.Attr
+	attrs := make([]slog.Attr, 0, 2+len(m.GPUs))
 	if m.InputWeights != 0 {
 		attrs = append(attrs, slog.Any("InputWeights", m.InputWeights))
 	}
@@ -414,14 +415,7 @@ func LibraryPaths(l []DeviceInfo) []string {
 	gpuLibs := []string{LibOllamaPath}
 	for _, gpu := range l {
 		for _, dir := range gpu.LibraryPath {
-			needed := true
-			for _, existing := range gpuLibs {
-				if dir == existing {
-					needed = false
-					break
-				}
-			}
-			if needed {
+			if !slices.Contains(gpuLibs, dir) {
 				gpuLibs = append(gpuLibs, dir)
 			}
 		}
@@ -437,15 +431,15 @@ const (
 	DuplicateDevice                    // The same physical device but different library/backend (overlapping device)
 )
 
-func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
-	if a.PCIID != b.PCIID {
+func (d DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
+	if d.PCIID != b.PCIID {
 		return UniqueDevice
 	}
 	// If PCIID is empty, we have to use ID + library for uniqueness
-	if a.PCIID == "" && a.DeviceID != b.DeviceID {
+	if d.PCIID == "" && d.DeviceID != b.DeviceID {
 		return UniqueDevice
 	}
-	if a.Library == b.Library {
+	if d.Library == b.Library {
 		return SameBackendDevice
 	}
 	return DuplicateDevice
@@ -453,8 +447,8 @@ func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 
 // For a SameBackendDevice, return true if b is better than a
 // e.g. newer GPU library version
-func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
-	aLib := a.LibraryPath[len(a.LibraryPath)-1]
+func (d DeviceInfo) IsBetter(b DeviceInfo) bool {
+	aLib := d.LibraryPath[len(d.LibraryPath)-1]
 	bLib := b.LibraryPath[len(b.LibraryPath)-1]
 	if aLib == bLib {
 		return false
@@ -481,7 +475,7 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && (gpu.ComputeMajor != 7 || gpu.ComputeMinor != 2)) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
 
@@ -547,12 +541,12 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 	}
 	v, existing := env[envVar]
 	if existing {
-		v = v + ","
+		v += ","
 	}
 	if d.FilterID != "" {
-		v = v + d.FilterID
+		v += d.FilterID
 	} else {
-		v = v + d.ID
+		v += d.ID
 	}
 	env[envVar] = v
 }
@@ -592,7 +586,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo,
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("failed to finish discovery before timeout")
+			return nil, errors.New("failed to finish discovery before timeout")
 		case <-tick:
 			r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/info", port), nil)
 			if err != nil {
@@ -604,7 +598,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo,
 			if err != nil {
 				// slog.Warn("failed to send request", "error", err)
 				if runner.HasExited() {
-					return nil, fmt.Errorf("runner crashed")
+					return nil, errors.New("runner crashed")
 				}
 				continue
 			}
@@ -612,7 +606,7 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo,
 
 			if resp.StatusCode == http.StatusNotFound {
 				// old runner, fall back to bootstrapping model
-				return nil, fmt.Errorf("llamarunner free vram reporting not supported")
+				return nil, errors.New("llamarunner free vram reporting not supported")
 			}
 
 			body, err := io.ReadAll(resp.Body)

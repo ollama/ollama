@@ -420,7 +420,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 			// show a generalized compatibility error until there is a better way to
 			// check for model compatibility
 			if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
-				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
+				err = fmt.Errorf("%w: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
 			}
 			slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
 			req.errCh <- err
@@ -429,10 +429,8 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 		}
 
 		s.activeLoading = llama
-	} else {
-		if s.activeLoading.ModelPath() != req.model.ModelPath {
-			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), req.model.ModelPath))
-		}
+	} else if s.activeLoading.ModelPath() != req.model.ModelPath {
+		panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), req.model.ModelPath))
 	}
 
 	s.loadedMu.Unlock()
@@ -637,7 +635,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	}
 
 	// Don't reload runner if num_gpu=-1 was provided
-	optsExisting := runner.Options.Runner
+	optsExisting := runner.Runner
 	optsNew := req.opts.Runner
 	if optsNew.NumGPU < 0 {
 		optsExisting.NumGPU = -1
@@ -745,7 +743,7 @@ func (runner *runnerRef) LogValue() slog.Value {
 		slog.String("model", runner.modelPath),
 	)
 	if runner.Options != nil {
-		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
+		attrs = append(attrs, slog.Int("num_ctx", runner.NumCtx))
 	}
 	return slog.GroupValue(attrs...)
 }

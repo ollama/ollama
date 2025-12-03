@@ -31,7 +31,7 @@ func terminate(proc *os.Process) error {
 func terminated(pid int) (bool, error) {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		return false, fmt.Errorf("failed to find process: %v", err)
+		return false, fmt.Errorf("failed to find process: %w", err)
 	}
 
 	err = proc.Signal(syscall.Signal(0))
@@ -40,7 +40,7 @@ func terminated(pid int) (bool, error) {
 			return true, nil
 		}
 
-		return false, fmt.Errorf("error signaling process: %v", err)
+		return false, fmt.Errorf("error signaling process: %w", err)
 	}
 
 	return false, nil
@@ -67,8 +67,7 @@ func reapServers() error {
 		return nil
 	}
 
-	pids := strings.Split(pidsStr, "\n")
-	for _, pidStr := range pids {
+	for pidStr := range strings.SplitSeq(pidsStr, "\n") {
 		pidStr = strings.TrimSpace(pidStr)
 		if pidStr == "" {
 			continue

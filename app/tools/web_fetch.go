@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -36,7 +37,7 @@ func (w *WebFetch) Description() string {
 	return "Crawl and extract text content from web pages"
 }
 
-func (g *WebFetch) Schema() map[string]any {
+func (w *WebFetch) Schema() map[string]any {
 	schemaBytes := []byte(`{
 		"type": "object",
 		"properties": {
@@ -61,11 +62,11 @@ func (w *WebFetch) Prompt() string {
 func (w *WebFetch) Execute(ctx context.Context, args map[string]any) (any, string, error) {
 	urlRaw, ok := args["url"]
 	if !ok {
-		return nil, "", fmt.Errorf("url parameter is required")
+		return nil, "", errors.New("url parameter is required")
 	}
 	urlStr, ok := urlRaw.(string)
 	if !ok || strings.TrimSpace(urlStr) == "" {
-		return nil, "", fmt.Errorf("url must be a non-empty string")
+		return nil, "", errors.New("url must be a non-empty string")
 	}
 
 	result, err := performWebFetch(ctx, urlStr)

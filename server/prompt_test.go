@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -238,7 +239,7 @@ func TestChatPrompt(t *testing.T) {
 			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, tt.truncate)
 			if tt.error == nil && err != nil {
 				t.Fatal(err)
-			} else if tt.error != nil && err != tt.error {
+			} else if tt.error != nil && !errors.Is(err, tt.error) {
 				t.Fatalf("expected err '%q', got '%q'", tt.error, err)
 			}
 

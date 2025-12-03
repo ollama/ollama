@@ -250,7 +250,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		if s.status != nil && s.status.LastErrMsg != "" {
 			msg = s.status.LastErrMsg
 		}
-		err := fmt.Errorf("error starting runner: %v %s", err, msg)
+		err := fmt.Errorf("error starting runner: %w %s", err, msg)
 		if llamaModel != nil {
 			llama.FreeModel(llamaModel)
 		}
@@ -846,14 +846,7 @@ nextOperation:
 func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 	devices := []ml.DeviceID{}
 	for _, layer := range gpuLayers {
-		new := true
-		for _, ID := range devices {
-			if layer.DeviceID == ID {
-				new = false
-				break
-			}
-		}
-		if new {
+		if !slices.Contains(devices, layer.DeviceID) {
 			devices = append(devices, layer.DeviceID)
 		}
 	}
@@ -989,13 +982,11 @@ nextLayer:
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(cpuSize), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
 			return fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(cpuSize), format.HumanBytes2(available))
 		}
-	} else {
-		if vramSize > systemInfo.TotalMemory {
-			// disable partial offloading when model is greater than total system memory as this
-			// can lead to locking up the system
-			s.options.NumGPU = 0
-			gpuLayers = ml.GPULayersList{}
-		}
+	} else if vramSize > systemInfo.TotalMemory {
+		// disable partial offloading when model is greater than total system memory as this
+		// can lead to locking up the system
+		s.options.NumGPU = 0
+		gpuLayers = ml.GPULayersList{}
 	}
 
 	if len(systemGPUs) > 0 && gpuLayers.Sum() == 0 {
@@ -1218,7 +1209,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", s.port), nil)
 	if err != nil {
-		return ServerStatusError, fmt.Errorf("error creating GET request: %v", err)
+		return ServerStatusError, fmt.Errorf("error creating GET request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -1481,7 +1472,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			// User provided a JSON schema
 			g := llama.SchemaToGrammar(req.Format)
 			if g == nil {
-				return fmt.Errorf("invalid JSON schema in format")
+				return errors.New("invalid JSON schema in format")
 			}
 			req.Grammar = string(g)
 		}
@@ -1521,13 +1512,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	enc.SetEscapeHTML(false)
 
 	if err := enc.Encode(req); err != nil {
-		return fmt.Errorf("failed to marshal data: %v", err)
+		return fmt.Errorf("failed to marshal data: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
-		return fmt.Errorf("error creating POST request: %v", err)
+		return fmt.Errorf("error creating POST request: %w", err)
 	}
 	serverReq.Header.Set("Content-Type", "application/json")
 
@@ -1576,7 +1567,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			var c CompletionResponse
 			if err := json.Unmarshal(evt, &c); err != nil {
-				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
+				return fmt.Errorf("error unmarshalling llm prediction response: %w", err)
 			}
 			switch {
 			case strings.TrimSpace(c.Content) == lastToken:
@@ -1618,7 +1609,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return fmt.Errorf("an error was encountered while running the model: %s", msg)
 		}
 
-		return fmt.Errorf("error reading llm response: %v", err)
+		return fmt.Errorf("error reading llm response: %w", err)
 	}
 
 	return nil
@@ -1693,7 +1684,7 @@ func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, erro
 	defer s.llamaModelLock.Unlock()
 
 	if s.llamaModel == nil {
-		return nil, fmt.Errorf("no tokenizer configured")
+		return nil, errors.New("no tokenizer configured")
 	}
 
 	return s.llamaModel.Tokenize(content, false, true)
@@ -1718,15 +1709,15 @@ func (s *llamaServer) Detokenize(ctx context.Context, tokens []int) (string, err
 	defer s.llamaModelLock.Unlock()
 
 	if s.llamaModel == nil {
-		return "", fmt.Errorf("no tokenizer configured")
+		return "", errors.New("no tokenizer configured")
 	}
 
-	var resp string
+	var sb strings.Builder
 	for _, token := range tokens {
-		resp += s.llamaModel.TokenToPiece(token)
+		sb.WriteString(s.llamaModel.TokenToPiece(token))
 	}
 
-	return resp, nil
+	return sb.String(), nil
 }
 
 func (s *ollamaServer) Detokenize(ctx context.Context, tokens []int) (string, error) {

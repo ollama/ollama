@@ -143,9 +143,9 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 				case r == 0x00ad:
 					r = 0x0143
 				case r <= 0x0020:
-					r = r + 0x0100
+					r += 0x0100
 				case r >= 0x007f && r <= 0x00a0:
-					r = r + 0x00a2
+					r += 0x00a2
 				}
 
 				sb.WriteRune(r)
@@ -264,9 +264,9 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 			case r == 0x0143:
 				r = 0x00ad
 			case r > 0x0100 && r <= 0x0120:
-				r = r - 0x0100
+				r -= 0x0100
 			case r > 0x0120 && r <= 0x0142:
-				r = r - 0x00a2
+				r -= 0x00a2
 			}
 
 			// NOTE: not using WriteRune here because it writes the UTF-8

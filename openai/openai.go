@@ -232,9 +232,9 @@ func NewError(code int, message string) ErrorResponse {
 // ToUsage converts an api.ChatResponse to Usage
 func ToUsage(r api.ChatResponse) Usage {
 	return Usage{
-		PromptTokens:     r.Metrics.PromptEvalCount,
-		CompletionTokens: r.Metrics.EvalCount,
-		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
 	}
 }
 
@@ -326,9 +326,9 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 // ToUsageGenerate converts an api.GenerateResponse to Usage
 func ToUsageGenerate(r api.GenerateResponse) Usage {
 	return Usage{
-		PromptTokens:     r.Metrics.PromptEvalCount,
-		CompletionTokens: r.Metrics.EvalCount,
-		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
 	}
 }
 
@@ -377,20 +377,19 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 
 // ToListCompletion converts an api.ListResponse to ListCompletion
 func ToListCompletion(r api.ListResponse) ListCompletion {
-	var data []Model
-	for _, m := range r.Models {
-		data = append(data, Model{
-			Id:      m.Name,
-			Object:  "model",
-			Created: m.ModifiedAt.Unix(),
-			OwnedBy: model.ParseName(m.Name).Namespace,
-		})
+	c := ListCompletion{Object: "list"}
+	if len(r.Models) > 0 {
+		c.Data = make([]Model, len(r.Models))
+		for i, m := range r.Models {
+			c.Data[i] = Model{
+				Id:      m.Name,
+				Object:  "model",
+				Created: m.ModifiedAt.Unix(),
+				OwnedBy: model.ParseName(m.Name).Namespace,
+			}
+		}
 	}
-
-	return ListCompletion{
-		Object: "list",
-		Data:   data,
-	}
+	return c
 }
 
 // ToEmbeddingList converts an api.EmbedResponse to EmbeddingList
@@ -487,19 +486,14 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png", "webp"}
-					valid := false
-					// support blank mime type to match api/chat taking just unadorned base64
-					if strings.HasPrefix(url, "data:;base64,") {
-						url = strings.TrimPrefix(url, "data:;base64,")
-						valid = true
-					}
-					for _, t := range types {
-						prefix := "data:image/" + t + ";base64,"
-						if strings.HasPrefix(url, prefix) {
-							url = strings.TrimPrefix(url, prefix)
-							valid = true
-							break
+					url, valid := strings.CutPrefix(url, "data:;base64,")
+					if !valid {
+						for _, t := range []string{"jpeg", "jpg", "png", "webp"} {
+							prefix := "data:image/" + t + ";base64,"
+							url, valid = strings.CutPrefix(url, prefix)
+							if valid {
+								break
+							}
 						}
 					}
 

@@ -35,6 +35,12 @@ linters:
     errcheck:
       exclude-functions:
         - fmt.Fprintf
+    gocritic:
+      disabled-checks:
+        # Detects suspicious duplicated sub-expressions.
+        # Prone to false positives when used on cgo code
+        # https://github.com/go-critic/go-critic/issues/897#issuecomment-568892104
+        - dupSubExpr
     perfsprint:
       strconcat: false
       concat-loop: false
@@ -44,24 +50,22 @@ linters:
         # Using a deprecated function, variable, constant or field.
         # https://staticcheck.dev/docs/checks/#SA1019
         - -SA1019
-        # Incorrect or missing package comment.
-        # https://staticcheck.dev/docs/checks/#ST1000
-        - -ST1000
         # Poorly chosen identifier.
         # https://staticcheck.dev/docs/checks/#ST1003
         - -ST1003
-        # The documentation of an exported function should start with the function's name.
-        # https://staticcheck.dev/docs/checks/#ST1020
-        - -ST1020
-        # The documentation of an exported type should start with type's name.
-        # https://staticcheck.dev/docs/checks/#ST1021
-        - -ST1021
-        # The documentation of an exported variable or constant should start with variable's name.
-        # https://staticcheck.dev/docs/checks/#ST1022
-        - -ST1022
     usestdlibvars:
       http-method: false
       http-status-code: false
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - prealloc
 
 formatters:
   enable:

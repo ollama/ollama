@@ -263,9 +263,9 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams.use_mmap = C.bool(params.UseMmap)
 	cparams.vocab_only = C.bool(params.VocabOnly)
 
-	var devices []C.ggml_backend_dev_t
-	for _, llamaID := range params.Devices {
-		devices = append(devices, C.ggml_backend_dev_get(C.size_t(llamaID)))
+	devices := make([]C.ggml_backend_dev_t, len(params.Devices))
+	for i, llamaID := range params.Devices {
+		devices[i] = C.ggml_backend_dev_get(C.size_t(llamaID))
 	}
 	if len(devices) > 0 {
 		devices = append(devices, C.ggml_backend_dev_t(C.NULL))

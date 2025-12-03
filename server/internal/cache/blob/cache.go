@@ -438,7 +438,7 @@ func (w *checkWriter) Write(p []byte) (int, error) {
 		// last write. check hash.
 		sum := w.h.Sum(nil)
 		if !bytes.Equal(sum, w.d.sum[:]) {
-			return 0, w.seterr(fmt.Errorf("file content changed underfoot"))
+			return 0, w.seterr(errors.New("file content changed underfoot"))
 		}
 		if w.testHookBeforeFinalWrite != nil {
 			w.testHookBeforeFinalWrite(w.f)

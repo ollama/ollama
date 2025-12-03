@@ -133,7 +133,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	hiddenStates := m.PatchEmbedding.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
 	hiddenStates = hiddenStates.Reshape(ctx, numPatches, m.hiddenSize)
 	hiddenStates = hiddenStates.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
-	hiddenStates = m.EncoderNorm.Forward(ctx, hiddenStates, m.VisionModelOptions.eps)
+	hiddenStates = m.EncoderNorm.Forward(ctx, hiddenStates, m.eps)
 
 	// Prepare position IDs for 2D rope
 	positions := make([]int32, numPatches)
