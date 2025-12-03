@@ -22,7 +22,6 @@ linters:
     - nolintlint
     - nosprintfhostport
     - perfsprint
-    - prealloc
     - sloglint
     - staticcheck
     - unconvert
