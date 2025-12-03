@@ -228,39 +228,34 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-# ============ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 (полный образ, dnf) ============
+# Удалить Python-зависимости
+RUN find /bin /lib /usr -name "*.pyc" -delete 2>/dev/null || true \
+    && find /bin /lib /usr -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true \
+    && rm -rf /usr/lib/python* /usr/local/lib/python* 2>/dev/null || true
+
+# Берем АльмаЛинукс8
 FROM --platform=${TARGETOS}/${TARGETARCH} almalinux:8
 
-# Минимальные зависимости для Ollama + обновление безопасности
-RUN dnf install -y \
-        ca-certificates \
-        openssl \
-        openssl-libs \
-        glibc \
-        libgcrypt \
-        gnupg2 \
-        tar \
-        shadow-utils \
+RUN dnf install -y ca-certificates openssl openssl-libs glibc libgcrypt gnupg2 tar shadow-utils \
     && dnf update -y \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-# Копирование бинарников и библиотек
-COPY --from=archive /bin /usr/bin
+# Копировать ТОЛЬКО бинарник Ollama (не весь /bin)
+COPY --from=archive /bin/ollama /usr/bin/ollama
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Библиотеки Ollama
 COPY --from=archive /lib/ollama /usr/lib/ollama
 
-# GPU переменные окружения
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 
-# Non-root пользователь
 RUN groupadd -r ollama && useradd -r -g ollama -s /sbin/nologin ollama \
     && mkdir -p /home/ollama \
-    && chown -R ollama:ollama /home/ollama \
-    && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
+    && chown -R ollama:ollama /home/ollama /usr/lib/ollama /usr/bin/ollama
 
 USER ollama
 EXPOSE 11434
