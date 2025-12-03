@@ -10,7 +10,6 @@ ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.10
 ARG VULKANVERSION=1.4.321.1
-ARG UBUNTU_VERSION=24.04
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -229,47 +228,45 @@ ARG VULKANVERSION
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-FROM --platform=${TARGETOS}/${TARGETARCH} ubuntu:${UBUNTU_VERSION}
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get dist-upgrade -y \
-    && apt-get install -y --no-install-recommends \
+# ============ ФИНАЛЬНАЯ СТАДИЯ: AlmaLinux 8 вместо Ubuntu 24.04 ============
+FROM --platform=${TARGETOS}/${TARGETARCH} almalinux:8
+
+# Установка зависимостей и обновление безопасности
+RUN dnf install -y \
         ca-certificates \
+        openssl \
+        openssl-libs \
+        glibc \
+        libgcrypt \
+        pam \
         coreutils \
         gnupg2 \
-        libgcrypt20 \
-        libpam0g \
-        libssl3 \
-        libvulkan1 \
-        openssl \
-        passwd \
         tar \
-    # Исправление уязвимостей CVE-2025-45582 (tar), CVE-2025-8941 (pam), CVE-2016-2781 (coreutils), \
-    # CVE-2022-3219 (gnupg2), CVE-2024-2236 (libgcrypt), CVE-2024-41996 (openssl), CVE-2024-56433 (passwd)
-    && apt-get install -y --only-upgrade \
-        coreutils \
-        gnupg2 \
-        libgcrypt20 \
-        libpam0g \
-        libssl3 \
-        openssl \
         passwd \
-        tar \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives \
-    && update-ca-certificates
+        shadow-utils \
+    # Обновление всех пакетов безопасности
+    && dnf update -y --security \
+    && dnf update -y openssl openssl-libs ca-certificates \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Копирование бинарников и библиотек из стадии сборки
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
+
+# Переменные окружения для NVIDIA GPU
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
-# Добавлен non-root пользователь для повышения безопасности
+
+# Создание non-root пользователя для безопасности
 RUN groupadd -r ollama && useradd -r -g ollama ollama \
     && mkdir -p /home/ollama \
     && chown -R ollama:ollama /home/ollama \
     && chown -R ollama:ollama /usr/lib/ollama /usr/bin/ollama
+
 USER ollama
 EXPOSE 11434
 ENTRYPOINT ["/usr/bin/ollama"]
