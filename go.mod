@@ -17,7 +17,6 @@ require (
 	github.com/x448/float16 v0.8.4
 	golang.org/x/sync v0.12.0
 	golang.org/x/sys v0.36.0
-
 )
 
 require (

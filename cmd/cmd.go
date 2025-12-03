@@ -1430,7 +1430,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		latest.Summary()
 	}
 
-	return &api.Message{Role: role, Content: fullResponse.String()}, nil
+	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, nil
 }
 
 func generate(cmd *cobra.Command, opts runOptions) error {

@@ -15,7 +15,9 @@ func TestWordPiece(t *testing.T) {
 			AddEOS: true,
 			BOS:    []int32{1},
 			EOS:    []int32{2},
-		})
+		},
+		true, // lowercase
+	)
 
 	ids, err := wpm.Encode("Hello world!", true)
 	if err != nil {

@@ -910,7 +910,7 @@ func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 		}}
 	}
 	gpuLayers, layers := s.buildLayout(systemGPUs, memory, requireFull, backoff)
-	err := s.verifyLayout(systemInfo, memory, requireFull, gpuLayers, layers)
+	err := s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, layers)
 	if err != nil {
 		return nil, err
 	}
@@ -992,7 +992,7 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 }
 
 // verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
-func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
+func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
@@ -1019,8 +1019,8 @@ nextLayer:
 	}
 
 	if requireFull {
-		if gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
-			slog.Info("model requires more memory than is currently available, evicting a model to make space", "loaded layers", gpuLayers.Sum())
+		if len(systemGPUs) > 0 && gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
+			slog.Info("model requires more gpu memory than is currently available, evicting a model to make space", "loaded layers", gpuLayers.Sum())
 			return ErrLoadRequiredFull
 		}
 
@@ -1047,7 +1047,7 @@ nextLayer:
 		}
 	}
 
-	if gpuLayers.Sum() == 0 {
+	if len(systemGPUs) > 0 && gpuLayers.Sum() == 0 {
 		slog.Debug("insufficient VRAM to load any model layers")
 	}
 

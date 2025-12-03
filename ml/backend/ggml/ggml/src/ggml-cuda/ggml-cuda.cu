@@ -3513,7 +3513,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
     if (ggml_hip_mgmt_init() == 0) {
         int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total);
         if (status == 0) {
-            GGML_LOG_DEBUG("%s device %s utilizing ADLX memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
+            GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
             ggml_hip_mgmt_release();
             return;
         }
@@ -3675,6 +3675,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     }
                 }
                 if (b->type == GGML_TYPE_F16 && a->type != GGML_TYPE_F16) {
+                    return false;
+                }
+                if (op->op == GGML_OP_MUL_MAT && b->ne[2] * b->ne[3] > 1024) {
                     return false;
                 }
 #ifdef GGML_USE_MUSA
