@@ -305,7 +305,7 @@ func readGGUFV1StringsData(llm *gguf, r io.Reader, a *array[string]) (any, error
 
 			a.values[i] = e
 		} else {
-			discardGGUFString(llm, r)
+			_ = discardGGUFString(llm, r)
 		}
 	}
 
@@ -568,7 +568,6 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
 	for _, t := range ts {
-		t := t
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
 		g.Go(func() error {
 			_, err := t.WriteTo(w)

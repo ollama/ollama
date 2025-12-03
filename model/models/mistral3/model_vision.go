@@ -11,9 +11,9 @@ import (
 var batchSize int = 1
 
 func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
-	x1 := t.View(ctx, 0, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3))
-	x2 := t.View(ctx, t.Stride(0)*t.Dim(0)/2, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3)).Contiguous(ctx)
-	return x2.Neg(ctx).Concat(ctx, x1, 0)
+	x1 := t.Slice(ctx, 0, 0, t.Dim(0)/2, 1)
+	x2 := t.Slice(ctx, 0, t.Dim(0)/2, t.Dim(0), 1).Contiguous(ctx)
+	return x2.Scale(ctx, -1).Concat(ctx, x1, 0)
 }
 
 func applyRotaryPositionalEmbedding(ctx ml.Context, t, cos, sin ml.Tensor) ml.Tensor {

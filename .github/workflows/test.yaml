@@ -226,12 +226,9 @@ jobs:
         if: always()
         run: go test -count=1 -benchtime=1x ./...
 
-      # TODO(bmizerany): replace this heavy tool with just the
-      # tools/checks/binaries we want and then make them all run in parallel
-      # across jobs, not on a single tiny vm on Github Actions.
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
-          args: --timeout 10m0s -v
+          only-new-issues: true
 
   patches:
     runs-on: ubuntu-latest

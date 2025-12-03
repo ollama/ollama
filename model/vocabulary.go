@@ -45,7 +45,7 @@ func (v *Vocabulary) Is(id int32, special Special) bool {
 
 func (v *Vocabulary) addSpecials(ids []int32) []int32 {
 	if v.AddBOS && len(v.BOS) > 0 {
-		if slices.Contains(v.BOS, ids[0]) {
+		if len(ids) > 0 && slices.Contains(v.BOS, ids[0]) {
 			slog.Warn("adding bos token to prompt which already has it", "id", v.BOS)
 		}
 
@@ -54,7 +54,7 @@ func (v *Vocabulary) addSpecials(ids []int32) []int32 {
 	}
 
 	if v.AddEOS && len(v.EOS) > 0 {
-		if slices.Contains(v.BOS, ids[len(ids)-1]) {
+		if len(ids) > 0 && slices.Contains(v.BOS, ids[len(ids)-1]) {
 			slog.Warn("adding eos token to prompt which already has it", "id", v.EOS)
 		}
 

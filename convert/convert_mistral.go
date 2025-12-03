@@ -29,6 +29,15 @@ type mistral3Model struct {
 		SlidingWindow         *uint32 `json:"sliding_window"`
 		HiddenAct             string  `json:"hidden_act"`
 		VocabSize             uint32  `json:"vocab_size"`
+		RopeParameters        struct {
+			BetaFast                  float32 `json:"beta_fast"`
+			BetaSlow                  float32 `json:"beta_slow"`
+			Factor                    float32 `json:"factor"`
+			ScalingBeta               float32 `json:"llama_4_scaling_beta"`
+			OrigMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
+			RopeType                  string  `json:"rope_type"`
+			RopeTheta                 float32 `json:"rope_theta"`
+		} `json:"rope_parameters"`
 	} `json:"text_config"`
 	VisionModel struct {
 		NumAttentionHeads uint32  `json:"num_attention_heads"`
@@ -61,8 +70,13 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.attention.layer_norm_rms_epsilon"] = p.TextModel.RMSNormEPS
 	kv["mistral3.attention.key_length"] = p.TextModel.HeadDim
 	kv["mistral3.attention.value_length"] = p.TextModel.HeadDim
-	kv["mistral3.rope.dimension_count"] = p.TextModel.HiddenSize / p.TextModel.NumHiddenLayers
-	kv["mistral3.rope.freq_base"] = p.TextModel.RopeTheta
+	kv["mistral3.rope.dimension_count"] = cmp.Or(p.TextModel.HeadDim, p.TextModel.HiddenSize/p.TextModel.NumAttentionHeads)
+	kv["mistral3.rope.freq_base"] = cmp.Or(p.TextModel.RopeTheta, p.TextModel.RopeParameters.RopeTheta)
+
+	if p.TextModel.RopeParameters.OrigMaxPositionEmbeddings > 0 {
+		kv["mistral3.rope.scaling.original_context_length"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
+		kv["mistral3.rope.scaling_beta"] = p.TextModel.RopeParameters.ScalingBeta
+	}
 
 	// Vision configuration
 	kv["mistral3.vision.block_count"] = p.VisionModel.NumHiddenLayers

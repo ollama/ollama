@@ -33,6 +33,9 @@ func TestVisionModels(t *testing.T) {
 			// Qwen 3 VL mixture of experts
 			model: "qwen3-vl:30b",
 		},
+		{
+			model: "ministral-3",
+		},
 	}
 
 	for _, v := range testCases {
