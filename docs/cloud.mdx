@@ -1,0 +1,230 @@
+---
+title: Cloud
+sidebarTitle: Cloud
+---
+
+<Info>Ollama's cloud is currently in preview.</Info>
+
+## Cloud Models
+
+Ollama's cloud models are a new kind of model in Ollama that can run without a powerful GPU. Instead, cloud models are automatically offloaded to Ollama's cloud service while offering the same capabilities as local models, making it possible to keep using your local tools while running larger models that wouldn't fit on a personal computer.
+
+### Supported models
+
+For a list of supported models, see Ollama's [model library](https://ollama.com/search?c=cloud).
+
+### Running Cloud models
+
+Ollama's cloud models require an account on [ollama.com](https://ollama.com). To sign in or create an account, run:
+
+```
+ollama signin
+```
+
+<Tabs>
+  <Tab title="CLI">
+
+To run a cloud model, open the terminal and run:
+
+```
+ollama run gpt-oss:120b-cloud
+```
+
+  </Tab>
+  <Tab title="Python">
+
+First, pull a cloud model so it can be accessed:
+
+```
+ollama pull gpt-oss:120b-cloud
+```
+
+Next, install [Ollama's Python library](https://github.com/ollama/ollama-python):
+
+```
+pip install ollama
+```
+
+Next, create and run a simple Python script:
+
+```python
+from ollama import Client
+
+client = Client()
+
+messages = [
+  {
+    'role': 'user',
+    'content': 'Why is the sky blue?',
+  },
+]
+
+for part in client.chat('gpt-oss:120b-cloud', messages=messages, stream=True):
+  print(part['message']['content'], end='', flush=True)
+```
+
+  </Tab>
+  <Tab title="JavaScript">
+
+First, pull a cloud model so it can be accessed:
+
+```
+ollama pull gpt-oss:120b-cloud
+```
+
+Next, install [Ollama's JavaScript library](https://github.com/ollama/ollama-js):
+
+```
+npm i ollama
+```
+
+Then use the library to run a cloud model:
+
+```typescript
+import { Ollama } from "ollama";
+
+const ollama = new Ollama();
+
+const response = await ollama.chat({
+  model: "gpt-oss:120b-cloud",
+  messages: [{ role: "user", content: "Explain quantum computing" }],
+  stream: true,
+});
+
+for await (const part of response) {
+  process.stdout.write(part.message.content);
+}
+```
+
+  </Tab>
+  <Tab title="cURL">
+
+First, pull a cloud model so it can be accessed:
+
+```
+ollama pull gpt-oss:120b-cloud
+```
+
+Run the following cURL command to run the command via Ollama's API:
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "gpt-oss:120b-cloud",
+  "messages": [{
+    "role": "user",
+    "content": "Why is the sky blue?"
+  }],
+  "stream": false
+}'
+```
+
+  </Tab>
+</Tabs>
+
+## Cloud API access
+
+Cloud models can also be accessed directly on ollama.com's API. In this mode, ollama.com acts as a remote Ollama host.
+
+### Authentication
+
+For direct access to ollama.com's API, first create an [API key](https://ollama.com/settings/keys).
+
+Then, set the `OLLAMA_API_KEY` environment variable to your API key.
+
+```
+export OLLAMA_API_KEY=your_api_key
+```
+
+### Listing models
+
+For models available directly via Ollama's API, models can be listed via:
+
+```
+curl https://ollama.com/api/tags
+```
+
+### Generating a response
+
+<Tabs>
+  <Tab title="Python">
+
+First, install [Ollama's Python library](https://github.com/ollama/ollama-python)
+
+```
+pip install ollama
+```
+
+Then make a request
+
+```python
+import os
+from ollama import Client
+
+client = Client(
+    host="https://ollama.com",
+    headers={'Authorization': 'Bearer ' + os.environ.get('OLLAMA_API_KEY')}
+)
+
+messages = [
+  {
+    'role': 'user',
+    'content': 'Why is the sky blue?',
+  },
+]
+
+for part in client.chat('gpt-oss:120b', messages=messages, stream=True):
+  print(part['message']['content'], end='', flush=True)
+```
+
+  </Tab>
+  <Tab title="JavaScript">
+
+First, install [Ollama's JavaScript library](https://github.com/ollama/ollama-js):
+
+```
+npm i ollama
+```
+
+Next, make a request to the model:
+
+```typescript
+import { Ollama } from "ollama";
+
+const ollama = new Ollama({
+  host: "https://ollama.com",
+  headers: {
+    Authorization: "Bearer " + process.env.OLLAMA_API_KEY,
+  },
+});
+
+const response = await ollama.chat({
+  model: "gpt-oss:120b",
+  messages: [{ role: "user", content: "Explain quantum computing" }],
+  stream: true,
+});
+
+for await (const part of response) {
+  process.stdout.write(part.message.content);
+}
+```
+
+  </Tab>
+  <Tab title="cURL">
+
+Generate a response via Ollama's chat API:
+
+```
+curl https://ollama.com/api/chat \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -d '{
+    "model": "gpt-oss:120b",
+    "messages": [{
+      "role": "user",
+      "content": "Why is the sky blue?"
+    }],
+    "stream": false
+  }'
+```
+
+  </Tab>
+</Tabs>

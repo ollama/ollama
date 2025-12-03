@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Santosh Bhavani <santosh.bhavani@live.com>
+Date: Wed, 15 Oct 2025 09:29:51 -0700
+Subject: [PATCH] NVML fallback for unified memory GPUs
+
+---
+ ggml/src/mem_nvml.cpp | 71 +++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 68 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/mem_nvml.cpp b/ggml/src/mem_nvml.cpp
+index c9073cef0..f473a2a2c 100644
+--- a/ggml/src/mem_nvml.cpp
++++ b/ggml/src/mem_nvml.cpp
+@@ -13,6 +13,7 @@
+ #include <filesystem>
+ #include <mutex>
+ #include <array>
++#include <cstring>
+ 
+ #ifdef _WIN32
+ #    define WIN32_LEAN_AND_MEAN
+@@ -23,6 +24,8 @@
+ #else
+ #    include <dlfcn.h>
+ #    include <unistd.h>
++#    include <fstream>
++#    include <string>
+ #endif
+ 
+ namespace fs = std::filesystem;
+@@ -79,12 +82,36 @@ struct {
+   nvmlReturn_t (*nvmlShutdown)(void);
+   nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
+   nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
++  nvmlReturn_t (*nvmlDeviceGetName)(nvmlDevice_t, char *, unsigned int);
+   const char * (*nvmlErrorString)(nvmlReturn_t result);
+-} nvml { NULL, NULL, NULL, NULL, NULL };
++} nvml { NULL, NULL, NULL, NULL, NULL, NULL, NULL };
+ static std::mutex ggml_nvml_lock;
+ 
+ extern "C" {
+ 
++#ifndef _WIN32
++// Helper function to get available memory from /proc/meminfo on Linux
++// Returns MemAvailable as calculated by the kernel
++static size_t get_mem_available() {
++    std::ifstream meminfo("/proc/meminfo");
++    if (!meminfo.is_open()) {
++        return 0;
++    }
++
++    std::string line;
++    while (std::getline(meminfo, line)) {
++        if (line.find("MemAvailable:") == 0) {
++            size_t available_kb;
++            sscanf(line.c_str(), "MemAvailable: %zu kB", &available_kb);
++            // Convert from kB to bytes
++            return available_kb * 1024;
++        }
++    }
++
++    return 0;
++}
++#endif
++
+ int ggml_nvml_init() {
+     std::lock_guard<std::mutex> lock(ggml_nvml_lock);
+     if (nvml.handle != NULL) {
+@@ -117,8 +144,9 @@ int ggml_nvml_init() {
+     nvml.nvmlShutdown = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlShutdown");
+     nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetHandleByUUID");
+     nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlDeviceGetName = (nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetName");
+     nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) GetProcAddress((HMODULE)(nvml.handle), "nvmlErrorString");
+-    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlErrorString == NULL) {
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlDeviceGetName == NULL || nvml.nvmlErrorString == NULL) {
+         GGML_LOG_INFO("%s unable to locate required symbols in NVML.dll", __func__);
+         FreeLibrary((HMODULE)(nvml.handle));
+         nvml.handle = NULL;
+@@ -151,8 +179,9 @@ int ggml_nvml_init() {
+     nvml.nvmlShutdown = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlShutdown");
+     nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) dlsym(nvml.handle, "nvmlDeviceGetHandleByUUID");
+     nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) dlsym(nvml.handle, "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlDeviceGetName = (nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int)) dlsym(nvml.handle, "nvmlDeviceGetName");
+     nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) dlsym(nvml.handle, "nvmlErrorString");
+-    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlDeviceGetName == NULL) {
+         GGML_LOG_INFO("%s unable to locate required symbols in libnvidia-ml.so", __func__);
+         dlclose(nvml.handle);
+         nvml.handle = NULL;
+@@ -199,10 +228,46 @@ int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
+     }
+     nvmlMemory_t memInfo = {0};
+     status = nvml.nvmlDeviceGetMemoryInfo(device, &memInfo);
++
+     if (status == NVML_SUCCESS) {
++        // NVML working correctly, use its values
+         *free = memInfo.free;
+         *total = memInfo.total;
++        return NVML_SUCCESS;
+     }
++
++#ifndef _WIN32
++    // Handle NVML_ERROR_NOT_SUPPORTED - this indicates NVML doesn't support
++    // reporting framebuffer memory (e.g., unified memory GPUs where FB memory is 0)
++    if (status == NVML_ERROR_NOT_SUPPORTED) {
++        // Use system memory from /proc/meminfo
++        size_t mem_available = get_mem_available();
++        size_t mem_total = 0;
++
++        // Read MemTotal
++        std::ifstream meminfo("/proc/meminfo");
++        if (meminfo.is_open()) {
++            std::string line;
++            while (std::getline(meminfo, line)) {
++                if (line.find("MemTotal:") == 0) {
++                    size_t total_kb;
++                    sscanf(line.c_str(), "MemTotal: %zu kB", &total_kb);
++                    mem_total = total_kb * 1024;
++                    break;
++                }
++            }
++        }
++
++        if (mem_total > 0) {
++            *total = mem_total;
++            *free = mem_available;
++            GGML_LOG_INFO("%s NVML not supported for memory query, using system memory (total=%zu, available=%zu)\n",
++                          __func__, mem_total, mem_available);
++            return NVML_SUCCESS;
++        }
++    }
++#endif
++
+     return status;
+ }
+ 

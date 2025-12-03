@@ -175,7 +175,6 @@ func quantize(in, out *os.File, orig *fsggml.GGML, newFileType fsggml.FileType, 
 	origTensors := orig.Tensors().Items()
 	outputTensors := make([]*fsggml.Tensor, len(origTensors))
 	for i, tensor := range origTensors {
-		tensor := tensor
 		newType := newType(tensor, kv, qs, newFileType)
 		newTensor := &fsggml.Tensor{
 			Name:  tensor.Name,

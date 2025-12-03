@@ -27,16 +27,18 @@ func TestChatPrompt(t *testing.T) {
 	visionModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
 
 	cases := []struct {
-		name  string
-		model Model
-		limit int
-		msgs  []api.Message
+		name     string
+		model    Model
+		limit    int
+		truncate bool
+		msgs     []api.Message
 		expect
 	}{
 		{
-			name:  "messages",
-			model: visionModel,
-			limit: 64,
+			name:     "messages",
+			model:    visionModel,
+			limit:    64,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -47,9 +49,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate messages",
-			model: visionModel,
-			limit: 1,
+			name:     "truncate messages",
+			model:    visionModel,
+			limit:    1,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -60,9 +63,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate messages with image",
-			model: visionModel,
-			limit: 64,
+			name:     "truncate messages with image",
+			model:    visionModel,
+			limit:    64,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -76,9 +80,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate messages with images",
-			model: visionModel,
-			limit: 64,
+			name:     "truncate messages with images",
+			model:    visionModel,
+			limit:    64,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -92,9 +97,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "messages with images",
-			model: visionModel,
-			limit: 2048,
+			name:     "messages with images",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -109,9 +115,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "message with image tag",
-			model: visionModel,
-			limit: 2048,
+			name:     "message with image tag",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry! [img]", Images: []api.ImageData{[]byte("something")}},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -126,9 +133,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "messages with interleaved images",
-			model: visionModel,
-			limit: 2048,
+			name:     "messages with interleaved images",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "user", Images: []api.ImageData{[]byte("something")}},
@@ -145,9 +153,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate message with interleaved images",
-			model: visionModel,
-			limit: 1024,
+			name:     "truncate message with interleaved images",
+			model:    visionModel,
+			limit:    1024,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "user", Images: []api.ImageData{[]byte("something")}},
@@ -163,9 +172,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "message with system prompt",
-			model: visionModel,
-			limit: 2048,
+			name:     "message with system prompt",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "system", Content: "You are the Test Who Lived."},
 				{Role: "user", Content: "You're a test, Harry!"},
@@ -177,9 +187,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "out of order system",
-			model: visionModel,
-			limit: 2048,
+			name:     "out of order system",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -191,15 +202,30 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "multiple images same prompt",
-			model: visionModel,
-			limit: 2048,
+			name:     "multiple images same prompt",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "Compare these two pictures of hotdogs", Images: []api.ImageData{[]byte("one hotdog"), []byte("two hotdogs")}},
 			},
 			expect: expect{
 				prompt: "[img-0][img-1]Compare these two pictures of hotdogs ",
 				images: [][]byte{[]byte("one hotdog"), []byte("two hotdogs")},
+			},
+		},
+		{
+			name:     "no truncate with limit exceeded",
+			model:    visionModel,
+			limit:    10,
+			truncate: false,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
+			},
+			expect: expect{
+				prompt: "You're a test, Harry! I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
 			},
 		},
 	}
@@ -209,7 +235,7 @@ func TestChatPrompt(t *testing.T) {
 			model := tt.model
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
 			think := false
-			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &think)
+			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, tt.truncate)
 			if tt.error == nil && err != nil {
 				t.Fatal(err)
 			} else if tt.error != nil && err != tt.error {

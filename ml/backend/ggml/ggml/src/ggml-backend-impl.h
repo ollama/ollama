@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-    #define GGML_BACKEND_API_VERSION 1
+    #define GGML_BACKEND_API_VERSION 2
 
     //
     // Backend buffer type
@@ -26,12 +26,17 @@ extern "C" {
         size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
+
+        // (optional) returns a dummy buffer that is equivalent to one created by alloc_buffer but without actually being backed
+        // by memory
+        ggml_backend_buffer_t (*noalloc_buffer)(ggml_backend_buffer_type_t buft, size_t size);
     };
 
     struct ggml_backend_buffer_type {
         struct ggml_backend_buffer_type_i  iface;
         ggml_backend_dev_t device;
         void * context;
+        bool no_alloc;
     };
 
     //
@@ -63,6 +68,7 @@ extern "C" {
         void * context;
         size_t size;
         enum ggml_backend_buffer_usage usage;
+        bool no_alloc;
     };
 
     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
@@ -106,14 +112,27 @@ extern "C" {
         // compute the graph with the plan
         enum ggml_status          (*graph_plan_compute)(ggml_backend_t backend, ggml_backend_graph_plan_t plan);
 
-        // compute graph (always async if supported by the backend)
-        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+        // compute graph (always async if supported by the backend). batch_size may be -1 if unknown
+        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
 
         // (optional) event synchronization
         // record an event on this stream
         void (*event_record)(ggml_backend_t backend, ggml_backend_event_t event);
         // wait for an event on on a different stream
         void (*event_wait)  (ggml_backend_t backend, ggml_backend_event_t event);
+
+        // (optional) sort/optimize the nodes in the graph
+        void                      (*graph_optimize)    (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+
+        // (optional) reserves intermediate buffers needed for the compution
+        // if alloc is true, memory is actually allocated, otherwise the required amount is just returned by buffer_size
+        enum ggml_status          (*graph_reserve)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, bool alloc);
+
+        // (optional) returns the memory needed after calling graph_reserve
+        size_t                    (*buffer_size)       (ggml_backend_t backend);
+
+        // (optional) frees memory from intermediate buffers that was allocated either by graph_compute or graph_reserve
+        void                      (*reset)             (ggml_backend_t backend);
     };
 
     struct ggml_backend {
@@ -176,6 +195,10 @@ extern "C" {
         ggml_backend_event_t (*event_new)         (ggml_backend_dev_t dev);
         void                 (*event_free)        (ggml_backend_dev_t dev, ggml_backend_event_t event);
         void                 (*event_synchronize) (ggml_backend_dev_t dev, ggml_backend_event_t event);
+
+        // (optional) reset device, clearing existing allocations and context
+        // the caller must ensure that there are no outstanding buffers, as these will become invalid
+        void (*reset)(ggml_backend_dev_t dev);
     };
 
     struct ggml_backend_device {
@@ -205,9 +228,6 @@ extern "C" {
         struct ggml_backend_reg_i iface;
         void * context;
     };
-
-    // Internal backend registry API
-    GGML_API void ggml_backend_register(ggml_backend_reg_t reg);
 
     // Add backend dynamic loading support to the backend
 

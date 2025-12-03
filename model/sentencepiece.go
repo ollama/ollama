@@ -2,7 +2,6 @@ package model
 
 import (
 	"container/heap"
-	"context"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -13,19 +12,19 @@ import (
 
 const spmWhitespaceSep = "▁"
 
-type SentencePieceModel struct {
+type SentencePiece struct {
 	maxTokenLen int
 	vocab       *Vocabulary
 }
 
-var _ TextProcessor = (*SentencePieceModel)(nil)
+var _ TextProcessor = (*SentencePiece)(nil)
 
-func (spm SentencePieceModel) Vocabulary() *Vocabulary {
+func (spm SentencePiece) Vocabulary() *Vocabulary {
 	return spm.vocab
 }
 
-func NewSentencePieceModel(vocab *Vocabulary) SentencePieceModel {
-	slog.Log(context.TODO(), logutil.LevelTrace, "Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
+func NewSentencePiece(vocab *Vocabulary) SentencePiece {
+	logutil.Trace("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
 	counter := map[int]int{}
 	var maxTokenLen int
@@ -39,21 +38,21 @@ func NewSentencePieceModel(vocab *Vocabulary) SentencePieceModel {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "Token counts", "normal", counter[TOKEN_TYPE_NORMAL], "unknown", counter[TOKEN_TYPE_UNKNOWN], "control", counter[TOKEN_TYPE_CONTROL],
+	logutil.Trace("Token counts", "normal", counter[TOKEN_TYPE_NORMAL], "unknown", counter[TOKEN_TYPE_UNKNOWN], "control", counter[TOKEN_TYPE_CONTROL],
 		"user defined", counter[TOKEN_TYPE_USER_DEFINED], "unused", counter[TOKEN_TYPE_UNUSED], "byte", counter[TOKEN_TYPE_BYTE],
 		"max token len", maxTokenLen)
 
-	return SentencePieceModel{
+	return SentencePiece{
 		maxTokenLen: maxTokenLen,
 		vocab:       vocab,
 	}
 }
 
-func (spm SentencePieceModel) Is(id int32, special Special) bool {
+func (spm SentencePiece) Is(id int32, special Special) bool {
 	return spm.vocab.Is(id, special)
 }
 
-func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error) {
+func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	fragments := []fragment{{value: s}}
 	for _, special := range spm.vocab.SpecialVocabulary() {
 		id := spm.vocab.Encode(special)
@@ -182,12 +181,11 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "string", s, "ids", ids)
-
-	if addSpecial && len(ids) > 0 {
+	if addSpecial {
 		ids = spm.vocab.addSpecials(ids)
 	}
 
+	logutil.Trace("encoded", "string", s, "ids", ids)
 	return ids, nil
 }
 
@@ -220,7 +218,7 @@ func (q *queue) Pop() interface{} {
 	return item
 }
 
-func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
+func (spm SentencePiece) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
 		data := spm.vocab.Decode(id)
@@ -246,6 +244,6 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "ids", ids, "string", sb.String())
+	logutil.Trace("decoded", "ids", ids, "string", sb.String())
 	return sb.String(), nil
 }

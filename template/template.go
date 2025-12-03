@@ -6,15 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 	"sync"
 	"text/template"
 	"text/template/parse"
+	"time"
 
 	"github.com/agnivade/levenshtein"
-	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/api"
 )
@@ -121,6 +122,21 @@ var funcs = template.FuncMap{
 		b, _ := json.Marshal(v)
 		return string(b)
 	},
+	"currentDate": func(args ...string) string {
+		// Currently ignoring the format argument, but accepting it for future use
+		// Default format is YYYY-MM-DD
+		return time.Now().Format("2006-01-02")
+	},
+	"toTypeScriptType": func(v any) string {
+		if param, ok := v.(api.ToolProperty); ok {
+			return param.ToTypeScriptType()
+		}
+		// Handle pointer case
+		if param, ok := v.(*api.ToolProperty); ok && param != nil {
+			return param.ToTypeScriptType()
+		}
+		return "any"
+	},
 }
 
 func Parse(s string) (*Template, error) {
@@ -132,7 +148,12 @@ func Parse(s string) (*Template, error) {
 	}
 
 	t := Template{Template: tmpl, raw: s}
-	if vars := t.Vars(); !slices.Contains(vars, "messages") && !slices.Contains(vars, "response") {
+	vars, err := t.Vars()
+	if err != nil {
+		return nil, err
+	}
+
+	if !slices.Contains(vars, "messages") && !slices.Contains(vars, "response") {
 		// touch up the template and append {{ .Response }}
 		tmpl.Tree.Root.Nodes = append(tmpl.Tree.Root.Nodes, &response)
 	}
@@ -144,11 +165,15 @@ func (t *Template) String() string {
 	return t.raw
 }
 
-func (t *Template) Vars() []string {
+func (t *Template) Vars() ([]string, error) {
 	var vars []string
 	for _, tt := range t.Templates() {
 		for _, n := range tt.Root.Nodes {
-			vars = append(vars, Identifiers(n)...)
+			v, err := Identifiers(n)
+			if err != nil {
+				return vars, err
+			}
+			vars = append(vars, v...)
 		}
 	}
 
@@ -157,9 +182,11 @@ func (t *Template) Vars() []string {
 		set[strings.ToLower(n)] = struct{}{}
 	}
 
-	vars = maps.Keys(set)
-	slices.Sort(vars)
-	return vars
+	return slices.Sorted(maps.Keys(set)), nil
+}
+
+func (t *Template) Contains(s string) bool {
+	return strings.Contains(t.raw, s)
 }
 
 type Values struct {
@@ -168,6 +195,8 @@ type Values struct {
 	Prompt string
 	Suffix string
 	Think  bool
+	// ThinkLevel contains the thinking level if Think is true and a string value was provided
+	ThinkLevel string
 	// whether or not the user explicitly set the thinking flag (vs. it being
 	// implicitly false). Templates can't see whether `Think` is nil
 	IsThinkSet bool
@@ -224,21 +253,27 @@ func (t *Template) Subtree(fn func(parse.Node) bool) *template.Template {
 
 func (t *Template) Execute(w io.Writer, v Values) error {
 	system, messages := collate(v.Messages)
+	vars, err := t.Vars()
+	if err != nil {
+		return err
+	}
 	if v.Prompt != "" && v.Suffix != "" {
 		return t.Template.Execute(w, map[string]any{
 			"Prompt":     v.Prompt,
 			"Suffix":     v.Suffix,
 			"Response":   "",
 			"Think":      v.Think,
+			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
 		})
-	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
+	} else if !v.forceLegacy && slices.Contains(vars, "messages") {
 		return t.Template.Execute(w, map[string]any{
 			"System":     system,
 			"Messages":   messages,
 			"Tools":      v.Tools,
 			"Response":   "",
 			"Think":      v.Think,
+			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
 		})
 	}
@@ -253,6 +288,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 				"Prompt":     prompt,
 				"Response":   response,
 				"Think":      v.Think,
+				"ThinkLevel": v.ThinkLevel,
 				"IsThinkSet": v.IsThinkSet,
 			}); err != nil {
 				return err
@@ -300,31 +336,34 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		"Prompt":     prompt,
 		"Response":   response,
 		"Think":      v.Think,
+		"ThinkLevel": v.ThinkLevel,
 		"IsThinkSet": v.IsThinkSet,
 	}); err != nil {
 		return err
 	}
 
-	_, err := io.Copy(w, &b)
+	_, err = io.Copy(w, &b)
 	return err
 }
 
 // collate messages based on role. consecutive messages of the same role are merged
-// into a single message. collate also collects and returns all system messages.
+// into a single message (except for tool messages which preserve individual metadata).
+// collate also collects and returns all system messages.
 // collate mutates message content adding image tags ([img-%d]) as needed
+// todo(parthsareen): revisit for contextual image support
 func collate(msgs []api.Message) (string, []*api.Message) {
 	var system []string
 	var collated []*api.Message
 	for i := range msgs {
-		msg := msgs[i]
-		if msg.Role == "system" {
-			system = append(system, msg.Content)
+		if msgs[i].Role == "system" {
+			system = append(system, msgs[i].Content)
 		}
 
-		if len(collated) > 0 && collated[len(collated)-1].Role == msg.Role {
-			collated[len(collated)-1].Content += "\n\n" + msg.Content
+		// merges consecutive messages of the same role into a single message (except for tool messages)
+		if len(collated) > 0 && collated[len(collated)-1].Role == msgs[i].Role && msgs[i].Role != "tool" {
+			collated[len(collated)-1].Content += "\n\n" + msgs[i].Content
 		} else {
-			collated = append(collated, &msg)
+			collated = append(collated, &msgs[i])
 		}
 	}
 
@@ -332,27 +371,47 @@ func collate(msgs []api.Message) (string, []*api.Message) {
 }
 
 // Identifiers walks the node tree returning any identifiers it finds along the way
-func Identifiers(n parse.Node) []string {
+func Identifiers(n parse.Node) ([]string, error) {
 	switch n := n.(type) {
 	case *parse.ListNode:
 		var names []string
 		for _, n := range n.Nodes {
-			names = append(names, Identifiers(n)...)
+			i, err := Identifiers(n)
+			if err != nil {
+				return names, err
+			}
+			names = append(names, i...)
 		}
 
-		return names
+		return names, nil
 	case *parse.TemplateNode:
+		if n.Pipe == nil {
+			return nil, errors.New("undefined template specified")
+		}
 		return Identifiers(n.Pipe)
 	case *parse.ActionNode:
+		if n.Pipe == nil {
+			return nil, errors.New("undefined action in template")
+		}
 		return Identifiers(n.Pipe)
 	case *parse.BranchNode:
-		names := Identifiers(n.Pipe)
+		if n.Pipe == nil {
+			return nil, errors.New("undefined branch")
+		}
+		names, err := Identifiers(n.Pipe)
+		if err != nil {
+			return names, err
+		}
 		for _, n := range []*parse.ListNode{n.List, n.ElseList} {
 			if n != nil {
-				names = append(names, Identifiers(n)...)
+				i, err := Identifiers(n)
+				if err != nil {
+					return names, err
+				}
+				names = append(names, i...)
 			}
 		}
-		return names
+		return names, nil
 	case *parse.IfNode:
 		return Identifiers(&n.BranchNode)
 	case *parse.RangeNode:
@@ -363,17 +422,21 @@ func Identifiers(n parse.Node) []string {
 		var names []string
 		for _, c := range n.Cmds {
 			for _, a := range c.Args {
-				names = append(names, Identifiers(a)...)
+				i, err := Identifiers(a)
+				if err != nil {
+					return names, err
+				}
+				names = append(names, i...)
 			}
 		}
-		return names
+		return names, nil
 	case *parse.FieldNode:
-		return n.Ident
+		return n.Ident, nil
 	case *parse.VariableNode:
-		return n.Ident
+		return n.Ident, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // deleteNode walks the node list and deletes nodes that match the predicate

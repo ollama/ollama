@@ -305,7 +305,7 @@ func readGGUFV1StringsData(llm *gguf, r io.Reader, a *array[string]) (any, error
 
 			a.values[i] = e
 		} else {
-			discardGGUFString(llm, r)
+			_ = discardGGUFString(llm, r)
 		}
 	}
 
@@ -509,7 +509,10 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 }
 
 func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
-	alignment := kv.Uint("general.alignment", 32)
+	arch := kv.String("general.architecture")
+	if arch == "" {
+		return fmt.Errorf("architecture not set")
+	}
 
 	if err := binary.Write(f, binary.LittleEndian, []byte("GGUF")); err != nil {
 		return err
@@ -528,17 +531,22 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 	}
 
 	for _, key := range slices.Sorted(maps.Keys(kv)) {
-		if err := ggufWriteKV(f, key, kv[key]); err != nil {
+		if err := ggufWriteKV(f, arch, key, kv[key]); err != nil {
 			return err
 		}
 	}
 
-	slices.SortStableFunc(ts, func(a, b *Tensor) int {
-		if i, j := a.block(), b.block(); i > 0 && j > 0 {
-			return cmp.Compare(i, j)
-		}
-		return cmp.Compare(a.Name, b.Name)
-	})
+	slices.SortStableFunc(
+		ts,
+		func(a, b *Tensor) int {
+			return cmp.Or(
+				cmp.Compare(a.block(), b.block()),
+				cmp.Compare(a.Name, b.Name),
+			)
+		},
+	)
+
+	alignment := kv.Uint("general.alignment", 32)
 
 	var s uint64
 	for i := range ts {
@@ -560,7 +568,6 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
 	for _, t := range ts {
-		t := t
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
 		g.Go(func() error {
 			_, err := t.WriteTo(w)
@@ -571,7 +578,14 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 	return g.Wait()
 }
 
-func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
+func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
+	if !strings.HasPrefix(k, arch+".") &&
+		!strings.HasPrefix(k, "general.") &&
+		!strings.HasPrefix(k, "adapter.") &&
+		!strings.HasPrefix(k, "tokenizer.") {
+		k = arch + "." + k
+	}
+
 	slog.Debug(k, "type", fmt.Sprintf("%T", v))
 	if err := binary.Write(ws, binary.LittleEndian, uint64(len(k))); err != nil {
 		return err
