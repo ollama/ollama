@@ -466,7 +466,24 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 				embed = s.lc.GetEmbeddingsIth(seq.iBatch)
 			}
 
-			seq.embedding <- embed
+			// Validate embedding before sending
+			if embed == nil {
+				seq.embedding <- nil
+				s.removeSequence(i, llm.DoneReasonStop)
+				continue
+			}
+
+			if len(embed) == 0 {
+				seq.embedding <- nil
+				s.removeSequence(i, llm.DoneReasonStop)
+				continue
+			}
+
+			// Create a copy to avoid race conditions
+			embedCopy := make([]float32, len(embed))
+			copy(embedCopy, embed)
+
+			seq.embedding <- embedCopy
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
@@ -705,6 +722,17 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	embedding := <-seq.embedding
+
+	// Validate embedding before returning
+	if embedding == nil {
+		http.Error(w, "embedding generation returned nil", http.StatusInternalServerError)
+		return
+	}
+
+	if len(embedding) == 0 {
+		http.Error(w, "embedding generation returned empty vector", http.StatusInternalServerError)
+		return
+	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
 		Embedding: embedding,

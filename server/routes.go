@@ -478,12 +478,29 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
 	for i, text := range input {
+		i := i // capture loop variable
 		g.Go(func() error {
 			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
 				return err
 			}
-			embeddings[i] = normalize(embedding)
+			if embedding == nil {
+				return fmt.Errorf("embedding generation returned nil for input index %d", i)
+			}
+			if len(embedding) == 0 {
+				return fmt.Errorf("embedding generation returned empty vector for input index %d", i)
+			}
+			
+			// Create a copy to avoid race conditions during normalization
+			embeddingCopy := make([]float32, len(embedding))
+			copy(embeddingCopy, embedding)
+			
+			normalized := normalize(embeddingCopy)
+			if normalized == nil {
+				return fmt.Errorf("normalization failed for input index %d", i)
+			}
+			
+			embeddings[i] = normalized
 			return nil
 		})
 	}
@@ -504,6 +521,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 }
 
 func normalize(vec []float32) []float32 {
+	if vec == nil {
+		return nil
+	}
+	
 	var sum float32
 	for _, v := range vec {
 		sum += v * v
@@ -512,6 +533,11 @@ func normalize(vec []float32) []float32 {
 	norm := float32(0.0)
 	if sum > 0 {
 		norm = float32(1.0 / math.Sqrt(float64(sum)))
+	}
+
+	// Check for NaN or infinity in norm
+	if math.IsNaN(float64(norm)) || math.IsInf(float64(norm), 0) {
+		return nil
 	}
 
 	for i := range vec {
@@ -554,8 +580,25 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
+	if embedding == nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "embedding generation returned nil"})
+		return
+	}
+
+	if len(embedding) == 0 {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "embedding generation returned empty vector"})
+		return
+	}
+
+	// Normalize the embedding for consistency
+	normalizedEmbedding := normalize(embedding)
+	if normalizedEmbedding == nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "embedding normalization failed"})
+		return
+	}
+
 	var e []float64
-	for _, v := range embedding {
+	for _, v := range normalizedEmbedding {
 		e = append(e, float64(v))
 	}
 

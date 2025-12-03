@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"runtime"
 	"runtime/cgo"
@@ -125,7 +126,20 @@ type Context struct {
 
 var ErrKvCacheFull = errors.New("could not find a kv cache slot")
 
+func (m *Model) HasEncoder() bool {
+	return bool(C.llama_model_has_encoder(m.c))
+}
+
+func (m *Model) HasDecoder() bool {
+	return bool(C.llama_model_has_decoder(m.c))
+}
+
 func (c *Context) Decode(batch *Batch) error {
+	// Check if this is an encoder-only model that should use Encode instead
+	if c.Model().HasEncoder() && !c.Model().HasDecoder() {
+		return c.Encode(batch)
+	}
+	
 	// Positive return values does not mean a fatal error, but rather a warning.
 	//   0 - success
 	//   1 - could not find a KV slot for the batch (try reducing the size of the batch or increase the context)
@@ -138,6 +152,19 @@ func (c *Context) Decode(batch *Batch) error {
 
 	if code > 0 {
 		return ErrKvCacheFull
+	}
+
+	return nil
+}
+
+func (c *Context) Encode(batch *Batch) error {
+	// Process batch using llama_encode for encoder-only models
+	//   0 - success
+	// < 0 - error
+	code := int(C.llama_encode(c.c, batch.c))
+
+	if code < 0 {
+		return fmt.Errorf("llama_encode failed with code %d", code)
 	}
 
 	return nil
@@ -178,8 +205,26 @@ func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 		return nil
 	}
 
-	embeddings := make([]float32, c.Model().NEmbd())
-	_ = copy(embeddings, unsafe.Slice((*float32)(e), c.Model().NEmbd()))
+	embeddingDim := c.Model().NEmbd()
+	if embeddingDim <= 0 {
+		return nil
+	}
+
+	embeddings := make([]float32, embeddingDim)
+	copied := copy(embeddings, unsafe.Slice((*float32)(e), embeddingDim))
+	
+	// Validate that we copied the expected number of elements
+	if copied != embeddingDim {
+		return nil
+	}
+	
+	// Check for NaN or infinity values
+	for _, v := range embeddings {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return nil
+		}
+	}
+	
 	return embeddings
 }
 
@@ -189,8 +234,26 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 		return nil
 	}
 
-	embeddings := make([]float32, c.Model().NEmbd())
-	_ = copy(embeddings, unsafe.Slice((*float32)(e), c.Model().NEmbd()))
+	embeddingDim := c.Model().NEmbd()
+	if embeddingDim <= 0 {
+		return nil
+	}
+
+	embeddings := make([]float32, embeddingDim)
+	copied := copy(embeddings, unsafe.Slice((*float32)(e), embeddingDim))
+	
+	// Validate that we copied the expected number of elements
+	if copied != embeddingDim {
+		return nil
+	}
+	
+	// Check for NaN or infinity values
+	for _, v := range embeddings {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return nil
+		}
+	}
+	
 	return embeddings
 }
 
