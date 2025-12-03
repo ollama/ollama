@@ -494,13 +494,14 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variables
-func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
+// Set mustFilter true to enable filtering of CUDA devices
+func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
 	env := map[string]string{}
 	for _, d := range l {
-		d.updateVisibleDevicesEnv(env)
+		d.updateVisibleDevicesEnv(env, mustFilter)
 	}
 	return env
 }
@@ -532,7 +533,7 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	return false
 }
 
-func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
+func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) {
 	var envVar string
 	switch d.Library {
 	case "ROCm":
@@ -541,8 +542,15 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 		if runtime.GOOS != "linux" {
 			envVar = "HIP_VISIBLE_DEVICES"
 		}
+	case "CUDA":
+		if !mustFilter {
+			// By default we try to avoid filtering CUDA devices because ROCm also
+			// looks at the CUDA env var, and gets confused in mixed vendor environments.
+			return
+		}
+		envVar = "CUDA_VISIBLE_DEVICES"
 	default:
-		// CUDA and Vulkan are not filtered via env var, but via scheduling decisions
+		// Vulkan is not filtered via env var, but via scheduling decisions
 		return
 	}
 	v, existing := env[envVar]
