@@ -244,6 +244,8 @@ RUN apt-get update \
         openssl \
         passwd \
         tar \
+    # Исправление уязвимостей CVE-2025-45582 (tar), CVE-2025-8941 (pam), CVE-2016-2781 (coreutils), \
+    # CVE-2022-3219 (gnupg2), CVE-2024-2236 (libgcrypt), CVE-2024-41996 (openssl), CVE-2024-56433 (passwd)
     && apt-get install -y --only-upgrade \
         coreutils \
         gnupg2 \

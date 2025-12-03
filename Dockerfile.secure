@@ -207,6 +207,8 @@ RUN apt-get update \
     && apt-get upgrade -y \
         openssl libssl3 ca-certificates \
         libpam0g coreutils gnupg2 libgcrypt20 tar passwd \
+    # Исправление уязвимостей CVE-2025-45582 (tar), CVE-2025-8941 (pam), CVE-2016-2781 (coreutils), \
+    # CVE-2022-3219 (gnupg2), CVE-2024-2236 (libgcrypt), CVE-2024-41996 (openssl), CVE-2024-56433 (passwd)
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && update-ca-certificates
