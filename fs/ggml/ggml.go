@@ -831,6 +831,7 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"gemma3",
 		"gptoss", "gpt-oss",
+		"mistral3",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
