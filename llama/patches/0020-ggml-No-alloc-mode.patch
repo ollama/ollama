@@ -75,7 +75,7 @@ index 0f5b03cef..7bdf9d81f 100644
  
      struct ggml_backend {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index f511e8d76..74b7f070c 100644
+index 312ca873c..4092dfe8a 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -41,6 +41,19 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t
@@ -121,10 +121,10 @@ index f511e8d76..74b7f070c 100644
      void * base = buffer->iface.get_base(buffer);
  
      GGML_ASSERT(base != NULL && "backend buffer base cannot be NULL");
-@@ -725,6 +745,12 @@ struct ggml_backend_sched {
-     int batch_size; // a hint on the batch size to optimize processing, -1 to use heuristics
- 
-     int debug;
+@@ -731,6 +751,12 @@ struct ggml_backend_sched {
+     int debug_realloc;
+     int debug_graph_size;
+     int debug_prev_graph_size;
 +
 +    // allocate buffers on attached ggml_backend_buffer_type_t's and during reservation
 +    // if false, dummy buffers are used for faster memory sizing calculations
@@ -134,7 +134,7 @@ index f511e8d76..74b7f070c 100644
  };
  
  #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
-@@ -1614,6 +1640,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1630,6 +1656,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
          size_t graph_size,
          bool parallel,
          bool op_offload) {
@@ -152,7 +152,7 @@ index f511e8d76..74b7f070c 100644
      GGML_ASSERT(n_backends > 0);
      GGML_ASSERT(n_backends <= GGML_SCHED_MAX_BACKENDS);
      GGML_ASSERT(ggml_backend_dev_type(ggml_backend_get_device(backends[n_backends - 1])) == GGML_BACKEND_DEVICE_TYPE_CPU);
-@@ -1655,11 +1692,14 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1682,11 +1719,14 @@ ggml_backend_sched_t ggml_backend_sched_new(
                  sched->events[b][c] = ggml_backend_event_new(backends[b]->device);
              }
          }
@@ -167,7 +167,7 @@ index f511e8d76..74b7f070c 100644
  
      ggml_backend_sched_reset(sched);
  
-@@ -1674,6 +1714,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+@@ -1701,6 +1741,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
          for (int c = 0; c < sched->n_copies; c++) {
              ggml_backend_event_free(sched->events[b][c]);
          }
@@ -178,7 +178,7 @@ index f511e8d76..74b7f070c 100644
      }
      ggml_gallocr_free(sched->galloc);
      ggml_free(sched->ctx);
-@@ -1719,6 +1763,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
+@@ -1746,6 +1790,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
          return false;
      }
  
@@ -203,7 +203,7 @@ index f511e8d76..74b7f070c 100644
      ggml_backend_sched_reset(sched);
  
      return true;
-@@ -1824,7 +1886,13 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched,
+@@ -1851,7 +1913,13 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched,
      int backend_index = ggml_backend_sched_backend_id(sched, backend);
      GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
  
@@ -219,7 +219,7 @@ index f511e8d76..74b7f070c 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 611341deb..ee463af9c 100644
+index c4529f5d9..8b0fb5d42 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -37,6 +37,41 @@
@@ -264,7 +264,7 @@ index 611341deb..ee463af9c 100644
  #define STRINGIZE_IMPL(...) #__VA_ARGS__
  #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
  
-@@ -891,6 +926,9 @@ struct ggml_cuda_pool {
+@@ -938,6 +973,9 @@ struct ggml_cuda_pool {
  
      virtual void * alloc(size_t size, size_t * actual_size) = 0;
      virtual void free(void * ptr, size_t size) = 0;
@@ -274,7 +274,7 @@ index 611341deb..ee463af9c 100644
  };
  
  template<typename T>
-@@ -1179,11 +1217,15 @@ struct ggml_backend_cuda_context {
+@@ -1229,11 +1267,15 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
  
@@ -292,7 +292,7 @@ index 611341deb..ee463af9c 100644
          }
          return *pools[device][curr_stream_no];
      }
-@@ -1191,6 +1233,22 @@ struct ggml_backend_cuda_context {
+@@ -1241,6 +1283,22 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -316,10 +316,10 @@ index 611341deb..ee463af9c 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 78fb2d8b3..f1c178f31 100644
+index 8b18e24de..9dc979b09 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -361,6 +361,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
+@@ -364,6 +364,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
  
  // #define DEBUG_CUDA_MALLOC
  
@@ -328,7 +328,7 @@ index 78fb2d8b3..f1c178f31 100644
  // buffer pool for cuda (legacy)
  struct ggml_cuda_pool_leg : public ggml_cuda_pool {
      static const int MAX_BUFFERS = 256;
-@@ -373,9 +375,12 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -376,9 +378,12 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
  
      ggml_cuda_buffer buffer_pool[MAX_BUFFERS] = {};
      size_t pool_size = 0;
@@ -343,7 +343,7 @@ index 78fb2d8b3..f1c178f31 100644
      }
  
      ~ggml_cuda_pool_leg() {
-@@ -383,7 +388,9 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -386,7 +391,9 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
          for (int i = 0; i < MAX_BUFFERS; ++i) {
              ggml_cuda_buffer & b = buffer_pool[i];
              if (b.ptr != nullptr) {
@@ -354,7 +354,7 @@ index 78fb2d8b3..f1c178f31 100644
                  pool_size -= b.size;
              }
          }
-@@ -431,8 +438,15 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -434,8 +441,15 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
          void * ptr;
          size_t look_ahead_size = (size_t) (1.05 * size);
          look_ahead_size = 256 * ((look_ahead_size + 255)/256);
@@ -372,7 +372,7 @@ index 78fb2d8b3..f1c178f31 100644
          *actual_size = look_ahead_size;
          pool_size += look_ahead_size;
  #ifdef DEBUG_CUDA_MALLOC
-@@ -452,10 +466,20 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -455,10 +469,20 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
              }
          }
          GGML_LOG_DEBUG(GGML_CUDA_NAME " buffer pool full, increase MAX_CUDA_BUFFERS\n");
@@ -395,7 +395,7 @@ index 78fb2d8b3..f1c178f31 100644
  };
  
  // pool with virtual memory
-@@ -467,18 +491,24 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -470,18 +494,24 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
      CUdeviceptr pool_addr = 0;
      size_t pool_used = 0;
      size_t pool_size = 0;
@@ -423,7 +423,7 @@ index 78fb2d8b3..f1c178f31 100644
  #if defined(GGML_USE_HIP)
              // Workaround for https://github.com/ROCm/ROCR-Runtime/issues/285
              for (std::pair<CUdeviceptr, size_t> & mapping : mappings) {
-@@ -505,35 +535,49 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -508,35 +538,49 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
  
              GGML_ASSERT(pool_size + reserve_size <= CUDA_POOL_VMM_MAX_SIZE);
  
@@ -499,7 +499,7 @@ index 78fb2d8b3..f1c178f31 100644
  
              // add to the pool
              pool_size += reserve_size;
-@@ -566,17 +610,27 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -569,17 +613,27 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
          // all deallocations must be in reverse order of the allocations
          GGML_ASSERT(ptr == (void *) ((char *)(pool_addr) + pool_used));
      }
@@ -530,7 +530,7 @@ index 78fb2d8b3..f1c178f31 100644
  }
  
  // destroying a cuBLAS handle while a graph is being captured in a different thread can result in a CUDA error
-@@ -760,11 +814,20 @@ static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_bac
+@@ -763,11 +817,20 @@ static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_bac
  }
  
  static size_t ggml_backend_cuda_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
@@ -552,7 +552,7 @@ index 78fb2d8b3..f1c178f31 100644
  static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
      size_t size = ggml_nbytes(tensor);
      int64_t ne0 = tensor->ne[0];
-@@ -788,6 +851,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface
+@@ -791,6 +854,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface
      /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
      /* .get_alloc_size   = */ ggml_backend_cuda_buffer_type_get_alloc_size,
      /* .is_host          = */ NULL,
@@ -560,7 +560,7 @@ index 78fb2d8b3..f1c178f31 100644
  };
  
  ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
-@@ -3258,6 +3322,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx,
+@@ -3270,6 +3334,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx,
  
  static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
      bool & graph_evaluated_or_captured, bool & use_cuda_graph, bool & cuda_graph_update_required) {
@@ -568,7 +568,7 @@ index 78fb2d8b3..f1c178f31 100644
      // flag used to determine whether it is an integrated_gpu
      const bool integrated = ggml_cuda_info().devices[cuda_ctx->device].integrated;
  
-@@ -3347,6 +3412,10 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+@@ -3406,6 +3471,10 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
                      continue;
                  }
  
@@ -579,7 +579,7 @@ index 78fb2d8b3..f1c178f31 100644
  
                  // start of fusion operations
                  static bool disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
-@@ -3691,6 +3760,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+@@ -3750,6 +3819,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
  
  static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
@@ -587,7 +587,7 @@ index 78fb2d8b3..f1c178f31 100644
  
      ggml_cuda_set_device(cuda_ctx->device);
  
-@@ -3766,6 +3836,77 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3825,6 +3895,77 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  }
  
@@ -665,7 +665,7 @@ index 78fb2d8b3..f1c178f31 100644
  static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
-@@ -4035,6 +4176,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+@@ -4093,6 +4234,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
      /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,

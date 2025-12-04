@@ -25,7 +25,7 @@ index 79ee20206..3efb22f01 100644
      // get ith C string from array with given key_id
      GGML_API const char * gguf_get_arr_str (const struct gguf_context * ctx, int64_t key_id, size_t i);
 diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
-index 8cc4ef1cf..d950dbdf5 100644
+index b165d8bdc..f91d4faba 100644
 --- a/ggml/src/gguf.cpp
 +++ b/ggml/src/gguf.cpp
 @@ -805,10 +805,14 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
@@ -53,7 +53,7 @@ index 8cc4ef1cf..d950dbdf5 100644
  }
  
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 1525283d7..ea450c361 100644
+index dfba7778b..f72f321b9 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -1781,9 +1781,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {

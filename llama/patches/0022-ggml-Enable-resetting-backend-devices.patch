@@ -43,7 +43,7 @@ index 7bdf9d81f..21b35ac5c 100644
  
      struct ggml_backend_device {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 74b7f070c..8d2cc167f 100644
+index 4092dfe8a..a1a19fe51 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -526,6 +526,14 @@ ggml_backend_t ggml_backend_dev_init(ggml_backend_dev_t device, const char * par
@@ -62,10 +62,10 @@ index 74b7f070c..8d2cc167f 100644
      GGML_ASSERT(device);
      return device->iface.get_buffer_type(device);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index f1c178f31..1110ca372 100644
+index 9dc979b09..7e817d6ff 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -109,6 +109,11 @@ int ggml_cuda_get_device() {
+@@ -112,6 +112,11 @@ int ggml_cuda_get_device() {
      return id;
  }
  
@@ -77,7 +77,7 @@ index f1c178f31..1110ca372 100644
  static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
      ggml_cuda_set_device(device);
      cudaError_t err;
-@@ -4386,7 +4391,10 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+@@ -4444,7 +4449,10 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
      props->id          = ggml_backend_cuda_device_get_id(dev);
      props->type        = ggml_backend_cuda_device_get_type(dev);
      props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
@@ -89,7 +89,7 @@ index f1c178f31..1110ca372 100644
  
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
-@@ -4841,6 +4849,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
+@@ -4902,6 +4910,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
      CUDA_CHECK(cudaEventSynchronize((cudaEvent_t)event->context));
  }
  
@@ -101,7 +101,7 @@ index f1c178f31..1110ca372 100644
  static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
      /* .get_name                = */ ggml_backend_cuda_device_get_name,
      /* .get_description         = */ ggml_backend_cuda_device_get_description,
-@@ -4857,6 +4870,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+@@ -4918,6 +4931,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
      /* .event_new               = */ ggml_backend_cuda_device_event_new,
      /* .event_free              = */ ggml_backend_cuda_device_event_free,
      /* .event_synchronize       = */ ggml_backend_cuda_device_event_synchronize,
