@@ -687,7 +687,7 @@ func (b *Backend) CacheConfig() ml.CacheConfig {
 	if b.flashAttention {
 		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
 	} else {
-		return ml.CacheConfig{CachePadding: 32, PermutedV: true}
+		return ml.CacheConfig{CachePadding: 256, PermutedV: true}
 	}
 }
 
