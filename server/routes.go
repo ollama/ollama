@@ -175,7 +175,7 @@ func signinURL() (string, error) {
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
-	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+	if err := bindJSON(c, &req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -639,7 +639,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 func (s *Server) EmbedHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.EmbedRequest
-	err := c.ShouldBindJSON(&req)
+	// err := bindJSON(c, &req)
+	err := strictBindJson(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -793,7 +794,8 @@ func normalize(vec []float32) []float32 {
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	var req api.EmbeddingRequest
-	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+	// if err := bindJSON(c, &req); errors.Is(err, io.EOF) {
+	if err := strictBindJson(c, &req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -838,7 +840,8 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
-	err := c.ShouldBindJSON(&req)
+	// err := bindJSON(c, &req)
+	err := strictBindJson(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -887,9 +890,39 @@ func (s *Server) PullHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func strictBindJson(c *gin.Context, obj any) error {
+	if c.Request.Body == nil {
+		return io.EOF
+	}
+
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(obj); err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("malformed JSON at position %d", syntaxError.Offset)
+		case errors.As(err, &unmarshalTypeError):
+			return fmt.Errorf("invalid value for field %q", unmarshalTypeError.Field)
+		case strings.HasPrefix(err.Error(), "json: unknown field"):
+			field := strings.TrimPrefix(err.Error(), "json: unknown field ")
+			return fmt.Errorf("unknown field %s in request", field)
+		case errors.Is(err, io.EOF):
+			return io.EOF
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) PushHandler(c *gin.Context) {
 	var req api.PushRequest
-	err := c.ShouldBindJSON(&req)
+	// err := bindJSON(c, &req)
+	err := strictBindJson(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -972,7 +1005,8 @@ func getExistingName(n model.Name) (model.Name, error) {
 
 func (s *Server) DeleteHandler(c *gin.Context) {
 	var r api.DeleteRequest
-	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+	// if err := bindJSON(c, &r); errors.Is(err, io.EOF) {
+	if err := strictBindJson(c, &r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -1259,7 +1293,8 @@ func (s *Server) ListHandler(c *gin.Context) {
 
 func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
-	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+	// if err := bindJSON(c, &r); errors.Is(err, io.EOF) {
+	if err := strictBindJson(c, &r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -1845,7 +1880,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
 	var req api.ChatRequest
-	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+	// if err := bindJSON(c, &req); errors.Is(err, io.EOF) {
+	if err := strictBindJson(c, &req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
