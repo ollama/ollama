@@ -119,14 +119,26 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
     }
 }
 
-bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const int64_t * src0_ne, const int src1_ncols, bool mul_mat_id) {
-
+bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const int64_t * src0_ne,
+        const size_t * src0_nb, const int src1_ncols, bool mul_mat_id) {
     if (ggml_is_quantized(type)) {
         return false;
     }
 
-    if (src0_ne[0] % (warp_size * (4/ggml_type_size(type))) != 0) {
+    const size_t ts = ggml_type_size(type);
+    if (src0_ne[0] % (warp_size * (4/ts)) != 0) {
         return false;
+    }
+
+    if (src0_nb[0] != ts) {
+        return false;
+    }
+
+    // Pointers not aligned to the size of half2/nv_bfloat162/float2 would result in a crash:
+    for (size_t i = 1; i < GGML_MAX_DIMS; ++i) {
+        if (src0_nb[i] % (2*ts) != 0) {
+            return false;
+        }
     }
     if (src0_ne[1] % MMF_ROWS_PER_BLOCK != 0) {
         return false;
@@ -148,9 +160,9 @@ bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const 
         case GGML_TYPE_F32:
             return ampere_mma_available(cc);
         case GGML_TYPE_F16:
-            return turing_mma_available(cc);
+            return volta_mma_available(cc) || turing_mma_available(cc) || amd_wmma_available(cc);
         case GGML_TYPE_BF16:
-            return ampere_mma_available(cc);
+            return ampere_mma_available(cc) || amd_wmma_available(cc);
         default:
             return false;
     }
