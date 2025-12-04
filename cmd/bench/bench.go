@@ -148,14 +148,13 @@ func BenchmarkChat(fOpt flagOptions) error {
 	}
 
 	var out io.Writer = os.Stdout
-	var outFile *os.File
 	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
 		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: cannot open output file %s: %v\n", *fOpt.outputFile, err)
 			return err
 		}
-		outFile = f
+		defer f.Close()
 		out = f
 	}
 
@@ -261,11 +260,6 @@ func BenchmarkChat(fOpt flagOptions) error {
 		}
 	}
 
-	if outFile != nil {
-		if err := outFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: failed to close output file %s: %v\n", *fOpt.outputFile, err)
-		}
-	}
 	return nil
 }
 
