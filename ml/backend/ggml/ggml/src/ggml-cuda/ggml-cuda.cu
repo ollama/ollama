@@ -3913,12 +3913,18 @@ static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, 
 
 static size_t ggml_backend_cuda_buffer_size(ggml_backend_t backend) {
     ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
-    return ctx->pool_get_alloc_size();
+    size_t allocs = 0;
+    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; i++) {
+        allocs += ctx->pool_get_alloc_size(i);
+    }
+    return allocs;
 }
 
 static void ggml_backend_cuda_reset(ggml_backend_t backend) {
     ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
-    ctx->pools[ctx->device][ctx->curr_stream_no] = NULL;
+    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; i++) {
+        ctx->pools[ctx->device][i] = NULL;
+    }
 }
 
 static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
