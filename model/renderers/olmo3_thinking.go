@@ -49,7 +49,7 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 	sb.WriteString(systemContent)
 
 	if len(tools) > 0 {
-		functionsJSON, err := olmo3ThinkingMarshalWithSpaces(tools)
+		functionsJSON, err := marshalWithSpaces(tools)
 		if err != nil {
 			return "", err
 		}
@@ -94,7 +94,7 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 						},
 					}
 				}
-				toolCallsJSON, err := olmo3ThinkingMarshalWithSpaces(toolCalls)
+				toolCallsJSON, err := marshalWithSpaces(toolCalls)
 				if err != nil {
 					return "", err
 				}
@@ -127,49 +127,4 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 	}
 
 	return sb.String(), nil
-}
-
-func olmo3ThinkingMarshalWithSpaces(v any) ([]byte, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	return olmo3ThinkingAddJSONSpaces(data), nil
-}
-
-func olmo3ThinkingAddJSONSpaces(data []byte) []byte {
-	result := make([]byte, 0, len(data))
-	inString := false
-	escaped := false
-
-	for i := range data {
-		c := data[i]
-
-		if escaped {
-			result = append(result, c)
-			escaped = false
-			continue
-		}
-
-		if c == '\\' && inString {
-			result = append(result, c)
-			escaped = true
-			continue
-		}
-
-		if c == '"' {
-			inString = !inString
-			result = append(result, c)
-			continue
-		}
-
-		if !inString && (c == ':' || c == ',') {
-			result = append(result, c, ' ')
-			continue
-		}
-
-		result = append(result, c)
-	}
-
-	return result
 }
