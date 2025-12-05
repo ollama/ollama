@@ -42,6 +42,8 @@ func TestWriteGGUF(t *testing.T) {
 				"general.architecture": "test",
 				"general.alignment":    uint32(16),
 				"test.key":             "value",
+				"test.int32_key":       int32(-42),
+				"test.int64_key":       int64(-9223372036854775808),
 				"attention.key":        "value2",
 				"tokenizer.key":        "value3",
 				"adapter.key":          "value4",
@@ -65,6 +67,8 @@ func TestWriteGGUF(t *testing.T) {
 				"general.alignment":       uint32(16),
 				"general.parameter_count": uint64(54),
 				"test.key":                "value",
+				"test.int32_key":          int32(-42),
+				"test.int64_key":          int64(-9223372036854775808),
 				"test.attention.key":      "value2",
 				"tokenizer.key":           "value3",
 				"adapter.key":             "value4",
@@ -73,7 +77,7 @@ func TestWriteGGUF(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(Tensors{
-				Offset: 800,
+				Offset: 864,
 				items: []*Tensor{
 					{Name: "blk.0.attn_k.weight", Offset: 0, Shape: []uint64{2, 3}},
 					{Name: "blk.0.attn_norm.weight", Offset: 32, Shape: []uint64{2, 3}},
