@@ -8,24 +8,24 @@ import (
 )
 
 const (
-	olmo3ThinkingDefaultSystemMessage = "You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai."
-	olmo3ThinkingNoFunctionsMessage   = " You do not currently have access to any functions."
+	olmo3ThinkDefaultSystemMessage = "You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai."
+	olmo3ThinkNoFunctionsMessage   = " You do not currently have access to any functions."
 )
 
-type Olmo3ThinkingRenderer struct{}
+type Olmo3ThinkRenderer struct{}
 
-type olmo3ThinkingToolCall struct {
-	ID       string                    `json:"id,omitempty"`
-	Type     string                    `json:"type,omitempty"`
-	Function olmo3ThinkingToolCallFunc `json:"function"`
+type olmo3ThinkToolCall struct {
+	ID       string                 `json:"id,omitempty"`
+	Type     string                 `json:"type,omitempty"`
+	Function olmo3ThinkToolCallFunc `json:"function"`
 }
 
-type olmo3ThinkingToolCallFunc struct {
+type olmo3ThinkToolCallFunc struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+func (r *Olmo3ThinkRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
 	var systemMessage *api.Message
@@ -40,7 +40,7 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 		filteredMessages = append(filteredMessages, message)
 	}
 
-	systemContent := olmo3ThinkingDefaultSystemMessage
+	systemContent := olmo3ThinkDefaultSystemMessage
 	if systemMessage != nil {
 		systemContent = systemMessage.Content
 	}
@@ -57,7 +57,7 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 		sb.WriteString(string(functionsJSON))
 		sb.WriteString("</functions>")
 	} else {
-		sb.WriteString(olmo3ThinkingNoFunctionsMessage)
+		sb.WriteString(olmo3ThinkNoFunctionsMessage)
 		sb.WriteString(" <functions></functions>")
 	}
 	sb.WriteString("<|im_end|>\n")
@@ -79,16 +79,16 @@ func (r *Olmo3ThinkingRenderer) Render(messages []api.Message, tools []api.Tool,
 			}
 
 			if len(message.ToolCalls) > 0 {
-				toolCalls := make([]olmo3ThinkingToolCall, len(message.ToolCalls))
+				toolCalls := make([]olmo3ThinkToolCall, len(message.ToolCalls))
 				for j, tc := range message.ToolCalls {
 					argsJSON, err := json.Marshal(tc.Function.Arguments)
 					if err != nil {
 						return "", err
 					}
-					toolCalls[j] = olmo3ThinkingToolCall{
+					toolCalls[j] = olmo3ThinkToolCall{
 						ID:   tc.ID,
 						Type: "function",
-						Function: olmo3ThinkingToolCallFunc{
+						Function: olmo3ThinkToolCallFunc{
 							Name:      tc.Function.Name,
 							Arguments: string(argsJSON),
 						},

@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestOlmo3ThinkingRenderer(t *testing.T) {
+func TestOlmo3ThinkRenderer(t *testing.T) {
 	tests := []struct {
 		name     string
 		msgs     []api.Message
@@ -212,7 +212,7 @@ func TestOlmo3ThinkingRenderer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := (&Olmo3ThinkingRenderer{}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Olmo3ThinkRenderer{}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
