@@ -44,6 +44,8 @@ func TestWriteGGUF(t *testing.T) {
 				"test.key":             "value",
 				"test.int32_key":       int32(-42),
 				"test.int64_key":       int64(-9223372036854775808),
+				"test.int32_array":     []int32{-1, 0, 1, 2147483647, -2147483648},
+				"test.int64_array":     []int64{-1, 0, 1, 9223372036854775807, -9223372036854775808},
 				"attention.key":        "value2",
 				"tokenizer.key":        "value3",
 				"adapter.key":          "value4",
@@ -57,7 +59,7 @@ func TestWriteGGUF(t *testing.T) {
 			}
 			defer r.Close()
 
-			ff, err := Decode(r, 0)
+			ff, err := Decode(r, -1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,15 +71,17 @@ func TestWriteGGUF(t *testing.T) {
 				"test.key":                "value",
 				"test.int32_key":          int32(-42),
 				"test.int64_key":          int64(-9223372036854775808),
+				"test.int32_array":        &array[int32]{size: 5, values: []int32{-1, 0, 1, 2147483647, -2147483648}},
+				"test.int64_array":        &array[int64]{size: 5, values: []int64{-1, 0, 1, 9223372036854775807, -9223372036854775808}},
 				"test.attention.key":      "value2",
 				"tokenizer.key":           "value3",
 				"adapter.key":             "value4",
-			}, ff.KV()); diff != "" {
+			}, ff.KV(), cmp.AllowUnexported(array[int32]{}, array[int64]{})); diff != "" {
 				t.Errorf("Mismatch (-want +got):\n%s", diff)
 			}
 
 			if diff := cmp.Diff(Tensors{
-				Offset: 864,
+				Offset: 992,
 				items: []*Tensor{
 					{Name: "blk.0.attn_k.weight", Offset: 0, Shape: []uint64{2, 3}},
 					{Name: "blk.0.attn_norm.weight", Offset: 32, Shape: []uint64{2, 3}},

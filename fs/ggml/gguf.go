@@ -615,6 +615,10 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 		err = writeGGUFArray(ws, ggufTypeInt32, v)
 	case *array[int32]:
 		err = writeGGUFArray(ws, ggufTypeInt32, v.values)
+	case []int64:
+		err = writeGGUFArray(ws, ggufTypeInt64, v)
+	case *array[int64]:
+		err = writeGGUFArray(ws, ggufTypeInt64, v.values)
 	case []uint32:
 		err = writeGGUFArray(ws, ggufTypeUint32, v)
 	case *array[uint32]:
