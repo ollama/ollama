@@ -262,9 +262,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			slog.Warn("embedded messages in the model not supported with '/api/generate'; try '/api/chat' instead")
 		}
 
-		contentType := "application/json; charset=utf-8"
-		if req.Stream != nil && *req.Stream {
-			contentType = "application/x-ndjson"
+		contentType := "application/x-ndjson"
+		if req.Stream != nil && !*req.Stream {
+			contentType = "application/json; charset=utf-8"
 		}
 		c.Header("Content-Type", contentType)
 
@@ -1939,9 +1939,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		contentType := "application/json; charset=utf-8"
-		if req.Stream != nil && *req.Stream {
-			contentType = "application/x-ndjson"
+		contentType := "application/x-ndjson"
+		if req.Stream != nil && !*req.Stream {
+			contentType = "application/json; charset=utf-8"
 		}
 		c.Header("Content-Type", contentType)
 
