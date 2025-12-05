@@ -634,6 +634,67 @@ func TestSchedFindRunnerToUnload(t *testing.T) {
 	require.Equal(t, r1, resp)
 }
 
+func TestSchedNoEvictPreventsUnload(t *testing.T) {
+	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
+	t.Setenv("OLLAMA_NO_MODEL_EVICT", "1")
+
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	first := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: time.Second}, nil)
+	second := newScenarioRequest(t, ctx, "ollama-model-2", 10, &api.Duration{Duration: time.Second}, nil)
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+	servers := map[string]*mockLlm{
+		first.req.model.ModelPath:  first.srv,
+		second.req.model.ModelPath: second.srv,
+	}
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		if srv, ok := servers[model]; ok {
+			srv.modelPath = model
+			return srv, nil
+		}
+		return nil, errors.New("unexpected model")
+	}
+
+	s.Run(ctx)
+
+	firstSuccess, firstErr := s.GetRunner(first.ctx, first.req.model, first.req.opts, first.req.sessionDuration)
+	select {
+	case resp := <-firstSuccess:
+		require.Equal(t, first.srv, resp.llama)
+		require.Empty(t, firstErr)
+	case err := <-firstErr:
+		t.Fatalf("unexpected error: %s", err)
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for first runner")
+	}
+
+	secondSuccess, secondErr := s.GetRunner(second.ctx, second.req.model, second.req.opts, second.req.sessionDuration)
+	select {
+	case <-secondSuccess:
+		t.Fatal("expected eviction to be blocked")
+	case err := <-secondErr:
+		require.ErrorContains(t, err, "OLLAMA_NO_MODEL_EVICT")
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for eviction error")
+	}
+
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 1)
+	_, ok := s.loaded[first.req.model.ModelPath]
+	s.loadedMu.Unlock()
+	require.True(t, ok)
+	require.False(t, first.srv.closeCalled)
+	require.False(t, second.srv.closeCalled)
+
+	first.ctxDone()
+	time.Sleep(10 * time.Millisecond)
+}
+
 func TestSchedNeedsReload(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
