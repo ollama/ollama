@@ -147,10 +147,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			// TODO: this is incorrect since the file might be in a subdirectory
-			//       instead this should take the path relative to the model directory
-			//       but the current implementation does not allow this
-			files.Store(filepath.Base(f), digest)
+			files.Store(f, digest)
 			return nil
 		})
 	}
@@ -162,8 +159,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			// TODO: same here
-			adapters.Store(filepath.Base(f), digest)
+			adapters.Store(f, digest)
 			return nil
 		})
 	}
