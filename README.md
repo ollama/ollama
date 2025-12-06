@@ -432,6 +432,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Clueless](https://github.com/KashyapTan/clueless) (Open Source & Local Cluely: A desktop application LLM assistant to help you talk to anything on your screen using locally served Ollama models. Also undetectable to screenshare)
 - [ollama-co2](https://github.com/carbonatedWaterOrg/ollama-co2) (FastAPI web interface for monitoring and managing local and remote Ollama servers with real-time model monitoring and concurrent downloads)
 - [Hillnote](https://hillnote.com) (A Markdown-first workspace designed to supercharge your AI workflow. Create documents ready to integrate with Claude, ChatGPT, Gemini, Cursor, and more - all while keeping your work on your device.)
+- [Atlas UI](https://github.com/sandialabs/atlas-ui-3) (Chat UI for US Government use, developed by Sandia National Labs, a DOE national laboratory)
 
 ### Cloud
 
