@@ -554,6 +554,9 @@ type CreateRequest struct {
 	Renderer string `json:"renderer,omitempty"`
 	Parser   string `json:"parser,omitempty"`
 
+	// Requires is the minimum version of Ollama required by the model.
+	Requires string `json:"requires,omitempty"`
+
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
 
@@ -604,6 +607,7 @@ type ShowResponse struct {
 	Tensors       []Tensor           `json:"tensors,omitempty"`
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
+	Requires      string             `json:"requires,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
