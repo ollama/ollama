@@ -1257,6 +1257,22 @@ func (s *Server) ListHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
+func (s *Server) ModelsSizeHandler(c *gin.Context) {
+
+	manifests, err := Manifests(true)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var bytes_size int64
+	for _, m := range manifests {
+		bytes_size += m.Size()
+	}
+
+	c.JSON(http.StatusOK, gin.H{"total_size_bytes": bytes_size, "models_count": len(manifests)})
+}
+
 func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -1497,6 +1513,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
+	r.GET("/api/models/size", s.ModelsSizeHandler)
 
 	r.POST("/api/me", s.WhoamiHandler)
 
