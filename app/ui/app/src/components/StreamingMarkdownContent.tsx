@@ -5,14 +5,12 @@ import remarkCitationParser from "@/utils/remarkCitationParser";
 interface StreamingMarkdownContentProps {
   content: string;
   isStreaming?: boolean;
-  size?: "sm" | "md" | "lg";
   browserToolResult?: any; // TODO: proper type
 }
 
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> = ({
   content,
   isStreaming = false,
-  size,
   browserToolResult,
 }) => {
     // Build the remark plugins array - keep default GFM and Math, add citations

@@ -147,7 +147,6 @@ export default function Thinking({
           <StreamingMarkdownContent
             content={thinking}
             isStreaming={activelyThinking}
-            size="sm"
           />
         </div>
 
