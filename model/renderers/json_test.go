@@ -6,7 +6,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// TODO(drifkin): this will be moved to utils in the near future and used by other renderers as well
 func TestMarshalWithSpaces(t *testing.T) {
 	tests := []struct {
 		name     string
