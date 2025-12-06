@@ -1221,7 +1221,11 @@ struct ggml_backend_cuda_context {
 
     ggml_cuda_pool & pool(int device) {
         if (pools[device][curr_stream_no] == nullptr) {
-            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, true);
+            bool alloc = true;
+            if (pools[device][0] != nullptr) {
+                alloc = pools[device][0]->alloc_memory();
+            }
+            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
         }
         return *pools[device][curr_stream_no];
     }
@@ -1238,12 +1242,12 @@ struct ggml_backend_cuda_context {
         }
     }
 
-    size_t pool_get_alloc_size() {
-        if (pools[device][curr_stream_no] == nullptr) {
+    size_t pool_get_alloc_size(int stream_no) {
+        if (pools[device][stream_no] == nullptr) {
             return 0;
         }
 
-        return pools[device][curr_stream_no]->alloc_size();
+        return pools[device][stream_no]->alloc_size();
     }
 };
 

@@ -10,10 +10,10 @@ must be recreated with no-alloc set to false before loading data.
 ---
  ggml/include/ggml-backend.h     |   1 +
  ggml/src/ggml-backend-impl.h    |  16 +++
- ggml/src/ggml-backend.cpp       |  72 ++++++++++-
- ggml/src/ggml-cuda/common.cuh   |  58 ++++++++-
- ggml/src/ggml-cuda/ggml-cuda.cu | 218 ++++++++++++++++++++++++++------
- 5 files changed, 321 insertions(+), 44 deletions(-)
+ ggml/src/ggml-backend.cpp       |  72 +++++++++-
+ ggml/src/ggml-cuda/common.cuh   |  62 ++++++++-
+ ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
+ 5 files changed, 331 insertions(+), 44 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 2763f2bd6..b3b5b356a 100644
@@ -219,7 +219,7 @@ index f511e8d76..74b7f070c 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 611341deb..c3f8ca914 100644
+index 611341deb..ee463af9c 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -37,6 +37,41 @@
@@ -274,7 +274,7 @@ index 611341deb..c3f8ca914 100644
  };
  
  template<typename T>
-@@ -1179,11 +1217,11 @@ struct ggml_backend_cuda_context {
+@@ -1179,11 +1217,15 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
  
@@ -284,11 +284,15 @@ index 611341deb..c3f8ca914 100644
      ggml_cuda_pool & pool(int device) {
          if (pools[device][curr_stream_no] == nullptr) {
 -            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no);
-+            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, true);
++            bool alloc = true;
++            if (pools[device][0] != nullptr) {
++                alloc = pools[device][0]->alloc_memory();
++            }
++            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
          }
          return *pools[device][curr_stream_no];
      }
-@@ -1191,6 +1229,22 @@ struct ggml_backend_cuda_context {
+@@ -1191,6 +1233,22 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -301,18 +305,18 @@ index 611341deb..c3f8ca914 100644
 +        }
 +    }
 +
-+    size_t pool_get_alloc_size() {
-+        if (pools[device][curr_stream_no] == nullptr) {
++    size_t pool_get_alloc_size(int stream_no) {
++        if (pools[device][stream_no] == nullptr) {
 +            return 0;
 +        }
 +
-+        return pools[device][curr_stream_no]->alloc_size();
++        return pools[device][stream_no]->alloc_size();
 +    }
  };
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 78fb2d8b3..fe0da71ca 100644
+index 78fb2d8b3..f1c178f31 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -361,6 +361,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
@@ -583,7 +587,7 @@ index 78fb2d8b3..fe0da71ca 100644
  
      ggml_cuda_set_device(cuda_ctx->device);
  
-@@ -3766,6 +3836,71 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3766,6 +3836,77 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  }
  
@@ -644,18 +648,24 @@ index 78fb2d8b3..fe0da71ca 100644
 +
 +static size_t ggml_backend_cuda_buffer_size(ggml_backend_t backend) {
 +    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
-+    return ctx->pool_get_alloc_size();
++    size_t allocs = 0;
++    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; i++) {
++        allocs += ctx->pool_get_alloc_size(i);
++    }
++    return allocs;
 +}
 +
 +static void ggml_backend_cuda_reset(ggml_backend_t backend) {
 +    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
-+    ctx->pools[ctx->device][ctx->curr_stream_no] = NULL;
++    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; i++) {
++        ctx->pools[ctx->device][i] = NULL;
++    }
 +}
 +
  static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
-@@ -4035,6 +4170,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+@@ -4035,6 +4176,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
      /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,
