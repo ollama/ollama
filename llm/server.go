@@ -103,7 +103,8 @@ type llmServer struct {
 	loadStart    time.Time // Record how long it took the model to load
 	loadProgress float32
 
-	sem *semaphore.Weighted
+	sem      *semaphore.Weighted
+	override *envconfig.Override
 }
 
 type llamaServer struct {
@@ -116,6 +117,80 @@ type ollamaServer struct {
 	llmServer
 
 	textProcessor model.TextProcessor // textProcessor handles text encoding/decoding
+}
+
+// buildGPULayersFromOverride constructs an explicit ml.GPULayersList from a
+// per-model override configuration.
+//
+// It takes:
+//   - totalLayers: the total number of layers in the model (i.e. block_count+1,
+//     including the output layer).
+//   - gpus: the visible GPUs, whose order is used to map tensor-split entries to
+//     device IDs (tensor-split index i -> gpus[i]).
+//   - override: the parsed override which provides:
+//       * NumGPULayers: how many of the last model layers to offload, and
+//       * TensorSplit: integer weights describing how to distribute those layers
+//         across the GPUs (proportional split).
+//
+// The function assigns the last NumGPULayers layers in the range
+// [blocks-NumGPULayers, blocks] to GPUs according to the cumulative proportions
+// derived from TensorSplit. If TensorSplit has more entries than visible GPUs,
+// any required value is non-positive, the proportional total is zero, or the
+// computed span is empty, the function returns nil to signal "no override".
+//
+// On success it returns a non-empty GPULayersList; otherwise it returns nil.
+//
+func buildGPULayersFromOverride(totalLayers int, gpus []ml.DeviceInfo, override *envconfig.Override) ml.GPULayersList {
+	if totalLayers <= 0 || len(gpus) == 0 || override == nil {
+		return nil
+	}
+	if len(override.TensorSplit) > len(gpus) {
+		return nil
+	}
+	// cumulative proportions
+	var total int
+	for _, v := range override.TensorSplit {
+		total += v
+	}
+	if total <= 0 {
+		return nil
+	}
+	cum := make([]float32, len(override.TensorSplit))
+	var run float32
+	for i, v := range override.TensorSplit {
+		run += float32(v) / float32(total)
+		cum[i] = run
+	}
+
+	// totalLayers = blocks + 1
+	blocks := totalLayers - 1
+	start := max(0, blocks-override.NumGPULayers)
+	stop := min(start+override.NumGPULayers, blocks+1)
+
+	gl := make(ml.GPULayersList, len(gpus))
+	for i := range gpus {
+		gl[i].DeviceID = gpus[i].DeviceID
+	}
+
+	span := float32(stop - start)
+	if span <= 0 {
+		return nil
+	}
+	for layer := start; layer < stop; layer++ {
+		ratio := float32(layer-start) / span
+		idx := 0
+		for i := range cum {
+			if ratio < cum[i] {
+				idx = i
+				break
+			}
+		}
+		gl[idx].Layers = append(gl[idx].Layers, layer)
+	}
+	if gl.Sum() == 0 {
+		return nil
+	}
+	return gl
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
@@ -139,7 +214,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 }
 
 // NewLlamaServer will run a server for the given GPUs
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int, override *envconfig.Override) (LlamaServer, error) {
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
@@ -243,6 +318,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		totalLayers:    f.KV().BlockCount() + 1,
 		loadStart:      time.Now(),
 		done:           make(chan error, 1),
+		override:       override,
 	}
 
 	if err != nil {
@@ -455,6 +531,75 @@ type LoadResponse struct {
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
 
+// maybeApplyOverride attempts to replace a heuristic GPU layer layout with a
+// per-model override read from OLLAMA_OVERRIDE_CONFIG.
+//
+// Inputs:
+//   - gpus: the set of visible GPUs (their order is used to map tensor-split
+//     entries onto devices: tensor-split index i -> gpus[i]).
+//   - gpuLayers: the current, heuristic ml.GPULayersList that would be used if
+//     no override is applied.
+//
+// Behavior:
+//   * If no override is configured, or it is incomplete (missing NumGPULayers
+//     or TensorSplit), the function returns the original gpuLayers and false.
+//   * If TensorSplit has more entries than visible GPUs, or NumGPULayers
+//     exceeds the model's total layers (block_count+1), the override is ignored
+//     and the function returns the original gpuLayers and false (with a log
+//     warning).
+//   * Otherwise, it builds a replacement assignment via buildGPULayersFromOverride.
+//     On success, it logs the application, updates s.options.NumGPU to match
+//     the override's NumGPULayers (so downstream logging/heuristics see a
+//     consistent value), and returns (override, true). If the mapping produces
+//     no layers, the heuristic layout is kept and false is returned.
+//
+func (s *llmServer) maybeApplyOverride(gpus []ml.DeviceInfo, gpuLayers ml.GPULayersList) (ml.GPULayersList, bool) {
+	// If no override loaded, or incomplete, bail out
+	if s.override == nil || s.override.NumGPULayers <= 0 || len(s.override.TensorSplit) == 0 {
+		return gpuLayers, false
+	}
+
+	// Too many split entries for visible GPUs? Warn and fallback.
+	if len(s.override.TensorSplit) > len(gpus) {
+		slog.Warn(
+			"Override ignored: tensor-split override has more entries than visible GPUs; using heuristic split instead",
+			"model", s.override.ModelName,
+			"tensor_split_entries", len(s.override.TensorSplit),
+			"visible_gpus", len(gpus),
+		)
+		return gpuLayers, false
+	}
+
+	// Clamp to model size (totalLayers == block_count + 1)
+	maxLayers := int(s.totalLayers)
+	if s.override.NumGPULayers > maxLayers {
+		slog.Warn(
+			"Override ignored: n_gpu_layers is larger than the maximum supported; using heuristic split instead",
+			"model", s.override.ModelName,
+			"max_layers", maxLayers,
+			"n_gpu_layers", s.override.NumGPULayers,
+		)
+		return gpuLayers, false
+	}
+
+	override := buildGPULayersFromOverride(int(s.totalLayers), gpus, s.override)
+	if override == nil || override.Sum() == 0 {
+		slog.Warn("Override ignored: override mapping produced no layers; using heuristic layout instead")
+		return gpuLayers, false
+	}
+
+	slog.Info(
+		"Applying override from OLLAMA_OVERRIDE_CONFIG",
+		"model", s.override.ModelName,
+		"n_gpu_layers", s.override.NumGPULayers,
+		"tensor_split", s.override.TensorSplit,
+		"layers_offloaded", override.Sum(),
+	)
+	// Align NumGPU with override for downstream logging / heuristics that read it
+	s.options.NumGPU = s.override.NumGPULayers
+	return override, true
+}
+
 func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	slog.Info("loading model", "model layers", s.totalLayers, "requested", s.options.NumGPU)
 
@@ -580,6 +725,11 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		} else {
 			break
 		}
+	}
+
+	// Apply per-model override
+	if newLayers, ok := s.maybeApplyOverride(gpus, gpuLayers); ok {
+		gpuLayers = newLayers
 	}
 
 	// This maintains the historical assignment of graph sizes, though it isn't fully accurate
@@ -717,6 +867,11 @@ nextOperation:
 	for operation := LoadOperationFit; operation < LoadOperationCommit; operation++ {
 	nextLoad:
 		for {
+			// Apply per-model override if present
+			if newLayers, ok := s.maybeApplyOverride(gpus, gpuLayers); ok {
+				gpuLayers = newLayers
+			}
+
 			s.loadRequest.GPULayers = gpuLayers
 			resp, err := s.initModel(ctx, s.loadRequest, operation)
 			if err != nil {
