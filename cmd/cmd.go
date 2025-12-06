@@ -1890,6 +1890,14 @@ func NewCLI() *cobra.Command {
 		}
 	}
 
+	// Add config command for managing user settings
+	configCmd := &cobra.Command{
+		Use:   "config [KEY] [VALUE]",
+		Short: "View or set configuration",
+		Args:  cobra.MaximumNArgs(2),
+		RunE:  ConfigHandler,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -1904,6 +1912,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		configCmd,
 		runnerCmd,
 	)
 
