@@ -274,6 +274,7 @@ type ConfigV2 struct {
 	FileType      string   `json:"file_type"`  // shown as Quantization Level
 	Renderer      string   `json:"renderer,omitempty"`
 	Parser        string   `json:"parser,omitempty"`
+	MinVersion    string   `json:"min_version,omitempty"`
 
 	RemoteHost  string `json:"remote_host,omitempty"`
 	RemoteModel string `json:"remote_model,omitempty"`

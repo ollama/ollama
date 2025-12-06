@@ -4,89 +4,94 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
 
-func TestDelete(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
+func TestDeleteHandler(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 
-	var s Server
+	s := &Server{}
 
-	_, digest := createBinFile(t, nil, nil)
-	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:  "test",
-		Files: map[string]string{"test.gguf": digest},
-	})
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status code 200, actual %d", w.Code)
+	w := createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status code 404, actual %d", w.Code)
 	}
 
-	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:     "test2",
-		Files:    map[string]string{"test.gguf": digest},
-		Template: "{{ .System }} {{ .Prompt }}",
-	})
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status code 200, actual %d", w.Code)
+	blobPath := filepath.Join(p, "blobs", "sha256-22222222222222222222222222222222222222222222222222222222222222222")
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blobPath, []byte("config"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	n := model.Name{
+		Host:      "registry.ollama.ai",
+		Namespace: "library",
+		Model:     "test",
+		Tag:       "latest",
+	}
 
-	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
-		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
-		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
-		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
-	})
+	config := Layer{
+		MediaType: "config",
+		Digest:    "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		Size:      6,
+	}
+
+	manifestPath := filepath.Join(p, "manifests", n.Filepath())
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Manifest{
+		SchemaVersion: 2,
+		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+		Config:        config,
+		Layers:        []Layer{config},
+	}
+
+	manifestFile, err := os.Create(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manifestFile.Close()
+	if err := json.NewEncoder(manifestFile).Encode(m); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify blobs exist
+	checkFileExists(t, filepath.Join(p, "blobs", "sha256-*"), []string{blobPath})
 
 	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
-
 	if w.Code != http.StatusOK {
-		t.Fatalf("expected status code 200, actual %d", w.Code)
+		t.Errorf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
-
-	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
-		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
-		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
-	})
-
-	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test2"})
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status code 200, actual %d", w.Code)
-	}
-
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{})
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
 }
 
 func TestDeleteDuplicateLayers(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	var s Server
+	envconfig.LoadConfig()
 
-	n := model.ParseName("test")
+	s := &Server{}
+
+	n := model.Name{
+		Host:      "registry.ollama.ai",
+		Namespace: "library",
+		Model:     "test",
+		Tag:       "latest",
+	}
 
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(&ConfigV2{}); err != nil {

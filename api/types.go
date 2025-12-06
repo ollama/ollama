@@ -553,6 +553,9 @@ type CreateRequest struct {
 	Renderer string `json:"renderer,omitempty"`
 	Parser   string `json:"parser,omitempty"`
 
+	// MinVersion is the minimum version of Ollama required by the model.
+	MinVersion string `json:"min_version,omitempty"`
+
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
 
