@@ -210,6 +210,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &deepseekocr{}
 	case "DeepseekV3ForCausalLM":
 		conv = &deepseek2Model{}
+	case "Rnj1ForCausalLM":
+		conv = &rnj1Model{}
 	default:
 		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
