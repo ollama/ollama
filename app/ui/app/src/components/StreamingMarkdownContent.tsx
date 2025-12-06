@@ -19,7 +19,6 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> = ({
         isStreaming={isStreaming}
       >
         <Streamdown
-          parseIncompleteMarkdown={isStreaming}
           isAnimating={isStreaming}
           remarkPlugins={[remarkCitationParser]}
           controls={false}
