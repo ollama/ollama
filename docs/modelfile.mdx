@@ -12,7 +12,7 @@ A Modelfile is the blueprint to create and share customized models using Ollama.
   - [FROM (Required)](#from-required)
     - [Build from existing model](#build-from-existing-model)
     - [Build from a Safetensors model](#build-from-a-safetensors-model)
-    - [Build from a GGUF file](#build-from-a-gguf-file)
+    - [Build from a GGUF file](#build-from-a-gguf-model)
   - [PARAMETER](#parameter)
     - [Valid Parameters and Values](#valid-parameters-and-values)
   - [TEMPLATE](#template)
@@ -129,13 +129,21 @@ Currently supported model architectures:
 - Gemma (including Gemma 1 and Gemma 2)
 - Phi3
 
-#### Build from a GGUF file
+#### Build from a GGUF model
 
 ```
 FROM ./ollama-model.gguf
 ```
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
+
+For GGUF model split into multiple files:
+
+```
+FROM <model directory>
+```
+
+The model directory should contain solely the split GGUF weights of one model.
 
 ### PARAMETER
 
