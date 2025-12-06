@@ -1,5 +1,5 @@
 import React from "react";
-import { Streamdown, defaultRemarkPlugins } from "streamdown";
+import { Streamdown } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 
 interface StreamingMarkdownContentProps {
@@ -12,83 +12,72 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> = ({
   content,
   isStreaming = false,
   browserToolResult,
-}) => {
-    // Build the remark plugins array - keep default GFM and Math, add citations
-    const remarkPlugins = React.useMemo(() => {
-      return [
-        defaultRemarkPlugins.gfm,
-        defaultRemarkPlugins.math,
-        remarkCitationParser,
-      ];
-    }, []);
+}) => (
+    <div className="max-w-full break-words">
+      <StreamingMarkdownErrorBoundary
+        content={content}
+        isStreaming={isStreaming}
+      >
+        <Streamdown
+          parseIncompleteMarkdown={isStreaming}
+          isAnimating={isStreaming}
+          remarkPlugins={[remarkCitationParser]}
+          controls={false}
+          components={{
+            // @ts-expect-error: custom citation type
+            "ol-citation": ({
+              cursor,
+            }: {
+              cursor: number;
+              start: number;
+              end: number;
+            }) => {
+              const pageStack = browserToolResult?.page_stack;
+              const hasValidPage = pageStack && cursor < pageStack.length;
+              const pageUrl = hasValidPage ? pageStack[cursor] : null;
 
-    return (
-      <div className="max-w-full break-words">
-        <StreamingMarkdownErrorBoundary
-          content={content}
-          isStreaming={isStreaming}
-        >
-          <Streamdown
-            parseIncompleteMarkdown={isStreaming}
-            isAnimating={isStreaming}
-            remarkPlugins={remarkPlugins}
-            controls={false}
-            components={{
-              // @ts-expect-error: custom citation type
-              "ol-citation": ({
-                cursor,
-              }: {
-                cursor: number;
-                start: number;
-                end: number;
-              }) => {
-                const pageStack = browserToolResult?.page_stack;
-                const hasValidPage = pageStack && cursor < pageStack.length;
-                const pageUrl = hasValidPage ? pageStack[cursor] : null;
-
-                const getPageTitle = (url: string) => {
-                  if (url.startsWith("search_results_")) {
-                    const searchTerm = url.substring("search_results_".length);
-                    return `Search: ${searchTerm}`;
-                  }
-                  try {
-                    const urlObj = new URL(url);
-                    return urlObj.hostname;
-                  } catch {
-                    return url;
-                  }
-                };
-
-                const citationElement = (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 rounded-full px-2 py-1 ml-1">
-                    [{cursor}]
-                  </span>
-                );
-
-                if (pageUrl && pageUrl.startsWith("http")) {
-                  return (
-                    <a
-                      href={pageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center hover:opacity-80 transition-opacity no-underline"
-                      title={getPageTitle(pageUrl)}
-                    >
-                      {citationElement}
-                    </a>
-                  );
+              const getPageTitle = (url: string) => {
+                if (url.startsWith("search_results_")) {
+                  const searchTerm = url.substring("search_results_".length);
+                  return `Search: ${searchTerm}`;
                 }
+                try {
+                  const urlObj = new URL(url);
+                  return urlObj.hostname;
+                } catch {
+                  return url;
+                }
+              };
 
-                return citationElement;
-              },
-            }}
-          >
-            {content}
-          </Streamdown>
-        </StreamingMarkdownErrorBoundary>
-      </div>
-    );
-};
+              const citationElement = (
+                <span className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 rounded-full px-2 py-1 ml-1">
+                  [{cursor}]
+                </span>
+              );
+
+              if (pageUrl && pageUrl.startsWith("http")) {
+                return (
+                  <a
+                    href={pageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center hover:opacity-80 transition-opacity no-underline"
+                    title={getPageTitle(pageUrl)}
+                  >
+                    {citationElement}
+                  </a>
+                );
+              }
+
+              return citationElement;
+            },
+          }}
+        >
+          {content}
+        </Streamdown>
+      </StreamingMarkdownErrorBoundary>
+    </div>
+  );
 
 interface StreamingMarkdownErrorBoundaryProps {
   content: string;
