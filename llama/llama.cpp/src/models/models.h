@@ -322,6 +322,10 @@ struct llm_build_minimax_m2 : public llm_graph_context {
     llm_build_minimax_m2(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_mistral3 : public llm_graph_context {
+    llm_build_mistral3(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_mpt : public llm_graph_context {
     llm_build_mpt(const llama_model & model, const llm_graph_params & params);
 };
