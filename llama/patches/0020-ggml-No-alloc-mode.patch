@@ -5,17 +5,11 @@ Subject: [PATCH] ggml: No-alloc mode
 
 ---
  ggml/include/ggml-backend.h     |   1 +
- ggml/src/.idea/.gitignore       |  15 +++
- ggml/src/.idea/encodings.xml    |   4 +
- ggml/src/.idea/indexLayout.xml  |   8 ++
  ggml/src/ggml-backend-impl.h    |  16 +++
  ggml/src/ggml-backend.cpp       |  71 +++++++++-
  ggml/src/ggml-cuda/common.cuh   |  62 ++++++++-
  ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
- 8 files changed, 357 insertions(+), 44 deletions(-)
- create mode 100644 ggml/src/.idea/.gitignore
- create mode 100644 ggml/src/.idea/encodings.xml
- create mode 100644 ggml/src/.idea/indexLayout.xml
+ 5 files changed, 330 insertions(+), 44 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 2763f2bd6..b3b5b356a 100644
@@ -29,53 +23,6 @@ index 2763f2bd6..b3b5b356a 100644
      GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
  
      // Provide a hint on the batch size to optimize processing (uses heuristics if unset)
-diff --git a/ggml/src/.idea/.gitignore b/ggml/src/.idea/.gitignore
-new file mode 100644
-index 000000000..4a1e949d8
---- /dev/null
-+++ b/ggml/src/.idea/.gitignore
-@@ -0,0 +1,15 @@
-+﻿# Default ignored files
-+/shelf/
-+/workspace.xml
-+# Rider ignored files
-+/contentModel.xml
-+/projectSettingsUpdater.xml
-+/.idea.src.iml
-+/modules.xml
-+# Ignored default folder with query files
-+/queries/
-+# Datasource local storage ignored files
-+/dataSources/
-+/dataSources.local.xml
-+# Editor-based HTTP Client requests
-+/httpRequests/
-diff --git a/ggml/src/.idea/encodings.xml b/ggml/src/.idea/encodings.xml
-new file mode 100644
-index 000000000..df87cf951
---- /dev/null
-+++ b/ggml/src/.idea/encodings.xml
-@@ -0,0 +1,4 @@
-+<?xml version="1.0" encoding="UTF-8"?>
-+<project version="4">
-+  <component name="Encoding" addBOMForNewFiles="with BOM under Windows, with no BOM otherwise" />
-+</project>
-\ No newline at end of file
-diff --git a/ggml/src/.idea/indexLayout.xml b/ggml/src/.idea/indexLayout.xml
-new file mode 100644
-index 000000000..7b08163ce
---- /dev/null
-+++ b/ggml/src/.idea/indexLayout.xml
-@@ -0,0 +1,8 @@
-+<?xml version="1.0" encoding="UTF-8"?>
-+<project version="4">
-+  <component name="UserContentModel">
-+    <attachedFolders />
-+    <explicitIncludes />
-+    <explicitExcludes />
-+  </component>
-+</project>
-\ No newline at end of file
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
 index 0f5b03cef..7bdf9d81f 100644
 --- a/ggml/src/ggml-backend-impl.h
