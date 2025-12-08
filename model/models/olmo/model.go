@@ -2,6 +2,7 @@ package olmo
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -37,6 +38,7 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
+	fmt.Println("🦙 OLMo model loaded!")
 	vocabulary := model.Vocabulary{
 		Values: c.Strings("tokenizer.ggml.tokens"),
 		Scores: c.Floats("tokenizer.ggml.scores"),

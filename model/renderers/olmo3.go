@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	olmo3DefaultSystemMessage      = "You are a helpful function-calling AI assistant. "
-	olmo3NoFunctionsMessage        = "You do not currently have access to any functions. "
-	olmo3WithFunctionsMessage      = "You are provided with function signatures within <functions></functions> XML tags. You may call one or more functions to assist with the user query. Output any function calls within <function_calls></function_calls> XML tags. Do not make assumptions about what values to plug into functions."
+	olmo3DefaultSystemMessage = "You are a helpful function-calling AI assistant. "
+	olmo3NoFunctionsMessage   = "You do not currently have access to any functions. "
+	olmo3WithFunctionsMessage = "You are provided with function signatures within <functions></functions> XML tags. You may call one or more functions to assist with the user query. Output any function calls within <function_calls></function_calls> XML tags. Do not make assumptions about what values to plug into functions."
 )
 
 type Olmo3Renderer struct{}
@@ -145,4 +145,3 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 
 	return sb.String(), nil
 }
-

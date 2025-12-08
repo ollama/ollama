@@ -110,6 +110,7 @@ func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.Thi
 		if err != nil {
 			return "", err
 		}
+		slog.Debug("rendered prompt", "renderer", m.Config.Renderer, "prompt", rendered)
 		return rendered, nil
 	}
 
