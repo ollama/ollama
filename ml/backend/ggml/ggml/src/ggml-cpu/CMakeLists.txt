@@ -126,36 +126,48 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 )
                 if (NOT ARM_MCPU_RESULT)
                     string(REGEX MATCH "-mcpu=[^ ']+" ARM_MCPU_FLAG "${ARM_MCPU}")
+                    string(REGEX MATCH "-march=[^ ']+" ARM_MARCH_FLAG "${ARM_MCPU}")
+
+                    # on some old GCC we need to read -march=
+                    if (ARM_MARCH_FLAG AND NOT "${ARM_MARCH_FLAG}" STREQUAL "-march=native")
+                        set(ARM_NATIVE_FLAG "${ARM_MARCH_FLAG}")
+                    elseif(ARM_MCPU_FLAG AND NOT "${ARM_MCPU_FLAG}" STREQUAL "-mcpu=native")
+                        set(ARM_NATIVE_FLAG "${ARM_MCPU_FLAG}")
+                    endif()
                 endif()
-                if ("${ARM_MCPU_FLAG}" STREQUAL "")
-                    set(ARM_MCPU_FLAG -mcpu=native)
-                    message(STATUS "ARM -mcpu not found, -mcpu=native will be used")
+
+                if ("${ARM_NATIVE_FLAG}" STREQUAL "")
+                    set(ARM_NATIVE_FLAG -mcpu=native)
+                    message(WARNING "ARM -march/-mcpu not found, -mcpu=native will be used")
+                else()
+                    message(STATUS "ARM detected flags: ${ARM_NATIVE_FLAG}")
                 endif()
 
                 include(CheckCXXSourceRuns)
 
-                function(check_arm_feature tag code)
+                macro(check_arm_feature tag feature code)
                     set(CMAKE_REQUIRED_FLAGS_SAVE ${CMAKE_REQUIRED_FLAGS})
-                    set(CMAKE_REQUIRED_FLAGS "${ARM_MCPU_FLAG}+${tag}")
+                    set(CMAKE_REQUIRED_FLAGS "${ARM_NATIVE_FLAG}+${tag}")
                     check_cxx_source_runs("${code}" GGML_MACHINE_SUPPORTS_${tag})
                     if (GGML_MACHINE_SUPPORTS_${tag})
-                        set(ARM_MCPU_FLAG_FIX "${ARM_MCPU_FLAG_FIX}+${tag}" PARENT_SCOPE)
+                        set(ARM_NATIVE_FLAG_FIX "${ARM_NATIVE_FLAG_FIX}+${tag}")
                     else()
-                        set(CMAKE_REQUIRED_FLAGS "${ARM_MCPU_FLAG}+no${tag}")
+                        set(CMAKE_REQUIRED_FLAGS "${ARM_NATIVE_FLAG}+no${tag}")
                         check_cxx_source_compiles("int main() { return 0; }" GGML_MACHINE_SUPPORTS_no${tag})
                         if (GGML_MACHINE_SUPPORTS_no${tag})
-                            set(ARM_MCPU_FLAG_FIX "${ARM_MCPU_FLAG_FIX}+no${tag}" PARENT_SCOPE)
+                            set(ARM_NATIVE_FLAG_FIX "${ARM_NATIVE_FLAG_FIX}+no${tag}")
+                            list(APPEND ARCH_FLAGS -U__ARM_FEATURE_${feature})
                         endif()
                     endif()
                     set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVE})
-                endfunction()
+                endmacro()
 
-                check_arm_feature(dotprod "#include <arm_neon.h>\nint main() { int8x16_t _a, _b; volatile int32x4_t _s = vdotq_s32(_s, _a, _b); return 0; }")
-                check_arm_feature(i8mm    "#include <arm_neon.h>\nint main() { int8x16_t _a, _b; volatile int32x4_t _s = vmmlaq_s32(_s, _a, _b); return 0; }")
-                check_arm_feature(sve     "#include <arm_sve.h>\nint main()  { svfloat32_t _a, _b; volatile svfloat32_t _c = svadd_f32_z(svptrue_b8(), _a, _b); return 0; }")
-                check_arm_feature(sme     "#include <arm_sme.h>\n__arm_locally_streaming int main() { __asm__ volatile(\"smstart; smstop;\"); return 0; }")
+                check_arm_feature(dotprod DOTPROD     "#include <arm_neon.h>\nint main() { int8x16_t _a, _b; volatile int32x4_t _s = vdotq_s32(_s, _a, _b); return 0; }")
+                check_arm_feature(i8mm    MATMUL_INT8 "#include <arm_neon.h>\nint main() { int8x16_t _a, _b; volatile int32x4_t _s = vmmlaq_s32(_s, _a, _b); return 0; }")
+                check_arm_feature(sve     SVE         "#include <arm_sve.h>\nint main()  { svfloat32_t _a, _b; volatile svfloat32_t _c = svadd_f32_z(svptrue_b8(), _a, _b); return 0; }")
+                check_arm_feature(sme     SME         "#include <arm_sme.h>\n__arm_locally_streaming int main() { __asm__ volatile(\"smstart; smstop;\"); return 0; }")
 
-                list(APPEND ARCH_FLAGS "${ARM_MCPU_FLAG}${ARM_MCPU_FLAG_FIX}")
+                list(APPEND ARCH_FLAGS "${ARM_NATIVE_FLAG}${ARM_NATIVE_FLAG_FIX}")
             else()
                 if (GGML_CPU_ARM_ARCH)
                     list(APPEND ARCH_FLAGS -march=${GGML_CPU_ARM_ARCH})
@@ -205,35 +217,28 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 endif()
             endif()
 
-            # show enabled features
-            if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
-                set(FEAT_INPUT_FILE "NUL")
-            else()
-                set(FEAT_INPUT_FILE "/dev/null")
-            endif()
+            message(STATUS "Checking for ARM features using flags:")
+            foreach(flag IN LISTS ARCH_FLAGS)
+                message(STATUS "  ${flag}")
+            endforeach()
 
-            execute_process(
-                COMMAND ${CMAKE_C_COMPILER} ${ARCH_FLAGS} -dM -E -
-                INPUT_FILE ${FEAT_INPUT_FILE}
-                OUTPUT_VARIABLE ARM_FEATURE
-                RESULT_VARIABLE ARM_FEATURE_RESULT
-            )
-            if (ARM_FEATURE_RESULT)
-                message(WARNING "Failed to get ARM features")
-            else()
-                foreach(feature DOTPROD SVE MATMUL_INT8 FMA FP16_VECTOR_ARITHMETIC SME)
-                    string(FIND "${ARM_FEATURE}" "__ARM_FEATURE_${feature} 1" feature_pos)
-                    if (NOT ${feature_pos} EQUAL -1)
-                        # Special handling for MATMUL_INT8 when machine doesn't support i8mm
-                        if ("${feature}" STREQUAL "MATMUL_INT8" AND GGML_MACHINE_SUPPORTS_noi8mm)
-                            message(STATUS "ARM feature ${feature} detected but unsetting due to machine not supporting i8mm")
-                            list(APPEND ARCH_FLAGS -U__ARM_FEATURE_MATMUL_INT8)
-                        else()
-                            message(STATUS "ARM feature ${feature} enabled")
-                        endif()
-                    endif()
-                endforeach()
-            endif()
+            include(CheckCXXSourceCompiles)
+            set(CMAKE_REQUIRED_FLAGS_SAVE ${CMAKE_REQUIRED_FLAGS})
+            string(REPLACE ";" " " ARCH_FLAGS_STR "${ARCH_FLAGS}")
+            set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS_STR}")
+            foreach(feature DOTPROD SVE MATMUL_INT8 FMA FP16_VECTOR_ARITHMETIC SME)
+                set(ARM_FEATURE "HAVE_${feature}")
+                check_cxx_source_compiles(
+                    "
+                    #if !defined(__ARM_FEATURE_${feature})
+                    #  error \"Feature ${feature} is not defined\"
+                    #endif
+                    int main() { return 0; }
+                    "
+                    ${ARM_FEATURE}
+                )
+            endforeach()
+            set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVE})
         endif()
     elseif (GGML_SYSTEM_ARCH STREQUAL "x86")
         message(STATUS "x86 detected")
@@ -388,9 +393,9 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             string(REGEX REPLACE "POWER *([0-9]+)" "\\1" EXTRACTED_NUMBER "${MATCHED_STRING}")
 
             if (EXTRACTED_NUMBER GREATER_EQUAL 10)
-                list(APPEND ARCH_FLAGS -mcpu=power10 -mpowerpc64)
+                list(APPEND ARCH_FLAGS -mcpu=power10)
             elseif (EXTRACTED_NUMBER EQUAL 9)
-                list(APPEND ARCH_FLAGS -mcpu=power9 -mpowerpc64)
+                list(APPEND ARCH_FLAGS -mcpu=power9)
             elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "ppc64le")
                 list(APPEND ARCH_FLAGS -mcpu=powerpc64le -mtune=native)
             else()
@@ -448,51 +453,87 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 ggml-cpu/spacemit/ime_kernels.h
             )
         endif()
-        set(MARCH_STR "rv64gc")
-        if (GGML_RV_ZFH)
-            string(APPEND MARCH_STR "_zfh")
-        endif()
-        if (GGML_XTHEADVECTOR)
-            string(APPEND MARCH_STR "_xtheadvector")
-        elseif (GGML_RVV)
-            string(APPEND MARCH_STR "_v")
-            if (GGML_RV_ZVFH)
-                string(APPEND MARCH_STR "_zvfh")
+        if(NOT GGML_CPU_ALL_VARIANTS)
+            set(MARCH_STR "rv64gc")
+            if (GGML_RV_ZFH)
+                string(APPEND MARCH_STR "_zfh")
             endif()
+            if (GGML_XTHEADVECTOR)
+                string(APPEND MARCH_STR "_xtheadvector")
+            elseif (GGML_RVV)
+                string(APPEND MARCH_STR "_v")
+                if (GGML_RV_ZVFH)
+                    string(APPEND MARCH_STR "_zvfh")
+                endif()
+            endif()
+            if (GGML_RV_ZICBOP)
+                string(APPEND MARCH_STR "_zicbop")
+            endif()
+            list(APPEND ARCH_FLAGS "-march=${MARCH_STR}" -mabi=lp64d)
+        else()
+            # Begin with the lowest baseline
+            set(ARCH_DEFINITIONS "")
+
+            if (GGML_INTERNAL_RVV)
+                message(STATUS "RVV enabled")
+                list(APPEND ARCH_DEFINITIONS GGML_USE_RVV)
+                list(APPEND ARCH_FLAGS -march=rv64gc_v -mabi=lp64d)
+            endif()
+
+            ggml_add_cpu_backend_features(${GGML_CPU_NAME} riscv ${ARCH_DEFINITIONS})
         endif()
-        if (GGML_RV_ZICBOP)
-            string(APPEND MARCH_STR "_zicbop")
-        endif()
-        list(APPEND ARCH_FLAGS "-march=${MARCH_STR}" -mabi=lp64d)
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         message(STATUS "s390x detected")
-        list(APPEND GGML_CPU_SOURCES ggml-cpu/arch/s390/quants.c)
-        file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
-        string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/arch/s390/quants.c)
 
-        # TODO: Separation to determine activation of VX/VXE/VXE2
-        if (${S390X_M} MATCHES "8561|8562")
-            message(STATUS "z15 target")
-            list(APPEND ARCH_FLAGS -march=z15)
-        elseif (${S390X_M} MATCHES "3931")
-            message(STATUS "z16 target")
-            list(APPEND ARCH_FLAGS -march=z16)
-        elseif (${S390X_M} MATCHES "9175|9176")
-            # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
-            #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
-            message(STATUS "z17 target")
-            list(APPEND ARCH_FLAGS -march=arch15)
-        else()
-            message(STATUS "Unknown target")
-            message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
-            list(APPEND ARCH_FLAGS -march=native -mtune=native)
+        # for native compilation
+        if (GGML_NATIVE)
+            # check machine level to determine target
+            file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
+            string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+
+            # TODO: Separation to determine activation of VX/VXE/VXE2
+            if (${S390X_M} MATCHES "8561|8562")
+                message(STATUS "z15 target")
+                list(APPEND ARCH_FLAGS -march=z15)
+            elseif (${S390X_M} MATCHES "3931")
+                message(STATUS "z16 target")
+                list(APPEND ARCH_FLAGS -march=z16)
+            elseif (${S390X_M} MATCHES "9175|9176")
+                # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
+                #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
+                message(STATUS "z17 target")
+                list(APPEND ARCH_FLAGS -march=arch15)
+            else()
+                message(STATUS "Unknown target")
+                message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
+                list(APPEND ARCH_FLAGS -march=native -mtune=native)
+            endif()
+        # for cross-compilation
+        elseif(GGML_CPU_ALL_VARIANTS)
+            # range through IBM z15 to z17
+            # NOTE: update when a new hardware level is released
+            foreach (ZHW RANGE 15 17)
+                if(DEFINED GGML_INTERNAL_Z${ZHW})
+                    message(STATUS "z${ZHW} cross-compile target")
+                    list(APPEND ARCH_FLAGS -march=z${ZHW})
+                endif()
+            endforeach()
         endif()
 
-        if (GGML_VXE)
-            message(STATUS "VX/VXE/VXE2 enabled")
+        if (GGML_VXE OR GGML_INTERNAL_VXE2)
+            message(STATUS "VXE2 enabled")
             list(APPEND ARCH_FLAGS -mvx -mzvector)
-            list(APPEND ARCH_DEFINITIONS GGML_VXE)
+            list(APPEND ARCH_DEFINITIONS GGML_USE_VXE2)
         endif()
+
+        if (GGML_INTERNAL_NNPA)
+            message(STATUS "NNPA enabled")
+            list(APPEND ARCH_DEFINITIONS GGML_USE_NNPA)
+        endif()
+
+        ggml_add_cpu_backend_features(${GGML_CPU_NAME} s390 ${ARCH_DEFINITIONS})
     elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "wasm")
         message(STATUS "Wasm detected")
         list (APPEND GGML_CPU_SOURCES ggml-cpu/arch/wasm/quants.c)
@@ -556,6 +597,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             ${KLEIDIAI_SRC}/kai/ukernels/
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/)
 
@@ -574,23 +616,34 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p4x8sb_f32_neon.c
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32ps1s0scalef16_qsu4c32s16s0_neon.c
             ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p_f32_neon.c
-            ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32pscalef16_qsu4c32s16s0.c)
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32pscalef16_qsu4c32s16s0.c
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qai8dxp_f32.c
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi8cxp_qsi8cx_neon.c)
 
         if (NOT DOTPROD_ENABLED MATCHES -1)
             list(APPEND GGML_KLEIDIAI_SOURCES
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x8_qsi4c32p4x8_1x4x32_neon_dotprod.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x4_qsi4c32p4x4_1x4_neon_dotprod.c
-                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x4_qsi4c32p4x4_16x4_neon_dotprod.c)
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x4_qsi4c32p4x4_16x4_neon_dotprod.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp4x4_qsi8cxp4x4_16x4_neon_dotprod.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp1x4_qsi8cxp4x4_1x4_neon_dotprod.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp1x8_qsi8cxp4x8_1x4_neon_dotprod.c)
         endif()
 
         if (NOT I8MM_ENABLED MATCHES -1)
-            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p4x8_16x4_neon_i8mm.c)
+            list(APPEND GGML_KLEIDIAI_SOURCES
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p4x8_16x4_neon_i8mm.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp4x8_qsi8cxp4x8_16x4_neon_i8mm.c)
         endif()
 
         if (NOT SME_ENABLED MATCHES -1)
             list(APPEND GGML_KLEIDIAI_SOURCES
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1vlx4_qsi4c32p4vlx4_1vlx4vl_sme2_mopa.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x4_qsi4c32p4vlx4_1x4vl_sme2_sdot.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp1vlx4_qsi8cxp4vlx4_1vlx4vl_sme2_mopa.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp1vlx4_qsi8cxp4vlx4_1vlx4vl_sme2_mopa_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp1x4_qsi8cxp4vlx4_1x4vl_sme2_dot.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi8cxp/kai_matmul_clamp_f32_qai8dxp1x4_qsi8cxp4vlx4_1x4vl_sme2_dot_asm.S
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/kai_matmul_clamp_f32_bf16p2vlx2_bf16p2vlx2_2vlx2vl_sme2_mopa.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/kai_matmul_clamp_f32_bf16p2vlx2_bf16p2vlx2_2vlx2vl_sme2_mopa_asm.S
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_pack_bf16p2vlx2_f32_sme.c

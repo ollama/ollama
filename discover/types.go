@@ -41,7 +41,7 @@ func LogDetails(devices []ml.DeviceInfo) {
 		}
 		slog.Info("inference compute",
 			"id", dev.ID,
-			"filtered_id", dev.FilteredID,
+			"filter_id", dev.FilterID,
 			"library", dev.Library,
 			"compute", dev.Compute(),
 			"name", dev.Name,

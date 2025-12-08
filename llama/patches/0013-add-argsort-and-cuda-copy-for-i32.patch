@@ -4,18 +4,18 @@ Date: Thu, 1 May 2025 13:45:12 -0700
 Subject: [PATCH] add argsort and cuda copy for i32
 
 ---
- ggml/src/ggml-cpu/ops.cpp            |  43 +++++++++++
- ggml/src/ggml-cuda/argsort.cu        | 102 ++++++++++++++++++++++++++-
+ ggml/src/ggml-cpu/ops.cpp            |  43 ++++++++++
+ ggml/src/ggml-cuda/argsort.cu        | 122 ++++++++++++++++++++++++---
  ggml/src/ggml-cuda/cpy-utils.cuh     |   6 ++
- ggml/src/ggml-cuda/cpy.cu            |  43 +++++++++++
- ggml/src/ggml-metal/ggml-metal.metal |  64 +++++++++++++++++
- 5 files changed, 256 insertions(+), 2 deletions(-)
+ ggml/src/ggml-cuda/cpy.cu            |  40 +++++++++
+ ggml/src/ggml-metal/ggml-metal.metal |  69 +++++++++++++++
+ 5 files changed, 268 insertions(+), 12 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 1c43865f..31478dd8 100644
+index 2745fc54e..40666bab6 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -7889,6 +7889,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -7846,6 +7846,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -61,7 +61,7 @@ index 1c43865f..31478dd8 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -7900,6 +7939,10 @@ void ggml_compute_forward_argsort(
+@@ -7857,6 +7896,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -73,10 +73,10 @@ index 1c43865f..31478dd8 100644
              {
                  GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
-index 607ded85..53b02634 100644
+index da9652c3b..b82be371c 100644
 --- a/ggml/src/ggml-cuda/argsort.cu
 +++ b/ggml/src/ggml-cuda/argsort.cu
-@@ -85,13 +85,107 @@ static void argsort_f32_i32_cuda(const float * x, int * dst, const int ncols, co
+@@ -168,13 +168,107 @@ static void argsort_f32_i32_cuda_bitonic(const float *   x,
      }
  }
  
@@ -185,23 +185,46 @@ index 607ded85..53b02634 100644
      GGML_ASSERT( dst->type == GGML_TYPE_I32);
      GGML_ASSERT(ggml_is_contiguous(src0));
  
-@@ -100,5 +194,9 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+@@ -183,18 +277,22 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
  
      enum ggml_sort_order order = (enum ggml_sort_order) dst->op_params[0];
  
--    argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
+-#ifdef GGML_CUDA_USE_CUB
+-    const int    ncols_pad      = next_power_of_2(ncols);
+-    const size_t shared_mem     = ncols_pad * sizeof(int);
+-    const size_t max_shared_mem = ggml_cuda_info().devices[ggml_cuda_get_device()].smpb;
+-
+-    if (shared_mem > max_shared_mem || ncols > 1024) {
+-        ggml_cuda_pool & pool = ctx.pool();
+-        argsort_f32_i32_cuda_cub(pool, src0_d, (int *) dst_d, ncols, nrows, order, stream);
 +    if (src0->type == GGML_TYPE_I32) {
 +        argsort_i32_i32_cuda((const int32_t *)src0_d, (int *)dst_d, ncols, nrows, order, stream);
-+    } else {
-+        argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
+     } else {
+-        argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
+-    }
++#ifdef GGML_CUDA_USE_CUB
++        const int    ncols_pad      = next_power_of_2(ncols);
++        const size_t shared_mem     = ncols_pad * sizeof(int);
++        const size_t max_shared_mem = ggml_cuda_info().devices[ggml_cuda_get_device()].smpb;
++
++        if (shared_mem > max_shared_mem || ncols > 1024) {
++            ggml_cuda_pool & pool = ctx.pool();
++            argsort_f32_i32_cuda_cub(pool, src0_d, (int *) dst_d, ncols, nrows, order, stream);
++        } else {
++            argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
++        }
+ #else
+-    argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
++        argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
+ #endif
 +    }
  }
 diff --git a/ggml/src/ggml-cuda/cpy-utils.cuh b/ggml/src/ggml-cuda/cpy-utils.cuh
-index e621cb98..597c0c8b 100644
+index 7697c292d..00d773dd3 100644
 --- a/ggml/src/ggml-cuda/cpy-utils.cuh
 +++ b/ggml/src/ggml-cuda/cpy-utils.cuh
 @@ -215,3 +215,9 @@ template<typename src_t, typename dst_t>
- static __device__ void cpy_1_flt(const char * cxi, char * cdsti) {
+ static __device__ void cpy_1_scalar(const char * cxi, char * cdsti) {
      *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);
  }
 +
@@ -211,19 +234,18 @@ index e621cb98..597c0c8b 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index 746f4396..911220e9 100644
+index c4ceb4fc5..0e53ecc39 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -277,6 +277,47 @@ static void ggml_cpy_f32_iq4_nl_cuda(
-         (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, cdst_indirect, graph_cpynode_index++);
+@@ -352,6 +352,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+         (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
 +template <cpy_kernel_t cpy_1>
 +static __global__ void cpy_i32_i32(
 +    const char *cx, char *cdst, const int ne,
 +    const int ne00, const int ne01, const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
-+    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11, const int nb12, const int nb13,
-+    cudaStream_t stream, char ** cdst_indirect, int & graph_cpynode_index) {
++    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11, const int nb12, const int nb13, cudaStream_t stream) {
 +
 +    const int64_t i = blockDim.x * blockIdx.x + threadIdx.x;
 +
@@ -243,91 +265,92 @@ index 746f4396..911220e9 100644
 +    const int64_t i10 = i - i13 * ne10 * ne11 * ne12 - i12 * ne10 * ne11 - i11 * ne10;
 +    const int64_t dst_offset = i10 * nb10 + i11 * nb11 + i12 * nb12 + i13 * nb13;
 +
-+    char * cdst_ptr = (cdst_indirect != nullptr) ? cdst_indirect[graph_cpynode_index] : cdst;
-+    cpy_1(cx + x_offset, cdst_ptr + dst_offset);
++    cpy_1(cx + x_offset, cdst + dst_offset);
 +}
-+
 +
 +static void ggml_cpy_i32_i32_cuda(
 +    const char * cx, char * cdst, const int ne,
 +    const int ne00, const int ne01, const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
-+    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11, const int nb12, const int nb13,
-+    cudaStream_t stream, char ** cdst_indirect, int graph_cpynode_index) {
++    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11, const int nb12, const int nb13, cudaStream_t stream) {
 +
 +    const int num_blocks = (ne + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
 +    cpy_i32_i32<cpy_1_i32_i32><<<num_blocks, CUDA_CPY_BLOCK_SIZE, 0, stream>>>
-+        (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, stream, cdst_indirect, graph_cpynode_index);
++        (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, stream);
 +}
 +
- void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1, bool disable_indirection_for_this_node) {
+ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -372,6 +413,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
-         ggml_cpy_flt_cuda<half, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
-     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
-         ggml_cpy_flt_cuda<half, float> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
+@@ -481,6 +518,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+             ggml_cpy_scalar_cuda<half, float>
+                 (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+         }
 +    } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_I32) {
-+        ggml_cpy_i32_i32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
++        // TODO consider converting to template
++        ggml_cpy_i32_i32_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
      } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_BF16) {
-         ggml_cpy_flt_cuda<nv_bfloat16, nv_bfloat16> (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
-     } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F16) {
+         if (can_be_transposed) {
+             ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 74a9aa99..375a0c7f 100644
+index 73b45c762..aed013a9d 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4346,8 +4346,72 @@ kernel void kernel_argsort_f32_i32(
+@@ -4721,8 +4721,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  
 +typedef void (i32_argsort_t)(
 +        constant   ggml_metal_kargs_argsort & args,
-+        device  const int32_t * x,
++        device  const int32_t * src0,
 +        device        int32_t * dst,
-+        threadgroup   int32_t * shared_values [[threadgroup(0)]],
-+        uint3 tgpig[[threadgroup_position_in_grid]],
-+        uint3 tpitg[[thread_position_in_threadgroup]]);
++        threadgroup   int32_t * shmem_i32 [[threadgroup(0)]],
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]],
++        ushort3   ntg[[threads_per_threadgroup]]);
 +
 +template<ggml_sort_order order>
 +kernel void kernel_argsort_i32_i32(
 +        constant   ggml_metal_kargs_argsort & args,
-+        device const int32_t * x,
++        device const int32_t * src0,
 +        device       int32_t * dst,
-+        threadgroup int32_t  * shared_values [[threadgroup(0)]],
-+        uint3 tgpig[[threadgroup_position_in_grid]],
-+        uint3 tpitg[[thread_position_in_threadgroup]]) {
++        threadgroup int32_t  * shmem_i32 [[threadgroup(0)]],
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]],
++        ushort3   ntg[[threads_per_threadgroup]]) {
 +    // bitonic sort
-+    int col = tpitg[0];
-+    int row = tgpig[1];
++    const int col = tpitg[0];
 +
-+    if (col >= args.ncols_pad) return;
++    const int i00 = (tgpig[0]/args.ne01)*ntg.x;
++    const int i01 =  tgpig[0]%args.ne01;
++    const int i02 =  tgpig[1];
++    const int i03 =  tgpig[2];
 +
-+    device const int32_t * x_row   = x + row * args.ncols;
-+    threadgroup int32_t  * dst_row = shared_values;
++    device const int32_t * src0_row = (device const int32_t *) (src0 + args.nb01*i01 + args.nb02*i02 + args.nb03*i03);
 +
 +    // initialize indices
-+    dst_row[col] = col;
++    shmem_i32[col] = i00 + col;
 +
 +    threadgroup_barrier(mem_flags::mem_threadgroup);
 +
-+    for (int k = 2; k <= args.ncols_pad; k *= 2) {
++    for (int k = 2; k <= ntg.x; k *= 2) {
 +        for (int j = k / 2; j > 0; j /= 2) {
 +            int ixj = col ^ j;
 +            if (ixj > col) {
 +                if ((col & k) == 0) {
-+                    if (dst_row[col] >= args.ncols ||
-+                        (dst_row[ixj] < args.ncols && (order == GGML_SORT_ORDER_ASC ?
-+                            x_row[dst_row[col]] > x_row[dst_row[ixj]] :
-+                            x_row[dst_row[col]] < x_row[dst_row[ixj]]))
++                    if (shmem_i32[col] >= args.ne00 ||
++                        (shmem_i32[ixj] <  args.ne00 && (order == GGML_SORT_ORDER_ASC ?
++                            src0_row[shmem_i32[col]] > src0_row[shmem_i32[ixj]] :
++                            src0_row[shmem_i32[col]] < src0_row[shmem_i32[ixj]]))
 +                    ) {
-+                        SWAP(dst_row[col], dst_row[ixj]);
++                        SWAP(shmem_i32[col], shmem_i32[ixj]);
 +                    }
 +                } else {
-+                    if (dst_row[ixj] >= args.ncols ||
-+                        (dst_row[col] < args.ncols && (order == GGML_SORT_ORDER_ASC ?
-+                            x_row[dst_row[col]] < x_row[dst_row[ixj]] :
-+                            x_row[dst_row[col]] > x_row[dst_row[ixj]]))
++                    if (shmem_i32[ixj] >= args.ne00 ||
++                        (shmem_i32[col] <  args.ne00 && (order == GGML_SORT_ORDER_ASC ?
++                            src0_row[shmem_i32[col]] < src0_row[shmem_i32[ixj]] :
++                            src0_row[shmem_i32[col]] > src0_row[shmem_i32[ixj]]))
 +                    ) {
-+                        SWAP(dst_row[col], dst_row[ixj]);
++                        SWAP(shmem_i32[col], shmem_i32[ixj]);
 +                    }
 +                }
 +            }
@@ -336,8 +359,10 @@ index 74a9aa99..375a0c7f 100644
 +    }
 +
 +    // copy the result to dst without the padding
-+    if (col < args.ncols) {
-+        dst[row * args.ncols + col] = dst_row[col];
++    if (i00 + col < args.ne00) {
++        dst += i00 + args.ne00*i01 + args.ne00*args.ne01*i02 + args.ne00*args.ne01*args.ne02*i03;
++
++        dst[col] = shmem_i32[col];
 +    }
 +}
 +
@@ -346,5 +371,5 @@ index 74a9aa99..375a0c7f 100644
 +template [[host_name("kernel_argsort_i32_i32_asc")]] kernel i32_argsort_t kernel_argsort_i32_i32<GGML_SORT_ORDER_ASC>;
 +template [[host_name("kernel_argsort_i32_i32_desc")]] kernel i32_argsort_t kernel_argsort_i32_i32<GGML_SORT_ORDER_DESC>;
  
- kernel void kernel_leaky_relu_f32(
-         constant     ggml_metal_kargs_leaky_relu & args,
+ typedef void (argsort_merge_t)(
+         constant   ggml_metal_kargs_argsort_merge & args,

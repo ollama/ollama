@@ -62,14 +62,8 @@ layout(push_constant) uniform parameter {
     uint32_t nb3;
 
     // fastdiv helper values
-    uint32_t KWmp;   uint32_t KWL;
-    uint32_t KWKHmp; uint32_t KWKHL;
     uint32_t OWmp;   uint32_t OWL;
     uint32_t OWOHmp; uint32_t OWOHL;
-#ifdef TRANSPOSE
-    uint32_t s0mp; uint32_t s0L;
-    uint32_t s1mp; uint32_t s1L;
-#endif
 }
 
 p;
@@ -84,6 +78,15 @@ layout(constant_id = 4) const uint TS_K            = 8;
 layout(constant_id = 5) const uint use_collectives = 1;
 layout(constant_id = 6) const uint SHMEM_PAD       = 4;
 
+layout(constant_id = 7)  const uint s0             = 1;
+layout(constant_id = 8)  const uint s1             = 1;
+layout(constant_id = 9)  const uint p0             = 0;
+layout(constant_id = 10) const uint p1             = 0;
+layout(constant_id = 11) const uint d0             = 1;
+layout(constant_id = 12) const uint d1             = 1;
+layout(constant_id = 13) const uint KW             = 1;
+layout(constant_id = 14) const uint KH             = 1;
+
 uint32_t       tid     = gl_LocalInvocationID.x;
 const uint32_t WG_SIZE = gl_WorkGroupSize.x;
 
@@ -92,7 +95,7 @@ uint splitWork(uint work_size, uint block_size) {
 }
 
 uint32_t K   = p.Cout;
-uint32_t CRS = p.Cin * p.KH * p.KW;
+uint32_t CRS = p.Cin * KH * KW;
 uint32_t NPQ = p.N * p.OH * p.OW;
 
 uint32_t n_elems_out = K * NPQ;
@@ -187,7 +190,7 @@ void main() {
     }
 #endif
     /* Advance block in CRS dim */
-    for (uint32_t B_idx_CRS = 0; B_idx_CRS < NB_CRS; B_idx_CRS++) {
+    [[dont_unroll]] for (uint32_t B_idx_CRS = 0; B_idx_CRS < NB_CRS; B_idx_CRS++) {
         uint32_t CRS_idx_a;
         uint32_t Cin_idx_a;
         uint32_t KH_idx_a;
@@ -200,10 +203,10 @@ void main() {
         uint32_t cached_KW_idx;
         if (use_collectives == 1) {
             cached_CRS_idx                = B_idx_CRS * BS_CRS + gl_SubgroupInvocationID;
-            cached_Cin_idx                = fastdiv(cached_CRS_idx, p.KWKHmp, p.KWKHL); // divide by (p.KW * p.KH);
-            uint32_t cached_CRS_remainder = (cached_CRS_idx - cached_Cin_idx * p.KW * p.KH);
-            cached_KH_idx                 = fastdiv(cached_CRS_remainder, p.KWmp, p.KWL); // divide by p.KW;
-            cached_KW_idx                 = cached_CRS_remainder - cached_KH_idx * p.KW;
+            cached_Cin_idx                = cached_CRS_idx / (KW * KH);
+            uint32_t cached_CRS_remainder = cached_CRS_idx % (KW * KH);
+            cached_KH_idx                 = cached_CRS_remainder / KW;
+            cached_KW_idx                 = cached_CRS_remainder % KW;
 
             CRS_idx_a = subgroupShuffle(cached_CRS_idx, Ac);
             Cin_idx_a = subgroupShuffle(cached_Cin_idx, Ac);
@@ -211,21 +214,21 @@ void main() {
             KW_idx_a  = subgroupShuffle(cached_KW_idx, Ac);
         } else {
             CRS_idx_a              = B_idx_CRS * BS_CRS + Ac;  // Global CRS_idx_a (column index of A)
-            Cin_idx_a              = fastdiv(CRS_idx_a, p.KWKHmp, p.KWKHL); // divide by (p.KW * p.KH);
-            uint32_t CRS_remainder = CRS_idx_a - Cin_idx_a * p.KW * p.KH;
-            KH_idx_a               = fastdiv(CRS_remainder, p.KWmp, p.KWL); // divide by p.KW;
-            KW_idx_a               = CRS_remainder - KH_idx_a * p.KW;
+            Cin_idx_a              = CRS_idx_a / (KW * KH);
+            uint32_t CRS_remainder = CRS_idx_a % (KW * KH);
+            KH_idx_a               = CRS_remainder / KW;
+            KW_idx_a               = CRS_remainder % KW;
         }
 #else
         CRS_idx_a     = B_idx_CRS * BS_CRS + Ac;  // Global CRS_idx_a (column index of A)
-        Cin_idx_a     = fastdiv(CRS_idx_a, p.KWKHmp, p.KWKHL); // divide by (p.KW * p.KH); / (p.KW * p.KH);
-        CRS_remainder = CRS_idx_a - Cin_idx_a * p.KW * p.KH;
-        KH_idx_a      = fastdiv(CRS_remainder, p.KWmp, p.KWL); // divide by p.KW;
-        KW_idx_a      = CRS_remainder - KH_idx_a * p.KW;
+        Cin_idx_a     = CRS_idx_a / (KW * KH);
+        CRS_remainder = CRS_idx_a % (KW * KH);
+        KH_idx_a      = CRS_remainder / KW;
+        KW_idx_a      = CRS_remainder % KW;
 #endif
 
         /* Load kernel to A_block: (BS_K x BS_CRS)*/
-        for (uint32_t r_offset = 0; r_offset < BS_K; r_offset += ArpWg) {
+        UNROLL for (uint32_t r_offset = 0; r_offset < BS_K; r_offset += ArpWg) {
             uint32_t B_ly    = r_offset + Ar;
             uint32_t B_lx    = Ac;
             uint32_t K_idx   = B_idx_K * BS_K + B_ly; /* Global K_idx (row index of A)*/
@@ -262,27 +265,27 @@ void main() {
                 KW_idx_b  = subgroupShuffle(cached_KW_idx, r_offset + Br);
             } else {
                 CRS_idx_b              = B_idx_CRS * BS_CRS + B_ly; /* Global CRS index (row index of B) */
-                Cin_idx_b              = fastdiv(CRS_idx_b, p.KWKHmp, p.KWKHL); // divide by (p.KW * p.KH);
-                uint32_t CRS_remainder = CRS_idx_b - Cin_idx_b * p.KW * p.KH;
-                KH_idx_b               = fastdiv(CRS_remainder, p.KWmp, p.KWL); // divide by p.KW;
-                KW_idx_b               = CRS_remainder - KH_idx_b * p.KW;
+                Cin_idx_b              = CRS_idx_b / (KW * KH);
+                uint32_t CRS_remainder = CRS_idx_b % (KW * KH);
+                KH_idx_b               = CRS_remainder / KW;
+                KW_idx_b               = CRS_remainder % KW;
             }
 #else
             CRS_idx_b              = B_idx_CRS * BS_CRS + B_ly; /* Global CRS index (row index of B) */
-            Cin_idx_b              = fastdiv(CRS_idx_b, p.KWKHmp, p.KWKHL); // divide by (p.KW * p.KH);
-            uint32_t CRS_remainder = CRS_idx_b - Cin_idx_b * p.KW * p.KH;
-            KH_idx_b               = fastdiv(CRS_remainder, p.KWmp, p.KWL); // divide by p.KW;
-            KW_idx_b               = CRS_remainder - KH_idx_b * p.KW;
+            Cin_idx_b              = CRS_idx_b / (KW * KH);
+            uint32_t CRS_remainder = CRS_idx_b % (KW * KH);
+            KH_idx_b               = CRS_remainder / KW;
+            KW_idx_b               = CRS_remainder % KW;
 #endif
 
 #ifdef TRANSPOSE
-            uint32_t H_idx_x_s1 = OH_idx - KH_idx_b * p.d1 + p.p1;
-            uint32_t W_idx_x_s0 = OW_idx - KW_idx_b * p.d0 + p.p0;
-            uint32_t H_idx = fastdiv(H_idx_x_s1, p.s1mp, p.s1L);
-            uint32_t W_idx = fastdiv(W_idx_x_s0, p.s0mp, p.s0L);
+            uint32_t H_idx_x_s1 = OH_idx - KH_idx_b * d1 + p1;
+            uint32_t W_idx_x_s0 = OW_idx - KW_idx_b * d0 + p0;
+            uint32_t H_idx = H_idx_x_s1 / s1;
+            uint32_t W_idx = W_idx_x_s0 / s0;
 #else
-            uint32_t H_idx = OH_idx * p.s1 + KH_idx_b * p.d1 - p.p1;
-            uint32_t W_idx = OW_idx * p.s0 + KW_idx_b * p.d0 - p.p0;
+            uint32_t H_idx = OH_idx * s1 + KH_idx_b * d1 - p1;
+            uint32_t W_idx = OW_idx * s0 + KW_idx_b * d0 - p0;
 #endif
             uint32_t src_idx =
                 min(max(W_idx + H_idx * p.nb11 + Cin_idx_b * p.nb12 + N_idx * p.nb13, 0), p.Cin * p.N * p.W * p.H - 1);
@@ -290,7 +293,7 @@ void main() {
             if (CRS_idx_b >= CRS || NPQ_idx >= NPQ
                 || H_idx >= p.H || W_idx >= p.W // Lower bound checks aren't necessary. (idx >= 0x80000000 for such case)
 #ifdef TRANSPOSE
-                || (H_idx_x_s1 - H_idx * p.s1 != 0) || (W_idx_x_s0 - W_idx * p.s0 != 0)
+                || (H_idx_x_s1 - H_idx * s1 != 0) || (W_idx_x_s0 - W_idx * s0 != 0)
 #endif
                 ) {
                 val = 0.0;

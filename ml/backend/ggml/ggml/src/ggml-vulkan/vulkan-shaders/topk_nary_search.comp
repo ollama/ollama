@@ -1,0 +1,199 @@
+#version 450
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_EXT_debug_printf : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
+
+#include "types.glsl"
+
+layout(constant_id = 0) const int BLOCK_SIZE = 1024;
+layout(constant_id = 1) const int SUBGROUP_SIZE = 32;
+layout(constant_id = 2) const int SUBGROUP_SIZE_LOG2 = 5;
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+// Input can either be the source (A) or intermediate values (S).
+// Similarly, output can be either destination (D) or intermediate values (S).
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 0) readonly buffer S {ivec2 data_s[];};
+layout (binding = 1) writeonly buffer D {int data_d[];};
+layout (binding = 1) writeonly buffer T {ivec2 data_t[];};
+
+layout (push_constant) uniform parameter {
+    uint orig_ncols;
+    uint ncols_input;
+    uint ncols_output;
+    uint nrows;
+    uint first_pass;
+    uint last_pass;
+} p;
+
+// pairs of (gid, value)
+shared ivec2 dst_row[BLOCK_SIZE];
+
+shared int counts[SUBGROUP_SIZE];
+shared int sh_min_idx;
+shared uint sh_total;
+shared uint offset_partials[BLOCK_SIZE / SUBGROUP_SIZE];
+
+// Map float values to uint such that comparisons still work.
+// Positive values set the high bit, negative values are inverted.
+// +0.0 -> 0x80000000, -0.0 -> 0x7FFFFFFF are in the correct places.
+uint f2ui(float x) {
+    uint y = floatBitsToUint(x);
+    if ((y & 0x80000000) != 0) {
+        y ^= ~0;
+    } else {
+        y |= 0x80000000;
+    }
+    return y;
+}
+
+void topk(const uint row) {
+    const int tid = int(gl_LocalInvocationID.x);
+
+    // initialize indices
+    if (gl_GlobalInvocationID.x < p.ncols_input) {
+        if (p.first_pass != 0) {
+            const uint row_offset = row * p.ncols_input;
+            dst_row[tid] = ivec2(gl_GlobalInvocationID.x, floatBitsToInt(data_a[row_offset + gl_GlobalInvocationID.x]));
+        } else {
+            const uint row_offset = row * p.orig_ncols;
+            dst_row[tid] = data_s[row_offset + gl_GlobalInvocationID.x];
+        }
+    } else {
+        dst_row[tid] = ivec2(p.orig_ncols, 0xFF800000); // -inf
+    }
+    barrier();
+
+    if (p.ncols_output == 1) {
+        // Fast path for single output - just do a max reduction
+        [[unroll]] for (int s = BLOCK_SIZE / 2; s >= 1; s /= 2) {
+            if (tid < s) {
+                ivec2 a = dst_row[tid];
+                ivec2 b = dst_row[tid + s];
+                if (a.x >= p.orig_ncols ||
+                    b.x < p.orig_ncols && b.y > a.y) {
+                    dst_row[tid] = b;
+                }
+            }
+            barrier();
+        }
+    } else {
+        // Do an N-ary search to find the K-th largest value.
+        // We remap the float values to be comparable as unsigned integers,
+        // and split the range into 2^N smaller ranges where N is the
+        // subgroup size. Count how many values are in each range, if the K-th
+        // largest value is in the middle of one of thee ranges then repeat
+        // and split again.
+
+        // Mask is the current set of bits we're searching. Shift is the LSB index.
+        int shift = 32 - SUBGROUP_SIZE_LOG2;
+        uint mask = ((1 << SUBGROUP_SIZE_LOG2) - 1) << shift;
+
+        // The current range.
+        uint range_min = 0;
+        uint range_max = 0xFF800000;
+        // How many are above the current range, and how many we need to find.
+        uint total = 0;
+        uint limit = min(p.ncols_output, p.ncols_input - gl_WorkGroupID.x * BLOCK_SIZE);
+
+        while (mask != 0) {
+            barrier();
+            // Initialize bucket counts to zero.
+            if (tid < SUBGROUP_SIZE) {
+                counts[tid] = 0;
+            }
+            barrier();
+            // Count how many values are in each bucket.
+            if (tid < p.ncols_input) {
+                float y = intBitsToFloat(dst_row[tid].y);
+                uint fy = f2ui(y);
+                if (fy >= range_min && fy < range_max) {
+                    uint bucket = (fy & mask) >> shift;
+                    atomicAdd(counts[bucket], 1);
+                }
+            }
+            barrier();
+
+            // On the first subgroup, do a scan to count (from the top down) how
+            // many elements are in the top N buckets. Find the index of the first
+            // that is over the limit. Copy it to the other invocations through
+            // shared memory.
+            if (tid < SUBGROUP_SIZE) {
+                uint partial_sum = counts[SUBGROUP_SIZE - 1 - tid];
+                partial_sum = subgroupInclusiveAdd(partial_sum) + total;
+                uint t = subgroupBallotFindLSB(subgroupBallot(partial_sum >= limit));
+                if (tid == t) {
+                    sh_min_idx = int(SUBGROUP_SIZE - 1 - t);
+                    sh_total = partial_sum;
+                }
+            }
+            barrier();
+            int min_idx = sh_min_idx;
+            total = sh_total;
+
+            // Update the range, and break if we've found the K-th largest.
+            range_max = range_min + ((min_idx + 1) << shift);
+            range_min = range_min + (min_idx << shift);
+
+            if (total == p.ncols_output) {
+                break;
+            }
+            total -= counts[min_idx];
+            mask >>= SUBGROUP_SIZE_LOG2;
+            shift -= SUBGROUP_SIZE_LOG2;
+            if (shift < 0) {
+                shift = 0;
+            }
+        }
+
+        ivec2 v = dst_row[tid];
+
+        // We need to compact these values to the start of the dst_row array.
+        // Have each subgroup count how many items it'll store, so other
+        // subgroups can compute their base offset.
+        bool top = f2ui(intBitsToFloat(v.y)) >= range_min;
+        uvec4 b = subgroupBallot(top);
+        uint bit_count = subgroupBallotBitCount(b);
+        if ((tid % SUBGROUP_SIZE) == 0) {
+            offset_partials[tid / SUBGROUP_SIZE] = bit_count;
+        }
+        barrier();
+
+        uint out_idx = 0;
+        [[unroll]] for (int i = 0; i < BLOCK_SIZE / SUBGROUP_SIZE; ++i) {
+            if (i < tid / SUBGROUP_SIZE) {
+                out_idx += offset_partials[i];
+            }
+        }
+
+        uint bit_count_ex = subgroupBallotExclusiveBitCount(b);
+        if (top) {
+            // TODO: Copy directly to the output?
+            dst_row[out_idx + bit_count_ex] = v;
+        }
+
+        barrier();
+    }
+
+    if (tid < p.ncols_output && gl_GlobalInvocationID.x < p.orig_ncols) {
+        if (p.last_pass != 0) {
+            const uint row_offset = row * p.ncols_output;
+            data_d[row_offset + tid] = dst_row[tid].x;
+        } else {
+            const uint row_offset = row * p.orig_ncols + gl_WorkGroupID.x * p.ncols_output;
+            data_t[row_offset + tid] = dst_row[tid];
+        }
+    }
+}
+
+void main() {
+    uint row = gl_WorkGroupID.y;
+    while (row < p.nrows) {
+        topk(row);
+        row += gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+    }
+}

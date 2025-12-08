@@ -63,6 +63,8 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "megrez",            LLM_CHAT_TEMPLATE_MEGREZ            },
     { "yandex",            LLM_CHAT_TEMPLATE_YANDEX            },
     { "bailing",           LLM_CHAT_TEMPLATE_BAILING           },
+    { "bailing-think",     LLM_CHAT_TEMPLATE_BAILING_THINK     },
+    { "bailing2",          LLM_CHAT_TEMPLATE_BAILING2          },
     { "llama4",            LLM_CHAT_TEMPLATE_LLAMA4            },
     { "smolvlm",           LLM_CHAT_TEMPLATE_SMOLVLM           },
     { "hunyuan-moe",       LLM_CHAT_TEMPLATE_HUNYUAN_MOE       },
@@ -71,6 +73,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "kimi-k2",           LLM_CHAT_TEMPLATE_KIMI_K2           },
     { "seed_oss",          LLM_CHAT_TEMPLATE_SEED_OSS          },
     { "grok-2",            LLM_CHAT_TEMPLATE_GROK_2            },
+    { "pangu-embedded",    LLM_CHAT_TEMPLATE_PANGU_EMBED       },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -191,6 +194,10 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_YANDEX;
     } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("'HUMAN'")) {
         return LLM_CHAT_TEMPLATE_BAILING;
+    } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("\"HUMAN\"") && tmpl_contains("<think>")) {
+        return LLM_CHAT_TEMPLATE_BAILING_THINK;
+    } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("<role>HUMAN</role>") && tmpl_contains("<|role_end|>")) {
+        return LLM_CHAT_TEMPLATE_BAILING2;
     } else if (tmpl_contains("<|header_start|>") && tmpl_contains("<|header_end|>")) {
         return LLM_CHAT_TEMPLATE_LLAMA4;
     } else if (tmpl_contains("<|endofuserprompt|>")) {
@@ -207,6 +214,8 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_SEED_OSS;
     } else if (tmpl_contains("'Assistant: '  + message['content'] + '<|separator|>")) {
         return LLM_CHAT_TEMPLATE_GROK_2;
+    } else if (tmpl_contains(LU8("[unused9]系统：[unused10]"))) {
+        return LLM_CHAT_TEMPLATE_PANGU_EMBED;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -644,8 +653,8 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << " Ассистент:[SEP]";
         }
-    }  else if (tmpl == LLM_CHAT_TEMPLATE_BAILING) {
-        // Bailing (Ling) template
+    } else if (tmpl == LLM_CHAT_TEMPLATE_BAILING || tmpl == LLM_CHAT_TEMPLATE_BAILING_THINK) {
+        // Bailing (Ling/Ring) template
         for (auto message : chat) {
             std::string role(message->role);
 
@@ -656,6 +665,33 @@ int32_t llm_chat_apply_template(
             }
 
             ss << "<role>" << role << "</role>" << message->content;
+        }
+
+        if (add_ass) {
+            ss << "<role>ASSISTANT</role>";
+
+            if (tmpl == LLM_CHAT_TEMPLATE_BAILING_THINK) {
+                ss << "<think>";
+            }
+        }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_BAILING2) {
+        // Bailing2 (Ling 2.0) template
+        bool has_system = !chat.empty() && std::string(chat[0]->role) == "system";
+
+        if (!has_system) {
+            ss << "<role>SYSTEM</role>detailed thinking off<|role_end|>";
+        }
+
+        for (auto message : chat) {
+            std::string role(message->role);
+
+            if (role == "user") {
+                role = "HUMAN";
+            } else {
+                std::transform(role.begin(), role.end(), role.begin(), ::toupper);
+            }
+
+            ss << "<role>" << role << "</role>" << message->content << "<|role_end|>";
         }
 
         if (add_ass) {
@@ -779,6 +815,35 @@ int32_t llm_chat_apply_template(
         }
         if (add_ass) {
             ss << "Assistant:";
+        }
+    }else if (tmpl == LLM_CHAT_TEMPLATE_PANGU_EMBED) {
+        // [unused9]系统：xxx[unused10]
+        // [unused9]用户：xxx[unused10]
+        // [unused9]助手：xxx[unused10]
+        // ...
+        for (size_t i = 0; i < chat.size(); ++i) {
+            const auto & msg = chat[i];
+            const std::string & role = msg->role;
+            const std::string & content = msg->content;
+
+            if (i == 0 && role != "system") {
+                ss << "[unused9]系统：[unused10]";
+            }
+
+            if (role == "system") {
+                ss << "[unused9]系统：" << content << "[unused10]";
+            } else if (role == "user") {
+                ss << "[unused9]用户：" << content << "[unused10]";
+            } else if (role == "assistant") {
+                ss << "[unused9]助手：" << content << "[unused10]";
+            } else if (role == "tool") {
+                ss << "[unused9]工具：" << content << "[unused10]";
+            } else if (role == "function") {
+                ss << "[unused9]方法：" << content << "[unused10]";
+            }
+        }
+        if (add_ass) {
+            ss << "[unused9]助手：";
         }
     } else {
         // template not supported
