@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/ggml-org/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=3cfa9c3f125763305b4226bc032f1954f08990dc
+FETCH_HEAD=7f8ef50cce40e3e7e4526a3696cb45658190e69a
 
 .PHONY: help
 help:

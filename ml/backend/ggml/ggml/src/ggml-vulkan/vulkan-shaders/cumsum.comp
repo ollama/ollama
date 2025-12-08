@@ -1,0 +1,69 @@
+#version 450
+
+#include "types.glsl"
+#include "sum_rows.glsl"
+
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+layout (constant_id = 0) const uint BLOCK_SIZE = 128;
+layout (constant_id = 1) const uint SUBGROUP_SIZE = 32;
+
+#define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
+
+shared FLOAT_TYPE partial[BLOCK_SIZE / SUBGROUP_SIZE];
+shared FLOAT_TYPE last_sum;
+
+void main() {
+    const uint row = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
+    const uint tid = gl_LocalInvocationID.x;
+
+    const uint i03 = fastdiv(row, p.ne0_12mp, p.ne0_12L);
+    const uint i03_offset = i03 * p.ne01*p.ne02;
+    const uint i02 = fastdiv(row - i03_offset, p.ne0_1mp, p.ne0_1L);
+    const uint i01 = row - i03_offset - i02*p.ne01;
+
+    const uint src_idx = get_aoffset() + i01 * p.nb01 + i02 * p.nb02 + i03 * p.nb03;
+    const uint dst_idx = get_doffset() + i01 * p.nb11 + i02 * p.nb12 + i03 * p.nb13;
+
+    uint subgroup_id = tid / SUBGROUP_SIZE;
+
+    if (tid == 0) {
+        last_sum = 0;
+    }
+
+    uint col = tid;
+    uint num_iter = CEIL_DIV(p.n_cols, BLOCK_SIZE);
+    for (int i = 0; i < num_iter; ++i) {
+        FLOAT_TYPE v = 0;
+        if (col < p.n_cols) {
+            v = FLOAT_TYPE(data_a[src_idx + col]);
+        }
+        v = subgroupInclusiveAdd(v);
+
+        // Store the largest partial sum for each subgroup, then add the partials for all
+        // lower subgroups and the final partial sum from the previous iteration.
+        if (gl_SubgroupInvocationID == SUBGROUP_SIZE - 1) {
+            partial[subgroup_id] = v;
+        }
+        barrier();
+        for (int j = 0; j < subgroup_id; ++j) {
+            v += partial[j];
+        }
+        v += last_sum;
+        barrier();
+        if (tid == BLOCK_SIZE - 1) {
+            last_sum = v;
+        }
+        if (col < p.n_cols) {
+            data_d[dst_idx + col] = D_TYPE(v);
+        }
+        col += BLOCK_SIZE;
+    }
+}

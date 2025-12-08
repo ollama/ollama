@@ -233,8 +233,10 @@ type Tensor interface {
 //
 // kqv := value.Mulmat(ctx, kq)
 // return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+//
+// cacheConfigApplied indicates whether the optimizations requested through CacheConfig have been performed
 type ScaledDotProductAttention interface {
-	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, vmla Tensor, scale float64) Tensor
+	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, vmla Tensor, scale float64, cacheConfigApplied bool) Tensor
 }
 
 type number interface {
