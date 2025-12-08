@@ -59,6 +59,9 @@ func rendererForName(name string) Renderer {
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
+	case "olmo3":
+		renderer := &Olmo3Renderer{}
+		return renderer
 	default:
 		return nil
 	}
