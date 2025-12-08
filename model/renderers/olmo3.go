@@ -152,3 +152,7 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 
 	return sb.String(), nil
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 991a63b6 (renderers/parsers: olmo3 instruct)
