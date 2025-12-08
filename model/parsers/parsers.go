@@ -60,6 +60,8 @@ func ParserForName(name string) Parser {
 		return &CogitoParser{}
 	case "olmo3-think":
 		return &Olmo3ThinkParser{}
+	case "olmo3":
+		return &Olmo3Parser{}
 	default:
 		return nil
 	}
