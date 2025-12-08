@@ -18,6 +18,8 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> = ({
       return [
         defaultRemarkPlugins.gfm,
         defaultRemarkPlugins.math,
+        defaultRemarkPlugins.cjkFriendly,
+        defaultRemarkPlugins.cjkFriendlyGfmStrikethrough,
         remarkCitationParser,
       ];
     }, []);
@@ -29,7 +31,6 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> = ({
           isStreaming={isStreaming}
         >
           <Streamdown
-            parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
             remarkPlugins={remarkPlugins}
             controls={false}
