@@ -97,51 +97,51 @@ func (p *nomicbertModel) KV(t *Tokenizer) ggml.KV {
 	}
 
 	kv["general.architecture"] = arch
-	kv[arch+".attention.causal"] = false
-	kv[arch+".pooling_type"] = p.PoolingType
-	kv[arch+".normalize_embeddings"] = p.normalizeEmbeddings
+	kv["attention.causal"] = false
+	kv["pooling_type"] = p.PoolingType
+	kv["normalize_embeddings"] = p.normalizeEmbeddings
 
-	kv[arch+".block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers)
+	kv["block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers)
 
 	if contextLength := p.MaxPositionEmbeddings; contextLength > 0 {
-		kv[arch+".context_length"] = contextLength
+		kv["context_length"] = contextLength
 	}
 
 	if embeddingLength := p.HiddenSize; embeddingLength > 0 {
-		kv[arch+".embedding_length"] = p.HiddenSize
+		kv["embedding_length"] = p.HiddenSize
 	}
 
 	if feedForwardLength := p.IntermediateSize; feedForwardLength > 0 {
-		kv[arch+".feed_forward_length"] = p.IntermediateSize
+		kv["feed_forward_length"] = p.IntermediateSize
 	}
 
 	if headCount := p.NumAttentionHeads; headCount > 0 {
-		kv[arch+".attention.head_count"] = p.NumAttentionHeads
+		kv["attention.head_count"] = p.NumAttentionHeads
 	}
 
 	if kvHeadCount := p.NumKeyValueHeads; kvHeadCount > 0 {
-		kv[arch+".attention.head_count_kv"] = p.NumKeyValueHeads
+		kv["attention.head_count_kv"] = p.NumKeyValueHeads
 	}
 
 	if layerNormEpsilon := cmp.Or(p.LayerNormEPS, p.LayerNormEpsilon); layerNormEpsilon > 0 {
-		kv[arch+".attention.layer_norm_epsilon"] = layerNormEpsilon
+		kv["attention.layer_norm_epsilon"] = layerNormEpsilon
 	}
 
 	if p.RopeFreqBase > 0 {
-		kv[arch+".rope.freq_base"] = p.RopeFreqBase
+		kv["rope.freq_base"] = p.RopeFreqBase
 	}
 
 	// MoE specific parameters (only if MoE is enabled)
 	if p.NumExperts > 0 {
-		kv[arch+".expert_count"] = p.NumExperts
+		kv["expert_count"] = p.NumExperts
 	}
 
 	if p.NumExpertsUsed > 0 {
-		kv[arch+".expert_used_count"] = p.NumExpertsUsed
+		kv["expert_used_count"] = p.NumExpertsUsed
 	}
 
 	if p.MoEEveryNLayers > 0 {
-		kv[arch+".moe_every_n_layers"] = p.MoEEveryNLayers
+		kv["moe_every_n_layers"] = p.MoEEveryNLayers
 	}
 
 	kv["tokenizer.ggml.model"] = "bert"
