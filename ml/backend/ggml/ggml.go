@@ -29,6 +29,7 @@ import (
 	"unicode"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
@@ -61,6 +62,12 @@ var initDevices = sync.OnceFunc(func() {
 			accels = append(accels, d)
 		case C.GGML_BACKEND_DEVICE_TYPE_GPU,
 			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
+			// Skip Vulkan devices if OLLAMA_VULKAN is not enabled
+			name := C.GoString(C.ggml_backend_dev_name(d))
+			if !envconfig.EnableVulkan() && strings.Contains(strings.ToLower(name), "vulkan") {
+				slog.Debug("skipping Vulkan device (OLLAMA_VULKAN not enabled)", "device", name)
+				continue
+			}
 			gpus = append(gpus, d)
 		}
 
@@ -78,6 +85,11 @@ type Backend struct {
 	modelPath string
 
 	meta *fsggml.GGML
+
+	// secondaryMetas stores metadata from secondary GGUF files (e.g., vision encoder)
+	secondaryMetas []*fsggml.GGML
+	// secondaryPaths stores paths to secondary GGUF files for loading tensor data
+	secondaryPaths []string
 
 	// allocMemory means that memory should be allocated for tensors and not
 	// just a dry run
@@ -133,7 +145,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	once.Do(func() {
-		slog.Info(
+		slog.Debug(
 			"",
 			"architecture", meta.KV().Architecture(),
 			"file_type", meta.KV().FileType(),
@@ -231,6 +243,15 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	maxTensors += 1
 	// each layer has at most 2 extra tensors for rope operations
 	maxTensors += blocks * 2
+	// Pre-scan secondary GGUF files to count additional tensors
+	for _, secondaryPath := range params.SecondaryPaths {
+		if sr, err := os.Open(secondaryPath); err == nil {
+			if secMeta, err := fsggml.Decode(sr, -1); err == nil {
+				maxTensors += len(secMeta.Tensors().Items())
+			}
+			sr.Close()
+		}
+	}
 
 	type tensor struct {
 		source *fsggml.Tensor
@@ -273,10 +294,28 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				kind = uint32(fsggml.TensorTypeF32)
 			}
 
-			tt := C.ggml_new_tensor(ctxs[bt], kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
+			// Special handling for patch embedding weight in split GGUF:
+			// Original shape [16, 16, 3, 1152] needs to be reshaped to [768, 1152] for linear projection.
+			// Reshaping later fails due to view_src assertion in ggml_new_tensor_impl.
+			// Solution: create tensor with target 2D shape directly at load time.
+			var shape []C.int64_t
+			if name == "v.patch_embd.weight" && len(t.source.Shape) == 4 {
+				// Calculate patchDim = kW * kH * channels = ne[0] * ne[1] * ne[2]
+				patchDim := C.int64_t(t.source.Shape[0] * t.source.Shape[1] * t.source.Shape[2])
+				hiddenSize := C.int64_t(t.source.Shape[3])
+				shape = []C.int64_t{patchDim, hiddenSize}
+				slog.Debug("reshaping patch embedding at load time", "original", t.source.Shape, "target", shape)
+			} else {
+				shape = make([]C.int64_t, len(t.source.Shape))
+				for i, s := range t.source.Shape {
+					shape[i] = C.int64_t(s)
+				}
+			}
+
+			tt := C.ggml_new_tensor(ctxs[bt], kind, C.int(len(shape)), &shape[0])
 			C.ggml_set_name(tt, cname)
 
-			logutil.Trace("created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
+			logutil.Trace("created tensor", "name", name, "shape", shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
 
 			size := pad(C.ggml_backend_buft_get_alloc_size(bt, tt), C.ggml_backend_buft_get_alignment(bt))
 			if layer == -1 {
@@ -342,11 +381,118 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
+	// Load tensors from secondary GGUF files (e.g., vision encoder)
+	// These are loaded into the same contexts so they're registered with the scheduler
+	secondaryMetas := make([]*fsggml.GGML, 0, len(params.SecondaryPaths))
+	for _, secondaryPath := range params.SecondaryPaths {
+		sr, err := os.Open(secondaryPath)
+		if err != nil {
+			slog.Warn("failed to open secondary GGUF", "path", secondaryPath, "error", err)
+			continue
+		}
+
+		secondaryMeta, err := fsggml.Decode(sr, -1)
+		sr.Close()
+		if err != nil {
+			slog.Warn("failed to decode secondary GGUF", "path", secondaryPath, "error", err)
+			continue
+		}
+
+		slog.Debug("loading secondary GGUF into main backend", "path", secondaryPath, "tensors", len(secondaryMeta.Tensors().Items()))
+		secondaryMetas = append(secondaryMetas, secondaryMeta)
+
+		// Create tensors from secondary GGUF - vision tensors go to output buffer
+		for _, t := range secondaryMeta.Tensors().Items() {
+			// Vision/multimodal tensors (v.*, mm.*, s.*) go to output buffer type
+			if strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm.") || strings.HasPrefix(t.Name, "s.") {
+				createTensor(tensor{source: t}, output.bts, blocks)
+			} else {
+				// Other tensors go to CPU
+				createTensor(tensor{source: t}, input.bts, -1)
+			}
+		}
+	}
+
 	// map tensor names to tensors for easy lookup later
 	tensors := make(map[string]*C.struct_ggml_tensor)
 	for _, c := range ctxs {
 		for t := C.ggml_get_first_tensor(c); t != nil; t = C.ggml_get_next_tensor(c, t) {
 			tensors[C.GoString(C.ggml_get_name(t))] = t
+		}
+	}
+
+	// Register aliases for split model compatibility
+	// Split models use different naming conventions than unified models
+	for name, tensor := range tensors {
+		// patch_embd → patch_embed
+		if strings.HasPrefix(name, "v.patch_embd") {
+			aliasName := "v.patch_embed" + strings.TrimPrefix(name, "v.patch_embd")
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// position_embd → position_embed
+		if strings.HasPrefix(name, "v.position_embd") {
+			aliasName := "v.position_embed" + strings.TrimPrefix(name, "v.position_embd")
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// ln1 → norm1 (layer norm naming)
+		if strings.Contains(name, ".ln1.") {
+			aliasName := strings.Replace(name, ".ln1.", ".norm1.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// ln2 → norm2 (layer norm naming)
+		if strings.Contains(name, ".ln2.") {
+			aliasName := strings.Replace(name, ".ln2.", ".norm2.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// ffn_up → mlp.linear_fc1 (MLP naming)
+		if strings.Contains(name, ".ffn_up.") {
+			aliasName := strings.Replace(name, ".ffn_up.", ".mlp.linear_fc1.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// ffn_down → mlp.linear_fc2 (MLP naming)
+		if strings.Contains(name, ".ffn_down.") {
+			aliasName := strings.Replace(name, ".ffn_down.", ".mlp.linear_fc2.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// v.deepstack.N → v.deepstack_merger.N (deepstack naming)
+		if strings.HasPrefix(name, "v.deepstack.") && !strings.Contains(name, "deepstack_merger") {
+			aliasName := strings.Replace(name, "v.deepstack.", "v.deepstack_merger.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// .fc1. → .linear_fc1. (for deepstack)
+		if strings.Contains(name, "deepstack") && strings.Contains(name, ".fc1.") {
+			aliasName := strings.Replace(name, ".fc1.", ".linear_fc1.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// .fc2. → .linear_fc2. (for deepstack)
+		if strings.Contains(name, "deepstack") && strings.Contains(name, ".fc2.") {
+			aliasName := strings.Replace(name, ".fc2.", ".linear_fc2.", 1)
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
+		}
+		// v.post_ln → v.merger.norm (post layer norm for merger)
+		if strings.HasPrefix(name, "v.post_ln.") {
+			aliasName := "v.merger.norm." + strings.TrimPrefix(name, "v.post_ln.")
+			if _, exists := tensors[aliasName]; !exists {
+				tensors[aliasName] = tensor
+			}
 		}
 	}
 
@@ -378,7 +524,12 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(1024, len(meta.Tensors().Items())*8)
+	// Calculate max graph nodes - include secondary GGUF tensors for vision models
+	totalTensors := len(meta.Tensors().Items())
+	for _, sm := range secondaryMetas {
+		totalTensors += len(sm.Tensors().Items())
+	}
+	maxGraphNodes := max(1024, totalTensors*8)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
@@ -445,6 +596,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		btDeviceMemory: btDeviceMemory,
 		maxGraphNodes:  maxGraphNodes,
 		weightBuffers:  bbs,
+		secondaryMetas: secondaryMetas,
+		secondaryPaths: params.SecondaryPaths,
 	}, nil
 }
 
@@ -479,19 +632,19 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 			gpuLayers++
 		}
 	}
-	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
+	slog.Debug(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
 
 	switch C.ggml_backend_dev_type(b.output) {
 	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
-		slog.Info("offloading output layer to CPU")
+		slog.Debug("offloading output layer to CPU")
 	case C.GGML_BACKEND_DEVICE_TYPE_GPU,
 		C.GGML_BACKEND_DEVICE_TYPE_IGPU:
-		slog.Info("offloading output layer to GPU")
+		slog.Debug("offloading output layer to GPU")
 		gpuLayers++
 	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-		slog.Info("offloading output layer to ACCEL")
+		slog.Debug("offloading output layer to ACCEL")
 	}
-	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(b.layers)+1))
+	slog.Debug(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(b.layers)+1))
 
 	var doneBytes atomic.Uint64
 	totalBytes := uint64(b.meta.Length) - b.meta.Tensors().Offset
@@ -625,6 +778,53 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 		})
 	}
 
+	// Load tensor data from secondary GGUF files
+	for i, secondaryMeta := range b.secondaryMetas {
+		secondaryPath := b.secondaryPaths[i]
+		for _, t := range secondaryMeta.Tensors().Items() {
+			// Check if tensor exists (it should have been created during New())
+			tts, ok := b.tensors[t.Name]
+			if !ok {
+				logutil.Trace("secondary GGUF tensor not in backend", "name", t.Name, "path", secondaryPath)
+				continue
+			}
+
+			g.Go(func() error {
+				file, err := os.Open(secondaryPath)
+				if err != nil {
+					slog.Warn("secondary file open error", "file", secondaryPath, "error", err)
+					return err
+				}
+				defer file.Close()
+
+				sr := io.NewSectionReader(file, int64(secondaryMeta.Tensors().Offset+t.Offset), int64(t.Size()))
+				bts := make([]byte, 128*format.KibiByte)
+
+				var s uint64
+				for s < t.Size() {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+
+					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
+					if err != nil {
+						slog.Warn("secondary file read error", "file", secondaryPath, "tensor", t.Name, "error", err)
+						return err
+					}
+
+					C.ggml_backend_tensor_set(tts, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
+					s += uint64(n)
+
+					if progress != nil {
+						done := doneBytes.Add(uint64(n))
+						progress(float32(done) / float32(totalBytes))
+					}
+				}
+				return nil
+			})
+		}
+	}
+
 	// Cleanup any backend state from devices that we didn't end up using
 nextDevice:
 	for _, d := range append(gpus, append(accels, cpus...)...) {
@@ -644,12 +844,334 @@ nextDevice:
 	return nil
 }
 
+// LoadSecondary loads tensor data from a secondary GGUF file into the backend.
+// This is used for split models where the vision encoder is in a separate GGUF file.
+// If tensors don't exist in the backend, they are created and allocated.
+func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(float32)) error {
+	if !b.allocMemory {
+		return errors.New("cannot load secondary model without memory allocation")
+	}
+
+	// Open and decode the secondary GGUF file
+	r, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open secondary GGUF: %w", err)
+	}
+	defer r.Close()
+
+	meta, err := fsggml.Decode(r, -1)
+	if err != nil {
+		return fmt.Errorf("failed to decode secondary GGUF: %w", err)
+	}
+
+	slog.Debug("loading secondary GGUF", "path", path, "tensors", len(meta.Tensors().Items()))
+
+	// Use the first scheduler buffer type (typically GPU if available, else CPU)
+	// This ensures secondary tensors are on the same buffer as main model tensors
+	// so they can be used together in compute graphs
+	if len(b.schedBufts) == 0 {
+		return errors.New("no scheduler buffer types available")
+	}
+	bufferType := b.schedBufts[0]
+
+	// Create tensors that don't exist in the backend
+	maxNewTensors := len(meta.Tensors().Items())
+	secondaryCtx := C.ggml_init(C.struct_ggml_init_params{
+		mem_size: C.ggml_tensor_overhead() * C.size_t(maxNewTensors),
+		no_alloc: true,
+	})
+	if secondaryCtx == nil {
+		return errors.New("failed to create GGML context for secondary tensors")
+	}
+
+	// Track new tensors to allocate
+	var newTensors []*C.struct_ggml_tensor
+	tensorMap := make(map[string]*C.struct_ggml_tensor)
+
+	for _, t := range meta.Tensors().Items() {
+		// Check if tensor already exists
+		if existing, ok := b.tensors[t.Name]; ok {
+			tensorMap[t.Name] = existing
+			logutil.Trace("secondary GGUF tensor exists in backend", "name", t.Name)
+			continue
+		}
+
+		// Create new tensor
+		cname := C.CString(t.Name)
+		defer C.free(unsafe.Pointer(cname))
+
+		kind := t.Kind
+
+		// Special handling for patch embedding weight in split GGUF:
+		// Original shape [16, 16, 3, 1152] needs to be reshaped to [768, 1152] for linear projection.
+		// Reshaping secondary GGUF tensors later fails due to view_src assertion in ggml_new_tensor_impl.
+		// Solution: create tensor with target 2D shape directly at load time.
+		var shape []C.int64_t
+		if t.Name == "v.patch_embd.weight" && len(t.Shape) == 4 {
+			// Calculate patchDim = kW * kH * channels = ne[0] * ne[1] * ne[2]
+			patchDim := C.int64_t(t.Shape[0] * t.Shape[1] * t.Shape[2])
+			hiddenSize := C.int64_t(t.Shape[3])
+			shape = []C.int64_t{patchDim, hiddenSize}
+			slog.Debug("reshaping secondary patch embedding at load time", "original", t.Shape, "target", shape)
+		} else {
+			shape = make([]C.int64_t, len(t.Shape))
+			for i, s := range t.Shape {
+				shape[i] = C.int64_t(s)
+			}
+		}
+
+		tt := C.ggml_new_tensor(secondaryCtx, kind, C.int(len(shape)), &shape[0])
+		C.ggml_set_name(tt, cname)
+
+		newTensors = append(newTensors, tt)
+		tensorMap[t.Name] = tt
+		b.tensors[t.Name] = tt
+
+		logutil.Trace("created secondary tensor", "name", t.Name, "shape", t.Shape, "dtype", t.Kind)
+	}
+
+	// Allocate buffer for new tensors using the same buffer type as the scheduler
+	if len(newTensors) > 0 {
+		buf := C.ggml_backend_alloc_ctx_tensors_from_buft(secondaryCtx, bufferType)
+		if buf == nil {
+			C.ggml_free(secondaryCtx)
+			return errors.New("failed to allocate buffer for secondary tensors")
+		}
+		slog.Debug("allocated buffer for secondary tensors", "count", len(newTensors), "buffer_type", C.GoString(C.ggml_backend_buft_name(bufferType)))
+
+		// Store the buffer for cleanup (add to weightBuffers)
+		b.weightBuffers[secondaryCtx] = buf
+	}
+
+	// Load tensor data
+	var doneBytes atomic.Uint64
+	totalBytes := uint64(meta.Length) - meta.Tensors().Offset
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
+
+	loadedCount := 0
+	for _, t := range meta.Tensors().Items() {
+		tt := tensorMap[t.Name]
+		if tt == nil {
+			continue
+		}
+
+		loadedCount++
+		g.Go(func() error {
+			file, err := os.Open(path)
+			if err != nil {
+				slog.Warn("file open error", "file", path, "error", err)
+				return err
+			}
+			defer file.Close()
+
+			sr := io.NewSectionReader(file, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			bts := make([]byte, 128*format.KibiByte)
+
+			var s uint64
+			for s < t.Size() {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+
+				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
+				if err != nil {
+					slog.Warn("secondary GGUF read error", "file", path, "tensor", t.Name, "error", err)
+					return err
+				}
+
+				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
+				s += uint64(n)
+
+				if progress != nil {
+					done := doneBytes.Add(uint64(n))
+					progress(float32(done) / float32(totalBytes))
+				}
+			}
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	slog.Debug("secondary GGUF loaded", "path", path, "tensors_loaded", loadedCount, "new_tensors", len(newTensors))
+	return nil
+}
+
 func (b *Backend) BackendMemory() ml.BackendMemory {
 	return *b.requiredMemory
 }
 
+// mergedConfig wraps the main config and falls back to secondary configs for vision keys
+type mergedConfig struct {
+	main        fs.Config
+	secondaries []fs.Config
+}
+
+func (m *mergedConfig) Architecture() string {
+	return m.main.Architecture()
+}
+
+func (m *mergedConfig) String(key string, defaults ...string) string {
+	val := m.main.String(key, "")
+	if val != "" {
+		return val
+	}
+	// Try secondary configs - strip main architecture prefix
+	baseKey := key
+	if mainArch := m.main.Architecture(); strings.HasPrefix(key, mainArch+".") {
+		baseKey = strings.TrimPrefix(key, mainArch+".")
+	}
+	for _, sec := range m.secondaries {
+		val = sec.String(baseKey, "")
+		if val != "" {
+			return val
+		}
+	}
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+	return ""
+}
+
+func (m *mergedConfig) Uint(key string, defaults ...uint32) uint32 {
+	// Try main config first
+	val := m.main.Uint(key, 0)
+	if val != 0 {
+		return val
+	}
+	// Try secondary configs - strip main architecture prefix first
+	// E.g., "qwen3vl.vision.embedding_length" -> "vision.embedding_length"
+	// Then secondary config will apply its own prefix (e.g., "clip.vision.embedding_length")
+	baseKey := key
+	mainArch := m.main.Architecture()
+	if strings.HasPrefix(key, mainArch+".") {
+		baseKey = strings.TrimPrefix(key, mainArch+".")
+	}
+	for _, sec := range m.secondaries {
+		val = sec.Uint(baseKey, 0)
+		if val != 0 {
+			return val
+		}
+	}
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+	return 0
+}
+
+func (m *mergedConfig) Float(key string, defaults ...float32) float32 {
+	val := m.main.Float(key, 0)
+	if val != 0 {
+		return val
+	}
+	// Strip main architecture prefix for secondary lookups
+	baseKey := key
+	if mainArch := m.main.Architecture(); strings.HasPrefix(key, mainArch+".") {
+		baseKey = strings.TrimPrefix(key, mainArch+".")
+	}
+	for _, sec := range m.secondaries {
+		val = sec.Float(baseKey, 0)
+		if val != 0 {
+			return val
+		}
+	}
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+	return 0
+}
+
+func (m *mergedConfig) Bool(key string, defaults ...bool) bool {
+	return m.main.Bool(key, defaults...)
+}
+
+func (m *mergedConfig) Strings(key string, defaults ...[]string) []string {
+	val := m.main.Strings(key)
+	if len(val) > 0 {
+		return val
+	}
+	baseKey := key
+	if mainArch := m.main.Architecture(); strings.HasPrefix(key, mainArch+".") {
+		baseKey = strings.TrimPrefix(key, mainArch+".")
+	}
+	for _, sec := range m.secondaries {
+		val = sec.Strings(baseKey)
+		if len(val) > 0 {
+			return val
+		}
+	}
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+	return nil
+}
+
+func (m *mergedConfig) Ints(key string, defaults ...[]int32) []int32 {
+	val := m.main.Ints(key)
+	if len(val) > 0 {
+		return val
+	}
+	baseKey := key
+	if mainArch := m.main.Architecture(); strings.HasPrefix(key, mainArch+".") {
+		baseKey = strings.TrimPrefix(key, mainArch+".")
+	}
+	for _, sec := range m.secondaries {
+		val = sec.Ints(baseKey)
+		if len(val) > 0 {
+			return val
+		}
+	}
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+	return nil
+}
+
+func (m *mergedConfig) Floats(key string, defaults ...[]float32) []float32 {
+	val := m.main.Floats(key)
+	if len(val) > 0 {
+		return val
+	}
+	baseKey := key
+	if mainArch := m.main.Architecture(); strings.HasPrefix(key, mainArch+".") {
+		baseKey = strings.TrimPrefix(key, mainArch+".")
+	}
+	for _, sec := range m.secondaries {
+		val = sec.Floats(baseKey)
+		if len(val) > 0 {
+			return val
+		}
+	}
+	if len(defaults) > 0 {
+		return defaults[0]
+	}
+	return nil
+}
+
+func (m *mergedConfig) Bools(key string, defaults ...[]bool) []bool {
+	return m.main.Bools(key, defaults...)
+}
+
 func (b *Backend) Config() fs.Config {
-	return b.meta.KV()
+	if len(b.secondaryMetas) == 0 {
+		return b.meta.KV()
+	}
+
+	// Create merged config with secondary configs
+	secondaries := make([]fs.Config, len(b.secondaryMetas))
+	for i, meta := range b.secondaryMetas {
+		secondaries[i] = meta.KV()
+	}
+
+	return &mergedConfig{
+		main:        b.meta.KV(),
+		secondaries: secondaries,
+	}
 }
 
 func (b *Backend) Get(name string) ml.Tensor {
@@ -658,6 +1180,73 @@ func (b *Backend) Get(name string) ml.Tensor {
 	}
 
 	return nil
+}
+
+// RegisterTensorAlias registers an alternative name for existing tensors.
+// This allows different GGUF naming conventions to work with the same model code.
+// For example, split GGUFs may use "patch_embd" while unified use "patch_embed".
+// Supports wildcard * pattern matching: "v.blk.*.mlp" matches "v.blk.0.mlp", "v.blk.1.mlp", etc.
+func (b *Backend) RegisterTensorAlias(aliasPattern, sourcePattern string) {
+	// Check if patterns contain wildcards
+	if strings.Contains(sourcePattern, "*") {
+		// Split patterns at wildcard
+		sourceParts := strings.SplitN(sourcePattern, "*", 2)
+		aliasParts := strings.SplitN(aliasPattern, "*", 2)
+		if len(sourceParts) != 2 || len(aliasParts) != 2 {
+			slog.Warn("invalid wildcard pattern", "alias", aliasPattern, "source", sourcePattern)
+			return
+		}
+
+		sourcePrefix := sourceParts[0]
+		sourceSuffix := sourceParts[1]
+		aliasPrefix := aliasParts[0]
+		aliasSuffix := aliasParts[1]
+
+		slog.Debug("registering wildcard tensor alias",
+			"source_pattern", sourcePattern, "alias_pattern", aliasPattern,
+			"source_prefix", sourcePrefix, "source_suffix", sourceSuffix)
+
+		matchCount := 0
+		for name, tensor := range b.tensors {
+			// Check if name matches source pattern
+			if strings.HasPrefix(name, sourcePrefix) {
+				remainder := strings.TrimPrefix(name, sourcePrefix)
+				// Find where the suffix starts
+				idx := strings.Index(remainder, sourceSuffix)
+				if idx >= 0 {
+					// Extract the wildcard portion (e.g., "0" from "v.blk.0.ffn_up.weight")
+					wildcardPart := remainder[:idx]
+					afterSuffix := remainder[idx+len(sourceSuffix):]
+					// Construct alias name
+					aliasName := aliasPrefix + wildcardPart + aliasSuffix + afterSuffix
+					if _, exists := b.tensors[aliasName]; !exists {
+						b.tensors[aliasName] = tensor
+						matchCount++
+						if matchCount <= 5 {
+							slog.Debug("created wildcard alias", "source", name, "alias", aliasName)
+						}
+					}
+				}
+			}
+		}
+		slog.Debug("wildcard alias complete", "pattern", sourcePattern, "matches", matchCount)
+	} else {
+		// Simple prefix-based aliasing (original behavior)
+		matchCount := 0
+		for name, tensor := range b.tensors {
+			if strings.HasPrefix(name, sourcePattern) {
+				aliasName := aliasPattern + strings.TrimPrefix(name, sourcePattern)
+				if _, exists := b.tensors[aliasName]; !exists {
+					b.tensors[aliasName] = tensor
+					matchCount++
+					if matchCount <= 3 {
+						slog.Debug("created prefix alias", "source", name, "alias", aliasName)
+					}
+				}
+			}
+		}
+		slog.Debug("prefix alias complete", "pattern", sourcePattern, "matches", matchCount)
+	}
 }
 
 func (b *Backend) NewContext() ml.Context {

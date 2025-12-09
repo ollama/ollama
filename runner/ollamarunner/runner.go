@@ -146,11 +146,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if int32(len(inputs)) > s.cache.numCtx {
+		discard := int32(len(inputs)) - s.cache.numCtx
+
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
-
-		discard := int32(len(inputs)) - s.cache.numCtx
 
 		promptStart := params.numKeep + discard
 
@@ -996,13 +996,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-		truncate:  false,
+
+		// TODO (jmorganca): this should be provided by the server via the
+		// request options and truncated here in the runner, instead of relying on
+		// the server's truncate logic
+		truncate: true,
 	})
 	if err != nil {
-		if errors.Is(err, errorInputTooLong) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1043,8 +1043,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding:       <-seq.embedding,
-		PromptEvalCount: seq.numPromptInputs,
+		Embedding: <-seq.embedding,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
@@ -1171,6 +1170,7 @@ func (s *Server) allocModel(
 	mpath string,
 	params ml.BackendParams,
 	loraPath []string,
+	projectorPath string,
 	parallel int,
 	kvCacheType string,
 	kvSize int,
@@ -1193,6 +1193,13 @@ func (s *Server) allocModel(
 	}()
 
 	var err error
+
+	// Pass projector path as secondary GGUF to load vision tensors during backend creation
+	// This ensures vision tensors are registered with the scheduler
+	if projectorPath != "" {
+		params.SecondaryPaths = append(params.SecondaryPaths, projectorPath)
+	}
+
 	s.model, err = model.New(mpath, params)
 	if err != nil {
 		return err
@@ -1211,6 +1218,16 @@ func (s *Server) allocModel(
 		if s.batchSize < kvSize {
 			s.batchSize = kvSize
 			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
+		}
+	}
+
+	// Set vision path for split vision models (e.g., Qwen3VL)
+	if projectorPath != "" {
+		if visionSetter, ok := s.model.(interface{ SetVisionPath(string) }); ok {
+			slog.Debug("setting vision path for split model", "path", projectorPath)
+			visionSetter.SetVisionPath(projectorPath)
+		} else {
+			slog.Warn("model does not support split vision", "projector", projectorPath)
 		}
 	}
 
@@ -1302,7 +1319,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		s.batchSize = req.BatchSize
 
-		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		err := s.allocModel(s.modelPath, params, req.LoraPath, req.ProjectorPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
 		if err != nil {
 			s.closeModel()
 
