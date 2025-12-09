@@ -61,6 +61,7 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "olmo3-think":
 		renderer := &Olmo3ThinkRenderer{}
+		return renderer
 	case "olmo3":
 		renderer := &Olmo3Renderer{}
 		return renderer

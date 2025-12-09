@@ -252,6 +252,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"deepseekocr",
 		"deepseek2",
 		"nomic-bert",
+		"olmo2",
 	}, kv.Architecture())
 }
 

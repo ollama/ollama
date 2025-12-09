@@ -1,27 +1,37 @@
 package olmo
 
 import (
-	"cmp"
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
 
+const (
+	cacheTypeSWA = iota
+	cacheTypeCausal
+)
+
 type Options struct {
 	hiddenSize, numHeads, numKVHeads int
-	headDim, ropeDim                 int
-	eps, ropeBase, ropeScale         float32
-	clampKQV                         float32
+	// headDim, ropeDim                 int
+	eps, ropeBase, ropeScale float32
 
 	originalContextLength int
 	attnFactor            float32
+
+	ropeType          string
+	ropeExtrapolation float32
+	ropeBetaFast      float32
+	ropeBetaSlow      float32
+
+	slidingWindowPattern []bool
 }
 
 type Model struct {
@@ -63,25 +73,61 @@ func New(c fs.Config) (model.Model, error) {
 	}
 	processor := model.NewBytePairEncoding(&vocabulary, pretokenizers...)
 
+	hiddenSize := int(c.Uint("embedding_length"))
+	numHeads := int(c.Uint("attention.head_count"))
+	numKVHeads := int(c.Uint("attention.head_count_kv"))
+	// headDim := int(c.Uint("attention.head_count"))
+	// ropeDim := int(c.Uint("rope.dimension_count"))
+	eps := c.Float("attention.layer_norm_rms_epsilon")
+	ropeBase := c.Float("rope.freq_base", 1e4)
+	ropeScale := c.Float("rope.scaling.factor", 1)
+	originalContextLength := int(c.Uint("rope.scaling.original_context_length"))
+	attnFactor := c.Float("rope.scaling.attn_factor", 1)
+	ropeType := c.String("rope.scaling.type")
+	ropeExtrapolation := c.Float("rope.scaling.extrapolation_factor", 1.0)
+	ropeBetaFast := c.Float("rope.scaling.beta_fast", 64.0)
+	ropeBetaSlow := c.Float("rope.scaling.beta_slow", 1.0)
+
+	fmt.Printf("hiddenSize: %d\n", hiddenSize)
+	fmt.Printf("numHeads: %d\n", numHeads)
+	fmt.Printf("numKVHeads: %d\n", numKVHeads)
+	// fmt.Printf("headDim: %d\n", headDim)
+	// fmt.Printf("ropeDim: %d\n", ropeDim)
+	fmt.Printf("eps: %f\n", eps)
+	fmt.Printf("ropeBase: %f\n", ropeBase)
+	fmt.Printf("ropeScale: %f\n", ropeScale)
+	fmt.Printf("originalContextLength: %d\n", originalContextLength)
+	fmt.Printf("attnFactor: %f\n", attnFactor)
+	fmt.Printf("ropeType: %s\n", ropeType)
+	fmt.Printf("ropeExtrapolation: %f\n", ropeExtrapolation)
+	fmt.Printf("ropeBetaFast: %f\n", ropeBetaFast)
+	fmt.Printf("ropeBetaSlow: %f\n", ropeBetaSlow)
+	fmt.Printf("sliding_window_pattern: %v\n", c.Bools("attention.sliding_window_pattern"))
+
 	m := Model{
 		TextProcessor: processor,
 		Layers:        make([]Layer, c.Uint("block_count")),
 		Options: Options{
-			hiddenSize:            int(c.Uint("embedding_length")),
-			numHeads:              int(c.Uint("attention.head_count")),
-			numKVHeads:            int(c.Uint("attention.head_count_kv")),
-			headDim:               int(c.Uint("attention.key_length")),
-			ropeDim:               int(c.Uint("rope.dimension_count")),
-			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:              c.Float("rope.freq_base", 1e4),
-			ropeScale:             c.Float("rope.scaling.factor", 1),
-			clampKQV:              c.Float("attention.clamp_kqv", 0),
-			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
-			attnFactor:            c.Float("rope.scaling.attn_factor", 1),
+			hiddenSize: hiddenSize,
+			numHeads:   numHeads,
+			numKVHeads: numKVHeads,
+			// headDim:               headDim,
+			// ropeDim:               ropeDim,
+			eps:                   eps,
+			ropeBase:              ropeBase,
+			ropeScale:             ropeScale,
+			originalContextLength: originalContextLength,
+			attnFactor:            attnFactor,
+			ropeType:              ropeType,
+			ropeExtrapolation:     ropeExtrapolation,
+			ropeBetaFast:          ropeBetaFast,
+			ropeBetaSlow:          ropeBetaSlow,
+			slidingWindowPattern:  c.Bools("attention.sliding_window_pattern"),
 		},
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.Shift)
+	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(int32(c.Uint("attention.sliding_window")), m.Shift), kvcache.NewCausalCache(m.Shift))
+	// m.Cache = kvcache.NewCausalCache(m.Shift)
 
 	return &m, nil
 }
@@ -102,10 +148,22 @@ func (o *Options) ropeOptions(factors ml.Tensor, isSWA bool) []func(*rope.Option
 	}
 
 	if !isSWA && o.originalContextLength > 0 {
+		// opts = append(opts,
+		// 	rope.WithOriginalContextLength(o.originalContextLength),
+		// 	rope.WithAttentionFactor(o.attnFactor),
+		// )
 		opts = append(opts,
 			rope.WithOriginalContextLength(o.originalContextLength),
-			rope.WithExtrapolationFactor(1.),
+			rope.WithExtrapolationFactor(o.ropeExtrapolation),
 			rope.WithAttentionFactor(o.attnFactor),
+			rope.WithBetaFast(o.ropeBetaFast),
+			rope.WithBetaSlow(o.ropeBetaSlow),
+		)
+	} else if isSWA && o.originalContextLength > 0 {
+		opts = append(opts,
+			rope.WithOriginalContextLength(o.originalContextLength),
+			rope.WithExtrapolationFactor(0.),
+			rope.WithAttentionFactor(1.),
 		)
 	}
 
@@ -114,8 +172,8 @@ func (o *Options) ropeOptions(factors ml.Tensor, isSWA bool) []func(*rope.Option
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, opts *Options, isSWA bool) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
-	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
-	ropeDim := cmp.Or(opts.ropeDim, headDim)
+	headDim := opts.hiddenSize / opts.numHeads
+	ropeDim := headDim
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	if sa.QNorm != nil {
@@ -138,17 +196,18 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 	}
 
 	ropeOpts := opts.ropeOptions(sa.RopeFactors, isSWA)
-	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, freqScale, ropeOpts...)
-	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, freqScale, ropeOpts...)
+	query = nn.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, freqScale, ropeOpts...)
+	key = nn.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, freqScale, ropeOpts...)
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
-	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
+	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
+
 	return sa.Output.Forward(ctx, attention)
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
-	isSWA := isSWALayer(layer)
+	ropeDim := m.hiddenSize / m.numHeads
+	isSWA := m.isSWALayer(layer)
 
 	freqScale := float32(1.0)
 	if !isSWA {
@@ -156,7 +215,7 @@ func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tenso
 	}
 
 	ropeOpts := m.Options.ropeOptions(m.Layers[layer].SelfAttention.RopeFactors, isSWA)
-	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, freqScale, ropeOpts...), nil
+	return nn.RoPE(ctx, key, shift, ropeDim, m.ropeBase, freqScale, ropeOpts...), nil
 }
 
 type MLP struct {
@@ -181,40 +240,49 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso
 	residual := hiddenState
 
 	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positions, cache, opts, isSWA)
+	if l.PostAttentionNorm != nil {
+		hiddenState = l.PostAttentionNorm.Forward(ctx, hiddenState, opts.eps)
+	}
 
 	if outputs != nil {
 		hiddenState = hiddenState.Rows(ctx, outputs)
 		residual = residual.Rows(ctx, outputs)
 	}
 
-	if l.PostAttentionNorm != nil {
-		hiddenState = l.PostAttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	}
+	hiddenState = hiddenState.Add(ctx, residual)
+	residual = hiddenState
+	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
+	hiddenState = l.PostFFWNorm.Forward(ctx, hiddenState, opts.eps)
 
-	ffnInput := hiddenState.Add(ctx, residual)
-
-	hiddenState = l.MLP.Forward(ctx, ffnInput, opts)
-
-	if l.PostFFWNorm != nil {
-		hiddenState = l.PostFFWNorm.Forward(ctx, hiddenState, opts.eps)
-	}
-
-	return hiddenState.Add(ctx, ffnInput)
+	return hiddenState.Add(ctx, residual)
 }
 
-func isSWALayer(layerIdx int) bool {
-	return (layerIdx+1)%4 != 0
+// Olmo3 has Sliding Window Attention (SWA) 3 out of 4 layers.
+func (m *Model) isSWALayer(layerIdx int) bool {
+	return m.Options.slidingWindowPattern[layerIdx]
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.hiddenSize)))
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
+		cacheType := cacheTypeSWA
 
-		isSWA := isSWALayer(i)
+		isSWA := m.isSWALayer(i)
+		if !isSWA {
+			cacheType = cacheTypeCausal
+		}
+
+		if wc, ok := m.Cache.(*kvcache.WrapperCache); ok {
+			wc.SetLayerType(cacheType)
+		}
+		if causal, ok := m.Cache.(*kvcache.Causal); ok {
+			causal.SetCausal(ctx, kvcache.CausalOptions{Except: []int{i}})
+		}
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
