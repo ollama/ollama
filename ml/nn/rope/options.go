@@ -58,6 +58,18 @@ func WithAttentionFactor(attentionFactor float32) func(*Options) {
 	}
 }
 
+func WithBetaFast(betaFast float32) func(*Options) {
+	return func(opts *Options) {
+		opts.YaRN.BetaFast = betaFast
+	}
+}
+
+func WithBetaSlow(betaSlow float32) func(*Options) {
+	return func(opts *Options) {
+		opts.YaRN.BetaSlow = betaSlow
+	}
+}
+
 func WithMRoPE(sections []int) func(*Options) {
 	return func(opts *Options) {
 		opts.Type |= 1 << 3
