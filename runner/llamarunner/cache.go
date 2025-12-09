@@ -217,7 +217,14 @@ func inputsEqual(a, b input) bool {
 		// Only match if both have embeddings AND they point to the same memory
 		// This happens when using cached embeddings
 		if a.embed != nil && b.embed != nil && len(a.embed) == len(b.embed) {
-			// Check if they share the same backing array (fast path for cached)
+			// Check if they share the same backing array (fast path for cached).
+			// NOTE: This pointer comparison is safe and intentional in this context.
+			// We only consider embeddings equal if they are the exact same slice
+			// (i.e., from cache), which means they share the same backing array.
+			// This avoids issues with numerical precision differences between
+			// encoding runs. Since embeddings are only reused from cache, comparing
+			// the address of the first element is a reliable way to check for identity.
+			// Do not use this pattern for general slice equality.
 			if len(a.embed) > 0 && &a.embed[0] == &b.embed[0] {
 				return true
 			}

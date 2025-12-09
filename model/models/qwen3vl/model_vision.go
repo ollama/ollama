@@ -42,8 +42,7 @@ func (sa *VisionAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml.Ten
 		query = qkv.Slice(ctx, 0, 0, hiddenSize, 1)
 		key = qkv.Slice(ctx, 0, hiddenSize, hiddenSize*2, 1)
 		value = qkv.Slice(ctx, 0, hiddenSize*2, hiddenSize*3, 1)
-		// Use Contiguous(ctx, shape...) to avoid view_src chain - this calls ggml_cont_Nd
-		// which creates a truly independent tensor without view_src issues
+		// Use Contiguous(ctx, shape...) to avoid view_src chain; this calls ggml_cont_Nd, creating a truly independent tensor without view_src issues.
 		query = query.Contiguous(ctx, opts.headDim(), opts.numHeads, seqLen)
 		key = key.Contiguous(ctx, opts.headDim(), opts.numHeads, seqLen)
 		value = value.Contiguous(ctx, opts.headDim(), opts.numHeads, seqLen)
@@ -443,9 +442,13 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 		slog.Debug("Split Model: Projected main vision via mm.0/mm.2", 
 			"shape", hiddenStates.Shape(), "mergedPatches", mergedPatches)
 	} else if len(deepstackStates) > 0 && len(m.DeepstackMerger) > 0 {
-		// FALLBACK: PatchMerger is nil AND mm.0/mm.2 not available
-		// Use the LAST DeepstackMerger (layer 24) to project main vision from 4608 -> 4096
-		// WARNING: This is NOT the correct behavior - mm.0/mm.2 should be used
+		// FALLBACK PATH: When neither PatchMerger nor mm.0/mm.2 projectors are loaded.
+		// This path exists for robustness when working with incomplete or non-standard GGUFs.
+		// Expected usage:
+		//   - Unified models: PatchMerger is populated from GGUF
+		//   - Split models: mm.0/mm.2 projectors are populated from GGUF
+		// If neither is available, we attempt to use the last DeepstackMerger as a last resort.
+		// Note: This produces suboptimal results but prevents crashes. A warning is logged.
 		lastIdx := len(m.DeepstackMerger) - 1
 		if m.DeepstackMerger[lastIdx] != nil && m.DeepstackMerger[lastIdx].FC1 != nil && m.DeepstackMerger[lastIdx].FC2 != nil {
 			// Apply PostNorm first (same as for deepstack layer 24)
@@ -634,8 +637,7 @@ func (m *VisionModel) InferOptionsFromTensors() {
 			if dim3 == m.hiddenSize && dim2 == m.numChannels {
 				// Split architecture: [kH, kW, channels, hiddenSize]
 				m.isSplitArchitecture = true
-				m.temporalPatchSize = 1 // 2D reshaped weights don't include temporal dimension
-				m.temporalPatchSize = 1 // Split 2D weights process single frames
+				m.temporalPatchSize = 1 // Split 2D weights process single frames (no temporal dimension)
 				// Create Conv2D using the same weight/bias tensors
 				m.PatchEmbedding2D = &nn.Conv2D{
 					Weight: m.PatchEmbedding.Weight,

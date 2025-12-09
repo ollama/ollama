@@ -228,8 +228,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 }
 
 // detectRepetitionLoop checks if the model is stuck in a repetition loop
-// by looking for repeating patterns in the recent token buffer
-// Returns true if a repetition loop is detected
+// by looking for repeating patterns in the recent token buffer.
+// Returns true if a repetition loop is detected.
+// Optimization: starts with short patterns (more common) and exits early on match.
+// Only runs the full check every 8 tokens to reduce overhead.
 func (seq *Sequence) detectRepetitionLoop(token int) bool {
 	bufSize := len(seq.recentTokens)
 	
@@ -241,11 +243,17 @@ func (seq *Sequence) detectRepetitionLoop(token int) bool {
 	if seq.numPredicted < 48 {
 		return false
 	}
+
+	// Performance optimization: only run full pattern check every 8 tokens
+	// Short patterns (6-16) are checked every token, longer patterns less frequently
+	checkLongPatterns := (seq.numPredicted % 8) == 0
+	maxPatternLen := 16
+	if checkLongPatterns {
+		maxPatternLen = 128
+	}
 	
-	// Check for repeating patterns of various lengths (6 to 128 tokens)
-	// Smaller patterns catch "word word word" loops
-	// Larger patterns catch "paragraph paragraph" loops
-	for patternLen := 6; patternLen <= 128; patternLen++ {
+	// Check for repeating patterns, starting with shorter (more common) patterns
+	for patternLen := 6; patternLen <= maxPatternLen; patternLen++ {
 		if seq.numPredicted < patternLen*3 {
 			continue
 		}
@@ -1185,7 +1193,7 @@ func Execute(args []string) error {
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
-		// sadly pflag does not expose out(). Fallback to os.Stderr which should perform identically as we don't set fs.output
+		// pflag allows setting the output stream via fs.SetOutput(). By default, usage is printed to os.Stderr.
 		fmt.Fprintf(os.Stderr, "Runner usage\n")
 		fs.PrintDefaults()
 	}
@@ -1194,6 +1202,11 @@ func Execute(args []string) error {
 	}
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Debug("starting go runner")
+
+	// Check that at least one valid model path is provided
+	if len(*mpaths) == 0 || (*mpaths)[0] == "" {
+		return errors.New("model path required")
+	}
 
 	llama.BackendInit()
 
