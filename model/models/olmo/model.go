@@ -58,7 +58,7 @@ func New(c fs.Config) (model.Model, error) {
 	var pretokenizers []string
 	if c.String("tokenizer.ggml.pre") != "default" {
 		pretokenizers = []string{
-			"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+`,
 		}
 	}
 	processor := model.NewBytePairEncoding(&vocabulary, pretokenizers...)
