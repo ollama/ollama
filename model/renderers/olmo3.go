@@ -140,7 +140,7 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 	}
 
 	if needsGenerationPrompt {
-		sb.WriteString("<|im_start|>assistant\n\n")
+		sb.WriteString("<|im_start|>assistant\n")
 	}
 
 	return sb.String(), nil

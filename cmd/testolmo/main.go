@@ -43,7 +43,7 @@ func main() {
 
 	// Use the olmo3 renderer to format the prompt properly
 	messages := []api.Message{
-		{Role: "user", Content: "What is machine learning?"},
+		{Role: "user", Content: "wagwan"},
 	}
 	// prompt := "Question: What is machine learning? Answer:"
 	prompt, err := renderers.RenderWithRenderer("olmo3", messages, nil, nil)
@@ -55,7 +55,7 @@ func main() {
 	fmt.Printf("\nRendered prompt:\n%s\n", prompt)
 
 	tp := m.(model.TextProcessor)
-	tokens, err := tp.Encode(prompt, true)
+	tokens, err := tp.Encode(prompt, false)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func main() {
 	generated := make([]int32, 0, maxTokens)
 
 	// Create sampler (temperature=0 for greedy sampling)
-	sampler := sample.NewSampler(0.6, 0, 0, 0, -1, nil)
+	sampler := sample.NewSampler(0, 0, 0, 0, -1, nil)
 
 	for i := 0; i < maxTokens; i++ {
 		// Create a new context for each generation step to avoid memory buildup
