@@ -175,6 +175,20 @@ ollama rm llama3.2
 ollama cp llama3.2 my-model
 ```
 
+### Configure Ollama
+
+```shell
+ollama config
+```
+
+View current configuration settings.
+
+```shell
+ollama config server_url http://localhost:11434
+```
+
+Set the server URL for connecting to remote Ollama instances.
+
 ### Multiline input
 
 For multiline input, you can wrap text with `"""`:

@@ -398,6 +398,7 @@ export class ErrorEvent {
     }
 }
 export class Settings {
+    ServerURL: string;
     Expose: boolean;
     Browser: boolean;
     Survey: boolean;
@@ -416,6 +417,7 @@ export class Settings {
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
+        this.ServerURL = source["ServerURL"];
         this.Expose = source["Expose"];
         this.Browser = source["Browser"];
         this.Survey = source["Survey"];
