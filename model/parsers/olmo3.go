@@ -218,10 +218,6 @@ func parseOlmo3FunctionCalls(s string) ([]api.ToolCall, error) {
 // Regex to match function call: func_name(args)
 var funcCallRegex = regexp.MustCompile(`^(\w+)\((.*)\)$`)
 
-// Regex to match a single argument: key=value
-// Value can be: "string", 'string', number, true, false, null, or nested structures
-var argRegex = regexp.MustCompile(`^(\w+)=(.+)$`)
-
 func parseOlmo3SingleFunctionCall(s string) (api.ToolCall, error) {
 	matches := funcCallRegex.FindStringSubmatch(s)
 	if matches == nil {
@@ -291,7 +287,7 @@ func splitArguments(s string) []string {
 	stringChar := byte(0)
 	escaped := false
 
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		c := s[i]
 
 		if escaped {
