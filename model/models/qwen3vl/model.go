@@ -461,7 +461,8 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			for i := range visionOutputs.Dim(1) {
 				row := int32(i / w)
 				col := int32(i % w)
-				// pos[0] stays as temporal base (already set from positionCache)
+				// pos[0] must be constant (temporalBase) for all image tokens
+				positionSlice[0][mi.Index+i] = temporalBase
 				positionSlice[1][mi.Index+i] = temporalBase + row
 				positionSlice[2][mi.Index+i] = temporalBase + col
 			}

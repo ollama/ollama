@@ -130,6 +130,96 @@ type Backend struct {
 	weightBuffers map[*C.struct_ggml_context]C.ggml_backend_buffer_t
 }
 
+// patchEmbedShape returns the reshaped dimensions for patch embedding weights.
+// For 4D patch embeddings [kW, kH, channels, hidden], returns [kW*kH*channels, hidden].
+// This is needed because reshaping later fails due to view_src assertion in ggml_new_tensor_impl.
+func patchEmbedShape(name string, originalShape []uint64) []C.int64_t {
+	if name == "v.patch_embd.weight" && len(originalShape) == 4 {
+		// Calculate patchDim = kW * kH * channels = ne[0] * ne[1] * ne[2]
+		patchDim := C.int64_t(originalShape[0] * originalShape[1] * originalShape[2])
+		hiddenSize := C.int64_t(originalShape[3])
+		slog.Debug("reshaping patch embedding at load time", "original", originalShape, "target", []int64{int64(patchDim), int64(hiddenSize)})
+		return []C.int64_t{patchDim, hiddenSize}
+	}
+	shape := make([]C.int64_t, len(originalShape))
+	for i, s := range originalShape {
+		shape[i] = C.int64_t(s)
+	}
+	return shape
+}
+
+// tensorAliasRule defines a mapping rule for tensor name compatibility between
+// split GGUF models and unified models. Split models from different providers
+// use different naming conventions that need to be mapped to the canonical names.
+type tensorAliasRule struct {
+	// prefix-based rules: if name starts with 'from', create alias with 'to' prefix
+	prefixFrom string
+	prefixTo   string
+	// contains-based rules: if name contains 'from', replace with 'to'
+	containsFrom string
+	containsTo   string
+	// additional condition: if non-empty, name must also contain this string
+	requiredContains string
+	// additional condition: if non-empty, name must NOT contain this string
+	excludeContains string
+}
+
+// tensorAliasRules defines the mapping between split GGUF tensor names and
+// unified model tensor names. This enables compatibility with models from
+// providers like Unsloth that use different naming conventions.
+var tensorAliasRules = []tensorAliasRule{
+	// Embedding layer naming differences
+	{prefixFrom: "v.patch_embd", prefixTo: "v.patch_embed"},
+	{prefixFrom: "v.position_embd", prefixTo: "v.position_embed"},
+	// Layer normalization naming
+	{containsFrom: ".ln1.", containsTo: ".norm1."},
+	{containsFrom: ".ln2.", containsTo: ".norm2."},
+	// MLP layer naming
+	{containsFrom: ".ffn_up.", containsTo: ".mlp.linear_fc1."},
+	{containsFrom: ".ffn_down.", containsTo: ".mlp.linear_fc2."},
+	// Deepstack naming variations
+	{prefixFrom: "v.deepstack.", prefixTo: "v.deepstack_merger.", excludeContains: "deepstack_merger"},
+	{containsFrom: ".fc1.", containsTo: ".linear_fc1.", requiredContains: "deepstack"},
+	{containsFrom: ".fc2.", containsTo: ".linear_fc2.", requiredContains: "deepstack"},
+	// Post layer norm for merger
+	{prefixFrom: "v.post_ln.", prefixTo: "v.merger.norm."},
+}
+
+// registerTensorAliases applies tensor aliasing rules to enable split GGUF compatibility.
+// This allows models with different tensor naming conventions to work seamlessly.
+func registerTensorAliases(tensors map[string]*C.struct_ggml_tensor) {
+	for name, tensor := range tensors {
+		for _, rule := range tensorAliasRules {
+			var aliasName string
+
+			// Check additional conditions
+			if rule.requiredContains != "" && !strings.Contains(name, rule.requiredContains) {
+				continue
+			}
+			if rule.excludeContains != "" && strings.Contains(name, rule.excludeContains) {
+				continue
+			}
+
+			// Apply prefix-based rule
+			if rule.prefixFrom != "" && strings.HasPrefix(name, rule.prefixFrom) {
+				aliasName = rule.prefixTo + strings.TrimPrefix(name, rule.prefixFrom)
+			}
+
+			// Apply contains-based rule
+			if rule.containsFrom != "" && strings.Contains(name, rule.containsFrom) {
+				aliasName = strings.Replace(name, rule.containsFrom, rule.containsTo, 1)
+			}
+
+			// Register alias if it doesn't already exist
+			if aliasName != "" {
+				if _, exists := tensors[aliasName]; !exists {
+					tensors[aliasName] = tensor
+				}
+			}
+		}
+	}
+}
+
 var once sync.Once
 
 func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
@@ -294,23 +384,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				kind = uint32(fsggml.TensorTypeF32)
 			}
 
-			// Special handling for patch embedding weight in split GGUF:
-			// Original shape [16, 16, 3, 1152] needs to be reshaped to [768, 1152] for linear projection.
-			// Reshaping later fails due to view_src assertion in ggml_new_tensor_impl.
-			// Solution: create tensor with target 2D shape directly at load time.
-			var shape []C.int64_t
-			if name == "v.patch_embd.weight" && len(t.source.Shape) == 4 {
-				// Calculate patchDim = kW * kH * channels = ne[0] * ne[1] * ne[2]
-				patchDim := C.int64_t(t.source.Shape[0] * t.source.Shape[1] * t.source.Shape[2])
-				hiddenSize := C.int64_t(t.source.Shape[3])
-				shape = []C.int64_t{patchDim, hiddenSize}
-				slog.Debug("reshaping patch embedding at load time", "original", t.source.Shape, "target", shape)
-			} else {
-				shape = make([]C.int64_t, len(t.source.Shape))
-				for i, s := range t.source.Shape {
-					shape[i] = C.int64_t(s)
-				}
-			}
+			shape := patchEmbedShape(name, t.source.Shape)
 
 			tt := C.ggml_new_tensor(ctxs[bt], kind, C.int(len(shape)), &shape[0])
 			C.ggml_set_name(tt, cname)
@@ -421,80 +495,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	// Register aliases for split model compatibility
-	// Split models use different naming conventions than unified models
-	for name, tensor := range tensors {
-		// patch_embd → patch_embed
-		if strings.HasPrefix(name, "v.patch_embd") {
-			aliasName := "v.patch_embed" + strings.TrimPrefix(name, "v.patch_embd")
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// position_embd → position_embed
-		if strings.HasPrefix(name, "v.position_embd") {
-			aliasName := "v.position_embed" + strings.TrimPrefix(name, "v.position_embd")
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// ln1 → norm1 (layer norm naming)
-		if strings.Contains(name, ".ln1.") {
-			aliasName := strings.Replace(name, ".ln1.", ".norm1.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// ln2 → norm2 (layer norm naming)
-		if strings.Contains(name, ".ln2.") {
-			aliasName := strings.Replace(name, ".ln2.", ".norm2.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// ffn_up → mlp.linear_fc1 (MLP naming)
-		if strings.Contains(name, ".ffn_up.") {
-			aliasName := strings.Replace(name, ".ffn_up.", ".mlp.linear_fc1.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// ffn_down → mlp.linear_fc2 (MLP naming)
-		if strings.Contains(name, ".ffn_down.") {
-			aliasName := strings.Replace(name, ".ffn_down.", ".mlp.linear_fc2.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// v.deepstack.N → v.deepstack_merger.N (deepstack naming)
-		if strings.HasPrefix(name, "v.deepstack.") && !strings.Contains(name, "deepstack_merger") {
-			aliasName := strings.Replace(name, "v.deepstack.", "v.deepstack_merger.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// .fc1. → .linear_fc1. (for deepstack)
-		if strings.Contains(name, "deepstack") && strings.Contains(name, ".fc1.") {
-			aliasName := strings.Replace(name, ".fc1.", ".linear_fc1.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// .fc2. → .linear_fc2. (for deepstack)
-		if strings.Contains(name, "deepstack") && strings.Contains(name, ".fc2.") {
-			aliasName := strings.Replace(name, ".fc2.", ".linear_fc2.", 1)
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-		// v.post_ln → v.merger.norm (post layer norm for merger)
-		if strings.HasPrefix(name, "v.post_ln.") {
-			aliasName := "v.merger.norm." + strings.TrimPrefix(name, "v.post_ln.")
-			if _, exists := tensors[aliasName]; !exists {
-				tensors[aliasName] = tensor
-			}
-		}
-	}
+	// Register aliases for split model compatibility between different naming conventions
+	registerTensorAliases(tensors)
 
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
 	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
@@ -901,24 +903,7 @@ func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(
 		defer C.free(unsafe.Pointer(cname))
 
 		kind := t.Kind
-
-		// Special handling for patch embedding weight in split GGUF:
-		// Original shape [16, 16, 3, 1152] needs to be reshaped to [768, 1152] for linear projection.
-		// Reshaping secondary GGUF tensors later fails due to view_src assertion in ggml_new_tensor_impl.
-		// Solution: create tensor with target 2D shape directly at load time.
-		var shape []C.int64_t
-		if t.Name == "v.patch_embd.weight" && len(t.Shape) == 4 {
-			// Calculate patchDim = kW * kH * channels = ne[0] * ne[1] * ne[2]
-			patchDim := C.int64_t(t.Shape[0] * t.Shape[1] * t.Shape[2])
-			hiddenSize := C.int64_t(t.Shape[3])
-			shape = []C.int64_t{patchDim, hiddenSize}
-			slog.Debug("reshaping secondary patch embedding at load time", "original", t.Shape, "target", shape)
-		} else {
-			shape = make([]C.int64_t, len(t.Shape))
-			for i, s := range t.Shape {
-				shape[i] = C.int64_t(s)
-			}
-		}
+		shape := patchEmbedShape(t.Name, t.Shape)
 
 		tt := C.ggml_new_tensor(secondaryCtx, kind, C.int(len(shape)), &shape[0])
 		C.ggml_set_name(tt, cname)
