@@ -127,6 +127,10 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 			if devices[i].Library == "Metal" {
 				continue
 			}
+			// TSAVORITE doesn't need environment variable filtering like GPU backends
+			if devices[i].Library == "Tsavorite" {
+				continue
+			}
 			slog.Debug("verifying GPU is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
@@ -146,6 +150,8 @@ func GPUDevices(ctx context.Context, runners []FilteredRunnerDiscovery) []ml.Dev
 					envVar = "GGML_VK_VISIBLE_DEVICES"
 				} else {
 					slog.Error("Unknown Library:" + devices[i].Library)
+					// Skip verification for unknown libraries to avoid invalid env var
+					return
 				}
 
 				extraEnvs := []string{
@@ -598,3 +604,4 @@ func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]ml.DeviceIn
 		}
 	}
 }
+
