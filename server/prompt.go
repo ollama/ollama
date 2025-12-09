@@ -69,6 +69,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	currMsgIdx := n
 
+	// Models loaded without a renderer (e.g., split GGUF from HuggingFace) need [img] text tokens
+	// before image embeddings. These tokens act as visual context indicators that help the model
+	// properly interpret the following image data and respond in the appropriate language.
+	// The renderer normally adds these, but for models without one we add them automatically.
+	needsImgTags := m.Config.Renderer == "" && needsImageTagTokens(m.Config.ModelFamilies)
+
 	for cnt, msg := range msgs[currMsgIdx:] {
 		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
 			return "", nil, errors.New("this model only supports one image while more than one image requested")
@@ -85,6 +91,9 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
 			if !strings.Contains(prompt, "[img]") {
+				if needsImgTags {
+					prefix += "[img]"
+				}
 				prefix += imgTag
 			} else {
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
@@ -102,6 +111,19 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	return p, images, nil
+}
+
+// needsImageTagTokens returns true for model families that require [img] text tokens
+// before image embeddings when no renderer is configured. Add new model families here
+// as needed.
+func needsImageTagTokens(families []string) bool {
+	imgTagFamilies := []string{"qwen3vl", "qwen25vl"}
+	for _, family := range imgTagFamilies {
+		if slices.Contains(families, family) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
