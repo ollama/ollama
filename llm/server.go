@@ -69,7 +69,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, input string) ([]float32, int, error)
+	Embedding(ctx context.Context, input string) ([]float32, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -116,6 +116,7 @@ type ollamaServer struct {
 	llmServer
 
 	textProcessor model.TextProcessor // textProcessor handles text encoding/decoding
+	projectorPath string              // projectorPath is the path to split vision model GGUF
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
@@ -144,18 +145,18 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var textProcessor model.TextProcessor
 	var err error
 	if envconfig.NewEngine(true) || f.KV().OllamaEngineRequired() {
-		if len(projectors) == 0 {
-			textProcessor, err = model.NewTextProcessor(modelPath)
-		} else {
-			err = errors.New("split vision models aren't supported")
-		}
+		// Allow projectors with the Ollama engine - the model will handle loading split vision.
+		textProcessor, err = model.NewTextProcessor(modelPath)
 		if err != nil {
 			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
 			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
+		} else if len(projectors) > 0 {
+			slog.Debug("loading model with split vision encoder", "projector", projectors[0])
 		}
 	}
+
 	if textProcessor == nil {
-		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
+		llamaModel, err = llama.LoadModelFromFile(modelPath, nil, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +186,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		loadRequest.MainGPU = opts.MainGPU
 	}
 
-	if len(projectors) > 0 && llamaModel != nil {
+	// Set projector path for both engines (vision model support)
+	if len(projectors) > 0 {
 		loadRequest.ProjectorPath = projectors[0]
 	}
 	// Determine if the user has forced FA on or off
@@ -310,7 +312,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}()
 
 	if textProcessor != nil {
-		return &ollamaServer{llmServer: s, textProcessor: textProcessor}, nil
+		var projPath string
+		if len(projectors) > 0 {
+			projPath = projectors[0]
+		}
+		return &ollamaServer{llmServer: s, textProcessor: textProcessor, projectorPath: projPath}, nil
 	} else {
 		return &llamaServer{llmServer: s, ggml: f}, nil
 	}
@@ -479,10 +485,12 @@ type LoadRequest struct {
 	GPULayers      ml.GPULayersList
 	MultiUserCache bool
 
-	// Legacy fields - not used with the Ollama engine
+	// Projector/Vision model fields - used for split vision GGUF models
 	ProjectorPath string
-	MainGPU       int
-	UseMmap       bool
+
+	// Legacy fields - not used with the Ollama engine
+	MainGPU int
+	UseMmap bool
 }
 
 type LoadResponse struct {
@@ -1673,11 +1681,10 @@ type EmbeddingRequest struct {
 }
 
 type EmbeddingResponse struct {
-	Embedding       []float32 `json:"embedding"`
-	PromptEvalCount int       `json:"prompt_eval_count"`
+	Embedding []float32 `json:"embedding"`
 }
 
-func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
 	logutil.Trace("embedding request", "input", input)
 
 	if err := s.sem.Acquire(ctx, 1); err != nil {
@@ -1686,54 +1693,51 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int
 		} else {
 			slog.Error("Failed to acquire semaphore", "error", err)
 		}
-		return nil, 0, err
+		return nil, err
 	}
 	defer s.sem.Release(1)
 
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	} else if status != ServerStatusReady {
-		return nil, 0, fmt.Errorf("unexpected server status: %s", status)
+		return nil, fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	data, err := json.Marshal(EmbeddingRequest{Content: input})
 	if err != nil {
-		return nil, 0, fmt.Errorf("error marshaling embed data: %w", err)
+		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
 	if err != nil {
-		return nil, 0, fmt.Errorf("error creating embed request: %w", err)
+		return nil, fmt.Errorf("error creating embed request: %w", err)
 	}
 	r.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, 0, fmt.Errorf("do embedding request: %w", err)
+		return nil, fmt.Errorf("do embedding request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, 0, fmt.Errorf("error reading embed response: %w", err)
+		return nil, fmt.Errorf("error reading embed response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
 		log.Printf("llm embedding error: %s", body)
-		return nil, 0, api.StatusError{
-			StatusCode:   resp.StatusCode,
-			ErrorMessage: string(body),
-		}
+		return nil, fmt.Errorf("%s", body)
 	}
 
 	var e EmbeddingResponse
 	if err := json.Unmarshal(body, &e); err != nil {
-		return nil, 0, fmt.Errorf("unmarshal tokenize response: %w", err)
+		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return e.Embedding, e.PromptEvalCount, nil
+	return e.Embedding, nil
 }
 
 func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {
