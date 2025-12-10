@@ -505,7 +505,6 @@ void ggml_gemv_q4_K_8x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     constexpr int blocklen          = 8;
 
     assert(n % qk == 0);
-    assert(nr % 4 == 0);
     assert(nc % ncols_interleaved == 0);
 
     UNUSED(nb);
@@ -645,7 +644,6 @@ void ggml_gemv_q4_K_8x8_q8_K(int                        n,
     constexpr int blocklen          = 8;
 
     assert(n % qk == 0);
-    assert(nr % 4 == 0);
     assert(nc % ncols_interleaved == 0);
 
     UNUSED(nb);
