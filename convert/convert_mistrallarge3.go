@@ -147,8 +147,8 @@ func (p *mistralLarge3Model) KV(t *Tokenizer) ggml.KV {
 		kv["deepseek2.spatial_merge_size"] = p.VisionEncoder.SpatialMergeSize
 	}
 
-	// Set tokenizer type - use deepseek-v3 since we're using deepseek2 architecture
-	kv["tokenizer.ggml.pre"] = "deepseek-v3"
+	// Set tokenizer type - use default for Mistral models
+	kv["tokenizer.ggml.pre"] = "tekken" // Let it use the default tokenizer preprocessing
 
 	return kv
 }
