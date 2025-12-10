@@ -28,8 +28,6 @@ type Options struct {
 
 	ropeType          string
 	ropeExtrapolation float32
-	ropeBetaFast      float32
-	ropeBetaSlow      float32
 
 	slidingWindowPattern []bool
 }
@@ -52,7 +50,7 @@ func New(c fs.Config) (model.Model, error) {
 		Scores: c.Floats("tokenizer.ggml.scores"),
 		Types:  c.Ints("tokenizer.ggml.token_type"),
 		Merges: c.Strings("tokenizer.ggml.merges"),
-		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
 		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
 		EOS: append(
@@ -85,8 +83,6 @@ func New(c fs.Config) (model.Model, error) {
 	attnFactor := c.Float("rope.scaling.attn_factor", 1)
 	ropeType := c.String("rope.scaling.type")
 	ropeExtrapolation := c.Float("rope.scaling.extrapolation_factor", 1.0)
-	ropeBetaFast := c.Float("rope.scaling.beta_fast", 64.0)
-	ropeBetaSlow := c.Float("rope.scaling.beta_slow", 1.0)
 
 	fmt.Printf("hiddenSize: %d\n", hiddenSize)
 	fmt.Printf("numHeads: %d\n", numHeads)
@@ -100,8 +96,6 @@ func New(c fs.Config) (model.Model, error) {
 	fmt.Printf("attnFactor: %f\n", attnFactor)
 	fmt.Printf("ropeType: %s\n", ropeType)
 	fmt.Printf("ropeExtrapolation: %f\n", ropeExtrapolation)
-	fmt.Printf("ropeBetaFast: %f\n", ropeBetaFast)
-	fmt.Printf("ropeBetaSlow: %f\n", ropeBetaSlow)
 	fmt.Printf("sliding_window_pattern: %v\n", c.Bools("attention.sliding_window_pattern"))
 
 	m := Model{
@@ -120,14 +114,14 @@ func New(c fs.Config) (model.Model, error) {
 			attnFactor:            attnFactor,
 			ropeType:              ropeType,
 			ropeExtrapolation:     ropeExtrapolation,
-			ropeBetaFast:          ropeBetaFast,
-			ropeBetaSlow:          ropeBetaSlow,
 			slidingWindowPattern:  c.Bools("attention.sliding_window_pattern"),
 		},
 	}
 
-	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(int32(c.Uint("attention.sliding_window")), m.Shift), kvcache.NewCausalCache(m.Shift))
-	// m.Cache = kvcache.NewCausalCache(m.Shift)
+	m.Cache = kvcache.NewWrapperCache(
+		kvcache.NewSWACache(int32(c.Uint("attention.sliding_window")), m.Shift),
+		kvcache.NewCausalCache(m.Shift),
+	)
 
 	return &m, nil
 }
@@ -142,65 +136,59 @@ type SelfAttention struct {
 	RopeFactors ml.Tensor   `gguf:"rope_freqs.weight"`
 }
 
-func (o *Options) ropeOptions(factors ml.Tensor, isSWA bool) []func(*rope.Options) {
-	opts := []func(*rope.Options){
-		rope.WithFactors(factors),
-	}
+func (m *Model) applyRoPE(ctx ml.Context, states, positions ml.Tensor, ropeDim int, isSWA bool) ml.Tensor {
 
-	if !isSWA && o.originalContextLength > 0 {
-		// opts = append(opts,
-		// 	rope.WithOriginalContextLength(o.originalContextLength),
-		// 	rope.WithAttentionFactor(o.attnFactor),
+	var ropeOpts []func(*rope.Options)
+
+	// Both SWA and non-SWA use beta_fast and beta_slow
+	// But SWA uses freq_scale=1.0, ext_factor=0.0, attn_factor=1.0
+	// Non-SWA uses full yarn parameters
+	if m.originalContextLength > 0 {
+		ropeOpts = append(ropeOpts,
+			rope.WithOriginalContextLength(m.originalContextLength),
+		)
+
+		// if !isSWA {
+		ropeOpts = append(ropeOpts,
+			rope.WithExtrapolationFactor(m.ropeExtrapolation),
+		)
+		// rope.WithAttentionFactor(m.attnFactor),
 		// )
-		opts = append(opts,
-			rope.WithOriginalContextLength(o.originalContextLength),
-			rope.WithExtrapolationFactor(o.ropeExtrapolation),
-			rope.WithAttentionFactor(o.attnFactor),
-			rope.WithBetaFast(o.ropeBetaFast),
-			rope.WithBetaSlow(o.ropeBetaSlow),
-		)
-	} else if isSWA && o.originalContextLength > 0 {
-		opts = append(opts,
-			rope.WithOriginalContextLength(o.originalContextLength),
-			rope.WithExtrapolationFactor(0.),
-			rope.WithAttentionFactor(1.),
-		)
 	}
-
-	return opts
-}
-
-func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, opts *Options, isSWA bool) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
-	headDim := opts.hiddenSize / opts.numHeads
-	ropeDim := headDim
-
-	query := sa.Query.Forward(ctx, hiddenState)
-	if sa.QNorm != nil {
-		query = sa.QNorm.Forward(ctx, query, opts.eps)
-	}
-	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-
-	key := sa.Key.Forward(ctx, hiddenState)
-	if sa.KNorm != nil {
-		key = sa.KNorm.Forward(ctx, key, opts.eps)
-	}
-	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-
-	value := sa.Value.Forward(ctx, hiddenState)
-	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
 	freqScale := float32(1.0)
 	if !isSWA {
-		freqScale = 1. / opts.ropeScale
+		freqScale = 1. / m.ropeScale
 	}
 
-	ropeOpts := opts.ropeOptions(sa.RopeFactors, isSWA)
-	query = nn.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, freqScale, ropeOpts...)
-	key = nn.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, freqScale, ropeOpts...)
+	return nn.RoPE(ctx, states, positions, ropeDim, m.ropeBase, freqScale, ropeOpts...)
+}
 
+func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, m *Model, isSWA bool) ml.Tensor {
+	batchSize := hiddenState.Dim(1)
+	headDim := m.hiddenSize / m.numHeads
+	ropeDim := headDim
+
+	query := sa.Query.Forward(ctx, hiddenState)
+	// double check type
+	query = sa.QNorm.Forward(ctx, query, m.eps)
+	query = query.Reshape(ctx, headDim, m.numHeads, batchSize)
+	//check here
+
+	query = m.applyRoPE(ctx, query, positions, ropeDim, isSWA)
+	// and here
+
+	key := sa.Key.Forward(ctx, hiddenState)
+	key = sa.KNorm.Forward(ctx, key, m.eps)
+	key = key.Reshape(ctx, headDim, m.numKVHeads, batchSize)
+	key = m.applyRoPE(ctx, key, positions, ropeDim, isSWA)
+
+	value := sa.Value.Forward(ctx, hiddenState)
+	value = value.Reshape(ctx, headDim, m.numKVHeads, batchSize)
+
+	// check attention scaling as well
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
-	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
+	attention = attention.Reshape(ctx, m.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, attention)
 }
@@ -208,14 +196,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	ropeDim := m.hiddenSize / m.numHeads
 	isSWA := m.isSWALayer(layer)
-
-	freqScale := float32(1.0)
-	if !isSWA {
-		freqScale = 1. / m.ropeScale
-	}
-
-	ropeOpts := m.Options.ropeOptions(m.Layers[layer].SelfAttention.RopeFactors, isSWA)
-	return nn.RoPE(ctx, key, shift, ropeDim, m.ropeBase, freqScale, ropeOpts...), nil
+	return m.applyRoPE(ctx, key, shift, ropeDim, isSWA), nil
 }
 
 type MLP struct {
@@ -224,7 +205,7 @@ type MLP struct {
 	Gate *nn.Linear `gguf:"ffn_gate"`
 }
 
-func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, m *Model) ml.Tensor {
 	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
@@ -236,13 +217,11 @@ type Layer struct {
 	PostFFWNorm       *nn.RMSNorm `gguf:"post_ffw_norm"`
 }
 
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options, isSWA bool) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tensor, cache kvcache.Cache, m *Model, isSWA bool) ml.Tensor {
 	residual := hiddenState
 
-	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positions, cache, opts, isSWA)
-	if l.PostAttentionNorm != nil {
-		hiddenState = l.PostAttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	}
+	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positions, cache, m, isSWA)
+	hiddenState = l.PostAttentionNorm.Forward(ctx, hiddenState, m.eps)
 
 	if outputs != nil {
 		hiddenState = hiddenState.Rows(ctx, outputs)
@@ -251,8 +230,9 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso
 
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
-	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
-	hiddenState = l.PostFFWNorm.Forward(ctx, hiddenState, opts.eps)
+
+	hiddenState = l.MLP.Forward(ctx, hiddenState, m)
+	hiddenState = l.PostFFWNorm.Forward(ctx, hiddenState, m.eps)
 
 	return hiddenState.Add(ctx, residual)
 }
@@ -266,7 +246,6 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.hiddenSize)))
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
@@ -277,10 +256,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			cacheType = cacheTypeCausal
 		}
 
-		if wc, ok := m.Cache.(*kvcache.WrapperCache); ok {
-			wc.SetLayerType(cacheType)
-		}
-		if causal, ok := m.Cache.(*kvcache.Causal); ok {
+		cache := m.Cache.(*kvcache.WrapperCache)
+		cache.SetLayerType(cacheType)
+		// would need to check the cache at the layer instead
+		if causal, ok := cache.UnderlyingCache().(*kvcache.Causal); ok {
 			causal.SetCausal(ctx, kvcache.CausalOptions{Except: []int{i}})
 		}
 
@@ -289,7 +268,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			outputs = batch.Outputs
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, &m.Options, isSWA)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, m, isSWA)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
