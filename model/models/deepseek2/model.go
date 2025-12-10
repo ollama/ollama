@@ -247,7 +247,8 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	layers := make([]Layer, c.Uint("block_count"))
+	// layers := make([]Layer, c.Uint("block_count"))
+	layers := make([]Layer, 4)
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
 	for i := range layers {
@@ -348,6 +349,11 @@ func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+
+	// DEBUG: Check TokenEmbedding initialization
+	if m.TokenEmbedding == nil {
+		panic("DEBUG: m.TokenEmbedding is nil - 'token_embd' tensor not found in GGUF")
+	}
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
