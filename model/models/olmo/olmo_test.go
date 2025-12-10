@@ -107,7 +107,7 @@ func TestTokenization(t *testing.T) {
 
 	prompt := args.prompt
 	if prompt == "" {
-		prompt = "hello"
+		prompt = "hello, how are you?"
 	}
 
 	tp := m.(model.TextProcessor)
