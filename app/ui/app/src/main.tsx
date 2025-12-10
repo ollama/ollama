@@ -5,13 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { fetchUser } from "./api";
 import { StreamingProvider } from "./contexts/StreamingContext";
-import { User } from "@/gotypes";
-
-declare global {
-  interface Window {
-    __initialUserDataPromise?: Promise<User | null>;
-  }
-}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,27 +17,11 @@ const queryClient = new QueryClient({
   },
 });
 
-// Track initial user data fetch
-let initialUserDataPromise: Promise<User | null> | null = null;
-
-// Initialize user data on app startup
-const initializeUserData = async () => {
-  try {
-    const userData = await fetchUser();
+fetchUser().then((userData) => {
+  if (userData) {
     queryClient.setQueryData(["user"], userData);
-    return userData;
-  } catch (error) {
-    console.error("Error initializing user data:", error);
-    queryClient.setQueryData(["user"], null);
-    return null;
   }
-};
-
-// Start initialization immediately and track the promise
-initialUserDataPromise = initializeUserData();
-
-// Export the promise so hooks can await it
-window.__initialUserDataPromise = initialUserDataPromise;
+});
 
 const router = createRouter({
   routeTree,
