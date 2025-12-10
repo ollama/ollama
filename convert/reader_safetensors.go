@@ -26,54 +26,65 @@ type safetensorMetadata struct {
 func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
-		f, err := fsys.Open(p)
+		pt, err := parseSafetensor(fsys, p, replacer)
 		if err != nil {
 			return nil, err
 		}
-		defer f.Close()
+		ts = append(ts, pt...)
+	}
 
-		var n int64
-		if err := binary.Read(f, binary.LittleEndian, &n); err != nil {
-			return nil, err
-		}
+	return ts, nil
+}
 
-		b := bytes.NewBuffer(make([]byte, 0, n))
-		if _, err = io.CopyN(b, f, n); err != nil {
-			return nil, err
-		}
+func parseSafetensor(fsys fs.FS, p string, replacer *strings.Replacer) ([]Tensor, error) {
+	f, err := fsys.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
 
-		var headers map[string]safetensorMetadata
-		if err := json.NewDecoder(b).Decode(&headers); err != nil {
-			return nil, err
-		}
+	var n int64
+	if err := binary.Read(f, binary.LittleEndian, &n); err != nil {
+		return nil, err
+	}
 
-		keys := slices.Sorted(maps.Keys(headers))
+	b := bytes.NewBuffer(make([]byte, 0, n))
+	if _, err = io.CopyN(b, f, n); err != nil {
+		return nil, err
+	}
 
-		names := make(map[string]struct{}, len(keys))
+	var headers map[string]safetensorMetadata
+	if err := json.NewDecoder(b).Decode(&headers); err != nil {
+		return nil, err
+	}
 
-		for _, key := range keys {
-			if value := headers[key]; value.Type != "" {
-				// bitsandbytes quantized models are unsupported
-				if len(value.Shape) == 0 {
-					return nil, errors.New("unsupported safetensors model")
-				}
-				ggufName := replacer.Replace(key)
-				if _, ok := names[ggufName]; ok {
-					return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
-				}
-				names[ggufName] = struct{}{}
-				ts = append(ts, safetensor{
-					fs:     fsys,
-					path:   p,
-					dtype:  value.Type,
-					offset: safetensorsPad(n, value.Offsets[0]),
-					size:   safetensorsPad(n, value.Offsets[1]) - safetensorsPad(n, value.Offsets[0]),
-					tensorBase: &tensorBase{
-						name:  ggufName,
-						shape: value.Shape,
-					},
-				})
+	keys := slices.Sorted(maps.Keys(headers))
+
+	var ts []Tensor
+	names := make(map[string]struct{}, len(keys))
+
+	for _, key := range keys {
+		if value := headers[key]; value.Type != "" {
+			// bitsandbytes quantized models are unsupported
+			if len(value.Shape) == 0 {
+				return nil, errors.New("unsupported safetensors model")
 			}
+			ggufName := replacer.Replace(key)
+			if _, ok := names[ggufName]; ok {
+				return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
+			}
+			names[ggufName] = struct{}{}
+			ts = append(ts, safetensor{
+				fs:     fsys,
+				path:   p,
+				dtype:  value.Type,
+				offset: safetensorsPad(n, value.Offsets[0]),
+				size:   safetensorsPad(n, value.Offsets[1]) - safetensorsPad(n, value.Offsets[0]),
+				tensorBase: &tensorBase{
+					name:  ggufName,
+					shape: value.Shape,
+				},
+			})
 		}
 	}
 

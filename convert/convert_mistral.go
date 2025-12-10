@@ -50,6 +50,9 @@ type mistral3Model struct {
 		HeadDim           uint32  `json:"head_dim"`
 		HiddenAct         string  `json:"hidden_act"`
 		RopeTheta         float32 `json:"rope_theta"`
+		RopeParameters    struct {
+			RopeTheta float32 `json:"rope_theta"`
+		} `json:"rope_parameters"`
 	} `json:"vision_config"`
 	MultiModalProjectorBias bool   `json:"multimodal_projector_bias"`
 	ProjectorHiddenAct      string `json:"projector_hidden_act"`
@@ -72,6 +75,7 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.attention.value_length"] = p.TextModel.HeadDim
 	kv["mistral3.rope.dimension_count"] = cmp.Or(p.TextModel.HeadDim, p.TextModel.HiddenSize/p.TextModel.NumAttentionHeads)
 	kv["mistral3.rope.freq_base"] = cmp.Or(p.TextModel.RopeTheta, p.TextModel.RopeParameters.RopeTheta)
+	kv["mistral3.rope.scaling.factor"] = p.TextModel.RopeParameters.Factor
 
 	if p.TextModel.RopeParameters.OrigMaxPositionEmbeddings > 0 {
 		kv["mistral3.rope.scaling.original_context_length"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
@@ -88,7 +92,7 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.vision.patch_size"] = p.VisionModel.PatchSize
 	kv["mistral3.vision.num_channels"] = p.VisionModel.NumChannels
 	// kv["mistral3.vision.attention.layer_norm_epsilon"] = 1e-05 // Default value
-	kv["mistral3.vision.rope.freq_base"] = p.VisionModel.RopeTheta
+	kv["mistral3.vision.rope.freq_base"] = cmp.Or(p.VisionModel.RopeTheta, p.VisionModel.RopeParameters.RopeTheta)
 
 	// Multimodal configuration
 	kv["mistral3.image_token_index"] = p.ImageTokenIndex
