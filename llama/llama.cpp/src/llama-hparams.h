@@ -164,8 +164,8 @@ struct llama_hparams {
     // llama4 smallthinker
     uint32_t n_moe_layer_step        = 0;
     uint32_t n_no_rope_layer_step    = 4;
-    uint32_t n_attn_temp_floor_scale = 8192;
-    float    f_attn_temp_scale       = 0.1;
+    uint32_t n_attn_temp_floor_scale = 0;
+    float    f_attn_temp_scale       = 0.0f;
 
     // gemma3n altup
     uint32_t n_altup      = 4; // altup_num_inputs

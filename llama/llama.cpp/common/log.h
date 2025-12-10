@@ -21,8 +21,14 @@
 #    define LOG_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
 #endif
 
-#define LOG_DEFAULT_DEBUG 1
-#define LOG_DEFAULT_LLAMA 0
+#define LOG_LEVEL_DEBUG  4
+#define LOG_LEVEL_INFO   3
+#define LOG_LEVEL_WARN   2
+#define LOG_LEVEL_ERROR  1
+#define LOG_LEVEL_OUTPUT 0 // output data from tools
+
+#define LOG_DEFAULT_DEBUG LOG_LEVEL_DEBUG
+#define LOG_DEFAULT_LLAMA LOG_LEVEL_INFO
 
 enum log_colors {
     LOG_COLORS_AUTO     = -1,
@@ -67,10 +73,11 @@ void common_log_add(struct common_log * log, enum ggml_log_level level, const ch
 //   0.00.090.578 I llm_load_tensors: offloading 32 repeating layers to GPU
 //   0.00.090.579 I llm_load_tensors: offloading non-repeating layers to GPU
 //
-// I - info    (stdout, V = 0)
-// W - warning (stderr, V = 0)
-// E - error   (stderr, V = 0)
 // D - debug   (stderr, V = LOG_DEFAULT_DEBUG)
+// I - info    (stdout, V = LOG_DEFAULT_INFO)
+// W - warning (stderr, V = LOG_DEFAULT_WARN)
+// E - error   (stderr, V = LOG_DEFAULT_ERROR)
+// O - output  (stdout, V = LOG_DEFAULT_OUTPUT)
 //
 
 void common_log_set_file      (struct common_log * log, const char * file); // not thread-safe
@@ -95,14 +102,14 @@ void common_log_set_timestamps(struct common_log * log, bool timestamps);   // w
         } \
     } while (0)
 
-#define LOG(...)             LOG_TMPL(GGML_LOG_LEVEL_NONE, 0,         __VA_ARGS__)
-#define LOGV(verbosity, ...) LOG_TMPL(GGML_LOG_LEVEL_NONE, verbosity, __VA_ARGS__)
+#define LOG(...)             LOG_TMPL(GGML_LOG_LEVEL_NONE, LOG_LEVEL_OUTPUT, __VA_ARGS__)
+#define LOGV(verbosity, ...) LOG_TMPL(GGML_LOG_LEVEL_NONE, verbosity,        __VA_ARGS__)
 
-#define LOG_INF(...) LOG_TMPL(GGML_LOG_LEVEL_INFO,  0,                 __VA_ARGS__)
-#define LOG_WRN(...) LOG_TMPL(GGML_LOG_LEVEL_WARN,  0,                 __VA_ARGS__)
-#define LOG_ERR(...) LOG_TMPL(GGML_LOG_LEVEL_ERROR, 0,                 __VA_ARGS__)
-#define LOG_DBG(...) LOG_TMPL(GGML_LOG_LEVEL_DEBUG, LOG_DEFAULT_DEBUG, __VA_ARGS__)
-#define LOG_CNT(...) LOG_TMPL(GGML_LOG_LEVEL_CONT,  0,                 __VA_ARGS__)
+#define LOG_DBG(...) LOG_TMPL(GGML_LOG_LEVEL_DEBUG, LOG_LEVEL_DEBUG,  __VA_ARGS__)
+#define LOG_INF(...) LOG_TMPL(GGML_LOG_LEVEL_INFO,  LOG_LEVEL_INFO,   __VA_ARGS__)
+#define LOG_WRN(...) LOG_TMPL(GGML_LOG_LEVEL_WARN,  LOG_LEVEL_WARN,   __VA_ARGS__)
+#define LOG_ERR(...) LOG_TMPL(GGML_LOG_LEVEL_ERROR, LOG_LEVEL_ERROR,  __VA_ARGS__)
+#define LOG_CNT(...) LOG_TMPL(GGML_LOG_LEVEL_CONT,  LOG_LEVEL_INFO,   __VA_ARGS__) // same as INFO
 
 #define LOG_INFV(verbosity, ...) LOG_TMPL(GGML_LOG_LEVEL_INFO,  verbosity, __VA_ARGS__)
 #define LOG_WRNV(verbosity, ...) LOG_TMPL(GGML_LOG_LEVEL_WARN,  verbosity, __VA_ARGS__)
