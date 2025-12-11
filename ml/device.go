@@ -502,15 +502,19 @@ const (
 )
 
 func (f FlashAttentionType) LogValue() slog.Value {
+	return slog.AnyValue(f.String())
+}
+
+func (f FlashAttentionType) String() string {
 	switch f {
 	case FlashAttentionAuto:
-		return slog.AnyValue("Auto")
+		return "Auto"
 	case FlashAttentionDisabled:
-		return slog.AnyValue("Disabled")
+		return "Disabled"
 	case FlashAttentionEnabled:
-		return slog.AnyValue("Enabled")
+		return "Enabled"
 	default:
-		return slog.AnyValue("unknown")
+		return "unknown"
 	}
 }
 

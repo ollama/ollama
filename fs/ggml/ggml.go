@@ -810,6 +810,14 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
+// KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
+func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
+}
+
 // SupportsFlashAttention checks if the model supports flash attention
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
