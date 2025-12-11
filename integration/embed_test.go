@@ -487,6 +487,63 @@ func TestEmbedTruncation(t *testing.T) {
 	}
 }
 
+// TestEmbedLargeInput tests that embedding models can handle large inputs that would exceed typical batch sizes.
+func TestEmbedLargeInput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	for _, model := range libraryEmbedModels {
+		model := model
+		t.Run(model, func(t *testing.T) {
+			mctx, mcancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer mcancel()
+
+			// Test with progressively larger inputs
+			testCases := []struct {
+				name       string
+				inputWords int
+			}{
+				{"medium_input_256_words", 256},
+				{"large_input_512_words", 512},
+				{"very_large_input_800_words", 800},
+			}
+
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					words := make([]string, tc.inputWords)
+					for i := range words {
+						words[i] = "word"
+					}
+					input := strings.Join(words, " ")
+
+					req := api.EmbedRequest{
+						Model:     model,
+						Input:     input,
+						KeepAlive: &api.Duration{Duration: 30 * time.Second},
+					}
+
+					res, err := embedTestHelper(mctx, client, t, req)
+					if err != nil {
+						t.Fatalf("embedding failed for %d words: %v", tc.inputWords, err)
+					}
+
+					if len(res.Embeddings) != 1 {
+						t.Fatalf("expected 1 embedding, got %d", len(res.Embeddings))
+					}
+
+					if len(res.Embeddings[0]) == 0 {
+						t.Fatal("expected non-empty embedding")
+					}
+
+					t.Logf("Successfully embedded %d words (%d tokens)", tc.inputWords, res.PromptEvalCount)
+				})
+			}
+		})
+	}
+}
+
 // TestEmbedStatusCode tests that errors from the embedding endpoint
 // properly preserve their HTTP status codes when returned to the client.
 // This test specifically checks the error handling path in EmbedHandler

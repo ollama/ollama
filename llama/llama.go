@@ -121,7 +121,8 @@ type ContextParams struct {
 func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, kvCacheType string) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
-	params.n_batch = C.uint(batchSize)
+	params.n_batch = C.uint(batchSize * numSeqMax)
+	params.n_ubatch = C.uint(batchSize)
 	params.n_seq_max = C.uint(numSeqMax)
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
