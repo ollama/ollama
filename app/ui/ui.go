@@ -128,18 +128,18 @@ func (s *Server) ollamaProxy() http.Handler {
 
 		if proxy == nil {
 			var err error
-			for i := 0; i < 2; i++ {
+			for i := range 2 {
 				if i > 0 {
 					s.log().Warn("ollama server not ready, retrying", "attempt", i+1)
 					time.Sleep(1 * time.Second)
 				}
-				
+
 				err = WaitForServer(context.Background(), 10*time.Second)
 				if err == nil {
 					break
 				}
 			}
-			
+
 			if err != nil {
 				s.log().Error("ollama server not ready after retries", "error", err)
 				http.Error(w, "Ollama server is not ready", http.StatusServiceUnavailable)
