@@ -478,11 +478,7 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	batchSize := s.loadRequest.BatchSize
 	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
 	if isEmbedding {
-		if s.loadRequest.KvSize > 0 {
-			batchSize = s.loadRequest.KvSize
-		} else {
-			batchSize = s.options.NumCtx
-		}
+		batchSize = s.options.NumCtx
 	}
 
 	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(batchSize),
