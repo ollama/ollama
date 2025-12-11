@@ -1203,20 +1203,20 @@ func (s *Server) allocModel(
 		return errors.New("loras are not yet implemented")
 	}
 
-	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
-	if err != nil {
-		return err
-	}
-
-	if !s.cache.enabled {
+	if s.model.Config().Cache == nil {
 		if parallel > 1 {
 			parallel = 1
 			slog.Warn("model does not support caching, disabling parallel processing")
 		}
 		if s.batchSize < kvSize {
 			s.batchSize = kvSize
-			slog.Warn("model does not support caching, setting batch size to context length")
+			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
 		}
+	}
+
+	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
+	if err != nil {
+		return err
 	}
 
 	s.parallel = parallel
