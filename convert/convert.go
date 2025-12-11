@@ -202,10 +202,16 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &qwen3VLModel{}
 	case "BertModel":
 		conv = &bertModel{}
+	case "NomicBertModel", "NomicBertMoEModel":
+		conv = &nomicbertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
 	case "GptOssForCausalLM":
 		conv = &gptossModel{}
+	case "DeepseekOCRForCausalLM":
+		conv = &deepseekocr{}
+	case "DeepseekV3ForCausalLM":
+		conv = &deepseek2Model{}
 	default:
 		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}

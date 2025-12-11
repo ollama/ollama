@@ -68,6 +68,15 @@ To run Ollama using Docker with AMD GPUs, use the `rocm` tag and the following c
 docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama:rocm
 ```
 
+## Vulkan Support
+
+Vulkan is bundled into the `ollama/ollama` image.  
+
+```shell
+docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_VULKAN=1 --name ollama ollama/ollama
+```
+
+
 ## Run model locally
 
 Now you can run a model:
@@ -79,3 +88,4 @@ docker exec -it ollama ollama run llama3.2
 ## Try different models
 
 More models can be found on the [Ollama library](https://ollama.com/library).
+

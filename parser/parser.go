@@ -260,9 +260,12 @@ func filesForModel(path string) ([]string, error) {
 
 	var files []string
 	// some safetensors files do not properly match "application/octet-stream", so skip checking their contentType
-	if st, _ := glob(filepath.Join(path, "*.safetensors"), ""); len(st) > 0 {
+	if st, _ := glob(filepath.Join(path, "model*.safetensors"), ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
+		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
+		// covers consolidated.safetensors
 		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
@@ -297,18 +300,13 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
-	// only include tokenizer.model is tokenizer.json is not present
-	if !slices.ContainsFunc(files, func(s string) bool {
-		return slices.Contains(strings.Split(s, string(os.PathSeparator)), "tokenizer.json")
-	}) {
-		if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-			// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-			// tokenizer.model might be a unresolved git lfs reference; error if it is
-			files = append(files, tks...)
-		} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
-			// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
-			files = append(files, tks...)
-		}
+	// add tokenizer.model if it exists (tokenizer.json is automatically picked up by the previous glob)
+	// tokenizer.model might be a unresolved git lfs reference; error if it is
+	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+		files = append(files, tks...)
+	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
+		files = append(files, tks...)
 	}
 
 	return files, nil

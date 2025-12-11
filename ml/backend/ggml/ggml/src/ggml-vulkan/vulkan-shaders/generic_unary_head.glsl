@@ -18,6 +18,13 @@ layout (push_constant) uniform parameter
 } p;
 
 layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+#if defined(A_TYPE_PACKED16)
+layout (binding = 0) readonly buffer A_PACKED16 {A_TYPE_PACKED16 data_a_packed16[];};
+#endif
+#if defined(A_TYPE_PACKED32)
+layout (binding = 0) readonly buffer A_PACKED32 {A_TYPE_PACKED32 data_a_packed32[];};
+#endif
+
 layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 
 uint get_idx() {

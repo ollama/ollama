@@ -653,7 +653,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 gguf_set_val_f32(ctx_out.get(), o.key, o.val_f64);
             } else if (o.tag == LLAMA_KV_OVERRIDE_TYPE_INT) {
                 // Setting type to UINT32. See https://github.com/ggml-org/llama.cpp/pull/14182 for context
-                gguf_set_val_u32(ctx_out.get(), o.key, (uint32_t)abs(o.val_i64));
+                gguf_set_val_u32(ctx_out.get(), o.key, (uint32_t)std::abs(o.val_i64));
             } else if (o.tag == LLAMA_KV_OVERRIDE_TYPE_BOOL) {
                 gguf_set_val_bool(ctx_out.get(), o.key, o.val_bool);
             } else if (o.tag == LLAMA_KV_OVERRIDE_TYPE_STR) {
@@ -666,7 +666,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     std::map<int, std::string> mapped;
     int blk_id = 0;
-    int pruned_attention_w = 0;
 
     // make a list of weights
     std::vector<const llama_model_loader::llama_tensor_weight *> tensors;
@@ -674,14 +673,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     for (const auto & it : ml.weights_map) {
         const std::string remapped_name(remap_layer(it.first, prune_list, mapped, blk_id));
         if (remapped_name.empty()) {
-            if (it.first.find("attn_v.weight") != std::string::npos ||
-                it.first.find("attn_qkv.weight") != std::string::npos ||
-                it.first.find("attn_kv_b.weight") != std::string::npos) {
-                    pruned_attention_w++;
-            }
             LLAMA_LOG_DEBUG("%s: pruning tensor %s\n", __func__, it.first.c_str());
             continue;
-        } else if (remapped_name != it.first) {
+        }
+
+        if (remapped_name != it.first) {
             ggml_set_name(it.second.tensor, remapped_name.c_str());
             LLAMA_LOG_DEBUG("%s: tensor %s remapped to %s\n", __func__, it.first.c_str(), ggml_get_name(it.second.tensor));
         }
@@ -717,20 +713,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     }
 
     qs.n_ffn_down = qs.n_ffn_gate = qs.n_ffn_up = (int)model.hparams.n_layer;
-
-    // sanity checks for models that have attention layers
-    if (qs.n_attention_wv != 0)
-    {
-        const auto & n_head_kv_iter = model.hparams.n_head_kv_arr.begin();
-        // attention layers have a non-zero number of kv heads
-        int32_t n_attn_layer = model.hparams.n_layer - std::count(n_head_kv_iter, n_head_kv_iter + model.hparams.n_layer, 0);
-        if (llama_model_has_encoder(&model)) {
-            // now n_attn_layer is the number of attention layers in the encoder
-            // for each decoder block, there are 2 attention layers
-            n_attn_layer += 2 * model.hparams.dec_n_layer;
-        }
-        GGML_ASSERT((qs.n_attention_wv == n_attn_layer - pruned_attention_w) && "n_attention_wv is unexpected");
-    }
 
     size_t total_size_org = 0;
     size_t total_size_new = 0;
@@ -880,6 +862,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
         // do not quantize relative position bias (T5)
         quantize &= name.find("attn_rel_b.weight") == std::string::npos;
+
+        // do not quantize specific multimodal tensors
+        quantize &= name.find(".position_embd.") == std::string::npos;
 
         ggml_type new_type;
         void * new_data;

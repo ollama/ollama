@@ -4,9 +4,7 @@
 // # Manifests
 //
 // A manifest is a JSON object that describes a model. The JSON object has a
-// single field "layers" which is a list of layers that make up the model. Each
-// layer has the following fields:
-//
+// single field "layers" which is a list of layers that make up the model.
 // A layer is a single, logical unit of a model. Layers are stored in the cache
 // as files with the name of the digest of the layer. Layers are pushed and
 // pulled from the registry as blobs.

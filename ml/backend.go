@@ -146,7 +146,6 @@ type Tensor interface {
 	FromFloats([]float32)
 	FromInts([]int32)
 
-	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Sub(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
@@ -174,6 +173,7 @@ type Tensor interface {
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
+	QuickGELU(ctx Context, up ...Tensor) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
@@ -185,7 +185,6 @@ type Tensor interface {
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context, shape ...int) Tensor
-	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
 
@@ -195,8 +194,13 @@ type Tensor interface {
 	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
+	SetRows(ctx Context, src Tensor, idxs Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
+
+	Slice(ctx Context, dim, low, high, step int) Tensor
+	Chunk(ctx Context, dim int, size int) []Tensor
+	ChunkSections(ctx Context, dim int, sections ...int) []Tensor
 
 	TopK(ctx Context, k int) Tensor
 	Argsort(ctx Context) Tensor
@@ -205,7 +209,8 @@ type Tensor interface {
 	Stddev(ctx Context) Tensor
 	Sqr(ctx Context) Tensor
 	Sqrt(ctx Context) Tensor
-	Clamp(ctx Context, min, max float32) Tensor
+
+	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -228,8 +233,10 @@ type Tensor interface {
 //
 // kqv := value.Mulmat(ctx, kq)
 // return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+//
+// cacheConfigApplied indicates whether the optimizations requested through CacheConfig have been performed
 type ScaledDotProductAttention interface {
-	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, scale float64) Tensor
+	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, vmla Tensor, scale float64, cacheConfigApplied bool) Tensor
 }
 
 type number interface {
@@ -370,4 +377,11 @@ const (
 	DTypeQ40
 	DTypeI32
 	DTypeMXFP4
+)
+
+type SamplingMode int
+
+const (
+	SamplingModeNearest SamplingMode = iota
+	SamplingModeBilinear
 )

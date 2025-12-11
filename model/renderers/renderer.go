@@ -56,6 +56,15 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-thinking":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
+	case "cogito":
+		renderer := &CogitoRenderer{isThinking: true}
+		return renderer
+	case "olmo3":
+		renderer := &Olmo3Renderer{}
+		return renderer
+	case "olmo3-think":
+		renderer := &Olmo3ThinkRenderer{}
+		return renderer
 	default:
 		return nil
 	}
