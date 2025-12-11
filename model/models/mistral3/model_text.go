@@ -35,7 +35,14 @@ func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, posit
 			}
 			return 0.1*mscale*math.Log(scale) + 1.0
 		}
-		attnFactor := float32(getMscale(float64(o.ropeScale), float64(o.ropeMscale)) / getMscale(float64(o.ropeScale), float64(o.ropeMscaleAllDim)))
+
+		var attnFactor float32
+		if o.ropeMscale != 0 && o.ropeMscaleAllDim != 0 {
+			attnFactor = float32(getMscale(float64(o.ropeScale), float64(o.ropeMscale)) / getMscale(float64(o.ropeScale), float64(o.ropeMscaleAllDim)))
+		} else {
+			attnFactor = float32(getMscale(float64(o.ropeScale), 1))
+		}
+
 		ropeOpts = append(ropeOpts,
 			rope.WithOriginalContextLength(o.ropeOrigPosEmbeddings),
 			rope.WithExtrapolationFactor(o.ropeExtrapolation),
@@ -181,8 +188,8 @@ func newTextModel(c fs.Config) *TextModel {
 			ropeBetaFast:          c.Float("rope.scaling.beta_fast", 32.0),
 			ropeBetaSlow:          c.Float("rope.scaling.beta_slow", 1.0),
 			ropeType:              c.String("rope.scaling.type"),
-			ropeMscale:            c.Float("rope.scaling.mscale", 1),
-			ropeMscaleAllDim:      c.Float("rope.scaling.mscale_all_dim", 1),
+			ropeMscale:            c.Float("rope.scaling.mscale"),
+			ropeMscaleAllDim:      c.Float("rope.scaling.mscale_all_dim"),
 			ropeExtrapolation:     c.Float("rope.scaling.extrapolation_factor", 1),
 		},
 	}
