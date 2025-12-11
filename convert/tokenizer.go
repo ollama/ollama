@@ -101,6 +101,8 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			t.Pre = "deepseek-coder"
 		case "1ff7f41064896984db5d1bb6ff64fa4bc29007d08c1b439e505b7392777a319e":
 			t.Pre = "qwen2"
+		case "1d64a9a8eaf9f1bd80331984d81fdd514e7feafe8df83a525dd31472f275699a":
+			t.Pre = "tekken"
 		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
 			// noop, empty pretokenizer
 		default:

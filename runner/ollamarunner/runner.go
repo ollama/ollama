@@ -213,7 +213,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []llm.Logprob {
 	decoder := func(tokenID int) string {
 		text, _ := textProcessor.Decode([]int32{int32(tokenID)})
-		fmt.Printf("[TOKENIZER] Decoded token %d to: %q\n", tokenID, text)
 		return text
 	}
 	return common.CalculateLogprobs(logits, int(selectedToken), topK, decoder)
@@ -243,51 +242,9 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 
 	for i, part := range parts {
 		// text - tokenize
-		fmt.Printf("[TOKENIZER] Encoding text: %q\n", part)
-
-		// Debug: Test what token 0 decodes to
-		token0Text, _ := s.model.(model.TextProcessor).Decode([]int32{0})
-		fmt.Printf("[TOKENIZER] Token 0 decodes to: %q\n", token0Text)
-
-		// Debug: Test a few other common tokens
-		for testToken := int32(1); testToken <= 10; testToken++ {
-			testText, _ := s.model.(model.TextProcessor).Decode([]int32{testToken})
-			fmt.Printf("[TOKENIZER] Token %d decodes to: %q\n", testToken, testText)
-		}
-
-		// Debug: Test higher token IDs where real vocabulary might be
-		fmt.Printf("[TOKENIZER] Testing higher token IDs:\n")
-		testHighTokens := []int32{100, 1000, 10000, 50000, 100000, 131000}
-		for _, testToken := range testHighTokens {
-			testText, _ := s.model.(model.TextProcessor).Decode([]int32{testToken})
-			fmt.Printf("[TOKENIZER] Token %d decodes to: %q\n", testToken, testText)
-		}
-
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
 		if err != nil {
 			return nil, nil, nil, err
-		}
-		fmt.Printf("[TOKENIZER] Encoded to %d tokens: %v\n", len(tokens), tokens)
-
-		// Debug: Decode the encoded tokens back to text
-		if len(tokens) > 0 {
-			decodedText, _ := s.model.(model.TextProcessor).Decode(tokens)
-			fmt.Printf("[TOKENIZER] Tokens %v decode back to: %q\n", tokens, decodedText)
-
-			// Debug: Show each token individually
-			fmt.Printf("[TOKENIZER] Individual tokens:\n")
-			for i, token := range tokens {
-				singleText, _ := s.model.(model.TextProcessor).Decode([]int32{token})
-				fmt.Printf("[TOKENIZER]   Token %d: %d → %q (hex: %x)\n", i, token, singleText, []byte(singleText))
-			}
-
-			// Debug: Test specific tokens that should be clean
-			fmt.Printf("[TOKENIZER] Testing specific clean tokens:\n")
-			testTokens := []int32{8101, 1033, 29706} // hi, !, hello
-			for _, testToken := range testTokens {
-				testText, _ := s.model.(model.TextProcessor).Decode([]int32{testToken})
-				fmt.Printf("[TOKENIZER]   Clean test %d → %q (hex: %x)\n", testToken, testText, []byte(testText))
-			}
 		}
 
 		for _, t := range tokens {
@@ -822,9 +779,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if err != nil {
 			panic("failed to decode token")
 		}
-
-		// DEBUG: Show what token is being generated
-		fmt.Printf("[GENERATION] Token %d → %q (hex: %x)\n", token, piece, []byte(piece))
 
 		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
 		if seq.logprobs {

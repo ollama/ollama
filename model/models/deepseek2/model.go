@@ -216,7 +216,6 @@ type Layer struct {
 }
 
 func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, attentionScales, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
-	fmt.Println("[LAYER] In the new engine")
 	residual := hiddenStates
 	hiddenStates = t.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
 	hiddenStates = t.Attention.Forward(ctx, hiddenStates, positions, attentionScales, cache, opts)
@@ -249,8 +248,11 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	layers := make([]Layer, c.Uint("block_count"))
-	fmt.Printf("[MODEL DEBUG] Creating model with %d layers\n", c.Uint("block_count"))
+	// layers := make([]Layer, c.Uint("block_count"))
+	// fmt.Printf("[MODEL DEBUG] Creating model with %d layers\n", c.Uint("block_count"))
+
+	layers := make([]Layer, 4)
+	fmt.Printf("[MODEL DEBUG] Creating model with %d layers\n", 4)
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
 	for i := range layers {
@@ -269,7 +271,6 @@ func New(c fs.Config) (model.Model, error) {
 	valueLength := int(cmp.Or(c.Uint("attention.value_length_mla"), c.Uint("attention.value_length")))
 
 	var pre []string
-	fmt.Println("[TOKENIZER] Using tokenizer", c.String("tokenizer.ggml.pre"))
 	switch c.String("tokenizer.ggml.pre") {
 	case "deepseek-v3":
 		pre = []string{
@@ -279,7 +280,6 @@ func New(c fs.Config) (model.Model, error) {
 			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
 		}
 	case "tekken":
-		fmt.Println("[TOKENIZER] Using Tekken tokenizer")
 		pre = []string{
 			"[^\\r\\n\\p{L}\\p{N}]?((?=[\\p{L}])([^a-z]))*((?=[\\p{L}])([^A-Z]))+|[^\\r\\n\\p{L}\\p{N}]?((?=[\\p{L}])([^a-z]))+((?=[\\p{L}])([^A-Z]))*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
 		}
@@ -303,24 +303,7 @@ func New(c fs.Config) (model.Model, error) {
 	tokenTypes := c.Ints("tokenizer.ggml.token_type")
 	merges := c.Strings("tokenizer.ggml.merges")
 
-	fmt.Printf("[TOKENIZER DEBUG] Loading vocabulary:\n")
-	fmt.Printf("[TOKENIZER DEBUG] - Tokens count: %d\n", len(tokens))
-	fmt.Printf("[TOKENIZER DEBUG] - Token types count: %d\n", len(tokenTypes))
-	fmt.Printf("[TOKENIZER DEBUG] - Merges count: %d\n", len(merges))
-	fmt.Printf("[TOKENIZER DEBUG] - BOS token ID: %d\n", c.Uint("tokenizer.ggml.bos_token_id"))
-	fmt.Printf("[TOKENIZER DEBUG] - EOS token ID: %d\n", c.Uint("tokenizer.ggml.eos_token_id"))
-	fmt.Printf("[TOKENIZER DEBUG] - Add BOS: %v\n", c.Bool("tokenizer.ggml.add_bos_token", true))
-	fmt.Printf("[TOKENIZER DEBUG] - Add EOS: %v\n", c.Bool("tokenizer.ggml.add_eos_token", false))
-
-	if len(tokens) > 0 {
-		maxShow := 10
-		if len(tokens) < maxShow {
-			maxShow = len(tokens)
-		}
-		fmt.Printf("[TOKENIZER DEBUG] First %d tokens: %v\n", maxShow, tokens[:maxShow])
-	} else {
-		fmt.Printf("[TOKENIZER DEBUG] ERROR: No tokens loaded from GGUF!\n")
-	}
+	// Debug output removed for performance
 
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
