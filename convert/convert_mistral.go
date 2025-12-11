@@ -30,15 +30,15 @@ type mistral3Model struct {
 		HiddenAct             string  `json:"hidden_act"`
 		VocabSize             uint32  `json:"vocab_size"`
 		RopeParameters        struct {
-			BetaFast                  float32 `json:"beta_fast"`
-			BetaSlow                  float32 `json:"beta_slow"`
-			Factor                    float32 `json:"factor"`
-			Llama4ScalingBeta         float32 `json:"llama_4_scaling_beta"`
-			OrigMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
-			RopeType                  string  `json:"rope_type"`
-			RopeTheta                 float32 `json:"rope_theta"`
-			Mscale                    float32 `json:"mscale"`
-			MscaleAllDim              float32 `json:"mscale_all_dim"`
+			BetaFast                  float32  `json:"beta_fast"`
+			BetaSlow                  float32  `json:"beta_slow"`
+			Factor                    float32  `json:"factor"`
+			Llama4ScalingBeta         float32  `json:"llama_4_scaling_beta"`
+			OrigMaxPositionEmbeddings uint32   `json:"original_max_position_embeddings"`
+			RopeType                  string   `json:"rope_type"`
+			RopeTheta                 float32  `json:"rope_theta"`
+			Mscale                    *float32 `json:"mscale"`
+			MscaleAllDim              *float32 `json:"mscale_all_dim"`
 		} `json:"rope_parameters"`
 	} `json:"text_config"`
 	VisionModel struct {
@@ -82,11 +82,11 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.rope.scaling.beta_fast"] = p.TextModel.RopeParameters.BetaFast
 	kv["mistral3.rope.scaling.beta_slow"] = p.TextModel.RopeParameters.BetaSlow
 
-	if p.TextModel.RopeParameters.Mscale > 0 {
-		kv["mistral3.rope.scaling.mscale"] = p.TextModel.RopeParameters.Mscale
+	if p.TextModel.RopeParameters.Mscale != nil {
+		kv["mistral3.rope.scaling.mscale"] = *p.TextModel.RopeParameters.Mscale
 	}
-	if p.TextModel.RopeParameters.MscaleAllDim > 0 {
-		kv["mistral3.rope.scaling.mscale_all_dim"] = p.TextModel.RopeParameters.MscaleAllDim
+	if p.TextModel.RopeParameters.MscaleAllDim != nil {
+		kv["mistral3.rope.scaling.mscale_all_dim"] = *p.TextModel.RopeParameters.MscaleAllDim
 	}
 	if p.TextModel.RopeParameters.OrigMaxPositionEmbeddings > 0 {
 		kv["mistral3.rope.scaling.original_context_length"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
