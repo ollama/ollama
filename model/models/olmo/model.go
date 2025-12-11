@@ -111,7 +111,6 @@ type SelfAttention struct {
 }
 
 func (m *Model) applyRoPE(ctx ml.Context, states, positions ml.Tensor, ropeDim int, isSWA bool) ml.Tensor {
-
 	var ropeOpts []func(*rope.Options)
 
 	ropeOpts = append(ropeOpts, rope.WithTypeNeoX())
