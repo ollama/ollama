@@ -1208,9 +1208,15 @@ func (s *Server) allocModel(
 		return err
 	}
 
-	if !s.cache.enabled && parallel > 1 {
-		parallel = 1
-		slog.Warn("model does not support caching, disabling parallel processing")
+	if !s.cache.enabled {
+		if parallel > 1 {
+			parallel = 1
+			slog.Warn("model does not support caching, disabling parallel processing")
+		}
+		if s.batchSize < kvSize {
+			s.batchSize = kvSize
+			slog.Warn("model does not support caching, setting batch size to context length")
+		}
 	}
 
 	s.parallel = parallel

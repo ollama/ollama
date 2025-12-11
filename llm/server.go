@@ -474,7 +474,18 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 	}
 
-	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(s.loadRequest.BatchSize),
+	// Check if embedding model and adjust batch size accordingly
+	batchSize := s.loadRequest.BatchSize
+	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
+	if isEmbedding {
+		if s.loadRequest.KvSize > 0 {
+			batchSize = s.loadRequest.KvSize
+		} else {
+			batchSize = s.options.NumCtx
+		}
+	}
+
+	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(batchSize),
 		s.loadRequest.Parallel, s.loadRequest.KvCacheType, s.loadRequest.FlashAttention)
 
 	// Use the size of one layer as a buffer
