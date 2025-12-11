@@ -87,7 +87,7 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 PARAMETER stop "<|start_header_id|>"
 PARAMETER stop "<|end_header_id|>"
 PARAMETER stop "<|eot_id|>"
-PARAMETER stop "<|reserved_special_token"
+PARAMETER stop "<|reserved_special_token|>"
 ```
 
 ## Instructions
@@ -158,7 +158,7 @@ PARAMETER <parameter> <parametervalue>
 | num_predict    | Maximum number of tokens to predict when generating text. (Default: -1, infinite generation)                                                                                                                                                                                                                                                                                    | int        | num_predict 42       |
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                                                                                                                                                | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                                                                                                                                         | float      | top_p 0.9            |
-| min_p          | Alternative to the top*p, and aims to ensure a balance of quality and variety. The parameter \_p* represents the minimum probability for a token to be considered, relative to the probability of the most likely token. For example, with _p_=0.05 and the most likely token having a probability of 0.9, logits with a value less than 0.045 are filtered out. (Default: 0.0) | float      | min_p 0.05           |
+| min_p          | Alternative to the top-p, and aims to ensure a balance of quality and variety. The parameter \_p* represents the minimum probability for a token to be considered, relative to the probability of the most likely token. For example, with _p_=0.05 and the most likely token having a probability of 0.9, logits with a value less than 0.045 are filtered out. (Default: 0.0) | float      | min_p 0.05           |
 
 ### TEMPLATE
 
@@ -193,13 +193,13 @@ SYSTEM """<system message>"""
 
 The `ADAPTER` instruction specifies a fine tuned LoRA adapter that should apply to the base model. The value of the adapter should be an absolute path or a path relative to the Modelfile. The base model should be specified with a `FROM` instruction. If the base model is not the same as the base model that the adapter was tuned from the behaviour will be erratic.
 
-#### Safetensor adapter
+#### Safetensors adapter
 
 ```
-ADAPTER <path to safetensor adapter>
+ADAPTER <path to safetensors adapter>
 ```
 
-Currently supported Safetensor adapters:
+Currently supported Safetensors adapters:
 
 - Llama (including Llama 2, Llama 3, and Llama 3.1)
 - Mistral (including Mistral 1, Mistral 2, and Mixtral)
