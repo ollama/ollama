@@ -479,6 +479,7 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
 	if isEmbedding {
 		batchSize = s.options.NumCtx
+		s.loadRequest.BatchSize = batchSize
 		slog.Info("embedding model detected, setting batch size to context length", "batch_size", batchSize)
 	}
 

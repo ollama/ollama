@@ -519,8 +519,9 @@ func TestEmbedLargeInput(t *testing.T) {
 					input := strings.Join(words, " ")
 
 					req := api.EmbedRequest{
-						Model: model,
-						Input: input,
+						Model:     model,
+						Input:     input,
+						KeepAlive: &api.Duration{Duration: 30 * time.Second},
 					}
 
 					res, err := embedTestHelper(mctx, client, t, req)
