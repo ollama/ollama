@@ -109,6 +109,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	Options          map[string]any  `json:"options,omitempty"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
 	Logprobs         *bool           `json:"logprobs"`
@@ -151,6 +152,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	Options          map[string]any `json:"options,omitempty"`
 	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
 }
@@ -544,6 +546,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	options := make(map[string]any)
+	if r.Options != nil {
+		for k, v := range r.Options {
+			options[k] = v
+		}
+	}
 
 	switch stop := r.Stop.(type) {
 	case string:
@@ -620,7 +627,15 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	return &api.ChatRequest{
+	// Handle think from options if not set via Reasoning/ReasoningEffort
+	if think == nil && r.Options != nil {
+		if thinkVal, ok := options["think"].(bool); ok {
+			think = &api.ThinkValue{Value: thinkVal}
+			delete(options, "think")
+		}
+	}
+
+	chatRequest := &api.ChatRequest{
 		Model:           r.Model,
 		Messages:        messages,
 		Format:          format,
@@ -631,7 +646,25 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
-	}, nil
+	}
+
+	// Handle keep_alive from options
+	if r.Options != nil {
+		if keepAlive, ok := options["keep_alive"]; ok {
+			var d api.Duration
+			b, err := json.Marshal(keepAlive)
+			if err != nil {
+				return nil, fmt.Errorf("invalid keep_alive format: %w", err)
+			}
+			if err := json.Unmarshal(b, &d); err != nil {
+				return nil, fmt.Errorf("invalid keep_alive duration: %w", err)
+			}
+			chatRequest.KeepAlive = &d
+			delete(options, "keep_alive")
+		}
+	}
+
+	return chatRequest, nil
 }
 
 func nameFromToolCallID(messages []Message, toolCallID string) string {
@@ -666,6 +699,11 @@ func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 // FromCompleteRequest converts a CompletionRequest to api.GenerateRequest
 func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	options := make(map[string]any)
+	if r.Options != nil {
+		for k, v := range r.Options {
+			options[k] = v
+		}
+	}
 
 	switch stop := r.Stop.(type) {
 	case string:
@@ -713,7 +751,13 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		topLogprobs = *r.Logprobs
 	}
 
-	return api.GenerateRequest{
+	var think *api.ThinkValue
+	if thinkVal, ok := options["think"].(bool); ok {
+		think = &api.ThinkValue{Value: thinkVal}
+		delete(options, "think")
+	}
+
+	generateRequest := api.GenerateRequest{
 		Model:           r.Model,
 		Prompt:          r.Prompt,
 		Options:         options,
@@ -722,5 +766,21 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		Logprobs:        logprobs,
 		TopLogprobs:     topLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
-	}, nil
+		Think:           think,
+	}
+
+	if keepAlive, ok := options["keep_alive"]; ok {
+		var d api.Duration
+		b, err := json.Marshal(keepAlive)
+		if err != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid keep_alive format: %w", err)
+		}
+		if err := json.Unmarshal(b, &d); err != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid keep_alive duration: %w", err)
+		}
+		generateRequest.KeepAlive = &d
+		delete(options, "keep_alive")
+	}
+
+	return generateRequest, nil
 }
