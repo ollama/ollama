@@ -37,6 +37,10 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 			return nil, err
 		}
 
+		if n <= 0 || n > 100<<20 {
+			return nil, fmt.Errorf("invalid safetensors file %q (header size: %d): file may be corrupted or a Git LFS pointer", p, n)
+		}
+
 		b := bytes.NewBuffer(make([]byte, 0, n))
 		if _, err = io.CopyN(b, f, n); err != nil {
 			return nil, err
