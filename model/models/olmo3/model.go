@@ -1,7 +1,8 @@
-package olmo
+package olmo3
 
 import (
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -13,8 +14,8 @@ import (
 )
 
 const (
-	cacheTypeSWA = iota
-	cacheTypeCausal
+	cacheTypeSWA    = 0
+	cacheTypeCausal = 1
 )
 
 type Options struct {
@@ -26,9 +27,6 @@ type Options struct {
 
 	ropeType          string
 	ropeExtrapolation float32
-
-	ropeBetaFast float32
-	ropeBetaSlow float32
 
 	slidingWindowPattern []bool
 }
@@ -60,17 +58,10 @@ func New(c fs.Config) (model.Model, error) {
 		),
 	}
 
-	if c.String("tokenizer.ggml.model") != "gpt2" {
-		return nil, model.ErrUnsupportedTokenizer
-	}
-
-	var pretokenizers []string
-	if c.String("tokenizer.ggml.pre") != "default" {
-		pretokenizers = []string{
-			"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-		}
-	}
-	processor := model.NewBytePairEncoding(&vocabulary, pretokenizers...)
+	processor := model.NewBytePairEncoding(
+		&vocabulary,
+		"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+	)
 
 	m := Model{
 		TextProcessor: processor,
@@ -86,8 +77,6 @@ func New(c fs.Config) (model.Model, error) {
 			attnFactor:            c.Float("rope.scaling.attn_factor", 1),
 			ropeType:              c.String("rope.scaling.type"),
 			ropeExtrapolation:     c.Float("rope.scaling.extrapolation_factor", 1.0),
-			ropeBetaFast:          32.0,
-			ropeBetaSlow:          1.0,
 			slidingWindowPattern:  c.Bools("attention.sliding_window_pattern"),
 		},
 	}
@@ -101,68 +90,45 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 type SelfAttention struct {
-	Query       *nn.Linear  `gguf:"attn_q"`
-	Key         *nn.Linear  `gguf:"attn_k"`
-	Value       *nn.Linear  `gguf:"attn_v"`
-	Output      *nn.Linear  `gguf:"attn_output"`
-	QNorm       *nn.RMSNorm `gguf:"attn_q_norm"`
-	KNorm       *nn.RMSNorm `gguf:"attn_k_norm"`
-	RopeFactors ml.Tensor   `gguf:"rope_freqs.weight"`
+	Query  *nn.Linear  `gguf:"attn_q"`
+	Key    *nn.Linear  `gguf:"attn_k"`
+	Value  *nn.Linear  `gguf:"attn_v"`
+	Output *nn.Linear  `gguf:"attn_output"`
+	QNorm  *nn.RMSNorm `gguf:"attn_q_norm"`
+	KNorm  *nn.RMSNorm `gguf:"attn_k_norm"`
 }
 
-func (m *Model) applyRoPE(ctx ml.Context, states, positions ml.Tensor, ropeDim int, isSWA bool) ml.Tensor {
-	var ropeOpts []func(*rope.Options)
-
-	ropeOpts = append(ropeOpts, rope.WithTypeNeoX())
-
-	ropeOpts = append(ropeOpts,
-		rope.WithBetaFast(m.ropeBetaFast),
-		rope.WithBetaSlow(m.ropeBetaSlow),
-	)
-
-	if m.originalContextLength > 0 {
-		ropeOpts = append(ropeOpts,
-			rope.WithOriginalContextLength(m.originalContextLength),
-		)
-
-		// Set freq_scale to 1.0, extrapolation factor to 0.0, and attention factor to 1.0 for SWA to not use YaRN
-		if isSWA {
-			ropeOpts = append(ropeOpts,
-				rope.WithExtrapolationFactor(0),
-				rope.WithAttentionFactor(1.),
-			)
-		} else {
-			// Non-SWA uses full YaRN parameters
-			ropeOpts = append(ropeOpts,
-				rope.WithExtrapolationFactor(m.ropeExtrapolation),
-				rope.WithAttentionFactor(m.attnFactor),
-			)
-		}
-	}
-
-	freqScale := float32(1.0)
-	if !isSWA {
-		freqScale = 1. / m.ropeScale
-	}
-
-	return nn.RoPE(ctx, states, positions, ropeDim, m.ropeBase, freqScale, ropeOpts...)
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor, freqScale float32, extraOptions ...func(*rope.Options)) ml.Tensor {
+	ropeOpts := slices.Concat([]func(*rope.Options){rope.WithTypeNeoX()}, extraOptions)
+	return nn.RoPE(ctx, states, positions, o.hiddenSize/o.numHeads, o.ropeBase, freqScale, ropeOpts...)
 }
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, m *Model, isSWA bool) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := m.hiddenSize / m.numHeads
-	ropeDim := headDim
+
+	freqScale := float32(1.0)
+	var ropeOpts []func(*rope.Options)
+	if !isSWA {
+		freqScale = 1. / m.ropeScale
+		if m.originalContextLength > 0 {
+			ropeOpts = []func(*rope.Options){
+				rope.WithOriginalContextLength(m.originalContextLength),
+				rope.WithExtrapolationFactor(m.ropeExtrapolation),
+				rope.WithAttentionFactor(m.attnFactor),
+			}
+		}
+	}
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = sa.QNorm.Forward(ctx, query, m.eps)
 	query = query.Reshape(ctx, headDim, m.numHeads, batchSize)
-
-	query = m.applyRoPE(ctx, query, positions, ropeDim, isSWA)
+	query = m.Options.applyRotaryPositionEmbeddings(ctx, query, positions, freqScale, ropeOpts...)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = sa.KNorm.Forward(ctx, key, m.eps)
 	key = key.Reshape(ctx, headDim, m.numKVHeads, batchSize)
-	key = m.applyRoPE(ctx, key, positions, ropeDim, isSWA)
+	key = m.Options.applyRotaryPositionEmbeddings(ctx, key, positions, freqScale, ropeOpts...)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, m.numKVHeads, batchSize)
@@ -174,9 +140,22 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeDim := m.hiddenSize / m.numHeads
 	isSWA := m.isSWALayer(layer)
-	return m.applyRoPE(ctx, key, shift, ropeDim, isSWA), nil
+
+	freqScale := float32(1.0)
+	var ropeOpts []func(*rope.Options)
+	if !isSWA {
+		freqScale = 1. / m.ropeScale
+		if m.originalContextLength > 0 {
+			ropeOpts = []func(*rope.Options){
+				rope.WithOriginalContextLength(m.originalContextLength),
+				rope.WithExtrapolationFactor(m.ropeExtrapolation),
+				rope.WithAttentionFactor(m.attnFactor),
+			}
+		}
+	}
+
+	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift, freqScale, ropeOpts...), nil
 }
 
 type MLP struct {
@@ -217,7 +196,7 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso
 	return hiddenState.Add(ctx, residual)
 }
 
-// Olmo3 has Sliding Window Attention (SWA) 3 out of 4 layers.
+// OLMo3 has Sliding Window Attention (SWA) for 3 out of every 4 layers.
 func (m *Model) isSWALayer(layerIdx int) bool {
 	return m.Options.slidingWindowPattern[layerIdx]
 }
@@ -255,5 +234,5 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 }
 
 func init() {
-	model.Register("olmo2", New)
+	model.Register("olmo3", New)
 }

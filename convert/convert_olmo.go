@@ -37,45 +37,43 @@ var _ ModelConverter = (*olmoModel)(nil)
 
 func (p *olmoModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "olmo2"
-	kv["olmo2.block_count"] = p.NumHiddenLayers
-	kv["olmo2.context_length"] = p.MaxPositionEmbeddings
-	kv["olmo2.embedding_length"] = p.HiddenSize
-	kv["olmo2.feed_forward_length"] = p.IntermediateSize
-	kv["olmo2.attention.head_count"] = p.NumAttentionHeads
-	kv["olmo2.attention.head_count_kv"] = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
+	kv["general.architecture"] = "olmo3"
+	kv["olmo3.block_count"] = p.NumHiddenLayers
+	kv["olmo3.context_length"] = p.MaxPositionEmbeddings
+	kv["olmo3.embedding_length"] = p.HiddenSize
+	kv["olmo3.feed_forward_length"] = p.IntermediateSize
+	kv["olmo3.attention.head_count"] = p.NumAttentionHeads
+	kv["olmo3.attention.head_count_kv"] = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
 
 	if p.RopeTheta > 0 {
-		kv["olmo2.rope.freq_base"] = p.RopeTheta
-	} else {
-		kv["olmo2.rope.freq_base"] = float32(10000.0)
+		kv["olmo3.rope.freq_base"] = p.RopeTheta
 	}
 
 	if p.RopeScaling != nil {
 		if p.RopeScaling.Factor > 0 {
-			kv["olmo2.rope.scaling.factor"] = p.RopeScaling.Factor
+			kv["olmo3.rope.scaling.factor"] = p.RopeScaling.Factor
 		}
 		if p.RopeScaling.OriginalMaxPositionEmbeds > 0 {
-			kv["olmo2.rope.scaling.original_context_length"] = p.RopeScaling.OriginalMaxPositionEmbeds
+			kv["olmo3.rope.scaling.original_context_length"] = p.RopeScaling.OriginalMaxPositionEmbeds
 		}
 		if p.RopeScaling.AttentionFactor > 0 {
-			kv["olmo2.rope.scaling.attn_factor"] = p.RopeScaling.AttentionFactor
+			kv["olmo3.rope.scaling.attn_factor"] = p.RopeScaling.AttentionFactor
 		}
 		if p.RopeScaling.RopeType != "" {
-			kv["olmo2.rope.scaling.type"] = p.RopeScaling.RopeType
+			kv["olmo3.rope.scaling.type"] = p.RopeScaling.RopeType
 		}
 	}
 
 	if p.RMSNormEPS > 0 {
-		kv["olmo2.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+		kv["olmo3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
 	}
 
 	if p.ClampKQV > 0 {
-		kv["olmo2.attention.clamp_kqv"] = p.ClampKQV
+		kv["olmo3.attention.clamp_kqv"] = p.ClampKQV
 	}
 
 	if p.SlidingWindow > 0 {
-		kv["olmo2.attention.sliding_window"] = p.SlidingWindow
+		kv["olmo3.attention.sliding_window"] = p.SlidingWindow
 	}
 
 	if len(p.LayerTypes) > 0 {
@@ -83,7 +81,7 @@ func (p *olmoModel) KV(t *Tokenizer) ggml.KV {
 		for i, layerType := range p.LayerTypes {
 			slidingPattern[i] = (layerType == "sliding_attention")
 		}
-		kv["olmo2.attention.sliding_window_pattern"] = slidingPattern
+		kv["olmo3.attention.sliding_window_pattern"] = slidingPattern
 	}
 
 	return kv
