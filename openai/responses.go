@@ -408,7 +408,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else {
+	} else { //nolint:staticcheck // SA9003: empty branch
 		// TODO(drifkin): OpenAI defaults to 1.0 here, but we don't follow that here
 		// in case the model has a different default. It would be best if we
 		// understood whether there was a model-specific default and if not, we
