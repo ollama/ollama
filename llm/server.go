@@ -475,15 +475,13 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	}
 
 	// Check if embedding model and adjust batch size accordingly
-	batchSize := s.loadRequest.BatchSize
 	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
-	if isEmbedding {
-		batchSize = s.options.NumCtx
-		s.loadRequest.BatchSize = batchSize
-		slog.Info("embedding model detected, setting batch size to context length", "batch_size", batchSize)
+	if isEmbedding && s.loadRequest.BatchSize < s.options.NumCtx {
+		s.loadRequest.BatchSize = s.options.NumCtx
+		slog.Info("embedding model detected, setting batch size to context length", "batch_size", s.loadRequest.BatchSize)
 	}
 
-	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(batchSize),
+	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(s.loadRequest.BatchSize),
 		s.loadRequest.Parallel, s.loadRequest.KvCacheType, s.loadRequest.FlashAttention)
 
 	// Use the size of one layer as a buffer
