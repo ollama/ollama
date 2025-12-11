@@ -409,7 +409,11 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
 	} else {
-		options["top_p"] = 1.0
+		// TODO(drifkin): OpenAI defaults to 1.0 here, but we don't follow that here
+		// in case the model has a different default. It would be best if we
+		// understood whether there was a model-specific default and if not, we
+		// should also default to 1.0, but that will require some additional
+		// plumbing
 	}
 
 	if r.MaxOutputTokens != nil {
@@ -509,6 +513,9 @@ type ResponsesResponse struct {
 	Model     string                `json:"model"`
 	Output    []ResponsesOutputItem `json:"output"`
 	Usage     *ResponsesUsage       `json:"usage,omitempty"`
+	// TODO(drifkin): add `temperature` and `top_p` to the response, but this
+	// requires additional plumbing to find the effective values since the
+	// defaults can come from the model or the request
 }
 
 type ResponsesOutputItem struct {
@@ -748,6 +755,11 @@ func (c *ResponsesStreamConverter) processThinking(thinking string) []ResponsesS
 		"output_index": c.outputIndex,
 		"delta":        thinking,
 	}))
+
+	// TODO(drifkin): consider adding
+	// [`response.reasoning_text.delta`](https://platform.openai.com/docs/api-reference/responses-streaming/response/reasoning_text/delta),
+	// but need to do additional research to understand how it's used and how
+	// widely supported it is
 
 	return events
 }
