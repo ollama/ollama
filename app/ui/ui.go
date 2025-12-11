@@ -118,15 +118,31 @@ func (s *Server) log() *slog.Logger {
 // ollamaProxy creates a reverse proxy handler to the Ollama server
 func (s *Server) ollamaProxy() http.Handler {
 	var (
-		proxy     http.Handler
-		proxyOnce sync.Once
-		proxyErr  error
+		proxy   http.Handler
+		proxyMu sync.Mutex
 	)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyOnce.Do(func() {
-			if err := waitForServer(r.Context()); err != nil {
-				proxyErr = err
+		proxyMu.Lock()
+		defer proxyMu.Unlock()
+
+		if proxy == nil {
+			var err error
+			for i := 0; i < 2; i++ {
+				if i > 0 {
+					s.log().Warn("ollama server not ready, retrying", "attempt", i+1)
+					time.Sleep(1 * time.Second)
+				}
+				
+				err = WaitForServer(context.Background(), 10*time.Second)
+				if err == nil {
+					break
+				}
+			}
+			
+			if err != nil {
+				s.log().Error("ollama server not ready after retries", "error", err)
+				http.Error(w, "Ollama server is not ready", http.StatusServiceUnavailable)
 				return
 			}
 
@@ -148,12 +164,6 @@ func (s *Server) ollamaProxy() http.Handler {
 			}
 
 			proxy = p
-		})
-
-		if proxyErr != nil {
-			s.log().Error("ollama server not ready", "error", proxyErr)
-			http.Error(w, "Ollama server is not ready", http.StatusServiceUnavailable)
-			return
 		}
 
 		proxy.ServeHTTP(w, r)
