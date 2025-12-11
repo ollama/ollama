@@ -1,6 +1,7 @@
 package olmo3
 
 import (
+	"fmt"
 	"math"
 	"slices"
 
@@ -215,7 +216,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			cacheType = cacheTypeCausal
 		}
 
-		wc := m.Cache.(*kvcache.WrapperCache)
+		wc, ok := m.Cache.(*kvcache.WrapperCache)
+		if !ok {
+			return nil, fmt.Errorf("expected *kvcache.WrapperCache, got %T", m.Cache)
+		}
 		wc.SetLayerType(cacheType)
 		if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
 			causal.SetCausal(ctx, kvcache.CausalOptions{Except: []int{}})
