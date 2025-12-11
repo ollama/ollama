@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -841,7 +842,52 @@ func (s *Server) loadModel(
 	if err != nil {
 		panic(err)
 	}
-
+	if envThreads := os.Getenv("OLLAMA_NUM_THREADS"); envThreads != "" {
+		if n, err := strconv.Atoi(envThreads); err == nil && n > 0 {
+			threads = n
+		}
+	} else if runtime.GOARCH == "ppc64le" || runtime.GOARCH == "ppc64" {
+		getTotalCPUs := func() int {
+			if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+				count := 0
+				for _, line := range strings.Split(string(data), "\n") {
+					if strings.HasPrefix(line, "processor") {
+						count++
+					}
+				}
+				return count
+			}
+			return 0
+		}
+		getThreadsPerCore := func() int {
+			if data, err := os.ReadFile("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list"); err == nil {
+				count := 0
+				for _, p := range strings.Split(strings.TrimSpace(string(data)), ",") {
+					if strings.Contains(p, "-") {
+						rng := strings.SplitN(p, "-", 2)
+						if len(rng) == 2 {
+							start, _ := strconv.Atoi(rng[0])
+							end, _ := strconv.Atoi(rng[1])
+							count += end - start + 1
+						}
+					} else {
+						count++
+					}
+				}
+				return count
+			}
+			return 0
+		}
+		totalCPUs := getTotalCPUs()
+		threadsPerCore := getThreadsPerCore()
+		if totalCPUs == 0 || threadsPerCore == 0 {
+			threads = runtime.NumCPU()
+		} else if threadsPerCore == 8 {
+			threads = totalCPUs / 2
+		} else {
+			threads = totalCPUs
+		}
+	}
 	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
