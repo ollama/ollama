@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -449,6 +450,72 @@ func TestExecuteWithSuffix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDateFunctions(t *testing.T) {
+	t.Run("currentDate", func(t *testing.T) {
+		tmpl, err := Parse("{{- range .Messages }}{{ .Content }}{{ end }} Today is {{ currentDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+
+		expected := "Hello Today is " + time.Now().Format("2006-01-02")
+		if b.String() != expected {
+			t.Errorf("got %q, want %q", b.String(), expected)
+		}
+	})
+
+	t.Run("yesterdayDate", func(t *testing.T) {
+		tmpl, err := Parse("{{- range .Messages }}{{ .Content }}{{ end }} Yesterday was {{ yesterdayDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+
+		expected := "Hello Yesterday was " + time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+		if b.String() != expected {
+			t.Errorf("got %q, want %q", b.String(), expected)
+		}
+	})
+
+	t.Run("yesterdayDate format", func(t *testing.T) {
+		tmpl, err := Parse("{{- range .Messages }}{{ end }}{{ yesterdayDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify the format matches YYYY-MM-DD
+		result := b.String()
+		if len(result) != 10 {
+			t.Errorf("expected date length 10, got %d: %q", len(result), result)
+		}
+
+		// Parse and verify it's a valid date
+		parsed, err := time.Parse("2006-01-02", result)
+		if err != nil {
+			t.Errorf("failed to parse date %q: %v", result, err)
+		}
+
+		// Verify it's yesterday
+		yesterday := time.Now().AddDate(0, 0, -1)
+		if parsed.Year() != yesterday.Year() || parsed.Month() != yesterday.Month() || parsed.Day() != yesterday.Day() {
+			t.Errorf("expected yesterday's date, got %v", parsed)
+		}
+	})
 }
 
 func TestCollate(t *testing.T) {
