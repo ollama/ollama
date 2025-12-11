@@ -33,10 +33,12 @@ type mistral3Model struct {
 			BetaFast                  float32 `json:"beta_fast"`
 			BetaSlow                  float32 `json:"beta_slow"`
 			Factor                    float32 `json:"factor"`
-			ScalingBeta               float32 `json:"llama_4_scaling_beta"`
+			Llama4ScalingBeta         float32 `json:"llama_4_scaling_beta"`
 			OrigMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
 			RopeType                  string  `json:"rope_type"`
 			RopeTheta                 float32 `json:"rope_theta"`
+			Mscale                    float32 `json:"mscale"`
+			MscaleAllDim              float32 `json:"mscale_all_dim"`
 		} `json:"rope_parameters"`
 	} `json:"text_config"`
 	VisionModel struct {
@@ -76,10 +78,21 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.rope.dimension_count"] = cmp.Or(p.TextModel.HeadDim, p.TextModel.HiddenSize/p.TextModel.NumAttentionHeads)
 	kv["mistral3.rope.freq_base"] = cmp.Or(p.TextModel.RopeTheta, p.TextModel.RopeParameters.RopeTheta)
 	kv["mistral3.rope.scaling.factor"] = p.TextModel.RopeParameters.Factor
+	kv["mistral3.rope.scaling.type"] = p.TextModel.RopeParameters.RopeType
+	kv["mistral3.rope.scaling.beta_fast"] = p.TextModel.RopeParameters.BetaFast
+	kv["mistral3.rope.scaling.beta_slow"] = p.TextModel.RopeParameters.BetaSlow
 
+	if p.TextModel.RopeParameters.Mscale > 0 {
+		kv["mistral3.rope.scaling.mscale"] = p.TextModel.RopeParameters.Mscale
+	}
+	if p.TextModel.RopeParameters.MscaleAllDim > 0 {
+		kv["mistral3.rope.scaling.mscale_all_dim"] = p.TextModel.RopeParameters.MscaleAllDim
+	}
 	if p.TextModel.RopeParameters.OrigMaxPositionEmbeddings > 0 {
 		kv["mistral3.rope.scaling.original_context_length"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
-		kv["mistral3.rope.scaling_beta"] = p.TextModel.RopeParameters.ScalingBeta
+	}
+	if p.TextModel.RopeParameters.Llama4ScalingBeta > 0 {
+		kv["mistral3.rope.scaling_beta"] = p.TextModel.RopeParameters.Llama4ScalingBeta
 	}
 
 	// Vision configuration
