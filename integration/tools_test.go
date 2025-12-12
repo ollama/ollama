@@ -30,6 +30,7 @@ func TestAPIToolCalling(t *testing.T) {
 		"mistral":       6,
 		"qwen2.5":       6,
 		"qwen2":         6,
+		"ministral-3":   20,
 		"mistral-nemo":  9,
 		"mistral-small": 16,
 		"mixtral:8x22b": 80,

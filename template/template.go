@@ -127,6 +127,9 @@ var funcs = template.FuncMap{
 		// Default format is YYYY-MM-DD
 		return time.Now().Format("2006-01-02")
 	},
+	"yesterdayDate": func(args ...string) string {
+		return time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	},
 	"toTypeScriptType": func(v any) string {
 		if param, ok := v.(api.ToolProperty); ok {
 			return param.ToTypeScriptType()

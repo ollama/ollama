@@ -1,5 +1,4 @@
-run:
-  timeout: 5m
+version: "2"
 linters:
   enable:
     - asasalint
@@ -7,35 +6,46 @@ linters:
     - bodyclose
     - containedctx
     - gocheckcompilerdirectives
-    - gofmt
-    - gofumpt
-    - gosimple
-    - govet
-    - ineffassign
     - intrange
     - makezero
     - misspell
     - nilerr
     - nolintlint
     - nosprintfhostport
-    - staticcheck
     - unconvert
     - usetesting
     - wastedassign
     - whitespace
   disable:
-    - usestdlibvars
     - errcheck
-linters-settings:
-  staticcheck:
-    checks:
-      - all
-      - -SA1019 # omit Deprecated check
+    - usestdlibvars
+  settings:
+    govet:
+      disable:
+        - unusedresult
+    staticcheck:
+      checks:
+        - all
+        - -QF* # disable quick fix suggestions
+        - -SA1019
+        - -ST1000 # package comment format
+        - -ST1003 # underscores in package names
+        - -ST1005 # error strings should not be capitalized
+        - -ST1012 # error var naming (ErrFoo)
+        - -ST1016 # receiver name consistency
+        - -ST1020 # comment on exported function format
+        - -ST1021 # comment on exported type format
+        - -ST1022 # comment on exported var format
+        - -ST1023 # omit type from declaration
 severity:
-  default-severity: error
+  default: error
   rules:
     - linters:
         - gofmt
         - goimports
         - intrange
       severity: info
+formatters:
+  enable:
+    - gofmt
+    - gofumpt

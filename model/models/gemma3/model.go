@@ -16,7 +16,7 @@ import (
 
 type Model struct {
 	model.Base
-	model.SentencePiece
+	model.TextProcessor
 
 	*VisionModel `gguf:"v"`
 	*TextModel
@@ -54,24 +54,35 @@ func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, i
 }
 
 func New(c fs.Config) (model.Model, error) {
-	m := Model{
-		SentencePiece: model.NewSentencePiece(
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				EOS: append(
-					[]int32{
-						int32(c.Uint("tokenizer.ggml.eos_token_id")),
-						int32(c.Uint("tokenizer.ggml.eot_token_id", 106)),
-					},
-					c.Ints("tokenizer.ggml.eos_token_ids")...,
-				),
+	vocabulary := model.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		Merges: c.Strings("tokenizer.ggml.merges"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+		EOS: append(
+			[]int32{
+				int32(c.Uint("tokenizer.ggml.eos_token_id")),
 			},
+			c.Ints("tokenizer.ggml.eos_token_ids")...,
 		),
+	}
+
+	var processor model.TextProcessor
+	switch c.String("tokenizer.ggml.model") {
+	case "gpt2":
+		processor = model.NewBytePairEncoding(&vocabulary)
+	default:
+		// Previous uploads of Gemma 3 on Ollama did not have token 106
+		// (i.e. "<end_of_turn>") so we need to add in case it's not already present
+		vocabulary.EOS = append(vocabulary.EOS, int32(c.Uint("tokenizer.ggml.eot_token_id", 106)))
+		processor = model.NewSentencePiece(&vocabulary)
+	}
+
+	m := Model{
+		TextProcessor:  processor,
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
 		TextModel:      newTextModel(c),
@@ -141,8 +152,16 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	hiddenStates := m.TextModel.Forward(ctx, batch, m.Cache)
-	return m.Output.Forward(ctx, hiddenStates), nil
+	hiddenState := m.TextModel.Forward(ctx, batch, m.Cache)
+	hiddenState = m.Output.Forward(ctx, hiddenState)
+
+	if m.TextConfig.finalLogitSoftcap > 0.0 {
+		hiddenState = hiddenState.Scale(ctx, 1.0/float64(m.TextConfig.finalLogitSoftcap))
+		hiddenState = hiddenState.Tanh(ctx)
+		hiddenState = hiddenState.Scale(ctx, float64(m.TextConfig.finalLogitSoftcap))
+	}
+
+	return hiddenState, nil
 }
 
 func init() {

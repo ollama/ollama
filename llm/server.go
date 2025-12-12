@@ -69,7 +69,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, input string) ([]float32, error)
+	Embedding(ctx context.Context, input string) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -227,7 +227,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		modelPath,
 		gpuLibs,
 		status,
-		ml.GetVisibleDevicesEnv(gpus),
+		ml.GetVisibleDevicesEnv(gpus, false),
 	)
 
 	s := llmServer{
@@ -472,6 +472,13 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
 		s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
 		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
+	}
+
+	// Check if embedding model and adjust batch size accordingly
+	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
+	if isEmbedding && s.loadRequest.BatchSize < s.options.NumCtx {
+		s.loadRequest.BatchSize = s.options.NumCtx
+		slog.Info("embedding model detected, setting batch size to context length", "batch_size", s.loadRequest.BatchSize)
 	}
 
 	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(s.loadRequest.BatchSize),
@@ -874,7 +881,7 @@ func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 		}}
 	}
 	gpuLayers, layers := s.buildLayout(systemGPUs, memory, requireFull, backoff)
-	err := s.verifyLayout(systemInfo, memory, requireFull, gpuLayers, layers)
+	err := s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, layers)
 	if err != nil {
 		return nil, err
 	}
@@ -943,7 +950,7 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 }
 
 // verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
-func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
+func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
@@ -970,8 +977,8 @@ nextLayer:
 	}
 
 	if requireFull {
-		if gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
-			slog.Info("model requires more memory than is currently available, evicting a model to make space", "loaded layers", gpuLayers.Sum())
+		if len(systemGPUs) > 0 && gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
+			slog.Info("model requires more gpu memory than is currently available, evicting a model to make space", "loaded layers", gpuLayers.Sum())
 			return ErrLoadRequiredFull
 		}
 
@@ -998,7 +1005,7 @@ nextLayer:
 		}
 	}
 
-	if gpuLayers.Sum() == 0 {
+	if len(systemGPUs) > 0 && gpuLayers.Sum() == 0 {
 		slog.Debug("insufficient VRAM to load any model layers")
 	}
 
@@ -1629,10 +1636,11 @@ type EmbeddingRequest struct {
 }
 
 type EmbeddingResponse struct {
-	Embedding []float32 `json:"embedding"`
+	Embedding       []float32 `json:"embedding"`
+	PromptEvalCount int       `json:"prompt_eval_count"`
 }
 
-func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
+func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int, error) {
 	logutil.Trace("embedding request", "input", input)
 
 	if err := s.sem.Acquire(ctx, 1); err != nil {
@@ -1641,51 +1649,54 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 		} else {
 			slog.Error("Failed to acquire semaphore", "error", err)
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	defer s.sem.Release(1)
 
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status)
+		return nil, 0, fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	data, err := json.Marshal(EmbeddingRequest{Content: input})
 	if err != nil {
-		return nil, fmt.Errorf("error marshaling embed data: %w", err)
+		return nil, 0, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
 	if err != nil {
-		return nil, fmt.Errorf("error creating embed request: %w", err)
+		return nil, 0, fmt.Errorf("error creating embed request: %w", err)
 	}
 	r.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("do embedding request: %w", err)
+		return nil, 0, fmt.Errorf("do embedding request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading embed response: %w", err)
+		return nil, 0, fmt.Errorf("error reading embed response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
 		log.Printf("llm embedding error: %s", body)
-		return nil, fmt.Errorf("%s", body)
+		return nil, 0, api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: string(body),
+		}
 	}
 
 	var e EmbeddingResponse
 	if err := json.Unmarshal(body, &e); err != nil {
-		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
+		return nil, 0, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return e.Embedding, nil
+	return e.Embedding, e.PromptEvalCount, nil
 }
 
 func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {

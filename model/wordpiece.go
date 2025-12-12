@@ -10,7 +10,8 @@ import (
 )
 
 type WordPiece struct {
-	vocab *Vocabulary
+	vocab     *Vocabulary
+	lowercase bool
 }
 
 // ggmlPrefix is the prefix used by GGML vocabularies to indicate word boundaries.
@@ -114,8 +115,10 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 					subword = ggmlPrefix + subword
 				}
 
-				// TODO: some models might not want [ToLower]
-				piece = wpm.vocab.Encode(strings.ToLower(subword))
+				if wpm.lowercase {
+					subword = strings.ToLower(subword)
+				}
+				piece = wpm.vocab.Encode(subword)
 				if piece >= 0 {
 					break
 				}
@@ -140,7 +143,7 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
-	if addSpecial && len(ids) > 0 {
+	if addSpecial {
 		ids = wpm.vocab.addSpecials(ids)
 	}
 
@@ -160,8 +163,9 @@ func (wpm WordPiece) Vocabulary() *Vocabulary {
 
 var _ TextProcessor = (*WordPiece)(nil)
 
-func NewWordPiece(vocab *Vocabulary) WordPiece {
+func NewWordPiece(vocab *Vocabulary, lowercase bool) WordPiece {
 	return WordPiece{
-		vocab: vocab,
+		vocab:     vocab,
+		lowercase: lowercase,
 	}
 }

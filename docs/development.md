@@ -49,6 +49,8 @@ Install prerequisites:
     - [Ninja](https://github.com/ninja-build/ninja/releases)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
+- (Optional) VULKAN GPU support
+    - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
 
 Then, configure and build the project:
 
@@ -57,12 +59,24 @@ cmake -B build
 cmake --build build --config Release
 ```
 
+> Building for Vulkan requires VULKAN_SDK environment variable:
+> 
+> PowerShell
+> ```powershell
+> $env:VULKAN_SDK="C:\VulkanSDK\<version>"
+> ```
+> CMD
+> ```cmd
+> set VULKAN_SDK=C:\VulkanSDK\<version>
+> ```
+
 > [!IMPORTANT]
 > Building for ROCm requires additional flags:
 > ```
 > cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 > cmake --build build --config Release
 > ```
+
 
 
 Lastly, run Ollama:
@@ -84,7 +98,9 @@ Install prerequisites:
     - [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
-
+- (Optional) VULKAN GPU support
+    - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
+    - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
 

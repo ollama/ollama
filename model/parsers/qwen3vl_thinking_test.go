@@ -205,7 +205,7 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 			// parser.state = CollectingThinkingContent
 
 			for i, step := range tc.steps {
@@ -386,7 +386,7 @@ func TestQwen3VLParserState(t *testing.T) {
 
 	for _, tc := range cases {
 		parser := Qwen3VLParser{hasThinkingSupport: tc.hasThinking}
-		parser.Init(nil, tc.last)
+		parser.Init(nil, tc.last, nil)
 		if parser.state != tc.wantState {
 			t.Errorf("%s: got state %v, want %v", tc.desc, parser.state, tc.wantState)
 		}
@@ -437,7 +437,7 @@ func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, last)
+			parser.Init([]api.Tool{}, last, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -500,7 +500,7 @@ func TestQwen3VLThinkingParserWithNonThinkingPrefill(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, last)
+			parser.Init([]api.Tool{}, last, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -523,7 +523,7 @@ func TestQwen3VLThinkingParserStreamingAssistantPrefillContent(t *testing.T) {
 	// last message is assistant with content ⇒ start in CollectingContent
 	last := &api.Message{Role: "assistant", Content: "has content"}
 	parser := Qwen3VLParser{hasThinkingSupport: true}
-	parser.Init([]api.Tool{}, last)
+	parser.Init([]api.Tool{}, last, nil)
 
 	type step struct {
 		input      string
@@ -750,7 +750,7 @@ func TestQwen3VLThinkingWhitespaceHandling(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -859,7 +859,7 @@ func TestQwen3VLToolCallWhitespaceHandling(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, tc.prefillMsg)
+			parser.Init([]api.Tool{}, tc.prefillMsg, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)

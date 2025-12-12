@@ -18,23 +18,23 @@ type VisionAttention struct {
 }
 
 func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
-	x1 := t.View(ctx, 0, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3))
-	x2 := t.View(ctx, t.Stride(0)*t.Dim(0)/2, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3)).Contiguous(ctx)
+	x1 := t.Slice(ctx, 0, 0, t.Dim(0)/2, 1)
+	x2 := t.Slice(ctx, 0, t.Dim(0)/2, t.Dim(0), 1).Contiguous(ctx)
 	return x2.Scale(ctx, -1).Concat(ctx, x1, 0)
 }
 
-func applyRotaryPositionalEmbedding(ctx ml.Context, t, cos, sin ml.Tensor) ml.Tensor {
-	return t.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, t).Mul(ctx, sin))
+func applyRotaryPositionEmbeddings(ctx ml.Context, states, cos, sin ml.Tensor) ml.Tensor {
+	return states.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, states).Mul(ctx, sin))
 }
 
 func (sa *VisionAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml.Tensor, opts VisionOptions) ml.Tensor {
 	query := sa.Query.Forward(ctx, hiddenStates)
 	query = query.Reshape(ctx, opts.headDim(), opts.numHeads, query.Dim(1))
-	query = applyRotaryPositionalEmbedding(ctx, query, cos, sin)
+	query = applyRotaryPositionEmbeddings(ctx, query, cos, sin)
 
 	key := sa.Key.Forward(ctx, hiddenStates)
 	key = key.Reshape(ctx, opts.headDim(), opts.numHeads, key.Dim(1))
-	key = applyRotaryPositionalEmbedding(ctx, key, cos, sin)
+	key = applyRotaryPositionEmbeddings(ctx, key, cos, sin)
 
 	value := sa.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, opts.headDim(), opts.numHeads, value.Dim(1))
@@ -160,10 +160,11 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 	positionEmbeds = positionEmbeds.Mul(ctx, weights)
 	positionEmbeds = positionEmbeds.Reshape(ctx, n, -1, 4)
 
-	positionEmbeds = positionEmbeds.View(ctx, 0, n, positionEmbeds.Stride(1), grid.Height*grid.Width).
-		Add(ctx, positionEmbeds.View(ctx, 1*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), grid.Height*grid.Width)).
-		Add(ctx, positionEmbeds.View(ctx, 2*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), grid.Height*grid.Width)).
-		Add(ctx, positionEmbeds.View(ctx, 3*positionEmbeds.Stride(2), n, positionEmbeds.Stride(1), grid.Height*grid.Width))
+	positionEmbedsChunks := positionEmbeds.Chunk(ctx, 2, 1)
+	positionEmbeds = positionEmbedsChunks[0].
+		Add(ctx, positionEmbedsChunks[1]).
+		Add(ctx, positionEmbedsChunks[2]).
+		Add(ctx, positionEmbedsChunks[3])
 
 	positionEmbeds = positionEmbeds.Reshape(ctx, -1, grid.Width/opts.spatialMergeSize, opts.spatialMergeSize, grid.Height/opts.spatialMergeSize)
 	positionEmbeds = positionEmbeds.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, n, -1)

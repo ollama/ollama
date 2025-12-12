@@ -889,6 +889,37 @@ func TestFilesForModel(t *testing.T) {
 			},
 		},
 		{
+			name: "safetensors with both tokenizer.json and tokenizer.model",
+			setup: func(dir string) error {
+				// Create binary content for tokenizer.model (application/octet-stream)
+				binaryContent := make([]byte, 512)
+				for i := range binaryContent {
+					binaryContent[i] = byte(i % 256)
+				}
+				files := []string{
+					"model-00001-of-00001.safetensors",
+					"config.json",
+					"tokenizer.json",
+				}
+				for _, file := range files {
+					if err := os.WriteFile(filepath.Join(dir, file), []byte("test content"), 0o644); err != nil {
+						return err
+					}
+				}
+				// Write tokenizer.model as binary
+				if err := os.WriteFile(filepath.Join(dir, "tokenizer.model"), binaryContent, 0o644); err != nil {
+					return err
+				}
+				return nil
+			},
+			wantFiles: []string{
+				"model-00001-of-00001.safetensors",
+				"config.json",
+				"tokenizer.json",
+				"tokenizer.model",
+			},
+		},
+		{
 			name: "safetensors with consolidated files - prefers model files",
 			setup: func(dir string) error {
 				files := []string{

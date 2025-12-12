@@ -8,7 +8,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model/input"
 )
@@ -64,18 +63,18 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 
 		cache.(*kvcache.WrapperCache).SetLayerType(layerType)
 
-		// inputPerLayer = inputsPerLayer[:, i, :]
-		inputPerLayer := inputsPerLayer.View(ctx, i*inputsPerLayer.Stride(1), inputsPerLayer.Dim(0), inputsPerLayer.Stride(2), inputsPerLayer.Dim(2)).Contiguous(ctx)
+		// inputPerLayer = inputsPerLayer[:, i, :].squeeze(1)
+		inputPerLayer := inputsPerLayer.View(ctx, i*inputsPerLayer.Stride(1), inputsPerLayer.Dim(0), inputsPerLayer.Stride(2), inputsPerLayer.Dim(2))
 		hiddenStates = layer.Forward(ctx, hiddenStates, inputPerLayer, positions, one, cache, i >= firstSharedKeyValue, ropeBase, float64(m.activationSparsityScale[i]), &m.TextOptions)
 	}
 
 	// hiddenStates = hiddenStates[:, :, 0]
-	hiddenStates0 := hiddenStates.View(ctx, 0, hiddenStates.Dim(0), hiddenStates.Stride(1), hiddenStates.Dim(1))
+	hiddenStates0 := hiddenStates.Slice(ctx, 2, 0, 1, 1)
 	targetMagnitude = hiddenStates0.Sqr(ctx).Mean(ctx).Sqrt(ctx)
 	targetMagnitude = targetMagnitude.Repeat(ctx, 2, m.altupInputs-1)
 
 	// hiddenState = hiddenStates[:, :, 1:]
-	hiddenState = hiddenStates.View(ctx, hiddenStates.Stride(2), hiddenStates.Dim(0), hiddenStates.Stride(1), hiddenStates.Dim(1), hiddenStates.Stride(2), m.altupInputs-1)
+	hiddenState = hiddenStates.Slice(ctx, 2, 1, hiddenStates.Dim(2), 1)
 	altupUnembdProj := m.AltupUnembd.Forward(ctx, hiddenState)
 	altupUnembdProj = altupUnembdProj.Mul(ctx, targetMagnitude.Div(ctx, altupUnembdProj.Sqr(ctx).Mean(ctx).Sqrt(ctx)))
 
@@ -95,7 +94,7 @@ func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.T
 		ropeBase = m.ropeBaseLocal
 	}
 
-	return fast.RoPE(ctx, key, shift, m.headDim(), ropeBase, 1./m.ropeScale, rope.WithTypeNeoX()), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift, ropeBase), nil
 }
 
 type TextScaledWordEmbedding struct {
@@ -176,10 +175,10 @@ func (d TextLayer) Forward(ctx ml.Context, hiddenStates, perLayerInput, position
 	active = d.PostPerLayerNorm.Forward(ctx, active, opts.eps)
 
 	// inactive := predictions[:, :, 1:]
-	inactive := predictions.View(ctx, predictions.Stride(2), predictions.Dim(0), predictions.Stride(1), predictions.Dim(1), predictions.Stride(2), predictions.Dim(2)-1)
+	inactive := predictions.Slice(ctx, 2, 1, predictions.Dim(2), 1)
 	active = inactive.Add(ctx, active)
 
-	predictions0 := predictions.View(ctx, 0, predictions.Dim(0), predictions.Stride(1), predictions.Dim(1))
+	predictions0 := predictions.Slice(ctx, 2, 0, 1, 1)
 	return predictions0.Concat(ctx, active, 2)
 }
 
@@ -256,14 +255,14 @@ func (attn TextAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Ten
 	query := attn.Query.Forward(ctx, hiddenStates)
 	query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
 	query = attn.QueryNorm.Forward(ctx, query, opts.eps)
-	query = fast.RoPE(ctx, query, positions, opts.headDim(), ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions, ropeBase)
 
 	var key, value ml.Tensor
 	if !sharedKV {
 		key = attn.Key.Forward(ctx, hiddenStates)
 		key = key.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
 		key = attn.KeyNorm.Forward(ctx, key, opts.eps)
-		key = fast.RoPE(ctx, key, positions, opts.headDim(), ropeBase, 1./opts.ropeScale, rope.WithTypeNeoX())
+		key = opts.applyRotaryPositionEmbeddings(ctx, key, positions, ropeBase)
 
 		value = attn.Value.Forward(ctx, hiddenStates)
 		value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
@@ -319,7 +318,7 @@ type TextOptions struct {
 
 func (o *TextOptions) altupActive(ctx ml.Context, t ml.Tensor) ml.Tensor {
 	// t[:, :, o.altupActiveIndex]
-	return t.View(ctx, o.altupActiveIndex*t.Stride(2), t.Dim(0), t.Stride(1), t.Dim(1))
+	return t.Slice(ctx, 2, o.altupActiveIndex, o.altupActiveIndex+1, 1)
 }
 
 func (o *TextOptions) headDim() int {
@@ -328,6 +327,10 @@ func (o *TextOptions) headDim() int {
 
 func (o *TextOptions) isLocal(i int) bool {
 	return o.slidingWindowPattern[i]
+}
+
+func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, t, p ml.Tensor, base float32) ml.Tensor {
+	return nn.RoPE(ctx, t, p, o.headDim(), base, 1./o.ropeScale, rope.WithTypeNeoX())
 }
 
 func newTextModel(c fs.Config) *TextModel {

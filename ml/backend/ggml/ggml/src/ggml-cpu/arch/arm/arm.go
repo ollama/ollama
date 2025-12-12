@@ -1,3 +1,5 @@
+//go:build arm64
+
 package arm
 
 // #cgo CXXFLAGS: -std=c++17

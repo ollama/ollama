@@ -299,9 +299,9 @@ export default function Settings() {
                         </Button>
                       </div>
                     </div>
-                    {user?.avatarURL && (
+                    {user?.avatarurl && (
                       <img
-                        src={user.avatarURL}
+                        src={user.avatarurl}
                         alt={user?.name}
                         className="h-10 w-10 rounded-full bg-neutral-200 dark:bg-neutral-700 flex-shrink-0"
                         onError={(e) => {

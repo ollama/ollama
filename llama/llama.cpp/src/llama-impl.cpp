@@ -20,10 +20,10 @@ static llama_logger_state g_logger_state;
 time_meas::time_meas(int64_t & t_acc, bool disable) : t_start_us(disable ? -1 : ggml_time_us()), t_acc(t_acc) {}
 
 time_meas::~time_meas() {
-        if (t_start_us >= 0) {
-            t_acc += ggml_time_us() - t_start_us;
-        }
+    if (t_start_us >= 0) {
+        t_acc += ggml_time_us() - t_start_us;
     }
+}
 
 void llama_log_set(ggml_log_callback log_callback, void * user_data) {
     ggml_log_set(log_callback, user_data);

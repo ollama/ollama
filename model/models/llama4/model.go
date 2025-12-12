@@ -105,9 +105,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 
 		for range aspectRatio.Y {
 			for x := range aspectRatio.X {
-				view := projectedOutputs.View(ctx, projectedOutputs.Stride(1)*offset,
-					projectedOutputs.Dim(0), projectedOutputs.Stride(1),
-					patchesPerChunk)
+				view := projectedOutputs.Slice(ctx, 1, offset, offset+patchesPerChunk, 1)
 				var separator separator
 				if x < aspectRatio.X-1 {
 					separator.x = true // <|tile_x_separator|>
@@ -120,9 +118,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		}
 	}
 
-	view := projectedOutputs.View(ctx, projectedOutputs.Stride(1)*offset,
-		projectedOutputs.Dim(0), projectedOutputs.Stride(1),
-		patchesPerChunk)
+	view := projectedOutputs.Slice(ctx, 1, offset, offset+patchesPerChunk, 1)
 	multimodal = append(multimodal, input.Multimodal{Tensor: view, Data: &separator{}})
 
 	return multimodal, nil

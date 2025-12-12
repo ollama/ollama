@@ -13,13 +13,13 @@ import (
 var batchSize int = 1
 
 func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
-	x1 := t.View(ctx, 0, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3))
-	x2 := t.View(ctx, t.Stride(0)*t.Dim(0)/2, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3)).Contiguous(ctx)
-	return x2.Neg(ctx).Concat(ctx, x1, 0)
+	x1 := t.Slice(ctx, 0, 0, t.Dim(0)/2, 1)
+	x2 := t.Slice(ctx, 0, t.Dim(0)/2, t.Dim(0), 1).Contiguous(ctx)
+	return x2.Scale(ctx, -1).Concat(ctx, x1, 0)
 }
 
-func applyRotaryPositionalEmbedding(ctx ml.Context, t, cos, sin ml.Tensor) ml.Tensor {
-	return t.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, t).Mul(ctx, sin))
+func applyRotaryPositionEmbeddings(ctx ml.Context, states, cos, sin ml.Tensor) ml.Tensor {
+	return states.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, states).Mul(ctx, sin))
 }
 
 func blockDiagonalMask(ctx ml.Context, seqLength int, bounds []int, numHeads int) ml.Tensor {
@@ -67,8 +67,8 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenStates, cos, sin, m
 	key = key.Reshape(ctx, opts.headDim, opts.numHeads, key.Dim(1), batchSize)
 	value = value.Reshape(ctx, opts.headDim, opts.numHeads, value.Dim(1), batchSize)
 
-	query = applyRotaryPositionalEmbedding(ctx, query, cos, sin)
-	key = applyRotaryPositionalEmbedding(ctx, key, cos, sin)
+	query = applyRotaryPositionEmbeddings(ctx, query, cos, sin)
+	key = applyRotaryPositionEmbeddings(ctx, key, cos, sin)
 
 	// Scale factor for scaled dot-product attention
 	scale := 1.0 / math.Sqrt(float64(opts.headDim))

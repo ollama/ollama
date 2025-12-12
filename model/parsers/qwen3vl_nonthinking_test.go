@@ -198,7 +198,7 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: false}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -515,7 +515,7 @@ func TestQwenOldParserStreaming(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: false}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -822,7 +822,7 @@ func TestQwen3VLNonThinkingToolCallWhitespaceHandling(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: false}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
