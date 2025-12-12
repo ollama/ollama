@@ -456,6 +456,196 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_FunctionCallMerge(t *testing.T) {
+	t.Run("function call merges with preceding assistant message", func(t *testing.T) {
+		// When assistant message has content followed by function_call,
+		// they should be merged into a single message
+		reqJSON := `{
+			"model": "gpt-oss:20b",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I'll check the weather for you."}]},
+				{"type": "function_call", "call_id": "call_abc123", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}
+			]
+		}`
+
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatalf("failed to convert request: %v", err)
+		}
+
+		// Should have 2 messages: user and assistant (with content + tool call merged)
+		if len(chatReq.Messages) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+		}
+
+		// Check user message
+		if chatReq.Messages[0].Role != "user" {
+			t.Errorf("Messages[0].Role = %q, want %q", chatReq.Messages[0].Role, "user")
+		}
+
+		// Check assistant message has both content and tool call
+		assistantMsg := chatReq.Messages[1]
+		if assistantMsg.Role != "assistant" {
+			t.Errorf("Messages[1].Role = %q, want %q", assistantMsg.Role, "assistant")
+		}
+		if assistantMsg.Content != "I'll check the weather for you." {
+			t.Errorf("Messages[1].Content = %q, want %q", assistantMsg.Content, "I'll check the weather for you.")
+		}
+		if len(assistantMsg.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
+		}
+		if assistantMsg.ToolCalls[0].Function.Name != "get_weather" {
+			t.Errorf("ToolCalls[0].Function.Name = %q, want %q", assistantMsg.ToolCalls[0].Function.Name, "get_weather")
+		}
+	})
+
+	t.Run("function call without preceding assistant creates new message", func(t *testing.T) {
+		// When there's no preceding assistant message, function_call creates its own message
+		reqJSON := `{
+			"model": "gpt-oss:20b",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
+				{"type": "function_call", "call_id": "call_abc123", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}
+			]
+		}`
+
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatalf("failed to convert request: %v", err)
+		}
+
+		// Should have 2 messages: user and assistant (tool call only)
+		if len(chatReq.Messages) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+		}
+
+		// Check assistant message has tool call but no content
+		assistantMsg := chatReq.Messages[1]
+		if assistantMsg.Role != "assistant" {
+			t.Errorf("Messages[1].Role = %q, want %q", assistantMsg.Role, "assistant")
+		}
+		if assistantMsg.Content != "" {
+			t.Errorf("Messages[1].Content = %q, want empty", assistantMsg.Content)
+		}
+		if len(assistantMsg.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
+		}
+	})
+
+	t.Run("multiple function calls merge into same assistant message", func(t *testing.T) {
+		// Multiple consecutive function_calls should all merge into the same assistant message
+		reqJSON := `{
+			"model": "gpt-oss:20b",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "check weather and time"}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I'll check both."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
+				{"type": "function_call", "call_id": "call_2", "name": "get_time", "arguments": "{\"city\":\"Paris\"}"}
+			]
+		}`
+
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatalf("failed to convert request: %v", err)
+		}
+
+		// Should have 2 messages: user and assistant (content + both tool calls)
+		if len(chatReq.Messages) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+		}
+
+		// Assistant has content + both tool calls
+		assistantMsg := chatReq.Messages[1]
+		if assistantMsg.Content != "I'll check both." {
+			t.Errorf("Messages[1].Content = %q, want %q", assistantMsg.Content, "I'll check both.")
+		}
+		if len(assistantMsg.ToolCalls) != 2 {
+			t.Fatalf("expected 2 tool calls, got %d", len(assistantMsg.ToolCalls))
+		}
+		if assistantMsg.ToolCalls[0].Function.Name != "get_weather" {
+			t.Errorf("ToolCalls[0].Function.Name = %q, want %q", assistantMsg.ToolCalls[0].Function.Name, "get_weather")
+		}
+		if assistantMsg.ToolCalls[1].Function.Name != "get_time" {
+			t.Errorf("ToolCalls[1].Function.Name = %q, want %q", assistantMsg.ToolCalls[1].Function.Name, "get_time")
+		}
+	})
+
+	t.Run("new assistant message starts fresh tool call group", func(t *testing.T) {
+		// assistant → tool_call → tool_call → assistant → tool_call
+		// Should result in 2 assistant messages with their respective tool calls
+		reqJSON := `{
+			"model": "gpt-oss:20b",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "do multiple things"}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "First batch."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "func_a", "arguments": "{}"},
+				{"type": "function_call", "call_id": "call_2", "name": "func_b", "arguments": "{}"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Second batch."}]},
+				{"type": "function_call", "call_id": "call_3", "name": "func_c", "arguments": "{}"}
+			]
+		}`
+
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatalf("failed to convert request: %v", err)
+		}
+
+		// Should have 3 messages:
+		// 1. user
+		// 2. assistant "First batch." + tool calls [func_a, func_b]
+		// 3. assistant "Second batch." + tool calls [func_c]
+		if len(chatReq.Messages) != 3 {
+			t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+		}
+
+		asst1 := chatReq.Messages[1]
+		if asst1.Content != "First batch." {
+			t.Errorf("Messages[1].Content = %q, want %q", asst1.Content, "First batch.")
+		}
+		if len(asst1.ToolCalls) != 2 {
+			t.Fatalf("expected 2 tool calls in Messages[1], got %d", len(asst1.ToolCalls))
+		}
+		if asst1.ToolCalls[0].Function.Name != "func_a" {
+			t.Errorf("Messages[1].ToolCalls[0] = %q, want %q", asst1.ToolCalls[0].Function.Name, "func_a")
+		}
+		if asst1.ToolCalls[1].Function.Name != "func_b" {
+			t.Errorf("Messages[1].ToolCalls[1] = %q, want %q", asst1.ToolCalls[1].Function.Name, "func_b")
+		}
+
+		asst2 := chatReq.Messages[2]
+		if asst2.Content != "Second batch." {
+			t.Errorf("Messages[2].Content = %q, want %q", asst2.Content, "Second batch.")
+		}
+		if len(asst2.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call in Messages[2], got %d", len(asst2.ToolCalls))
+		}
+		if asst2.ToolCalls[0].Function.Name != "func_c" {
+			t.Errorf("Messages[2].ToolCalls[0] = %q, want %q", asst2.ToolCalls[0].Function.Name, "func_c")
+		}
+	})
+}
+
 func TestDecodeImageURL(t *testing.T) {
 	// Valid PNG base64 (1x1 red pixel)
 	validPNG := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
