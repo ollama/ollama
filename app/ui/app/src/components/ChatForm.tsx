@@ -268,8 +268,6 @@ function ChatForm({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-
-    clearDraft();
   };
 
   // Clear loginPromptFeature when user becomes authenticated or no features are enabled

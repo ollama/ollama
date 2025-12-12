@@ -460,6 +460,14 @@ func (s *Store) UpdateChatDraft(chatID string, draft string) error {
 	return s.db.updateChatDraft(chatID, draft)
 }
 
+func (s *Store) ClearAllDrafts() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.clearAllDrafts()
+}
+
 func (s *Store) UpdateChatBrowserState(chatID string, state json.RawMessage) error {
 	if err := s.ensureDB(); err != nil {
 		return err

@@ -707,6 +707,14 @@ func (db *database) updateChatDraft(chatID string, draft string) error {
 	return nil
 }
 
+func (db *database) clearAllDrafts() error {
+	_, err := db.conn.Exec(`UPDATE chats SET draft = ''`)
+	if err != nil {
+		return fmt.Errorf("clear all drafts: %w", err)
+	}
+	return nil
+}
+
 // updateChatBrowserState updates only the browser_state for a chat
 func (db *database) updateChatBrowserState(chatID string, state json.RawMessage) error {
 	_, err := db.conn.Exec(`UPDATE chats SET browser_state = ? WHERE id = ?`, string(state), chatID)
