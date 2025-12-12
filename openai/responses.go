@@ -374,8 +374,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			}
 
 			// Merge tool call into existing assistant message if it has content or tool calls
-			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" &&
-				(messages[len(messages)-1].Content != "" || len(messages[len(messages)-1].ToolCalls) > 0) {
+			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
 				lastMsg := &messages[len(messages)-1]
 				lastMsg.ToolCalls = append(lastMsg.ToolCalls, toolCall)
 				if pendingThinking != "" {

@@ -644,6 +644,115 @@ func TestFromResponsesRequest_FunctionCallMerge(t *testing.T) {
 			t.Errorf("Messages[2].ToolCalls[0] = %q, want %q", asst2.ToolCalls[0].Function.Name, "func_c")
 		}
 	})
+
+	t.Run("function call merges with assistant that has thinking", func(t *testing.T) {
+		// reasoning → assistant (gets thinking) → function_call → should merge
+		reqJSON := `{
+			"model": "gpt-oss:20b",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "think and act"}]},
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Let me think...", "summary": []},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I thought about it."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "do_thing", "arguments": "{}"}
+			]
+		}`
+
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatalf("failed to convert request: %v", err)
+		}
+
+		// Should have 2 messages: user and assistant (thinking + content + tool call)
+		if len(chatReq.Messages) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+		}
+
+		asst := chatReq.Messages[1]
+		if asst.Thinking != "Let me think..." {
+			t.Errorf("Messages[1].Thinking = %q, want %q", asst.Thinking, "Let me think...")
+		}
+		if asst.Content != "I thought about it." {
+			t.Errorf("Messages[1].Content = %q, want %q", asst.Content, "I thought about it.")
+		}
+		if len(asst.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d", len(asst.ToolCalls))
+		}
+		if asst.ToolCalls[0].Function.Name != "do_thing" {
+			t.Errorf("ToolCalls[0].Function.Name = %q, want %q", asst.ToolCalls[0].Function.Name, "do_thing")
+		}
+	})
+
+	t.Run("mixed thinking and content with multiple tool calls", func(t *testing.T) {
+		// Test:
+		// 1. reasoning → assistant (empty content, gets thinking) → tc (merges)
+		// 2. assistant with content → tc → tc (both merge)
+		// Result: 2 assistant messages
+		reqJSON := `{
+			"model": "gpt-oss:20b",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "complex task"}]},
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Thinking first...", "summary": []},
+				{"type": "message", "role": "assistant", "content": ""},
+				{"type": "function_call", "call_id": "call_1", "name": "think_action", "arguments": "{}"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Now doing more."}]},
+				{"type": "function_call", "call_id": "call_2", "name": "action_a", "arguments": "{}"},
+				{"type": "function_call", "call_id": "call_3", "name": "action_b", "arguments": "{}"}
+			]
+		}`
+
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatalf("failed to convert request: %v", err)
+		}
+
+		// Should have 3 messages:
+		// 1. user
+		// 2. assistant with thinking + tool call [think_action]
+		// 3. assistant with content "Now doing more." + tool calls [action_a, action_b]
+		if len(chatReq.Messages) != 3 {
+			t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+		}
+
+		// First assistant: thinking + tool call
+		asst1 := chatReq.Messages[1]
+		if asst1.Thinking != "Thinking first..." {
+			t.Errorf("Messages[1].Thinking = %q, want %q", asst1.Thinking, "Thinking first...")
+		}
+		if asst1.Content != "" {
+			t.Errorf("Messages[1].Content = %q, want empty", asst1.Content)
+		}
+		if len(asst1.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call in Messages[1], got %d", len(asst1.ToolCalls))
+		}
+		if asst1.ToolCalls[0].Function.Name != "think_action" {
+			t.Errorf("Messages[1].ToolCalls[0] = %q, want %q", asst1.ToolCalls[0].Function.Name, "think_action")
+		}
+
+		// Second assistant: content + 2 tool calls
+		asst2 := chatReq.Messages[2]
+		if asst2.Content != "Now doing more." {
+			t.Errorf("Messages[2].Content = %q, want %q", asst2.Content, "Now doing more.")
+		}
+		if len(asst2.ToolCalls) != 2 {
+			t.Fatalf("expected 2 tool calls in Messages[2], got %d", len(asst2.ToolCalls))
+		}
+		if asst2.ToolCalls[0].Function.Name != "action_a" {
+			t.Errorf("Messages[2].ToolCalls[0] = %q, want %q", asst2.ToolCalls[0].Function.Name, "action_a")
+		}
+		if asst2.ToolCalls[1].Function.Name != "action_b" {
+			t.Errorf("Messages[2].ToolCalls[1] = %q, want %q", asst2.ToolCalls[1].Function.Name, "action_b")
+		}
+	})
 }
 
 func TestDecodeImageURL(t *testing.T) {
