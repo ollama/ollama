@@ -169,37 +169,51 @@ DlgResult fileDlg(FileDlgParams* params) {
 	}
 	
 	NSArray* urls = [panel URLs];
-	if(self->params->allowMultiple && [urls count] >= 1) {
-		// For multiple files, we need to return all paths separated by null bytes
-		char* bufPtr = self->params->buf;
-		int remainingBuf = self->params->nbuf;
-		
-  // Calculate total required buffer size first
-  int totalSize = 0;
-  for(NSURL* url in urls) {
-      char tempBuf[PATH_MAX];
-      if(![url getFileSystemRepresentation:tempBuf maxLength:PATH_MAX]) {
-          return DLG_URLFAIL;
-      }
-      totalSize += strlen(tempBuf) + 1; // +1 for null terminator
-  }
-  totalSize += 1; // Final null terminator
+	if([urls count] >= 1) {
+		if(self->params->allowMultiple) {
+			// For multiple files, we need to return all paths separated by null bytes
+			char* bufPtr = self->params->buf;
+			int remainingBuf = self->params->nbuf;
+			
+			// Calculate total required buffer size first
+			int totalSize = 0;
+			for(NSURL* url in urls) {
+				char tempBuf[PATH_MAX];
+				if(![url getFileSystemRepresentation:tempBuf maxLength:PATH_MAX]) {
+					return DLG_URLFAIL;
+				}
+				totalSize += strlen(tempBuf) + 1; // +1 for null terminator
+			}
+			totalSize += 1; // Final null terminator
 
-  if(totalSize > self->params->nbuf) {
-      // Not enough buffer space
-      return DLG_URLFAIL;
-  }
+			if(totalSize > self->params->nbuf) {
+				// Not enough buffer space
+				return DLG_URLFAIL;
+			}
 
-  // Now actually copy the paths (we know we have space)
-  bufPtr = self->params->buf;
-  for(NSURL* url in urls) {
-      char tempBuf[PATH_MAX];
-      [url getFileSystemRepresentation:tempBuf maxLength:PATH_MAX];
-      int pathLen = strlen(tempBuf);
-      strcpy(bufPtr, tempBuf);
-      bufPtr += pathLen + 1;
-  }
-  *bufPtr = '\0'; // Final null terminator
+			// Now actually copy the paths (we know we have space)
+			bufPtr = self->params->buf;
+			for(NSURL* url in urls) {
+				char tempBuf[PATH_MAX];
+				[url getFileSystemRepresentation:tempBuf maxLength:PATH_MAX];
+				int pathLen = strlen(tempBuf);
+				strcpy(bufPtr, tempBuf);
+				bufPtr += pathLen + 1;
+			}
+			*bufPtr = '\0'; // Final null terminator
+		} else {
+			// Single file or directory selection
+			NSURL* url = [urls objectAtIndex:0];
+			char tempBuf[PATH_MAX];
+			if(![url getFileSystemRepresentation:tempBuf maxLength:PATH_MAX]) {
+				return DLG_URLFAIL;
+			}
+			if(strlen(tempBuf) >= self->params->nbuf) {
+				// Not enough buffer space
+				return DLG_URLFAIL;
+			}
+			strcpy(self->params->buf, tempBuf);
+		}
 	}
 	
 	return DLG_OK;
