@@ -63,7 +63,7 @@ interface ChatFormProps {
   chatId?: string;
   isDownloadingModel?: boolean;
   isDisabled?: boolean;
-  initialDraft?: string; // Draft text to restore when switching chats
+  initialDraft?: string;
   // Editing props - when provided, ChatForm enters edit mode
   editingMessage?: {
     content: string;

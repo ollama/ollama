@@ -51,7 +51,6 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  // const navigate = useNavigate();
 
   const {
     data: settingsData,

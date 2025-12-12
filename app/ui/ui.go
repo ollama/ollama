@@ -1290,7 +1290,6 @@ func (s *Server) updateDraft(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("invalid request body: %w", err)
 	}
 
-	// Update the draft - use the efficient single-field update method
 	if err := s.Store.UpdateChatDraft(cid, req.Draft); err != nil {
 		return fmt.Errorf("failed to update draft: %w", err)
 	}
