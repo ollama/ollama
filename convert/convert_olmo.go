@@ -27,8 +27,8 @@ type olmoModel struct {
 	MaxPositionEmbeddings uint32       `json:"max_position_embeddings"`
 	RMSNormEPS            float32      `json:"rms_norm_eps"`
 	RopeTheta             float32      `json:"rope_theta"`
-	RopeScaling   *ropeScaling `json:"rope_scaling"`
-	SlidingWindow uint32       `json:"sliding_window"`
+	RopeScaling           *ropeScaling `json:"rope_scaling"`
+	SlidingWindow         uint32       `json:"sliding_window"`
 	LayerTypes            []string     `json:"layer_types"`
 }
 
