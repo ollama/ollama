@@ -3,7 +3,6 @@ package olmo3
 import (
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -99,8 +98,21 @@ type SelfAttention struct {
 	KNorm  *nn.RMSNorm `gguf:"attn_k_norm"`
 }
 
-func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor, freqScale float32, extraOptions ...func(*rope.Options)) ml.Tensor {
-	ropeOpts := slices.Concat([]func(*rope.Options){rope.WithTypeNeoX()}, extraOptions)
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor, isSWA bool) ml.Tensor {
+	freqScale := float32(1.0)
+	ropeOpts := []func(*rope.Options){rope.WithTypeNeoX()}
+
+	if !isSWA {
+		freqScale = 1. / o.ropeScale
+		if o.originalContextLength > 0 {
+			ropeOpts = append(ropeOpts,
+				rope.WithOriginalContextLength(o.originalContextLength),
+				rope.WithExtrapolationFactor(o.ropeExtrapolation),
+				rope.WithAttentionFactor(o.attnFactor),
+			)
+		}
+	}
+
 	return nn.RoPE(ctx, states, positions, o.hiddenSize/o.numHeads, o.ropeBase, freqScale, ropeOpts...)
 }
 
@@ -108,28 +120,15 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 	batchSize := hiddenState.Dim(1)
 	headDim := m.hiddenSize / m.numHeads
 
-	freqScale := float32(1.0)
-	var ropeOpts []func(*rope.Options)
-	if !isSWA {
-		freqScale = 1. / m.ropeScale
-		if m.originalContextLength > 0 {
-			ropeOpts = []func(*rope.Options){
-				rope.WithOriginalContextLength(m.originalContextLength),
-				rope.WithExtrapolationFactor(m.ropeExtrapolation),
-				rope.WithAttentionFactor(m.attnFactor),
-			}
-		}
-	}
-
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = sa.QNorm.Forward(ctx, query, m.eps)
 	query = query.Reshape(ctx, headDim, m.numHeads, batchSize)
-	query = m.Options.applyRotaryPositionEmbeddings(ctx, query, positions, freqScale, ropeOpts...)
+	query = m.Options.applyRotaryPositionEmbeddings(ctx, query, positions, isSWA)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = sa.KNorm.Forward(ctx, key, m.eps)
 	key = key.Reshape(ctx, headDim, m.numKVHeads, batchSize)
-	key = m.Options.applyRotaryPositionEmbeddings(ctx, key, positions, freqScale, ropeOpts...)
+	key = m.Options.applyRotaryPositionEmbeddings(ctx, key, positions, isSWA)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, m.numKVHeads, batchSize)
@@ -142,21 +141,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	isSWA := m.isSWALayer(layer)
-
-	freqScale := float32(1.0)
-	var ropeOpts []func(*rope.Options)
-	if !isSWA {
-		freqScale = 1. / m.ropeScale
-		if m.originalContextLength > 0 {
-			ropeOpts = []func(*rope.Options){
-				rope.WithOriginalContextLength(m.originalContextLength),
-				rope.WithExtrapolationFactor(m.ropeExtrapolation),
-				rope.WithAttentionFactor(m.attnFactor),
-			}
-		}
-	}
-
-	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift, freqScale, ropeOpts...), nil
+	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift, isSWA), nil
 }
 
 type MLP struct {
