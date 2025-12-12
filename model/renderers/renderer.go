@@ -60,10 +60,19 @@ func rendererForName(name string) Renderer {
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
 	case "olmo3":
-		renderer := &Olmo3Renderer{}
+		renderer := &Olmo3Renderer{UseExtendedSystemMessage: false}
 		return renderer
-	case "olmo3-think":
-		renderer := &Olmo3ThinkRenderer{}
+	case "olmo31":
+		renderer := &Olmo3Renderer{UseExtendedSystemMessage: true}
+		return renderer
+	case "olmo3-7b-think":
+		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think7B}
+		return renderer
+	case "olmo3-32b-think":
+		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think32B}
+		return renderer
+	case "olmo31-think":
+		renderer := &Olmo3ThinkRenderer{Variant: Olmo31Think}
 		return renderer
 	default:
 		return nil

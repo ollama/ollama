@@ -11,12 +11,14 @@ import (
 func TestOlmo3ThinkRenderer(t *testing.T) {
 	tests := []struct {
 		name     string
+		variant  Olmo3ThinkVariant
 		msgs     []api.Message
 		tools    []api.Tool
 		expected string
 	}{
 		{
-			name: "basic without system - adds default system",
+			name:    "7b_basic_without_system",
+			variant: Olmo3Think7B,
 			msgs: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
@@ -28,7 +30,8 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 				"<think>",
 		},
 		{
-			name: "with system message no tools",
+			name:    "7b_with_custom_system",
+			variant: Olmo3Think7B,
 			msgs: []api.Message{
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Hello!"},
@@ -41,9 +44,9 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 				"<think>",
 		},
 		{
-			name: "with system message and tools",
+			name:    "7b_tools_ignored",
+			variant: Olmo3Think7B,
 			msgs: []api.Message{
-				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "What is the weather?"},
 			},
 			tools: []api.Tool{
@@ -52,27 +55,20 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 					Function: api.ToolFunction{
 						Name:        "get_weather",
 						Description: "Get the current weather",
-						Parameters: api.ToolFunctionParameters{
-							Type:     "object",
-							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
-								"location": {Type: api.PropertyType{"string"}, Description: "The city"},
-							},
-						},
 					},
 				},
 			},
 			expected: "<|im_start|>system\n" +
-				`You are a helpful assistant. <functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
+				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"What is the weather?<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
 				"<think>",
 		},
 		{
-			name: "assistant with tool calls",
+			name:    "7b_tool_calls_and_tool_messages_ignored",
+			variant: Olmo3Think7B,
 			msgs: []api.Message{
-				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "What is the weather in SF?"},
 				{
 					Role:    "assistant",
@@ -81,53 +77,33 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 						{
 							ID: "call_1",
 							Function: api.ToolCallFunction{
-								Name: "get_weather",
-								Arguments: map[string]any{
-									"location": "San Francisco",
-								},
+								Name:      "get_weather",
+								Arguments: map[string]any{"location": "San Francisco"},
 							},
 						},
 					},
 				},
-				{Role: "tool", Content: `{"temperature": 68}`, ToolName: "get_weather"},
-			},
-			tools: []api.Tool{
-				{
-					Type: "function",
-					Function: api.ToolFunction{
-						Name:        "get_weather",
-						Description: "Get the current weather",
-						Parameters: api.ToolFunctionParameters{
-							Type:     "object",
-							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
-								"location": {Type: api.PropertyType{"string"}, Description: "The city"},
-							},
-						},
-					},
-				},
+				{Role: "tool", Content: `{"temperature": 68}`},
 			},
 			expected: "<|im_start|>system\n" +
-				`You are a helpful assistant. <functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
+				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"What is the weather in SF?<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
-				`Let me check the weather.<function_calls>[{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\":\"San Francisco\"}"}}]</function_calls><|im_end|>` + "\n" +
-				"<|im_start|>environment\n" +
-				`{"temperature": 68}<|im_end|>` + "\n" +
+				"Let me check the weather.<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
 				"<think>",
 		},
 		{
-			name: "multi-turn conversation",
+			name:    "7b_multi_turn_conversation",
+			variant: Olmo3Think7B,
 			msgs: []api.Message{
-				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 				{Role: "user", Content: "How are you?"},
 			},
 			expected: "<|im_start|>system\n" +
-				"You are a helpful assistant. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"Hello<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
@@ -138,73 +114,56 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 				"<think>",
 		},
 		{
-			name: "parallel tool calls",
+			name:    "32b_basic_without_system",
+			variant: Olmo3Think32B,
 			msgs: []api.Message{
-				{Role: "user", Content: "Get weather in SF and NYC"},
-				{
-					Role: "assistant",
-					ToolCalls: []api.ToolCall{
-						{
-							ID: "call_1",
-							Function: api.ToolCallFunction{
-								Name:      "get_weather",
-								Arguments: map[string]any{"location": "San Francisco"},
-							},
-						},
-						{
-							ID: "call_2",
-							Function: api.ToolCallFunction{
-								Name:      "get_weather",
-								Arguments: map[string]any{"location": "New York"},
-							},
-						},
-					},
-				},
-				{Role: "tool", Content: `{"temperature": 68}`, ToolName: "get_weather"},
-				{Role: "tool", Content: `{"temperature": 55}`, ToolName: "get_weather"},
-			},
-			tools: []api.Tool{
-				{
-					Type: "function",
-					Function: api.ToolFunction{
-						Name: "get_weather",
-						Parameters: api.ToolFunctionParameters{
-							Type: "object",
-							Properties: map[string]api.ToolProperty{
-								"location": {Type: api.PropertyType{"string"}},
-							},
-						},
-					},
-				},
+				{Role: "user", Content: "Hello!"},
 			},
 			expected: "<|im_start|>system\n" +
-				`You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. <functions>[{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}}}]</functions><|im_end|>` + "\n" +
+				"You are a helpful AI assistant.<|im_end|>\n" +
 				"<|im_start|>user\n" +
-				"Get weather in SF and NYC<|im_end|>\n" +
-				"<|im_start|>assistant\n" +
-				`<function_calls>[{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\":\"San Francisco\"}"}}, {"id": "call_2", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\":\"New York\"}"}}]</function_calls><|im_end|>` + "\n" +
-				"<|im_start|>environment\n" +
-				`{"temperature": 68}<|im_end|>` + "\n" +
-				"<|im_start|>environment\n" +
-				`{"temperature": 55}<|im_end|>` + "\n" +
+				"Hello!<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
 				"<think>",
 		},
 		{
-			name: "assistant message only content no tool calls",
+			name:    "32b_with_custom_system_gets_suffix",
+			variant: Olmo3Think32B,
 			msgs: []api.Message{
-				{Role: "user", Content: "Tell me a joke"},
-				{Role: "assistant", Content: "Why did the chicken cross the road?"},
-				{Role: "user", Content: "I don't know, why?"},
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "Hello!"},
 			},
 			expected: "<|im_start|>system\n" +
-				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"You are a helpful assistant. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
 				"<|im_start|>user\n" +
-				"Tell me a joke<|im_end|>\n" +
+				"Hello!<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
-				"Why did the chicken cross the road?<|im_end|>\n" +
+				"<think>",
+		},
+		{
+			name:    "31_basic_without_system",
+			variant: Olmo31Think,
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			expected: "<|im_start|>system\n" +
+				"You are Olmo, a helpful AI assistant built by Ai2. Your date cutoff is December 2024, and your model weights are available at https://huggingface.co/allenai.<|im_end|>\n" +
 				"<|im_start|>user\n" +
-				"I don't know, why?<|im_end|>\n" +
+				"Hello!<|im_end|>\n" +
+				"<|im_start|>assistant\n" +
+				"<think>",
+		},
+		{
+			name:    "31_with_custom_system_gets_suffix",
+			variant: Olmo31Think,
+			msgs: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "Hello!"},
+			},
+			expected: "<|im_start|>system\n" +
+				"You are a helpful assistant. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"<|im_start|>user\n" +
+				"Hello!<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
 				"<think>",
 		},
@@ -212,7 +171,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := (&Olmo3ThinkRenderer{}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Olmo3ThinkRenderer{Variant: tt.variant}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
