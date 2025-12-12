@@ -120,6 +120,7 @@ const char * llm_type_name(llm_type type) {
         case LLM_TYPE_16B_A1B:       return "16B.A1B";
         case LLM_TYPE_21B_A3B:       return "21B.A3B";
         case LLM_TYPE_30B_A3B:       return "30B.A3B";
+        case LLM_TYPE_80B_A3B:       return "80B.A3B";
         case LLM_TYPE_100B_A6B:      return "100B.A6B";
         case LLM_TYPE_106B_A12B:     return "106B.A12B";
         case LLM_TYPE_230B_A10B:     return "230B.A10B";
@@ -1634,7 +1635,12 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     // that have no expert_gating_func model parameter set
                     hparams.expert_gating_func = LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX;
                 }
-                ml.get_key(LLM_KV_ROPE_SCALING_YARN_LOG_MUL, hparams.rope_yarn_log_mul, false);
+
+                if (ml.get_key(LLM_KV_ROPE_SCALING_YARN_LOG_MUL, hparams.rope_yarn_log_mul, 0.0f)) {
+                    // [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]
+                    // cancel the factor from the convert script
+                    hparams.rope_yarn_log_mul /= 0.1f;
+                }
 
                 // (optional) temperature tuning - used by mistral-large
                 ml.get_key(LLM_KV_ATTENTION_TEMPERATURE_SCALE,  hparams.f_attn_temp_scale,       false);
@@ -2272,7 +2278,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
 
                 switch (hparams.n_layer) {
-                    case 80: type = LLM_TYPE_80B_A3B; break;
+                    case 48: type = LLM_TYPE_80B_A3B; break;
                     default: type = LLM_TYPE_UNKNOWN;
                 }
             } break;
@@ -2281,9 +2287,9 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
                 ml.get_key(LLM_KV_ATTENTION_TEMPERATURE_SCALE, hparams.f_attn_temp_scale, false);
 
-                ml.get_key(LLM_KV_ROPE_SCALING_YARN_BETA_FAST,   hparams.yarn_beta_fast, false);
-                ml.get_key(LLM_KV_ROPE_SCALING_YARN_BETA_SLOW,   hparams.yarn_beta_slow, false);
-                ml.get_key(LLM_KV_ROPE_SCALING_YARN_LOG_MUL,     hparams.rope_yarn_log_mul, false);
+                ml.get_key(LLM_KV_ROPE_SCALING_YARN_BETA_FAST, hparams.yarn_beta_fast,    false);
+                ml.get_key(LLM_KV_ROPE_SCALING_YARN_BETA_SLOW, hparams.yarn_beta_slow,    false);
+                ml.get_key(LLM_KV_ROPE_SCALING_YARN_LOG_MUL,   hparams.rope_yarn_log_mul, 0.0f);
 
                 // TODO: maybe add n_attn_temp_floor_scale as a separate KV?
                 if (hparams.f_attn_temp_scale != 0.0f) {
@@ -2291,18 +2297,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     if (hparams.n_attn_temp_floor_scale == 0) {
                         throw std::runtime_error("invalid n_ctx_orig_yarn for attention temperature scaling");
                     }
-                }
-
-                // TODO: this seems to be correct with the case of mscale == mscale_all_dims == 1.0f
-                //       but may need further verification with other values
-                if (hparams.rope_yarn_log_mul != 0.0f) {
-                    float factor = 1.0f / hparams.rope_freq_scale_train;
-                    float mscale = 1.0f;
-                    float mscale_all_dims = hparams.rope_yarn_log_mul;
-                    static auto get_mscale = [](float scale, float mscale) {
-                        return scale <= 1.0f ? 1.0f : (0.1f * mscale * logf(scale) + 1.0f);
-                    };
-                    hparams.yarn_attn_factor = get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dims);
                 }
 
                 switch (hparams.n_layer) {
@@ -2313,6 +2307,32 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
             } break;
         default: throw std::runtime_error("unsupported model architecture");
+    }
+
+    // ref: https://github.com/huggingface/transformers/blob/6d00f6b0a5679c36510f203e4226e36f517c3032/src/transformers/modeling_rope_utils.py#L336-L348
+    if (hparams.rope_yarn_log_mul != 0.0f) {
+        const float factor = 1.0f / hparams.rope_freq_scale_train;
+
+        // note: here we assume `mscale == 1.0f`
+        // TODO: start reading the actual value of mscale and handle the case where it is not 1.0f
+              float mscale          = 1.0f;
+        const float mscale_all_dims = hparams.rope_yarn_log_mul;
+
+        // [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]
+        // special-case DEEPSEEK v2:
+        // https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite-Chat/blob/main/config.json#L42-L43
+        if (arch == LLM_ARCH_DEEPSEEK2 && mscale_all_dims != 1.0f) {
+            mscale = mscale_all_dims;
+        }
+
+        static auto get_mscale = [](float scale, float mscale) {
+            return scale <= 1.0f ? 1.0f : (0.1f * mscale * logf(scale) + 1.0f);
+        };
+
+        hparams.yarn_attn_factor = get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dims);
+
+        LLAMA_LOG_WARN("%s: setting new yarn_attn_factor = %.4f (mscale == %.1f, mscale_all_dim = %.1f)\n",
+                __func__, hparams.yarn_attn_factor, mscale, mscale_all_dims);
     }
 
     pimpl->n_bytes = ml.n_bytes;
@@ -6848,6 +6868,7 @@ void llama_model::print_info() const {
         LLAMA_LOG_INFO("%s: freq_base_train  = %.1f\n",   __func__, hparams.rope_freq_base_train);
         LLAMA_LOG_INFO("%s: freq_scale_train = %g\n",     __func__, hparams.rope_freq_scale_train);
         LLAMA_LOG_INFO("%s: n_ctx_orig_yarn  = %u\n",     __func__, hparams.n_ctx_orig_yarn);
+        LLAMA_LOG_INFO("%s: rope_yarn_log_mul= %.4f\n",   __func__, hparams.rope_yarn_log_mul);
         LLAMA_LOG_INFO("%s: rope_finetuned   = %s\n",     __func__, hparams.rope_finetuned ? "yes" : "unknown");
         // MRoPE (Multi-axis Rotary Position Embedding) sections
         if (const auto & s = hparams.rope_sections; s[0] || s[1] || s[2] || s[3]) {
@@ -6911,7 +6932,6 @@ void llama_model::print_info() const {
         LLAMA_LOG_INFO("%s: expert_weights_scale = %.1f\n",   __func__, hparams.expert_weights_scale);
         LLAMA_LOG_INFO("%s: expert_weights_norm  = %d\n",     __func__, hparams.expert_weights_norm);
         LLAMA_LOG_INFO("%s: expert_gating_func   = %s\n",     __func__, llama_expert_gating_func_name((llama_expert_gating_func_type) hparams.expert_gating_func));
-        LLAMA_LOG_INFO("%s: rope_yarn_log_mul    = %.4f\n",   __func__, hparams.rope_yarn_log_mul);
     }
 
     if (arch == LLM_ARCH_QWEN2MOE) {
