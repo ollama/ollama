@@ -365,22 +365,33 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 					return nil, fmt.Errorf("failed to parse function call arguments: %w", err)
 				}
 			}
-			msg := api.Message{
-				Role: "assistant",
-				ToolCalls: []api.ToolCall{{
-					ID: v.CallID,
-					Function: api.ToolCallFunction{
-						Name:      v.Name,
-						Arguments: args,
-					},
-				}},
+			toolCall := api.ToolCall{
+				ID: v.CallID,
+				Function: api.ToolCallFunction{
+					Name:      v.Name,
+					Arguments: args,
+				},
 			}
-			// Attach pending thinking
-			if pendingThinking != "" {
-				msg.Thinking = pendingThinking
-				pendingThinking = ""
+
+			// Merge tool call into existing assistant message if it has content or tool calls
+			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+				lastMsg := &messages[len(messages)-1]
+				lastMsg.ToolCalls = append(lastMsg.ToolCalls, toolCall)
+				if pendingThinking != "" {
+					lastMsg.Thinking = pendingThinking
+					pendingThinking = ""
+				}
+			} else {
+				msg := api.Message{
+					Role:      "assistant",
+					ToolCalls: []api.ToolCall{toolCall},
+				}
+				if pendingThinking != "" {
+					msg.Thinking = pendingThinking
+					pendingThinking = ""
+				}
+				messages = append(messages, msg)
 			}
-			messages = append(messages, msg)
 		case ResponsesFunctionCallOutput:
 			messages = append(messages, api.Message{
 				Role:       "tool",
