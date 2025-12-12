@@ -124,49 +124,58 @@ func (s *Server) ollamaProxy() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxyMu.Lock()
-		defer proxyMu.Unlock()
+		p := proxy
+		proxyMu.Unlock()
 
-		if proxy == nil {
-			var err error
-			for i := range 2 {
-				if i > 0 {
-					s.log().Warn("ollama server not ready, retrying", "attempt", i+1)
-					time.Sleep(1 * time.Second)
+		if p == nil {
+			proxyMu.Lock()
+			if proxy == nil {
+				var err error
+				for i := range 2 {
+					if i > 0 {
+						s.log().Warn("ollama server not ready, retrying", "attempt", i+1)
+						time.Sleep(1 * time.Second)
+					}
+
+					err = WaitForServer(context.Background(), 10*time.Second)
+					if err == nil {
+						break
+					}
 				}
 
-				err = WaitForServer(context.Background(), 10*time.Second)
-				if err == nil {
-					break
+				if err != nil {
+					proxyMu.Unlock()
+					s.log().Error("ollama server not ready after retries", "error", err)
+					http.Error(w, "Ollama server is not ready", http.StatusServiceUnavailable)
+					return
 				}
+
+				target := envconfig.Host()
+				s.log().Info("configuring ollama proxy", "target", target.String())
+
+				newProxy := httputil.NewSingleHostReverseProxy(target)
+
+				originalDirector := newProxy.Director
+				newProxy.Director = func(req *http.Request) {
+					originalDirector(req)
+					req.Host = target.Host
+					s.log().Debug("proxying request", "method", req.Method, "path", req.URL.Path, "target", target.Host)
+				}
+
+				newProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+					s.log().Error("proxy error", "error", err, "path", r.URL.Path, "target", target.String())
+					http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
+				}
+
+				proxy = newProxy
+				p = newProxy
+			} else {
+				p = proxy
 			}
-
-			if err != nil {
-				s.log().Error("ollama server not ready after retries", "error", err)
-				http.Error(w, "Ollama server is not ready", http.StatusServiceUnavailable)
-				return
-			}
-
-			target := envconfig.Host()
-			s.log().Info("configuring ollama proxy", "target", target.String())
-
-			p := httputil.NewSingleHostReverseProxy(target)
-
-			originalDirector := p.Director
-			p.Director = func(req *http.Request) {
-				originalDirector(req)
-				req.Host = target.Host
-				s.log().Debug("proxying request", "method", req.Method, "path", req.URL.Path, "target", target.Host)
-			}
-
-			p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-				s.log().Error("proxy error", "error", err, "path", r.URL.Path, "target", target.String())
-				http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
-			}
-
-			proxy = p
+			proxyMu.Unlock()
 		}
 
-		proxy.ServeHTTP(w, r)
+		p.ServeHTTP(w, r)
 	})
 }
 
