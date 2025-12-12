@@ -282,8 +282,19 @@ func TestVar(t *testing.T) {
 
 func TestContextLength(t *testing.T) {
 	cases := map[string]uint{
-		"":     4096,
-		"2048": 2048,
+		"":        4096,
+		"2048":    2048,
+		"8192":    8192,
+		"8k":      8000,
+		"8K":      8192,
+		"16k":     16000,
+		"16K":     16384,
+		"1.5k":    4096,
+		"25.6k":   4096,
+		"1g":      4096,
+		"1G":      4096,
+		"invalid": 4096,
+		"xk":      4096,
 	}
 
 	for k, v := range cases {
