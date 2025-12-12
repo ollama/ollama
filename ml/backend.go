@@ -54,10 +54,6 @@ type CacheConfig struct {
 	// MaskDType specifies the data type for generating the mask. If unset it will
 	// default to DTypeF32.
 	MaskDType DType
-
-	// MaskBatchPadding specifies the multiple for the batch size dimension in the mask.
-	// Any position that does not correspond to an actual token will be filled with -Inf.
-	MaskBatchPadding int
 }
 
 // BackendParams controls how the backend loads and executes models

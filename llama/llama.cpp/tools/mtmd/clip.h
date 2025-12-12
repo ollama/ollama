@@ -7,6 +7,8 @@
 
 // !!! Internal header, to be used by mtmd only !!!
 
+#define MTMD_INTERNAL_HEADER
+
 struct clip_ctx;
 
 struct clip_image_size {

@@ -58,7 +58,7 @@ index d55aed348..99ae293cc 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ec63cadab..cd71902df 100644
+index 6852d2e20..48cdb1dcf 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -267,6 +267,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -159,7 +159,7 @@ index ec63cadab..cd71902df 100644
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
      bool events = false;
-@@ -5046,6 +5102,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5047,6 +5103,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
@@ -167,7 +167,7 @@ index ec63cadab..cd71902df 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -5061,6 +5118,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5062,6 +5119,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
  
@@ -183,7 +183,7 @@ index ec63cadab..cd71902df 100644
                      /* .iface   = */ ggml_backend_cuda_device_interface,
                      /* .reg     = */ &reg,
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index b987d7aeb..5ad5623ae 100644
+index 4e162258d..d89e35a8e 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -5,6 +5,8 @@
@@ -195,7 +195,7 @@ index b987d7aeb..5ad5623ae 100644
  
  #if defined(GGML_HIP_ROCWMMA_FATTN)
  #include <rocwmma/rocwmma-version.hpp>
-@@ -47,6 +49,7 @@
+@@ -51,6 +53,7 @@
  #define cudaDeviceProp hipDeviceProp_t
  #define cudaDeviceReset hipDeviceReset
  #define cudaDeviceSynchronize hipDeviceSynchronize

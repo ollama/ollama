@@ -6,6 +6,8 @@
 #include <vector>
 #include <string>
 
+#define MTMD_INTERNAL_HEADER
+
 #define WHISPER_ASSERT GGML_ASSERT
 
 #define WHISPER_SAMPLE_RATE 16000

@@ -140,10 +140,6 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity
 		c.config.CachePadding = 1
 	}
 
-	if c.config.MaskBatchPadding == 0 {
-		c.config.MaskBatchPadding = 1
-	}
-
 	if c.config.MaskDType == ml.DTypeOther {
 		c.config.MaskDType = ml.DTypeF32
 	}
@@ -365,7 +361,7 @@ func roundUp(length, pad int) int {
 // position of the history is not ahead of the token in the batch).
 func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 	// Align and pad the two dimensions as required by the backend
-	batchSize := roundUp(c.curBatchSize, c.config.MaskBatchPadding)
+	batchSize := c.curBatchSize
 
 	c.curCellRange.min = roundDown(c.curCellRange.min, c.config.CachePadding)
 	c.curCellRange.max = roundUp(c.curCellRange.max+1, c.config.CachePadding) - 1
