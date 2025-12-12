@@ -253,6 +253,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/chat/{id}", handle(s.deleteChat))
 	mux.Handle("POST /api/v1/create-chat", handle(s.createChat))
 	mux.Handle("PUT /api/v1/chat/{id}/rename", handle(s.renameChat))
+	mux.Handle("PUT /api/v1/chat/{id}/draft", handle(s.updateDraft))
 
 	mux.Handle("GET /api/v1/inference-compute", handle(s.getInferenceCompute))
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
@@ -1273,6 +1274,29 @@ func (s *Server) renameChat(w http.ResponseWriter, r *http.Request) error {
 	// Return the updated chat info
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatInfoFromChat(*chat))
+	return nil
+}
+
+func (s *Server) updateDraft(w http.ResponseWriter, r *http.Request) error {
+	cid := r.PathValue("id")
+	if cid == "" {
+		return fmt.Errorf("chat ID is required")
+	}
+
+	var req struct {
+		Draft string `json:"draft"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	// Update the draft - use the efficient single-field update method
+	if err := s.Store.UpdateChatDraft(cid, req.Draft); err != nil {
+		return fmt.Errorf("failed to update draft: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	return nil
 }
 
