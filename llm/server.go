@@ -143,7 +143,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
-	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
+	if envconfig.NewEngine(true) || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
 			textProcessor, err = model.NewTextProcessor(modelPath)
 		} else {
