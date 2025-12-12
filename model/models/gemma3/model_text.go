@@ -90,12 +90,15 @@ func newTextModel(c fs.Config) *TextModel {
 
 	// Google's Gemma 3 release with sliding window attention does
 	// not use final logit softcapping, and so force it to 0.0
+	// The QAT weights for Gemma 3 also included an incorrect
+	// value for the rope scale, so we need to set it to 1.0 here.
 	// TODO (jmorganca): this should ideally be set to 0.0 in the
 	// model configuration instead of here, as future versions of
 	// models may include both sliding window attention and final
 	// logit softcapping.
 	if slices.Contains(m.TextConfig.slidingWindowPattern, true) {
 		m.TextConfig.finalLogitSoftcap = 0.0
+		m.TextConfig.ropeScale = 1.0
 	}
 
 	if numBlocks == gemma27BLayerCount {
