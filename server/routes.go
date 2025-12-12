@@ -1521,13 +1521,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
-	// Web proxy endpoints: forward web search/fetch to main server (ollama.com)
-	r.POST("/api/web_search", s.WebSearchHandler)
-	r.POST("/api/web_fetch", s.WebFetchHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/web_search", s.WebSearchHandler)
+	r.POST("/api/web_fetch", s.WebFetchHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)

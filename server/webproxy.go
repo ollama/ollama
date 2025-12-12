@@ -13,6 +13,12 @@ import (
     "github.com/ollama/ollama/auth"
 )
 
+// signFunc is a variable to allow tests to override signing behavior.
+var signFunc = auth.Sign
+
+// httpClient is injectable for tests to capture outbound requests.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 // proxyToMain forwards the incoming request body to the main ollama server
 // and sets an Authorization token if signing is available locally.
 func (s *Server) proxyToMain(c *gin.Context, path string) {
@@ -27,7 +33,7 @@ func (s *Server) proxyToMain(c *gin.Context, path string) {
     now := strconv.FormatInt(time.Now().Unix(), 10)
     chal := fmt.Sprintf("%s,%s?ts=%s", http.MethodPost, path, now)
 
-    token, err := auth.Sign(ctx, []byte(chal))
+    token, err := signFunc(ctx, []byte(chal))
     if err != nil {
         // If signing fails, return an error so callers know the proxy couldn't
         // obtain a token. Clients may fallback to asking the user for a key.
@@ -57,8 +63,7 @@ func (s *Server) proxyToMain(c *gin.Context, path string) {
         req.Header.Set("Authorization", token)
     }
 
-    client := &http.Client{Timeout: 30 * time.Second}
-    resp, err := client.Do(req)
+    resp, err := httpClient.Do(req)
     if err != nil {
         c.JSON(http.StatusBadGateway, gin.H{"error": "failed to contact main server"})
         return
