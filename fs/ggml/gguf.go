@@ -582,7 +582,8 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 	if !strings.HasPrefix(k, arch+".") &&
 		!strings.HasPrefix(k, "general.") &&
 		!strings.HasPrefix(k, "adapter.") &&
-		!strings.HasPrefix(k, "tokenizer.") {
+		!strings.HasPrefix(k, "tokenizer.") &&
+		!strings.HasPrefix(k, "split.") {
 		k = arch + "." + k
 	}
 
@@ -597,6 +598,8 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 
 	var err error
 	switch v := v.(type) {
+	case uint16:
+		err = writeGGUF(ws, ggufTypeUint16, v)
 	case int32:
 		err = writeGGUF(ws, ggufTypeInt32, v)
 	case int64:
