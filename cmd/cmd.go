@@ -943,6 +943,9 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
 		}
 		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
+		if resp.Requires != "" {
+			rows = append(rows, []string{"", "requires", resp.Requires})
+		}
 		return
 	})
 
