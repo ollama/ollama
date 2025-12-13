@@ -749,7 +749,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	embeddings := make([][]float32, len(input))
 	for i, text := range input {
 		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
+			embedding, _, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
 				return err
 			}
@@ -819,7 +819,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return

@@ -1022,7 +1022,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	embedding := <-seq.embedding
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding:       embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}

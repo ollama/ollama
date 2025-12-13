@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/ollama/ollama/llama"
@@ -193,11 +194,7 @@ func countCommonPrefix(a []input, b []input) int {
 			break
 		}
 
-		// For embeddings, we need to be more careful about comparison
-		// because float32 embeddings can have minor numerical differences
-		// between encoding runs. Only match if both are tokens (not embeddings)
-		// or if the embeddings are exactly the same pointer (from cache).
-		if !inputsEqual(a[i], b[i]) {
+		if !reflect.DeepEqual(a[i], b[i]) {
 			break
 		}
 
@@ -205,38 +202,6 @@ func countCommonPrefix(a []input, b []input) int {
 	}
 
 	return count
-}
-
-// inputsEqual compares two inputs. For tokens, it's a simple comparison.
-// For embeddings, we're conservative - only consider them equal if they're
-// the exact same slice (same backing array) to avoid issues with numerical
-// differences between encoding runs.
-func inputsEqual(a, b input) bool {
-	// If either has an embedding, be conservative about matching
-	if a.embed != nil || b.embed != nil {
-		// Only match if both have embeddings AND they point to the same memory
-		// This happens when using cached embeddings
-		if a.embed != nil && b.embed != nil && len(a.embed) == len(b.embed) {
-			// Check if they share the same backing array (fast path for cached).
-			// NOTE: This pointer comparison is safe and intentional in this context.
-			// We only consider embeddings equal if they are the exact same slice
-			// (i.e., from cache), which means they share the same backing array.
-			// This avoids issues with numerical precision differences between
-			// encoding runs. Since embeddings are only reused from cache, comparing
-			// the address of the first element is a reliable way to check for identity.
-			// Do not use this pattern for general slice equality.
-			if len(a.embed) > 0 && &a.embed[0] == &b.embed[0] {
-				return true
-			}
-			// For different slices, don't consider them equal even if values match
-			// This avoids issues with numerical precision in GPU operations
-			return false
-		}
-		return false
-	}
-	
-	// For tokens, simple comparison
-	return a.token == b.token
 }
 
 func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
