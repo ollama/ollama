@@ -1,7 +1,6 @@
 package qwen3vl
 
 import (
-	"fmt"
 	"iter"
 	"log/slog"
 	"math"
@@ -178,6 +177,13 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 
 	n := hiddenStates.Dim(0) // hidden size
 
+	// DEBUG: Log position embedding parameters for split vs nosplit comparison
+	slog.Debug("PositionEmbedding.Forward",
+		"hiddenStates_shape", hiddenStates.Shape(),
+		"grid_width", grid.Width, "grid_height", grid.Height,
+		"gridPerSide", opts.gridPerSide, "spatialMergeSize", opts.spatialMergeSize,
+		"isSplitArchitecture", opts.isSplitArchitecture)
+
 	// UNIFIED MODEL: Use bilinear interpolation (original upstream code)
 	// This is required for proper position encoding in unified models
 	indexSlice := slices.Collect(makeSlice2D[int32](4, grid.Height*grid.Width))
@@ -221,13 +227,24 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 		Add(ctx, positionEmbedsChunks[2]).
 		Add(ctx, positionEmbedsChunks[3])
 
+	slog.Debug("PositionEmbedding after chunk sum",
+		"shape", positionEmbeds.Shape(),
+		"expected_spatial_merge_output", []int{int(n), grid.Width / opts.spatialMergeSize * grid.Height / opts.spatialMergeSize})
+
 	positionEmbeds = positionEmbeds.Reshape(ctx, -1, grid.Width/opts.spatialMergeSize, opts.spatialMergeSize, grid.Height/opts.spatialMergeSize)
 	positionEmbeds = positionEmbeds.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, n, -1)
+
+	slog.Debug("PositionEmbedding after spatial merge",
+		"posEmbed_shape", positionEmbeds.Shape(),
+		"hiddenStates_shape", hiddenStates.Shape(),
+		"SHAPES_MATCH", positionEmbeds.Dim(1) == hiddenStates.Dim(1))
+
 	return hiddenStates.Add(ctx, positionEmbeds)
 }
 
 type VisionModel struct {
 	PatchEmbedding    *nn.Conv3D `gguf:"patch_embed,alt:patch_embd"` // Unified model uses 3D conv
+	PatchEmbedding1   *nn.Linear // Second kernel for split - manually loaded (tensor: v.patch_embd.weight.1)
 	PatchEmbedding2D  *nn.Conv2D // Split model uses 2D conv (not auto-populated, set from PatchEmbedding when detected)
 	PositionEmbedding *VisionPositionEmbedding
 	Layers            []VisionEncoderLayer `gguf:"blk"`
@@ -308,43 +325,41 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	var hiddenStates ml.Tensor
 
 	if m.isSplitArchitecture {
-		// Split architecture: weight was originally [16,16,3,1152] but LoadSecondary reshapes it
-		// to [768, 1152] at load time to avoid view_src assertion failures in GGML.
-		// Input [768, numPatches] is already patchDim,seqLen format from ImageProcessor.
-
-		// Verify PatchEmbedding exists
+		// Split architecture: patch embeddings are stored as flattened weights.
+		// Use the patch-based input tensor from ImageProcessor (shape [patchDim, numPatches]) and apply
+		// both kernels to the SAME input, then sum (matches reference behavior).
 		if m.PatchEmbedding == nil || m.PatchEmbedding.Weight == nil {
 			panic("VisionModel.PatchEmbedding.Weight is nil - split model patch embedding not loaded correctly")
 		}
-
-		patchDim := m.numChannels * m.patchSize * m.patchSize // Should be 768
-		numPatches := pixelValues.Dim(1)
-
-		// Log shapes for debugging
-		weightShape := m.PatchEmbedding.Weight.Shape()
-		pixelShape := pixelValues.Shape()
-		slog.Debug("Split patch embedding forward",
-			"weight_shape", weightShape, "pixel_shape", pixelShape,
-			"expected_patchDim", patchDim, "hiddenSize", m.hiddenSize, "numPatches", numPatches)
-
-		// Verify shapes before Mulmat to give clear error message
-		// For Mulmat(a, b): requires a.ne[0] == b.ne[0]
-		// Weight should be [patchDim, hiddenSize], pixelValues should be [patchDim, numPatches]
-		if len(weightShape) >= 2 && len(pixelShape) >= 1 {
-			if weightShape[0] != pixelShape[0] {
-				slog.Error("Shape mismatch for patch embedding Mulmat",
-					"weight_ne0", weightShape[0], "pixel_ne0", pixelShape[0],
-					"need", "weight.ne[0] == pixel.ne[0]")
-				panic(fmt.Sprintf("Patch embedding shape mismatch: weight[0]=%d != pixel[0]=%d", weightShape[0], pixelShape[0]))
-			}
+		if len(pixelValues.Shape()) != 2 {
+			panic("split vision expects patch tensor [patchDim, numPatches]")
 		}
 
-		hiddenStates = m.PatchEmbedding.Weight.Mulmat(ctx, pixelValues)
-		// Mulmat output is [hiddenSize, numPatches] - already correct shape, no Reshape needed
+		hasKernel2 := m.PatchEmbedding1 != nil && m.PatchEmbedding1.Weight != nil
+		slog.Debug("Split patch embedding forward (Mulmat)",
+			"pixel_shape", pixelValues.Shape(),
+			"weight_shape", m.PatchEmbedding.Weight.Shape(),
+			"has_kernel2", hasKernel2,
+			"patchSize", m.patchSize, "hiddenSize", m.hiddenSize,
+		)
 
+		// Kernel 0
+		h1 := m.PatchEmbedding.Weight.Mulmat(ctx, pixelValues)
+		hiddenStates = h1
+		// Kernel 1 (optional)
+		if hasKernel2 {
+			h2 := m.PatchEmbedding1.Weight.Mulmat(ctx, pixelValues)
+			hiddenStates = hiddenStates.Add(ctx, h2)
+		}
+
+		// Apply bias (v.patch_embd.bias) once after summing kernels.
+		// The split GGUF provides this tensor and omitting it shifts the feature distribution.
 		if m.PatchEmbedding.Bias != nil {
-			hiddenStates = hiddenStates.Add(ctx, m.PatchEmbedding.Bias)
+			bias := m.PatchEmbedding.Bias.Reshape(ctx, -1, 1)
+			hiddenStates = hiddenStates.Add(ctx, bias)
 		}
+
+		slog.Debug("Split model: after linear patch embedding", "shape", hiddenStates.Shape())
 	} else {
 		// Unified architecture: conv kernel is [kH, kW, temporal, channels*hidden] - use Conv3D
 		slog.Debug("Unified patch embedding BEFORE reshape",
@@ -353,20 +368,25 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 			"temporalPatchSize", m.temporalPatchSize,
 			"numChannels", m.numChannels,
 			"target_reshape", []int{m.patchSize, m.patchSize, m.temporalPatchSize, -1})
-		
+
 		pixelValues = pixelValues.Reshape(ctx, m.patchSize, m.patchSize, m.temporalPatchSize, -1)
 		slog.Debug("Unified patch embedding AFTER reshape",
 			"pixelValues_shape", pixelValues.Shape())
-		
+
 		// Log Conv3D weight shape
 		if m.PatchEmbedding != nil && m.PatchEmbedding.Weight != nil {
 			slog.Debug("Unified Conv3D kernel",
 				"weight_shape", m.PatchEmbedding.Weight.Shape())
 		}
-		
+
 		hiddenStates = m.PatchEmbedding.Forward(ctx, pixelValues, m.numChannels, m.patchSize, m.patchSize, m.temporalPatchSize, 0, 0, 0, 1, 1, 1)
 		slog.Debug("Unified patch embedding AFTER Conv3D",
 			"hiddenStates_shape", hiddenStates.Shape())
+
+	}
+
+	if m.isSplitArchitecture {
+		slog.Debug("Split model: after position embedding", "shape", hiddenStates.Shape())
 	}
 
 	hiddenStates = m.PositionEmbedding.Forward(ctx, hiddenStates, grid, m.VisionOptions)
@@ -387,7 +407,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	}
 
 	// Log deepstack configuration before processing
-	slog.Debug("VisionModel.Forward starting", 
+	slog.Debug("VisionModel.Forward starting",
 		"n_layers", len(m.Layers),
 		"deepstackVisualIndexes", m.deepstackVisualIndexes,
 		"n_deepstack_mergers", len(m.DeepstackMerger))
@@ -395,16 +415,11 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	deepstackStates := make([]ml.Tensor, len(m.deepstackVisualIndexes))
 	for layerIdx, layer := range m.Layers {
 		hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, m.VisionOptions)
+		if m.isSplitArchitecture && layerIdx == 0 {
+			slog.Debug("Split model: after first vision layer", "layer", layerIdx, "shape", hiddenStates.Shape())
+		}
 		if dsIdx := slices.Index(m.deepstackVisualIndexes, int32(layerIdx)); dsIdx >= 0 && m.DeepstackMerger[dsIdx] != nil {
-			inputTensor := hiddenStates
-			// FIX for Split Models: Apply PostNorm to the LAST deepstack layer input (Layer 24)
-			// This normalizes the embedding before projection, crucial for correct output distribution.
-			// v.post_ln (1152 dim) matches hiddenStates dim.
-			if dsIdx == len(m.deepstackVisualIndexes)-1 && m.PostNorm != nil {
-				slog.Debug("Applying PostNorm before last Deepstack projection", "layerIdx", layerIdx, "dsIdx", dsIdx)
-				inputTensor = m.PostNorm.Forward(ctx, hiddenStates, m.VisionOptions.eps)
-			}
-			deepstackStates[dsIdx] = m.DeepstackMerger[dsIdx].Forward(ctx, inputTensor, true, m.VisionOptions)
+			deepstackStates[dsIdx] = m.DeepstackMerger[dsIdx].Forward(ctx, hiddenStates, true, m.VisionOptions)
 			slog.Debug("Extracted deepstack from layer", "layerIdx", layerIdx, "dsIdx", dsIdx, "shape", deepstackStates[dsIdx].Shape())
 		}
 	}
@@ -417,29 +432,29 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 		// SPLIT MODEL: Use dedicated mm.0/mm.2 projectors for main vision
 		// These are SEPARATE from deepstack FC weights - critical difference!
 		// In llama.cpp: model.mm_0_w/mm_1_w vs layer.deepstack_fc1_w/deepstack_fc2_w
-		
+
 		// CRITICAL: Apply PostNorm BEFORE projection (matches llama.cpp post_ln_w)
 		if m.PostNorm != nil {
 			hiddenStates = m.PostNorm.Forward(ctx, hiddenStates, m.VisionOptions.eps)
 			slog.Debug("Applied PostNorm before mm.0/mm.2 projection", "shape", hiddenStates.Shape())
 		}
-		
-		// Main vision goes through spatial merge (2x2) first
-		// Input: [1152, n_patches] -> reshape to [4608, n_patches/4]
-		nPatches := hiddenStates.Dim(1)
-		mergedPatches := nPatches / 4 // spatial merge 2x2
-		
-		// Reshape: [1152, n_patches] -> [4608, mergedPatches]
-		hiddenStates = hiddenStates.Reshape(ctx, m.hiddenSize*4, mergedPatches)
-		
+
+		// Main vision goes through spatial merge (2x2) first, grouping neighboring patches
+		// into the channel dimension to preserve local structure before projection.
+		w, h := grid.Width, grid.Height
+		mergedPatches := (w / m.spatialMergeSize) * (h / m.spatialMergeSize)
+
+		// Collapse each 2x2 spatial block into the channel dimension; patch order is already grouped.
+		hiddenStates = hiddenStates.Reshape(ctx, m.hiddenSize*m.spatialMergeSize*m.spatialMergeSize, mergedPatches)
+
 		// FC1: 4608 -> 4608 with GELU activation
 		hiddenStates = m.MultimodalFC1.Forward(ctx, hiddenStates)
 		hiddenStates = hiddenStates.GELU(ctx)
-		
+
 		// FC2: 4608 -> 4096
 		hiddenStates = m.MultimodalFC2.Forward(ctx, hiddenStates)
-		
-		slog.Debug("Split Model: Projected main vision via mm.0/mm.2", 
+
+		slog.Debug("Split Model: Projected main vision via mm.0/mm.2",
 			"shape", hiddenStates.Shape(), "mergedPatches", mergedPatches)
 	} else if len(deepstackStates) > 0 && len(m.DeepstackMerger) > 0 {
 		// FALLBACK PATH: When neither PatchMerger nor mm.0/mm.2 projectors are loaded.
@@ -535,7 +550,7 @@ func newVisionModel(c fs.Config) *VisionModel {
 // calculateDeepstackLayerIDs determines which vision encoder layers to extract deepstack features from
 // based on the total number of vision encoder layers. This is used for unified models where
 // the layer IDs are not embedded in tensor names.
-// 
+//
 // Qwen3-VL uses 3 deepstack layers at approximately 1/4, 1/2, and 3/4 of the vision encoder depth:
 // - 24 layers (4B): layers 5, 11, 17  (n_layers * [6/24, 12/24, 18/24] - 1)
 // - 27 layers (8B): layers 8, 16, 24  (n_layers * [9/27, 18/27, 27/27] - 1)
