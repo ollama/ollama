@@ -3,6 +3,7 @@ package qwen3vl
 import (
 	"fmt"
 	"image"
+	"log/slog"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -29,7 +30,7 @@ type ImageProcessor struct {
 func newImageProcessor(c fs.Config) ImageProcessor {
 	patchSize := int(c.Uint("vision.patch_size", 14))
 	mergeSize := int(c.Uint("vision.spatial_merge_size", 2))
-	// Read temporalPatchSize from config - split models have 1, unified have 2
+	// Read temporalPatchSize from GGUF: split models have 1, non-split have 2
 	temporalPatchSize := int(c.Uint("vision.temporal_patch_size", 2))
 
 	return ImageProcessor{
@@ -44,8 +45,9 @@ func newImageProcessor(c fs.Config) ImageProcessor {
 		longestEdge:   2 << 20,
 		factor:        patchSize * mergeSize,
 		rescaleFactor: 1.0 / 255.0,
-		imageMean:     c.Floats("vision.image_mean", []float32{0.5, 0.5, 0.5}),
-		imageStd:      c.Floats("vision.image_std", []float32{0.5, 0.5, 0.5}),
+		// Qwen-VL family typically uses CLIP normalization; split models may omit these keys.
+		imageMean: c.Floats("vision.image_mean", imageproc.ClipDefaultMean[:]),
+		imageStd:  c.Floats("vision.image_std", imageproc.ClipDefaultSTD[:]),
 	}
 }
 
@@ -94,7 +96,7 @@ func (p *ImageProcessor) ProcessImage(ctx ml.Context, img image.Image) (ml.Tenso
 	// Calculate smart resize dimensions
 	resizedHeight, resizedWidth := p.SmartResize(origHeight, origWidth)
 
-	// Resize image using existing functions
+	// Keep resize behavior stable across runs/models.
 	resizedImg := imageproc.Resize(img, image.Point{X: resizedWidth, Y: resizedHeight}, imageproc.ResizeBilinear)
 
 	normalizedPixels := imageproc.Normalize(
@@ -123,7 +125,52 @@ func (p *ImageProcessor) ProcessImage(ctx ml.Context, img image.Image) (ml.Tenso
 
 	pixelValues := ctx.Input().FromFloats(patches, patchDim, numPatches)
 
+	slog.Debug("ImageProcessor.ProcessImage",
+		"patch_dim", patchDim,
+		"num_patches", numPatches,
+		"grid", []int{grid.Height, grid.Width, grid.Temporal},
+		"patch_size", p.patchSize,
+		"temporal_patch_size", p.temporalPatchSize)
+
 	// Return patches and grid dimensions
+	return pixelValues, grid, nil
+}
+
+// ProcessImageRaw returns the raw normalized CHW image for use with Conv2D (split models)
+// Returns tensor with shape [width, height, channels] and grid dimensions
+func (p *ImageProcessor) ProcessImageRaw(ctx ml.Context, img image.Image) (ml.Tensor, *Grid, error) {
+	img = imageproc.Composite(img)
+
+	origWidth := img.Bounds().Dx()
+	origHeight := img.Bounds().Dy()
+
+	// Calculate smart resize dimensions
+	resizedHeight, resizedWidth := p.SmartResize(origHeight, origWidth)
+
+	// Keep resize behavior stable across runs/models.
+	resizedImg := imageproc.Resize(img, image.Point{X: resizedWidth, Y: resizedHeight}, imageproc.ResizeBilinear)
+
+	// Normalize to HWC so Conv2D sees width/height/channel ordering expected by ggml_conv_2d
+	normalizedPixels := imageproc.Normalize(
+		resizedImg,
+		[3]float32{p.imageMean[0], p.imageMean[1], p.imageMean[2]},
+		[3]float32{p.imageStd[0], p.imageStd[1], p.imageStd[2]},
+		true,  // rescale
+		false, // channelFirst -> HWC format for WHC tensor layout
+	)
+
+	// Calculate grid dimensions (patches after Conv2D)
+	grid := &Grid{
+		Height:   resizedHeight / p.patchSize,
+		Width:    resizedWidth / p.patchSize,
+		Temporal: 1,
+	}
+
+	// Create tensor with shape [height, width, channels] (row-major HWC) for ggml_conv_2d
+	// ggml_conv_2d expects input as [W, H, C, batch]; we keep row-major HWC and the reshape in the
+	// vision model will place width/height correctly.
+	pixelValues := ctx.Input().FromFloats(normalizedPixels, resizedHeight, resizedWidth, p.numChannels)
+
 	return pixelValues, grid, nil
 }
 

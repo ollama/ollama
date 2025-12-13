@@ -134,11 +134,12 @@ type Backend struct {
 // For 4D patch embeddings [kW, kH, channels, hidden], returns [kW*kH*channels, hidden].
 // This is needed because reshaping later fails due to view_src assertion in ggml_new_tensor_impl.
 func patchEmbedShape(name string, originalShape []uint64) []C.int64_t {
-	if name == "v.patch_embd.weight" && len(originalShape) == 4 {
+	// Handle both v.patch_embd.weight and v.patch_embd.weight.1 for split models
+	if (name == "v.patch_embd.weight" || name == "v.patch_embd.weight.1") && len(originalShape) == 4 {
 		// Calculate patchDim = kW * kH * channels = ne[0] * ne[1] * ne[2]
 		patchDim := C.int64_t(originalShape[0] * originalShape[1] * originalShape[2])
 		hiddenSize := C.int64_t(originalShape[3])
-		slog.Debug("reshaping patch embedding at load time", "original", originalShape, "target", []int64{int64(patchDim), int64(hiddenSize)})
+		slog.Debug("reshaping patch embedding at load time", "name", name, "original", originalShape, "target", []int64{int64(patchDim), int64(hiddenSize)})
 		return []C.int64_t{patchDim, hiddenSize}
 	}
 	shape := make([]C.int64_t, len(originalShape))

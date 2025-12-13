@@ -103,7 +103,7 @@ func (m *Model) loadDeepstackMergerWeights(layerIDs []int) {
 
 	// Store the detected layer IDs for use in vision processing
 	m.VisionModel.deepstackLayerIDs = layerIDs
-	
+
 	// CRITICAL: Also update deepstackVisualIndexes in VisionOptions
 	// This is what VisionModel.Forward() uses to know which layers to extract deepstack from
 	// Without this, Forward() still uses hardcoded [8,16,24] and produces nil tensors!
@@ -112,7 +112,7 @@ func (m *Model) loadDeepstackMergerWeights(layerIDs []int) {
 		deepstackIndexes[i] = int32(id)
 	}
 	m.VisionModel.deepstackVisualIndexes = deepstackIndexes
-	
+
 	slog.Debug("Deepstack layers detected and loaded", "layerIDs", layerIDs, "deepstackVisualIndexes", deepstackIndexes, "count", len(layerIDs))
 }
 
@@ -170,7 +170,31 @@ func (m *Model) ensureVisionReady() error {
 			m.loadDeepstackMergerWeights(layerIDs)
 		}
 
-		// Sync temporalPatchSize from VisionModel to ImageProcessor (split model may have different value)
+		// Manually load the second patch embedding kernel (v.patch_embd.weight.1) for split models
+		// The GGUF tag system cannot handle this tensor name format
+		if m.VisionModel.PatchEmbedding1 == nil {
+			if patchEmbd1Weight := m.Backend().Get("v.patch_embd.weight.1"); patchEmbd1Weight != nil {
+				m.VisionModel.PatchEmbedding1 = &nn.Linear{
+					Weight: patchEmbd1Weight,
+				}
+				slog.Info("Loaded second patch embedding kernel (early path)", "tensor", "v.patch_embd.weight.1", "shape", patchEmbd1Weight.Shape())
+			}
+		}
+
+		// Sync image preprocessing parameters from model config.
+		// For split GGUF setups, vision-specific config (e.g., image_mean/std) may
+		// live in the vision GGUF, so we refresh from the merged backend config.
+		cfg := m.Backend().Config()
+		if v := cfg.Floats("vision.image_mean"); len(v) > 0 {
+			m.ImageProcessor.imageMean = v
+		}
+		if v := cfg.Floats("vision.image_std"); len(v) > 0 {
+			m.ImageProcessor.imageStd = v
+		}
+
+		// Sync temporalPatchSize from VisionModel to ImageProcessor.
+		// For split models, use the ORIGINAL temporalPatchSize=1 from the GGUF
+		// (the split kernels expect 768-dim input, not 1536-dim).
 		m.ImageProcessor.temporalPatchSize = m.VisionModel.temporalPatchSize
 		m.ImageProcessor.storagePatchSize = m.VisionModel.storagePatchSize
 		slog.Debug("Vision ready", "hiddenSize", m.VisionModel.hiddenSize, "numHeads", m.VisionModel.numHeads, "layers", len(m.VisionModel.Layers), "isSplitArchitecture", m.VisionModel.isSplitArchitecture, "temporalPatchSize", m.VisionModel.temporalPatchSize)
@@ -252,6 +276,20 @@ func (m *Model) ensureVisionReady() error {
 		m.loadDeepstackMergerWeights(layerIDs)
 	}
 
+	// Manually load the second patch embedding kernel (v.patch_embd.weight.1)
+	// The GGUF tag system cannot handle this tensor because it expects v.patch_embd.1.weight
+	// but the actual tensor is named v.patch_embd.weight.1
+	patchEmbd1Weight := m.Backend().Get("v.patch_embd.weight.1")
+	slog.Info("Looking for second patch embedding kernel", "tensor", "v.patch_embd.weight.1", "found", patchEmbd1Weight != nil)
+	if patchEmbd1Weight != nil {
+		m.VisionModel.PatchEmbedding1 = &nn.Linear{
+			Weight: patchEmbd1Weight,
+		}
+		slog.Info("Loaded second patch embedding kernel", "tensor", "v.patch_embd.weight.1", "shape", patchEmbd1Weight.Shape())
+	} else {
+		slog.Warn("No second patch embedding kernel found - dual kernel summing disabled", "tensor", "v.patch_embd.weight.1")
+	}
+
 	// Infer correct vision dimensions from actual tensor shapes
 	m.VisionModel.InferOptionsFromTensors()
 
@@ -264,7 +302,20 @@ func (m *Model) ensureVisionReady() error {
 	}
 
 	m.visionReady = true
-	slog.Debug("Split vision model loaded", "layers", len(m.VisionModel.Layers), "hiddenSize", m.VisionModel.hiddenSize)
+
+	// Sync image preprocessing parameters from merged config now that vision GGUF is loaded.
+	cfg := m.Backend().Config()
+	if v := cfg.Floats("vision.image_mean"); len(v) > 0 {
+		m.ImageProcessor.imageMean = v
+	}
+	if v := cfg.Floats("vision.image_std"); len(v) > 0 {
+		m.ImageProcessor.imageStd = v
+	}
+	// Keep temporal/storage patch sizes in sync with the inferred vision options.
+	m.ImageProcessor.temporalPatchSize = m.VisionModel.temporalPatchSize
+	m.ImageProcessor.storagePatchSize = m.VisionModel.storagePatchSize
+
+	slog.Debug("Split vision model loaded", "layers", len(m.VisionModel.Layers), "hiddenSize", m.VisionModel.hiddenSize, "temporalPatchSize", m.VisionModel.temporalPatchSize)
 	return nil
 }
 
@@ -283,7 +334,14 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	pixelValues, grid, err := m.ProcessImage(ctx, img)
+	// Always use patch-based inputs produced by ImageProcessor.
+	// This keeps tensor memory layout consistent with ggml's expectations and matches the original
+	// Qwen3VL runtime path (split and non-split).
+	var (
+		pixelValues ml.Tensor
+		grid        *Grid
+	)
+	pixelValues, grid, err = m.ProcessImage(ctx, img)
 	if err != nil {
 		return nil, err
 	}
@@ -301,33 +359,47 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	// Calculate tensor dimensions
 	visionOutputs, deepstackVisualEmbeds := m.VisionModel.Forward(ctx, pixelValues, grid)
 
-	// Qwen3-VL requires concatenating main + deepstack embeddings into single expanded tensor
+	// Defensive: ensure returned tensors are not views with view_src chains.
+	// This helps avoid subtle lifetime/aliasing issues that can manifest as unstable outputs.
+	if visionOutputs != nil {
+		visionOutputs = visionOutputs.Contiguous(ctx, visionOutputs.Shape()...)
+	}
+	for i := range deepstackVisualEmbeds {
+		if deepstackVisualEmbeds[i] != nil {
+			deepstackVisualEmbeds[i] = deepstackVisualEmbeds[i].Contiguous(ctx, deepstackVisualEmbeds[i].Shape()...)
+		}
+	}
+
+	// For SPLIT models only: concatenate main + deepstack embeddings into single tensor
+	// This is needed because split models pass vision through a single tensor interface
 	// Format: [main (n_embd) | deepstack_0 (n_embd) | deepstack_1 (n_embd) | deepstack_2 (n_embd)]
-	// This creates n_embd_inp = n_embd * (1 + n_deepstack_layers)
-	// GGML uses column-major: shape [features, tokens] means features are contiguous in memory
-	// So concatenating features requires dim=0
-	if len(deepstackVisualEmbeds) > 0 {
+	// For UNIFIED models: keep embeddings separate (original Ollama behavior)
+	if m.VisionModel.isSplitArchitecture && len(deepstackVisualEmbeds) > 0 {
 		// Concatenate along the feature dimension (dim=0 for column-major GGML tensors)
-		// Input shapes: [4096, n_tokens] each
-		// Output shape: [16384, n_tokens] = [4096*4, n_tokens]
 		allEmbeds := []ml.Tensor{visionOutputs}
 		allEmbeds = append(allEmbeds, deepstackVisualEmbeds...)
 
-		// Concatenated shape: [n_embd * (1 + n_deepstack), n_tokens]
 		concatenated := allEmbeds[0].Concat(ctx, allEmbeds[1], 0)
 		for i := 2; i < len(allEmbeds); i++ {
 			concatenated = concatenated.Concat(ctx, allEmbeds[i], 0)
 		}
-		slog.Debug("Concatenated vision + deepstack embeddings",
+		concatenated = concatenated.Contiguous(ctx, concatenated.Shape()...)
+		slog.Debug("Split model: Concatenated vision + deepstack embeddings",
 			"main_shape", visionOutputs.Shape(),
 			"n_deepstack", len(deepstackVisualEmbeds),
 			"concatenated_shape", concatenated.Shape())
-
 		return []input.Multimodal{{Tensor: concatenated, Data: grid}}, nil
 	}
 
-	// No deepstack - return main vision output only
-	return []input.Multimodal{{Tensor: visionOutputs, Data: grid}}, nil
+	// Unified model: return embeddings separately (original Ollama behavior)
+	if visionOutputs != nil {
+		visionOutputs = visionOutputs.Contiguous(ctx, visionOutputs.Shape()...)
+	}
+	mm := []input.Multimodal{{Tensor: visionOutputs, Data: grid}}
+	for i := range deepstackVisualEmbeds {
+		mm = append(mm, input.Multimodal{Tensor: deepstackVisualEmbeds[i]})
+	}
+	return mm, nil
 }
 
 var (
@@ -426,18 +498,22 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			slog.Debug("Detected concatenated vision embeddings - splitting",
 				"full_dim", nEmbdFull, "n_embd", nEmbd, "n_tokens", nTokens, "n_deepstack", nDeepstackLayers)
 
-			// Extract main vision (first n_embd rows in column-major = first n_embd features)
-			mainVision := visionOutputs.View(ctx, 0, nEmbd*nTokens).Reshape(ctx, nEmbd, nTokens)
+			// GGML tensors are column-major. A flattened View() cannot correctly slice rows
+			// across all columns because the memory for [rows, tokens] is not laid out as a
+			// single contiguous span per row-block. Use Chunk() to split along dim(0).
+			chunks := visionOutputs.Chunk(ctx, 0, nEmbd)
+			if len(chunks) != nDeepstackLayers+1 {
+				panic(fmt.Sprintf("unexpected concatenated vision chunk count: got=%d want=%d (full_dim=%d n_embd=%d)", len(chunks), nDeepstackLayers+1, nEmbdFull, nEmbd))
+			}
 
-			// Extract deepstack features (these are raw, need to be expanded to hiddenStates shape later)
+			// Main vision is chunk 0; deepstacks follow in order.
+			visionOutputs = chunks[0].Contiguous(ctx, nEmbd, nTokens)
 			if nDeepstackLayers > 0 {
 				extractedDeepstacks = make([]ml.Tensor, nDeepstackLayers)
 				for i := 0; i < nDeepstackLayers; i++ {
-					offset := (i + 1) * nEmbd * nTokens
-					extractedDeepstacks[i] = visionOutputs.View(ctx, offset, nEmbd*nTokens).Reshape(ctx, nEmbd, nTokens)
+					extractedDeepstacks[i] = chunks[i+1].Contiguous(ctx, nEmbd, nTokens)
 				}
 			}
-			visionOutputs = mainVision
 		}
 
 		// Copy main vision embeddings into hiddenStates
@@ -445,33 +521,12 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		if grid, ok := mi.Multimodal[0].Data.(*Grid); ok {
 			w := grid.Width / m.spatialMergeSize
-			h := grid.Height / m.spatialMergeSize
-			// Get the temporal base position (same for all image tokens)
-			temporalBase := positionSlice[0][mi.Index]
-			slog.Debug("M-RoPE image position adjustment",
-				"grid.Width", grid.Width, "grid.Height", grid.Height,
-				"spatialMergeSize", m.spatialMergeSize, "w", w, "h", h,
-				"mi.Index", mi.Index, "numImageTokens", visionOutputs.Dim(1),
-				"temporalBase", temporalBase)
-
-			// For M-RoPE, image tokens need proper 2D position encoding:
-			// pos[0] = temporal (constant for all image tokens)
-			// pos[1] = temporal + row (y coordinate)
-			// pos[2] = temporal + column (x coordinate)
+			// M-RoPE position encoding for images:
+			// pos[0] already has correct value from positionCache (temporal position)
+			// pos[1] and pos[2] are incremented by row/col for 2D spatial encoding
 			for i := range visionOutputs.Dim(1) {
-				row := int32(i / w)
-				col := int32(i % w)
-				// pos[0] must be constant (temporalBase) for all image tokens
-				positionSlice[0][mi.Index+i] = temporalBase
-				positionSlice[1][mi.Index+i] = temporalBase + row
-				positionSlice[2][mi.Index+i] = temporalBase + col
-			}
-			// Log sample positions after adjustment
-			if visionOutputs.Dim(1) >= 3 {
-				slog.Debug("M-RoPE sample positions after adjustment",
-					"pos[0][0,1,2]", []int32{positionSlice[0][mi.Index], positionSlice[0][mi.Index+1], positionSlice[0][mi.Index+2]},
-					"pos[1][0,1,2]", []int32{positionSlice[1][mi.Index], positionSlice[1][mi.Index+1], positionSlice[1][mi.Index+2]},
-					"pos[2][0,1,2]", []int32{positionSlice[2][mi.Index], positionSlice[2][mi.Index+1], positionSlice[2][mi.Index+2]})
+				positionSlice[1][mi.Index+i] += int32(i / w)
+				positionSlice[2][mi.Index+i] += int32(i % w)
 			}
 		}
 
@@ -501,12 +556,6 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 				"ds_shape", extractedDeepstacks[0].Shape())
 		}
 	}
-
-	slog.Debug("M-RoPE total positions",
-		"numPositions", len(positionSlice[0]),
-		"mropeSections", m.Options.mropeSections,
-		"samplePos0_first3", positionSlice[0][:min(3, len(positionSlice[0]))],
-		"samplePos1_first3", positionSlice[1][:min(3, len(positionSlice[1]))])
 
 	positions := ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0])*len(positionSlice))
 	for i, layer := range m.TextModel.Layers {
