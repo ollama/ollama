@@ -35,7 +35,6 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 	sb.WriteString("<｜begin▁of▁sentence｜>" + systemPrompt.String())
 
 	// state tracking
-	isFirst := false
 	isTool := false
 	isLastUser := false
 
@@ -43,7 +42,6 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 		switch message.Role {
 		case "user":
 			isTool = false
-			isFirst = false
 			isLastUser = true
 			sb.WriteString("<｜User｜>" + message.Content)
 
@@ -53,7 +51,6 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 					sb.WriteString("<｜Assistant｜></think>")
 				}
 				isLastUser = false
-				isFirst = false
 				isTool = false
 
 				if message.Content != "" {
@@ -62,16 +59,7 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 
 				sb.WriteString("<｜tool▁calls▁begin｜>")
 				for _, toolCall := range message.ToolCalls {
-					if !isFirst {
-						if message.Content == "" {
-							sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
-						} else {
-							sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
-						}
-						isFirst = true
-					} else {
-						sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
-					}
+					sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
 
 					argsJSON, _ := json.Marshal(toolCall.Function.Arguments)
 					sb.WriteString(string(argsJSON))
