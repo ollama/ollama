@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -963,6 +964,93 @@ func TestListHandler(t *testing.T) {
 				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
 		},
 		{
+			name: "list all models ordered by name",
+			args: []string{"--name"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+				{Name: "model0", Digest: "sha256:bcd789", Size: 1536, ModifiedAt: time.Now().Add(-72 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
+				"model0    sha256:bcd78    1.5 KB    3 days ago      \n" +
+				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
+				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+		},
+		{
+			name: "list all models ordered by ID",
+			args: []string{"--id"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+				{Name: "model0", Digest: "sha256:bcd789", Size: 1536, ModifiedAt: time.Now().Add(-72 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
+				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
+				"model0    sha256:bcd78    1.5 KB    3 days ago      \n" +
+				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+		},
+		{
+			name: "list all models ordered by size",
+			args: []string{"--size"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+				{Name: "model0", Digest: "sha256:bcd789", Size: 1536, ModifiedAt: time.Now().Add(-72 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
+				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
+				"model0    sha256:bcd78    1.5 KB    3 days ago      \n" +
+				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+			},
+		{
+			name: "list all models reversed",
+			args: []string{"--reverse"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+				{Name: "model0", Digest: "sha256:bcd789", Size: 1536, ModifiedAt: time.Now().Add(-72 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
+				"model0    sha256:bcd78    1.5 KB    3 days ago      \n" +
+				"model2    sha256:def45    2.0 KB    2 days ago      \n" +
+				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
+		},
+		{
+			name: "list all models grouped",
+			args: []string{"--grouped"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "b:model4", Digest: "sha256:cde357", Size: 3072, ModifiedAt: time.Now().Add(-12 * time.Hour)},
+				{Name: "a:model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "a:model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+				{Name: "b:model0", Digest: "sha256:bcd789", Size: 1536, ModifiedAt: time.Now().Add(-72 * time.Hour)},
+			},
+			expectedOutput: "NAME        ID              SIZE      MODIFIED     \n" +
+				"b:model4    sha256:cde35    3.1 KB    12 hours ago    \n" +
+				"b:model0    sha256:bcd78    1.5 KB    3 days ago      \n" +
+				"a:model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
+				"a:model2    sha256:def45    2.0 KB    2 days ago      \n",
+		},
+		{
+			name: "list help",
+			args: []string{"--help"},
+			expectedOutput: "Usage:\n" +
+				"  ollama list [flags]\n" +
+				"\n" +
+				"Aliases:\n" +
+				"  list, ls\n" +
+				"\n" +
+				"Flags:\n" +
+				"  -g, --grouped   Group models.\n" +
+				"  -i, --id        Sort by ID in alphabetical order.\n" +
+				"  -U, --name      Sort by name in alphabetical order.\n" +
+				"  -r, --reverse   Reverse the sort order.\n" +
+				"  -S, --size      Sort by file size, smallest first.\n" +
+				"  -t, --time      Sort by date/time, chronologically (default reversed).\n" +
+				"\n" +
+				"Environment Variables:\n" +
+				"      OLLAMA_HOST                IP Address for the ollama server (default 127.0.0.1:11434)\n",
+		},
+		{
 			name:          "server error",
 			args:          []string{},
 			expectedError: "server error",
@@ -992,20 +1080,47 @@ func TestListHandler(t *testing.T) {
 
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
 
-			cmd := &cobra.Command{}
+			cmd := func() *cobra.Command {
+				cli := NewCLI()
+				listCmd, _, err := cli.Find([]string{"list"})
+				if err != nil || listCmd == nil {
+					return nil
+				}
+				return listCmd
+			}()
+			if cmd == nil {
+				t.Fatal("list command not found - did cmd package change?")
+			}
+			isHelp := slices.Equal(tt.args, []string{"--help"})
+			var args []string
+			if !isHelp {
+				if err := cmd.ParseFlags(tt.args); err != nil {
+					t.Fatal(err)
+				}
+				args = cmd.Flags().Args()
+			}
 			cmd.SetContext(t.Context())
 
-			// Capture stdout
-			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
-			os.Stdout = w
+			var output []byte
+			var err error
+			if isHelp {
+				var buf bytes.Buffer
+				cmd.SetOut(&buf)
+				err = cmd.Usage()
+				output = buf.Bytes()
+			} else {
+				// Capture stdout
+				oldStdout := os.Stdout
+				r, w, _ := os.Pipe()
+				os.Stdout = w
 
-			err := ListHandler(cmd, tt.args)
+				err = ListHandler(cmd, args)
 
-			// Restore stdout and get output
-			w.Close()
-			os.Stdout = oldStdout
-			output, _ := io.ReadAll(r)
+				// Restore stdout and get output
+				w.Close()
+				os.Stdout = oldStdout
+				output, _ = io.ReadAll(r)
+			}
 
 			if tt.expectedError == "" {
 				if err != nil {

@@ -49,6 +49,20 @@ import (
 
 const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
 
+type ListSortOrder int
+const (
+	ListByTime ListSortOrder = iota // -t
+	ListBySize                  // -S
+	ListByName                  // -U
+	ListByID                    // -i
+)
+var listSortByTime bool
+var listSortBySize bool
+var listSortByName bool
+var listSortByID bool
+var listSortReverse bool
+var listSortGrouped bool
+
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
 	if name == "" {
@@ -702,9 +716,11 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	sorted := sortListModels(models)
+
 	var data [][]string
 
-	for _, m := range models.Models {
+	for _, m := range sorted {
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
 			var size string
 			if m.RemoteModel != "" {
@@ -729,6 +745,58 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	table.Render()
 
 	return nil
+}
+
+func sortListModels(models *api.ListResponse) []*api.ListModelResponse {
+	sorted := make([]*api.ListModelResponse, len(models.Models))
+	for i := 0; i < len(models.Models); i++ {
+		sorted[i] = &models.Models[i]
+	}
+
+	var sortFn func(i, j int) bool
+	switch {
+	case listSortByName:
+		sortFn = func(i, j int) bool {
+			return sorted[i].Name < sorted[j].Name
+		}
+	case listSortBySize:
+		sortFn = func(i, j int) bool {
+			return sorted[i].Size < sorted[j].Size
+		}
+	case listSortByID:
+		sortFn = func(i, j int) bool {
+			return sorted[i].Digest < sorted[j].Digest
+		}
+	case listSortByTime:
+		listSortReverse = !listSortReverse
+	}
+
+	if sortFn != nil {
+		sort.Slice(sorted, sortFn)
+	}
+	if listSortReverse {
+		slices.Reverse(sorted)
+	}
+	if listSortGrouped {
+		groups := make([]string, 0, len(sorted))
+		grouped := make(map[string][]*api.ListModelResponse)
+		for _, model := range sorted {
+			group := strings.Split(model.Name, ":")[0]
+			ms, ok := grouped[group]
+			if !ok {
+				groups = append(groups, group)
+			}
+			grouped[group] = append(ms, model)
+		}
+		i := 0
+		for _, group := range groups {
+			for _, model := range grouped[group] {
+				sorted[i] = model
+				i++
+			}
+		}
+	}
+	return sorted
 }
 
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
@@ -1811,6 +1879,12 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+	listCmd.Flags().BoolVarP(&listSortByTime, "time", "t", false, "Sort by date/time, chronologically (default reversed).")
+	listCmd.Flags().BoolVarP(&listSortBySize, "size", "S", false, "Sort by file size, smallest first.")
+	listCmd.Flags().BoolVarP(&listSortByName, "name", "U", false, "Sort by name in alphabetical order.")
+	listCmd.Flags().BoolVarP(&listSortByID, "id", "i", false, "Sort by ID in alphabetical order.")
+	listCmd.Flags().BoolVarP(&listSortReverse, "reverse", "r", false, "Reverse the sort order.")
+	listCmd.Flags().BoolVarP(&listSortGrouped, "grouped", "g", false, "Group models.")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
