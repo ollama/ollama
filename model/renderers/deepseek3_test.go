@@ -271,6 +271,126 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			thinkValue: &api.ThinkValue{Value: false},
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Complex question<｜Assistant｜></think>Second thought</think>Final answer<｜end▁of▁sentence｜>`,
 		},
+		{
+			name: "thinking enabled after tool call - should render thinking",
+			messages: []api.Message{
+				{Role: "user", Content: "What's the weather in Paris?"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Temperature: 22°C, Sunny"},
+				{Role: "assistant", Content: "Based on the weather data, it's sunny in Paris."},
+				{Role: "user", Content: "Now tell me about London weather too."},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>What's the weather in Paris?<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜>Based on the weather data, it's sunny in Paris.<｜end▁of▁sentence｜><｜User｜>Now tell me about London weather too.<｜Assistant｜><think>`,
+		},
+		{
+			name: "thinking disabled after tool call - should not render thinking",
+			messages: []api.Message{
+				{Role: "user", Content: "What's the weather in Paris?"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Temperature: 22°C, Sunny"},
+				{Role: "assistant", Content: "Based on the weather data, it's sunny in Paris."},
+				{Role: "user", Content: "Now tell me about London weather too."},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>What's the weather in Paris?<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜>Based on the weather data, it's sunny in Paris.<｜end▁of▁sentence｜><｜User｜>Now tell me about London weather too.<｜Assistant｜></think>`,
+		},
+		{
+			name: "thinking enabled for all assistant responses",
+			messages: []api.Message{
+				{Role: "user", Content: "First question about cats"},
+				{Role: "assistant", Content: "Cats are wonderful pets."},
+				{Role: "user", Content: "What about dogs?"},
+				{Role: "assistant", Content: "Dogs are loyal companions."},
+				{Role: "user", Content: "Final question about birds"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>First question about cats<｜Assistant｜><think>Cats are wonderful pets.<｜end▁of▁sentence｜><｜User｜>What about dogs?<｜Assistant｜><think>Dogs are loyal companions.<｜end▁of▁sentence｜><｜User｜>Final question about birds<｜Assistant｜><think>`,
+		},
+		{
+			name: "thinking disabled for all assistant responses",
+			messages: []api.Message{
+				{Role: "user", Content: "First question about cats"},
+				{Role: "assistant", Content: "Cats are wonderful pets."},
+				{Role: "user", Content: "What about dogs?"},
+				{Role: "assistant", Content: "Dogs are loyal companions."},
+				{Role: "user", Content: "Final question about birds"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>First question about cats<｜Assistant｜></think>Cats are wonderful pets.<｜end▁of▁sentence｜><｜User｜>What about dogs?<｜Assistant｜></think>Dogs are loyal companions.<｜end▁of▁sentence｜><｜User｜>Final question about birds<｜Assistant｜></think>`,
+		},
+		{
+			name: "complex conversation with tool calls and thinking enabled",
+			messages: []api.Message{
+				{Role: "user", Content: "Tell me about the weather"},
+				{Role: "assistant", Content: "I'll check the weather for you."},
+				{Role: "user", Content: "Actually, get Paris weather specifically"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Paris: 22°C, Sunny"},
+				{Role: "assistant", Content: "The weather in Paris is great!"},
+				{Role: "user", Content: "What about the forecast for tomorrow?"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Tell me about the weather<｜Assistant｜><think>I'll check the weather for you.<｜end▁of▁sentence｜><｜User｜>Actually, get Paris weather specifically<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Paris: 22°C, Sunny<｜tool▁output▁end｜>The weather in Paris is great!<｜end▁of▁sentence｜><｜User｜>What about the forecast for tomorrow?<｜Assistant｜><think>`,
+		},
+		{
+			name: "tool call without subsequent user message - no thinking",
+			messages: []api.Message{
+				{Role: "user", Content: "Get the weather"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "22°C, Sunny"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Get the weather<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>22°C, Sunny<｜tool▁output▁end｜>`,
+		},
 	}
 
 	renderer := &DeepSeekRenderer{isThinking: true}

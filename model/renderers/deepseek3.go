@@ -14,11 +14,11 @@ type DeepSeekRenderer struct {
 func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
-	// thinking is enabled: model must support it AND user must request it (true)
-	enableThinking := r.isThinking && (thinkValue != nil && thinkValue.Bool())
+	// thinking is enabled: model must support it AND user must request it
+	thinking := r.isThinking && (thinkValue != nil && thinkValue.Bool())
 
+	// extract system messages first
 	var systemPrompt strings.Builder
-	var conversationMessages []api.Message
 	isFirstSystemPrompt := true
 
 	for _, message := range messages {
@@ -29,20 +29,21 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 			} else {
 				systemPrompt.WriteString("\n\n" + message.Content)
 			}
-		} else {
-			conversationMessages = append(conversationMessages, message)
 		}
 	}
 
 	sb.WriteString("<｜begin▁of▁sentence｜>" + systemPrompt.String())
 
+	// state tracking
+	isFirst := false
+	isTool := false
 	isLastUser := false
-	isToolContext := false
 
-	for _, message := range conversationMessages {
+	for _, message := range messages {
 		switch message.Role {
 		case "user":
-			isToolContext = false
+			isTool = false
+			isFirst = false
 			isLastUser = true
 			sb.WriteString("<｜User｜>" + message.Content)
 
@@ -52,27 +53,35 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 					sb.WriteString("<｜Assistant｜></think>")
 				}
 				isLastUser = false
-				isToolContext = false
+				isFirst = false
+				isTool = false
 
 				if message.Content != "" {
 					sb.WriteString(message.Content)
 				}
 
 				sb.WriteString("<｜tool▁calls▁begin｜>")
-
 				for _, toolCall := range message.ToolCalls {
-					sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
+					if !isFirst {
+						if message.Content == "" {
+							sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
+						} else {
+							sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
+						}
+						isFirst = true
+					} else {
+						sb.WriteString("<｜tool▁call▁begin｜>" + toolCall.Function.Name + "<｜tool▁sep｜>")
+					}
 
 					argsJSON, _ := json.Marshal(toolCall.Function.Arguments)
 					sb.WriteString(string(argsJSON))
 					sb.WriteString("<｜tool▁call▁end｜>")
 				}
-
 				sb.WriteString("<｜tool▁calls▁end｜><｜end▁of▁sentence｜>")
 			} else {
 				if isLastUser {
 					sb.WriteString("<｜Assistant｜>")
-					if enableThinking {
+					if thinking {
 						sb.WriteString("<think>")
 					} else {
 						sb.WriteString("</think>")
@@ -81,9 +90,9 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 				isLastUser = false
 
 				content := message.Content
-				if isToolContext {
+				if isTool {
 					sb.WriteString(content + "<｜end▁of▁sentence｜>")
-					isToolContext = false
+					isTool = false
 				} else {
 					if strings.Contains(content, "</think>") {
 						parts := strings.SplitN(content, "</think>", 2)
@@ -97,14 +106,14 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 
 		case "tool":
 			isLastUser = false
-			isToolContext = true
+			isTool = true
 			sb.WriteString("<｜tool▁output▁begin｜>" + message.Content + "<｜tool▁output▁end｜>")
 		}
 	}
 
-	if isLastUser && !isToolContext {
+	if isLastUser && !isTool {
 		sb.WriteString("<｜Assistant｜>")
-		if enableThinking {
+		if thinking {
 			sb.WriteString("<think>")
 		} else {
 			sb.WriteString("</think>")
