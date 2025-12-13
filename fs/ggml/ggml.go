@@ -253,6 +253,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"deepseekocr",
 		"deepseek2",
 		"nomic-bert",
+		"olmo3",
 	}, kv.Architecture())
 }
 
@@ -841,6 +842,7 @@ func (f GGML) FlashAttention() bool {
 		"gemma3",
 		"gptoss", "gpt-oss",
 		"mistral3",
+		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
