@@ -6,20 +6,16 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// Olmo3ThinkVariant specifies which OLMo Think model variant to use.
 type Olmo3ThinkVariant int
 
 const (
-	// Olmo3Think7B is for allenai/Olmo-3-7B-Think (includes functions tags in system message)
-	Olmo3Think7B Olmo3ThinkVariant = iota
-	// Olmo3Think32B is for allenai/Olmo-3-32B-Think (simple system message)
-	Olmo3Think32B
-	// Olmo31Think is for allenai/Olmo-3.1-32B-Think (includes model info)
+	// Olmo3Think32B is for allenai/Olmo-3-32B-Think
+	Olmo3Think32B Olmo3ThinkVariant = iota
+	// Olmo31Think is for allenai/Olmo-3-7B-Think and allenai/Olmo-3.1-32B-Think (includes model info)
 	Olmo31Think
 )
 
 const (
-	olmo3Think7BSystemMessage  = "You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai."
 	olmo3ThinkFunctionsSuffix  = " You do not currently have access to any functions. <functions></functions>"
 	olmo3Think32BSystemMessage = "You are a helpful AI assistant."
 	olmo31ThinkSystemMessage   = "You are Olmo, a helpful AI assistant built by Ai2. Your date cutoff is December 2024, and your model weights are available at https://huggingface.co/allenai."
@@ -60,11 +56,8 @@ func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api
 		switch r.Variant {
 		case Olmo3Think32B:
 			sb.WriteString(olmo3Think32BSystemMessage)
-		case Olmo31Think:
+		default: // Olmo3Think7B, Olmo31Think use same template - diverges from HF but confirmed difference from team
 			sb.WriteString(olmo31ThinkSystemMessage)
-		default: // Olmo3Think7B
-			sb.WriteString(olmo3Think7BSystemMessage)
-			sb.WriteString(olmo3ThinkFunctionsSuffix)
 		}
 	}
 

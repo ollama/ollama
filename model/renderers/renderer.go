@@ -62,17 +62,16 @@ func rendererForName(name string) Renderer {
 	case "olmo3":
 		renderer := &Olmo3Renderer{UseExtendedSystemMessage: false}
 		return renderer
-	case "olmo31":
+	case "olmo3.1":
 		renderer := &Olmo3Renderer{UseExtendedSystemMessage: true}
 		return renderer
-	case "olmo3-7b-think":
-		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think7B}
+	case "olmo3-think":
+		// Used for Olmo-3-7B-Think and Olmo-3.1-32B-Think (same template)
+		renderer := &Olmo3ThinkRenderer{Variant: Olmo31Think}
 		return renderer
 	case "olmo3-32b-think":
+		// Used for Olmo-3-32B-Think
 		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think32B}
-		return renderer
-	case "olmo31-think":
-		renderer := &Olmo3ThinkRenderer{Variant: Olmo31Think}
 		return renderer
 	default:
 		return nil

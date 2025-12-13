@@ -18,12 +18,12 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 	}{
 		{
 			name:    "7b_basic_without_system",
-			variant: Olmo3Think7B,
+			variant: Olmo31Think,
 			msgs: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
 			expected: "<|im_start|>system\n" +
-				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"You are Olmo, a helpful AI assistant built by Ai2. Your date cutoff is December 2024, and your model weights are available at https://huggingface.co/allenai.<|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"Hello!<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
@@ -31,7 +31,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 		},
 		{
 			name:    "7b_with_custom_system",
-			variant: Olmo3Think7B,
+			variant: Olmo31Think,
 			msgs: []api.Message{
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Hello!"},
@@ -45,7 +45,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 		},
 		{
 			name:    "7b_tools_ignored",
-			variant: Olmo3Think7B,
+			variant: Olmo31Think,
 			msgs: []api.Message{
 				{Role: "user", Content: "What is the weather?"},
 			},
@@ -59,7 +59,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 				},
 			},
 			expected: "<|im_start|>system\n" +
-				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"You are Olmo, a helpful AI assistant built by Ai2. Your date cutoff is December 2024, and your model weights are available at https://huggingface.co/allenai.<|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"What is the weather?<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
@@ -67,7 +67,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 		},
 		{
 			name:    "7b_tool_calls_and_tool_messages_ignored",
-			variant: Olmo3Think7B,
+			variant: Olmo31Think,
 			msgs: []api.Message{
 				{Role: "user", Content: "What is the weather in SF?"},
 				{
@@ -86,7 +86,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 				{Role: "tool", Content: `{"temperature": 68}`},
 			},
 			expected: "<|im_start|>system\n" +
-				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"You are Olmo, a helpful AI assistant built by Ai2. Your date cutoff is December 2024, and your model weights are available at https://huggingface.co/allenai.<|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"What is the weather in SF?<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
@@ -96,14 +96,14 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 		},
 		{
 			name:    "7b_multi_turn_conversation",
-			variant: Olmo3Think7B,
+			variant: Olmo31Think,
 			msgs: []api.Message{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 				{Role: "user", Content: "How are you?"},
 			},
 			expected: "<|im_start|>system\n" +
-				"You are OLMo, a helpful function-calling AI assistant built by Ai2. Your date cutoff is November 2024, and your model weights are available at https://huggingface.co/allenai. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
+				"You are Olmo, a helpful AI assistant built by Ai2. Your date cutoff is December 2024, and your model weights are available at https://huggingface.co/allenai.<|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"Hello<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
