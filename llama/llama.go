@@ -389,8 +389,12 @@ type Batch struct {
 	embedSize int
 	// M-RoPE support: when nPosPerEmbd > 1, pos array has nPosPerEmbd positions per token
 	nPosPerEmbd int
-	// Managed position array for M-RoPE (Go-managed memory)
+	// Managed position array for M-RoPE (backed by C-allocated memory)
 	mropePos []C.llama_pos
+	// Pointer to C-allocated M-RoPE position memory (freed in Free)
+	mropePosMem unsafe.Pointer
+	// Original pos pointer from llama_batch_init (restored before llama_batch_free)
+	origPos *C.llama_pos
 }
 
 // mropePositionDimensions is the number of position dimensions for M-RoPE (temporal, y, x, unused)
@@ -420,13 +424,6 @@ func newBatchInternal(batchSize int, maxSeq int, embedSize int, nPosPerEmbd int)
 		nPosPerEmbd: nPosPerEmbd,
 	}
 
-	// For M-RoPE, we need 4x the position space
-	if nPosPerEmbd > 1 {
-		b.mropePos = make([]C.llama_pos, allocSize*nPosPerEmbd)
-		// Point the batch's pos to our managed array
-		b.c.pos = &b.mropePos[0]
-	}
-
 	// Check to see if any of the allocations in llama_batch_init() failed
 	nilPointer := (embedSize == 0 && b.c.token == nil) || (embedSize != 0 && b.c.embd == nil) ||
 		b.c.pos == nil || b.c.n_seq_id == nil || b.c.seq_id == nil || b.c.logits == nil ||
@@ -435,6 +432,20 @@ func newBatchInternal(batchSize int, maxSeq int, embedSize int, nPosPerEmbd int)
 	if nilPointer {
 		C.llama_batch_free(b.c)
 		return nil, fmt.Errorf("unable to allocate batch (batchSize=%v maxSeq=%v embedSize=%v nPosPerEmbd=%v)", batchSize, maxSeq, embedSize, nPosPerEmbd)
+	}
+
+	// For M-RoPE, we need nPosPerEmbd * allocSize positions.
+	// Allocate in C memory to avoid storing Go pointers in C structs.
+	if nPosPerEmbd > 1 {
+		b.origPos = b.c.pos
+		mem := C.malloc(C.size_t(allocSize*nPosPerEmbd) * C.size_t(unsafe.Sizeof(C.llama_pos(0))))
+		if mem == nil {
+			C.llama_batch_free(b.c)
+			return nil, fmt.Errorf("unable to allocate M-RoPE pos buffer (batchSize=%v maxSeq=%v embedSize=%v nPosPerEmbd=%v)", batchSize, maxSeq, embedSize, nPosPerEmbd)
+		}
+		b.mropePosMem = mem
+		b.mropePos = unsafe.Slice((*C.llama_pos)(mem), allocSize*nPosPerEmbd)
+		b.c.pos = (*C.llama_pos)(mem)
 	}
 
 	return &b, nil
@@ -529,7 +540,7 @@ func (b *Batch) AddImageMRoPE(embeddings []float32, pos0 int, nx int, ny int, lo
 	// where n_tokens is the FINAL number of tokens in the batch after adding these.
 	//
 	// We must set positions using n_tokens as stride, not allocSize.
-	
+
 	numImageTokens := nx * ny
 	nTokensStart := int(b.c.n_tokens)
 	nTokensFinal := nTokensStart + numImageTokens
@@ -571,19 +582,19 @@ func (b *Batch) AddImageMRoPE(embeddings []float32, pos0 int, nx int, ny int, lo
 	// Now set M-RoPE positions with correct stride (nTokensFinal)
 	// The position array layout must be:
 	//   [0..nTokensFinal-1] = temporal positions
-	//   [nTokensFinal..2*nTokensFinal-1] = y positions  
+	//   [nTokensFinal..2*nTokensFinal-1] = y positions
 	//   [2*nTokensFinal..3*nTokensFinal-1] = x positions
 	//   [3*nTokensFinal..4*nTokensFinal-1] = zeros
 	for y := 0; y < ny; y++ {
 		for x := 0; x < nx; x++ {
 			i := y*nx + x
 			tokenIdx := nTokensStart + i
-			
+
 			// Set M-RoPE positions with nTokensFinal as stride
-			b.mropePos[tokenIdx] = C.llama_pos(pos0)                              // temporal
-			b.mropePos[tokenIdx+nTokensFinal] = C.llama_pos(pos0 + y)             // row (y)
-			b.mropePos[tokenIdx+nTokensFinal*2] = C.llama_pos(pos0 + x)           // column (x)
-			b.mropePos[tokenIdx+nTokensFinal*3] = 0                               // unused
+			b.mropePos[tokenIdx] = C.llama_pos(pos0)                    // temporal
+			b.mropePos[tokenIdx+nTokensFinal] = C.llama_pos(pos0 + y)   // row (y)
+			b.mropePos[tokenIdx+nTokensFinal*2] = C.llama_pos(pos0 + x) // column (x)
+			b.mropePos[tokenIdx+nTokensFinal*3] = 0                     // unused
 		}
 	}
 }
@@ -599,6 +610,15 @@ func (b *Batch) Clear() {
 
 func (b *Batch) Free() {
 	b.batchSize = 0
+	if b.origPos != nil {
+		b.c.pos = b.origPos
+		b.origPos = nil
+	}
+	if b.mropePosMem != nil {
+		C.free(b.mropePosMem)
+		b.mropePosMem = nil
+		b.mropePos = nil
+	}
 	C.llama_batch_free(b.c)
 }
 

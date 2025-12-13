@@ -748,6 +748,8 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
 	for i, text := range input {
+		i := i
+		text := text
 		g.Go(func() error {
 			embedding, _, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
@@ -764,6 +766,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	if err := g.Wait(); err != nil {
+		var httpErr *llm.HTTPStatusError
+		if errors.As(err, &httpErr) {
+			c.AbortWithStatusJSON(httpErr.StatusCode, gin.H{"error": strings.TrimSpace(httpErr.Error())})
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
@@ -821,6 +828,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
+		var httpErr *llm.HTTPStatusError
+		if errors.As(err, &httpErr) {
+			c.AbortWithStatusJSON(httpErr.StatusCode, gin.H{"error": strings.TrimSpace(httpErr.Error())})
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
@@ -2385,4 +2397,3 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 	}
 	return msgs
 }
-

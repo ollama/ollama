@@ -1680,6 +1680,21 @@ type EmbeddingRequest struct {
 	Content string `json:"content"`
 }
 
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Body != "" {
+		return e.Body
+	}
+	return http.StatusText(e.StatusCode)
+}
+
 type EmbeddingResponse struct {
 	Embedding       []float32 `json:"embedding"`
 	PromptEvalCount int       `json:"prompt_eval_count"`
@@ -1729,8 +1744,8 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int
 	}
 
 	if resp.StatusCode >= 400 {
-		log.Printf("llm embedding error: %s", body)
-		return nil, 0, fmt.Errorf("%s", body)
+		msg := strings.TrimSpace(string(body))
+		return nil, 0, &HTTPStatusError{StatusCode: resp.StatusCode, Body: msg}
 	}
 
 	var e EmbeddingResponse

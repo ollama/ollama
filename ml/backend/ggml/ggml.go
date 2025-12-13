@@ -850,7 +850,7 @@ nextDevice:
 // LoadSecondary loads tensor data from a secondary GGUF file into the backend.
 // This is used for split models where the vision encoder is in a separate GGUF file.
 // If tensors don't exist in the backend, they are created and allocated.
-func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(float32)) error {
+func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(float32)) (retErr error) {
 	if !b.allocMemory {
 		return errors.New("cannot load secondary model without memory allocation")
 	}
@@ -887,6 +887,34 @@ func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(
 		return errors.New("failed to create GGML context for secondary tensors")
 	}
 
+	var allocatedBuf C.ggml_backend_buffer_t
+	createdNames := make([]string, 0)
+	cleanupSecondary := func() {
+		if secondaryCtx == nil {
+			return
+		}
+
+		for _, name := range createdNames {
+			delete(b.tensors, name)
+		}
+
+		if allocatedBuf != nil {
+			if buf, ok := b.weightBuffers[secondaryCtx]; ok {
+				C.ggml_backend_buffer_free(buf)
+				delete(b.weightBuffers, secondaryCtx)
+			}
+			allocatedBuf = nil
+		}
+
+		C.ggml_free(secondaryCtx)
+		secondaryCtx = nil
+	}
+	defer func() {
+		if retErr != nil {
+			cleanupSecondary()
+		}
+	}()
+
 	// Track new tensors to allocate
 	var newTensors []*C.struct_ggml_tensor
 	tensorMap := make(map[string]*C.struct_ggml_tensor)
@@ -901,17 +929,18 @@ func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(
 
 		// Create new tensor
 		cname := C.CString(t.Name)
-		defer C.free(unsafe.Pointer(cname))
 
 		kind := t.Kind
 		shape := patchEmbedShape(t.Name, t.Shape)
 
 		tt := C.ggml_new_tensor(secondaryCtx, kind, C.int(len(shape)), &shape[0])
 		C.ggml_set_name(tt, cname)
+		C.free(unsafe.Pointer(cname))
 
 		newTensors = append(newTensors, tt)
 		tensorMap[t.Name] = tt
 		b.tensors[t.Name] = tt
+		createdNames = append(createdNames, t.Name)
 
 		logutil.Trace("created secondary tensor", "name", t.Name, "shape", t.Shape, "dtype", t.Kind)
 	}
@@ -920,13 +949,17 @@ func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(
 	if len(newTensors) > 0 {
 		buf := C.ggml_backend_alloc_ctx_tensors_from_buft(secondaryCtx, bufferType)
 		if buf == nil {
-			C.ggml_free(secondaryCtx)
 			return errors.New("failed to allocate buffer for secondary tensors")
 		}
 		slog.Debug("allocated buffer for secondary tensors", "count", len(newTensors), "buffer_type", C.GoString(C.ggml_backend_buft_name(bufferType)))
 
 		// Store the buffer for cleanup (add to weightBuffers)
 		b.weightBuffers[secondaryCtx] = buf
+		allocatedBuf = buf
+	} else {
+		// No tensors created in this context; free it immediately.
+		C.ggml_free(secondaryCtx)
+		secondaryCtx = nil
 	}
 
 	// Load tensor data
@@ -938,10 +971,12 @@ func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(
 
 	loadedCount := 0
 	for _, t := range meta.Tensors().Items() {
+		t := t
 		tt := tensorMap[t.Name]
 		if tt == nil {
 			continue
 		}
+		tensor := tt
 
 		loadedCount++
 		g.Go(func() error {
@@ -967,7 +1002,7 @@ func (b *Backend) LoadSecondary(ctx context.Context, path string, progress func(
 					return err
 				}
 
-				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
+				C.ggml_backend_tensor_set(tensor, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
 				s += uint64(n)
 
 				if progress != nil {
