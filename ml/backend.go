@@ -19,6 +19,16 @@ type Backend interface {
 
 	Load(ctx context.Context, progress func(float32)) error
 
+	// LoadSecondary loads tensor data from a secondary GGUF file into existing tensors.
+	// This is used for split models (e.g., separate vision encoder GGUF).
+	// Tensors in the secondary file must match names of tensors already allocated in the backend.
+	LoadSecondary(ctx context.Context, path string, progress func(float32)) error
+
+	// RegisterTensorAlias registers alternative names for tensors with a given prefix.
+	// For example, RegisterTensorAlias("v.patch_embed", "v.patch_embd") makes all
+	// tensors with v.patch_embd prefix also accessible via v.patch_embed prefix.
+	RegisterTensorAlias(aliasPrefix, sourcePrefix string)
+
 	// BackendMemory returns the memory allocations that were made for this model
 	BackendMemory() BackendMemory
 
@@ -75,6 +85,10 @@ type BackendParams struct {
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention FlashAttentionType
+
+	// SecondaryPaths is a list of additional GGUF files to load (e.g., vision encoder)
+	// These tensors are loaded during backend creation so they're registered with the scheduler.
+	SecondaryPaths []string
 }
 
 var backends = make(map[string]func(string, BackendParams) (Backend, error))

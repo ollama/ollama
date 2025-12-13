@@ -14,6 +14,9 @@ import (
 )
 
 func TestLLMServerFitGPU(t *testing.T) {
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+	t.Setenv("OLLAMA_SCHED_SPREAD", "")
+
 	minMemory := 457 * format.MebiByte
 
 	tests := []struct {

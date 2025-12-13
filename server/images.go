@@ -60,6 +60,7 @@ type Model struct {
 	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
+	VisionPath     string // Path to separate vision encoder GGUF for split models
 	System         string
 	License        []string
 	Digest         string
@@ -118,8 +119,8 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityInsert)
 	}
 
-	// Check for vision capability in projector-based models
-	if len(m.ProjectorPaths) > 0 {
+	// Check for vision capability in projector-based models or split vision models
+	if len(m.ProjectorPaths) > 0 || m.VisionPath != "" {
 		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
@@ -201,6 +202,14 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "model",
 			Args: projector,
+		})
+	}
+
+	// Vision model path for split GGUF models
+	if m.VisionPath != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "vision",
+			Args: m.VisionPath,
 		})
 	}
 
@@ -411,6 +420,9 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 			model.License = append(model.License, string(bts))
+		case "application/vnd.ollama.image.vision":
+			// Split vision model GGUF file
+			model.VisionPath = filename
 		}
 	}
 

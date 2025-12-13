@@ -98,6 +98,15 @@ func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*In
 	var numPast int32
 	var err error
 
+	// Check if prompt contains any multimodal embeddings (images)
+	hasMultimodal := false
+	for _, inp := range prompt {
+		if inp.Multimodal != nil || inp.MultimodalHash != 0 {
+			hasMultimodal = true
+			break
+		}
+	}
+
 	// In single-user scenarios, the longest cache slot works fine for getting good input
 	// cache hit rates and it keeps the footprint of the cache small, which improves throughput.
 	// For multiple users, the "best" cache slot produces better input cache hit rates
@@ -112,6 +121,16 @@ func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*In
 	}
 
 	if !cachePrompt {
+		numPast = 0
+	}
+
+	// Clear KV cache when prompt contains multimodal embeddings to prevent
+	// stale data from being reused between different models or requests
+	if hasMultimodal && numPast > 0 {
+		slog.Debug("clearing KV cache for prompt with multimodal embeddings", "id", slot.Id, "numPast", numPast)
+		if c.cache != nil {
+			c.cache.Remove(slot.Id, 0, math.MaxInt32)
+		}
 		numPast = 0
 	}
 

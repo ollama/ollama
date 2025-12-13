@@ -87,6 +87,11 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 		numPast = 0
 	}
 
+	// Note: We no longer clear KV cache for embeddings here.
+	// The image embedding cache (ImageContext) handles caching separately,
+	// and clearing KV cache was causing performance issues without benefit
+	// since M-RoPE positions are computed correctly.
+
 	slot.InUse = true
 	slot.lastUsed = time.Now()
 

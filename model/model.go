@@ -119,6 +119,24 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	return m, nil
 }
 
+// RepopulateField re-populates a struct field with tensors from the backend.
+// This is used for split models where tensors are loaded dynamically via LoadSecondary.
+// The fieldName should match a struct field with a gguf tag (e.g., "VisionModel" for `gguf:"v"`).
+func RepopulateField(base Base, target interface{}, tags ...string) {
+	v := reflect.ValueOf(target)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	var tagList []Tag
+	for _, t := range tags {
+		tagList = append(tagList, parseTag(t))
+	}
+
+	result := populateFields(base, v, tagList...)
+	v.Set(result)
+}
+
 func NewTextProcessor(s string) (TextProcessor, error) {
 	r, err := os.Open(s)
 	if err != nil {
