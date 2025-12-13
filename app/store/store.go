@@ -109,6 +109,7 @@ type Chat struct {
 	Title        string          `json:"title"`
 	CreatedAt    time.Time       `json:"created_at"`
 	BrowserState json.RawMessage `json:"browser_state,omitempty" ts_type:"BrowserStateData"`
+	Draft        string          `json:"draft,omitempty"`
 }
 
 // NewChat creates a new Chat with the ID, with CreatedAt timestamp initialized
@@ -449,6 +450,22 @@ func (s *Store) AppendMessage(chatID string, message Message) error {
 	}
 
 	return s.db.appendMessage(chatID, message)
+}
+
+func (s *Store) UpdateChatDraft(chatID string, draft string) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.updateChatDraft(chatID, draft)
+}
+
+func (s *Store) ClearAllDrafts() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.clearAllDrafts()
 }
 
 func (s *Store) UpdateChatBrowserState(chatID string, state json.RawMessage) error {

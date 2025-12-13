@@ -182,6 +182,11 @@ func osRun(_ func(), hasCompletedFirstRun, startHidden bool) {
 }
 
 func quit() {
+	if wv.Store != nil {
+		if err := wv.Store.ClearAllDrafts(); err != nil {
+			slog.Warn("failed to clear drafts on quit", "error", err)
+		}
+	}
 	C.quit()
 }
 

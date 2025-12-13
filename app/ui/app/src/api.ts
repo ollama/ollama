@@ -299,6 +299,20 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
   }
 }
 
+export async function updateChatDraft(chatId: string, draft: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}/draft`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ draft }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to update draft");
+  }
+}
+
 export async function deleteChat(chatId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
     method: "DELETE",
