@@ -24,7 +24,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				"You are a helpful function-calling AI assistant. You do not currently have access to any functions. <functions></functions><|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"Hello!<|im_end|>\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "with system message no tools",
@@ -36,7 +36,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				"You are a helpful assistant.<|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"Hello!<|im_end|>\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "with system message and tools",
@@ -64,7 +64,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				`You are a helpful assistant.<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
 				"<|im_start|>user\n" +
 				"What is the weather?<|im_end|>\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "default system with tools - includes function instruction",
@@ -93,7 +93,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				`<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
 				"<|im_start|>user\n" +
 				"What is the weather?<|im_end|>\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "assistant with tool calls - function call syntax",
@@ -141,7 +141,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				`Let me check the weather.<function_calls>get_weather(location="San Francisco")</function_calls><|im_end|>` + "\n" +
 				"<|im_start|>environment\n" +
 				`{"temperature": 68}<|im_end|>` + "\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "multi-turn conversation",
@@ -159,7 +159,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				"Hi there!<|im_end|>\n" +
 				"<|im_start|>user\n" +
 				"How are you?<|im_end|>\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "parallel tool calls - newline separated",
@@ -214,7 +214,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				`{"temperature": 68}<|im_end|>` + "\n" +
 				"<|im_start|>environment\n" +
 				`{"temperature": 55}<|im_end|>` + "\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "tool call with multiple arguments",
@@ -259,7 +259,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				"Book a flight<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
 				`<function_calls>book_flight(from="SFO", to="NYC")</function_calls><|im_end|>` + "\n" +
-				"<|im_start|>assistant\n\n",
+				"<|im_start|>assistant\n",
 		},
 		{
 			name: "assistant prefill - no generation prompt",
