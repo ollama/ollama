@@ -1458,6 +1458,83 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
+// corsResponseWriter wraps http.ResponseWriter to ensure CORS headers are present
+// on all responses, including redirects that bypass middleware
+type corsResponseWriter struct {
+	http.ResponseWriter
+	request       *http.Request
+	allowedOrigins []string
+	headerWritten bool
+}
+
+// ensureCORSHeaders adds CORS headers if they haven't been set yet
+func (w *corsResponseWriter) ensureCORSHeaders() {
+	if w.headerWritten {
+		return
+	}
+	w.headerWritten = true
+
+	// Check if CORS headers already exist (set by gin-contrib/cors middleware)
+	if w.Header().Get("Access-Control-Allow-Origin") != "" {
+		return
+	}
+
+	// Get the request origin
+	origin := w.request.Header.Get("Origin")
+	if origin == "" {
+		return
+	}
+
+	// Check if origin is allowed
+	for _, allowed := range w.allowedOrigins {
+		if matchOrigin(origin, allowed) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+			w.Header().Set("Vary", "Origin")
+			return
+		}
+	}
+}
+
+// matchOrigin checks if an origin matches an allowed pattern
+// Supports wildcard patterns like "http://localhost:*"
+func matchOrigin(origin, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if !strings.Contains(pattern, "*") {
+		return origin == pattern
+	}
+	// Handle wildcard patterns like "http://localhost:*"
+	parts := strings.SplitN(pattern, "*", 2)
+	if len(parts) != 2 {
+		return origin == pattern
+	}
+	return strings.HasPrefix(origin, parts[0]) && strings.HasSuffix(origin, parts[1])
+}
+
+func (w *corsResponseWriter) WriteHeader(code int) {
+	w.ensureCORSHeaders()
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *corsResponseWriter) Write(b []byte) (int, error) {
+	w.ensureCORSHeaders()
+	return w.ResponseWriter.Write(b)
+}
+
+// corsWrapper wraps an http.Handler to ensure CORS headers are present on all responses
+func corsWrapper(h http.Handler, allowedOrigins []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cw := &corsResponseWriter{
+			ResponseWriter: w,
+			request:        r,
+			allowedOrigins: allowedOrigins,
+		}
+		h.ServeHTTP(cw, r)
+	})
+}
+
 func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
@@ -1534,6 +1611,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
 
+	// Get allowed origins for CORS wrapper
+	allowedOrigins := corsConfig.AllowOrigins
+
 	if rc != nil {
 		// wrap old with new
 		rs := &registry.Local{
@@ -1543,10 +1623,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 			Prune: PruneLayers,
 		}
-		return rs, nil
+		// Wrap with CORS handler to ensure CORS headers on redirects
+		return corsWrapper(rs, allowedOrigins), nil
 	}
 
-	return r, nil
+	// Wrap with CORS handler to ensure CORS headers on redirects
+	return corsWrapper(r, allowedOrigins), nil
 }
 
 func Serve(ln net.Listener) error {
