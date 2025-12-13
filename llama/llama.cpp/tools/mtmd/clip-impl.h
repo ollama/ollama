@@ -1,3 +1,5 @@
+#pragma once
+
 #include "ggml.h"
 #include "gguf.h"
 #include "clip.h"
@@ -12,6 +14,8 @@
 #include <memory>
 
 // Internal header for clip.cpp
+
+#define MTMD_INTERNAL_HEADER
 
 #define KEY_FTYPE               "general.file_type"
 #define KEY_NAME                "general.name"
@@ -131,6 +135,10 @@
 
 // align x to upper multiple of n
 #define CLIP_ALIGN(x, n) ((((x) + (n) - 1) / (n)) * (n))
+
+// forward declaration
+// TODO: improve this later
+struct clip_ctx;
 
 enum projector_type {
     PROJECTOR_TYPE_MLP,

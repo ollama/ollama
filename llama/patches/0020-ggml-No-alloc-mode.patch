@@ -219,7 +219,7 @@ index 312ca873c..4092dfe8a 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index c4529f5d9..8b0fb5d42 100644
+index 9fcb2f9fd..e800ee8f6 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -37,6 +37,41 @@
@@ -264,7 +264,7 @@ index c4529f5d9..8b0fb5d42 100644
  #define STRINGIZE_IMPL(...) #__VA_ARGS__
  #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
  
-@@ -938,6 +973,9 @@ struct ggml_cuda_pool {
+@@ -941,6 +976,9 @@ struct ggml_cuda_pool {
  
      virtual void * alloc(size_t size, size_t * actual_size) = 0;
      virtual void free(void * ptr, size_t size) = 0;
@@ -274,7 +274,7 @@ index c4529f5d9..8b0fb5d42 100644
  };
  
  template<typename T>
-@@ -1229,11 +1267,15 @@ struct ggml_backend_cuda_context {
+@@ -1232,11 +1270,15 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
  
@@ -292,7 +292,7 @@ index c4529f5d9..8b0fb5d42 100644
          }
          return *pools[device][curr_stream_no];
      }
-@@ -1241,6 +1283,22 @@ struct ggml_backend_cuda_context {
+@@ -1244,6 +1286,22 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -316,7 +316,7 @@ index c4529f5d9..8b0fb5d42 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 17062697b..ede1d089a 100644
+index 25548629d..eeaae3fe4 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -365,6 +365,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {

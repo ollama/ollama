@@ -31,10 +31,10 @@ index d06fa42e6..0f5712e21 100644
      return "<__media__>";
  }
 diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
-index b3df24c29..a6a1af3b8 100644
+index 9f7e861e9..72cec1937 100644
 --- a/tools/mtmd/mtmd.h
 +++ b/tools/mtmd/mtmd.h
-@@ -75,6 +75,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
+@@ -80,6 +80,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
  typedef struct mtmd_input_chunks mtmd_input_chunks;
  typedef struct mtmd_input_text   mtmd_input_text;
  
