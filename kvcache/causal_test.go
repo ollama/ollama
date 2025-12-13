@@ -696,7 +696,7 @@ func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
 
-func (c *testContext) Reserve() {}
+func (c *testContext) Reserve() error { return nil }
 
 func (c *testContext) MaxGraphNodes() int {
 	return 10

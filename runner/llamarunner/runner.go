@@ -935,13 +935,13 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 	case llm.LoadOperationClose:
 		// No-op for us
-		if err := json.NewEncoder(w).Encode(&llm.LoadResponse{}); err != nil {
+		if err := json.NewEncoder(w).Encode(&llm.LoadResponse{Request: req}); err != nil {
 			http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 		}
 		return
 	}
 
-	resp := llm.LoadResponse{Success: true}
+	resp := llm.LoadResponse{Success: true, Request: req}
 	if err := json.NewEncoder(w).Encode(&resp); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 		return

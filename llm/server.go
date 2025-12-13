@@ -188,73 +188,26 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	if len(projectors) > 0 && llamaModel != nil {
 		loadRequest.ProjectorPath = projectors[0]
 	}
-	// Determine if the user has forced FA on or off
-	faUserSet := false
-	if envconfig.FlashAttention(true) == envconfig.FlashAttention(false) {
-		faUserSet = true
-	}
 
-	fa := envconfig.FlashAttention(f.FlashAttention())
+	// Determine if the user has forced FA on or off
+	if envconfig.FlashAttention(true) != envconfig.FlashAttention(false) {
+		loadRequest.FlashAttention = ml.FlashAttentionAuto
+	} else if envconfig.FlashAttention(false) {
+		loadRequest.FlashAttention = ml.FlashAttentionEnabled
+	}
 
 	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
-	// that can handle it.
-	if fa && !ml.FlashAttentionSupported(gpus) {
+	// that can handle it. There are still holes in GGML's hardware detection for flash attention.
+	if loadRequest.FlashAttention != ml.FlashAttentionDisabled && !ml.FlashAttentionSupported(gpus) {
 		slog.Warn("flash attention enabled but not supported by gpu")
-		fa = false
-	}
-
-	if fa && !f.SupportsFlashAttention() {
-		slog.Warn("flash attention enabled but not supported by model")
-		fa = false
+		loadRequest.FlashAttention = ml.FlashAttentionDisabled
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
-
-	if textProcessor == nil {
-		flashAttention := ml.FlashAttentionAuto
-		if faUserSet {
-			if fa {
-				flashAttention = ml.FlashAttentionEnabled
-			} else {
-				flashAttention = ml.FlashAttentionDisabled
-			}
-		}
-
-		if kvct != "" {
-			if f.KVCacheTypeIsQuantized(kvct) {
-				if flashAttention != ml.FlashAttentionEnabled {
-					slog.Warn("OLLAMA_FLASH_ATTENTION must be enabled to use a quantized OLLAMA_KV_CACHE_TYPE", "type", kvct)
-					loadRequest.KvCacheType = ""
-				} else if f.SupportsKVCacheType(kvct) {
-					loadRequest.KvCacheType = kvct
-				} else {
-					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
-				}
-			} else {
-				if f.SupportsKVCacheType(kvct) {
-					loadRequest.KvCacheType = kvct
-				} else {
-					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
-				}
-			}
-		}
-		loadRequest.FlashAttention = flashAttention
+	if f.SupportsKVCacheType(kvct) {
+		loadRequest.KvCacheType = kvct
 	} else {
-		// For Ollama engine, use our SupportsFlashAttention logic
-		if fa {
-			slog.Info("enabling flash attention")
-			loadRequest.FlashAttention = ml.FlashAttentionEnabled
-
-			// Flash Attention also supports kv cache quantization
-			// Enable if the requested and kv cache type is supported by the model
-			if f.SupportsKVCacheType(kvct) {
-				loadRequest.KvCacheType = kvct
-			} else {
-				slog.Warn("kv cache type not supported by model", "type", kvct)
-			}
-		} else if kvct != "" && kvct != "f16" {
-			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
-		}
+		slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
@@ -487,6 +440,7 @@ type LoadRequest struct {
 
 type LoadResponse struct {
 	Success bool
+	Request LoadRequest // The original request with fields updated that the runner had to modify
 	Memory  ml.BackendMemory
 }
 
@@ -509,6 +463,11 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
 		s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
 		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
+	}
+
+	if s.loadRequest.FlashAttention != ml.FlashAttentionEnabled && ggml.KVCacheTypeIsQuantized(s.loadRequest.KvCacheType) {
+		slog.Warn("OLLAMA_FLASH_ATTENTION must be enabled to use a quantized OLLAMA_KV_CACHE_TYPE", "type", s.loadRequest.KvCacheType)
+		s.loadRequest.KvCacheType = ""
 	}
 
 	// Check if embedding model and adjust batch size accordingly
@@ -769,6 +728,7 @@ nextOperation:
 
 			resp.Memory.Log(slog.LevelDebug)
 			slog.Debug("memory", "success", resp.Success, "required", resp.Memory)
+			s.loadRequest = resp.Request // Incorporate any adjustments from the runner to avoid needing to do them again
 
 			pastAllocations[gpuLayers.Hash()] = struct{}{}
 			s.mem = &resp.Memory
@@ -822,6 +782,7 @@ nextOperation:
 
 						resp.Memory.Log(slog.LevelDebug)
 						slog.Debug("memory", "success", resp.Success, "required", resp.Memory)
+						s.loadRequest = resp.Request
 
 						if resp.Success {
 							verifyGPULayers, err := s.createLayout(systemInfo, gpus, &resp.Memory, requireFull, backoff)

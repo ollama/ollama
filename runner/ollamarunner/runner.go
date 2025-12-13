@@ -1160,22 +1160,12 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 	}
 
 	ctx.SetBatchSize(batchSize)
-	ctx.Forward(t).Reserve()
-
-	return nil
+	return ctx.Forward(t).Reserve()
 }
 
 // allocModel pre-allocates the maximum needed memory for a model
 // based on the given parameters
-func (s *Server) allocModel(
-	mpath string,
-	params ml.BackendParams,
-	loraPath []string,
-	parallel int,
-	kvCacheType string,
-	kvSize int,
-	multiUserCache bool,
-) (panicErr error) {
+func (s *Server) allocModel(mpath string, req *llm.LoadRequest) (panicErr error) {
 	// Convert memory allocation panics to errors
 	defer func() {
 		if r := recover(); r != nil {
@@ -1192,43 +1182,73 @@ func (s *Server) allocModel(
 		}
 	}()
 
-	var err error
-	s.model, err = model.New(mpath, params)
-	if err != nil {
-		return err
-	}
-
-	// TODO(jessegross): LoRA loading
-	if len(loraPath) > 0 {
-		return errors.New("loras are not yet implemented")
-	}
-
-	if s.model.Config().Cache == nil {
-		if parallel > 1 {
-			parallel = 1
-			slog.Warn("model does not support caching, disabling parallel processing")
+reload:
+	for range 2 {
+		params := ml.BackendParams{
+			AllocMemory:    req.Operation != llm.LoadOperationFit,
+			NumThreads:     req.NumThreads,
+			GPULayers:      req.GPULayers,
+			FlashAttention: req.FlashAttention,
 		}
-		if s.batchSize < kvSize {
-			s.batchSize = kvSize
-			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
+
+		var err error
+		s.model, err = model.New(mpath, params)
+		if err != nil {
+			return err
 		}
-	}
 
-	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
-	if err != nil {
-		return err
-	}
+		// TODO(jessegross): LoRA loading
+		if len(req.LoraPath) > 0 {
+			return errors.New("loras are not yet implemented")
+		}
 
-	s.parallel = parallel
-	s.seqs = make([]*Sequence, s.parallel)
-	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
+		if params.FlashAttention == ml.FlashAttentionDisabled && ggml.KVCacheTypeIsQuantized(req.KvCacheType) {
+			slog.Warn("quantized kv cache requested but flash attention disabled", "type", req.KvCacheType)
+			req.KvCacheType = ""
+		}
 
-	err = s.reserveWorstCaseGraph(true)
-	if err != nil {
+		if s.model.Config().Cache == nil {
+			if req.Parallel > 1 {
+				req.Parallel = 1
+				slog.Warn("model does not support caching, disabling parallel processing")
+			}
+			if req.BatchSize < req.KvSize {
+				req.BatchSize = req.KvSize
+				slog.Warn("model does not support caching, setting batch size to context length", "batch_size", req.KvSize)
+			}
+		}
+
+		s.cache, err = NewInputCache(s.model, req.KvCacheType, int32(req.KvSize), req.Parallel, req.BatchSize, req.MultiUserCache)
+		if err != nil {
+			return err
+		}
+
+		s.batchSize = req.BatchSize
+		s.parallel = req.Parallel
+		s.seqs = make([]*Sequence, s.parallel)
+		s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
+
+		for _, prompt := range []bool{true, false} {
+			if err := s.reserveWorstCaseGraph(prompt); err != nil {
+				if req.FlashAttention != ml.FlashAttentionDisabled {
+					slog.Warn("flash attention enabled but not supported by model")
+					req.FlashAttention = ml.FlashAttentionDisabled
+					s.closeModel()
+					continue reload
+				}
+
+				return err
+			}
+		}
+
+		if req.FlashAttention == ml.FlashAttentionAuto {
+			req.FlashAttention = ml.FlashAttentionEnabled
+		}
+
 		return nil
 	}
 
-	return s.reserveWorstCaseGraph(false)
+	return errors.New("unable to allocate model")
 }
 
 // closeModel frees all memory associated with a model
@@ -1243,7 +1263,15 @@ func (s *Server) closeModel() {
 
 // loadModel loads the weights for a model. The memory must already
 // have been allocated with allocModel
-func (s *Server) loadModel() {
+func (s *Server) loadModel(req llm.LoadRequest) {
+	if req.FlashAttention != ml.FlashAttentionDisabled {
+		slog.Info("enabling flash attention")
+	}
+
+	if ggml.KVCacheTypeIsQuantized(req.KvCacheType) {
+		slog.Info("enabling kv cache quantization", "type", req.KvCacheType)
+	}
+
 	err := s.model.Backend().Load(context.TODO(),
 		func(progress float32) {
 			s.progress = progress
@@ -1279,7 +1307,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 	if req.Operation == llm.LoadOperationClose {
 		s.closeModel()
-		if err := json.NewEncoder(w).Encode(&llm.LoadResponse{}); err != nil {
+		if err := json.NewEncoder(w).Encode(&llm.LoadResponse{Request: req}); err != nil {
 			http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 		}
 		return
@@ -1288,27 +1316,16 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 	s.lastLoad.Operation = req.Operation
 	loadModel := s.model == nil || !reflect.DeepEqual(req, s.lastLoad)
 
-	s.lastLoad = req
-
 	if loadModel {
 		s.closeModel()
 
-		params := ml.BackendParams{
-			AllocMemory:    req.Operation != llm.LoadOperationFit,
-			NumThreads:     req.NumThreads,
-			GPULayers:      req.GPULayers,
-			FlashAttention: req.FlashAttention,
-		}
-
-		s.batchSize = req.BatchSize
-
-		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		err := s.allocModel(s.modelPath, &req)
 		if err != nil {
 			s.closeModel()
 
 			var noMem ml.ErrNoMem
 			if errors.As(err, &noMem) {
-				resp := llm.LoadResponse{Success: false, Memory: noMem.BackendMemory}
+				resp := llm.LoadResponse{Success: false, Request: req, Memory: noMem.BackendMemory}
 				if err := json.NewEncoder(w).Encode(&resp); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 				}
@@ -1321,6 +1338,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.lastLoad = req
 	mem := s.model.Backend().BackendMemory()
 
 	switch req.Operation {
@@ -1332,10 +1350,10 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 	case llm.LoadOperationCommit:
 		s.status = llm.ServerStatusLoadingModel
-		go s.loadModel()
+		go s.loadModel(req)
 	}
 
-	resp := llm.LoadResponse{Success: true, Memory: mem}
+	resp := llm.LoadResponse{Success: true, Request: req, Memory: mem}
 	if err := json.NewEncoder(w).Encode(&resp); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 		return

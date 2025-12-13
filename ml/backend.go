@@ -118,7 +118,7 @@ type Context interface {
 	// graph, simply preallocates memory. Typically called with a
 	// worst case graph to ensure all resources are available for
 	// for future inference.
-	Reserve()
+	Reserve() error
 
 	MaxGraphNodes() int
 	Close()
