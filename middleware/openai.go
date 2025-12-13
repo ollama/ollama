@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -273,6 +274,35 @@ func (w *EmbedWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func strictBindJson(c *gin.Context, obj any) error {
+	if c.Request.Body == nil {
+		return io.EOF
+	}
+
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(obj); err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("malformed JSON at position %d", syntaxError.Offset)
+		case errors.As(err, &unmarshalTypeError):
+			return fmt.Errorf("invalid value for field %q", unmarshalTypeError.Field)
+		case strings.HasPrefix(err.Error(), "json: unknown field"):
+			field := strings.TrimPrefix(err.Error(), "json: unknown field ")
+			return fmt.Errorf("unknown field %s in request", field)
+		case errors.Is(err, io.EOF):
+			return io.EOF
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		w := &ListWriter{
@@ -309,7 +339,7 @@ func RetrieveMiddleware() gin.HandlerFunc {
 func CompletionsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req openai.CompletionRequest
-		err := c.ShouldBindJSON(&req)
+		err := strictBindJson(c, &req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
@@ -344,7 +374,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 func EmbeddingsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req openai.EmbedRequest
-		err := c.ShouldBindJSON(&req)
+		err := strictBindJson(c, &req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
@@ -395,7 +425,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 func ChatMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req openai.ChatCompletionRequest
-		err := c.ShouldBindJSON(&req)
+		err := strictBindJson(c, &req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
