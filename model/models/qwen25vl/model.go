@@ -65,8 +65,7 @@ func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *
 	}
 
 	// Calculate tensor dimensions
-	patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
-		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
+	patchDim := m.numChannels * m.temporalPatchSize * m.patchSize * m.patchSize
 	numPatches := grid.Temporal * grid.Height * grid.Width
 
 	pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
