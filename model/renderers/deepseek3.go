@@ -81,7 +81,9 @@ func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thin
 			} else {
 				if isLastUser {
 					sb.WriteString("<｜Assistant｜>")
-					if thinking {
+					// message["prefix"] is defined and message["prefix"] and thinking
+					// message.Thinking != "" represents message["prefix"] being defined
+					if message.Thinking != "" && thinking {
 						sb.WriteString("<think>")
 					} else {
 						sb.WriteString("</think>")

@@ -320,7 +320,7 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>What's the weather in Paris?<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜>Based on the weather data, it's sunny in Paris.<｜end▁of▁sentence｜><｜User｜>Now tell me about London weather too.<｜Assistant｜></think>`,
 		},
 		{
-			name: "thinking enabled for all assistant responses",
+			name: "thinking enabled but messages without thinking content",
 			messages: []api.Message{
 				{Role: "user", Content: "First question about cats"},
 				{Role: "assistant", Content: "Cats are wonderful pets."},
@@ -329,7 +329,7 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 				{Role: "user", Content: "Final question about birds"},
 			},
 			thinkValue: &api.ThinkValue{Value: true},
-			expected:   `<｜begin▁of▁sentence｜><｜User｜>First question about cats<｜Assistant｜><think>Cats are wonderful pets.<｜end▁of▁sentence｜><｜User｜>What about dogs?<｜Assistant｜><think>Dogs are loyal companions.<｜end▁of▁sentence｜><｜User｜>Final question about birds<｜Assistant｜><think>`,
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>First question about cats<｜Assistant｜></think>Cats are wonderful pets.<｜end▁of▁sentence｜><｜User｜>What about dogs?<｜Assistant｜></think>Dogs are loyal companions.<｜end▁of▁sentence｜><｜User｜>Final question about birds<｜Assistant｜><think>`,
 		},
 		{
 			name: "thinking disabled for all assistant responses",
@@ -367,7 +367,7 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 				{Role: "user", Content: "What about the forecast for tomorrow?"},
 			},
 			thinkValue: &api.ThinkValue{Value: true},
-			expected:   `<｜begin▁of▁sentence｜><｜User｜>Tell me about the weather<｜Assistant｜><think>I'll check the weather for you.<｜end▁of▁sentence｜><｜User｜>Actually, get Paris weather specifically<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Paris: 22°C, Sunny<｜tool▁output▁end｜>The weather in Paris is great!<｜end▁of▁sentence｜><｜User｜>What about the forecast for tomorrow?<｜Assistant｜><think>`,
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Tell me about the weather<｜Assistant｜></think>I'll check the weather for you.<｜end▁of▁sentence｜><｜User｜>Actually, get Paris weather specifically<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Paris: 22°C, Sunny<｜tool▁output▁end｜>The weather in Paris is great!<｜end▁of▁sentence｜><｜User｜>What about the forecast for tomorrow?<｜Assistant｜><think>`,
 		},
 		{
 			name: "tool call without subsequent user message - no thinking",
@@ -390,6 +390,90 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			},
 			thinkValue: &api.ThinkValue{Value: true},
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Get the weather<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>22°C, Sunny<｜tool▁output▁end｜>`,
+		},
+		{
+			name: "messages with thinking content, no thinking in render",
+			messages: []api.Message{
+				{Role: "user", Content: "Solve this math problem: 15 * 23"},
+				{
+					Role:     "assistant",
+					Content:  "The answer is 345.",
+					Thinking: "Let me calculate 15 * 23. I can break this down: 15 * 20 = 300, and 15 * 3 = 45, so 300 + 45 = 345.",
+				},
+				{Role: "user", Content: "What about 12 * 34?"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Solve this math problem: 15 * 23<｜Assistant｜></think>The answer is 345.<｜end▁of▁sentence｜><｜User｜>What about 12 * 34?<｜Assistant｜></think>`,
+		},
+		{
+			name: "conversation with mix of thinking and no thinking",
+			messages: []api.Message{
+				{Role: "user", Content: "Explain quantum physics"},
+				{
+					Role:     "assistant",
+					Content:  "Quantum physics is the study of matter and energy at the smallest scales.",
+					Thinking: "This is a complex topic. I should start with basic concepts and avoid overwhelming technical details.",
+				},
+				{Role: "user", Content: "What about photons?"},
+				{
+					Role:    "assistant",
+					Content: "Photons are particles of light with no mass.",
+				},
+				{Role: "user", Content: "How do they interact with matter?"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Explain quantum physics<｜Assistant｜><think>Quantum physics is the study of matter and energy at the smallest scales.<｜end▁of▁sentence｜><｜User｜>What about photons?<｜Assistant｜></think>Photons are particles of light with no mass.<｜end▁of▁sentence｜><｜User｜>How do they interact with matter?<｜Assistant｜><think>`,
+		},
+		{
+			name: "tool call with thinking content in response",
+			messages: []api.Message{
+				{Role: "user", Content: "What's the weather in Tokyo and New York?"},
+				{
+					Role:     "assistant",
+					Content:  "I'll check the weather for both cities.",
+					Thinking: "I need to call the weather API for two different cities. Let me make parallel calls.",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Tokyo",
+								},
+							},
+						},
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "New York",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Tokyo: 18°C, Cloudy"},
+				{Role: "tool", Content: "New York: 22°C, Sunny"},
+				{
+					Role:     "assistant",
+					Content:  "Based on the weather data: Tokyo is cloudy at 18°C, while New York is sunny at 22°C.",
+					Thinking: "The data shows a nice contrast between the two cities. Tokyo is cooler and overcast while NYC has better weather.",
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>What's the weather in Tokyo and New York?<｜Assistant｜></think>I'll check the weather for both cities.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Tokyo"}<｜tool▁call▁end｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"New York"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Tokyo: 18°C, Cloudy<｜tool▁output▁end｜><｜tool▁output▁begin｜>New York: 22°C, Sunny<｜tool▁output▁end｜>Based on the weather data: Tokyo is cloudy at 18°C, while New York is sunny at 22°C.<｜end▁of▁sentence｜>`,
+		},
+		{
+			name: "empty thinking field",
+			messages: []api.Message{
+				{Role: "user", Content: "Simple question"},
+				{
+					Role:     "assistant",
+					Content:  "Simple answer.",
+					Thinking: "", // Empty thinking content
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Simple question<｜Assistant｜></think>Simple answer.<｜end▁of▁sentence｜>`,
 		},
 	}
 
