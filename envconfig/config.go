@@ -332,3 +332,9 @@ func Values() map[string]string {
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
 }
+
+// WhisperSubprocess returns true if whisper should run as a subprocess
+// Can be configured via OLLAMA_WHISPER_SUBPROCESS environment variable
+func WhisperSubprocess() bool {
+	return Bool("OLLAMA_WHISPER_SUBPROCESS")()
+}

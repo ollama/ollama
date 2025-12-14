@@ -44,12 +44,14 @@ import (
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
+	"github.com/ollama/ollama/stt"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/ollama/ollama/whisper"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -1526,6 +1528,16 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
+	// Speech-to-Text (Whisper)
+	r.POST("/api/transcribe", s.TranscribeHandler)
+	r.POST("/api/translate", s.TranslateHandler)
+	r.POST("/api/detect-language", s.DetectLanguageHandler)
+	r.GET("/api/languages", s.SupportedLanguagesHandler)
+
+	// OpenAI Audio API compatibility
+	r.POST("/v1/audio/transcriptions", s.TranscribeHandler)
+	r.POST("/v1/audio/translations", s.TranslateHandler)
+
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", middleware.CompletionsMiddleware(), s.GenerateHandler)
@@ -2352,6 +2364,411 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+// TranscribeHandler handles POST /api/transcribe requests
+func (s *Server) TranscribeHandler(c *gin.Context) {
+	var req api.TranscribeRequest
+
+	contentType := c.GetHeader("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		if err := parseTranscribeMultipart(c, &req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if req.Model == "" {
+		req.Model = "whisper:base"
+	}
+
+	if len(req.Audio) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "audio data is required"})
+		return
+	}
+
+	whisperServer, modelPath, err := s.getWhisperServer(c.Request.Context(), req.Model)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to load model: %v", err)})
+		return
+	}
+	defer s.sched.ReleaseWhisperRunner(modelPath)
+
+	converter, err := stt.NewAudioConverter()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("audio converter error: %v", err)})
+		return
+	}
+
+	samples, err := converter.ToFloat32Samples(c.Request.Context(), req.Audio, detectAudioFormat(req.Audio))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("audio conversion failed: %v", err)})
+		return
+	}
+
+	transcribeReq := buildTranscribeRequest(samples, req)
+
+	if req.IsStreaming() {
+		s.streamTranscribe(c, whisperServer, transcribeReq, req)
+	} else {
+		s.transcribeSync(c, whisperServer, transcribeReq, req)
+	}
+}
+
+// TranslateHandler handles POST /api/translate requests (audio translation)
+func (s *Server) TranslateHandler(c *gin.Context) {
+	var req api.TranscribeRequest
+
+	contentType := c.GetHeader("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		if err := parseTranscribeMultipart(c, &req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	req.Translate = true
+
+	if req.Model == "" {
+		req.Model = "whisper:base"
+	}
+
+	if len(req.Audio) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "audio data is required"})
+		return
+	}
+
+	whisperServer, modelPath, err := s.getWhisperServer(c.Request.Context(), req.Model)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to load model: %v", err)})
+		return
+	}
+	defer s.sched.ReleaseWhisperRunner(modelPath)
+
+	if !whisperServer.IsMultilingual() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "translation requires a multilingual model"})
+		return
+	}
+
+	converter, err := stt.NewAudioConverter()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("audio converter error: %v", err)})
+		return
+	}
+
+	samples, err := converter.ToFloat32Samples(c.Request.Context(), req.Audio, detectAudioFormat(req.Audio))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("audio conversion failed: %v", err)})
+		return
+	}
+
+	transcribeReq := buildTranscribeRequest(samples, req)
+	transcribeReq.Translate = true
+
+	s.transcribeSync(c, whisperServer, transcribeReq, req)
+}
+
+// DetectLanguageHandler handles POST /api/detect-language requests
+func (s *Server) DetectLanguageHandler(c *gin.Context) {
+	var req struct {
+		Model string `json:"model"`
+		Audio []byte `json:"audio"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Model == "" {
+		req.Model = "whisper:base"
+	}
+
+	if len(req.Audio) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "audio data is required"})
+		return
+	}
+
+	whisperServer, modelPath, err := s.getWhisperServer(c.Request.Context(), req.Model)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to load model: %v", err)})
+		return
+	}
+	defer s.sched.ReleaseWhisperRunner(modelPath)
+
+	converter, err := stt.NewAudioConverter()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("audio converter error: %v", err)})
+		return
+	}
+
+	samples, err := converter.ToFloat32Samples(c.Request.Context(), req.Audio, detectAudioFormat(req.Audio))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("audio conversion failed: %v", err)})
+		return
+	}
+
+	lang, prob, err := whisperServer.DetectLanguage(c.Request.Context(), samples)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("language detection failed: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"language": lang, "probability": prob})
+}
+
+// SupportedLanguagesHandler returns list of supported languages
+func (s *Server) SupportedLanguagesHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"languages": api.SupportedLanguages()})
+}
+
+func (s *Server) getWhisperServer(ctx context.Context, modelName string) (stt.WhisperServer, string, error) {
+	var modelPath string
+
+	if strings.HasSuffix(modelName, ".bin") || strings.HasSuffix(modelName, ".ggml") {
+		if _, err := os.Stat(modelName); err == nil {
+			modelPath = modelName
+		} else {
+			return nil, "", fmt.Errorf("model file not found: %s", modelName)
+		}
+	} else {
+		model, err := GetModel(modelName)
+		if err != nil {
+			return nil, "", fmt.Errorf("model not found: %s - %v", modelName, err)
+		}
+		modelPath = model.ModelPath
+		if modelPath == "" {
+			return nil, "", fmt.Errorf("model path not found for: %s", modelName)
+		}
+	}
+
+	server, err := s.sched.GetWhisperRunner(ctx, modelPath, 0)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return server, modelPath, nil
+}
+
+func (s *Server) transcribeSync(c *gin.Context, server stt.WhisperServer, req stt.TranscribeRequest, apiReq api.TranscribeRequest) {
+	startTime := time.Now()
+
+	resp, err := server.Transcribe(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transcription failed: %v", err)})
+		return
+	}
+
+	response := buildTranscribeResponse(apiReq.Model, resp, apiReq, time.Since(startTime))
+
+	switch apiReq.GetResponseFormat() {
+	case "text":
+		c.String(http.StatusOK, response.Text)
+	case "srt":
+		c.Header("Content-Type", "text/plain; charset=utf-8")
+		c.String(http.StatusOK, segmentsToSRT(resp.Segments))
+	case "vtt":
+		c.Header("Content-Type", "text/vtt; charset=utf-8")
+		c.String(http.StatusOK, segmentsToVTT(resp.Segments))
+	case "verbose_json":
+		c.JSON(http.StatusOK, response)
+	default:
+		c.JSON(http.StatusOK, gin.H{"text": response.Text, "language": response.Language, "duration": response.Duration})
+	}
+}
+
+func (s *Server) streamTranscribe(c *gin.Context, server stt.WhisperServer, req stt.TranscribeRequest, apiReq api.TranscribeRequest) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
+	req.NewSegmentFunc = func(segment whisper.Segment) {
+		streamResp := api.TranscribeStreamResponse{
+			Segment: &api.TranscribeSegment{
+				ID:    0,
+				Start: segment.Start.Seconds(),
+				End:   segment.End.Seconds(),
+				Text:  segment.Text,
+			},
+			Done: false,
+		}
+		data, _ := json.Marshal(streamResp)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	resp, err := server.Transcribe(c.Request.Context(), req)
+	if err != nil {
+		errorResp := api.TranscribeStreamResponse{Error: err.Error(), Done: true}
+		data, _ := json.Marshal(errorResp)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+		flusher.Flush()
+		return
+	}
+
+	finalResp := api.TranscribeStreamResponse{PartialText: combineSegmentTexts(resp.Segments), Done: true}
+	data, _ := json.Marshal(finalResp)
+	fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+	flusher.Flush()
+}
+
+func buildTranscribeRequest(samples []float32, req api.TranscribeRequest) stt.TranscribeRequest {
+	r := stt.TranscribeRequest{
+		Samples:       samples,
+		Language:      req.Language,
+		Translate:     req.Translate,
+		InitialPrompt: req.Prompt,
+		Temperature:   req.Temperature,
+		NoTimestamps:  req.ResponseFormat == "text",
+	}
+	if req.TimestampGranularity == "word" {
+		r.TokenTimestamps = true
+	}
+
+	// Copy advanced options from API request
+	if req.Options != nil {
+		r.Options = make(map[string]any)
+		for k, v := range req.Options {
+			r.Options[k] = v
+		}
+		// Set defaults for suppress options
+		if _, ok := r.Options[stt.OptSuppressBlank]; !ok {
+			r.Options[stt.OptSuppressBlank] = true
+		}
+		if _, ok := r.Options[stt.OptSuppressNonSpeech]; !ok {
+			r.Options[stt.OptSuppressNonSpeech] = true
+		}
+	} else {
+		r.Options = map[string]any{
+			stt.OptSuppressBlank:     true,
+			stt.OptSuppressNonSpeech: true,
+		}
+	}
+	return r
+}
+
+func buildTranscribeResponse(model string, resp *stt.TranscribeResponse, req api.TranscribeRequest, totalDuration time.Duration) api.TranscribeResponse {
+	text := combineSegmentTexts(resp.Segments)
+	apiResp := api.TranscribeResponse{
+		Model:              model,
+		Text:               text,
+		Language:           resp.Language,
+		TotalDuration:      totalDuration,
+		ProcessingDuration: resp.Duration,
+		Done:               true,
+	}
+	if req.Translate {
+		apiResp.Task = "translate"
+	} else {
+		apiResp.Task = "transcribe"
+	}
+	if req.GetResponseFormat() == "verbose_json" || req.TimestampGranularity == "segment" {
+		apiResp.Segments = make([]api.TranscribeSegment, len(resp.Segments))
+		for i, seg := range resp.Segments {
+			apiResp.Segments[i] = api.TranscribeSegment{ID: i, Start: seg.Start.Seconds(), End: seg.End.Seconds(), Text: seg.Text}
+		}
+	}
+	return apiResp
+}
+
+func combineSegmentTexts(segments []whisper.Segment) string {
+	var builder strings.Builder
+	for _, seg := range segments {
+		builder.WriteString(strings.TrimSpace(seg.Text))
+		builder.WriteString(" ")
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func segmentsToSRT(segments []whisper.Segment) string {
+	var builder strings.Builder
+	for i, seg := range segments {
+		fmt.Fprintf(&builder, "%d\n%s --> %s\n%s\n\n", i+1, formatSRTTime(seg.Start), formatSRTTime(seg.End), strings.TrimSpace(seg.Text))
+	}
+	return builder.String()
+}
+
+func segmentsToVTT(segments []whisper.Segment) string {
+	var builder strings.Builder
+	builder.WriteString("WEBVTT\n\n")
+	for _, seg := range segments {
+		fmt.Fprintf(&builder, "%s --> %s\n%s\n\n", formatVTTTime(seg.Start), formatVTTTime(seg.End), strings.TrimSpace(seg.Text))
+	}
+	return builder.String()
+}
+
+func formatSRTTime(d time.Duration) string {
+	h, m, s, ms := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", h, m, s, ms)
+}
+
+func formatVTTTime(d time.Duration) string {
+	h, m, s, ms := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000
+	return fmt.Sprintf("%02d:%02d:%02d.%03d", h, m, s, ms)
+}
+
+func parseTranscribeMultipart(c *gin.Context, req *api.TranscribeRequest) error {
+	req.Model = c.PostForm("model")
+	req.Language = c.PostForm("language")
+	req.ResponseFormat = c.PostForm("response_format")
+	req.Prompt = c.PostForm("prompt")
+	req.TimestampGranularity = c.PostForm("timestamp_granularity")
+	if c.PostForm("translate") == "true" {
+		req.Translate = true
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		return fmt.Errorf("audio file required: %w", err)
+	}
+	f, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	audioData, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	req.Audio = audioData
+	return nil
+}
+
+func detectAudioFormat(data []byte) string {
+	if len(data) < 12 {
+		return ""
+	}
+	if bytes.HasPrefix(data, []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WAVE")) {
+		return "wav"
+	}
+	if bytes.HasPrefix(data, []byte("ID3")) || (len(data) > 1 && data[0] == 0xFF && (data[1]&0xE0) == 0xE0) {
+		return "mp3"
+	}
+	if bytes.HasPrefix(data, []byte("fLaC")) {
+		return "flac"
+	}
+	if bytes.HasPrefix(data, []byte("OggS")) {
+		return "ogg"
+	}
+	if len(data) > 11 && bytes.Equal(data[4:8], []byte("ftyp")) {
+		return "m4a"
+	}
+	return ""
+}
+
 func handleScheduleError(c *gin.Context, name string, err error) {
 	switch {
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
@@ -2394,4 +2811,3 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 	}
 	return msgs
 }
-

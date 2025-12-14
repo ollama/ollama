@@ -20,7 +20,9 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/stt"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/whisper"
 )
 
 type LlmRequest struct {
@@ -31,6 +33,28 @@ type LlmRequest struct {
 	successCh       chan *runnerRef
 	errCh           chan error
 	schedAttempts   uint
+}
+
+// WhisperRequest represents a request for a Whisper STT model
+type WhisperRequest struct {
+	ctx             context.Context //nolint:containedctx
+	modelPath       string
+	sessionDuration time.Duration
+	successCh       chan *whisperRunnerRef
+	errCh           chan error
+}
+
+// whisperRunnerRef holds a reference to a loaded Whisper model
+type whisperRunnerRef struct {
+	server          stt.WhisperServer
+	modelPath       string
+	refCount        uint
+	refMu           sync.Mutex
+	expiresAt       time.Time
+	expireTimer     *time.Timer
+	sessionDuration time.Duration
+	loadedAt        time.Time
+	memorySize      uint64
 }
 
 type Scheduler struct {
@@ -54,6 +78,12 @@ type Scheduler struct {
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
+
+	// Whisper STT model management
+	whisperMu           sync.Mutex
+	loadedWhisper       map[string]*whisperRunnerRef
+	whisperExpiredCh    chan *whisperRunnerRef
+	defaultWhisperKeepAlive time.Duration
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -75,6 +105,10 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		getGpuFn:        discover.GPUDevices,
 		getSystemInfoFn: discover.GetSystemInfo,
 		waitForRecovery: 5 * time.Second,
+		// Whisper initialization
+		loadedWhisper:           make(map[string]*whisperRunnerRef),
+		whisperExpiredCh:        make(chan *whisperRunnerRef, maxQueue),
+		defaultWhisperKeepAlive: envconfig.KeepAlive(),
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -864,4 +898,209 @@ func (s *Scheduler) expireRunner(model *Model) {
 		}
 		runner.refMu.Unlock()
 	}
+}
+
+// ============================================================================
+// Whisper STT Model Management
+// ============================================================================
+
+// whisperSubprocessMode checks if subprocess mode is enabled via environment
+func whisperSubprocessMode() bool {
+	return envconfig.WhisperSubprocess()
+}
+
+// GetWhisperRunner returns a Whisper model runner, loading it if necessary
+// Supports two modes: direct (default) and subprocess (via OLLAMA_WHISPER_SUBPROCESS=1)
+func (s *Scheduler) GetWhisperRunner(ctx context.Context, modelPath string, keepAlive time.Duration) (stt.WhisperServer, error) {
+	if keepAlive == 0 {
+		keepAlive = s.defaultWhisperKeepAlive
+	}
+
+	s.whisperMu.Lock()
+	runner, exists := s.loadedWhisper[modelPath]
+	s.whisperMu.Unlock()
+
+	if exists {
+		// Model already loaded, increment ref count and reset expiry
+		runner.refMu.Lock()
+		runner.refCount++
+		if runner.expireTimer != nil {
+			runner.expireTimer.Stop()
+			runner.expireTimer = nil
+		}
+		runner.sessionDuration = keepAlive
+		runner.refMu.Unlock()
+
+		slog.Debug("reusing loaded whisper model", "model", modelPath, "refCount", runner.refCount)
+		return runner.server, nil
+	}
+
+	// Detect available GPUs for Whisper
+	gpus := s.getGpuFn(ctx, nil)
+	useGPU := len(gpus) > 0
+
+	var server stt.WhisperServer
+	var err error
+
+	if whisperSubprocessMode() {
+		// Subprocess mode: launch whisperrunner as separate process
+		slog.Info("loading whisper model (subprocess mode)", "model", modelPath)
+
+		config := stt.SubprocessConfig{
+			ModelPath: modelPath,
+			UseGPU:    useGPU,
+			FlashAttn: useGPU,
+			GPUDevice: 0,
+		}
+
+		client, err := stt.LaunchSubprocess(ctx, config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to launch whisper subprocess: %w", err)
+		}
+		server = client
+
+		slog.Info("whisper subprocess started",
+			"model", modelPath,
+			"gpu", useGPU,
+		)
+	} else {
+		// Direct mode: load model in-process
+		slog.Info("loading whisper model (direct mode)", "model", modelPath)
+
+		params := whisper.DefaultContextParams()
+		params.UseGPU = useGPU
+		if useGPU && len(gpus) > 0 {
+			params.GPUDevice = 0
+			params.FlashAttn = true
+			slog.Info("whisper using GPU acceleration", "gpu_count", len(gpus), "device", params.GPUDevice)
+		} else {
+			slog.Info("whisper using CPU (no GPU available)")
+		}
+
+		server, err = stt.NewWhisperServer(modelPath, params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load whisper model: %w", err)
+		}
+
+		slog.Info("whisper model loaded",
+			"model", modelPath,
+			"multilingual", server.IsMultilingual(),
+			"gpu", useGPU,
+		)
+	}
+
+	// Estimate memory size based on model
+	modelSize := stt.ModelSizeFromName(modelPath)
+	memorySize := stt.EstimateVRAM(modelSize)
+
+	runner = &whisperRunnerRef{
+		server:          server,
+		modelPath:       modelPath,
+		refCount:        1,
+		loadedAt:        time.Now(),
+		sessionDuration: keepAlive,
+		memorySize:      memorySize,
+	}
+
+	s.whisperMu.Lock()
+	s.loadedWhisper[modelPath] = runner
+	s.whisperMu.Unlock()
+
+	slog.Info("whisper runner ready",
+		"model", modelPath,
+		"subprocess", whisperSubprocessMode(),
+		"estimated_vram", format.HumanBytes2(memorySize),
+	)
+
+	return server, nil
+}
+
+// ReleaseWhisperRunner decrements the reference count and schedules expiry
+func (s *Scheduler) ReleaseWhisperRunner(modelPath string) {
+	s.whisperMu.Lock()
+	runner, exists := s.loadedWhisper[modelPath]
+	s.whisperMu.Unlock()
+
+	if !exists {
+		return
+	}
+
+	runner.refMu.Lock()
+	defer runner.refMu.Unlock()
+
+	if runner.refCount > 0 {
+		runner.refCount--
+	}
+
+	// If no more references and keep-alive > 0, schedule expiry
+	if runner.refCount == 0 && runner.sessionDuration > 0 {
+		runner.expiresAt = time.Now().Add(runner.sessionDuration)
+		runner.expireTimer = time.AfterFunc(runner.sessionDuration, func() {
+			s.expireWhisperRunner(modelPath)
+		})
+		slog.Debug("whisper model scheduled for expiry", "model", modelPath, "expiresAt", runner.expiresAt)
+	} else if runner.refCount == 0 && runner.sessionDuration == 0 {
+		// Immediate expiry
+		go s.expireWhisperRunner(modelPath)
+	}
+}
+
+// expireWhisperRunner unloads a Whisper model if it has no active references
+func (s *Scheduler) expireWhisperRunner(modelPath string) {
+	s.whisperMu.Lock()
+	runner, exists := s.loadedWhisper[modelPath]
+	if !exists {
+		s.whisperMu.Unlock()
+		return
+	}
+
+	runner.refMu.Lock()
+	if runner.refCount > 0 {
+		// Model is in use again, don't expire
+		runner.refMu.Unlock()
+		s.whisperMu.Unlock()
+		return
+	}
+	runner.refMu.Unlock()
+
+	// Remove from loaded map
+	delete(s.loadedWhisper, modelPath)
+	s.whisperMu.Unlock()
+
+	// Close the server
+	slog.Info("unloading whisper model", "model", modelPath, "loadedFor", time.Since(runner.loadedAt))
+	runner.server.Close()
+}
+
+// UnloadAllWhisperRunners unloads all loaded Whisper models
+func (s *Scheduler) UnloadAllWhisperRunners() {
+	s.whisperMu.Lock()
+	defer s.whisperMu.Unlock()
+
+	for modelPath, runner := range s.loadedWhisper {
+		if runner.expireTimer != nil {
+			runner.expireTimer.Stop()
+		}
+		slog.Debug("shutting down whisper runner", "model", modelPath)
+		runner.server.Close()
+	}
+	s.loadedWhisper = make(map[string]*whisperRunnerRef)
+}
+
+// ListLoadedWhisperModels returns information about loaded Whisper models
+func (s *Scheduler) ListLoadedWhisperModels() []api.ProcessModelResponse {
+	s.whisperMu.Lock()
+	defer s.whisperMu.Unlock()
+
+	models := make([]api.ProcessModelResponse, 0, len(s.loadedWhisper))
+	for modelPath, runner := range s.loadedWhisper {
+		runner.refMu.Lock()
+		models = append(models, api.ProcessModelResponse{
+			Name:      modelPath,
+			Model:     modelPath,
+			ExpiresAt: runner.expiresAt,
+		})
+		runner.refMu.Unlock()
+	}
+	return models
 }

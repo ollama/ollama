@@ -550,3 +550,190 @@ func TestToolFunctionParameters_String(t *testing.T) {
 		})
 	}
 }
+
+func TestTranscribeRequestJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		expected TranscribeRequest
+	}{
+		{
+			name: "basic request",
+			json: `{"model": "whisper:base", "language": "en"}`,
+			expected: TranscribeRequest{
+				Model:    "whisper:base",
+				Language: "en",
+			},
+		},
+		{
+			name: "with translate",
+			json: `{"model": "whisper:base", "translate": true}`,
+			expected: TranscribeRequest{
+				Model:     "whisper:base",
+				Translate: true,
+			},
+		},
+		{
+			name: "with response format",
+			json: `{"model": "whisper:base", "response_format": "srt"}`,
+			expected: TranscribeRequest{
+				Model:          "whisper:base",
+				ResponseFormat: "srt",
+			},
+		},
+		{
+			name: "with temperature",
+			json: `{"model": "whisper:base", "temperature": 0.5}`,
+			expected: TranscribeRequest{
+				Model:       "whisper:base",
+				Temperature: 0.5,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var req TranscribeRequest
+			err := json.Unmarshal([]byte(test.json), &req)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected.Model, req.Model)
+			assert.Equal(t, test.expected.Language, req.Language)
+			assert.Equal(t, test.expected.Translate, req.Translate)
+			assert.Equal(t, test.expected.ResponseFormat, req.ResponseFormat)
+			assert.Equal(t, test.expected.Temperature, req.Temperature)
+		})
+	}
+}
+
+func TestTranscribeRequestIsStreaming(t *testing.T) {
+	tests := []struct {
+		name     string
+		stream   *bool
+		expected bool
+	}{
+		{
+			name:     "nil stream",
+			stream:   nil,
+			expected: false,
+		},
+		{
+			name:     "stream true",
+			stream:   func() *bool { b := true; return &b }(),
+			expected: true,
+		},
+		{
+			name:     "stream false",
+			stream:   func() *bool { b := false; return &b }(),
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := TranscribeRequest{Stream: test.stream}
+			assert.Equal(t, test.expected, req.IsStreaming())
+		})
+	}
+}
+
+func TestTranscribeRequestGetResponseFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		format   string
+		expected string
+	}{
+		{
+			name:     "empty defaults to json",
+			format:   "",
+			expected: "json",
+		},
+		{
+			name:     "text format",
+			format:   "text",
+			expected: "text",
+		},
+		{
+			name:     "srt format",
+			format:   "srt",
+			expected: "srt",
+		},
+		{
+			name:     "vtt format",
+			format:   "vtt",
+			expected: "vtt",
+		},
+		{
+			name:     "verbose_json format",
+			format:   "verbose_json",
+			expected: "verbose_json",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := TranscribeRequest{ResponseFormat: test.format}
+			assert.Equal(t, test.expected, req.GetResponseFormat())
+		})
+	}
+}
+
+func TestTranscribeResponseJSON(t *testing.T) {
+	resp := TranscribeResponse{
+		Model:    "whisper:base",
+		Text:     "Hello world",
+		Language: "en",
+		Duration: 5.5,
+		Task:     "transcribe",
+		Done:     true,
+	}
+
+	data, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var decoded TranscribeResponse
+	err = json.Unmarshal(data, &decoded)
+	require.NoError(t, err)
+
+	assert.Equal(t, resp.Model, decoded.Model)
+	assert.Equal(t, resp.Text, decoded.Text)
+	assert.Equal(t, resp.Language, decoded.Language)
+	assert.Equal(t, resp.Duration, decoded.Duration)
+	assert.Equal(t, resp.Task, decoded.Task)
+	assert.Equal(t, resp.Done, decoded.Done)
+}
+
+func TestTranscribeSegmentJSON(t *testing.T) {
+	seg := TranscribeSegment{
+		ID:    0,
+		Start: 0.0,
+		End:   2.5,
+		Text:  "Hello",
+	}
+
+	data, err := json.Marshal(seg)
+	require.NoError(t, err)
+
+	var decoded TranscribeSegment
+	err = json.Unmarshal(data, &decoded)
+	require.NoError(t, err)
+
+	assert.Equal(t, seg.ID, decoded.ID)
+	assert.Equal(t, seg.Start, decoded.Start)
+	assert.Equal(t, seg.End, decoded.End)
+	assert.Equal(t, seg.Text, decoded.Text)
+}
+
+func TestSupportedLanguages(t *testing.T) {
+	langs := SupportedLanguages()
+
+	// Should not be empty
+	assert.NotEmpty(t, langs)
+
+	// Should contain common languages
+	assert.Contains(t, langs, "en")
+	assert.Contains(t, langs, "fr")
+	assert.Contains(t, langs, "es")
+	assert.Contains(t, langs, "de")
+	assert.Contains(t, langs, "zh")
+	assert.Contains(t, langs, "ja")
+}

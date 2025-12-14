@@ -466,3 +466,71 @@ func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 	}
 	return &resp, nil
 }
+
+// TranscribeResponseFunc is a function that [Client.Transcribe] invokes for streaming
+// transcription responses. If this function returns an error, transcription stops.
+type TranscribeResponseFunc func(TranscribeStreamResponse) error
+
+// Transcribe transcribes audio to text using a Whisper model.
+// For non-streaming requests, it returns the complete transcription.
+func (c *Client) Transcribe(ctx context.Context, req *TranscribeRequest) (*TranscribeResponse, error) {
+	// Ensure streaming is disabled for this method
+	if req.Stream != nil && *req.Stream {
+		return nil, errors.New("use TranscribeStream for streaming requests")
+	}
+
+	var resp TranscribeResponse
+	if err := c.do(ctx, http.MethodPost, "/api/transcribe", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// TranscribeStream transcribes audio with streaming responses.
+// fn is called for each segment as it's transcribed.
+func (c *Client) TranscribeStream(ctx context.Context, req *TranscribeRequest, fn TranscribeResponseFunc) error {
+	// Enable streaming
+	stream := true
+	req.Stream = &stream
+
+	return c.stream(ctx, http.MethodPost, "/api/transcribe", req, func(bts []byte) error {
+		var resp TranscribeStreamResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+		return fn(resp)
+	})
+}
+
+// Translate translates audio to English text using a Whisper model.
+func (c *Client) Translate(ctx context.Context, req *TranscribeRequest) (*TranscribeResponse, error) {
+	// Force translate mode
+	req.Translate = true
+
+	var resp TranscribeResponse
+	if err := c.do(ctx, http.MethodPost, "/api/translate", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DetectLanguage detects the spoken language in audio.
+func (c *Client) DetectLanguage(ctx context.Context, model string, audio []byte) (string, float64, error) {
+	reqBody := struct {
+		Model string `json:"model"`
+		Audio []byte `json:"audio"`
+	}{
+		Model: model,
+		Audio: audio,
+	}
+
+	var resp struct {
+		Language    string  `json:"language"`
+		Probability float64 `json:"probability"`
+	}
+
+	if err := c.do(ctx, http.MethodPost, "/api/detect-language", reqBody, &resp); err != nil {
+		return "", 0, err
+	}
+	return resp.Language, resp.Probability, nil
+}

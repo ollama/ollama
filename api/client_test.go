@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -318,5 +319,209 @@ func TestClientDo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClientTranscribe(t *testing.T) {
+	tests := []struct {
+		name       string
+		response   TranscribeResponse
+		statusCode int
+		wantErr    bool
+	}{
+		{
+			name: "successful transcription",
+			response: TranscribeResponse{
+				Model:    "whisper:base",
+				Text:     "Hello world",
+				Language: "en",
+				Duration: 2.5,
+				Task:     "transcribe",
+				Done:     true,
+			},
+			statusCode: http.StatusOK,
+			wantErr:    false,
+		},
+		{
+			name:       "server error",
+			response:   TranscribeResponse{},
+			statusCode: http.StatusInternalServerError,
+			wantErr:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("expected POST, got %s", r.Method)
+				}
+				if r.URL.Path != "/api/transcribe" {
+					t.Errorf("expected /api/transcribe, got %s", r.URL.Path)
+				}
+
+				w.WriteHeader(tc.statusCode)
+				if tc.statusCode == http.StatusOK {
+					json.NewEncoder(w).Encode(tc.response)
+				} else {
+					json.NewEncoder(w).Encode(map[string]string{"error": "server error"})
+				}
+			}))
+			defer ts.Close()
+
+			u, _ := url.Parse(ts.URL)
+			client := NewClient(u, http.DefaultClient)
+
+			req := &TranscribeRequest{
+				Model: "whisper:base",
+				Audio: []byte("fake audio data"),
+			}
+
+			resp, err := client.Transcribe(context.Background(), req)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if resp.Text != tc.response.Text {
+				t.Errorf("text mismatch: got %q, want %q", resp.Text, tc.response.Text)
+			}
+			if resp.Language != tc.response.Language {
+				t.Errorf("language mismatch: got %q, want %q", resp.Language, tc.response.Language)
+			}
+		})
+	}
+}
+
+func TestClientTranslate(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/translate" {
+			t.Errorf("expected /api/translate, got %s", r.URL.Path)
+		}
+
+		// Verify translate flag is set
+		var req TranscribeRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if !req.Translate {
+			t.Error("expected translate=true")
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(TranscribeResponse{
+			Model:    "whisper:base",
+			Text:     "Hello world",
+			Language: "fr",
+			Task:     "translate",
+			Done:     true,
+		})
+	}))
+	defer ts.Close()
+
+	u, _ := url.Parse(ts.URL)
+	client := NewClient(u, http.DefaultClient)
+
+	req := &TranscribeRequest{
+		Model: "whisper:base",
+		Audio: []byte("fake audio data"),
+	}
+
+	resp, err := client.Translate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resp.Task != "translate" {
+		t.Errorf("task mismatch: got %q, want %q", resp.Task, "translate")
+	}
+}
+
+func TestClientTranscribeStream(t *testing.T) {
+	segments := []TranscribeStreamResponse{
+		{Segment: &TranscribeSegment{ID: 0, Start: 0.0, End: 2.5, Text: "Hello"}, Done: false},
+		{Segment: &TranscribeSegment{ID: 1, Start: 2.5, End: 5.0, Text: "world"}, Done: false},
+		{PartialText: "Hello world", Done: true},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/transcribe" {
+			t.Errorf("expected /api/transcribe, got %s", r.URL.Path)
+		}
+
+		// Verify stream flag is set
+		var req TranscribeRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.Stream == nil || !*req.Stream {
+			t.Error("expected stream=true")
+		}
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+
+		for _, seg := range segments {
+			data, _ := json.Marshal(seg)
+			w.Write(data)
+			w.Write([]byte("\n"))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	defer ts.Close()
+
+	u, _ := url.Parse(ts.URL)
+	client := NewClient(u, http.DefaultClient)
+
+	req := &TranscribeRequest{
+		Model: "whisper:base",
+		Audio: []byte("fake audio data"),
+	}
+
+	var received []TranscribeStreamResponse
+	err := client.TranscribeStream(context.Background(), req, func(resp TranscribeStreamResponse) error {
+		received = append(received, resp)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(received) != len(segments) {
+		t.Errorf("received %d segments, want %d", len(received), len(segments))
+	}
+
+	// Verify last segment is done
+	if len(received) > 0 && !received[len(received)-1].Done {
+		t.Error("expected last segment to have Done=true")
+	}
+}
+
+func TestClientTranscribeRejectsStreamingRequest(t *testing.T) {
+	u, _ := url.Parse("http://localhost:11434")
+	client := NewClient(u, http.DefaultClient)
+
+	stream := true
+	req := &TranscribeRequest{
+		Model:  "whisper:base",
+		Audio:  []byte("fake audio data"),
+		Stream: &stream,
+	}
+
+	_, err := client.Transcribe(context.Background(), req)
+	if err == nil {
+		t.Error("expected error for streaming request with Transcribe()")
 	}
 }

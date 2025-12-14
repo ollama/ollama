@@ -1679,6 +1679,80 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+// TranscribeHandler handles the transcribe command
+func TranscribeHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	model, _ := cmd.Flags().GetString("model")
+	language, _ := cmd.Flags().GetString("language")
+	translate, _ := cmd.Flags().GetBool("translate")
+	format, _ := cmd.Flags().GetString("format")
+	output, _ := cmd.Flags().GetString("output")
+
+	if len(args) < 1 {
+		return errors.New("audio file path is required")
+	}
+
+	audioPath := args[0]
+
+	audioData, err := os.ReadFile(audioPath)
+	if err != nil {
+		return fmt.Errorf("failed to read audio file: %w", err)
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	status := progress.NewSpinner(fmt.Sprintf("Transcribing %s...", filepath.Base(audioPath)))
+	p.Add("", status)
+
+	req := api.TranscribeRequest{
+		Model:          model,
+		Audio:          audioData,
+		Language:       language,
+		Translate:      translate,
+		ResponseFormat: format,
+	}
+
+	resp, err := client.Transcribe(cmd.Context(), &req)
+	if err != nil {
+		return err
+	}
+
+	p.Stop()
+
+	var out io.Writer = os.Stdout
+	if output != "" {
+		f, err := os.Create(output)
+		if err != nil {
+			return fmt.Errorf("failed to create output file: %w", err)
+		}
+		defer f.Close()
+		out = f
+	}
+
+	switch format {
+	case "srt", "vtt":
+		fmt.Fprintln(out, resp.Text)
+	case "verbose_json":
+		fmt.Fprintf(out, "Language: %s\n", resp.Language)
+		fmt.Fprintf(out, "Duration: %.2fs\n", resp.Duration)
+		fmt.Fprintln(out, "\nSegments:")
+		for _, seg := range resp.Segments {
+			fmt.Fprintf(out, "[%.2f - %.2f] %s\n", seg.Start, seg.End, seg.Text)
+		}
+	default:
+		fmt.Fprintln(out, resp.Text)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nProcessing time: %s\n", resp.ProcessingDuration)
+
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1846,6 +1920,29 @@ func NewCLI() *cobra.Command {
 		_ = runner.Execute(args[1:])
 	})
 
+	transcribeCmd := &cobra.Command{
+		Use:   "transcribe FILE",
+		Short: "Transcribe audio to text",
+		Long: `Transcribe audio files to text using Whisper models.
+
+Supported formats: WAV, MP3, FLAC, OGG, M4A, WEBM
+
+Examples:
+  ollama transcribe audio.wav
+  ollama transcribe audio.mp3 --model whisper:large-v3
+  ollama transcribe meeting.wav --language en --format srt -o meeting.srt
+  ollama transcribe speech.wav --translate`,
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    TranscribeHandler,
+	}
+
+	transcribeCmd.Flags().StringP("model", "m", "whisper:base", "Whisper model to use")
+	transcribeCmd.Flags().StringP("language", "l", "", "Source language (auto-detect if empty)")
+	transcribeCmd.Flags().Bool("translate", false, "Translate to English")
+	transcribeCmd.Flags().StringP("format", "f", "text", "Output format: text, json, srt, vtt, verbose_json")
+	transcribeCmd.Flags().StringP("output", "o", "", "Output file (stdout if empty)")
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1905,6 +2002,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		transcribeCmd,
 	)
 
 	return rootCmd

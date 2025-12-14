@@ -1051,6 +1051,133 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	return nil
 }
 
+// TranscribeRequest describes a request sent to [Client.Transcribe] for audio transcription.
+type TranscribeRequest struct {
+	// Model is the whisper model name to use
+	Model string `json:"model"`
+
+	// Audio is the audio data (raw bytes or base64)
+	Audio []byte `json:"audio,omitempty"`
+
+	// Language is the source language code (e.g., "en", "fr")
+	// Leave empty for auto-detection
+	Language string `json:"language,omitempty"`
+
+	// Translate when true, translates to English
+	Translate bool `json:"translate,omitempty"`
+
+	// ResponseFormat specifies the output format: "json", "text", "srt", "vtt", "verbose_json"
+	ResponseFormat string `json:"response_format,omitempty"`
+
+	// Prompt provides context or previous text to guide the model
+	Prompt string `json:"prompt,omitempty"`
+
+	// Stream enables streaming responses
+	Stream *bool `json:"stream,omitempty"`
+
+	// KeepAlive controls how long the model stays loaded
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Temperature for sampling (0.0 to 1.0)
+	Temperature float32 `json:"temperature,omitempty"`
+
+	// TimestampGranularity: "segment" or "word"
+	TimestampGranularity string `json:"timestamp_granularity,omitempty"`
+
+	// Options for additional model-specific settings
+	Options map[string]any `json:"options,omitempty"`
+}
+
+// TranscribeResponse is the response from [Client.Transcribe].
+type TranscribeResponse struct {
+	// Model used for transcription
+	Model string `json:"model"`
+
+	// Text is the full transcribed text
+	Text string `json:"text"`
+
+	// Language detected or specified
+	Language string `json:"language,omitempty"`
+
+	// Duration of the audio in seconds
+	Duration float64 `json:"duration,omitempty"`
+
+	// Segments contains detailed segment information (for verbose_json)
+	Segments []TranscribeSegment `json:"segments,omitempty"`
+
+	// Words contains word-level timestamps (if requested)
+	Words []TranscribeWord `json:"words,omitempty"`
+
+	// Task is either "transcribe" or "translate"
+	Task string `json:"task,omitempty"`
+
+	// Metrics
+	TotalDuration      time.Duration `json:"total_duration,omitempty"`
+	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	ProcessingDuration time.Duration `json:"processing_duration,omitempty"`
+
+	// Done indicates if this is the final response (for streaming)
+	Done bool `json:"done,omitempty"`
+}
+
+// TranscribeSegment represents a transcribed segment with timestamps.
+type TranscribeSegment struct {
+	ID               int     `json:"id"`
+	Start            float64 `json:"start"`
+	End              float64 `json:"end"`
+	Text             string  `json:"text"`
+	Tokens           []int   `json:"tokens,omitempty"`
+	Temperature      float64 `json:"temperature,omitempty"`
+	AvgLogprob       float64 `json:"avg_logprob,omitempty"`
+	CompressionRatio float64 `json:"compression_ratio,omitempty"`
+	NoSpeechProb     float64 `json:"no_speech_prob,omitempty"`
+}
+
+// TranscribeWord represents word-level timestamp information.
+type TranscribeWord struct {
+	Word        string  `json:"word"`
+	Start       float64 `json:"start"`
+	End         float64 `json:"end"`
+	Probability float64 `json:"probability,omitempty"`
+}
+
+// TranscribeStreamResponse for streaming transcription responses.
+type TranscribeStreamResponse struct {
+	Segment     *TranscribeSegment `json:"segment,omitempty"`
+	PartialText string             `json:"partial_text,omitempty"`
+	Done        bool               `json:"done"`
+	Error       string             `json:"error,omitempty"`
+}
+
+// IsStreaming returns true if streaming is enabled for the transcription request.
+func (r *TranscribeRequest) IsStreaming() bool {
+	return r.Stream != nil && *r.Stream
+}
+
+// GetResponseFormat returns the response format with a default of "json".
+func (r *TranscribeRequest) GetResponseFormat() string {
+	if r.ResponseFormat == "" {
+		return "json"
+	}
+	return r.ResponseFormat
+}
+
+// SupportedLanguages returns ISO language codes supported by whisper.
+func SupportedLanguages() []string {
+	return []string{
+		"en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr",
+		"pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi",
+		"he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no",
+		"th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk",
+		"te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk",
+		"br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw",
+		"gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc",
+		"ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo",
+		"ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl",
+		"mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su",
+	}
+}
+
 // FormatParams converts specified parameter options to their correct types
 func FormatParams(params map[string][]string) (map[string]any, error) {
 	opts := Options{}
