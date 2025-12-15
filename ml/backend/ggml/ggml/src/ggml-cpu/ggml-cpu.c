@@ -492,6 +492,15 @@ static inline void ggml_thread_cpu_relax(void) {
 static inline void ggml_thread_cpu_relax(void) {
     _mm_pause();
 }
+#elif defined(__riscv)
+static inline void ggml_thread_cpu_relax(void) {
+    #ifdef __riscv_zihintpause
+        __asm__ __volatile__ ("pause");
+    #else
+        /* Encoding of the pause instruction */
+        __asm__ __volatile__ (".4byte 0x100000F");
+    #endif
+}
 #else
 static inline void ggml_thread_cpu_relax(void) {;}
 #endif
@@ -685,22 +694,14 @@ bool ggml_is_numa(void) {
 }
 
 #if defined(__ARM_ARCH)
-
-#if defined(__linux__) && defined(__aarch64__)
-#include <sys/auxv.h>
-#endif
-
-static void ggml_init_arm_arch_features(void) {
 #if defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
-#if defined(__linux__)
-    ggml_arm_arch_features.sve_cnt = PR_SVE_VL_LEN_MASK & prctl(PR_SVE_GET_VL);
-#else
-    // TODO: add support of SVE for non-linux systems
-#error "TODO: SVE is not supported on this platform. To use SVE, sve_cnt needs to be initialized here."
-#endif
-#endif
+#include <arm_sve.h>
+static void ggml_init_arm_arch_features(void) {
+    ggml_arm_arch_features.sve_cnt = svcntb();
 }
-
+#else
+static void ggml_init_arm_arch_features(void) {}
+#endif
 #endif // __ARM_ARCH
 
 struct ggml_tensor * ggml_new_i32(struct ggml_context * ctx, int32_t value) {
@@ -2707,6 +2708,11 @@ struct ggml_cplan ggml_graph_plan(
     if (n_threads <= 0) {
         n_threads = threadpool ? threadpool->n_threads_max : GGML_DEFAULT_N_THREADS;
     }
+
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    // Emscripten without pthreads support can only use a single thread
+    n_threads = 1;
+#endif
 
     size_t work_size = 0;
 

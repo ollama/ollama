@@ -974,7 +974,7 @@ public:
 
     void check_errors() {
         if (!_errors.empty()) {
-            throw std::runtime_error("JSON schema conversion failed:\n" + string_join(_errors, "\n"));
+            throw std::invalid_argument("JSON schema conversion failed:\n" + string_join(_errors, "\n"));
         }
         if (!_warnings.empty()) {
             fprintf(stderr, "WARNING: JSON schema conversion was incomplete: %s\n", string_join(_warnings, "; ").c_str());

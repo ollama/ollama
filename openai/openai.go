@@ -487,29 +487,9 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png", "webp"}
-					valid := false
-					// support blank mime type to match api/chat taking just unadorned base64
-					if strings.HasPrefix(url, "data:;base64,") {
-						url = strings.TrimPrefix(url, "data:;base64,")
-						valid = true
-					}
-					for _, t := range types {
-						prefix := "data:image/" + t + ";base64,"
-						if strings.HasPrefix(url, prefix) {
-							url = strings.TrimPrefix(url, prefix)
-							valid = true
-							break
-						}
-					}
-
-					if !valid {
-						return nil, errors.New("invalid image input")
-					}
-
-					img, err := base64.StdEncoding.DecodeString(url)
+					img, err := decodeImageURL(url)
 					if err != nil {
-						return nil, errors.New("invalid message format")
+						return nil, err
 					}
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
@@ -646,6 +626,35 @@ func nameFromToolCallID(messages []Message, toolCallID string) string {
 		}
 	}
 	return ""
+}
+
+// decodeImageURL decodes a base64 data URI into raw image bytes.
+func decodeImageURL(url string) (api.ImageData, error) {
+	types := []string{"jpeg", "jpg", "png", "webp"}
+
+	// Support blank mime type to match /api/chat's behavior of taking just unadorned base64
+	if strings.HasPrefix(url, "data:;base64,") {
+		url = strings.TrimPrefix(url, "data:;base64,")
+	} else {
+		valid := false
+		for _, t := range types {
+			prefix := "data:image/" + t + ";base64,"
+			if strings.HasPrefix(url, prefix) {
+				url = strings.TrimPrefix(url, prefix)
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, errors.New("invalid image input")
+		}
+	}
+
+	img, err := base64.StdEncoding.DecodeString(url)
+	if err != nil {
+		return nil, errors.New("invalid image input")
+	}
+	return img, nil
 }
 
 // FromCompletionToolCall converts OpenAI ToolCall format to api.ToolCall

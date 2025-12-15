@@ -1,3 +1,4 @@
+// Package rope provides options for RoPE
 package rope
 
 import "github.com/ollama/ollama/ml"
@@ -54,6 +55,18 @@ func WithExtrapolationFactor(extrapolationFactor float32) func(*Options) {
 func WithAttentionFactor(attentionFactor float32) func(*Options) {
 	return func(opts *Options) {
 		opts.YaRN.AttentionFactor = attentionFactor
+	}
+}
+
+func WithBetaFast(betaFast float32) func(*Options) {
+	return func(opts *Options) {
+		opts.YaRN.BetaFast = betaFast
+	}
+}
+
+func WithBetaSlow(betaSlow float32) func(*Options) {
+	return func(opts *Options) {
+		opts.YaRN.BetaSlow = betaSlow
 	}
 }
 

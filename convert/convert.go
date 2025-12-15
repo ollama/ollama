@@ -182,6 +182,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &llama4Model{}
 	case "Mistral3ForConditionalGeneration":
 		conv = &mistral3Model{}
+	case "Ministral3ForCausalLM":
+		conv = &mistral3CausalModel{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
 	case "GemmaForCausalLM":
@@ -202,6 +204,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &qwen3VLModel{}
 	case "BertModel":
 		conv = &bertModel{}
+	case "NomicBertModel", "NomicBertMoEModel":
+		conv = &nomicbertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
 	case "GptOssForCausalLM":

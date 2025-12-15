@@ -441,6 +441,7 @@ struct clip_ctx {
     int max_nodes = 8192;
     ggml_backend_sched_ptr sched;
     clip_flash_attn_type flash_attn_type = CLIP_FLASH_ATTN_TYPE_AUTO;
+    bool is_allocated = false;
 
     // for debugging
     bool debug_graph = false;
@@ -2033,7 +2034,7 @@ private:
         ggml_tensor * pos_embd = model.position_embeddings;
         const int height       = img.ny / patch_size;
         const int width        = img.nx / patch_size;
-        const uint32_t mode    = GGML_SCALE_MODE_BILINEAR;
+        const uint32_t mode    = GGML_SCALE_MODE_BILINEAR | GGML_SCALE_FLAG_ANTIALIAS;
         const int n_per_side   = (int)std::sqrt(pos_embd->ne[1]);
 
         GGML_ASSERT(pos_embd);
@@ -2812,7 +2813,8 @@ struct clip_model_loader {
                     {
                         get_u32(KEY_PROJ_SCALE_FACTOR, hparams.n_merge, false);
                         // ref: https://huggingface.co/LiquidAI/LFM2-VL-3B/blob/main/preprocessor_config.json
-                        hparams.set_limit_image_tokens(64, 256);
+                        // config above specifies number of tokens after downsampling, while here it is before, relax lowerbound to 64
+                        hparams.set_limit_image_tokens(64, 1024);
                     } break;
                 case PROJECTOR_TYPE_PIXTRAL:
                 case PROJECTOR_TYPE_LIGHTONOCR:
@@ -3347,12 +3349,30 @@ struct clip_model_loader {
     };
 
     static void warmup(clip_ctx & ctx_clip) {
+        // create a fake batch
+        const auto & hparams = ctx_clip.model.hparams;
+        clip_image_f32_batch batch;
+        clip_image_f32_ptr img(clip_image_f32_init());
+        if (ctx_clip.model.modality == CLIP_MODALITY_VISION) {
+            img->nx = hparams.warmup_image_size;
+            img->ny = hparams.warmup_image_size;
+            LOG_INF("%s: warmup with image size = %d x %d\n", __func__, img->nx, img->ny);
+        } else {
+            img->nx = hparams.warmup_audio_size;
+            img->ny = hparams.n_mel_bins;
+            LOG_INF("%s: warmup with audio size = %d\n", __func__, img->nx);
+        }
+        batch.entries.push_back(std::move(img));
+        warmup(ctx_clip, batch);
+    }
+
+    static void warmup(clip_ctx & ctx_clip, const clip_image_f32_batch & batch) {
         support_info_graph info;
 
         if (ctx_clip.flash_attn_type == CLIP_FLASH_ATTN_TYPE_AUTO) {
             // try to enable flash attention to see if it's supported
             ctx_clip.flash_attn_type = CLIP_FLASH_ATTN_TYPE_ENABLED;
-            info = alloc_compute_meta(ctx_clip);
+            info = alloc_compute_meta(ctx_clip, batch);
             if (!info.fattn && info.fattn_op) {
                 auto op = info.fattn_op;
                 LOG_WRN("%s: *****************************************************************\n", __func__);
@@ -3371,14 +3391,16 @@ struct clip_model_loader {
                 LOG_WRN("%s: please report this on github as an issue\n", __func__);
                 LOG_WRN("%s: *****************************************************************\n", __func__);
                 ctx_clip.flash_attn_type = CLIP_FLASH_ATTN_TYPE_DISABLED;
-                alloc_compute_meta(ctx_clip);
+                alloc_compute_meta(ctx_clip, batch);
             }
         } else {
-            info = alloc_compute_meta(ctx_clip);
+            info = alloc_compute_meta(ctx_clip, batch);
             if (!info.fattn && ctx_clip.flash_attn_type == CLIP_FLASH_ATTN_TYPE_ENABLED) {
                 LOG_WRN("%s: flash attention is not supported by the current backend; falling back to CPU (performance will be degraded)\n", __func__);
             }
         }
+
+        ctx_clip.is_allocated = true; // mark buffers as allocated
 
         LOG_INF("%s: flash attention is %s\n", __func__,
             (ctx_clip.flash_attn_type == CLIP_FLASH_ATTN_TYPE_ENABLED) ? "enabled" : "disabled");
@@ -3411,23 +3433,8 @@ struct clip_model_loader {
         }
     }
 
-    static support_info_graph alloc_compute_meta(clip_ctx & ctx_clip) {
-        const auto & hparams = ctx_clip.model.hparams;
+    static support_info_graph alloc_compute_meta(clip_ctx & ctx_clip, const clip_image_f32_batch & batch) {
         ctx_clip.buf_compute_meta.resize(ctx_clip.max_nodes * ggml_tensor_overhead() + ggml_graph_overhead());
-
-        // create a fake batch
-        clip_image_f32_batch batch;
-        clip_image_f32_ptr img(clip_image_f32_init());
-        if (ctx_clip.model.modality == CLIP_MODALITY_VISION) {
-            img->nx = hparams.warmup_image_size;
-            img->ny = hparams.warmup_image_size;
-            LOG_INF("%s: warmup with image size = %d x %d\n", __func__, img->nx, img->ny);
-        } else {
-            img->nx = hparams.warmup_audio_size;
-            img->ny = hparams.n_mel_bins;
-            LOG_INF("%s: warmup with audio size = %d\n", __func__, img->nx);
-        }
-        batch.entries.push_back(std::move(img));
 
         ggml_cgraph * gf = clip_image_build_graph(&ctx_clip, batch);
         ggml_backend_sched_reserve(ctx_clip.sched.get(), gf);
@@ -3568,14 +3575,18 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
             ctx_vision = new clip_ctx(ctx_params);
             loader.load_hparams(ctx_vision->model, CLIP_MODALITY_VISION);
             loader.load_tensors(*ctx_vision);
-            loader.warmup(*ctx_vision);
+            if (ctx_params.warmup) {
+                loader.warmup(*ctx_vision);
+            }
         }
 
         if (loader.has_audio) {
             ctx_audio = new clip_ctx(ctx_params);
             loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
             loader.load_tensors(*ctx_audio);
-            loader.warmup(*ctx_audio);
+            if (ctx_params.warmup) {
+                loader.warmup(*ctx_audio);
+            }
         }
 
     } catch (const std::exception & e) {
@@ -3788,12 +3799,13 @@ struct img_tool {
         const int width  = inp_size.width;
         const int height = inp_size.height;
 
+        auto round_by_factor = [f = align_size](float x) { return static_cast<int>(std::round(x / static_cast<float>(f))) * f; };
         auto ceil_by_factor  = [f = align_size](float x) { return static_cast<int>(std::ceil(x / static_cast<float>(f))) * f; };
         auto floor_by_factor = [f = align_size](float x) { return static_cast<int>(std::floor(x / static_cast<float>(f))) * f; };
 
         // always align up first
-        int h_bar = std::max(align_size, ceil_by_factor(height));
-        int w_bar = std::max(align_size, ceil_by_factor(width));
+        int h_bar = std::max(align_size, round_by_factor(height));
+        int w_bar = std::max(align_size, round_by_factor(width));
 
         if (h_bar * w_bar > max_pixels) {
             const auto beta = std::sqrt(static_cast<float>(height * width) / max_pixels);
@@ -4408,7 +4420,8 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
                 const std::array<uint8_t, 3> pad_color = {122, 116, 104};
 
                 clip_image_u8 resized_img;
-                img_tool::resize(*img, resized_img, target_size, img_tool::RESIZE_ALGO_BILINEAR, true, pad_color);
+                const bool pad = (ctx->proj_type() != PROJECTOR_TYPE_LFM2);
+                img_tool::resize(*img, resized_img, target_size, img_tool::RESIZE_ALGO_BILINEAR, pad, pad_color);
                 clip_image_f32_ptr res(clip_image_f32_init());
                 normalize_image_u8_to_f32(resized_img, *res, params.image_mean, params.image_std);
                 res_imgs->entries.push_back(std::move(res));
@@ -4664,6 +4677,11 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     //                we don't need true batching support because the cgraph will gonna be big anyway
     if (batch_size != 1) {
         return false; // only support batch size of 1
+    }
+
+    // if buffers are not allocated, we need to do a warmup run to allocate them
+    if (!ctx->is_allocated) {
+        clip_model_loader::warmup(*ctx, *imgs_c_ptr);
     }
 
     // build the inference graph

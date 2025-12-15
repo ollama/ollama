@@ -74,7 +74,7 @@ type BackendParams struct {
 	GPULayers GPULayersList
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
-	FlashAttention bool
+	FlashAttention FlashAttentionType
 }
 
 var backends = make(map[string]func(string, []string, BackendParams) (Backend, error))
