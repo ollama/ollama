@@ -17,9 +17,6 @@ const (
 )
 
 type Olmo3Renderer struct {
-	// UseExtendedSystemMessage controls the default system message.
-	// When true, uses the OLMo-3.1 style extended message with model info.
-	// When false, uses the OLMo-3 style shorter message.
 	UseExtendedSystemMessage bool
 }
 

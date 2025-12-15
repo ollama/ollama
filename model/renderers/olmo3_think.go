@@ -44,15 +44,13 @@ func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api
 		filteredMessages = append(filteredMessages, message)
 	}
 
-	// Build system message
 	sb.WriteString("<|im_start|>system\n")
 
 	if systemMessage != nil {
-		// Custom system message - all variants append the functions suffix
 		sb.WriteString(systemMessage.Content)
 		sb.WriteString(olmo3ThinkFunctionsSuffix)
 	} else {
-		// Default system message - varies by variant
+		// Default system message varies by variant
 		switch r.Variant {
 		case Olmo3Think32B:
 			sb.WriteString(olmo3Think32BSystemMessage)
