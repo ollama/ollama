@@ -66,6 +66,14 @@ var (
 		"minicpm-v:latest",    // arch=qwen2
 		"granite-code:latest", // arch=llama
 	}
+	// MLX-backed safetensors tags. These exercise the mlxrunner subprocess
+	// on platforms where MLX is available (today: macOS; Linux/Windows CUDA
+	// coming). On other platforms, skipIfMLXUnsupported turns the load
+	// failure into a test skip.
+	mlxEngineChatModels = []string{
+		"qwen3.5:2b-nvfp4",  // ~2.5GB, Qwen3_5 arch
+		"gemma4:e2b-nvfp4",  // ~7.1GB, Gemma4 arch (skipped under low VRAM)
+	}
 	llamaRunnerChatModels = []string{
 		"mistral:latest",
 		"falcon3:latest",
@@ -261,7 +269,6 @@ var (
 		"zephyr",
 	}
 	libraryEmbedModels = []string{
-		"qwen3-embedding",
 		"embeddinggemma",
 		"nomic-embed-text",
 		"all-minilm",
@@ -272,6 +279,7 @@ var (
 		"paraphrase-multilingual",
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
+		"qwen3-embedding",
 	}
 	libraryToolsModels = []string{
 		"gemma4",
@@ -329,13 +337,23 @@ func testModels(defaults []string) []string {
 }
 
 // requireCapability skips the test if the model does not advertise the
-// given capability. It queries the server via Show and caches nothing —
-// call it once per subtest. For local-only models where Show may not
-// return capabilities (e.g. models created via ollama create), this is
-// a best-effort check.
+// given capability. If the model is missing locally, it first goes through
+// the normal pull-if-missing path so tests still behave correctly on cold
+// hosts. For local-only models where Show may not return capabilities
+// (e.g. models created via ollama create), this is a best-effort check.
 func requireCapability(ctx context.Context, t *testing.T, client *api.Client, modelName string, cap model.Capability) {
 	t.Helper()
+
 	resp, err := client.Show(ctx, &api.ShowRequest{Name: modelName})
+	var statusError api.StatusError
+	if errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound {
+		if err := PullIfMissing(ctx, client, modelName); err != nil {
+			t.Skipf("model %s not available: %v", modelName, err)
+		}
+
+		resp, err = client.Show(ctx, &api.ShowRequest{Name: modelName})
+	}
+
 	if err != nil {
 		t.Fatalf("failed to show model %s: %v", modelName, err)
 	}
@@ -784,6 +802,39 @@ func ChatRequests() ([]api.ChatRequest, [][]string) {
 	return reqs, results
 }
 
+// skipIfMLXUnsupported converts an MLX runner startup error into a test skip
+// when the fingerprint matches "the MLX stack is not wired up on this host",
+// and only on platforms where MLX is not yet expected to work. On Apple
+// Silicon (darwin/arm64) MLX must work, so the same errors there fall
+// through and fail the test — we never want to mask a real Mac regression.
+//
+// The fingerprints are the exact wrapper strings produced by the MLX code
+// paths (see x/mlxrunner/server.go, x/mlxrunner/mlx/dynamic.go,
+// x/imagegen/mlx/mlx.go, x/imagegen/memory.go). Model-level errors
+// (unsupported architecture, tensor mismatches, runtime failures) do not
+// contain these strings, so this helper will not mask them.
+func skipIfMLXUnsupported(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"MLX not available:",
+		"failed to load MLX dynamic library",
+		"failed to load MLX function symbols",
+		"image generation on macOS requires Apple Silicon",
+		"image generation is not supported on",
+	} {
+		if strings.Contains(msg, s) {
+			t.Skipf("MLX not available on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
+		}
+	}
+}
+
 func skipUnderMinVRAM(t *testing.T, gb uint64) {
 	// TODO use info API in the future
 	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
@@ -802,6 +853,8 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
 	gpuPercent := getGPUPercent(ctx, t, client, model)
 	if gpuPercent < minPercent {
+		// Unload the model if we're going to skip
+		client.Generate(ctx, &api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
 	}
 }
