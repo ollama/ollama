@@ -1,0 +1,59 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "description": "File system operations with path-based access control",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "requires_path": true,
+      "path_arg_index": -1,
+      "capabilities": ["read", "write", "list", "search"],
+      "auto_enable": "with_path"
+    },
+    {
+      "name": "git",
+      "description": "Git repository operations",
+      "command": "npx",
+      "args": ["-y", "@cyanheads/git-mcp-server"],
+      "requires_path": true,
+      "path_arg_index": -1,
+      "capabilities": ["diff", "log", "status", "branch"],
+      "auto_enable": "if_match",
+      "enable_if": {
+        "file_exists": ".git"
+      }
+    },
+    {
+      "name": "postgres",
+      "description": "PostgreSQL database operations",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION": ""
+      },
+      "capabilities": ["query", "schema"],
+      "auto_enable": "if_match",
+      "enable_if": {
+        "env_set": "POSTGRES_CONNECTION"
+      }
+    },
+    {
+      "name": "python",
+      "description": "Python code execution in sandboxed environment",
+      "command": "python",
+      "args": ["-m", "mcp_server_python"],
+      "requires_path": false,
+      "capabilities": ["execute", "eval"],
+      "auto_enable": "never"
+    },
+    {
+      "name": "web",
+      "description": "Web browsing and content extraction",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "requires_path": false,
+      "capabilities": ["browse", "screenshot", "extract"],
+      "auto_enable": "never"
+    }
+  ]
+}

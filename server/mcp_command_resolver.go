@@ -8,12 +8,39 @@ import (
 	"sync"
 )
 
+// =============================================================================
+// Command Resolver Interface & Default Implementation
+// =============================================================================
+//
+// SECURITY REVIEW: This component determines which executables are launched
+// for MCP servers. Changes here should be reviewed carefully.
+
+// CommandResolverInterface defines the contract for command resolution.
+// Implementations resolve command names (like "npx", "python") to actual
+// executable paths, with support for fallbacks and environment overrides.
+//
+// This interface enables dependency injection for testing MCPClient without
+// requiring actual executables to be present on the system.
+type CommandResolverInterface interface {
+	// ResolveCommand finds the actual executable for a command name.
+	// Returns the resolved path/command or an error if not found.
+	ResolveCommand(command string) (string, error)
+
+	// ResolveForEnvironment resolves a command, checking environment
+	// variable overrides first (e.g., OLLAMA_NPX_COMMAND for "npx").
+	// Returns the original command as fallback if resolution fails.
+	ResolveForEnvironment(command string) string
+}
+
 // CommandResolver handles resolving commands to their actual executables
-// with fallback detection for different system configurations
+// with fallback detection for different system configurations.
 type CommandResolver struct {
 	mu       sync.RWMutex
 	resolved map[string]string
 }
+
+// Ensure CommandResolver implements CommandResolverInterface
+var _ CommandResolverInterface = (*CommandResolver)(nil)
 
 // NewCommandResolver creates a new command resolver
 func NewCommandResolver() *CommandResolver {
