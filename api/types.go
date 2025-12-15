@@ -126,12 +126,6 @@ type GenerateRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
-
-	// Tools is a list of tools the model may call.
-	Tools []Tool `json:"tools,omitempty"`
-
-	// MCPServers specifies MCP servers to use for tool functionality
-	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -250,9 +244,10 @@ type ToolCall struct {
 }
 
 type ToolResult struct {
-	ToolName string `json:"tool_name"`
-	Content  string `json:"content"`
-	Error    string `json:"error,omitempty"`
+	ToolName  string                    `json:"tool_name"`
+	Arguments ToolCallFunctionArguments `json:"arguments,omitempty"`
+	Content   string                    `json:"content"`
+	Error     string                    `json:"error,omitempty"`
 }
 
 type ToolCallFunction struct {
@@ -856,9 +851,6 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
-
-	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
-	ToolResults []ToolResult `json:"tool_results,omitempty"`
 
 	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 
