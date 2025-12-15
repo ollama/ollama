@@ -477,7 +477,7 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 		},
 	}
 
-	renderer := &DeepSeek3TerminusRenderer{isThinking: true}
+	renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rendered, err := renderer.Render(tt.messages, tt.tools, tt.thinkValue)
