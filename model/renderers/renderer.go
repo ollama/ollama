@@ -60,7 +60,7 @@ func rendererForName(name string) Renderer {
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
 	case "deepseek-v3.1":
-		renderer := &DeepSeekTerminusRenderer{isThinking: true}
+		renderer := &DeepSeek3TerminusRenderer{isThinking: true}
 		return renderer
 	case "olmo3":
 		renderer := &Olmo3Renderer{UseExtendedSystemMessage: false}
