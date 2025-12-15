@@ -829,6 +829,62 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func ListToolsHandler(cmd *cobra.Command, args []string) {
+	servers, err := server.ListMCPServers()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading MCP servers: %v\n", err)
+		return
+	}
+
+	if len(servers) == 0 {
+		fmt.Println("No MCP servers configured.")
+		fmt.Println("\nTo add MCP servers, create ~/.ollama/mcp-servers.json")
+		fmt.Println("See https://ollama.com/docs/mcp for configuration details.")
+		return
+	}
+
+	fmt.Println("Available MCP Servers:")
+	fmt.Println()
+
+	var data [][]string
+	for _, s := range servers {
+		autoEnable := string(s.AutoEnable)
+		if autoEnable == "" {
+			autoEnable = "never"
+		}
+
+		capabilities := "-"
+		if len(s.Capabilities) > 0 {
+			capabilities = strings.Join(s.Capabilities, ", ")
+		}
+
+		requiresPath := "no"
+		if s.RequiresPath {
+			requiresPath = "yes"
+		}
+
+		data = append(data, []string{s.Name, s.Description, autoEnable, requiresPath, capabilities})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "DESCRIPTION", "AUTO-ENABLE", "REQUIRES PATH", "CAPABILITIES"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("    ")
+	table.AppendBulk(data)
+	table.Render()
+
+	fmt.Println()
+	fmt.Println("Auto-enable modes:")
+	fmt.Println("  never     - Must be explicitly configured via API")
+	fmt.Println("  always    - Enables whenever --tools is used")
+	fmt.Println("  with_path - Enables when --tools has a path argument")
+	fmt.Println("  if_match  - Enables when conditions match (e.g., file exists)")
+}
+
 func DeleteHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -2077,11 +2133,17 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
+			if listTools, _ := cmd.Flags().GetBool("list-tools"); listTools {
+				ListToolsHandler(cmd, args)
+				return
+			}
+
 			cmd.Print(cmd.UsageString())
 		},
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd.Flags().Bool("list-tools", false, "List available MCP servers and their tools")
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
