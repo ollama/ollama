@@ -754,6 +754,8 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
 	gpuPercent := getGPUPercent(ctx, t, client, model)
 	if gpuPercent < minPercent {
+		// Unload the model if we're going to skip
+		client.Generate(ctx, &api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
 	}
 }

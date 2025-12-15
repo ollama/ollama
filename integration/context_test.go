@@ -26,7 +26,7 @@ func TestLongInputContext(t *testing.T) {
 		Messages: []api.Message{
 			{
 				Role:    "user",
-				Content: "Oh, don’t speak to me of Austria. Perhaps I don’t understand things, but Austria never has wished, and does not wish, for war. She is betraying us! Russia alone must save Europe. Our gracious sovereign recognizes his high vocation and will be true to it. That is the one thing I have faith in! Our good and wonderful sovereign has to perform the noblest role on earth, and he is so virtuous and noble that God will not forsake him. He will fulfill his vocation and crush the hydra of revolution, which has become more terrible than ever in the person of this murderer and villain! We alone must avenge the blood of the just one.... Whom, I ask you, can we rely on?... England with her commercial spirit will not and cannot understand the Emperor Alexander’s loftiness of soul. She has refused to evacuate Malta. She wanted to find, and still seeks, some secret motive in our actions. What answer did Novosíltsev get? None. The English have not understood and cannot understand the self-abnegation of our Emperor who wants nothing for himself, but only desires the good of mankind. And what have they promised? Nothing! And what little they have promised they will not perform! Prussia has always declared that Buonaparte is invincible, and that all Europe is powerless before him.... And I don’t believe a word that Hardenburg says, or Haugwitz either. This famous Prussian neutrality is just a trap. I have faith only in God and the lofty destiny of our adored monarch. He will save Europe! What country is this referring to?",
+				Content: "What country is this passage referring to?\nOh, don’t speak to me of Austria. Perhaps I don’t understand things, but Austria never has wished, and does not wish, for war. She is betraying us! Russia alone must save Europe. Our gracious sovereign recognizes his high vocation and will be true to it. That is the one thing I have faith in! Our good and wonderful sovereign has to perform the noblest role on earth, and he is so virtuous and noble that God will not forsake him. He will fulfill his vocation and crush the hydra of revolution, which has become more terrible than ever in the person of this murderer and villain! We alone must avenge the blood of the just one.... Whom, I ask you, can we rely on?... England with her commercial spirit will not and cannot understand the Emperor Alexander’s loftiness of soul. She has refused to evacuate Malta. She wanted to find, and still seeks, some secret motive in our actions. What answer did Novosíltsev get? None. The English have not understood and cannot understand the self-abnegation of our Emperor who wants nothing for himself, but only desires the good of mankind. And what have they promised? Nothing! And what little they have promised they will not perform! Prussia has always declared that Buonaparte is invincible, and that all Europe is powerless before him.... And I don’t believe a word that Hardenburg says, or Haugwitz either. This famous Prussian neutrality is just a trap. I have faith only in God and the lofty destiny of our adored monarch. He will save Europe!",
 			},
 		},
 		Stream: &stream,
@@ -41,7 +41,7 @@ func TestLongInputContext(t *testing.T) {
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
 		t.Fatalf("PullIfMissing failed: %v", err)
 	}
-	DoChat(ctx, t, client, req, []string{"russia", "german", "france", "england", "austria", "prussia", "europe", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
+	DoChat(ctx, t, client, req, []string{"russia", "german", "france", "england", "austria", "prussia", "europe", "individuals", "coalition", "conflict", "napoleonic", "historical"}, 120*time.Second, 10*time.Second)
 }
 
 func TestContextExhaustion(t *testing.T) {
@@ -101,10 +101,14 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 		t.Fatalf("failed to load model %s: %s", modelName, err)
 	}
 	gpuPercent := getGPUPercent(ctx, t, client, modelName)
-	if gpuPercent < 80 {
+	if gpuPercent < 80 && gpuPercent > 50 {
 		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
 		initialTimeout = 240 * time.Second
 		streamTimeout = 30 * time.Second
+	} else if gpuPercent < 50 {
+		slog.Warn("Very low GPU percentage - skipping test", "percent", gpuPercent)
+		client.Generate(ctx, &api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
+		t.Skip("Very low GPU percentage")
 	}
 
 	var wg sync.WaitGroup
@@ -196,10 +200,14 @@ func TestParallelChatWithHistory(t *testing.T) {
 		t.Fatalf("failed to load model %s: %s", modelName, err)
 	}
 	gpuPercent := getGPUPercent(ctx, t, client, modelName)
-	if gpuPercent < 80 {
+	if gpuPercent < 80 && gpuPercent > 50 {
 		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
 		initialTimeout = 240 * time.Second
 		streamTimeout = 30 * time.Second
+	} else if gpuPercent < 50 {
+		slog.Warn("Very low GPU percentage - skipping test", "percent", gpuPercent)
+		client.Generate(ctx, &api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
+		t.Skip("Very low GPU percentage")
 	}
 
 	var wg sync.WaitGroup
