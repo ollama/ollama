@@ -83,9 +83,10 @@ If the runner crashes before enumerating devices:
 - Ensure no other `LD_LIBRARY_PATH` entries override `libamdhip64.so`.
 - Try unsetting `HSA_OVERRIDE_GFX_VERSION` to confirm whether the kernel patch is still needed on your system.
 
+> Example discovery + run log: [`docs/logs/rocm-760m-run.log`](logs/rocm-760m-run.log). The matching `curl` response is saved as [`docs/logs/rocm-760m-run-response.json`](logs/rocm-760m-run-response.json).
+
 ## 4. Sharing this build
 
 - Keep the staged RPMs alongside the branch so others can reproduce the exact runtime.
 - Include `/tmp/ollama_rocm_run.log` or similar discovery logs in issues/PRs to help maintainers understand the UMA setup.
 - Mention any kernel parameters (e.g., large UMA buffer in firmware) when opening upstream tickets.
-
