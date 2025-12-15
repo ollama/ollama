@@ -7,11 +7,11 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type DeepSeekRenderer struct {
+type DeepSeekTerminusRenderer struct {
 	isThinking bool
 }
 
-func (r *DeepSeekRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+func (r *DeepSeekTerminusRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
 	// thinking is enabled: model must support it AND user must request it
