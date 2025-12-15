@@ -10,7 +10,7 @@ Subject: [PATCH] ggml: Export GPU UUIDs
  3 files changed, 63 insertions(+), 6 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index c54ff98bf..229bf387b 100644
+index a7ebe5dcd..03557bb31 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -158,6 +158,7 @@ extern "C" {

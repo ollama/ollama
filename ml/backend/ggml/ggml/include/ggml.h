@@ -2615,7 +2615,8 @@ extern "C" {
 
     // Set callback for all future logging events.
     // If this is not called, or NULL is supplied, everything is output on stderr.
-    GGML_API void ggml_log_set(ggml_log_callback log_callback, void * user_data);
+    GGML_API void ggml_log_get(ggml_log_callback * log_callback, void ** user_data);
+    GGML_API void ggml_log_set(ggml_log_callback   log_callback, void *  user_data);
 
     GGML_API struct ggml_tensor * ggml_set_zero(struct ggml_tensor * tensor);
 

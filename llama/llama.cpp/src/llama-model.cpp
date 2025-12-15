@@ -668,6 +668,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     hparams.n_swa                   = 8192;
                     hparams.n_attn_temp_floor_scale = 8192;
                     hparams.f_attn_temp_scale       = 0.1f;
+                    hparams.f_attn_temp_offset      = 1.0f;
                     hparams.set_swa_pattern(4);   // pattern: 3 chunked - 1 full
                 }
 
@@ -1646,6 +1647,8 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ATTENTION_TEMPERATURE_SCALE,  hparams.f_attn_temp_scale,       false);
                 ml.get_key(LLM_KV_ATTENTION_TEMPERATURE_LENGTH, hparams.n_attn_temp_floor_scale, false);
 
+                hparams.f_attn_temp_offset = 0.0f;
+
                 switch (hparams.n_layer) {
                     case 27: type = LLM_TYPE_16B; break;
                     case 60: type = LLM_TYPE_236B; break;
@@ -2291,6 +2294,8 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ROPE_SCALING_YARN_BETA_SLOW, hparams.yarn_beta_slow,    false);
                 ml.get_key(LLM_KV_ROPE_SCALING_YARN_LOG_MUL,   hparams.rope_yarn_log_mul, 0.0f);
 
+                hparams.f_attn_temp_offset = 0.0f;
+
                 // TODO: maybe add n_attn_temp_floor_scale as a separate KV?
                 if (hparams.f_attn_temp_scale != 0.0f) {
                     hparams.n_attn_temp_floor_scale = hparams.n_ctx_orig_yarn;
@@ -2307,32 +2312,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
             } break;
         default: throw std::runtime_error("unsupported model architecture");
-    }
-
-    // ref: https://github.com/huggingface/transformers/blob/6d00f6b0a5679c36510f203e4226e36f517c3032/src/transformers/modeling_rope_utils.py#L336-L348
-    if (hparams.rope_yarn_log_mul != 0.0f) {
-        const float factor = 1.0f / hparams.rope_freq_scale_train;
-
-        // note: here we assume `mscale == 1.0f`
-        // TODO: start reading the actual value of mscale and handle the case where it is not 1.0f
-              float mscale          = 1.0f;
-        const float mscale_all_dims = hparams.rope_yarn_log_mul;
-
-        // [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]
-        // special-case DEEPSEEK v2:
-        // https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite-Chat/blob/main/config.json#L42-L43
-        if (arch == LLM_ARCH_DEEPSEEK2 && mscale_all_dims != 1.0f) {
-            mscale = mscale_all_dims;
-        }
-
-        static auto get_mscale = [](float scale, float mscale) {
-            return scale <= 1.0f ? 1.0f : (0.1f * mscale * logf(scale) + 1.0f);
-        };
-
-        hparams.yarn_attn_factor = get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dims);
-
-        LLAMA_LOG_WARN("%s: setting new yarn_attn_factor = %.4f (mscale == %.1f, mscale_all_dim = %.1f)\n",
-                __func__, hparams.yarn_attn_factor, mscale, mscale_all_dims);
     }
 
     pimpl->n_bytes = ml.n_bytes;
@@ -3424,9 +3403,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd}, 0);
 
                         // optional bias tensors
-                        layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd}, 0);
-                        layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, 0);
-                        layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, 0);
+                        layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd}, TENSOR_NOT_REQUIRED);
+                        layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, TENSOR_NOT_REQUIRED);
+                        layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, TENSOR_NOT_REQUIRED);
 
                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
 
@@ -6670,9 +6649,11 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
         std::vector<ggml_backend_buffer_ptr> bufs;
         if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+            GGML_ASSERT(!ml.no_alloc);
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
-                // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer, then we could just use metal for all layers
+                // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer,
+                //     then we could just use metal for all layers
                 // this allows using partial offloading when the model size exceeds the metal buffer size, but not the RAM size
                 void * addr = nullptr;
                 size_t first, last; // NOLINT
@@ -6688,9 +6669,16 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 bufs.emplace_back(buf);
                 buf_map.emplace(idx, buf);
             }
-        }
-        else {
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        } else {
+            ggml_backend_buffer_t buf;
+            if (ml.no_alloc) {
+                buf = ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0); // dummy buffer
+                for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+                    t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
+                }
+            } else {
+                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+            }
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }
@@ -6745,6 +6733,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
 
+    if (ml.no_alloc) {
+        return true;
+    }
+
     // load tensor data
     for (auto & [ctx, buf_map] : ctx_buf_maps) {
         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
@@ -6787,9 +6779,18 @@ size_t llama_model::n_devices() const {
 
 std::map<ggml_backend_buffer_type_t, size_t> llama_model::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, size_t> ret;
-    for (const auto & [_, bufs] : pimpl->ctxs_bufs) {
-        for (const auto & buf : bufs) {
-            ret[ggml_backend_buffer_get_type(buf.get())] += ggml_backend_buffer_get_size(buf.get());
+    for (const auto & [ctx, bufs] : pimpl->ctxs_bufs) {
+        if (hparams.no_alloc) {
+            GGML_ASSERT(bufs.size() == 1);
+            ggml_backend_buffer_t buf = bufs[0].get();
+            GGML_ASSERT(ggml_backend_buffer_get_base(buf) == nullptr);
+            ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(buf);
+            ret[buft] += ggml_backend_alloc_ctx_tensors_from_buft_size(ctx.get(), buft);
+        } else {
+            for (const auto & buf : bufs) {
+                // GGML_ASSERT(ggml_backend_buffer_get_base(buf.get()) != nullptr); // multi_buffer does not have a defined base
+                ret[ggml_backend_buffer_get_type(buf.get())] += ggml_backend_buffer_get_size(buf.get());
+            }
         }
     }
     return ret;
@@ -6834,6 +6835,7 @@ void llama_model::print_info() const {
     // hparams
     LLAMA_LOG_INFO("%s: arch             = %s\n",     __func__, arch_name().c_str());
     LLAMA_LOG_INFO("%s: vocab_only       = %d\n",     __func__, hparams.vocab_only);
+    LLAMA_LOG_INFO("%s: no_alloc         = %d\n",     __func__, hparams.no_alloc);
 
     if (!hparams.vocab_only) {
         LLAMA_LOG_INFO("%s: n_ctx_train      = %u\n",     __func__, hparams.n_ctx_train);
@@ -7686,6 +7688,7 @@ llama_model_params llama_model_default_params() {
         /*.check_tensors               =*/ false,
         /*.use_extra_bufts             =*/ true,
         /*.no_host                     =*/ false,
+        /*.no_alloc                    =*/ false,
     };
 
     return result;

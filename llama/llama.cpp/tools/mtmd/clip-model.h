@@ -65,6 +65,13 @@ struct clip_hparams {
     int32_t n_mel_bins = 0; // whisper preprocessor
     int32_t proj_stack_factor = 0; // ultravox
 
+    // audio-to-mel preprocessor params
+    int32_t audio_chunk_len   = -1; // in seconds
+    int32_t audio_sample_rate = -1;
+    int32_t audio_n_fft       = -1;
+    int32_t audio_window_len  = -1;
+    int32_t audio_hop_len     = -1;
+
     // legacy
     bool has_llava_projector = false;
     int minicpmv_version = 0;
@@ -256,6 +263,7 @@ struct clip_model {
     ggml_tensor * conv1d_2_w = nullptr;
     ggml_tensor * conv1d_2_b = nullptr;
     ggml_tensor * mm_norm_pre_w = nullptr;
+    ggml_tensor * mm_norm_pre_b = nullptr;
     ggml_tensor * mm_norm_mid_w = nullptr;
 
     // cogvlm
@@ -277,3 +285,5 @@ struct clip_model {
             || proj_type == PROJECTOR_TYPE_VOXTRAL;
     }
 };
+
+const clip_hparams * clip_get_hparams(const struct clip_ctx * ctx);

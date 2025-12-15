@@ -30,7 +30,6 @@ ggml_cgraph * clip_graph_whisper_enc::build() {
     GGML_ASSERT(model.layers[0].q_b);
     GGML_ASSERT(model.layers[0].v_b);
     GGML_ASSERT(!model.layers[0].k_b); // no bias for k
-    GGML_ASSERT(model.post_ln_w && model.post_ln_b);
 
     ggml_tensor * pos_embd_selected = ggml_view_2d(
         ctx0, model.position_embeddings,
@@ -49,15 +48,7 @@ ggml_cgraph * clip_graph_whisper_enc::build() {
     if (model.audio_has_stack_frames()) {
         // StackAudioFrames
         // https://huggingface.co/fixie-ai/ultravox-v0_5-llama-3_2-1b/blob/main/ultravox_model.py
-        int64_t stride = n_embd * hparams.proj_stack_factor;
-        int64_t padded_len = GGML_PAD(ggml_nelements(cur), stride);
-        int64_t pad = padded_len - ggml_nelements(cur);
-        if (pad > 0) {
-            cur = ggml_view_1d(ctx0, cur, ggml_nelements(cur), 0);
-            cur = ggml_pad(ctx0, cur, pad, 0, 0, 0);
-        }
-        cur = ggml_view_2d(ctx0, cur, stride, padded_len / stride,
-                            ggml_row_size(cur->type, stride), 0);
+        cur = build_stack(cur, hparams.proj_stack_factor, n_embd);
         cb(cur, "after_stacked", -1);
     }
 
@@ -95,6 +86,14 @@ ggml_cgraph * clip_graph_whisper_enc::build() {
             FFN_GELU_ERF,
             -1);
 
+    } else if (proj_type == PROJECTOR_TYPE_GLMA) {
+            cur = ggml_norm(ctx0, cur, hparams.eps);
+            cur = ggml_mul(ctx0, cur, model.mm_norm_pre_w);
+            cur = ggml_add(ctx0, cur, model.mm_norm_pre_b);
+            cur = build_stack(cur, hparams.proj_stack_factor, n_embd);
+            cur = build_ffn(cur, model.mm_1_w, model.mm_1_b, nullptr, nullptr, model.mm_2_w, model.mm_2_b, hparams.ffn_op, 0);
+            cur = ggml_concat(ctx0, model.mm_boi, cur, 1);
+            cur = ggml_concat(ctx0, cur, model.mm_eoi, 1);
     } else {
         GGML_ABORT("%s: unknown projector type", __func__);
     }

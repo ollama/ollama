@@ -112,4 +112,8 @@ struct clip_graph {
     // aka pixel_shuffle / pixel_unshuffle / patch_merger (Kimi-VL)
     // support dynamic resolution
     ggml_tensor * build_patch_merge_permute(ggml_tensor * cur, int scale_factor);
+
+    // Generic function to stack frames for audio processing
+    // Abstracts out the StackAudioFrames logic used by ultravox
+    ggml_tensor * build_stack(ggml_tensor * cur, int32_t stack_factor, int32_t n_embed);
 };
