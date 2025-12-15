@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +126,12 @@ type GenerateRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// Tools is a list of tools the model may call.
+	Tools []Tool `json:"tools,omitempty"`
+
+	// MCPServers specifies MCP servers to use for tool functionality
+	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -175,6 +182,26 @@ type ChatRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// MCPServers is an optional list of MCP (Model Context Protocol) servers
+	// that provide tools for autonomous execution during the chat.
+	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
+
+	// MaxToolRounds limits the number of tool execution rounds to prevent
+	// infinite loops. Defaults to 15 if not specified.
+	MaxToolRounds int `json:"max_tool_rounds,omitempty"`
+
+	// ToolTimeout sets the timeout for individual tool executions.
+	// Defaults to 30 seconds if not specified.
+	ToolTimeout *Duration `json:"tool_timeout,omitempty"`
+
+	// SessionID is an optional session identifier for maintaining MCP state
+	// across multiple API calls. If not provided, a new session is created.
+	SessionID string `json:"session_id,omitempty"`
+
+	// ToolsPath is the file path passed via --tools flag in interactive mode.
+	// Used to generate consistent session IDs for tool continuity.
+	ToolsPath string `json:"tools_path,omitempty"`
 }
 
 type Tools []Tool
@@ -197,11 +224,12 @@ type Message struct {
 	Content string `json:"content"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking   string      `json:"thinking,omitempty"`
-	Images     []ImageData `json:"images,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
-	ToolName   string      `json:"tool_name,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Thinking    string       `json:"thinking,omitempty"`
+	Images      []ImageData  `json:"images,omitempty"`
+	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
+	ToolResults []ToolResult `json:"tool_results,omitempty"` // MCP tool results
+	ToolName    string       `json:"tool_name,omitempty"`
+	ToolCallID  string       `json:"tool_call_id,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -219,6 +247,12 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 type ToolCall struct {
 	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
+}
+
+type ToolResult struct {
+	ToolName string `json:"tool_name"`
+	Content  string `json:"content"`
+	Error    string `json:"error,omitempty"`
 }
 
 type ToolCallFunction struct {
@@ -306,18 +340,106 @@ func (tp ToolProperty) ToTypeScriptType() string {
 	}
 
 	if len(tp.Type) == 1 {
-		return mapToTypeScriptType(tp.Type[0])
+		return tp.mapSingleType(tp.Type[0])
 	}
 
 	var types []string
 	for _, t := range tp.Type {
-		types = append(types, mapToTypeScriptType(t))
+		types = append(types, tp.mapSingleType(t))
 	}
 	return strings.Join(types, " | ")
 }
 
-// mapToTypeScriptType maps JSON Schema types to TypeScript types
-func mapToTypeScriptType(jsonType string) string {
+// mapSingleType maps a single JSON Schema type to TypeScript, using Items for arrays
+func (tp ToolProperty) mapSingleType(jsonType string) string {
+	switch jsonType {
+	case "string":
+		return "string"
+	case "number", "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "array":
+		return tp.arrayTypeString()
+	case "object":
+		return "Record<string, any>"
+	case "null":
+		return "null"
+	default:
+		return "any"
+	}
+}
+
+// arrayTypeString generates TypeScript type for arrays, using Items schema
+func (tp ToolProperty) arrayTypeString() string {
+	if tp.Items == nil {
+		return "any[]"
+	}
+
+	itemsMap, ok := tp.Items.(map[string]interface{})
+	if !ok {
+		return "any[]"
+	}
+
+	// Check if items has a type
+	itemType, ok := itemsMap["type"].(string)
+	if !ok {
+		return "any[]"
+	}
+
+	// For object types with properties, generate inline type
+	if itemType == "object" {
+		if props, ok := itemsMap["properties"].(map[string]interface{}); ok {
+			return objectTypeFromProperties(props) + "[]"
+		}
+	}
+
+	// Simple type array
+	return mapSimpleType(itemType) + "[]"
+}
+
+// objectTypeFromProperties generates a TypeScript inline object type from properties
+func objectTypeFromProperties(props map[string]interface{}) string {
+	if len(props) == 0 {
+		return "Record<string, any>"
+	}
+
+	// Collect and sort field names for consistent output
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var fields []string
+	for _, name := range names {
+		propDef := props[name]
+		propMap, ok := propDef.(map[string]interface{})
+		if !ok {
+			fields = append(fields, name+": any")
+			continue
+		}
+
+		propType := "any"
+		if t, ok := propMap["type"].(string); ok {
+			propType = mapSimpleType(t)
+			// Handle nested arrays
+			if t == "array" {
+				if items, ok := propMap["items"].(map[string]interface{}); ok {
+					if itemType, ok := items["type"].(string); ok {
+						propType = mapSimpleType(itemType) + "[]"
+					}
+				}
+			}
+		}
+		fields = append(fields, name+": "+propType)
+	}
+
+	return "{" + strings.Join(fields, ", ") + "}"
+}
+
+// mapSimpleType maps JSON Schema types to TypeScript (without recursion)
+func mapSimpleType(jsonType string) string {
 	switch jsonType {
 	case "string":
 		return "string"
@@ -379,6 +501,21 @@ type Logprob struct {
 	// TopLogprobs contains the most likely tokens and their log probabilities
 	// at this position, if requested via TopLogprobs parameter.
 	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
+}
+
+// MCPServerConfig represents configuration for an MCP (Model Context Protocol) server
+type MCPServerConfig struct {
+	// Name is a unique identifier for the MCP server
+	Name string `json:"name"`
+
+	// Command is the executable command to start the MCP server
+	Command string `json:"command"`
+
+	// Args are optional command-line arguments for the MCP server
+	Args []string `json:"args,omitempty"`
+
+	// Env are optional environment variables for the MCP server
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
@@ -720,7 +857,8 @@ type GenerateResponse struct {
 
 	Metrics
 
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
+	ToolResults []ToolResult `json:"tool_results,omitempty"`
 
 	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 
