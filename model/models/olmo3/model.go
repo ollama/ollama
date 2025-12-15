@@ -108,7 +108,6 @@ func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions
 			ropeOpts = append(ropeOpts,
 				rope.WithOriginalContextLength(o.originalContextLength),
 				rope.WithExtrapolationFactor(o.ropeExtrapolation),
-				rope.WithAttentionFactor(o.attnFactor),
 			)
 		}
 	}
@@ -206,9 +205,6 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			return nil, fmt.Errorf("expected *kvcache.WrapperCache, got %T", m.Cache)
 		}
 		wc.SetLayerType(cacheType)
-		if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
-			causal.SetCausal(ctx, kvcache.CausalOptions{Except: []int{}})
-		}
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
