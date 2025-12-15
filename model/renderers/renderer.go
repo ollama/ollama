@@ -59,6 +59,9 @@ func rendererForName(name string) Renderer {
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
+	case "deepseek-v3.1":
+		renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
+		return renderer
 	case "olmo3":
 		renderer := &Olmo3Renderer{UseExtendedSystemMessage: false}
 		return renderer
