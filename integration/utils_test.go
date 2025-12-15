@@ -261,7 +261,6 @@ var (
 		"zephyr",
 	}
 	libraryEmbedModels = []string{
-		"qwen3-embedding",
 		"embeddinggemma",
 		"nomic-embed-text",
 		"all-minilm",
@@ -272,6 +271,7 @@ var (
 		"paraphrase-multilingual",
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
+		"qwen3-embedding",
 	}
 	libraryToolsModels = []string{
 		"gemma4",
@@ -802,6 +802,8 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
 	gpuPercent := getGPUPercent(ctx, t, client, model)
 	if gpuPercent < minPercent {
+		// Unload the model if we're going to skip
+		client.Generate(ctx, &api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
 	}
 }

@@ -56,6 +56,7 @@ func TestVisionModels(t *testing.T) {
 					"seed":        42,
 					"temperature": 0.0,
 				},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}
 
 			// Preload to skip if we're less than 80% on GPU to avoid extremely slow tests
