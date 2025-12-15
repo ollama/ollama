@@ -16,7 +16,6 @@ func TestEmbeddedAssets(t *testing.T) {
 		t.Fatal("app/dist not found in embedded filesystem - UI not built")
 	}
 	
-	// Check index.html exists
 	data, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		t.Fatal("index.html not found - run 'go generate' first")
@@ -24,17 +23,14 @@ func TestEmbeddedAssets(t *testing.T) {
 	
 	html := string(data)
 	
-	// Check it's NOT the source version
 	if strings.Contains(html, "/src/main.tsx") {
 		t.Fatal("Wrong index.html embedded: has /src/main.tsx (dev paths). The UI was not built. Run 'npm run build' first.")
 	}
 	
-	// Check it IS the built version
 	if !strings.Contains(html, "/assets/index-") {
 		t.Fatal("Wrong index.html embedded: missing /assets/index-* (production paths). The UI was not built correctly.")
 	}
 	
-	// Check assets directory exists
 	if _, err := fsys.Open("assets"); err != nil {
 		t.Fatal("assets/ directory not found - UI build incomplete")
 	}
