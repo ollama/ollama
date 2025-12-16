@@ -387,6 +387,187 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				"Based on the weather data, Paris is sunny at 22°C and London is rainy at 15°C. Also, 2+2 equals 4.<|im_end|>\n" +
 				"<|im_start|>assistant\n<think>\n",
 		},
+		{
+			name:       "empty messages list",
+			msgs:       []api.Message{},
+			isThinking: false,
+			expected:   "<|im_start|>system\n<|im_end|>\n<|im_start|>assistant\n<think></think>",
+		},
+		{
+			name: "tool result with JSON content",
+			msgs: []api.Message{
+				{Role: "user", Content: "Get user info"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{Name: "get_user", Arguments: map[string]any{"id": "123"}}},
+					},
+				},
+				{Role: "tool", Content: `{"name": "John", "age": 30, "active": true}`},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "get_user",
+						Parameters: api.ToolFunctionParameters{
+							Type:       "object",
+							Properties: map[string]api.ToolProperty{"id": {Type: api.PropertyType{"string"}}},
+						},
+					},
+				},
+			},
+			isThinking: true,
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: "<|im_start|>system\n" +
+				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
+				"<function>\n<name>get_user</name>\n<parameters>\n" +
+				"<parameter>\n<name>id</name>\n<type>string</type>\n</parameter>\n" +
+				"</parameters>\n</function>\n</tools>\n\n" +
+				"If you choose to call a function ONLY reply in the following format with NO suffix:\n\n" +
+				"<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n" +
+				"<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n" +
+				"</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n" +
+				"- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n" +
+				"- Required parameters MUST be specified\n" +
+				"- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n" +
+				"- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n" +
+				"</IMPORTANT><|im_end|>\n" +
+				"<|im_start|>user\nGet user info<|im_end|>\n" +
+				"<|im_start|>assistant\n<think></think>\n" +
+				"<tool_call>\n<function=get_user>\n<parameter=id>\n123\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n" +
+				"<|im_start|>user\n<tool_response>\n{\"name\": \"John\", \"age\": 30, \"active\": true}\n</tool_response>\n<|im_end|>\n" +
+				"<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name: "assistant message with only thinking no content",
+			msgs: []api.Message{
+				{Role: "user", Content: "Think about this"},
+				{Role: "assistant", Thinking: "Deep thoughts here...", Content: ""},
+				{Role: "user", Content: "What did you think?"},
+			},
+			isThinking: true,
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: "<|im_start|>system\n<|im_end|>\n" +
+				"<|im_start|>user\nThink about this<|im_end|>\n" +
+				"<|im_start|>assistant\n<think></think><|im_end|>\n" +
+				"<|im_start|>user\nWhat did you think?<|im_end|>\n" +
+				"<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name: "tool call with complex nested argument",
+			msgs: []api.Message{
+				{Role: "user", Content: "Create data"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{
+							Name: "create",
+							Arguments: map[string]any{
+								"data": map[string]any{"nested": "value", "count": 42},
+							},
+						}},
+					},
+				},
+				{Role: "tool", Content: "Created"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "create",
+						Parameters: api.ToolFunctionParameters{
+							Type:       "object",
+							Properties: map[string]api.ToolProperty{"data": {Type: api.PropertyType{"object"}}},
+						},
+					},
+				},
+			},
+			isThinking: true,
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: "<|im_start|>system\n" +
+				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
+				"<function>\n<name>create</name>\n<parameters>\n" +
+				"<parameter>\n<name>data</name>\n<type>object</type>\n</parameter>\n" +
+				"</parameters>\n</function>\n</tools>\n\n" +
+				"If you choose to call a function ONLY reply in the following format with NO suffix:\n\n" +
+				"<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n" +
+				"<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n" +
+				"</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n" +
+				"- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n" +
+				"- Required parameters MUST be specified\n" +
+				"- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n" +
+				"- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n" +
+				"</IMPORTANT><|im_end|>\n" +
+				"<|im_start|>user\nCreate data<|im_end|>\n" +
+				"<|im_start|>assistant\n<think></think>\n" +
+				"<tool_call>\n<function=create>\n<parameter=data>\n{\"count\":42,\"nested\":\"value\"}\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n" +
+				"<|im_start|>user\n<tool_response>\nCreated\n</tool_response>\n<|im_end|>\n" +
+				"<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name: "content explaining the format itself",
+			msgs: []api.Message{
+				{Role: "user", Content: "How do I format a tool call?"},
+				{Role: "assistant", Content: "To call a tool, use <tool_call> tags with <function=name> inside."},
+				{Role: "user", Content: "Thanks!"},
+			},
+			isThinking: true,
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: "<|im_start|>system\n<|im_end|>\n" +
+				"<|im_start|>user\nHow do I format a tool call?<|im_end|>\n" +
+				"<|im_start|>assistant\n<think></think>To call a tool, use <tool_call> tags with <function=name> inside.<|im_end|>\n" +
+				"<|im_start|>user\nThanks!<|im_end|>\n" +
+				"<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name: "unicode in content and tool args",
+			msgs: []api.Message{
+				{Role: "user", Content: "Translate 你好"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{Name: "translate", Arguments: map[string]any{"text": "你好"}}},
+					},
+				},
+				{Role: "tool", Content: "Hello"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "translate",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"text": {Type: api.PropertyType{"string"}},
+							},
+						},
+					},
+				},
+			},
+			isThinking: true,
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: "<|im_start|>system\n" +
+				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
+				"<function>\n<name>translate</name>\n<parameters>\n" +
+				"<parameter>\n<name>text</name>\n<type>string</type>\n</parameter>\n" +
+				"</parameters>\n</function>\n</tools>\n\n" +
+				"If you choose to call a function ONLY reply in the following format with NO suffix:\n\n" +
+				"<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n" +
+				"<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n" +
+				"</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n" +
+				"- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n" +
+				"- Required parameters MUST be specified\n" +
+				"- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n" +
+				"- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n" +
+				"</IMPORTANT><|im_end|>\n" +
+				"<|im_start|>user\nTranslate 你好<|im_end|>\n" +
+				"<|im_start|>assistant\n<think></think>\n" +
+				"<tool_call>\n<function=translate>\n<parameter=text>\n你好\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n" +
+				"<|im_start|>user\n<tool_response>\nHello\n</tool_response>\n<|im_end|>\n" +
+				"<|im_start|>assistant\n<think>\n",
+		},
 	}
 
 	for _, tt := range tests {

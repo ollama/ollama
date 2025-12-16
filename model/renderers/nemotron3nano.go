@@ -161,14 +161,12 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 }
 
 func (r *Nemotron3NanoRenderer) buildContent(message api.Message) string {
+	// The parser always extracts thinking into the Thinking field,
+	// so Content will never have <think> tags embedded
 	if message.Thinking != "" {
 		return "<think>\n" + message.Thinking + "\n</think>\n" + message.Content
 	}
-	content := message.Content
-	if !strings.Contains(content, "<think>") && !strings.Contains(content, "</think>") {
-		return "<think></think>" + content
-	}
-	return content
+	return "<think></think>" + message.Content
 }
 
 func (r *Nemotron3NanoRenderer) formatContent(content string, truncate bool, addNewline bool) string {

@@ -148,6 +148,57 @@ func TestNemotron3NanoParser(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:             "empty thinking block - immediate close",
+			input:            "</think>\nHere is my answer.",
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "",
+			expectedContent:  "Here is my answer.",
+		},
+		{
+			name:            "thinking disabled but model outputs think close anyway",
+			input:           "</think>\nSome content after spurious tag.",
+			thinkValue:      &api.ThinkValue{Value: false},
+			expectedContent: "</think>\nSome content after spurious tag.",
+		},
+		{
+			name:          "tool call with no function name - returns empty tool call",
+			input:         "<tool_call>\n<function=>\n</function>\n</tool_call>",
+			thinkValue:    nil,
+			expectedCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "", Arguments: nil}}},
+		},
+		{
+			name:            "content with newlines preserved",
+			input:           "Line 1\n\nLine 2\n\n\nLine 3",
+			thinkValue:      nil,
+			expectedContent: "Line 1\n\nLine 2\n\n\nLine 3",
+		},
+		{
+			name:             "thinking with only whitespace after close tag",
+			input:            "My thoughts...</think>   \n\t\n   Content here.",
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "My thoughts...",
+			expectedContent:  "Content here.",
+		},
+		{
+			name:            "unicode content",
+			input:           "Hello 世界! 🌍 Ñoño",
+			thinkValue:      nil,
+			expectedContent: "Hello 世界! 🌍 Ñoño",
+		},
+		{
+			name:       "tool call with numeric parameter",
+			input:      "<tool_call>\n<function=set_temp>\n<parameter=value>\n42\n</parameter>\n</function>\n</tool_call>",
+			thinkValue: nil,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "set_temp",
+						Arguments: map[string]any{"value": "42"},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -339,6 +390,52 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			name:             "empty thinking block",
+			chunks:           []string{"</think>", "\n", "Just content."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "",
+			expectedContent:  "Just content.",
+		},
+		{
+			name:            "empty input chunks interspersed",
+			chunks:          []string{"Hello", "", " ", "", "world", "", "!"},
+			thinkValue:      nil,
+			expectedContent: "Hello world!",
+		},
+		{
+			name:             "tool call immediately after think close - no content",
+			chunks:           []string{"Analyzing...", "</think>", "\n", "<tool_call>", "\n<function=test>\n</function>\n", "</tool_call>"},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "Analyzing...",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "test",
+						Arguments: map[string]any{},
+					},
+				},
+			},
+		},
+		{
+			name:       "tool call with empty parameter value",
+			chunks:     []string{"<tool_call>\n<function=test>\n<parameter=name>\n", "\n</parameter>\n</function>\n</tool_call>"},
+			thinkValue: nil,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "test",
+						Arguments: map[string]any{"name": ""},
+					},
+				},
+			},
+		},
+		{
+			name:            "partial tool call tag at end - buffered",
+			chunks:          []string{"Here's some content", "<tool"},
+			thinkValue:      nil,
+			expectedContent: "Here's some content",
 		},
 	}
 
