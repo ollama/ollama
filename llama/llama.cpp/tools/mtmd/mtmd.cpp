@@ -227,7 +227,7 @@ struct mtmd_context {
 
     void init_vision() {
         GGML_ASSERT(ctx_v != nullptr);
-        use_mrope = clip_is_qwen2vl(ctx_v);
+        use_mrope = clip_is_mrope(ctx_v);
 
         projector_type proj = clip_get_projector_type(ctx_v);
         int minicpmv_version = clip_is_minicpmv(ctx_v);
@@ -318,6 +318,10 @@ struct mtmd_context {
         } else if (proj == PROJECTOR_TYPE_LFM2) {
             img_beg = "<|image_start|>";
             img_end = "<|image_end|>";
+
+        } else if (proj == PROJECTOR_TYPE_GLM4V) {
+            img_beg = "<|begin_of_image|>";
+            img_end = "<|end_of_image|>";
 
         }
     }
