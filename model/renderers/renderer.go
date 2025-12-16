@@ -77,11 +77,7 @@ func rendererForName(name string) Renderer {
 		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think32B}
 		return renderer
 	case "nemotron-3-nano":
-		renderer := &Nemotron3NanoRenderer{IsThinking: false}
-		return renderer
-	case "nemotron-3-nano-thinking":
-		renderer := &Nemotron3NanoRenderer{IsThinking: true}
-		return renderer
+		return &Nemotron3NanoRenderer{}
 	default:
 		return nil
 	}

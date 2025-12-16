@@ -14,7 +14,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 		msgs       []api.Message
 		tools      []api.Tool
 		thinkValue *api.ThinkValue
-		isThinking bool
 		expected   string
 	}{
 		{
@@ -22,7 +21,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 			msgs: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nHello!<|im_end|>\n" +
@@ -33,7 +31,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 			msgs: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
-			isThinking: false,
+			thinkValue: nil,
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nHello!<|im_end|>\n" +
 				"<|im_start|>assistant\n<think></think>",
@@ -44,7 +42,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Hello!"},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n" +
 				"<|im_start|>user\nHello!<|im_end|>\n" +
@@ -57,7 +54,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{Role: "assistant", Content: "Hello! How can I help?"},
 				{Role: "user", Content: "Tell me a joke"},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nHi<|im_end|>\n" +
@@ -86,7 +82,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -141,7 +136,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -198,7 +192,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -228,7 +221,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{Role: "assistant", Content: "Hello!", Thinking: "Let me think about this..."},
 				{Role: "user", Content: "How are you?"},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nHi<|im_end|>\n" +
@@ -274,7 +266,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -299,12 +290,11 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				"<|im_start|>assistant\n<think>\n",
 		},
 		{
-			name: "thinking disabled even when model supports it",
+			name: "thinking disabled when user doesn't request it",
 			msgs: []api.Message{
 				{Role: "user", Content: "Hello!"},
 			},
-			isThinking: true, // model supports thinking
-			thinkValue: nil,  // but user didn't request it
+			thinkValue: nil,
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nHello!<|im_end|>\n" +
 				"<|im_start|>assistant\n<think></think>",
@@ -351,7 +341,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -390,7 +379,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 		{
 			name:       "empty messages list",
 			msgs:       []api.Message{},
-			isThinking: false,
+			thinkValue: nil,
 			expected:   "<|im_start|>system\n<|im_end|>\n<|im_start|>assistant\n<think></think>",
 		},
 		{
@@ -417,7 +406,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -446,7 +434,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{Role: "assistant", Thinking: "Deep thoughts here...", Content: ""},
 				{Role: "user", Content: "What did you think?"},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nThink about this<|im_end|>\n" +
@@ -483,7 +470,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -512,7 +498,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{Role: "assistant", Content: "To call a tool, use <tool_call> tags with <function=name> inside."},
 				{Role: "user", Content: "Thanks!"},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n<|im_end|>\n" +
 				"<|im_start|>user\nHow do I format a tool call?<|im_end|>\n" +
@@ -546,7 +531,6 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					},
 				},
 			},
-			isThinking: true,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected: "<|im_start|>system\n" +
 				"# Tools\n\nYou have access to the following functions:\n\n<tools>\n" +
@@ -572,7 +556,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			renderer := &Nemotron3NanoRenderer{IsThinking: tt.isThinking}
+			renderer := &Nemotron3NanoRenderer{}
 			rendered, err := renderer.Render(tt.msgs, tt.tools, tt.thinkValue)
 			if err != nil {
 				t.Fatal(err)

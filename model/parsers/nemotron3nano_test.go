@@ -203,7 +203,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Nemotron3NanoParser{HasThinking: tt.thinkValue != nil && tt.thinkValue.Bool()}
+			p := &Nemotron3NanoParser{}
 			p.Init(nil, nil, tt.thinkValue)
 
 			content, thinking, calls, err := p.Add(tt.input, false)
@@ -441,7 +441,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Nemotron3NanoParser{HasThinking: tt.thinkValue != nil && tt.thinkValue.Bool()}
+			p := &Nemotron3NanoParser{}
 			p.Init(nil, nil, tt.thinkValue)
 
 			var allContent string
@@ -488,24 +488,15 @@ func TestNemotron3NanoParser_HasToolSupport(t *testing.T) {
 }
 
 func TestNemotron3NanoParser_HasThinkingSupport(t *testing.T) {
-	t.Run("with thinking enabled", func(t *testing.T) {
-		p := &Nemotron3NanoParser{HasThinking: true}
-		if !p.HasThinkingSupport() {
-			t.Error("expected HasThinkingSupport to return true")
-		}
-	})
-
-	t.Run("with thinking disabled", func(t *testing.T) {
-		p := &Nemotron3NanoParser{HasThinking: false}
-		if p.HasThinkingSupport() {
-			t.Error("expected HasThinkingSupport to return false")
-		}
-	})
+	p := &Nemotron3NanoParser{}
+	if !p.HasThinkingSupport() {
+		t.Error("expected HasThinkingSupport to return true")
+	}
 }
 
 func TestNemotron3NanoParser_Init(t *testing.T) {
 	t.Run("starts in thinking state when enabled", func(t *testing.T) {
-		p := &Nemotron3NanoParser{HasThinking: true}
+		p := &Nemotron3NanoParser{}
 		p.Init(nil, nil, &api.ThinkValue{Value: true})
 		if p.state != Nemotron3NanoCollectingThinking {
 			t.Errorf("expected state Nemotron3NanoCollectingThinking, got %v", p.state)
@@ -513,7 +504,7 @@ func TestNemotron3NanoParser_Init(t *testing.T) {
 	})
 
 	t.Run("starts in content state when thinking disabled", func(t *testing.T) {
-		p := &Nemotron3NanoParser{HasThinking: true}
+		p := &Nemotron3NanoParser{}
 		p.Init(nil, nil, &api.ThinkValue{Value: false})
 		if p.state != Nemotron3NanoCollectingContent {
 			t.Errorf("expected state Nemotron3NanoCollectingContent, got %v", p.state)
@@ -521,7 +512,7 @@ func TestNemotron3NanoParser_Init(t *testing.T) {
 	})
 
 	t.Run("starts in content state when nil thinkValue", func(t *testing.T) {
-		p := &Nemotron3NanoParser{HasThinking: true}
+		p := &Nemotron3NanoParser{}
 		p.Init(nil, nil, nil)
 		if p.state != Nemotron3NanoCollectingContent {
 			t.Errorf("expected state Nemotron3NanoCollectingContent, got %v", p.state)
@@ -529,7 +520,7 @@ func TestNemotron3NanoParser_Init(t *testing.T) {
 	})
 
 	t.Run("starts in content state with assistant prefill", func(t *testing.T) {
-		p := &Nemotron3NanoParser{HasThinking: true}
+		p := &Nemotron3NanoParser{}
 		prefill := &api.Message{Role: "assistant", Content: "Starting..."}
 		p.Init(nil, prefill, &api.ThinkValue{Value: true})
 		if p.state != Nemotron3NanoCollectingContent {
