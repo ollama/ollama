@@ -33,19 +33,19 @@ func (s *Server) appHandler() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
-		
+
 		if file, err := fsys.Open(p); err == nil {
 			file.Close()
-			
+
 			// Ensure proper Content-Type headers
 			if contentType := mime.TypeByExtension(filepath.Ext(p)); contentType != "" {
 				w.Header().Set("Content-Type", contentType)
 			}
-			
+
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		
+
 		// Fallback – serve index.html for unknown paths so React Router works
 		data, err := fs.ReadFile(fsys, "index.html")
 		if err != nil {
@@ -56,7 +56,7 @@ func (s *Server) appHandler() http.Handler {
 			}
 			return
 		}
-		
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(data))
 	})
