@@ -70,7 +70,16 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 	isTool := false
 	isLastUser := false
 
-	for _, message := range messages {
+	// Find the index of the last user message to determine which assistant message is "current"
+	lastUserIndex := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			lastUserIndex = i
+			break
+		}
+	}
+
+	for i, message := range messages {
 		switch message.Role {
 		case "user":
 			isTool = false
@@ -101,9 +110,11 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 			} else {
 				if isLastUser {
 					sb.WriteString("<｜Assistant｜>")
-					// message["prefix"] is defined and message["prefix"] and thinking
-					// message.Thinking != "" represents message["prefix"] being defined
-					if message.Thinking != "" && thinking {
+					hasThinking := message.Thinking != ""
+
+					// only use <think> for the current turn (after last user message)
+					isCurrentTurn := i > lastUserIndex
+					if hasThinking && thinking && isCurrentTurn {
 						sb.WriteString("<think>")
 					} else {
 						sb.WriteString("</think>")
