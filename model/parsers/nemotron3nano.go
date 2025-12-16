@@ -12,6 +12,7 @@ type Nemotron3NanoParserState int
 
 const (
 	Nemotron3NanoCollectingThinking Nemotron3NanoParserState = iota
+	Nemotron3NanoSkipWhitespaceAfterThinking
 	Nemotron3NanoCollectingContent
 	Nemotron3NanoCollectingToolCalls
 )
@@ -23,19 +24,14 @@ const (
 )
 
 type Nemotron3NanoParser struct {
-	state              Nemotron3NanoParserState
-	buffer             strings.Builder
-	tools              []api.Tool
-	hasThinkingSupport bool
+	state       Nemotron3NanoParserState
+	buffer      strings.Builder
+	tools       []api.Tool
+	HasThinking bool
 }
 
-func (p *Nemotron3NanoParser) HasToolSupport() bool {
-	return true
-}
-
-func (p *Nemotron3NanoParser) HasThinkingSupport() bool {
-	return p.hasThinkingSupport
-}
+func (p *Nemotron3NanoParser) HasToolSupport() bool     { return true }
+func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return p.HasThinking }
 
 func (p *Nemotron3NanoParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
@@ -115,133 +111,103 @@ func (p *Nemotron3NanoParser) parseEvents() []nemotronEvent {
 	return all
 }
 
+// emitWithPartialCheck extracts unambiguous content before a potential partial tag
+func (p *Nemotron3NanoParser) emitWithPartialCheck(bufStr, tag string) (unambiguous, ambiguous string) {
+	if overlapLen := overlap(bufStr, tag); overlapLen > 0 {
+		beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+		trailingLen := trailingWhitespaceLen(beforePartialTag)
+		return bufStr[:len(beforePartialTag)-trailingLen], bufStr[len(beforePartialTag)-trailingLen:]
+	}
+	wsLen := trailingWhitespaceLen(bufStr)
+	return bufStr[:len(bufStr)-wsLen], bufStr[len(bufStr)-wsLen:]
+}
+
 func (p *Nemotron3NanoParser) eat() ([]nemotronEvent, bool) {
-	var events []nemotronEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
-		return events, false
+		return nil, false
 	}
 
 	switch p.state {
 	case Nemotron3NanoCollectingThinking:
 		if strings.Contains(bufStr, nemotronThinkClose) {
 			split := strings.SplitN(bufStr, nemotronThinkClose, 2)
-			thinking := split[0]
-			thinking = strings.TrimRightFunc(thinking, unicode.IsSpace)
-
-			remaining := split[1]
-			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
-
+			thinking := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			p.buffer.Reset()
-			p.buffer.WriteString(remaining)
-			p.state = Nemotron3NanoCollectingContent
-
-			if len(thinking) > 0 {
-				events = append(events, nemotronEventThinkingContent{content: thinking})
+			remainder := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+			p.buffer.WriteString(remainder)
+			// Transition to whitespace-skipping state if buffer is empty,
+			// otherwise go directly to content collection
+			if remainder == "" {
+				p.state = Nemotron3NanoSkipWhitespaceAfterThinking
+			} else {
+				p.state = Nemotron3NanoCollectingContent
 			}
-			return events, true
-		} else if overlapLen := overlap(bufStr, nemotronThinkClose); overlapLen > 0 {
-			beforePartialTag := bufStr[:len(bufStr)-overlapLen]
-			trailingLen := trailingWhitespaceLen(beforePartialTag)
-			ambiguousStart := len(beforePartialTag) - trailingLen
-
-			unambiguous := bufStr[:ambiguousStart]
-			ambiguous := bufStr[ambiguousStart:]
-			p.buffer.Reset()
-			p.buffer.WriteString(ambiguous)
-			if len(unambiguous) > 0 {
-				events = append(events, nemotronEventThinkingContent{content: unambiguous})
+			if thinking != "" {
+				return []nemotronEvent{nemotronEventThinkingContent{content: thinking}}, true
 			}
-			return events, false
-		} else {
-			whitespaceLen := trailingWhitespaceLen(bufStr)
-			ambiguousStart := len(bufStr) - whitespaceLen
-
-			unambiguous := bufStr[:ambiguousStart]
-			ambiguous := bufStr[ambiguousStart:]
-			p.buffer.Reset()
-			p.buffer.WriteString(ambiguous)
-			if len(unambiguous) > 0 {
-				events = append(events, nemotronEventThinkingContent{content: unambiguous})
-			}
-			return events, false
+			return nil, true
 		}
+		unambig, ambig := p.emitWithPartialCheck(bufStr, nemotronThinkClose)
+		p.buffer.Reset()
+		p.buffer.WriteString(ambig)
+		if unambig != "" {
+			return []nemotronEvent{nemotronEventThinkingContent{content: unambig}}, false
+		}
+		return nil, false
+
+	// We only want to skip whitespace between thinking and content
+	case Nemotron3NanoSkipWhitespaceAfterThinking:
+		bufStr = strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+		p.buffer.Reset()
+		p.buffer.WriteString(bufStr)
+		if bufStr == "" {
+			return nil, false
+		}
+		p.state = Nemotron3NanoCollectingContent
+		return nil, true
 
 	case Nemotron3NanoCollectingContent:
-		switch {
-		case strings.Contains(bufStr, nemotronToolCallOpen):
+		if strings.Contains(bufStr, nemotronToolCallOpen) {
 			split := strings.SplitN(bufStr, nemotronToolCallOpen, 2)
-			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
-			remaining := split[1]
-
+			content := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			p.buffer.Reset()
-			p.buffer.WriteString(remaining)
+			p.buffer.WriteString(split[1])
 			p.state = Nemotron3NanoCollectingToolCalls
-
-			if len(contentBefore) > 0 {
-				events = append(events, nemotronEventContent{content: contentBefore})
+			if content != "" {
+				return []nemotronEvent{nemotronEventContent{content: content}}, true
 			}
-			return events, true
-		default:
-			// Check for partial tool call tag
-			if overlapLen := overlap(bufStr, nemotronToolCallOpen); overlapLen > 0 {
-				beforePartialTag := bufStr[:len(bufStr)-overlapLen]
-				trailingLen := trailingWhitespaceLen(beforePartialTag)
-				ambiguousStart := len(beforePartialTag) - trailingLen
-
-				unambiguous := bufStr[:ambiguousStart]
-				ambiguous := bufStr[ambiguousStart:]
-				p.buffer.Reset()
-				p.buffer.WriteString(ambiguous)
-				if len(unambiguous) > 0 {
-					events = append(events, nemotronEventContent{content: unambiguous})
-				}
-				return events, false
-			}
-
-			// Otherwise emit content, withholding trailing whitespace
-			whitespaceLen := trailingWhitespaceLen(bufStr)
-			ambiguousStart := len(bufStr) - whitespaceLen
-
-			unambiguous := bufStr[:ambiguousStart]
-			ambiguous := bufStr[ambiguousStart:]
-			p.buffer.Reset()
-			p.buffer.WriteString(ambiguous)
-			if len(unambiguous) > 0 {
-				events = append(events, nemotronEventContent{content: unambiguous})
-			}
-			return events, false
+			return nil, true
 		}
+		unambig, ambig := p.emitWithPartialCheck(bufStr, nemotronToolCallOpen)
+		p.buffer.Reset()
+		p.buffer.WriteString(ambig)
+		if unambig != "" {
+			return []nemotronEvent{nemotronEventContent{content: unambig}}, false
+		}
+		return nil, false
 
 	case Nemotron3NanoCollectingToolCalls:
-		// Look for complete tool call: <function=name>...</function>
 		if strings.Contains(bufStr, nemotronToolCallClose) {
-			// We have a complete tool call block
 			split := strings.SplitN(bufStr, nemotronToolCallClose, 2)
-			toolContent := split[0]
 			remaining := strings.TrimLeftFunc(split[1], unicode.IsSpace)
-
-			// Parse the tool call
-			if toolCall, err := p.parseToolCall(toolContent); err == nil {
-				events = append(events, nemotronEventToolCall{toolCall: toolCall})
-			}
-
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 
-			// Check if there are more tool calls
-			if strings.Contains(remaining, nemotronToolCallOpen) {
-				// Stay in tool call state
-				return events, true
+			var events []nemotronEvent
+			if tc, err := p.parseToolCall(split[0]); err == nil {
+				events = append(events, nemotronEventToolCall{toolCall: tc})
 			}
 
-			p.state = Nemotron3NanoCollectingContent
+			if !strings.Contains(remaining, nemotronToolCallOpen) {
+				p.state = Nemotron3NanoCollectingContent
+			}
 			return events, true
 		}
-		return events, false
+		return nil, false
 	}
 
-	return events, false
+	return nil, false
 }
 
 var (

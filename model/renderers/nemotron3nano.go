@@ -18,17 +18,6 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 	// thinking is enabled: model must support it AND user must request it
 	enableThinking := r.IsThinking && (thinkValue != nil && thinkValue.Bool())
 
-	// truncate_history_thinking: drop thinking from historical assistant messages
-	truncateHistoryThinking := true
-
-	// Find the last user message index
-	lastUserIdx := -1
-	for i, msg := range messages {
-		if msg.Role == "user" {
-			lastUserIdx = i
-		}
-	}
-
 	// Extract system message if present
 	var systemMessage string
 	var loopMessages []api.Message
@@ -39,16 +28,14 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 		loopMessages = messages
 	}
 
-	// Recalculate lastUserIdx for loopMessages
-	lastUserIdxInLoop := -1
+	// Find last user message index for thinking truncation
+	lastUserIdx := -1
 	for i, msg := range loopMessages {
 		if msg.Role == "user" {
-			lastUserIdxInLoop = i
+			lastUserIdx = i
 		}
 	}
-	_ = lastUserIdx // silence unused variable warning
 
-	// Write system message - always include the system block
 	sb.WriteString("<|im_start|>system\n")
 	if systemMessage != "" {
 		sb.WriteString(systemMessage)
@@ -65,79 +52,18 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 	for i, message := range loopMessages {
 		switch message.Role {
 		case "assistant":
-			// Build content with reasoning handling
-			var content string
-			if message.Thinking != "" {
-				content = "<think>\n" + message.Thinking + "\n</think>\n" + message.Content
-			} else {
-				content = message.Content
-				// Allow downstream logic to handle broken thought, only handle coherent reasoning here
-				if !strings.Contains(content, "<think>") && !strings.Contains(content, "</think>") {
-					content = "<think></think>" + content
-				}
-			}
+			// Build content with thinking tags
+			content := r.buildContent(message)
+			shouldTruncate := i < lastUserIdx
 
 			if len(message.ToolCalls) > 0 {
-				// Assistant message with tool calls
 				sb.WriteString("<|im_start|>assistant\n")
-
-				includeContent := !(truncateHistoryThinking && i < lastUserIdxInLoop)
-				if content != "" {
-					if includeContent {
-						sb.WriteString(strings.TrimSpace(content) + "\n")
-					} else {
-						// Truncate thinking
-						c := content
-						if strings.Contains(c, "</think>") {
-							// Keep only content after the last closing think
-							parts := strings.Split(c, "</think>")
-							c = parts[len(parts)-1]
-						} else if strings.Contains(c, "<think>") {
-							// If <think> was opened but never closed, drop the trailing think segment
-							parts := strings.Split(c, "<think>")
-							c = parts[0]
-						}
-						c = "<think></think>" + strings.TrimSpace(c)
-						if len(c) > len("<think></think>") {
-							sb.WriteString(c + "\n")
-						} else {
-							sb.WriteString("<think></think>")
-						}
-					}
-				} else {
-					sb.WriteString("<think></think>")
-				}
-
-				// Write tool calls
-				for _, toolCall := range message.ToolCalls {
-					sb.WriteString("<tool_call>\n<function=" + toolCall.Function.Name + ">\n")
-					for argName, argValue := range toolCall.Function.Arguments {
-						sb.WriteString("<parameter=" + argName + ">\n")
-						valueStr := r.formatArgValue(argValue)
-						sb.WriteString(valueStr + "\n</parameter>\n")
-					}
-					sb.WriteString("</function>\n</tool_call>\n")
-				}
+				sb.WriteString(r.formatContent(content, shouldTruncate, true))
+				r.writeToolCalls(&sb, message.ToolCalls)
 				sb.WriteString("<|im_end|>\n")
 			} else {
-				// Assistant message without tool calls
-				if !(truncateHistoryThinking && i < lastUserIdxInLoop) {
-					sb.WriteString("<|im_start|>assistant\n" + strings.TrimSpace(content) + "<|im_end|>\n")
-				} else {
-					// Truncate thinking - keep only content after </think>
-					c := content
-					if strings.Contains(c, "<think>") && strings.Contains(c, "</think>") {
-						parts := strings.Split(c, "</think>")
-						// Trim the content after </think> before concatenating
-						c = "<think></think>" + strings.TrimSpace(parts[len(parts)-1])
-					}
-					c = strings.TrimSpace(c)
-					if c != "" {
-						sb.WriteString("<|im_start|>assistant\n" + c + "<|im_end|>\n")
-					} else {
-						sb.WriteString("<|im_start|>assistant\n<|im_end|>\n")
-					}
-				}
+				formatted := r.formatContent(content, shouldTruncate, false)
+				sb.WriteString("<|im_start|>assistant\n" + formatted + "<|im_end|>\n")
 			}
 
 		case "user", "system":
@@ -232,6 +158,59 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 		"- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>")
 
 	return sb.String()
+}
+
+func (r *Nemotron3NanoRenderer) buildContent(message api.Message) string {
+	if message.Thinking != "" {
+		return "<think>\n" + message.Thinking + "\n</think>\n" + message.Content
+	}
+	content := message.Content
+	if !strings.Contains(content, "<think>") && !strings.Contains(content, "</think>") {
+		return "<think></think>" + content
+	}
+	return content
+}
+
+func (r *Nemotron3NanoRenderer) formatContent(content string, truncate bool, addNewline bool) string {
+	if content == "" {
+		return "<think></think>"
+	}
+
+	if !truncate {
+		if addNewline {
+			return strings.TrimSpace(content) + "\n"
+		}
+		return strings.TrimSpace(content)
+	}
+
+	// Truncate thinking - keep only content after </think>
+	c := content
+	if strings.Contains(c, "</think>") {
+		parts := strings.Split(c, "</think>")
+		c = parts[len(parts)-1]
+	} else if strings.Contains(c, "<think>") {
+		parts := strings.Split(c, "<think>")
+		c = parts[0]
+	}
+	c = "<think></think>" + strings.TrimSpace(c)
+
+	if addNewline && len(c) > len("<think></think>") {
+		return c + "\n"
+	}
+	if c == "<think></think>" {
+		return c
+	}
+	return strings.TrimSpace(c)
+}
+
+func (r *Nemotron3NanoRenderer) writeToolCalls(sb *strings.Builder, toolCalls []api.ToolCall) {
+	for _, tc := range toolCalls {
+		sb.WriteString("<tool_call>\n<function=" + tc.Function.Name + ">\n")
+		for name, value := range tc.Function.Arguments {
+			sb.WriteString("<parameter=" + name + ">\n" + r.formatArgValue(value) + "\n</parameter>\n")
+		}
+		sb.WriteString("</function>\n</tool_call>\n")
+	}
 }
 
 func (r *Nemotron3NanoRenderer) formatArgValue(value any) string {
