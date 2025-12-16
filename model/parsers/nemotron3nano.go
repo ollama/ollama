@@ -24,19 +24,18 @@ const (
 )
 
 type Nemotron3NanoParser struct {
-	state       Nemotron3NanoParserState
-	buffer      strings.Builder
-	tools       []api.Tool
-	HasThinking bool
+	state  Nemotron3NanoParserState
+	buffer strings.Builder
+	tools  []api.Tool
 }
 
 func (p *Nemotron3NanoParser) HasToolSupport() bool     { return true }
-func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return p.HasThinking }
+func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return true }
 
 func (p *Nemotron3NanoParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 
-	// Check both model capability AND request preference
+	// thinking is enabled if user requests it
 	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
 
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"

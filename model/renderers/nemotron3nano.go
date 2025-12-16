@@ -8,15 +8,13 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type Nemotron3NanoRenderer struct {
-	IsThinking bool
-}
+type Nemotron3NanoRenderer struct{}
 
 func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
-	// thinking is enabled: model must support it AND user must request it
-	enableThinking := r.IsThinking && (thinkValue != nil && thinkValue.Bool())
+	// thinking is enabled if user requests it
+	enableThinking := thinkValue != nil && thinkValue.Bool()
 
 	// Extract system message if present
 	var systemMessage string
