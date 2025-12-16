@@ -401,6 +401,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
                 };
                 break;
             case LLAMA_VOCAB_PRE_TYPE_GPT4O:
+            case LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2:
                 regex_exprs = {
                     // original regex from tokenizer.json
                     // "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
@@ -440,6 +441,17 @@ struct llm_tokenizer_bpe : llm_tokenizer {
                     // original regex from tokenizer.json
                     // "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
                     "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+                };
+                break;
+            case LLAMA_VOCAB_PRE_TYPE_AFMOE:
+                regex_exprs = {
+                    // Digit handling - uses custom implementation in unicode.cpp
+                    // Groups digits with leading 1-2 based on total length modulo 3
+                    "\\p{AFMoE_digits}",
+                    // CJK and Asian scripts (using direct Unicode literals)
+                    "[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ･-ﾟ⼀-⿟เ-๿຀-໿ក-៿က-႟ꩠ-ꩿꧠ-꧿가-힯ᄀ-ᇿ]+",
+                    // Main BPE pattern
+                    "[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\\r\\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
                 };
                 break;
             default:
@@ -1012,7 +1024,7 @@ private:
         }
     private:
         uint32_t get_node(size_t index) {
-            if (index > xcda_array_size) {
+            if (index >= xcda_array_size) {
                 throw std::runtime_error("Index out of array bounds in XCDA array!");
             }
             return xcda_array[index];
@@ -1269,6 +1281,7 @@ struct llm_tokenizer_plamo2 : llm_tokenizer {
 
         // Build suffix list in lexicographical order of reversed strings
         std::vector<std::string> suffixes;
+        suffixes.reserve(suffix_to_score.size() + 1);
         for (const auto & pair : suffix_to_score) {
             suffixes.push_back(pair.first);
         }
@@ -1980,6 +1993,14 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             } else if (
                 tokenizer_pre == "grok-2") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_GROK_2;
+                clean_spaces = false;
+            } else if (
+                tokenizer_pre == "afmoe") {
+                pre_type = LLAMA_VOCAB_PRE_TYPE_AFMOE;
+                clean_spaces = false;
+            } else if (
+                tokenizer_pre == "minimax-m2") {
+                pre_type = LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2;
                 clean_spaces = false;
             } else {
                 LLAMA_LOG_WARN("%s: missing or unrecognized pre-tokenizer type, using: 'default'\n", __func__);
@@ -3222,8 +3243,7 @@ void llama_vocab::impl::print_info() const {
 llama_vocab::llama_vocab() : pimpl(new impl(*this)) {
 }
 
-llama_vocab::~llama_vocab() {
-}
+llama_vocab::~llama_vocab() = default;
 
 void llama_vocab::load(llama_model_loader & ml, const LLM_KV & kv) {
     pimpl->load(ml, kv);

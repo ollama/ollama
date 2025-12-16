@@ -25,6 +25,7 @@ static bool ggml_is_view(const struct ggml_tensor * t) {
 // ops that return true for this function must not use restrict pointers for their backend implementations
 bool ggml_op_can_inplace(enum ggml_op op) {
     switch (op) {
+        case GGML_OP_FILL:
         case GGML_OP_SCALE:
         case GGML_OP_DIAG_MASK_ZERO:
         case GGML_OP_DIAG_MASK_INF:
@@ -226,16 +227,23 @@ static struct buffer_address ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * al
     }
 
     if (best_fit_block == -1) {
-        // no suitable block found, try the last block (this will grow a chunks size)
+        // no suitable block found, try the last block (this may grow a chunks size)
+        int64_t best_reuse = INT64_MIN;
         for (int c = 0; c < alloc->n_chunks; ++c) {
             struct tallocr_chunk * chunk = alloc->chunks[c];
             if (chunk->n_free_blocks > 0) {
                 struct free_block * block = &chunk->free_blocks[chunk->n_free_blocks - 1];
                 max_avail = MAX(max_avail, block->size);
-                if (block->size >= size) {
+                int64_t reuse_factor = chunk->max_size - block->offset - size;
+                // reuse_factor < 0 : amount of extra memory that needs to be allocated
+                // reuse_factor = 0 : allocated free space exactly matches tensor size
+                // reuse_factor > 0 : superfluous memory that will remain unused
+                bool better_reuse = best_reuse < 0 && reuse_factor > best_reuse;
+                bool better_fit = reuse_factor >= 0 && reuse_factor < best_reuse;
+                if (block->size >= size && (better_reuse || better_fit)) {
                     best_fit_chunk = c;
                     best_fit_block = chunk->n_free_blocks - 1;
-                    break;
+                    best_reuse = reuse_factor;
                 }
             }
         }
@@ -268,7 +276,7 @@ static struct buffer_address ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * al
 #ifdef GGML_ALLOCATOR_DEBUG
     add_allocated_tensor(alloc, addr, tensor);
     size_t cur_max = addr.offset + size;
-    if (cur_max > alloc->max_size[addr.chunk]) {
+    if (cur_max > chunk->max_size) {
         // sort allocated_tensors by chunk/offset
         for (int i = 0; i < 1024; i++) {
             for (int j = i + 1; j < 1024; j++) {
@@ -921,10 +929,15 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
         }
         if (realloc) {
 #ifndef NDEBUG
-            size_t cur_size = galloc->buffers[i] ? ggml_vbuffer_size(galloc->buffers[i]) : 0;
-            GGML_LOG_DEBUG("%s: reallocating %s buffer from size %.02f MiB to %.02f MiB\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), cur_size / 1024.0 / 1024.0, new_size / 1024.0 / 1024.0);
+            {
+                size_t cur_size = galloc->buffers[i] ? ggml_vbuffer_size(galloc->buffers[i]) : 0;
+                if (cur_size > 0) {
+                    GGML_LOG_DEBUG("%s: reallocating %s buffer from size %.02f MiB to %.02f MiB\n",
+                        __func__, ggml_backend_buft_name(galloc->bufts[i]),
+                        cur_size / 1024.0 / 1024.0, new_size / 1024.0 / 1024.0);
+                }
+            }
 #endif
-
             ggml_vbuffer_free(galloc->buffers[i]);
             galloc->buffers[i] = ggml_vbuffer_alloc(galloc->bufts[i], galloc->buf_tallocs[i], GGML_BACKEND_BUFFER_USAGE_COMPUTE);
             if (galloc->buffers[i]) {

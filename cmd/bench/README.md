@@ -15,7 +15,7 @@ A Go-based command-line tool for benchmarking Ollama models with configurable pa
 
 ```
 go build -o ollama-bench bench.go
-./bench -model gpt-oss:20b -epochs 6 -format csv
+./ollama-bench -model gpt-oss:20b -epochs 6 -format csv
 ```
 
 Using Go Run (without building)
@@ -29,31 +29,32 @@ go run bench.go -model gpt-oss:20b -epochs 3
 ### Basic Example
 
 ```
-./bench -model gemma3 -epochs 6
+./ollama-bench -model gemma3 -epochs 6
 ```
 
 ### Benchmark Multiple Models
 
 ```
-./bench -model gemma3,gemma3n -epochs 6 -max-tokens 100 -p "Write me a short story" | tee gemma.bench
+./ollama-bench -model gemma3,gemma3n -epochs 6 -max-tokens 100 -p "Write me a short story" | tee gemma.bench
 benchstat -col /name gemma.bench
 ```
 
 ### With Image Prompt
 
 ```
-./bench -model qwen3-vl -image photo.jpg -epochs 6 -max-tokens 100 -p "Describe this image"
+./ollama-bench -model qwen3-vl -image photo.jpg -epochs 6 -max-tokens 100 -p "Describe this image"
 ```
 
 ### Advanced Example
 
 ```
-./bench -model llama3 -epochs 10 -temperature 0.7 -max-tokens 500 -seed 42 -format csv -output results.csv
+./ollama-bench -model llama3 -epochs 10 -temperature 0.7 -max-tokens 500 -seed 42 -format csv -output results.csv
 ```
 
 ## Command Line Options
 
 | Option  	| Description | Default |
+|----------|-------------|---------|
 | -model	| Comma-separated list of models to benchmark	| (required)		|
 | -epochs	| Number of iterations per model		| 1			|
 | -max-tokens	| Maximum tokens for model response		| 0 (unlimited)		|

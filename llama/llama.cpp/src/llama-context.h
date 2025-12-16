@@ -43,11 +43,11 @@ struct llama_context {
 
     ggml_backend_sched_t get_sched() const;
 
-    uint32_t n_ctx()         const;
-    uint32_t n_ctx_per_seq() const;
-    uint32_t n_batch()       const;
-    uint32_t n_ubatch()      const;
-    uint32_t n_seq_max()     const;
+    uint32_t n_ctx()     const;
+    uint32_t n_ctx_seq() const;
+    uint32_t n_batch()   const;
+    uint32_t n_ubatch()  const;
+    uint32_t n_seq_max() const;
 
     uint32_t n_threads()       const;
     uint32_t n_threads_batch() const;
@@ -197,7 +197,7 @@ private:
     //
 
 public:
-    uint32_t graph_max_nodes() const;
+    uint32_t graph_max_nodes(uint32_t n_tokens) const;
 
     // can reuse the llm_graph_result instance of the context (for example to update a memory module)
     llm_graph_result * get_gf_res_reserve() const;

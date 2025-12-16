@@ -16,13 +16,15 @@ jobs:
     outputs:
       GOFLAGS: ${{ steps.goflags.outputs.GOFLAGS }}
       VERSION: ${{ steps.goflags.outputs.VERSION }}
+      vendorsha: ${{ steps.changes.outputs.vendorsha }}
     steps:
       - uses: actions/checkout@v4
       - name: Set environment
         id: goflags
         run: |
-          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
-          echo VERSION="${GITHUB_REF_NAME#v}" >>$GITHUB_OUTPUT
+          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" | tee -a $GITHUB_OUTPUT
+          echo VERSION="${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
+          echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
 
   darwin-build:
     runs-on: macos-14-xlarge
@@ -53,6 +55,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            Makefile.sync
       - run: |
           ./scripts/build_darwin.sh
       - name: Log build results
@@ -185,7 +190,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\.ccache
-          key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
+          key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}-${{ needs.setup-environment.outputs.vendorsha }}
       - name: Build target "${{ matrix.preset }}"
         run: |
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
@@ -249,6 +254,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            Makefile.sync
       - name: Verify gcc is actually clang
         run: |
           $ErrorActionPreference='Continue'
@@ -302,6 +310,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            Makefile.sync
       - uses: actions/download-artifact@v4
         with:
           pattern: depends-windows*

@@ -109,7 +109,7 @@ type Backend struct {
 	// btDeviceMemory maps from a buffer type to the memory allocations associated with that device
 	btDeviceMemory map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory
 
-	flashAttention bool
+	flashAttention ml.FlashAttentionType
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
@@ -684,10 +684,10 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 }
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
-	if b.flashAttention {
+	if b.flashAttention == ml.FlashAttentionEnabled {
 		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
 	} else {
-		return ml.CacheConfig{CachePadding: 32, PermutedV: true}
+		return ml.CacheConfig{CachePadding: 256, PermutedV: true}
 	}
 }
 
@@ -1534,7 +1534,8 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			unsafe.SliceData(mropeSections),
 			C.int(opts.Type),
 			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
-			C.float(ropeBase), C.float(ropeScale),
+			C.float(ropeBase),
+			C.float(ropeScale),
 			C.float(opts.YaRN.ExtrapolationFactor),
 			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
 			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
@@ -1546,9 +1547,11 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			dequant,
 			positions.(*Tensor).t,
 			opts.Factors.(*Tensor).t,
-			C.int(ropeDim), C.int(opts.Type),
+			C.int(ropeDim),
+			C.int(opts.Type),
 			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
-			C.float(ropeBase), C.float(ropeScale),
+			C.float(ropeBase),
+			C.float(ropeScale),
 			C.float(opts.YaRN.ExtrapolationFactor),
 			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
 			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
@@ -1645,7 +1648,29 @@ func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	}
 }
 
-func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64) ml.Tensor {
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64, cacheConfigApplied bool) ml.Tensor {
+	// If the cache didn't help us with required transformations, do them here
+	if !cacheConfigApplied {
+		cacheConfig := t.b.CacheConfig()
+
+		// Padding key and value to CachePadding is a performance optimization, not a requirement, so we don't do it if it wasn't done by the caller
+
+		if cacheConfig.PermutedV {
+			value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+		}
+
+		if mask != nil {
+			padSize := int(pad(C.size_t(mask.Dim(1)), C.size_t(cacheConfig.MaskBatchPadding))) - mask.Dim(1)
+			if padSize > 0 {
+				mask = mask.Pad(ctx, 0, padSize, 0, 0)
+			}
+
+			if mask.DType() != cacheConfig.MaskDType {
+				mask = mask.Cast(ctx, cacheConfig.MaskDType)
+			}
+		}
+	}
+
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
 		kqMask = mask.(*Tensor).t
@@ -1654,7 +1679,7 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 	query := t.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
 
-	if t.b.flashAttention {
+	if t.b.flashAttention == ml.FlashAttentionEnabled {
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
 		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
@@ -1702,7 +1727,7 @@ func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
 func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
+		t: C.ggml_argsort_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
 	}
 }
 
