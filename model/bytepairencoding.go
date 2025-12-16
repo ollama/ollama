@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/dlclark/regexp2"
-	heap "github.com/emirpasic/gods/v2/trees/binaryheap"
+	"github.com/emirpasic/gods/v2/trees/binaryheap"
 	"github.com/ollama/ollama/logutil"
 )
 
@@ -84,16 +84,15 @@ type fragment struct {
 	ids   []int32
 }
 
-// pair is a pair of runes and its rank
-type pair struct {
-	a, b  int
-	rank  int
-	value string
+// pair is a pair of merges and its rank
+type pair[T int | float32] struct {
+	a, b *merge
+	rank T
 }
 
 type merge struct {
-	p, n  int
-	runes []rune
+	offset, size int
+	prev, next   *merge
 }
 
 func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
@@ -156,80 +155,61 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 			}
 
 			runes := []rune(sb.String())
-			merges := make([]merge, len(runes))
-			for r := range runes {
-				merges[r] = merge{
-					p:     r - 1,
-					n:     r + 1,
-					runes: []rune{runes[r]},
-				}
+
+			root := &merge{offset: len(runes) - 1, size: 1}
+			for i := len(runes) - 2; i >= 0; i-- {
+				m := &merge{offset: i, size: 1, next: root}
+				root.prev = m
+				root = m
 			}
 
-			pairwise := func(a, b int) *pair {
-				if a < 0 || b >= len(runes) {
-					return nil
+			pairwise := func(a, b *merge) *pair[int] {
+				if a != nil && b != nil {
+					aa := string(runes[a.offset : a.offset+a.size])
+					bb := string(runes[b.offset : b.offset+b.size])
+					if rank := bpe.vocab.Merge(aa, bb); rank >= 0 {
+						return &pair[int]{a: a, b: b, rank: rank}
+					}
 				}
 
-				left, right := string(merges[a].runes), string(merges[b].runes)
-				rank := bpe.vocab.Merge(left, right)
-				if rank < 0 {
-					return nil
-				}
-
-				return &pair{
-					a:     a,
-					b:     b,
-					rank:  rank,
-					value: left + right,
-				}
+				return nil
 			}
 
-			pairs := heap.NewWith(func(i, j *pair) int {
-				return cmp.Compare(i.rank, j.rank)
-			})
-
-			for i := range len(runes) - 1 {
-				if pair := pairwise(i, i+1); pair != nil {
+			pairs := binaryheap.NewWith(func(i, j *pair[int]) int { return cmp.Compare(i.rank, j.rank) })
+			for m := root; m != nil; m = m.next {
+				if pair := pairwise(m, m.next); pair != nil {
 					pairs.Push(pair)
 				}
 			}
 
 			for !pairs.Empty() {
-				pair, _ := pairs.Pop()
-
-				left, right := merges[pair.a], merges[pair.b]
-				if len(left.runes) == 0 || len(right.runes) == 0 ||
-					string(left.runes)+string(right.runes) != pair.value {
+				p, _ := pairs.Pop()
+				a := string(runes[p.a.offset : p.a.offset+p.a.size])
+				b := string(runes[p.b.offset : p.b.offset+p.b.size])
+				if a == "" || b == "" || bpe.vocab.Merge(a, b) != p.rank {
 					continue
 				}
 
-				if id := bpe.vocab.Encode(pair.value); id < 0 {
-					continue
+				p.a.size += p.b.size
+				p.b.size = 0
+
+				p.a.next = p.b.next
+				if p.b.next != nil {
+					p.b.next.prev = p.a
 				}
 
-				merges[pair.a].runes = append(left.runes, right.runes...)
-				merges[pair.b].runes = nil
-
-				merges[pair.a].n = right.n
-				if right.n < len(merges) {
-					merges[right.n].p = pair.a
-				}
-
-				if pair := pairwise(merges[pair.a].p, pair.a); pair != nil {
+				if pair := pairwise(p.a.prev, p.a); pair != nil {
 					pairs.Push(pair)
 				}
 
-				if pair := pairwise(pair.a, merges[pair.a].n); pair != nil {
+				if pair := pairwise(p.a, p.a.next); pair != nil {
 					pairs.Push(pair)
 				}
 			}
 
-			for _, merge := range merges {
-				if len(merge.runes) > 0 {
-					// TODO: handle the edge case where the rune isn't in the vocabulary
-					if id := bpe.vocab.Encode(string(merge.runes)); id >= 0 {
-						ids = append(ids, id)
-					}
+			for m := root; m != nil; m = m.next {
+				if id := bpe.vocab.Encode(string(runes[m.offset : m.offset+m.size])); id >= 0 {
+					ids = append(ids, id)
 				}
 			}
 		}
