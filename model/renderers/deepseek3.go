@@ -39,7 +39,32 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 		}
 	}
 
-	sb.WriteString("<｜begin▁of▁sentence｜>" + systemPrompt.String())
+	sb.WriteString("<｜begin▁of▁sentence｜>")
+	sb.WriteString(systemPrompt.String())
+
+	// tool definitions
+	if len(tools) > 0 {
+		sb.WriteString("\n\n## Tools\nYou have access to the following tools:\n")
+
+		for _, tool := range tools {
+			sb.WriteString("\n### " + tool.Function.Name)
+			sb.WriteString("\nDescription: " + tool.Function.Description)
+
+			// parameters as JSON
+			parametersJSON, err := json.Marshal(tool.Function.Parameters)
+			if err == nil {
+				sb.WriteString("\n\nParameters: " + string(parametersJSON) + "\n")
+			}
+		}
+
+		// usage instructions
+		sb.WriteString("\nIMPORTANT: ALWAYS adhere to this exact format for tool use:\n")
+		sb.WriteString("<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>\n\n")
+		sb.WriteString("Where:\n\n")
+		sb.WriteString("- `tool_call_name` must be an exact match to one of the available tools\n")
+		sb.WriteString("- `tool_call_arguments` must be valid JSON that strictly follows the tool's Parameters Schema\n")
+		sb.WriteString("- For multiple tool calls, chain them directly without separators or spaces\n")
+	}
 
 	// state tracking
 	isTool := false

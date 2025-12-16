@@ -475,6 +475,490 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			thinkValue: &api.ThinkValue{Value: true},
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Simple question<｜Assistant｜></think>Simple answer.<｜end▁of▁sentence｜>`,
 		},
+		{
+			name: "with tools definitions",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "What's the weather like?"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant.
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>What's the weather like?<｜Assistant｜></think>`,
+		},
+		{
+			name: "tools definitions with thinking enabled",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "What's the weather in Paris?"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant.
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>What's the weather in Paris?<｜Assistant｜><think>`,
+		},
+		{
+			name: "tools definitions with actual tool call",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "What's the weather in Paris?"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+					},
+				},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant.
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>What's the weather in Paris?<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>`,
+		},
+		{
+			name: "tools definitions with full conversation cycle",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "What's the weather in Paris?"},
+				{
+					Role:    "assistant",
+					Content: "I'll check the weather for you.",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Temperature: 22°C, Sunny"},
+				{Role: "assistant", Content: "The weather in Paris is 22°C and sunny!"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant.
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>What's the weather in Paris?<｜Assistant｜></think>I'll check the weather for you.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜>The weather in Paris is 22°C and sunny!<｜end▁of▁sentence｜>`,
+		},
+		{
+			name: "tools with thinking and full conversation",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: "Check the weather in Tokyo"},
+				{
+					Role:     "assistant",
+					Thinking: "The user wants weather info for Tokyo. I should use the get_weather tool.",
+					Content:  "Let me check that for you.",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Tokyo",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Temperature: 18°C, Cloudy"},
+				{
+					Role:     "assistant",
+					Thinking: "The weather data shows it's cloudy and cool. I should present this clearly.",
+					Content:  "In Tokyo, it's currently 18°C and cloudy.",
+				},
+				{Role: "user", Content: "What about London?"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant.
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>Check the weather in Tokyo<｜Assistant｜></think>Let me check that for you.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Tokyo"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Temperature: 18°C, Cloudy<｜tool▁output▁end｜>In Tokyo, it's currently 18°C and cloudy.<｜end▁of▁sentence｜><｜User｜>What about London?<｜Assistant｜><think>`,
+		},
+		{
+			name: "multiple tools definitions",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant with access to multiple tools."},
+				{Role: "user", Content: "What can you help me with?"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "calculate",
+						Description: "Perform mathematical calculations",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"expression": {
+									Type:        api.PropertyType{"string"},
+									Description: "Mathematical expression to evaluate",
+								},
+							},
+							Required: []string{"expression"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant with access to multiple tools.
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+### calculate
+Description: Perform mathematical calculations
+
+Parameters: {"type":"object","required":["expression"],"properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>What can you help me with?<｜Assistant｜></think>`,
+		},
+		{
+			name: "multiple tools with multiple tool calls",
+			messages: []api.Message{
+				{Role: "user", Content: "Get weather for Paris and calculate 25 * 4"},
+				{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: api.ToolCallFunctionArguments{
+									"location": "Paris",
+								},
+							},
+						},
+						{
+							Function: api.ToolCallFunction{
+								Name: "calculate",
+								Arguments: api.ToolCallFunctionArguments{
+									"expression": "25 * 4",
+								},
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "Temperature: 22°C, Sunny"},
+				{Role: "tool", Content: "Result: 100"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "calculate",
+						Description: "Perform mathematical calculations",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"expression": {
+									Type:        api.PropertyType{"string"},
+									Description: "Mathematical expression to evaluate",
+								},
+							},
+							Required: []string{"expression"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected: `<｜begin▁of▁sentence｜>
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+### calculate
+Description: Perform mathematical calculations
+
+Parameters: {"type":"object","required":["expression"],"properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>Get weather for Paris and calculate 25 * 4<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁call▁begin｜>calculate<｜tool▁sep｜>{"expression":"25 * 4"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Temperature: 22°C, Sunny<｜tool▁output▁end｜><｜tool▁output▁begin｜>Result: 100<｜tool▁output▁end｜>`,
+		},
+		{
+			name: "tools without system message",
+			messages: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get current weather information",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: map[string]api.ToolProperty{
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "City name",
+								},
+							},
+							Required: []string{"location"},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected: `<｜begin▁of▁sentence｜>
+
+## Tools
+You have access to the following tools:
+
+### get_weather
+Description: Get current weather information
+
+Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
+
+Where:
+
+- ` + "`tool_call_name`" + ` must be an exact match to one of the available tools
+- ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces
+<｜User｜>What's the weather?<｜Assistant｜></think>`,
+		},
 	}
 
 	renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
