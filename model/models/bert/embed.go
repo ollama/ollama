@@ -157,8 +157,6 @@ func New(c fs.Config) (model.Model, error) {
 	switch c.String("tokenizer.ggml.model", "bert") {
 	case "bert":
 		processor = model.NewWordPiece(vocab, true)
-	case "gpt2":
-		processor = model.NewBytePairEncoding(vocab)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}
