@@ -62,6 +62,10 @@ func ParserForName(name string) Parser {
 		return &Olmo3Parser{}
 	case "olmo3-think":
 		return &Olmo3ThinkParser{}
+	case "nemotron-3-nano":
+		return &Nemotron3NanoParser{HasThinking: false}
+	case "nemotron-3-nano-thinking":
+		return &Nemotron3NanoParser{HasThinking: true}
 	default:
 		return nil
 	}
