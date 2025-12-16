@@ -5,8 +5,8 @@ type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
 	ModelFamily   string   `json:"model_family"`
 	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"`  // shown as Parameter Size
-	FileType      string   `json:"file_type"`   // shown as Quantization Level
+	ModelType     string   `json:"model_type"` // shown as Parameter Size
+	FileType      string   `json:"file_type"`  // shown as Quantization Level
 	Renderer      string   `json:"renderer,omitempty"`
 	Parser        string   `json:"parser,omitempty"`
 
