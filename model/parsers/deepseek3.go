@@ -48,7 +48,7 @@ func (p *DeepSeek3Parser) setInitialState(lastMessage *api.Message, tools []api.
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
 	// Check both model capability AND request preference
-	thinkingEnabled := p.HasThinkingSupport() && (thinkValue == nil || thinkValue.Bool())
+	thinkingEnabled := p.HasThinkingSupport() && (thinkValue != nil && thinkValue.Bool())
 
 	if !thinkingEnabled {
 		p.state = DeepSeekCollectingContent
