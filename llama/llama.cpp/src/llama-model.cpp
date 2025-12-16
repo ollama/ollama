@@ -120,8 +120,6 @@ const char * llm_type_name(llm_type type) {
         case LLM_TYPE_16B_A1B:       return "16B.A1B";
         case LLM_TYPE_21B_A3B:       return "21B.A3B";
         case LLM_TYPE_30B_A3B:       return "30B.A3B";
-        case LLM_TYPE_31B_A3_5B:     return "31B.A3.5B";
-        case LLM_TYPE_80B_A3B:       return "80B.A3B";
         case LLM_TYPE_100B_A6B:      return "100B.A6B";
         case LLM_TYPE_106B_A12B:     return "106B.A12B";
         case LLM_TYPE_230B_A10B:     return "230B.A10B";
@@ -1790,7 +1788,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
             } break;
         case LLM_ARCH_NEMOTRON_H:
-        case LLM_ARCH_NEMOTRON_H_MOE:
             {
                 ml.get_key(LLM_KV_SSM_CONV_KERNEL,    hparams.ssm_d_conv);
                 ml.get_key(LLM_KV_SSM_INNER_SIZE,     hparams.ssm_d_inner);
@@ -1806,14 +1803,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
 
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
 
-                ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp,        false);
-                ml.get_key(LLM_KV_EXPERT_SHARED_FEED_FORWARD_LENGTH, hparams.n_ff_shexp,      false);
-                ml.get_key(LLM_KV_EXPERT_SHARED_COUNT,               hparams.n_expert_shared, false);
-                ml.get_key(LLM_KV_EXPERT_WEIGHTS_NORM,               hparams.expert_weights_norm, false);
-                ml.get_key(LLM_KV_EXPERT_WEIGHTS_SCALE,              hparams.expert_weights_scale, false);
-
                 switch (hparams.n_layer) {
-                    case 52: type = LLM_TYPE_31B_A3_5B; break; // Nemotron-H_MOE 31B
                     case 56: type = LLM_TYPE_9B; break;
                     default: type = LLM_TYPE_UNKNOWN;
                 }
@@ -5185,7 +5175,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     }
                 } break;
             case LLM_ARCH_NEMOTRON_H:
-            case LLM_ARCH_NEMOTRON_H_MOE:
                 {
                     // mamba2 Mixer SSM params
                     // NOTE: int64_t for tensor dimensions
@@ -5195,9 +5184,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     const int64_t n_ssm_head = hparams.ssm_dt_rank;
                     const int64_t n_group    = hparams.ssm_n_group;
                     const int64_t d_in_proj  = 2*d_inner + 2*n_group*d_state + n_ssm_head;
-
-                    const int64_t n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / n_expert_used;
-                    const int64_t n_ff_shexp = hparams.n_ff_shexp;
 
                     // embeddings
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
@@ -5248,26 +5234,12 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                             layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias",   i), {n_embd_k_gqa_i}, TENSOR_NOT_REQUIRED);
                             layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias",   i), {n_embd_v_gqa_i}, TENSOR_NOT_REQUIRED);
                             layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias",   i), {n_embd},         TENSOR_NOT_REQUIRED);
-                        }  else {
-                            if (n_expert != 0) {
-                                layer.ffn_gate_inp    = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", i), { n_embd, n_expert}, 0);
-                                layer.ffn_exp_probs_b = create_tensor(tn(LLM_TENSOR_FFN_EXP_PROBS_B, "bias", i), {n_expert         }, 0);
-
-                                // MoE branch
-                                layer.ffn_down_exps   = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert}, 0);
-                                layer.ffn_up_exps     = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert}, 0);
-
-                                // Shared expert branch
-                                layer.ffn_down_shexp  = create_tensor(tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp, n_embd}, 0);
-                                layer.ffn_up_shexp    = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {n_embd, n_ff_shexp}, 0);
-
-                            } else {
-                                // mlp layers
-                                layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  hparams.n_ff(i), n_embd}, 0);
-                                layer.ffn_up     = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   hparams.n_ff(i)}, 0);
-                                layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias",   i), {n_embd}, TENSOR_NOT_REQUIRED);
-                                layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "bias",   i), {hparams.n_ff(i)}, TENSOR_NOT_REQUIRED);
-                            }
+                        } else {
+                            // mlp layers
+                            layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  hparams.n_ff(i), n_embd}, 0);
+                            layer.ffn_up     = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   hparams.n_ff(i)}, 0);
+                            layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias",   i), {n_embd}, TENSOR_NOT_REQUIRED);
+                            layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "bias",   i), {hparams.n_ff(i)}, TENSOR_NOT_REQUIRED);
                         }
                     }
                 } break;
@@ -6898,8 +6870,7 @@ void llama_model::print_info() const {
         arch == LLM_ARCH_PLAMO2 ||
         arch == LLM_ARCH_GRANITE_HYBRID ||
         arch == LLM_ARCH_QWEN3NEXT ||
-        arch == LLM_ARCH_NEMOTRON_H ||
-        arch == LLM_ARCH_NEMOTRON_H_MOE) {
+        arch == LLM_ARCH_NEMOTRON_H) {
         LLAMA_LOG_INFO("%s: ssm_d_conv       = %u\n",     __func__, hparams.ssm_d_conv);
         LLAMA_LOG_INFO("%s: ssm_d_inner      = %u\n",     __func__, hparams.ssm_d_inner);
         LLAMA_LOG_INFO("%s: ssm_d_state      = %u\n",     __func__, hparams.ssm_d_state);
@@ -6955,8 +6926,7 @@ void llama_model::print_info() const {
     if (arch == LLM_ARCH_MINICPM ||
         arch == LLM_ARCH_GRANITE ||
         arch == LLM_ARCH_GRANITE_MOE ||
-        arch == LLM_ARCH_GRANITE_HYBRID ||
-        arch == LLM_ARCH_NEMOTRON_H_MOE) {
+        arch == LLM_ARCH_GRANITE_HYBRID) {
         LLAMA_LOG_INFO("%s: f_embedding_scale = %f\n", __func__, hparams.f_embedding_scale);
         LLAMA_LOG_INFO("%s: f_residual_scale  = %f\n", __func__, hparams.f_residual_scale);
         LLAMA_LOG_INFO("%s: f_attention_scale = %f\n", __func__, hparams.f_attention_scale);
@@ -7137,7 +7107,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                     if (arch == LLM_ARCH_FALCON_H1) {
                         filter_attn = [&](int32_t) { return true; };
                         filter_recr = [&](int32_t) { return true; };
-                    } else if (arch == LLM_ARCH_NEMOTRON_H || arch == LLM_ARCH_NEMOTRON_H_MOE) {
+                    } else if (arch == LLM_ARCH_NEMOTRON_H) {
                         filter_attn = [&](int32_t il) {
                             return !hparams.is_recurrent(il) && hparams.n_ff(il) == 0;
                         };
@@ -7508,7 +7478,6 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
                 llm = std::make_unique<llm_build_nemotron>(*this, params);
             } break;
         case LLM_ARCH_NEMOTRON_H:
-        case LLM_ARCH_NEMOTRON_H_MOE:
             {
                 llm = std::make_unique<llm_build_nemotron_h>(*this, params);
             } break;
@@ -7796,7 +7765,6 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_ARWKV7:
         case LLM_ARCH_WAVTOKENIZER_DEC:
         case LLM_ARCH_NEMOTRON_H:
-        case LLM_ARCH_NEMOTRON_H_MOE:
             return LLAMA_ROPE_TYPE_NONE;
 
         // use what we call a normal RoPE, operating on pairs of consecutive head values
