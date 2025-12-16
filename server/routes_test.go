@@ -126,10 +126,10 @@ func TestRoutes(t *testing.T) {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		config := &ConfigV2{
+		config := &model.ConfigV2{
 			OS:           "linux",
 			Architecture: "amd64",
-			RootFS: RootFS{
+			RootFS: model.RootFS{
 				Type: "layers",
 			},
 		}
@@ -775,7 +775,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -793,7 +793,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -815,7 +815,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -833,7 +833,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "llama3",
 				},
 			},
@@ -853,7 +853,7 @@ func TestFilterThinkTags(t *testing.T) {
 			model: &Model{
 				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
 				ShortName: "deepseek-r1:7b",
-				Config:    ConfigV2{},
+				Config:    model.ConfigV2{},
 			},
 		},
 	}

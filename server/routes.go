@@ -1223,7 +1223,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 
 	models := []api.ListModelResponse{}
 	for n, m := range ms {
-		var cf ConfigV2
+		var cf model.ConfigV2
 
 		if m.Config.Digest != "" {
 			f, err := m.Config.Open()
