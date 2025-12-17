@@ -290,8 +290,7 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 	go func() {
 		// Don't blast an update message immediately after startup
 		time.Sleep(UpdateCheckInitialDelay)
-		slog.Info("beginning update checker", "interval", UpdateCheckInterval)
-		
+		slog.Info("beginning update checker", "interval", UpdateCheckInterval)		
 		ticker := time.NewTicker(UpdateCheckInterval)
 		defer ticker.Stop()
 		
