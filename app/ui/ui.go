@@ -120,6 +120,7 @@ type UpdaterInterface interface {
 	DownloadUpdate(ctx context.Context, updateVersion string) error
 	InstallAndRestart() error
 	CancelOngoingDownload()
+	TriggerImmediateCheck()
 }
 
 func (s *Server) log() *slog.Logger {
@@ -1465,43 +1466,25 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	// Update tray notification based on auto-update toggle
-	if old.AutoUpdateEnabled && !settings.AutoUpdateEnabled {
-		// Auto-update disabled: cancel any ongoing download and clear tray notification
-		if s.Updater != nil {
-			s.Updater.CancelOngoingDownload()
-		}
-		if s.ClearUpdateAvailableFunc != nil {
-			s.ClearUpdateAvailableFunc()
-		}
-	} else if !old.AutoUpdateEnabled && settings.AutoUpdateEnabled {
-		// Auto-update enabled: check for updates and download if available
-		go func() {
-			// First, show notification if update is already pending
+	// Handle auto-update toggle changes
+	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
+		if !settings.AutoUpdateEnabled {
+			// Auto-update disabled: cancel any ongoing download and clear tray notification
+			if s.Updater != nil {
+				s.Updater.CancelOngoingDownload()
+			}
+			if s.ClearUpdateAvailableFunc != nil {
+				s.ClearUpdateAvailableFunc()
+			}
+		} else {
+			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
 			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
 				s.UpdateAvailableFunc()
 			} else if s.Updater != nil {
-				// Otherwise, immediately check for and download new updates
-				slog.Info("auto-update re-enabled, checking for updates")
-				available, updateVersion, err := s.Updater.CheckForUpdate(r.Context())
-				if err != nil {
-					slog.Error("failed to check for update after re-enabling auto-update", "error", err)
-					return
-				}
-				if available {
-					slog.Info("update available, starting download", "version", updateVersion)
-					err := s.Updater.DownloadUpdate(r.Context(), updateVersion)
-					if err != nil {
-						slog.Error("failed to download update", "error", err)
-						return
-					}
-					// Show tray notification after successful download
-					if s.UpdateAvailableFunc != nil {
-						s.UpdateAvailableFunc()
-					}
-				}
+				// Trigger the background checker to run immediately
+				s.Updater.TriggerImmediateCheck()
 			}
-		}()
+		}
 	}
 
 	if old.ContextLength != settings.ContextLength ||

@@ -264,6 +264,7 @@ type Updater struct {
 	Store              *store.Store
 	cancelDownload     context.CancelFunc
 	cancelDownloadLock sync.Mutex
+	checkNow           chan struct{}
 }
 
 // CancelOngoingDownload cancels any currently running download
@@ -277,24 +278,45 @@ func (u *Updater) CancelOngoingDownload() {
 	}
 }
 
+// TriggerImmediateCheck signals the background checker to check for updates immediately
+func (u *Updater) TriggerImmediateCheck() {
+	if u.checkNow != nil {
+		u.checkNow <- struct{}{}
+	}
+}
+
 func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
+	u.checkNow = make(chan struct{}, 1)
+	
 	go func() {
 		// Don't blast an update message immediately after startup
 		time.Sleep(UpdateCheckInitialDelay)
 		slog.Info("beginning update checker", "interval", UpdateCheckInterval)
+		
+		ticker := time.NewTicker(UpdateCheckInterval)
+		defer ticker.Stop()
+		
 		for {
+			select {
+			case <-ctx.Done():
+				slog.Debug("stopping background update checker")
+				return
+			case <-u.checkNow:
+				// Immediate check triggered
+			case <-ticker.C:
+				// Regular interval check
+			}
+			
 			// Check if auto-update is enabled
 			settings, err := u.Store.Settings()
 			if err != nil {
 				slog.Error("failed to load settings", "error", err)
-				time.Sleep(UpdateCheckInterval)
 				continue
 			}
 
 			if !settings.AutoUpdateEnabled {
 				// When auto-update is disabled, don't check or download anything
 				slog.Debug("auto-update disabled, skipping check")
-				time.Sleep(UpdateCheckInterval)
 				continue
 			}
 
@@ -303,20 +325,13 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 			if available {
 				err := u.DownloadNewRelease(ctx, resp)
 				if err != nil {
-					slog.Error(fmt.Sprintf("failed to download new release: %s", err))
+					slog.Error("failed to download new release", "error", err)
 				} else {
 					err = cb(resp.UpdateVersion)
 					if err != nil {
-						slog.Warn(fmt.Sprintf("failed to register update available with tray: %s", err))
+						slog.Warn("failed to register update available with tray", "error", err)
 					}
 				}
-			}
-			select {
-			case <-ctx.Done():
-				slog.Debug("stopping background update checker")
-				return
-			default:
-				time.Sleep(UpdateCheckInterval)
 			}
 		}
 	}()
