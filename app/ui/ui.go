@@ -119,6 +119,7 @@ type UpdaterInterface interface {
 	CheckForUpdate(ctx context.Context) (bool, string, error)
 	DownloadUpdate(ctx context.Context, updateVersion string) error
 	InstallAndRestart() error
+	CancelOngoingDownload()
 }
 
 func (s *Server) log() *slog.Logger {
@@ -1466,15 +1467,41 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 
 	// Update tray notification based on auto-update toggle
 	if old.AutoUpdateEnabled && !settings.AutoUpdateEnabled {
-		// Auto-update disabled: clear tray notification
+		// Auto-update disabled: cancel any ongoing download and clear tray notification
+		if s.Updater != nil {
+			s.Updater.CancelOngoingDownload()
+		}
 		if s.ClearUpdateAvailableFunc != nil {
 			s.ClearUpdateAvailableFunc()
 		}
 	} else if !old.AutoUpdateEnabled && settings.AutoUpdateEnabled {
-		// Auto-update enabled: show tray notification if update is pending
-		if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
-			s.UpdateAvailableFunc()
-		}
+		// Auto-update enabled: check for updates and download if available
+		go func() {
+			// First, show notification if update is already pending
+			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
+				s.UpdateAvailableFunc()
+			} else if s.Updater != nil {
+				// Otherwise, immediately check for and download new updates
+				slog.Info("auto-update re-enabled, checking for updates")
+				available, updateVersion, err := s.Updater.CheckForUpdate(r.Context())
+				if err != nil {
+					slog.Error("failed to check for update after re-enabling auto-update", "error", err)
+					return
+				}
+				if available {
+					slog.Info("update available, starting download", "version", updateVersion)
+					err := s.Updater.DownloadUpdate(r.Context(), updateVersion)
+					if err != nil {
+						slog.Error("failed to download update", "error", err)
+						return
+					}
+					// Show tray notification after successful download
+					if s.UpdateAvailableFunc != nil {
+						s.UpdateAvailableFunc()
+					}
+				}
+			}
+		}()
 	}
 
 	if old.ContextLength != settings.ContextLength ||
@@ -1631,10 +1658,6 @@ func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("no update downloaded")
 	}
 
-	// Check if we can actually upgrade (not in dev mode)
-	if updater.BundlePath == "" {
-		return fmt.Errorf("cannot install updates in development mode")
-	}
 
 	// Send response before restarting
 	response := map[string]any{

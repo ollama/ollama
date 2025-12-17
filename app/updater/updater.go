@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/app/store"
@@ -134,15 +135,27 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 }
 
 func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
+	// Create a cancellable context for this download
+	downloadCtx, cancel := context.WithCancel(ctx)
+	u.cancelDownloadLock.Lock()
+	u.cancelDownload = cancel
+	u.cancelDownloadLock.Unlock()
+	defer func() {
+		u.cancelDownloadLock.Lock()
+		u.cancelDownload = nil
+		u.cancelDownloadLock.Unlock()
+		cancel()
+	}()
+
 	// Do a head first to check etag info
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodHead, updateResp.UpdateURL, nil)
 	if err != nil {
 		return err
 	}
 
 	// In case of slow downloads, continue the update check in the background
-	bgctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	bgctx, bgcancel := context.WithCancel(downloadCtx)
+	defer bgcancel()
 	go func() {
 		for {
 			select {
@@ -248,7 +261,20 @@ func cleanupOldDownloads(stageDir string) {
 }
 
 type Updater struct {
-	Store *store.Store
+	Store              *store.Store
+	cancelDownload     context.CancelFunc
+	cancelDownloadLock sync.Mutex
+}
+
+// CancelOngoingDownload cancels any currently running download
+func (u *Updater) CancelOngoingDownload() {
+	u.cancelDownloadLock.Lock()
+	defer u.cancelDownloadLock.Unlock()
+	if u.cancelDownload != nil {
+		slog.Info("cancelling ongoing update download")
+		u.cancelDownload()
+		u.cancelDownload = nil
+	}
 }
 
 func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
