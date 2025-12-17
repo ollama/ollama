@@ -357,6 +357,19 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	classifyGGUF := func(path string) (kind string, blockCount uint64, visionBlockCount uint64, err error) {
+		f, err := gguf.Open(path)
+		if err != nil {
+			return "", 0, 0, err
+		}
+		defer f.Close()
+
+		kind = strings.TrimSpace(f.KeyValue("general.type").String())
+		blockCount = f.KeyValue("block_count").Uint()
+		visionBlockCount = f.KeyValue("vision.block_count").Uint()
+		return kind, blockCount, visionBlockCount, nil
+	}
+
 	for _, layer := range manifest.Layers {
 		filename, err := GetBlobsPath(layer.Digest)
 		if err != nil {
@@ -365,8 +378,28 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
-			model.ModelPath = filename
-			model.ParentModel = layer.From
+			if kind, blockCount, visionBlockCount, err := classifyGGUF(filename); err == nil {
+				if kind == "mmproj" || kind == "projector" {
+					model.ProjectorPaths = append(model.ProjectorPaths, filename)
+					break
+				}
+				// Some split setups ship a standalone vision encoder GGUF; treat it as vision.
+				if blockCount == 0 && visionBlockCount > 0 {
+					if model.VisionPath == "" {
+						model.VisionPath = filename
+					} else {
+						slog.Warn("multiple vision layers found; ignoring extra", "model", model.Name, "path", filename)
+					}
+					break
+				}
+			}
+
+			if model.ModelPath == "" {
+				model.ModelPath = filename
+				model.ParentModel = layer.From
+			} else {
+				slog.Warn("multiple model layers found; keeping first", "model", model.Name, "existing", model.ModelPath, "extra", filename)
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version

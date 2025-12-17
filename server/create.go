@@ -642,9 +642,10 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 	}
 
 	mediatype := "application/vnd.ollama.image.model"
-	if f.KV().Kind() == "adapter" {
+	kind := f.KV().Kind()
+	if kind == "adapter" {
 		mediatype = "application/vnd.ollama.image.adapter"
-	} else if (f.KV().Uint("block_count") == 0 && f.KV().Uint("vision.block_count") > 0) || f.KV().Kind() == "projector" {
+	} else if (f.KV().Uint("block_count") == 0 && f.KV().Uint("vision.block_count") > 0) || kind == "projector" || kind == "mmproj" {
 		// if a model has vision.block_count but not block_count, it is a standalone vision model
 		mediatype = "application/vnd.ollama.image.projector"
 	}
