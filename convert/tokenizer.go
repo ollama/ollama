@@ -249,7 +249,7 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 	}
 
 	model := "gpt2"
-	if t.Decoder.Type == "SentencePiece" {
+	if t.Decoder.Type == "Sequence" {
 		model = "llama"
 	}
 
