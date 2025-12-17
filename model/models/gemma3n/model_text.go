@@ -8,6 +8,7 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/attention"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model/input"
 )
@@ -269,9 +270,9 @@ func (attn TextAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Ten
 		value = value.RMSNorm(ctx, nil, opts.eps)
 	}
 
-	attention := nn.Attention(ctx, query, key, value, 1., cache)
-	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
-	return attn.Output.Forward(ctx, attention)
+	hiddenStates = nn.Attention(ctx, query, key, value, cache, attention.WithScale(1))
+	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0)*hiddenStates.Dim(1), batchSize)
+	return attn.Output.Forward(ctx, hiddenStates)
 }
 
 type TextMLP struct {

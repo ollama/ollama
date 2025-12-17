@@ -2,7 +2,6 @@ package nomicbert
 
 import (
 	"cmp"
-	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -166,7 +165,7 @@ func (a *Attention) Forward(ctx ml.Context, hiddenStates ml.Tensor, positions ml
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
-	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(opts.headDim)), nil)
+	attention := nn.Attention(ctx, query, key, value, nil)
 
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 

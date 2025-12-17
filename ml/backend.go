@@ -33,7 +33,7 @@ type Backend interface {
 
 // BackendCacheConfig should be implemented by backends that need special output
 // from the cache to meet specific requirements. It is frequently implemented in
-// conjunction with ScaledDotProductAttention.
+// conjunction with [nn.fastAttention].
 type BackendCacheConfig interface {
 	CacheConfig() CacheConfig
 }
@@ -152,7 +152,6 @@ type Tensor interface {
 	Div(ctx Context, t2 Tensor) Tensor
 
 	Mulmat(ctx Context, t2 Tensor) Tensor
-	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
 	MulmatID(ctx Context, t2, ids Tensor) Tensor
 	AddID(ctx Context, t2, ids Tensor) Tensor
 
@@ -211,32 +210,6 @@ type Tensor interface {
 	Sqrt(ctx Context) Tensor
 
 	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
-}
-
-// ScaledDotProductAttention implements a fused attention
-// operation equivalent to following code on a tensor named
-// query:
-//
-// query = query.Permute(ctx, 0, 2, 1, 3)
-// key = key.Permute(ctx, 0, 2, 1, 3)
-// value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-//
-// kq := key.MulmatFullPrec(ctx, query)
-//
-// kq = kq.Scale(ctx, scale)
-//
-//	if mask != nil {
-//		kq = kq.Add(ctx, mask)
-//	}
-//
-// kq = kq.Softmax(ctx)
-//
-// kqv := value.Mulmat(ctx, kq)
-// return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-//
-// cacheConfigApplied indicates whether the optimizations requested through CacheConfig have been performed
-type ScaledDotProductAttention interface {
-	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, vmla Tensor, scale float64, cacheConfigApplied bool) Tensor
 }
 
 type number interface {

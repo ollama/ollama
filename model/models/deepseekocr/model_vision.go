@@ -102,7 +102,7 @@ func (m *visionAttention) Forward(ctx ml.Context, t ml.Tensor, opts visionOption
 	chunks := qkv.Chunk(ctx, 1, opts.numHeads)
 	query, key, value := chunks[0], chunks[1], chunks[2]
 
-	attention := nn.Attention(ctx, query, key, value, 1/math.Sqrt(float64(opts.headDim())), nil)
+	attention := nn.Attention(ctx, query, key, value, nil)
 	attention = attention.Reshape(ctx, -1, attention.Dim(2), attention.Dim(3))
 	return m.Output.Forward(ctx, attention)
 }

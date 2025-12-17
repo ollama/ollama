@@ -1,8 +1,6 @@
 package deepseekocr
 
 import (
-	"math"
-
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -85,7 +83,7 @@ func (m *textAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tenso
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, -1, attention.Dim(2))
 	return m.Output.Forward(ctx, attention)
 }

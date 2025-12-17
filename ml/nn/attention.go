@@ -1,11 +1,16 @@
 package nn
 
 import (
-	"fmt"
+	"log"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/attention"
 )
+
+type fastAttention interface {
+	SDPA(ctx ml.Context, key, value ml.Tensor, opts ...func(*attention.Options)) ml.Tensor
+}
 
 // Attention implements scaled dot-product attention for transformer models:
 // Attention(Q, K, V) = softmax(QK^T/√d_k)V
@@ -21,27 +26,19 @@ import (
 // Returns:
 //
 //	Attention output with shape [d_v, heads, seq_len_q]
-func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
-	return AttentionWithVMLA(ctx, query, key, value, nil, nil, scale, cache)
-}
 
-func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
-	return AttentionWithVMLA(ctx, query, key, value, sinks, nil, scale, cache)
-}
-
-func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
-	ctx.Forward(query)
+func Attention(ctx ml.Context, query, key, value ml.Tensor, cache kvcache.Cache, fns ...func(*attention.Options)) ml.Tensor {
 	if key != nil && value != nil {
 		if query.Dim(0) != key.Dim(0) {
-			panic(fmt.Errorf("d_k in attention operation does not match between query(%v) and key(%v)", query.Dim(0), key.Dim(0)))
+			log.Fatalf("d_k in attention operation does not match between query(%v) and key(%v)", query.Dim(0), key.Dim(0))
 		}
 
 		if key.Dim(1) != value.Dim(1) {
-			panic(fmt.Errorf("kv_heads in attention operation does not match between key(%v) and value(%v)", key.Dim(1), value.Dim(1)))
+			log.Fatalf("kv_heads in attention operation does not match between key(%v) and value(%v)", key.Dim(1), value.Dim(1))
 		}
 
 		if key.Dim(2) != value.Dim(2) {
-			panic(fmt.Errorf("seq_len_k in attention operation does not match between key(%v) and value(%v)", key.Dim(2), value.Dim(2)))
+			log.Fatalf("seq_len_k in attention operation does not match between key(%v) and value(%v)", key.Dim(2), value.Dim(2))
 		}
 
 		ctx.Forward(key, value)
@@ -57,28 +54,12 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		key, value, mask = cache.Get(ctx)
 	}
 
-	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
-		cacheConfigApplied := cache != nil
-		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
-	} else {
-		query = query.Permute(ctx, 0, 2, 1, 3)
-		key = key.Permute(ctx, 0, 2, 1, 3)
-		value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
-		kq := key.MulmatFullPrec(ctx, query)
-
-		kq = kq.Scale(ctx, scale)
-		if mask != nil {
-			kq = kq.Add(ctx, mask)
-		}
-		kq = kq.Softmax(ctx)
-
-		kqv := value.Mulmat(ctx, kq)
-
-		if vmla != nil {
-			kqv = vmla.Mulmat(ctx, kqv)
-		}
-
-		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	if t, ok := query.(fastAttention); ok {
+		return t.SDPA(ctx, key, value, append([]func(*attention.Options){
+			attention.WithMask(mask),
+			func(opts *attention.Options) { opts.Cached = cache != nil },
+		}, fns...)...)
 	}
+
+	panic("Attention not implemented for this tensor type")
 }

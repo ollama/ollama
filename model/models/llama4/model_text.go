@@ -45,7 +45,7 @@ func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions, attent
 		query = query.Mul(ctx, attentionScales)
 	}
 
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(headDim)), cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 	return sa.Output.Forward(ctx, attention)
 }

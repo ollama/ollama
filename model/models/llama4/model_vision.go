@@ -72,7 +72,7 @@ func (sa *VisionAttention) Forward(ctx ml.Context, hiddenState, cos, sin ml.Tens
 	query = applyVisionRotaryEmbedding(ctx, query, cos, sin)
 	key = applyVisionRotaryEmbedding(ctx, key, cos, sin)
 
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(headDim)), nil)
+	attention := nn.Attention(ctx, query, key, value, nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), attention.Dim(3))
 	return sa.Output.Forward(ctx, attention)
 }

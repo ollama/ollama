@@ -7,6 +7,7 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/attention"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model/input"
 )
@@ -165,8 +166,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
 
-	scaleFactor := 1.0
-	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
+	kqv := nn.Attention(ctx, q, k, v, cache, attention.WithScale(1))
 	kqv = kqv.Reshape(ctx, opts.attnValLen*opts.numHeads, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)

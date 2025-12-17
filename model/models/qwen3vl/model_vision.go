@@ -39,7 +39,7 @@ func (sa *VisionAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml.Ten
 	value := sa.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, opts.headDim(), opts.numHeads, value.Dim(1))
 
-	attention := nn.Attention(ctx, query, key, value, math.Pow(float64(opts.headDim()), -0.5), nil)
+	attention := nn.Attention(ctx, query, key, value, nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2))
 	return sa.Output.Forward(ctx, attention)
 }

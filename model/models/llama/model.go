@@ -2,7 +2,6 @@ package llama
 
 import (
 	"cmp"
-	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -131,7 +130,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions, sa.RopeFactors)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions, sa.RopeFactors)
 
-	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
+	attention := nn.Attention(ctx, query, key, value, cache)
 	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
 	return sa.Output.Forward(ctx, attention)
 }

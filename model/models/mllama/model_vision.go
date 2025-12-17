@@ -1,7 +1,6 @@
 package mllama
 
 import (
-	"math"
 	"slices"
 
 	"github.com/ollama/ollama/fs"
@@ -30,7 +29,7 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numHeads, value.Dim(1), batchSize)
 
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(headDim)), nil)
+	attention := nn.Attention(ctx, query, key, value, nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
 	return sa.Output.Forward(ctx, attention)
 }
