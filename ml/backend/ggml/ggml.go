@@ -685,7 +685,7 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
 	if b.flashAttention == ml.FlashAttentionEnabled {
-		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
+		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16}
 	} else {
 		return ml.CacheConfig{CachePadding: 256, PermutedV: true}
 	}
@@ -1660,11 +1660,6 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 		}
 
 		if mask != nil {
-			padSize := int(pad(C.size_t(mask.Dim(1)), C.size_t(cacheConfig.MaskBatchPadding))) - mask.Dim(1)
-			if padSize > 0 {
-				mask = mask.Pad(ctx, 0, padSize, 0, 0)
-			}
-
 			if mask.DType() != cacheConfig.MaskDType {
 				mask = mask.Cast(ctx, cacheConfig.MaskDType)
 			}

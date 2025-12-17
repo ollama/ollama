@@ -8,7 +8,7 @@ Subject: [PATCH] fix mtmd-audio.cpp build on windows
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/tools/mtmd/mtmd-audio.cpp b/tools/mtmd/mtmd-audio.cpp
-index 4d053895c..84bdc2777 100644
+index f68829a61..2024d3d37 100644
 --- a/tools/mtmd/mtmd-audio.cpp
 +++ b/tools/mtmd/mtmd-audio.cpp
 @@ -1,6 +1,6 @@
