@@ -133,6 +133,7 @@ func New(c fs.Config) (model.Model, error) {
 		Values: c.Strings("tokenizer.ggml.tokens"),
 		Scores: c.Floats("tokenizer.ggml.scores"),
 		Types:  c.Ints("tokenizer.ggml.token_type"),
+		Merges: c.Strings("tokenizer.ggml.merges"),
 		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
 		BOS: []int32{
 			int32(cmp.Or(
@@ -157,6 +158,8 @@ func New(c fs.Config) (model.Model, error) {
 	switch c.String("tokenizer.ggml.model", "bert") {
 	case "bert":
 		processor = model.NewWordPiece(vocab, true)
+	case "gpt2":
+		processor = model.NewBytePairEncoding(vocab)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}
