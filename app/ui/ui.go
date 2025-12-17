@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/types/not"
 	"github.com/ollama/ollama/app/ui/responses"
+	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -94,18 +95,30 @@ const (
 )
 
 type Server struct {
-	Logger       *slog.Logger
-	Restart      func()
-	Token        string
-	Store        *store.Store
-	ToolRegistry *tools.Registry
-	Tools        bool   // if true, the server will use single-turn tools to fulfill the user's request
-	WebSearch    bool   // if true, the server will use single-turn browser tool to fulfill the user's request
-	Agent        bool   // if true, the server will use multi-turn tools to fulfill the user's request
-	WorkingDir   string // Working directory for all agent operations
+	Logger                   *slog.Logger
+	Restart                  func()
+	Token                    string
+	Store                    *store.Store
+	ToolRegistry             *tools.Registry
+	Tools                    bool   // if true, the server will use single-turn tools to fulfill the user's request
+	WebSearch                bool   // if true, the server will use single-turn browser tool to fulfill the user's request
+	Agent                    bool   // if true, the server will use multi-turn tools to fulfill the user's request
+	WorkingDir               string // Working directory for all agent operations
 
 	// Dev is true if the server is running in development mode
 	Dev bool
+
+	// Updater for checking and downloading updates
+	Updater                  UpdaterInterface
+	UpdateAvailableFunc      func()
+	ClearUpdateAvailableFunc func()
+}
+
+// UpdaterInterface defines the methods we need from the updater
+type UpdaterInterface interface {
+	CheckForUpdate(ctx context.Context) (bool, string, error)
+	DownloadUpdate(ctx context.Context, updateVersion string) error
+	InstallAndRestart() error
 }
 
 func (s *Server) log() *slog.Logger {
@@ -250,7 +263,7 @@ func (s *Server) Handler() http.Handler {
 			}()
 
 			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("X-Version", version.Version)
+			w.Header().Set("X-Version", version.GetVersion())
 			w.Header().Set("X-Request-ID", requestID)
 
 			ctx := r.Context()
@@ -284,6 +297,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
+	mux.Handle("GET /api/v1/update/check", handle(s.checkForUpdate))
+	mux.Handle("POST /api/v1/update/download", handle(s.downloadUpdate))
+	mux.Handle("POST /api/v1/update/install", handle(s.installUpdate))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
@@ -1448,6 +1464,19 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
+	// Update tray notification based on auto-update toggle
+	if old.AutoUpdateEnabled && !settings.AutoUpdateEnabled {
+		// Auto-update disabled: clear tray notification
+		if s.ClearUpdateAvailableFunc != nil {
+			s.ClearUpdateAvailableFunc()
+		}
+	} else if !old.AutoUpdateEnabled && settings.AutoUpdateEnabled {
+		// Auto-update enabled: show tray notification if update is pending
+		if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
+			s.UpdateAvailableFunc()
+		}
+	}
+
 	if old.ContextLength != settings.ContextLength ||
 		old.Models != settings.Models ||
 		old.Expose != settings.Expose {
@@ -1522,6 +1551,114 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) error {
+	if s.Updater == nil {
+		return fmt.Errorf("updater not available")
+	}
+
+	updateAvailable, updateVersion, err := s.Updater.CheckForUpdate(r.Context())
+	if err != nil {
+		s.log().Warn("failed to check for update", "error", err)
+		// Don't return error, just log it and continue with no update available
+	}
+
+	// Get current version with fallbacks for development
+	currentVersion := version.GetVersion()
+
+	response := responses.UpdateCheckResponse{
+		UpdateInfo: responses.UpdateInfo{
+			CurrentVersion:   currentVersion,
+			AvailableVersion: updateVersion,
+			UpdateAvailable:  updateAvailable,
+			UpdateDownloaded: updater.UpdateDownloaded,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) downloadUpdate(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != "POST" {
+		return fmt.Errorf("method not allowed")
+	}
+
+	if s.Updater == nil {
+		return fmt.Errorf("updater not available")
+	}
+
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if req.Version == "" {
+		return fmt.Errorf("version is required")
+	}
+
+	err := s.Updater.DownloadUpdate(r.Context(), req.Version)
+	if err != nil {
+		s.log().Error("failed to download update", "error", err, "version", req.Version)
+		return fmt.Errorf("failed to download update: %w", err)
+	}
+
+	response := map[string]any{
+		"success": true,
+		"message": "Update downloaded successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != "POST" {
+		return fmt.Errorf("method not allowed")
+	}
+
+	if s.Updater == nil {
+		s.log().Error("install failed: updater not available")
+		return fmt.Errorf("updater not available")
+	}
+
+	// Check if update is downloaded
+	if !updater.UpdateDownloaded {
+		s.log().Error("install failed: no update downloaded")
+		return fmt.Errorf("no update downloaded")
+	}
+
+	// Check if we can actually upgrade (not in dev mode)
+	if updater.BundlePath == "" {
+		return fmt.Errorf("cannot install updates in development mode")
+	}
+
+	// Send response before restarting
+	response := map[string]any{
+		"success": true,
+		"message": "Installing update and restarting...",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return err
+	}
+
+	// Give the response time to be sent
+	time.Sleep(500 * time.Millisecond)
+
+	// Trigger the upgrade and restart
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if err := s.Updater.InstallAndRestart(); err != nil {
+			s.log().Error("failed to install update", "error", err)
+		}
+	}()
+
+	return nil
 }
 
 func userAgent() string {

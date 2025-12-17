@@ -253,6 +253,8 @@ func main() {
 		done <- osrv.Run(octx)
 	}()
 
+	upd := &updater.Updater{Store: st}
+
 	uiServer := ui.Server{
 		Token: token,
 		Restart: func() {
@@ -267,6 +269,13 @@ func main() {
 		ToolRegistry: toolRegistry,
 		Dev:          devMode,
 		Logger:       slog.Default(),
+		Updater:      upd,
+		UpdateAvailableFunc: func() {
+			UpdateAvailable("")
+		},
+		ClearUpdateAvailableFunc: func() {
+			ClearUpdateAvailable()
+		},
 	}
 
 	srv := &http.Server{
@@ -284,8 +293,7 @@ func main() {
 		slog.Debug("background desktop server done")
 	}()
 
-	updater := &updater.Updater{Store: st}
-	updater.StartBackgroundUpdaterChecker(ctx, UpdateAvailable)
+	upd.StartBackgroundUpdaterChecker(ctx, UpdateAvailable)
 
 	hasCompletedFirstRun, err := st.HasCompletedFirstRun()
 	if err != nil {
@@ -348,6 +356,16 @@ func startHiddenTasks() {
 			// CLI triggered app startup use-case
 			slog.Info("deferring pending update for fast startup")
 		} else {
+			// Check if auto-update is enabled before upgrading
+			st := &store.Store{}
+			settings, err := st.Settings()
+			if err != nil {
+				slog.Warn("failed to load settings for upgrade check", "error", err)
+			} else if !settings.AutoUpdateEnabled {
+				slog.Info("auto-update disabled, skipping automatic upgrade at startup")
+				return
+			}
+
 			if err := updater.DoUpgradeAtStartup(); err != nil {
 				slog.Info("unable to perform upgrade at startup", "error", err)
 				// Make sure the restart to upgrade menu shows so we can attempt an interactive upgrade to get authorization

@@ -58,8 +58,11 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	query := requestURL.Query()
 	query.Add("os", runtime.GOOS)
 	query.Add("arch", runtime.GOARCH)
-	query.Add("version", version.Version)
+	currentVersion := version.GetVersion()
+	query.Add("version", currentVersion)
 	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	
+	slog.Debug("checking for update", "current_version", currentVersion, "os", runtime.GOOS, "arch", runtime.GOARCH)
 
 	// The original macOS app used to use the device ID
 	// to check for updates so include it if present
@@ -94,7 +97,7 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	if signature != "" {
 		req.Header.Set("Authorization", signature)
 	}
-	ua := fmt.Sprintf("ollama/%s %s Go/%s %s", version.Version, runtime.GOARCH, runtime.Version(), UserAgentOS)
+	ua := fmt.Sprintf("ollama/%s %s Go/%s %s", version.GetVersion(), runtime.GOARCH, runtime.Version(), UserAgentOS)
 	req.Header.Set("User-Agent", ua)
 
 	slog.Debug("checking for available update", "requestURL", requestURL, "User-Agent", ua)
@@ -176,6 +179,7 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	_, err = os.Stat(stageFilename)
 	if err == nil {
 		slog.Info("update already downloaded", "bundle", stageFilename)
+		UpdateDownloaded = true
 		return nil
 	}
 
@@ -253,6 +257,22 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 		time.Sleep(UpdateCheckInitialDelay)
 		slog.Info("beginning update checker", "interval", UpdateCheckInterval)
 		for {
+			// Check if auto-update is enabled
+			settings, err := u.Store.Settings()
+			if err != nil {
+				slog.Error("failed to load settings", "error", err)
+				time.Sleep(UpdateCheckInterval)
+				continue
+			}
+			
+			if !settings.AutoUpdateEnabled {
+				// When auto-update is disabled, don't check or download anything
+				slog.Debug("auto-update disabled, skipping check")
+				time.Sleep(UpdateCheckInterval)
+				continue
+			}
+
+			// Auto-update is enabled - proceed with normal flow
 			available, resp := u.checkForUpdate(ctx)
 			if available {
 				err := u.DownloadNewRelease(ctx, resp)
@@ -274,4 +294,40 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 			}
 		}
 	}()
+}
+
+func (u *Updater) CheckForUpdate(ctx context.Context) (bool, string, error) {
+	available, resp := u.checkForUpdate(ctx)
+	return available, resp.UpdateVersion, nil
+}
+
+func (u *Updater) DownloadUpdate(ctx context.Context, updateVersion string) error {
+	// First check for update to get the actual download URL
+	available, updateResp := u.checkForUpdate(ctx)
+	
+	if !available {
+		return fmt.Errorf("no update available")
+	}
+	if updateResp.UpdateVersion != updateVersion {
+		slog.Error("version mismatch", "requested", updateVersion, "available", updateResp.UpdateVersion)
+		return fmt.Errorf("version mismatch: requested %s, available %s", updateVersion, updateResp.UpdateVersion)
+	}
+	
+	slog.Info("downloading update", "version", updateVersion)
+	err := u.DownloadNewRelease(ctx, updateResp)
+	if err != nil {
+		return err
+	}
+	
+	slog.Info("update downloaded successfully", "version", updateVersion)
+	return nil
+}
+
+func (u *Updater) InstallAndRestart() error {
+	if !UpdateDownloaded {
+		return fmt.Errorf("no update downloaded")
+	}
+	
+	slog.Info("installing update and restarting")
+	return DoUpgrade(true)
 }

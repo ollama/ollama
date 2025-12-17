@@ -157,6 +157,10 @@ func UpdateAvailable(ver string) error {
 	return app.t.UpdateAvailable(ver)
 }
 
+func ClearUpdateAvailable() error {
+	return app.t.ClearUpdateAvailable()
+}
+
 func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 	var err error
 	app.shutdown = shutdown

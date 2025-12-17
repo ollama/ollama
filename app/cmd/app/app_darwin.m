@@ -249,6 +249,12 @@ bool firstTimeRun,startHidden; // Set in run before initialization
     [self showIcon];
 }
 
+- (void)clearUpdateAvailable {
+    self.updateAvailable = NO;
+    [self.statusItem.menu.itemArray[3] setHidden:YES];
+    [self.statusItem.menu.itemArray[4] setHidden:YES];
+}
+
 - (void)aboutOllama {
     [[NSApplication sharedApplication] orderFrontStandardAboutPanel:nil];
     [NSApp activateIgnoringOtherApps:YES];
@@ -989,6 +995,12 @@ int installSymlink(const char *cliPath) {
 void updateAvailable() {
     dispatch_async(dispatch_get_main_queue(), ^{
       [appDelegate showUpdateAvailable];
+    });
+}
+
+void clearUpdateAvailable() {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [appDelegate clearUpdateAvailable];
     });
 }
 

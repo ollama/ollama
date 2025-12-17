@@ -30,6 +30,7 @@ var (
 	pPostQuitMessage       = u32.NewProc("PostQuitMessage")
 	pRegisterClass         = u32.NewProc("RegisterClassExW")
 	pRegisterWindowMessage = u32.NewProc("RegisterWindowMessageW")
+	pRemoveMenu            = u32.NewProc("RemoveMenu")
 	pSendMessage           = u32.NewProc("SendMessageW")
 	pSetForegroundWindow   = u32.NewProc("SetForegroundWindow")
 	pSetMenuInfo           = u32.NewProc("SetMenuInfo")

@@ -414,3 +414,68 @@ export async function fetchHealth(): Promise<boolean> {
     return false;
   }
 }
+
+export async function getCurrentVersion(): Promise<string> {
+  try {
+    const response = await fetch(`${API_BASE}/api/version`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return data.version || "Unknown";
+    }
+    return "Unknown";
+  } catch (error) {
+    console.error("Error fetching version:", error);
+    return "Unknown";
+  }
+}
+
+export async function checkForUpdate(): Promise<{
+  currentVersion: string;
+  availableVersion: string;
+  updateAvailable: boolean;
+  updateDownloaded: boolean;
+}> {
+  const response = await fetch(`${API_BASE}/api/v1/update/check`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error("Failed to check for update");
+  }
+  const data = await response.json();
+  return data.updateInfo;
+}
+
+export async function downloadUpdate(version: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/update/download`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ version }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to download update");
+  }
+}
+
+export async function installUpdate(): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/update/install`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to install update");
+  }
+}
