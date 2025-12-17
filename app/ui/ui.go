@@ -1641,7 +1641,6 @@ func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("no update downloaded")
 	}
 
-
 	// Send response before restarting
 	response := map[string]any{
 		"success": true,
