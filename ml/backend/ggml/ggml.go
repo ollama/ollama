@@ -684,7 +684,7 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 }
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
-	if b.flashAttention == ml.FlashAttentionEnabled {
+	if b.flashAttention != ml.FlashAttentionDisabled {
 		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
 	} else {
 		return ml.CacheConfig{CachePadding: 256, PermutedV: true}
@@ -842,9 +842,14 @@ func (c *Context) ComputeWithNotify(cb func(), tensors ...ml.Tensor) {
 	}
 }
 
-func (c *Context) Reserve() {
+func (c *Context) Reserve() error {
 	if c.batchSize > 0 {
 		C.ggml_backend_sched_set_batch_size(c.b.sched, C.int(c.batchSize))
+	}
+
+	flashBackendAssignments, err := validateGraph(c.graph, c.b.flashAttention)
+	if err != nil {
+		return err
 	}
 
 	reserved := C.ggml_backend_sched_reserve(c.b.sched, c.graph)
@@ -867,6 +872,142 @@ func (c *Context) Reserve() {
 	if !reserved {
 		panic(ml.ErrNoMem{BackendMemory: *c.b.requiredMemory})
 	}
+
+	// If flash attention is in auto mode, ensure that the scheduler placed the flash attention on the same
+	// (or higher priority) backend as we originally loaded the weights. If it's a lower priority backend (i.e. CPU),
+	// that means that backend likely does not support flash attention for this graph.
+	if c.b.flashAttention == ml.FlashAttentionAuto {
+		flashIdx := 0
+		for i := range C.ggml_graph_n_nodes(c.graph) {
+			node := C.ggml_graph_node(c.graph, i)
+			if node.op != C.GGML_OP_FLASH_ATTN_EXT {
+				continue
+			}
+
+			if flashIdx >= len(flashBackendAssignments) {
+				slog.Debug("flash attention assignment missing",
+					"index", flashIdx,
+					"tensor", C.GoString(C.ggml_get_name(node)))
+				return errors.New("flash attention not supported by backend")
+			}
+
+			assignedBT := flashBackendAssignments[flashIdx]
+			flashIdx++
+
+			if node.buffer == nil || assignedBT == nil {
+				continue
+			}
+
+			bufferType := C.ggml_backend_buffer_get_type(node.buffer)
+
+			actualPriority := bufferTypePriority(bufferType, c.b.schedBufts)
+			expectedPriority := bufferTypePriority(assignedBT, c.b.schedBufts)
+
+			// A lower numbered priority is better here
+			if actualPriority > expectedPriority {
+				slog.Debug("flash attention not supported by backend",
+					"tensor", C.GoString(C.ggml_get_name(node)),
+					"assigned_buffer_type", C.GoString(C.ggml_backend_buft_name(bufferType)),
+					"assigned_priority", actualPriority,
+					"expected_buffer_type", C.GoString(C.ggml_backend_buft_name(assignedBT)),
+					"expected_priority", expectedPriority)
+				return errors.New("flash attention not supported by backend")
+			}
+		}
+	}
+
+	return nil
+}
+
+func bufferTypePriority(buft C.ggml_backend_buffer_type_t, schedBufts []C.ggml_backend_buffer_type_t) int {
+	for i, b := range schedBufts {
+		if b == buft {
+			return i
+		}
+	}
+
+	return len(schedBufts)
+}
+
+// Check that there are no illegal operations and build a mapping of flash attention operation locations
+// from before the scheduler runs to compare to the result afterwards.
+func validateGraph(graph *C.struct_ggml_cgraph, flashAttention ml.FlashAttentionType) ([]C.ggml_backend_buffer_type_t, error) {
+	var assignments []C.ggml_backend_buffer_type_t
+
+	for i := range C.ggml_graph_n_nodes(graph) {
+		node := C.ggml_graph_node(graph, i)
+
+		switch node.op {
+		// Only flash attention supports quantized KV cache, so if we have a matmul that uses a quantized input (other than weights),
+		// it means that the model is using its own implementation of attention.
+		case C.GGML_OP_MUL_MAT:
+			for srcIndex := range int(C.GGML_MAX_SRC) {
+				src := node.src[srcIndex]
+				if src == nil {
+					continue
+				}
+
+				var quantized *C.struct_ggml_tensor
+				for current := src; current != nil; current = current.view_src {
+					if C.ggml_is_quantized(current._type) {
+						quantized = current
+						break
+					}
+				}
+
+				// If matmul has a quantized input, it is only supported if it is weights (due to uniform stride)
+				if quantized != nil &&
+					!(quantized.buffer != nil && C.ggml_backend_buffer_get_usage(quantized.buffer) == C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
+					slog.Debug("unsupported quantized matmul input",
+						"tensor", C.GoString(C.ggml_get_name(node)),
+						"src", C.GoString(C.ggml_get_name(src)),
+						"type", C.GoString(C.ggml_type_name(quantized._type)))
+					return nil, errors.New("unsupported quantized matmul input")
+				}
+			}
+
+		// Build a mapping of flash attention operations to their most direct weight input. We do this before the scheduler runs
+		// because the graph is fully connected. After scheduling, the graph is hard to trace because it is broken up into splits.
+		// We index by flash attention number (more or less equivalent to layer) since that is persistent across scheduling.
+		case C.GGML_OP_FLASH_ATTN_EXT:
+			if flashAttention == ml.FlashAttentionAuto {
+				// Breadth-first search for the first ancestor that has a buffer with weights
+				queue := []*C.struct_ggml_tensor{node}
+				visited := make(map[*C.struct_ggml_tensor]struct{})
+
+				var ancestor *C.struct_ggml_tensor
+				for len(queue) > 0 {
+					current := queue[0]
+					queue = queue[1:]
+
+					if _, ok := visited[current]; ok {
+						continue
+					}
+					visited[current] = struct{}{}
+
+					// Only use weights as reference points - we don't want to use inputs like the cache mask, which are always on the CPU
+					if current.buffer != nil && C.ggml_backend_buffer_get_usage(current.buffer) == C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS {
+						ancestor = current
+						break
+					}
+
+					for srcIndex := range int(C.GGML_MAX_SRC) {
+						if src := current.src[srcIndex]; src != nil {
+							queue = append(queue, src)
+						}
+					}
+				}
+
+				var bufferType C.ggml_backend_buffer_type_t
+				if ancestor != nil {
+					bufferType = C.ggml_backend_buffer_get_type(ancestor.buffer)
+				}
+				assignments = append(assignments, bufferType)
+			}
+		}
+	}
+
+	return assignments, nil
 }
 
 func (c *Context) MaxGraphNodes() int {
@@ -1679,7 +1820,7 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 	query := t.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
 
-	if t.b.flashAttention == ml.FlashAttentionEnabled {
+	if t.b.flashAttention != ml.FlashAttentionDisabled {
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
 		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)

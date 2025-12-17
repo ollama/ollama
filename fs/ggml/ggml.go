@@ -813,41 +813,11 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 }
 
 // KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
-func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
+func KVCacheTypeIsQuantized(cacheType string) bool {
 	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
 		return false
 	}
 	return true
-}
-
-// SupportsFlashAttention checks if the model supports flash attention
-func (f GGML) SupportsFlashAttention() bool {
-	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
-	if isEmbedding {
-		return false
-	}
-
-	if arch := f.KV().Architecture(); slices.Contains([]string{"gemma2"}, arch) {
-		return false
-	}
-
-	// Check head counts match and are non-zero
-	headCountK := f.KV().EmbeddingHeadCountK()
-	headCountV := f.KV().EmbeddingHeadCountV()
-	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
-}
-
-// FlashAttention checks if the model should enable flash attention
-func (f GGML) FlashAttention() bool {
-	return slices.Contains([]string{
-		"bert",
-		"gemma3",
-		"gptoss", "gpt-oss",
-		"mistral3",
-		"olmo3",
-		"qwen3", "qwen3moe",
-		"qwen3vl", "qwen3vlmoe",
-	}, f.KV().String("general.architecture"))
 }
 
 // kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type

@@ -98,7 +98,10 @@ func (m multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Ten
 				}
 			}
 		} else {
-			computeCtx.Reserve()
+			err := computeCtx.Reserve()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
