@@ -61,7 +61,7 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	currentVersion := version.GetVersion()
 	query.Add("version", currentVersion)
 	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
-	
+
 	slog.Debug("checking for update", "current_version", currentVersion, "os", runtime.GOOS, "arch", runtime.GOARCH)
 
 	// The original macOS app used to use the device ID
@@ -264,7 +264,7 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 				time.Sleep(UpdateCheckInterval)
 				continue
 			}
-			
+
 			if !settings.AutoUpdateEnabled {
 				// When auto-update is disabled, don't check or download anything
 				slog.Debug("auto-update disabled, skipping check")
@@ -304,7 +304,7 @@ func (u *Updater) CheckForUpdate(ctx context.Context) (bool, string, error) {
 func (u *Updater) DownloadUpdate(ctx context.Context, updateVersion string) error {
 	// First check for update to get the actual download URL
 	available, updateResp := u.checkForUpdate(ctx)
-	
+
 	if !available {
 		return fmt.Errorf("no update available")
 	}
@@ -312,13 +312,13 @@ func (u *Updater) DownloadUpdate(ctx context.Context, updateVersion string) erro
 		slog.Error("version mismatch", "requested", updateVersion, "available", updateResp.UpdateVersion)
 		return fmt.Errorf("version mismatch: requested %s, available %s", updateVersion, updateResp.UpdateVersion)
 	}
-	
+
 	slog.Info("downloading update", "version", updateVersion)
 	err := u.DownloadNewRelease(ctx, updateResp)
 	if err != nil {
 		return err
 	}
-	
+
 	slog.Info("update downloaded successfully", "version", updateVersion)
 	return nil
 }
@@ -327,7 +327,7 @@ func (u *Updater) InstallAndRestart() error {
 	if !UpdateDownloaded {
 		return fmt.Errorf("no update downloaded")
 	}
-	
+
 	slog.Info("installing update and restarting")
 	return DoUpgrade(true)
 }

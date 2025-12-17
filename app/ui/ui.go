@@ -95,15 +95,15 @@ const (
 )
 
 type Server struct {
-	Logger                   *slog.Logger
-	Restart                  func()
-	Token                    string
-	Store                    *store.Store
-	ToolRegistry             *tools.Registry
-	Tools                    bool   // if true, the server will use single-turn tools to fulfill the user's request
-	WebSearch                bool   // if true, the server will use single-turn browser tool to fulfill the user's request
-	Agent                    bool   // if true, the server will use multi-turn tools to fulfill the user's request
-	WorkingDir               string // Working directory for all agent operations
+	Logger       *slog.Logger
+	Restart      func()
+	Token        string
+	Store        *store.Store
+	ToolRegistry *tools.Registry
+	Tools        bool   // if true, the server will use single-turn tools to fulfill the user's request
+	WebSearch    bool   // if true, the server will use single-turn browser tool to fulfill the user's request
+	Agent        bool   // if true, the server will use multi-turn tools to fulfill the user's request
+	WorkingDir   string // Working directory for all agent operations
 
 	// Dev is true if the server is running in development mode
 	Dev bool
