@@ -341,7 +341,7 @@ type ToolFunctionParameters struct {
 	Defs       any                     `json:"$defs,omitempty"`
 	Items      any                     `json:"items,omitempty"`
 	Required   []string                `json:"required,omitempty"`
-	Properties map[string]ToolProperty `json:"properties"`
+	Properties map[string]ToolProperty `json:"properties,omitempty"`
 }
 
 func (t *ToolFunctionParameters) String() string {
@@ -352,7 +352,7 @@ func (t *ToolFunctionParameters) String() string {
 type ToolFunction struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
-	Parameters  ToolFunctionParameters `json:"parameters"`
+	Parameters  ToolFunctionParameters `json:"parameters,omitempty"`
 }
 
 func (t *ToolFunction) String() string {
