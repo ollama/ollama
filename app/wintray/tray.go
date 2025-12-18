@@ -41,6 +41,7 @@ type TrayCallbacks interface {
 	Quit()
 	TrayRun()
 	UpdateAvailable(ver string) error
+	ClearUpdateAvailable() error
 	GetIconHandle() windows.Handle
 }
 

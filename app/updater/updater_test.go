@@ -86,6 +86,16 @@ func TestBackgoundChecker(t *testing.T) {
 
 	updater := &Updater{Store: &store.Store{}}
 	defer updater.Store.Close() // Ensure database is closed
+	
+	settings, err := updater.Store.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoUpdateEnabled = true
+	if err := updater.Store.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	
 	updater.StartBackgroundUpdaterChecker(ctx, cb)
 	select {
 	case <-stallTimer.C:
