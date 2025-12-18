@@ -265,7 +265,7 @@ func (s *Server) Handler() http.Handler {
 			}()
 
 			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("X-Version", version.GetVersion())
+			w.Header().Set("X-Version", version.Version)
 			w.Header().Set("X-Request-ID", requestID)
 
 			ctx := r.Context()
@@ -1564,6 +1564,8 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) error {
+	currentVersion := version.Version
+
 	if s.Updater == nil {
 		return fmt.Errorf("updater not available")
 	}
@@ -1573,9 +1575,6 @@ func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) error {
 		s.log().Warn("failed to check for update", "error", err)
 		// Don't return error, just log it and continue with no update available
 	}
-
-	// Get current version with fallbacks for development
-	currentVersion := version.GetVersion()
 
 	response := responses.UpdateCheckResponse{
 		UpdateInfo: responses.UpdateInfo{

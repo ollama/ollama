@@ -59,7 +59,7 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	query := requestURL.Query()
 	query.Add("os", runtime.GOOS)
 	query.Add("arch", runtime.GOARCH)
-	currentVersion := version.GetVersion()
+	currentVersion := version.Version
 	query.Add("version", currentVersion)
 	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
 
@@ -98,7 +98,7 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	if signature != "" {
 		req.Header.Set("Authorization", signature)
 	}
-	ua := fmt.Sprintf("ollama/%s %s Go/%s %s", version.GetVersion(), runtime.GOARCH, runtime.Version(), UserAgentOS)
+	ua := fmt.Sprintf("ollama/%s %s Go/%s %s", version.Version, runtime.GOARCH, runtime.Version(), UserAgentOS)
 	req.Header.Set("User-Agent", ua)
 
 	slog.Debug("checking for available update", "requestURL", requestURL, "User-Agent", ua)
@@ -305,7 +305,13 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 				// Regular interval check
 			}
 
-			// Check if auto-update is enabled
+			// Always check for updates
+			available, resp := u.checkForUpdate(ctx)
+			if !available {
+				continue
+			}
+
+			// Update is available - check if auto-update is enabled
 			settings, err := u.Store.Settings()
 			if err != nil {
 				slog.Error("failed to load settings", "error", err)
@@ -313,22 +319,19 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 			}
 
 			if !settings.AutoUpdateEnabled {
-				// When auto-update is disabled, don't check or download anything
-				slog.Debug("auto-update disabled, skipping check")
+				// Auto-update disabled - don't download, just log
+				slog.Debug("update available but auto-update disabled", "version", resp.UpdateVersion)
 				continue
 			}
 
-			// Auto-update is enabled - proceed with normal flow
-			available, resp := u.checkForUpdate(ctx)
-			if available {
-				err := u.DownloadNewRelease(ctx, resp)
+			// Auto-update is enabled - download and notify
+			err = u.DownloadNewRelease(ctx, resp)
+			if err != nil {
+				slog.Error("failed to download new release", "error", err)
+			} else {
+				err = cb(resp.UpdateVersion)
 				if err != nil {
-					slog.Error("failed to download new release", "error", err)
-				} else {
-					err = cb(resp.UpdateVersion)
-					if err != nil {
-						slog.Warn("failed to register update available with tray", "error", err)
-					}
+					slog.Warn("failed to register update available with tray", "error", err)
 				}
 			}
 		}
