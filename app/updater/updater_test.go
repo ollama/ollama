@@ -85,8 +85,8 @@ func TestBackgoundChecker(t *testing.T) {
 	UpdateCheckURLBase = server.URL + "/update.json"
 
 	updater := &Updater{Store: &store.Store{}}
-	defer updater.Store.Close() // Ensure database is closed
-	
+	defer updater.Store.Close()
+
 	settings, err := updater.Store.Settings()
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestBackgoundChecker(t *testing.T) {
 	if err := updater.Store.SetSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	updater.StartBackgroundUpdaterChecker(ctx, cb)
 	select {
 	case <-stallTimer.C:
