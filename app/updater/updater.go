@@ -63,8 +63,6 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	query.Add("version", currentVersion)
 	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
 
-	slog.Debug("checking for update", "current_version", currentVersion, "os", runtime.GOOS, "arch", runtime.GOARCH)
-
 	// The original macOS app used to use the device ID
 	// to check for updates so include it if present
 	if runtime.GOOS == "darwin" {
