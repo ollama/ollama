@@ -463,6 +463,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			}
 			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			var texts []string
+			var images []api.ImageData
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -474,7 +476,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					if !ok {
 						return nil, errors.New("invalid message format")
 					}
-					messages = append(messages, api.Message{Role: msg.Role, Content: text})
+					texts = append(texts, text)
 				case "image_url":
 					var url string
 					if urlMap, ok := data["image_url"].(map[string]any); ok {
@@ -492,23 +494,24 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						return nil, err
 					}
 
-					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+					images = append(images, img)
 				default:
 					return nil, errors.New("invalid message format")
 				}
 			}
-			// since we might have added multiple messages above, if we have tools
-			// calls we'll add them to the last message
-			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
-				toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
-				if err != nil {
-					return nil, err
-				}
-				messages[len(messages)-1].ToolCalls = toolCalls
-				messages[len(messages)-1].ToolName = toolName
-				messages[len(messages)-1].ToolCallID = msg.ToolCallID
-				messages[len(messages)-1].Thinking = msg.Reasoning
+			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
 			}
+			messages = append(messages, api.Message{
+				Role:       msg.Role,
+				Content:    strings.Join(texts, "\n\n"),
+				Images:     images,
+				Thinking:   msg.Reasoning,
+				ToolCalls:  toolCalls,
+				ToolName:   toolName,
+				ToolCallID: msg.ToolCallID,
+			})
 		default:
 			// content is only optional if tool calls are present
 			if msg.ToolCalls == nil {

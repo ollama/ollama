@@ -41,7 +41,7 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
-func TestFromChatRequest_WithImage(t *testing.T) {
+func TestFromChatRequest_MultiPartContent(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(image)
 
 	req := ChatCompletionRequest{
@@ -50,7 +50,12 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 			{
 				Role: "user",
 				Content: []any{
-					map[string]any{"type": "text", "text": "Hello"},
+					map[string]any{"type": "text", "text": "First part."},
+					map[string]any{"type": "text", "text": "Second part."},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image},
+					},
 					map[string]any{
 						"type":      "image_url",
 						"image_url": map[string]any{"url": prefix + image},
@@ -65,20 +70,31 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	// Multi-part content array should produce a single message per OpenAI spec
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
 	}
 
-	if result.Messages[0].Content != "Hello" {
-		t.Errorf("expected first message content 'Hello', got %q", result.Messages[0].Content)
+	msg := result.Messages[0]
+	if msg.Role != "user" {
+		t.Errorf("expected role 'user', got %q", msg.Role)
 	}
 
-	if len(result.Messages[1].Images) != 1 {
-		t.Fatalf("expected 1 image, got %d", len(result.Messages[1].Images))
+	// Multiple text parts should be joined
+	expectedContent := "First part.\n\nSecond part."
+	if msg.Content != expectedContent {
+		t.Errorf("expected content %q, got %q", expectedContent, msg.Content)
 	}
 
-	if string(result.Messages[1].Images[0]) != string(imgData) {
-		t.Error("image data mismatch")
+	// Multiple images should be in the same message
+	if len(msg.Images) != 2 {
+		t.Fatalf("expected 2 images, got %d", len(msg.Images))
+	}
+
+	for i, img := range msg.Images {
+		if string(img) != string(imgData) {
+			t.Errorf("image %d data mismatch", i)
+		}
 	}
 }
 
