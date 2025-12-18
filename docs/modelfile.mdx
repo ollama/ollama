@@ -41,6 +41,7 @@ INSTRUCTION arguments
 | [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.            |
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
 | [`MESSAGE`](#message)               | Specify message history.                                       |
+| [`REQUIRES`](#requires)             | Specify the minimum version of Ollama required by the model.   |
 
 ## Examples
 
@@ -247,6 +248,16 @@ MESSAGE assistant no
 MESSAGE user Is Ontario in Canada?
 MESSAGE assistant yes
 ```
+
+### REQUIRES
+
+The `REQUIRES` instruction allows you to specify the minimum version of Ollama required by the model.
+
+```
+REQUIRES <version>
+```
+
+The version should be a valid Ollama version (e.g. 0.14.0).
 
 ## Notes
 
