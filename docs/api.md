@@ -16,6 +16,7 @@
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
 - [Version](#version)
+- [List Total Disk Space Used By Models](#list-total-disk-space-used-by-models)
 
 ## Conventions
 
@@ -1865,5 +1866,29 @@ curl http://localhost:11434/api/version
 ```json
 {
   "version": "0.5.1"
+}
+```
+
+## List Total Disk Space Used by Models
+```
+GET /api/models/size
+```
+
+Fetch the actual disk space used by all the models running on your machine as well as a count of the models
+
+### Examples
+
+#### Request
+
+```shell
+curl -sS http://localhost:11434/api/models/size
+```
+
+#### Response
+
+```json
+{
+  "models_count": 0,
+  "total_size_bytes": 0
 }
 ```
