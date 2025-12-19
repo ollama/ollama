@@ -172,14 +172,6 @@ func UpdateAvailable(ver string) error {
 	return nil
 }
 
-func ClearUpdateAvailable() error {
-	slog.Debug("clearing update notification")
-	if updater.BundlePath != "" {
-		C.clearUpdateAvailable()
-	}
-	return nil
-}
-
 func osRun(_ func(), hasCompletedFirstRun, startHidden bool) {
 	registerLaunchAgent(hasCompletedFirstRun)
 

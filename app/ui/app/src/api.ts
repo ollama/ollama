@@ -453,20 +453,6 @@ export async function checkForUpdate(): Promise<{
   return data.updateInfo;
 }
 
-export async function downloadUpdate(version: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/update/download`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ version }),
-  });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || "Failed to download update");
-  }
-}
-
 export async function installUpdate(): Promise<void> {
   const response = await fetch(`${API_BASE}/api/v1/update/install`, {
     method: "POST",

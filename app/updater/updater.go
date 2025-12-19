@@ -303,35 +303,37 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 				// Regular interval check
 			}
 
-			// Always check for updates
-			available, resp := u.checkForUpdate(ctx)
-			if !available {
-				continue
-			}
+		// Always check for updates
+		available, resp := u.checkForUpdate(ctx)
+		if !available {
+			continue
+		}
 
-			// Update is available - check if auto-update is enabled
-			settings, err := u.Store.Settings()
-			if err != nil {
-				slog.Error("failed to load settings", "error", err)
-				continue
-			}
+		// Update is available - check if auto-update is enabled for downloading
+		settings, err := u.Store.Settings()
+		if err != nil {
+			slog.Error("failed to load settings", "error", err)
+			continue
+		}
 
-			if !settings.AutoUpdateEnabled {
-				// Auto-update disabled - don't download, just log
-				slog.Debug("update available but auto-update disabled", "version", resp.UpdateVersion)
-				continue
-			}
+		if !settings.AutoUpdateEnabled {
+			// Auto-update disabled - don't download, just log
+			slog.Debug("update available but auto-update disabled", "version", resp.UpdateVersion)
+			continue
+		}
 
-			// Auto-update is enabled - download and notify
-			err = u.DownloadNewRelease(ctx, resp)
-			if err != nil {
-				slog.Error("failed to download new release", "error", err)
-			} else {
-				err = cb(resp.UpdateVersion)
-				if err != nil {
-					slog.Warn("failed to register update available with tray", "error", err)
-				}
-			}
+		// Auto-update is enabled - download
+		err = u.DownloadNewRelease(ctx, resp)
+		if err != nil {
+			slog.Error("failed to download new release", "error", err)
+			continue
+		}
+
+		// Download successful - show tray notification (regardless of toggle state)
+		err = cb(resp.UpdateVersion)
+		if err != nil {
+			slog.Warn("failed to register update available with tray", "error", err)
+		}
 		}
 	}()
 }
@@ -339,28 +341,6 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 func (u *Updater) CheckForUpdate(ctx context.Context) (bool, string, error) {
 	available, resp := u.checkForUpdate(ctx)
 	return available, resp.UpdateVersion, nil
-}
-
-func (u *Updater) DownloadUpdate(ctx context.Context, updateVersion string) error {
-	// First check for update to get the actual download URL
-	available, updateResp := u.checkForUpdate(ctx)
-
-	if !available {
-		return fmt.Errorf("no update available")
-	}
-	if updateResp.UpdateVersion != updateVersion {
-		slog.Error("version mismatch", "requested", updateVersion, "available", updateResp.UpdateVersion)
-		return fmt.Errorf("version mismatch: requested %s, available %s", updateVersion, updateResp.UpdateVersion)
-	}
-
-	slog.Info("downloading update", "version", updateVersion)
-	err := u.DownloadNewRelease(ctx, updateResp)
-	if err != nil {
-		return err
-	}
-
-	slog.Info("update downloaded successfully", "version", updateVersion)
-	return nil
 }
 
 func (u *Updater) InstallAndRestart() error {

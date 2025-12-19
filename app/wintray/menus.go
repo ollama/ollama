@@ -47,34 +47,6 @@ func (t *winTray) initMenus() error {
 	return nil
 }
 
-func (t *winTray) ClearUpdateAvailable() error {
-	if t.updateNotified {
-		slog.Debug("clearing update notification and menu items")
-		if err := t.removeMenuItem(updateSeparatorMenuID, 0); err != nil {
-			return fmt.Errorf("unable to remove menu entries %w", err)
-		}
-		if err := t.removeMenuItem(updateAvailableMenuID, 0); err != nil {
-			return fmt.Errorf("unable to remove menu entries %w", err)
-		}
-		if err := t.removeMenuItem(updateMenuID, 0); err != nil {
-			return fmt.Errorf("unable to remove menu entries %w", err)
-		}
-		if err := t.removeMenuItem(separatorMenuID, 0); err != nil {
-			return fmt.Errorf("unable to remove menu entries %w", err)
-		}
-		iconFilePath, err := iconBytesToFilePath(wt.normalIcon)
-		if err != nil {
-			return fmt.Errorf("unable to write icon data to temp file: %w", err)
-		}
-		if err := t.setIcon(iconFilePath); err != nil {
-			return fmt.Errorf("unable to set icon: %w", err)
-		}
-		t.updateNotified = false
-		t.pendingUpdate = false
-	}
-	return nil
-}
-
 func (t *winTray) UpdateAvailable(ver string) error {
 	if !t.updateNotified {
 		slog.Debug("updating menu and sending notification for new update")

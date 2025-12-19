@@ -375,14 +375,14 @@ export default function Settings() {
                       <Description>
                         {settings.AutoUpdateEnabled ? (
                           <>
-                            Automatically downloads updates and restarts the app.
+                            Automatically downloads updates when available.
                             <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
                               Current version: {updateInfo?.currentVersion || "Loading..."}
                             </div>
                           </>
                         ) : (
                           <>
-                            You must manually check for updates.
+                            Manually download updates.
                             <div className="mt-3 p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
                               <div className="space-y-2 text-sm">
                                 <div className="flex justify-between">

@@ -109,15 +109,13 @@ type Server struct {
 	Dev bool
 
 	// Updater for checking and downloading updates
-	Updater                  UpdaterInterface
-	UpdateAvailableFunc      func()
-	ClearUpdateAvailableFunc func()
+	Updater             UpdaterInterface
+	UpdateAvailableFunc func()
 }
 
 // UpdaterInterface defines the methods we need from the updater
 type UpdaterInterface interface {
 	CheckForUpdate(ctx context.Context) (bool, string, error)
-	DownloadUpdate(ctx context.Context, updateVersion string) error
 	InstallAndRestart() error
 	CancelOngoingDownload()
 	TriggerImmediateCheck()
@@ -300,7 +298,6 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/update/check", handle(s.checkForUpdate))
-	mux.Handle("POST /api/v1/update/download", handle(s.downloadUpdate))
 	mux.Handle("POST /api/v1/update/install", handle(s.installUpdate))
 
 	// Ollama proxy endpoints
@@ -1469,12 +1466,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	// Handle auto-update toggle changes
 	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
 		if !settings.AutoUpdateEnabled {
-			// Auto-update disabled: cancel any ongoing download and clear tray notification
+			// Auto-update disabled: cancel any ongoing download
 			if s.Updater != nil {
 				s.Updater.CancelOngoingDownload()
-			}
-			if s.ClearUpdateAvailableFunc != nil {
-				s.ClearUpdateAvailableFunc()
 			}
 		} else {
 			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
@@ -1583,41 +1577,6 @@ func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) error {
 			UpdateAvailable:  updateAvailable,
 			UpdateDownloaded: updater.UpdateDownloaded,
 		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) downloadUpdate(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != "POST" {
-		return fmt.Errorf("method not allowed")
-	}
-
-	if s.Updater == nil {
-		return fmt.Errorf("updater not available")
-	}
-
-	var req struct {
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return fmt.Errorf("invalid request body: %w", err)
-	}
-
-	if req.Version == "" {
-		return fmt.Errorf("version is required")
-	}
-
-	err := s.Updater.DownloadUpdate(r.Context(), req.Version)
-	if err != nil {
-		s.log().Error("failed to download update", "error", err, "version", req.Version)
-		return fmt.Errorf("failed to download update: %w", err)
-	}
-
-	response := map[string]any{
-		"success": true,
-		"message": "Update downloaded successfully",
 	}
 
 	w.Header().Set("Content-Type", "application/json")

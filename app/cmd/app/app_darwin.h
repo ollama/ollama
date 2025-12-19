@@ -30,7 +30,6 @@ void StartUpdate();
 void darwinStartHiddenTasks();
 void launchApp(const char *appPath);
 void updateAvailable();
-void clearUpdateAvailable();
 void quit();
 void uiRequest(char *path);
 void registerSelfAsLoginItem(bool firstTimeRun);

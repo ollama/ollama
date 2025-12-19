@@ -267,14 +267,11 @@ func main() {
 		},
 		Store:        st,
 		ToolRegistry: toolRegistry,
-		Dev:          devMode,
-		Logger:       slog.Default(),
-		Updater:      upd,
+		Dev:     devMode,
+		Logger:  slog.Default(),
+		Updater: upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
-		},
-		ClearUpdateAvailableFunc: func() {
-			ClearUpdateAvailable()
 		},
 	}
 
@@ -294,6 +291,12 @@ func main() {
 	}()
 
 	upd.StartBackgroundUpdaterChecker(ctx, UpdateAvailable)
+
+	// Check for pending updates on startup (show tray notification if update is ready)
+	if updater.IsUpdatePending() {
+		slog.Debug("update pending on startup, showing tray notification")
+		UpdateAvailable("")
+	}
 
 	hasCompletedFirstRun, err := st.HasCompletedFirstRun()
 	if err != nil {
@@ -356,13 +359,15 @@ func startHiddenTasks() {
 			// CLI triggered app startup use-case
 			slog.Info("deferring pending update for fast startup")
 		} else {
-			// Check if auto-update is enabled before upgrading
+			// Check if auto-update is enabled before automatically upgrading
 			st := &store.Store{}
 			settings, err := st.Settings()
 			if err != nil {
 				slog.Warn("failed to load settings for upgrade check", "error", err)
 			} else if !settings.AutoUpdateEnabled {
 				slog.Info("auto-update disabled, skipping automatic upgrade at startup")
+				// Still show tray notification so user knows update is ready
+				UpdateAvailable("")
 				return
 			}
 
