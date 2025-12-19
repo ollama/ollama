@@ -524,8 +524,13 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	// Use the size of one layer as a buffer
 	layers := s.ggml.Tensors().GroupLayers()
 	if blk0, ok := layers["blk.0"]; ok {
+		buffer := blk0.Size() + kv[0]
 		for i := range gpus {
-			gpus[i].FreeMemory -= blk0.Size() + kv[0]
+			if gpus[i].FreeMemory > buffer {
+				gpus[i].FreeMemory -= buffer
+			} else {
+				gpus[i].FreeMemory = 0
+			}
 		}
 	} else {
 		slog.Warn("model missing blk.0 layer size")
@@ -575,7 +580,11 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 			projectorGPU = firstIntegrated
 		}
 
-		gpus[projectorGPU].FreeMemory -= projectorWeights
+		if gpus[projectorGPU].FreeMemory > projectorWeights {
+			gpus[projectorGPU].FreeMemory -= projectorWeights
+		} else {
+			gpus[projectorGPU].FreeMemory = 0
+		}
 	}
 
 	var kvTotal uint64
