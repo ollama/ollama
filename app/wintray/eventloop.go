@@ -158,16 +158,16 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 	case uint32(UI_REQUEST_MSG_ID):
 		// Requests for the UI must always come from the main event thread
 		l := int(wParam)
-		path := unsafe.String((*byte)(unsafe.Pointer(lParam)), l)
+		path := unsafe.String((*byte)(unsafe.Pointer(lParam)), l) //nolint:govet,gosec
 		t.app.UIRun(path)
 	case WM_COPYDATA:
 		// Handle URL scheme requests from other instances
 		if lParam != 0 {
-			cds := (*COPYDATASTRUCT)(unsafe.Pointer(lParam))
-			if cds.DwData == 1 { // Our identifier for URL scheme messages
+			cds := (*COPYDATASTRUCT)(unsafe.Pointer(lParam)) //nolint:govet,gosec
+			if cds.DwData == 1 {                             // Our identifier for URL scheme messages
 				// Convert the data back to string
 				data := make([]byte, cds.CbData)
-				copy(data, (*[1 << 30]byte)(unsafe.Pointer(cds.LpData))[:cds.CbData:cds.CbData])
+				copy(data, (*[1 << 30]byte)(unsafe.Pointer(cds.LpData))[:cds.CbData:cds.CbData]) //nolint:govet,gosec
 				urlScheme := string(data)
 				handleURLSchemeRequest(urlScheme)
 				lResult = 1 // Return non-zero to indicate success

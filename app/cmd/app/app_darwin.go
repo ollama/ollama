@@ -191,13 +191,6 @@ func LaunchNewApp() {
 	C.launchApp(appName)
 }
 
-// Send a request to the main app thread to load a UI page
-func sendUIRequestMessage(path string) {
-	p := C.CString(path)
-	defer C.free(unsafe.Pointer(p))
-	C.uiRequest(p)
-}
-
 func registerLaunchAgent(hasCompletedFirstRun bool) {
 	// Remove any stale Login Item registrations
 	C.unregisterSelfFromLoginItem()
