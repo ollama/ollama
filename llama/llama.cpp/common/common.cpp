@@ -1013,31 +1013,40 @@ bool tty_can_use_colors() {
 // Model utils
 //
 
-static inline void common_init_sampler_from_model(
+// TODO: move to common/sampling
+static void common_init_sampler_from_model(
     const llama_model * model,
     common_params_sampling & sparams) {
 
     const uint64_t config = sparams.user_sampling_config;
 
     auto get_int32 = [&](const char * key, int32_t & dst, uint64_t user_config) {
-        if (config & user_config) return;
+        if (config & user_config) {
+            return;
+        }
 
         char buf[64] = {0};
         if (llama_model_meta_val_str(model, key, buf, sizeof(buf)) > 0) {
             char * end = nullptr;
             int32_t v = strtol(buf, &end, 10);
-            if (end && end != buf) dst = v;
+            if (end && end != buf) {
+                dst = v;
+            }
         }
     };
 
     auto get_float = [&](const char * key, float & dst, uint64_t user_config) {
-        if (config & user_config) return;
+        if (config & user_config) {
+            return;
+        }
 
         char buf[128] = {0};
         if (llama_model_meta_val_str(model, key, buf, sizeof(buf)) > 0) {
             char * end = nullptr;
             float v = strtof(buf, &end);
-            if (end && end != buf) dst = v;
+            if (end && end != buf) {
+                dst = v;
+            }
         }
     };
 
@@ -1065,30 +1074,124 @@ static inline void common_init_sampler_from_model(
     get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA),    sparams.mirostat_eta,    common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_ETA);
 }
 
-struct common_init_result common_init_from_params(common_params & params) {
-    common_init_result iparams;
+struct common_init_result::impl {
+    impl() = default;
+    ~impl() = default;
+
+    llama_model_ptr   model;
+    llama_context_ptr context;
+
+    std::vector<llama_adapter_lora_ptr> lora;
+
+    std::vector<common_sampler_ptr> samplers;
+};
+
+common_init_result::common_init_result(common_params & params) :
+    pimpl(new impl{}) {
     auto mparams = common_model_params_to_llama(params);
+    auto cparams = common_context_params_to_llama(params);
+
+    if (params.fit_params) {
+        LOG_INF("%s: fitting params to device memory, to report bugs during this step use -fit off (or --verbose if you can't)\n", __func__);
+        llama_params_fit(params.model.path.c_str(), &mparams, &cparams,
+            params.tensor_split, params.tensor_buft_overrides.data(), params.fit_params_target, params.fit_params_min_ctx,
+            params.verbosity >= 4 ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
+    }
 
     llama_model * model = llama_model_load_from_file(params.model.path.c_str(), mparams);
     if (model == NULL) {
-        LOG_ERR("%s: failed to load model '%s', try reducing --n-gpu-layers if you're running out of VRAM\n",
-            __func__, params.model.path.c_str());
-        return iparams;
+        return;
     }
 
-    common_init_sampler_from_model(model, params.sampling);
+    pimpl->model.reset(model);
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
 
-    auto cparams = common_context_params_to_llama(params);
+    // updates params.sampling
+    // TODO: fix naming
+    common_init_sampler_from_model(model, params.sampling);
+
+    if (params.sampling.ignore_eos && llama_vocab_eos(vocab) == LLAMA_TOKEN_NULL) {
+        LOG_WRN("%s: warning: vocab does not have an EOS token, ignoring --ignore-eos\n", __func__);
+        params.sampling.ignore_eos = false;
+    }
+
+    // initialize once
+    for (llama_token i = 0; i < llama_vocab_n_tokens(vocab); i++) {
+        if (llama_vocab_is_eog(vocab, i)) {
+            LOG_INF("%s: added %s logit bias = %f\n", __func__, common_token_to_piece(vocab, i).c_str(), -INFINITY);
+            params.sampling.logit_bias_eog.push_back({i, -INFINITY});
+        }
+    }
+
+    if (params.sampling.ignore_eos) {
+        // add EOG biases to the active set of logit biases
+        params.sampling.logit_bias.insert(
+                params.sampling.logit_bias.end(),
+                params.sampling.logit_bias_eog.begin(), params.sampling.logit_bias_eog.end());
+    }
+
+    //if (params.sampling.penalty_last_n == -1) {
+    //    LOG_INF("%s: setting penalty_last_n to ctx_size = %d\n", __func__, llama_n_ctx(lctx));
+    //    params.sampling.penalty_last_n = llama_n_ctx(lctx);
+    //}
+
+    //if (params.sampling.dry_penalty_last_n == -1) {
+    //    LOG_INF("%s: setting dry_penalty_last_n to ctx_size = %d\n", __func__, llama_n_ctx(lctx));
+    //    params.sampling.dry_penalty_last_n = llama_n_ctx(lctx);
+    //}
+
+    pimpl->samplers.resize(cparams.n_seq_max);
+
+    for (int i = 0; i < (int) cparams.n_seq_max; ++i) {
+        pimpl->samplers[i].reset(common_sampler_init(model, params.sampling));
+    }
 
     llama_context * lctx = llama_init_from_model(model, cparams);
     if (lctx == NULL) {
-        LOG_ERR("%s: failed to create context with model '%s', try reducing --n-gpu-layers if you're running out of VRAM\n",
-            __func__, params.model.path.c_str());
-        llama_model_free(model);
-        return iparams;
+        LOG_ERR("%s: failed to create context with model '%s'\n", __func__, params.model.path.c_str());
+        return;
     }
+
+    pimpl->context.reset(lctx);
+}
+
+llama_model * common_init_result::model() {
+    return pimpl->model.get();
+}
+
+llama_context * common_init_result::context() {
+    return pimpl->context.get();
+}
+
+common_sampler * common_init_result::sampler(llama_seq_id seq_id) {
+    return pimpl->samplers[seq_id].get();
+}
+
+std::vector<llama_adapter_lora_ptr> & common_init_result::lora() {
+    return pimpl->lora;
+}
+
+void common_init_result::free_context() {
+    pimpl->context.reset();
+}
+
+common_init_result_ptr common_init_from_params(common_params & params) {
+    common_init_result_ptr res(new common_init_result(params));
+
+    llama_model * model = res->model();
+    if (model == NULL) {
+        LOG_ERR("%s: failed to load model '%s'\n", __func__, params.model.path.c_str());
+        return res;
+    }
+
+    llama_context * lctx = res->context();
+    if (lctx == NULL) {
+        LOG_ERR("%s: failed to create context with model '%s'\n", __func__, params.model.path.c_str());
+        return res;
+    }
+
+    const llama_vocab * vocab = llama_model_get_vocab(model);
 
     if (params.ctx_shift && !llama_memory_can_shift(llama_get_memory(lctx))) {
         LOG_WRN("%s: KV cache shifting is not supported for this context, disabling KV cache shifting\n", __func__);
@@ -1101,10 +1204,7 @@ struct common_init_result common_init_from_params(common_params & params) {
 
         const auto cvec = common_control_vector_load(params.control_vectors);
         if (cvec.n_embd == -1) {
-            llama_free(lctx);
-            llama_model_free(model);
-
-            return iparams;
+            return res;
         }
 
         int err = llama_apply_adapter_cvec(
@@ -1115,10 +1215,7 @@ struct common_init_result common_init_from_params(common_params & params) {
                 params.control_vector_layer_start,
                 params.control_vector_layer_end);
         if (err) {
-            llama_free(lctx);
-            llama_model_free(model);
-
-            return iparams;
+            return res;
         }
     }
 
@@ -1142,10 +1239,7 @@ struct common_init_result common_init_from_params(common_params & params) {
         }
 
         if (!ok) {
-            llama_free(lctx);
-            llama_model_free(model);
-
-            return iparams;
+            return res;
         }
     }
 
@@ -1155,9 +1249,7 @@ struct common_init_result common_init_from_params(common_params & params) {
         lora.reset(llama_adapter_lora_init(model, la.path.c_str()));
         if (lora == nullptr) {
             LOG_ERR("%s: failed to apply lora adapter '%s'\n", __func__, la.path.c_str());
-            llama_free(lctx);
-            llama_model_free(model);
-            return iparams;
+            return res;
         }
 
         char buf[1024];
@@ -1166,41 +1258,11 @@ struct common_init_result common_init_from_params(common_params & params) {
         la.task_name = buf;
         llama_adapter_meta_val_str(la.ptr, "adapter.lora.prompt_prefix", buf, sizeof(buf));
         la.prompt_prefix = buf;
-        iparams.lora.emplace_back(std::move(lora)); // copy to list of loaded adapters
+        res->lora().emplace_back(std::move(lora)); // copy to list of loaded adapters
     }
 
     if (!params.lora_init_without_apply) {
         common_set_adapter_lora(lctx, params.lora_adapters);
-    }
-
-    if (params.sampling.ignore_eos && llama_vocab_eos(vocab) == LLAMA_TOKEN_NULL) {
-        LOG_WRN("%s: warning: vocab does not have an EOS token, ignoring --ignore-eos\n", __func__);
-        params.sampling.ignore_eos = false;
-    }
-
-    // initialize once
-    for (llama_token i = 0; i < llama_vocab_n_tokens(vocab); i++) {
-        if (llama_vocab_is_eog(vocab, i)) {
-            LOG_INF("%s: added %s logit bias = %f\n", __func__, common_token_to_piece(lctx, i).c_str(), -INFINITY);
-            params.sampling.logit_bias_eog.push_back({i, -INFINITY});
-        }
-    }
-
-    if (params.sampling.ignore_eos) {
-        // add EOG biases to the active set of logit biases
-        params.sampling.logit_bias.insert(
-                params.sampling.logit_bias.end(),
-                params.sampling.logit_bias_eog.begin(), params.sampling.logit_bias_eog.end());
-    }
-
-    if (params.sampling.penalty_last_n == -1) {
-        LOG_INF("%s: setting penalty_last_n to ctx_size = %d\n", __func__, llama_n_ctx(lctx));
-        params.sampling.penalty_last_n = llama_n_ctx(lctx);
-    }
-
-    if (params.sampling.dry_penalty_last_n == -1) {
-        LOG_INF("%s: setting dry_penalty_last_n to ctx_size = %d\n", __func__, llama_n_ctx(lctx));
-        params.sampling.dry_penalty_last_n = llama_n_ctx(lctx);
     }
 
     if (params.warmup) {
@@ -1241,11 +1303,10 @@ struct common_init_result common_init_from_params(common_params & params) {
         llama_set_warmup(lctx, false);
     }
 
-    iparams.model.reset(model);
-    iparams.context.reset(lctx);
-
-    return iparams;
+    return res;
 }
+
+common_init_result::~common_init_result() = default;
 
 std::string get_model_endpoint() {
     const char * model_endpoint_env = getenv("MODEL_ENDPOINT");
@@ -1255,7 +1316,9 @@ std::string get_model_endpoint() {
     std::string model_endpoint = "https://huggingface.co/";
     if (endpoint_env) {
         model_endpoint = endpoint_env;
-        if (model_endpoint.back() != '/') model_endpoint += '/';
+        if (model_endpoint.back() != '/') {
+            model_endpoint += '/';
+        }
     }
     return model_endpoint;
 }

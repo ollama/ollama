@@ -17,6 +17,9 @@ include /tools/mtmd/clip.cpp
 include /tools/mtmd/mtmd.cpp
 include /tools/mtmd/mtmd-audio.cpp
 include /tools/mtmd/mtmd-helper.cpp
+include /tools/mtmd/models/
+include /tools/mtmd/models/*.h
+include /tools/mtmd/models/*.cpp
 include /src/
 include /src/llama.*
 include /src/llama-*.*

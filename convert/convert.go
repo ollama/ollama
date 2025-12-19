@@ -202,6 +202,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &qwen25VLModel{}
 	case "Qwen3VLForConditionalGeneration", "Qwen3VLMoeForConditionalGeneration":
 		conv = &qwen3VLModel{}
+	case "Olmo3ForCausalLM":
+		conv = &olmoModel{}
 	case "BertModel":
 		conv = &bertModel{}
 	case "NomicBertModel", "NomicBertMoEModel":

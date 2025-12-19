@@ -189,6 +189,9 @@ namespace ggml_cuda_mma {
                 return 8 * (threadIdx.x / 16) + l;
 #elif defined(RDNA3)
                 return 2 * l + (threadIdx.x / 16);
+#else
+                NO_DEVICE_CODE;
+                return -1;
 #endif // defined(RDNA4)
             } else {
                 NO_DEVICE_CODE;
@@ -290,8 +293,12 @@ namespace ggml_cuda_mma {
             }
         }
 #elif defined(AMD_WMMA_AVAILABLE)
-
+#if defined(RDNA3)
+        // RDNA3 has duplicated data as input.
+        static constexpr int ne = I * J / 32 * 2;
+#else
         static constexpr int ne = I * J / 32;
+#endif // defined(RDNA3)
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
@@ -310,7 +317,14 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 16 && J == 8) {
+#if defined(RDNA4)
                 return 4 * (threadIdx.x / 16) + l;
+#elif defined(RDNA3)
+                return l;
+#else
+                NO_DEVICE_CODE;
+                return -1;
+#endif // defined(RDNA4)
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -366,11 +380,16 @@ namespace ggml_cuda_mma {
         static constexpr int         I  = I_;
         static constexpr int         J  = J_;
         static constexpr data_layout dl = DATA_LAYOUT_I_MAJOR;
-        static constexpr int         ne = I * J / WARP_SIZE;
-
-        nv_bfloat162 x[ne] = {{0.0f, 0.0f}};
 
 #if defined(AMD_WMMA_AVAILABLE)
+#if defined(RDNA3)
+        // RDNA3 has duplicated data as input.
+        static constexpr int ne = I * J / 32 * 2;
+#else
+        static constexpr int ne = I * J / 32;
+#endif // defined(RDNA3)
+        nv_bfloat162 x[ne] = {{0.0f, 0.0f}};
+
         static constexpr __device__ bool supported() {
             if (I == 16 && J == 8) return true;
             return false;
@@ -387,13 +406,23 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 16 && J == 8) {
+#if defined(RDNA4)
                 return 4 * (threadIdx.x / 16) + l;
+#elif defined(RDNA3)
+                return l;
+#else
+                NO_DEVICE_CODE;
+                return -1;
+#endif // defined(RDNA4)
             } else {
                 NO_DEVICE_CODE;
                 return -1;
             }
         }
 #else
+        static constexpr int ne = I * J / WARP_SIZE;
+        nv_bfloat162 x[ne] = {{0.0f, 0.0f}};
+
         static constexpr __device__ bool supported() {
             if (I ==  8 && J ==  8) return true;
             if (I == 16 && J ==  4) return true;
@@ -546,8 +575,14 @@ namespace ggml_cuda_mma {
         }
 #elif defined(AMD_WMMA_AVAILABLE)
         if constexpr (std::is_same_v<T, half2> || std::is_same_v<T, nv_bfloat162>) {
-            ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0) * stride + t.get_j(0));
-
+#if defined(RDNA4)
+                ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0) * stride + t.get_j(0));
+#elif defined(RDNA3)
+                ggml_cuda_memcpy_1<sizeof(t.x)/2>(t.x, xs0 + t.get_i(0) * stride + t.get_j(0));
+                ggml_cuda_memcpy_1<sizeof(t.x)/2>(t.x + t.ne/2, xs0 + t.get_i(0) * stride + t.get_j(t.ne/2));
+#else
+                NO_DEVICE_CODE;
+#endif // defined(RDNA4)
         } else if constexpr (std::is_same_v<T, int>) {
             if constexpr (I == 16 && J == 4) {
                 int64_t * xi = (int64_t *) t.x;
@@ -888,6 +923,16 @@ namespace ggml_cuda_mma {
         const halfx8_t& a_frag = reinterpret_cast<const halfx8_t&>(A.x[0]);
         const halfx8_t& b_frag = reinterpret_cast<const halfx8_t&>(B.x[0]);
         acc_frag = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12(a_frag, b_frag, acc_frag);
+#elif defined(RDNA3)
+        using halfx16_t = __attribute__((ext_vector_type(16))) _Float16;
+        using floatx8_t = __attribute__((ext_vector_type(8))) float;
+        floatx8_t& acc_frag = reinterpret_cast<floatx8_t&>(D.x[0]);
+        const halfx16_t& a_frag = reinterpret_cast<const halfx16_t&>(A.x[0]);
+        const halfx16_t& b_frag = reinterpret_cast<const halfx16_t&>(B.x[0]);
+        acc_frag = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a_frag, b_frag, acc_frag);
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
 #endif // RDNA4
 #else
         GGML_UNUSED_VARS(D, A, B);
@@ -905,6 +950,16 @@ namespace ggml_cuda_mma {
         const bf16x8_t& a_frag = reinterpret_cast<const bf16x8_t&>(A.x[0]);
         const bf16x8_t& b_frag = reinterpret_cast<const bf16x8_t&>(B.x[0]);
         acc_frag = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32_gfx12(a_frag, b_frag, acc_frag);
+#elif defined(RDNA3)
+        using bf16x16_t = __attribute__((ext_vector_type(16))) __bf16;
+        using floatx8_t = __attribute__((ext_vector_type(8))) float;
+        floatx8_t& acc_frag = reinterpret_cast<floatx8_t&>(D.x[0]);
+        const bf16x16_t& a_frag = reinterpret_cast<const bf16x16_t&>(A.x[0]);
+        const bf16x16_t& b_frag = reinterpret_cast<const bf16x16_t&>(B.x[0]);
+        acc_frag = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a_frag, b_frag, acc_frag);
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
 #endif // RDNA4
 #else
         GGML_UNUSED_VARS(D, A, B);

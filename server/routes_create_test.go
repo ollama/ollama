@@ -241,7 +241,7 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	}
 	defer cfgFile.Close()
 
-	var cfg ConfigV2
+	var cfg model.ConfigV2
 	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}

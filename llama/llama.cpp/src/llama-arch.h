@@ -3,6 +3,7 @@
 #include "ggml.h" // ggml_op
 
 #include <string>
+#include <set>
 
 //
 // gguf constants (sync with gguf.py)
@@ -79,6 +80,7 @@ enum llm_arch {
     LLM_ARCH_JAIS,
     LLM_ARCH_NEMOTRON,
     LLM_ARCH_NEMOTRON_H,
+    LLM_ARCH_NEMOTRON_H_MOE,
     LLM_ARCH_EXAONE,
     LLM_ARCH_EXAONE4,
     LLM_ARCH_RWKV6,
@@ -317,6 +319,7 @@ enum llm_tensor {
     LLM_TENSOR_DENSE_3_OUT,
     LLM_TENSOR_OUTPUT,
     LLM_TENSOR_OUTPUT_NORM,
+    LLM_TENSOR_OUTPUT_NORM_LFM2, // fix for wrong tensor name
     LLM_TENSOR_ROPE_FREQS,
     LLM_TENSOR_ROPE_FACTORS_LONG,
     LLM_TENSOR_ROPE_FACTORS_SHORT,
@@ -528,6 +531,10 @@ struct LLM_TN_IMPL {
     const int bid;
     const int xid;
 
+    const std::set<llm_tensor> model_tensors;
+
+    LLM_TN_IMPL(llm_arch arch, llm_tensor tensor, const char * suffix, int bid, int xid);
+
     std::string str() const;
 
     operator std::string() const {
@@ -549,11 +556,11 @@ struct LLM_TN {
     llm_arch arch;
 
     LLM_TN_IMPL operator()(llm_tensor tensor, const char * suffix, int bid = -1, int xid = -1) const {
-        return { arch, tensor, suffix, bid, xid };
+        return LLM_TN_IMPL(arch, tensor, suffix, bid, xid);
     }
 
     LLM_TN_IMPL operator()(llm_tensor tensor, int bid = -1, int xid = -1) const {
-        return { arch, tensor, nullptr, bid, xid };
+        return LLM_TN_IMPL(arch, tensor, nullptr, bid, xid);
     }
 };
 

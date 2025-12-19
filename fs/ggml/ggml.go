@@ -266,18 +266,20 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"bert",
+		"deepseek2",
+		"deepseekocr",
 		"gemma3",
 		"gemma3n",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nomic-bert",
+		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
-		"deepseekocr",
-		"deepseek2",
-		"nomic-bert",
 	}, kv.Architecture())
 }
 
@@ -1003,9 +1005,11 @@ func (f GGML) FlashAttention() bool {
 
 func (f MetaGGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"bert",
 		"gemma3",
 		"gptoss", "gpt-oss",
 		"mistral3",
+		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
