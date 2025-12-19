@@ -147,6 +147,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
         return (void *)ggml_backend_buffer_get_alignment(buffer);
     }
 
+    // FIXME JG: a multi_buffer has a non-zero size, according to the above comment get_base is not optional,
+    //     I don't know whether the above comment is correct
+    if (!buffer->iface.get_base) {
+        return NULL;
+    }
+
     void * base = buffer->iface.get_base(buffer);
 
     GGML_ASSERT(base != NULL && "backend buffer base cannot be NULL");
@@ -754,6 +760,12 @@ struct ggml_backend_sched {
 
     int debug;
 
+    // used for debugging graph reallocations [GGML_SCHED_DEBUG_REALLOC]
+    // ref: https://github.com/ggml-org/llama.cpp/pull/17617
+    int debug_realloc;
+    int debug_graph_size;
+    int debug_prev_graph_size;
+
     // allocate buffers on attached ggml_backend_buffer_type_t's and during reservation
     // if false, dummy buffers are used for faster memory sizing calculations
     // the scheduler needs to be recreated with allocated buffers before it can be used
@@ -1270,10 +1282,8 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
                                 tensor_copy = ggml_dup_tensor_layout(sched->ctx, src);
                                 ggml_format_name(tensor_copy, "%s#%s#%d", ggml_backend_name(backend), src->name, c);
                             }
-                            if (sched->n_copies > 1) {
-                                ggml_set_input(tensor_copy);
-                                ggml_set_output(tensor_copy); // prevent ggml-alloc from overwriting the tensor
-                            }
+                            ggml_set_input(tensor_copy);
+                            ggml_set_output(tensor_copy); // prevent ggml-alloc from overwriting the tensor
                             tensor_id_copy(src_id, src_backend_id, c) = tensor_copy;
                             SET_CAUSE(tensor_copy, "4.cpy");
                         }
@@ -1325,6 +1335,11 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
     }
 
     int graph_size = std::max(graph->n_nodes, graph->n_leafs) + sched->n_splits*GGML_SCHED_MAX_SPLIT_INPUTS*2*sched->n_copies;
+
+    // remember the actual graph_size for performing reallocation checks later [GGML_SCHED_DEBUG_REALLOC]
+    sched->debug_prev_graph_size = sched->debug_graph_size;
+    sched->debug_graph_size = graph_size;
+
     if (sched->graph.size < graph_size) {
         sched->graph.size = graph_size;
         sched->graph.nodes = (ggml_tensor **) realloc(sched->graph.nodes, graph_size * sizeof(struct ggml_tensor *));
@@ -1431,14 +1446,27 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
 
     // allocate graph
     if (backend_ids_changed || !ggml_gallocr_alloc_graph(sched->galloc, &sched->graph)) {
+#ifndef NDEBUG
+        GGML_LOG_DEBUG("%s: failed to allocate graph, reserving (backend_ids_changed = %d)\n", __func__, backend_ids_changed);
+#endif
+
+        if (sched->debug_realloc > 0) {
+            // we are interested only in situations where the graph was reallocated even though its size remained the same [GGML_SCHED_DEBUG_REALLOC]
+            // example: https://github.com/ggml-org/llama.cpp/pull/17143
+            const bool unexpected = !backend_ids_changed && sched->debug_prev_graph_size == sched->debug_graph_size;
+
+            if (unexpected || sched->debug_realloc > 1) {
+                GGML_ABORT("%s: unexpected graph reallocation (graph size = %d, nodes = %d, leafs = %d), debug_realloc = %d\n", __func__,
+                        sched->debug_graph_size, sched->graph.n_nodes, sched->graph.n_leafs, sched->debug_realloc);
+            }
+        }
+
         // the re-allocation may cause the split inputs to be moved to a different address
         // synchronize without ggml_backend_sched_synchronize to avoid changing cur_copy
         for (int i = 0; i < sched->n_backends; i++) {
             ggml_backend_synchronize(sched->backends[i]);
         }
-#ifndef NDEBUG
-        GGML_LOG_DEBUG("%s: failed to allocate graph, reserving (backend_ids_changed = %d)\n", __func__, backend_ids_changed);
-#endif
+
         ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids);
         if (!ggml_gallocr_alloc_graph(sched->galloc, &sched->graph)) {
             GGML_LOG_ERROR("%s: failed to allocate graph\n", __func__);
@@ -1661,6 +1689,14 @@ ggml_backend_sched_t ggml_backend_sched_new_ext(
 
     const char * GGML_SCHED_DEBUG = getenv("GGML_SCHED_DEBUG");
     sched->debug = GGML_SCHED_DEBUG ? atoi(GGML_SCHED_DEBUG) : 0;
+
+    sched->debug_realloc = 0;
+#ifdef GGML_SCHED_NO_REALLOC
+    sched->debug_realloc = 1;
+#endif
+    const char * GGML_SCHED_DEBUG_REALLOC = getenv("GGML_SCHED_DEBUG_REALLOC");
+    sched->debug_realloc = GGML_SCHED_DEBUG_REALLOC ? atoi(GGML_SCHED_DEBUG_REALLOC) : sched->debug_realloc;
+
     sched->n_backends = n_backends;
     sched->n_copies = parallel ? GGML_SCHED_MAX_COPIES : 1;
 
@@ -1676,6 +1712,9 @@ ggml_backend_sched_t ggml_backend_sched_new_ext(
     sched->leaf_backend_ids = (int *) calloc(nodes_size, sizeof(sched->leaf_backend_ids[0]));
     sched->prev_node_backend_ids = (int *) calloc(nodes_size, sizeof(sched->prev_node_backend_ids[0]));
     sched->prev_leaf_backend_ids = (int *) calloc(nodes_size, sizeof(sched->prev_leaf_backend_ids[0]));
+
+    sched->debug_graph_size = 0;
+    sched->debug_prev_graph_size = 0;
 
     sched->context_buffer_size = ggml_sched_max_splits*GGML_SCHED_MAX_SPLIT_INPUTS*2*sizeof(struct ggml_tensor) + ggml_graph_overhead_custom(graph_size, false);
     sched->context_buffer = (char *) malloc(sched->context_buffer_size);
@@ -1753,11 +1792,23 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
     sched->is_alloc = false;
 }
 
+void ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes) {
+    GGML_ASSERT(sched);
+    GGML_ASSERT((int)sched->hash_set.size >= measure_graph->n_nodes + measure_graph->n_leafs);
+    GGML_ASSERT(sizes);
+
+    ggml_backend_sched_reset(sched);
+
+    ggml_backend_sched_synchronize(sched);
+
+    ggml_backend_sched_split_graph(sched, measure_graph);
+
+    ggml_gallocr_reserve_n_size(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids, sizes);
+}
+
 bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph) {
     GGML_ASSERT(sched);
     GGML_ASSERT((int)sched->hash_set.size >= measure_graph->n_nodes + measure_graph->n_leafs);
-
-    ggml_backend_sched_reset(sched);
 
     ggml_backend_sched_synchronize(sched);
 

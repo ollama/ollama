@@ -109,7 +109,7 @@ type Backend struct {
 	// btDeviceMemory maps from a buffer type to the memory allocations associated with that device
 	btDeviceMemory map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory
 
-	flashAttention bool
+	flashAttention ml.FlashAttentionType
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
@@ -314,7 +314,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			"altup_proj", "altup_unembd_proj",
 			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
 			createTensor(tensor{source: t}, output.bts, blocks)
-		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
+		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm.") || strings.HasPrefix(t.Name, "s."):
 			// TODO: assign vision tensors to the gpu if possible
 			createTensor(tensor{source: t}, output.bts, blocks)
 		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
@@ -499,7 +499,6 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range b.meta.Tensors().Items() {
-		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
@@ -685,10 +684,10 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 }
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
-	if b.flashAttention {
-		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
+	if b.flashAttention == ml.FlashAttentionEnabled {
+		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16}
 	} else {
-		return ml.CacheConfig{CachePadding: 32, PermutedV: true}
+		return ml.CacheConfig{CachePadding: 256, PermutedV: true}
 	}
 }
 
@@ -1137,13 +1136,6 @@ func (t *Tensor) Cast(ctx ml.Context, dtype ml.DType) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
-	}
-}
-
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1346,6 +1338,13 @@ func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1386,6 +1385,10 @@ func inferShape(t *Tensor, shape []int) {
 }
 
 func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
+	if !C.ggml_is_contiguous(t.t) {
+		return t.Contiguous(ctx, shape...)
+	}
+
 	if slices.Contains(shape, -1) {
 		inferShape(t, shape)
 	}
@@ -1531,7 +1534,8 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			unsafe.SliceData(mropeSections),
 			C.int(opts.Type),
 			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
-			C.float(ropeBase), C.float(ropeScale),
+			C.float(ropeBase),
+			C.float(ropeScale),
 			C.float(opts.YaRN.ExtrapolationFactor),
 			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
 			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
@@ -1543,9 +1547,11 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			dequant,
 			positions.(*Tensor).t,
 			opts.Factors.(*Tensor).t,
-			C.int(ropeDim), C.int(opts.Type),
+			C.int(ropeDim),
+			C.int(opts.Type),
 			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
-			C.float(ropeBase), C.float(ropeScale),
+			C.float(ropeBase),
+			C.float(ropeScale),
 			C.float(opts.YaRN.ExtrapolationFactor),
 			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
 			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
@@ -1573,6 +1579,16 @@ func (t *Tensor) GELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 		b: t.b,
 		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
 	}
+}
+
+func (t *Tensor) QuickGELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
+	var tt *C.struct_ggml_tensor
+	if len(t2) > 0 {
+		tt = C.ggml_geglu_quick_split(ctx.(*Context).ctx, t.t, t2[0].(*Tensor).t)
+	} else {
+		tt = C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t)
+	}
+	return &Tensor{b: t.b, t: tt}
 }
 
 func (t *Tensor) SILU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
@@ -1632,21 +1648,24 @@ func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
-	var tt *C.struct_ggml_tensor
-	switch len(strides) {
-	case 0:
-		tt = C.ggml_set_1d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset))
-	case 1:
-		tt = C.ggml_set_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset), C.size_t(strides[0]))
-	default:
-		panic("unsupported number of dimensions")
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64, cacheConfigApplied bool) ml.Tensor {
+	// If the cache didn't help us with required transformations, do them here
+	if !cacheConfigApplied {
+		cacheConfig := t.b.CacheConfig()
+
+		// Padding key and value to CachePadding is a performance optimization, not a requirement, so we don't do it if it wasn't done by the caller
+
+		if cacheConfig.PermutedV {
+			value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+		}
+
+		if mask != nil {
+			if mask.DType() != cacheConfig.MaskDType {
+				mask = mask.Cast(ctx, cacheConfig.MaskDType)
+			}
+		}
 	}
 
-	return &Tensor{b: t.b, t: tt}
-}
-
-func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sinks ml.Tensor, scale float64) ml.Tensor {
 	var kqMask *C.struct_ggml_tensor
 	if mask != nil {
 		kqMask = mask.(*Tensor).t
@@ -1655,7 +1674,7 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 	query := t.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
 
-	if t.b.flashAttention {
+	if t.b.flashAttention == ml.FlashAttentionEnabled {
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
 		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
@@ -1663,6 +1682,16 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 			C.ggml_flash_attn_ext_add_sinks(kqv, sinks.(*Tensor).t)
 		}
 		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32)
+
+		if vmla != nil {
+			var cur ml.Tensor = &Tensor{b: t.b, t: kqv}
+			cur = cur.Permute(ctx, 0, 2, 1, 3)
+			cur = vmla.Mulmat(ctx, cur)
+			cur = cur.Permute(ctx, 0, 2, 1, 3)
+			cur = cur.Contiguous(ctx)
+			kqv = cur.(*Tensor).t
+		}
+
 		return &Tensor{b: t.b, t: kqv}
 	} else {
 		kq := key.MulmatFullPrec(ctx, query)
@@ -1675,6 +1704,10 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 		}
 
 		kqv := value.Mulmat(ctx, kq)
+		if vmla != nil {
+			kqv = vmla.Mulmat(ctx, kqv)
+		}
+
 		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
 }
@@ -1689,7 +1722,7 @@ func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
 func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
+		t: C.ggml_argsort_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
 	}
 }
 
@@ -1732,10 +1765,20 @@ func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+func (t *Tensor) Interpolate(ctx ml.Context, dims [4]int, samplingMode ml.SamplingMode) ml.Tensor {
+	var mode C.uint32_t
+	switch samplingMode {
+	case ml.SamplingModeNearest:
+		mode = C.GGML_SCALE_MODE_NEAREST
+	case ml.SamplingModeBilinear:
+		mode = C.GGML_SCALE_MODE_BILINEAR
+	default:
+		panic("unsupported interpolate mode")
+	}
+
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
+		t: C.ggml_interpolate(ctx.(*Context).ctx, t.t, C.int64_t(dims[0]), C.int64_t(dims[1]), C.int64_t(dims[2]), C.int64_t(dims[3]), mode),
 	}
 }
 

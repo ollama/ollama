@@ -138,7 +138,7 @@ func (app *appCallbacks) HandleURLScheme(urlScheme string) {
 
 // handleURLSchemeRequest processes URL scheme requests from other instances
 func handleURLSchemeRequest(urlScheme string) {
-	isConnect, uiPath, err := parseURLScheme(urlScheme)
+	isConnect, err := parseURLScheme(urlScheme)
 	if err != nil {
 		slog.Error("failed to parse URL scheme request", "url", urlScheme, "error", err)
 		return
@@ -147,7 +147,9 @@ func handleURLSchemeRequest(urlScheme string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage(uiPath)
+		if wv.webview != nil {
+			showWindow(wv.webview.Window())
+		}
 	}
 }
 
@@ -259,11 +261,6 @@ func createLoginShortcut() error {
 		slog.Debug("Startup link already exists", "shortcut", startupShortcut)
 	}
 	return nil
-}
-
-// Send a request to the main app thread to load a UI page
-func sendUIRequestMessage(path string) {
-	wintray.SendUIRequestMessage(path)
 }
 
 func LaunchNewApp() {

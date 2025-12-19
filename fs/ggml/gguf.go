@@ -305,7 +305,7 @@ func readGGUFV1StringsData(llm *gguf, r io.Reader, a *array[string]) (any, error
 
 			a.values[i] = e
 		} else {
-			discardGGUFString(llm, r)
+			_ = discardGGUFString(llm, r)
 		}
 	}
 
@@ -568,7 +568,6 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
 	for _, t := range ts {
-		t := t
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
 		g.Go(func() error {
 			_, err := t.WriteTo(w)
@@ -598,6 +597,10 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 
 	var err error
 	switch v := v.(type) {
+	case int32:
+		err = writeGGUF(ws, ggufTypeInt32, v)
+	case int64:
+		err = writeGGUF(ws, ggufTypeInt64, v)
 	case uint32, FileType:
 		err = writeGGUF(ws, ggufTypeUint32, v)
 	case uint64:
@@ -612,6 +615,10 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 		err = writeGGUFArray(ws, ggufTypeInt32, v)
 	case *array[int32]:
 		err = writeGGUFArray(ws, ggufTypeInt32, v.values)
+	case []int64:
+		err = writeGGUFArray(ws, ggufTypeInt64, v)
+	case *array[int64]:
+		err = writeGGUFArray(ws, ggufTypeInt64, v.values)
 	case []uint32:
 		err = writeGGUFArray(ws, ggufTypeUint32, v)
 	case *array[uint32]:
