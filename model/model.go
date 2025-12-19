@@ -37,6 +37,9 @@ type Model interface {
 
 	Backend() ml.Backend
 	Config() config
+
+	PostPopulate()
+	IsOnlineProjectorMergingSupported() bool
 }
 
 // MultimodalProcessor must be implemented by multimodal models.
@@ -90,6 +93,16 @@ func (m *Base) Config() config {
 	return m.config
 }
 
+func (m *Base) PostPopulate() {
+	// stub. This method can be used for redirecting tensors that
+	// has renamed by convert_hf_to_gguf.py from llama.cpp
+	// or any other model-specific logic
+}
+
+func (m *Base) IsOnlineProjectorMergingSupported() bool {
+	return false
+}
+
 var models = make(map[string]func(fs.Config) (Model, error))
 
 // Register registers a model constructor for the given architecture
@@ -115,7 +128,8 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 
 	base := Base{b: b, config: m.Config()}
 	v := reflect.ValueOf(m)
-	v.Elem().Set(populateFields(base, v.Elem()))
+	v.Elem().Set(PopulateFields(base, v.Elem()))
+	m.PostPopulate()
 	return m, nil
 }
 
@@ -143,6 +157,25 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 	return tp, nil
 }
 
+func CanMergeProjector(s string) (bool, error) {
+	r, err := os.Open(s)
+	if err != nil {
+		return false, err
+	}
+	defer r.Close()
+
+	meta, err := fsggml.Decode(r, -1)
+	if err != nil {
+		return false, err
+	}
+
+	m, err := modelForArch(meta.KV())
+	if err != nil {
+		return false, err
+	}
+	return m.IsOnlineProjectorMergingSupported(), nil
+}
+
 func modelForArch(c fs.Config) (Model, error) {
 	arch := c.Architecture()
 	if pooling.Type(c.Uint("pooling_type")) != pooling.TypeNone {
@@ -157,7 +190,7 @@ func modelForArch(c fs.Config) (Model, error) {
 	return f(c)
 }
 
-func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
+func PopulateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 	t := v.Type()
 
 	if t.Kind() == reflect.Struct {
@@ -172,7 +205,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 			// make a copy
 			tagsCopy := tags
 			if tag := t.Field(i).Tag.Get("gguf"); tag != "" {
-				tagsCopy = append(tagsCopy, parseTag(tag))
+				tagsCopy = append(tagsCopy, ParseTag(tag))
 			}
 
 			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
@@ -194,13 +227,23 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 						} else if len(childNames) == 0 {
 							// current tag has names but no children, create branches for each name
 							for _, name := range names {
-								fullNames = append(fullNames, []string{name})
+								if name == "" {
+									// If an empty alternate empty name exists, do not add it into the list
+									// as Go will create double dots in the name
+									fullNames = append(fullNames, []string{})
+								} else {
+									fullNames = append(fullNames, []string{name})
+								}
 							}
 						} else {
 							// merge each name with each child
 							for _, name := range names {
 								for _, childName := range childNames {
-									fullNames = append(fullNames, append([]string{name}, childName...))
+									if name == "" {
+										fullNames = append(fullNames, childName)
+									} else {
+										fullNames = append(fullNames, append([]string{name}, childName...))
+									}
 								}
 							}
 						}
@@ -218,14 +261,14 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 					}
 				}
 			} else if tt.Kind() == reflect.Pointer || tt.Kind() == reflect.Interface {
-				setPointer(base, vv, tagsCopy)
+				SetPointer(base, vv, tagsCopy)
 			} else if tt.Kind() == reflect.Slice || tt.Kind() == reflect.Array {
 				for i := range vv.Len() {
 					vvv := vv.Index(i)
 					if vvv.Kind() == reflect.Pointer || vvv.Kind() == reflect.Interface {
-						setPointer(base, vvv, append(tagsCopy, Tag{name: strconv.Itoa(i)}))
+						SetPointer(base, vvv, append(tagsCopy, Tag{name: strconv.Itoa(i)}))
 					} else {
-						vvv.Set(populateFields(base, vvv, append(tagsCopy, Tag{name: strconv.Itoa(i)})...))
+						vvv.Set(PopulateFields(base, vvv, append(tagsCopy, Tag{name: strconv.Itoa(i)})...))
 					}
 				}
 			}
@@ -243,7 +286,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 	return v
 }
 
-func setPointer(base Base, v reflect.Value, tags []Tag) {
+func SetPointer(base Base, v reflect.Value, tags []Tag) {
 	vv := v
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
@@ -258,7 +301,7 @@ func setPointer(base Base, v reflect.Value, tags []Tag) {
 		vv = reflect.New(v.Type().Elem()).Elem()
 	}
 
-	if f := populateFields(base, vv, tags...); f.CanAddr() {
+	if f := PopulateFields(base, vv, tags...); f.CanAddr() {
 		v.Set(f.Addr())
 	}
 }
@@ -271,7 +314,7 @@ type Tag struct {
 	alternatives []string
 }
 
-func parseTag(s string) (tag Tag) {
+func ParseTag(s string) (tag Tag) {
 	parts := strings.Split(s, ",")
 	if len(parts) > 0 {
 		tag.name = parts[0]

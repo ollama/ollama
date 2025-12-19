@@ -76,9 +76,9 @@ type VisionModelOptions struct {
 }
 
 type VisionModel struct {
-	PatchEmbedding    *nn.Conv2D    `gguf:"patch_embedding"`
-	PositionEmbedding *nn.Embedding `gguf:"position_embedding"`
-	PostLayerNorm     *nn.LayerNorm `gguf:"post_layernorm"`
+	PatchEmbedding    *nn.Conv2D    `gguf:"patch_embedding,alt:patch_embd"`
+	PositionEmbedding *nn.Embedding `gguf:"position_embedding,alt:position_embd"`
+	PostLayerNorm     *nn.LayerNorm `gguf:"post_layernorm,alt:post_ln"`
 
 	Layers []VisionEncoderLayer `gguf:"blk"`
 

@@ -59,7 +59,7 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 type PatchMerger struct {
-	MergingLayer *nn.Linear `gguf:"merging_layer"`
+	MergingLayer *nn.Linear `gguf:"merging_layer,alt:"`
 }
 
 func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, size image.Point, spatialMergeSize int) ml.Tensor {
@@ -72,9 +72,9 @@ func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, size ima
 }
 
 type MultiModalProjector struct {
-	Norm        *nn.RMSNorm  `gguf:"norm"`
-	Linear1     *nn.Linear   `gguf:"linear_1"`
-	Linear2     *nn.Linear   `gguf:"linear_2"`
+	Norm        *nn.RMSNorm  `gguf:"norm,alt:input_norm"`
+	Linear1     *nn.Linear   `gguf:"linear_1,alt:1"`
+	Linear2     *nn.Linear   `gguf:"linear_2,alt:2"`
 	PatchMerger *PatchMerger `gguf:"patch_merger"`
 
 	spatialMergeSize int
@@ -162,6 +162,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positionsScale := m.getScale(ctx, batch.Positions)
 
 	return m.TextModel.Forward(ctx, batch.Inputs, positions, positionsScale, batch.Outputs, batch, m.Cache), nil
+}
+
+func (m *Model) IsOnlineProjectorMergingSupported() bool {
+	return true
 }
 
 func init() {

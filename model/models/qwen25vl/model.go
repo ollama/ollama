@@ -3,6 +3,7 @@ package qwen25vl
 import (
 	"bytes"
 	"image"
+	"reflect"
 	"slices"
 
 	"github.com/ollama/ollama/fs"
@@ -188,6 +189,28 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.TextModel.eps)
 	return m.Output.Forward(ctx, hiddenStates), nil
+}
+
+func (m *Model) PostPopulate() {
+	if m.VisionModel.PatchMerger.MLP0.Weight == nil {
+		if tensor := m.Base.Backend().Get("mm.0.weight"); tensor != nil {
+			model.SetPointer(m.Base, reflect.ValueOf(m.VisionModel.PatchMerger.MLP0), []model.Tag{model.ParseTag("mm.0")})
+			model.SetPointer(m.Base, reflect.ValueOf(m.VisionModel.PatchMerger.MLP2), []model.Tag{model.ParseTag("mm.2")})
+			model.SetPointer(m.Base, reflect.ValueOf(m.VisionModel.PatchMerger.LNQ), []model.Tag{model.ParseTag("v.post_ln")})
+		}
+	}
+	if m.VisionModel.PatchEmbedding.PatchConv0.Weight == nil {
+		if tensor := m.Base.Backend().Get("v.patch_embd.weight"); tensor != nil {
+			m.VisionModel.PatchEmbedding.PatchConv0.Weight = tensor
+		}
+		if tensor := m.Base.Backend().Get("v.patch_embd.weight.1"); tensor != nil {
+			m.VisionModel.PatchEmbedding.PatchConv1.Weight = tensor
+		}
+	}
+}
+
+func (m *Model) IsOnlineProjectorMergingSupported() bool {
+	return true
 }
 
 func init() {
