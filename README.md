@@ -244,17 +244,63 @@ echo "Your text to embed" | ollama run embeddinggemma
 
 ## Building
 
-See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
+See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md) for complete details.
+
+### Prerequisites
+
+- [Go](https://go.dev/doc/install) 1.22 or later
+- C/C++ Compiler:
+  - macOS: Clang (included with Xcode Command Line Tools)
+  - Windows: [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (arm64)
+  - Linux: GCC or Clang
+
+### Building from source
+
+Clone the repository and build:
+
+```shell
+git clone https://github.com/ollama/ollama.git
+cd ollama
+go run . serve
+```
+
+#### macOS (Intel) and Windows
+
+For macOS Intel and Windows, you'll also need [CMake](https://cmake.org/download/):
+
+```shell
+cmake -B build
+cmake --build build
+go run . serve
+```
+
+#### Optional GPU Support
+
+**NVIDIA GPU (CUDA)**
+- Install [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
+- CMake will automatically detect and enable CUDA support
+
+**AMD GPU (ROCm)**
+- Install [ROCm](https://rocm.docs.amd.com/en/latest/)
+- Requires additional CMake flags on Windows:
+  ```shell
+  cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+  cmake --build build --config Release
+  ```
+
+**Intel/AMD GPU (Vulkan)**
+- Install [Vulkan SDK](https://vulkan.lunarg.com/sdk/home)
+- Set `VULKAN_SDK` environment variable before building
 
 ### Running local builds
 
-Next, start the server:
+After building, start the server:
 
 ```shell
 ./ollama serve
 ```
 
-Finally, in a separate shell, run a model:
+In a separate shell, run a model:
 
 ```shell
 ./ollama run llama3.2
