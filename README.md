@@ -282,7 +282,7 @@ go run . serve
 
 **AMD GPU (ROCm)**
 - Install [ROCm](https://rocm.docs.amd.com/en/latest/)
-- Requires additional CMake flags on Windows:
+- Windows only: Requires [Ninja](https://github.com/ninja-build/ninja/releases) and Clang, then use additional CMake flags:
   ```shell
   cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
   cmake --build build --config Release
@@ -290,7 +290,7 @@ go run . serve
 
 **Intel/AMD GPU (Vulkan)**
 - Install [Vulkan SDK](https://vulkan.lunarg.com/sdk/home)
-- Set `VULKAN_SDK` environment variable before building
+- Set `VULKAN_SDK` environment variable to the SDK installation path before building (e.g., `C:\VulkanSDK\<version>` on Windows)
 
 ### Running local builds
 
