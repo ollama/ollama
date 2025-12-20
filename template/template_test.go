@@ -18,6 +18,43 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 )
 
+func FuzzParse(f *testing.F) {
+	// Add seed corpus
+	seeds := []string{
+		"{{ .Prompt }}",
+		"{{ .System }}{{ .Prompt }}{{ .Response }}",
+		"{{ if .System }}System: {{ .System }}{{ end }}{{ .Prompt }}",
+		"{{- range .Messages }}{{ .Role }}: {{ .Content }}{{ end }}",
+		"{{ .Prompt }}{{ .Suffix }}",
+		"",
+		"Hello World",
+		"{{ .Response }}",
+		"{{- if .Think }}thinking...{{ end }}",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		tmpl, err := Parse(input)
+		if err != nil {
+			return // Invalid template is expected
+		}
+
+		// Verify String() returns original input
+		if tmpl.String() != input {
+			t.Errorf("String() returned %q, want %q", tmpl.String(), input)
+		}
+
+		// Test Vars() doesn't panic
+		_, err = tmpl.Vars()
+		if err != nil {
+			// Some valid templates may have issues with Vars(), log but don't fail
+			return
+		}
+	})
+}
+
 func TestNamed(t *testing.T) {
 	f, err := os.Open(filepath.Join("testdata", "templates.jsonl"))
 	if err != nil {

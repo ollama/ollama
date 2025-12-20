@@ -857,6 +857,54 @@ func TestCreateRequestFiles(t *testing.T) {
 	}
 }
 
+func FuzzParseFile(f *testing.F) {
+	// Add seed corpus from existing test cases
+	seeds := []string{
+		"FROM foo",
+		"FROM model1\nADAPTER adapter1\nLICENSE MIT",
+		"FROM foo\nPARAMETER param1 value1",
+		"FROM foo\nSYSTEM \"\"\"multiline\nsystem\"\"\"",
+		"FROM foo\nMESSAGE system Hello",
+		"FROM foo\nTEMPLATE {{ .Prompt }}",
+		"# comment\nFROM foo",
+		"",
+		"PARAMETER param1 value1",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		modelfile, err := ParseFile(strings.NewReader(input))
+		if err != nil {
+			return // Invalid input is expected
+		}
+
+		// Test round-trip: parse -> string -> parse should give same result
+		output := modelfile.String()
+		modelfile2, err := ParseFile(strings.NewReader(output))
+		if err != nil {
+			t.Errorf("Round-trip failed: ParseFile(modelfile.String()) returned error: %v\nOriginal input: %q\nString output: %q", err, input, output)
+			return
+		}
+
+		// Compare commands
+		if len(modelfile.Commands) != len(modelfile2.Commands) {
+			t.Errorf("Round-trip changed number of commands: %d -> %d\nOriginal: %v\nAfter round-trip: %v",
+				len(modelfile.Commands), len(modelfile2.Commands), modelfile.Commands, modelfile2.Commands)
+			return
+		}
+
+		for i := range modelfile.Commands {
+			if modelfile.Commands[i].Name != modelfile2.Commands[i].Name ||
+				modelfile.Commands[i].Args != modelfile2.Commands[i].Args {
+				t.Errorf("Round-trip changed command %d: %v -> %v",
+					i, modelfile.Commands[i], modelfile2.Commands[i])
+			}
+		}
+	})
+}
+
 func TestFilesForModel(t *testing.T) {
 	tests := []struct {
 		name          string

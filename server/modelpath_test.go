@@ -151,3 +151,46 @@ func TestParseModelPath(t *testing.T) {
 		})
 	}
 }
+
+func FuzzParseModelPath(f *testing.F) {
+	// Add seed corpus
+	seeds := []string{
+		"https://example.com/ns/repo:tag",
+		"http://example.com/ns/repo:tag",
+		"example.com/ns/repo:tag",
+		"ns/repo:tag",
+		"repo:tag",
+		"repo",
+		"",
+		"://ns/repo:tag",
+		"a/b/c/d/e",
+		":::",
+		"///",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		mp := ParseModelPath(input)
+
+		// Test GetFullTagname doesn't panic
+		fullTag := mp.GetFullTagname()
+		if fullTag == "" {
+			t.Errorf("GetFullTagname() returned empty string for input: %q", input)
+		}
+
+		// Test GetShortTagname doesn't panic
+		shortTag := mp.GetShortTagname()
+		if shortTag == "" {
+			t.Errorf("GetShortTagname() returned empty string for input: %q", input)
+		}
+
+		// Test that parsing the full tagname produces consistent results
+		mp2 := ParseModelPath(fullTag)
+		if mp2.GetFullTagname() != fullTag {
+			t.Errorf("Round-trip inconsistency: ParseModelPath(%q).GetFullTagname() = %q, but ParseModelPath(%q).GetFullTagname() = %q",
+				input, fullTag, fullTag, mp2.GetFullTagname())
+		}
+	})
+}

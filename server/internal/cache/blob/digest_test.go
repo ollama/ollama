@@ -5,6 +5,50 @@ import (
 	"testing"
 )
 
+func FuzzParseDigest(f *testing.F) {
+	// Add seed corpus
+	seeds := []string{
+		"sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+		"sha255-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"invalid",
+		"",
+		"sha256:",
+		"sha256-",
+		":",
+		"-",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		d, err := ParseDigest(input)
+		if err != nil {
+			return // Invalid input is expected
+		}
+
+		// If valid, test round-trip consistency
+		output := d.String()
+		d2, err := ParseDigest(output)
+		if err != nil {
+			t.Errorf("Round-trip failed: ParseDigest(d.String()) returned error: %v\nOriginal input: %q\nString output: %q", err, input, output)
+			return
+		}
+
+		if d.String() != d2.String() {
+			t.Errorf("Round-trip changed digest: %q -> %q", d.String(), d2.String())
+		}
+
+		// Verify the digest is valid
+		if !d.IsValid() {
+			t.Errorf("ParseDigest returned a digest that IsValid() returns false for input: %q", input)
+		}
+	})
+}
+
 func TestParseDigest(t *testing.T) {
 	cases := []struct {
 		in    string
