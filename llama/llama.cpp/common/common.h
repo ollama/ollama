@@ -484,8 +484,11 @@ struct common_params {
 
     std::map<std::string, std::string> default_template_kwargs;
 
+    // webui configs
+    bool webui = true;
+    std::string webui_config_json;
+
     // "advanced" endpoints are disabled by default for better security
-    bool webui            = true;
     bool endpoint_slots   = true;
     bool endpoint_props   = false; // only control POST requests, not GET
     bool endpoint_metrics = false;

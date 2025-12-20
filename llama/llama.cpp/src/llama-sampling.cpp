@@ -362,23 +362,39 @@ const char * llama_sampler_name(const struct llama_sampler * smpl) {
 }
 
 void llama_sampler_accept(struct llama_sampler * smpl, llama_token token) {
+    if (!smpl) {
+        return;
+    }
+
     if (smpl->iface->accept) {
         smpl->iface->accept(smpl, token);
     }
 }
 
 void llama_sampler_apply(struct llama_sampler * smpl, struct llama_token_data_array * cur_p) {
+    if (!smpl) {
+        return;
+    }
+
     GGML_ASSERT(smpl->iface->apply);
     smpl->iface->apply(smpl, cur_p);
 }
 
 void llama_sampler_reset(struct llama_sampler * smpl) {
+    if (!smpl) {
+        return;
+    }
+
     if (smpl->iface->reset) {
         smpl->iface->reset(smpl);
     }
 }
 
 struct llama_sampler * llama_sampler_clone(const struct llama_sampler * smpl) {
+    if (!smpl) {
+        return nullptr;
+    }
+
     if (smpl->iface->clone) {
         return smpl->iface->clone(smpl);
     }
