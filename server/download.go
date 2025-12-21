@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,8 +108,8 @@ var (
 
 	// downloadConcurrency limits concurrent part downloads.
 	// Higher = faster on fast connections. Memory stays ~64KB regardless.
-	// Default: 2 * GOMAXPROCS (scales with CPU cores). Override with OLLAMA_DOWNLOAD_CONCURRENCY.
-	downloadConcurrency = getEnvInt("OLLAMA_DOWNLOAD_CONCURRENCY", 2*runtime.GOMAXPROCS(0))
+	// Default: 64. Override with OLLAMA_DOWNLOAD_CONCURRENCY.
+	downloadConcurrency = getEnvInt("OLLAMA_DOWNLOAD_CONCURRENCY", 64)
 )
 
 func getEnvInt(key string, defaultVal int) int {
