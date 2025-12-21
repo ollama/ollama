@@ -140,7 +140,7 @@ const numDownloadParts = 16
 var (
 	// downloadPartSize is the size of each download part.
 	// Default: 16MB. Override with OLLAMA_DOWNLOAD_PART_SIZE (in MB).
-	downloadPartSize = int64(getEnvInt("OLLAMA_DOWNLOAD_PART_SIZE", 16)) * format.MegaByte
+	downloadPartSize = int64(getEnvInt("OLLAMA_DOWNLOAD_PART_SIZE", 32)) * format.MegaByte
 
 	// downloadConcurrency limits concurrent part downloads.
 	// Higher = faster on fast connections. Memory stays ~64KB regardless.
@@ -626,9 +626,9 @@ func (b *blobDownload) downloadChunkToDisk(ctx context.Context, requestURL *url.
 					return errPartStalled
 				}
 
-				// Check for slow speed after 5+ seconds
+				// Check for slow speed after 5+ seconds (only for multi-part downloads)
 				elapsed := time.Since(startTime).Seconds()
-				if elapsed >= 5 && currentBytes > 0 {
+				if elapsed >= 5 && currentBytes > 0 && len(b.Parts) > 1 {
 					currentSpeed := float64(currentBytes) / elapsed
 					median := tracker.Median()
 
