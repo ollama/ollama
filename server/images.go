@@ -621,21 +621,17 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	for _, layer := range layers {
-		_, err := downloadBlob(ctx, downloadOpts{
+		if err := downloadBlob(ctx, downloadOpts{
 			mp:      mp,
 			digest:  layer.Digest,
 			regOpts: regOpts,
 			fn:      fn,
-		})
-		if err != nil {
+		}); err != nil {
 			return err
 		}
 		delete(deleteMap, layer.Digest)
 	}
 	delete(deleteMap, manifest.Config.Digest)
-
-	// Note: Digest verification now happens inline during download in blobDownload.run()
-	// via the orderedWriter, so no separate verification pass is needed.
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
@@ -838,26 +834,4 @@ func parseRegistryChallenge(authStr string) registryChallenge {
 		Service: getValue(authStr, "service"),
 		Scope:   getValue(authStr, "scope"),
 	}
-}
-
-var errDigestMismatch = errors.New("digest mismatch, file must be downloaded again")
-
-func verifyBlob(digest string) error {
-	fp, err := GetBlobsPath(digest)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Open(fp)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	fileDigest, _ := GetSHA256Digest(f)
-	if digest != fileDigest {
-		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
-	}
-
-	return nil
 }

@@ -12,40 +12,41 @@ import (
 func TestSpeedTracker_Median(t *testing.T) {
 	s := &speedTracker{}
 
-	// Less than 3 samples returns 0
-	s.Record(100)
-	s.Record(200)
+	// Less than 10 samples returns 0
+	for i := 0; i < 9; i++ {
+		s.Record(float64(100 + i*10))
+	}
 	if got := s.Median(); got != 0 {
-		t.Errorf("expected 0 with < 3 samples, got %f", got)
+		t.Errorf("expected 0 with < 10 samples, got %f", got)
 	}
 
-	// With 3+ samples, returns median
-	s.Record(300)
-	// Samples: [100, 200, 300] -> median = 200
-	if got := s.Median(); got != 200 {
-		t.Errorf("expected median 200, got %f", got)
+	// With 10+ samples, returns median
+	s.Record(190)
+	// Samples: [100, 110, 120, 130, 140, 150, 160, 170, 180, 190] -> median = 150
+	if got := s.Median(); got != 150 {
+		t.Errorf("expected median 150, got %f", got)
 	}
 
 	// Add more samples
 	s.Record(50)
-	s.Record(250)
-	// Samples: [100, 200, 300, 50, 250] sorted = [50, 100, 200, 250, 300] -> median = 200
-	if got := s.Median(); got != 200 {
-		t.Errorf("expected median 200, got %f", got)
+	// Samples: [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 50]
+	// sorted = [50, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190] -> median = 140
+	if got := s.Median(); got != 140 {
+		t.Errorf("expected median 140, got %f", got)
 	}
 }
 
 func TestSpeedTracker_RollingWindow(t *testing.T) {
 	s := &speedTracker{}
 
-	// Add 105 samples (should keep only last 100)
-	for i := 0; i < 105; i++ {
+	// Add 35 samples (should keep only last 30)
+	for i := 0; i < 35; i++ {
 		s.Record(float64(i))
 	}
 
 	s.mu.Lock()
-	if len(s.speeds) != 100 {
-		t.Errorf("expected 100 samples, got %d", len(s.speeds))
+	if len(s.speeds) != 30 {
+		t.Errorf("expected 30 samples, got %d", len(s.speeds))
 	}
 	// First sample should be 5 (0-4 were dropped)
 	if s.speeds[0] != 5 {
@@ -99,7 +100,7 @@ func TestStreamHasher_Sequential(t *testing.T) {
 	sh := newStreamHasher(f, parts, int64(len(data)))
 
 	// Mark complete and run
-	sh.MarkComplete(0)
+	sh.Done(0)
 
 	done := make(chan struct{})
 	go func() {
@@ -150,9 +151,9 @@ func TestStreamHasher_OutOfOrderCompletion(t *testing.T) {
 	}()
 
 	// Mark parts complete out of order: 2, 0, 1
-	sh.MarkComplete(2)
-	sh.MarkComplete(0) // This should trigger hashing of part 0
-	sh.MarkComplete(1) // This should trigger hashing of parts 1 and 2
+	sh.Done(2)
+	sh.Done(0) // This should trigger hashing of part 0
+	sh.Done(1) // This should trigger hashing of parts 1 and 2
 
 	<-done
 
@@ -228,7 +229,7 @@ func TestStreamHasher_HashedProgress(t *testing.T) {
 	}()
 
 	// Complete part 0
-	sh.MarkComplete(0)
+	sh.Done(0)
 
 	// Give hasher time to process
 	for i := 0; i < 100; i++ {
@@ -238,7 +239,7 @@ func TestStreamHasher_HashedProgress(t *testing.T) {
 	}
 
 	// Complete part 1
-	sh.MarkComplete(1)
+	sh.Done(1)
 	<-done
 
 	if got := sh.Hashed(); got != 1000 {
@@ -291,7 +292,7 @@ func BenchmarkStreamHasher(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		sh := newStreamHasher(f, parts, int64(size))
-		sh.MarkComplete(0)
+		sh.Done(0)
 
 		done := make(chan struct{})
 		go func() {
