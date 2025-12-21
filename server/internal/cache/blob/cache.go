@@ -10,7 +10,6 @@ import (
 	"hash"
 	"io"
 	"io/fs"
-	"iter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,21 +326,19 @@ func (c *DiskCache) GetFile(d Digest) string {
 	return absJoin(c.dir, "blobs", filename)
 }
 
-// Links returns a sequence of link names. The sequence is in lexical order.
+// Links returns a slice of link names in lexical order.
 // Names are converted from their relative path form to their name form but are
 // not guaranteed to be valid. Callers should validate the names before using.
-func (c *DiskCache) Links() iter.Seq2[string, error] {
-	return func(yield func(string, error) bool) {
-		for path, err := range c.links() {
-			if err != nil {
-				yield("", err)
-				return
-			}
-			if !yield(pathToName(path), nil) {
-				return
-			}
-		}
+func (c *DiskCache) Links() ([]string, error) {
+	paths, err := c.links()
+	if err != nil {
+		return nil, err
 	}
+	names := make([]string, len(paths))
+	for i, path := range paths {
+		names[i] = pathToName(path)
+	}
+	return names, nil
 }
 
 // pathToName converts a path to a name. It is the inverse of nameToPath. The
@@ -372,10 +369,11 @@ func (c *DiskCache) manifestPath(name string) (string, error) {
 	}
 
 	maybe := filepath.Join("manifests", np)
-	for l, err := range c.links() {
-		if err != nil {
-			return "", err
-		}
+	paths, err := c.links()
+	if err != nil {
+		return "", err
+	}
+	for _, l := range paths {
 		if strings.EqualFold(maybe, l) {
 			return filepath.Join(c.dir, l), nil
 		}
@@ -383,22 +381,10 @@ func (c *DiskCache) manifestPath(name string) (string, error) {
 	return filepath.Join(c.dir, maybe), nil
 }
 
-// links returns a sequence of links in the cache in lexical order.
-func (c *DiskCache) links() iter.Seq2[string, error] {
-	// TODO(bmizerany): reuse empty dirnames if exist
-	return func(yield func(string, error) bool) {
-		fsys := os.DirFS(c.dir)
-		manifests, err := fs.Glob(fsys, "manifests/*/*/*/*")
-		if err != nil {
-			yield("", err)
-			return
-		}
-		for _, manifest := range manifests {
-			if !yield(manifest, nil) {
-				return
-			}
-		}
-	}
+// links returns a slice of link paths in the cache in lexical order.
+func (c *DiskCache) links() ([]string, error) {
+	fsys := os.DirFS(c.dir)
+	return fs.Glob(fsys, "manifests/*/*/*/*")
 }
 
 type checkWriter struct {

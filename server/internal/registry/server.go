@@ -231,7 +231,7 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 	if r.Method != "DELETE" {
 		return errMethodNotAllowed
 	}
-	p, err := decodeUserJSON[*params](r.Body)
+	p, err := decodeParams(r.Body)
 	if err != nil {
 		return err
 	}
@@ -261,7 +261,7 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		return errMethodNotAllowed
 	}
 
-	p, err := decodeUserJSON[*params](r.Body)
+	p, err := decodeParams(r.Body)
 	if err != nil {
 		return err
 	}
@@ -293,10 +293,14 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	t := time.NewTicker(1<<63 - 1) // "unstarted" timer
+	// ticker controls periodic progress flushing. It starts paused (very long
+	// interval) and is activated by start() once all layers are registered,
+	// so clients see a complete total before progress begins.
+	ticker := time.NewTicker(1 << 62) // effectively paused until started
+	defer ticker.Stop()
 	start := sync.OnceFunc(func() {
-		flushProgress() // flush initial state
-		t.Reset(100 * time.Millisecond)
+		flushProgress()
+		ticker.Reset(100 * time.Millisecond)
 	})
 	ctx := ollama.WithTrace(r.Context(), &ollama.Trace{
 		Update: func(l *ollama.Layer, n int64, err error) {
@@ -320,36 +324,21 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 				})
 			}()
 
-			// Block flushing progress updates until every
-			// layer is accounted for. Clients depend on a
-			// complete model size to calculate progress
-			// correctly; if they use an incomplete total,
-			// progress indicators would erratically jump
-			// as new layers are registered.
 			start()
 		},
 	})
 
 	done := make(chan error, 1)
-	go func() (err error) {
-		defer func() { done <- err }()
-		for _, err := range backoff.Loop(ctx, 3*time.Second) {
-			if err != nil {
-				return err
-			}
-			err := s.Client.Pull(ctx, p.model())
-			if canRetry(err) {
-				continue
-			}
-			return err
-		}
-		return nil
+	go func() {
+		done <- backoff.Retry(ctx, 3*time.Second, canRetry, func() error {
+			return s.Client.Pull(ctx, p.model())
+		})
 	}()
 
 	enc.Encode(progressUpdateJSON{Status: "pulling manifest"})
 	for {
 		select {
-		case <-t.C:
+		case <-ticker.C:
 			flushProgress()
 		case err := <-done:
 			flushProgress()
@@ -374,20 +363,13 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 	}
 }
 
-func decodeUserJSON[T any](r io.Reader) (T, error) {
-	var v T
-	err := json.NewDecoder(r).Decode(&v)
+func decodeParams(r io.Reader) (*params, error) {
+	var p params
+	err := json.NewDecoder(r).Decode(&p)
 	if err == nil {
-		return v, nil
+		return &p, nil
 	}
-	var zero T
 
-	// Not sure why, but I can't seem to be able to use:
-	//
-	//   errors.As(err, &json.UnmarshalTypeError{})
-	//
-	// This is working fine in stdlib, so I'm not sure what rules changed
-	// and why this no longer works here. So, we do it the verbose way.
 	var a *json.UnmarshalTypeError
 	var b *json.SyntaxError
 	if errors.As(err, &a) || errors.As(err, &b) {
@@ -396,7 +378,7 @@ func decodeUserJSON[T any](r io.Reader) (T, error) {
 	if errors.Is(err, io.EOF) {
 		err = &serverError{Status: 400, Message: "empty request body", Code: "bad_request"}
 	}
-	return zero, err
+	return nil, err
 }
 
 func canRetry(err error) bool {
@@ -408,10 +390,8 @@ func canRetry(err error) bool {
 		return oe.Temporary()
 	}
 	s := err.Error()
-	return cmp.Or(
-		errors.Is(err, context.DeadlineExceeded),
-		strings.Contains(s, "unreachable"),
-		strings.Contains(s, "no route to host"),
-		strings.Contains(s, "connection reset by peer"),
-	)
+	return errors.Is(err, context.DeadlineExceeded) ||
+		strings.Contains(s, "unreachable") ||
+		strings.Contains(s, "no route to host") ||
+		strings.Contains(s, "connection reset by peer")
 }

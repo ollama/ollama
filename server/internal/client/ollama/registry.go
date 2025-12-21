@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"iter"
 	"log/slog"
 	"net/http"
 	"os"
@@ -546,18 +545,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 				})
 			}()
 
-			for cs, err := range r.chunksums(ctx, name, l) {
-				if err != nil {
-					// Note the chunksum stream
-					// interruption, but do not cancel
-					// in-flight downloads. We can still
-					// make progress on them. Once they are
-					// done, ErrIncomplete will be returned
-					// below.
-					update(0, err)
-					break
-				}
-
+			err = r.chunksums(ctx, name, l, func(cs chunksum) bool {
 				cacheKey := fmt.Sprintf(
 					"v1 pull chunksum %s %s %d-%d",
 					l.Digest,
@@ -569,7 +557,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 				_, err := c.Get(cacheKeyDigest)
 				if err == nil {
 					update(cs.Chunk.Size(), ErrCached)
-					continue
+					return true // continue
 				}
 
 				wg.Add(1)
@@ -620,6 +608,13 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 					// Record the downloading of this chunk.
 					return blob.PutBytes(c, cacheKeyDigest, cacheKey)
 				})
+				return true // continue processing chunks
+			})
+			if err != nil {
+				// Note the chunksum stream interruption, but do not cancel
+				// in-flight downloads. We can still make progress on them.
+				// Once they are done, ErrIncomplete will be returned below.
+				update(0, err)
 			}
 
 			return nil
@@ -672,19 +667,6 @@ func (m *Manifest) Layer(d blob.Digest) *Layer {
 		}
 	}
 	return nil
-}
-
-func (m *Manifest) All() iter.Seq[*Layer] {
-	return func(yield func(*Layer) bool) {
-		if !yield(m.Config) {
-			return
-		}
-		for _, l := range m.Layers {
-			if !yield(l) {
-				return
-			}
-		}
-	}
 }
 
 func (m *Manifest) Size() int64 {
@@ -811,125 +793,114 @@ type chunksum struct {
 	Digest blob.Digest
 }
 
-// chunksums returns a sequence of chunksums for the given layer. If the layer is under the
-// chunking threshold, a single chunksum is returned that covers the entire layer. If the layer
-// is over the chunking threshold, the chunksums are read from the chunksums endpoint.
-func (r *Registry) chunksums(ctx context.Context, name string, l *Layer) iter.Seq2[chunksum, error] {
-	return func(yield func(chunksum, error) bool) {
-		scheme, n, _, err := r.parseNameExtended(name)
+// chunksums calls fn for each chunksum in the layer. If the layer is under the
+// chunking threshold, a single chunksum covering the entire layer is passed to fn.
+// If the layer is over the chunking threshold, chunksums are read from the chunksums endpoint.
+// Returns an error if the chunksum stream fails, or nil if all chunksums were processed.
+// If fn returns false, iteration stops early and chunksums returns nil.
+func (r *Registry) chunksums(ctx context.Context, name string, l *Layer, fn func(chunksum) bool) error {
+	scheme, n, _, err := r.parseNameExtended(name)
+	if err != nil {
+		return err
+	}
+
+	if l.Size < r.maxChunkingThreshold() {
+		// any layer under the threshold should be downloaded
+		// in one go.
+		cs := chunksum{
+			URL: fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s",
+				scheme,
+				n.Host(),
+				n.Namespace(),
+				n.Model(),
+				l.Digest,
+			),
+			Chunk:  blob.Chunk{Start: 0, End: l.Size - 1},
+			Digest: l.Digest,
+		}
+		fn(cs)
+		return nil
+	}
+
+	// The response is a sequence of chunksums.
+	//
+	// Chunksums are chunks of a larger blob that can be
+	// downloaded and verified independently.
+	//
+	// The chunksums endpoint is a GET request that returns a
+	// sequence of chunksums in the following format:
+	//
+	//     > GET /v2/<namespace>/<model>/chunksums/<digest>
+	//
+	//     < HTTP/1.1 200 OK
+	//     < Content-Location: <blobURL>
+	//     <
+	//     < <digest> <start>-<end>
+	//     < ...
+	//
+	// The <blobURL> is the URL to download the chunks from and
+	// each <digest> is the digest of the chunk, and <start>-<end>
+	// is the range the chunk in the blob.
+	//
+	// Ranges may be used directly in Range headers like
+	// "bytes=<start>-<end>".
+	//
+	// The chunksums returned are guaranteed to be contiguous and
+	// include all bytes of the layer. If the stream is cut short,
+	// clients should retry.
+
+	chunksumsURL := fmt.Sprintf("%s://%s/v2/%s/%s/chunksums/%s",
+		scheme,
+		n.Host(),
+		n.Namespace(),
+		n.Model(),
+		l.Digest,
+	)
+
+	req, err := r.newRequest(ctx, "GET", chunksumsURL, nil)
+	if err != nil {
+		return err
+	}
+	res, err := sendRequest(r.client(), req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return fmt.Errorf("chunksums: unexpected status code %d", res.StatusCode)
+	}
+	blobURL := res.Header.Get("Content-Location")
+
+	s := bufio.NewScanner(res.Body)
+	s.Split(bufio.ScanWords)
+	for {
+		if !s.Scan() {
+			return s.Err()
+		}
+		d, err := blob.ParseDigest(s.Bytes())
 		if err != nil {
-			yield(chunksum{}, err)
-			return
+			return fmt.Errorf("invalid digest: %q", s.Bytes())
 		}
 
-		if l.Size < r.maxChunkingThreshold() {
-			// any layer under the threshold should be downloaded
-			// in one go.
-			cs := chunksum{
-				URL: fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s",
-					scheme,
-					n.Host(),
-					n.Namespace(),
-					n.Model(),
-					l.Digest,
-				),
-				Chunk:  blob.Chunk{Start: 0, End: l.Size - 1},
-				Digest: l.Digest,
+		if !s.Scan() {
+			err := s.Err()
+			if err == nil {
+				err = fmt.Errorf("missing chunk range for digest %s", d)
 			}
-			yield(cs, nil)
-			return
+			return err
 		}
-
-		// The response is a sequence of chunksums.
-		//
-		// Chunksums are chunks of a larger blob that can be
-		// downloaded and verified independently.
-		//
-		// The chunksums endpoint is a GET request that returns a
-		// sequence of chunksums in the following format:
-		//
-		//     > GET /v2/<namespace>/<model>/chunksums/<digest>
-		//
-		//     < HTTP/1.1 200 OK
-		//     < Content-Location: <blobURL>
-		//     <
-		//     < <digest> <start>-<end>
-		//     < ...
-		//
-		// The <blobURL> is the URL to download the chunks from and
-		// each <digest> is the digest of the chunk, and <start>-<end>
-		// is the range the chunk in the blob.
-		//
-		// Ranges may be used directly in Range headers like
-		// "bytes=<start>-<end>".
-		//
-		// The chunksums returned are guaranteed to be contiguous and
-		// include all bytes of the layer. If the stream is cut short,
-		// clients should retry.
-
-		chunksumsURL := fmt.Sprintf("%s://%s/v2/%s/%s/chunksums/%s",
-			scheme,
-			n.Host(),
-			n.Namespace(),
-			n.Model(),
-			l.Digest,
-		)
-
-		req, err := r.newRequest(ctx, "GET", chunksumsURL, nil)
+		chunk, err := parseChunk(s.Bytes())
 		if err != nil {
-			yield(chunksum{}, err)
-			return
+			return fmt.Errorf("invalid chunk range for digest %s: %q", d, s.Bytes())
 		}
-		res, err := sendRequest(r.client(), req)
-		if err != nil {
-			yield(chunksum{}, err)
-			return
+
+		cs := chunksum{
+			URL:    blobURL,
+			Chunk:  chunk,
+			Digest: d,
 		}
-		defer res.Body.Close()
-		if res.StatusCode != 200 {
-			err := fmt.Errorf("chunksums: unexpected status code %d", res.StatusCode)
-			yield(chunksum{}, err)
-			return
-		}
-		blobURL := res.Header.Get("Content-Location")
-
-		s := bufio.NewScanner(res.Body)
-		s.Split(bufio.ScanWords)
-		for {
-			if !s.Scan() {
-				if s.Err() != nil {
-					yield(chunksum{}, s.Err())
-				}
-				return
-			}
-			d, err := blob.ParseDigest(s.Bytes())
-			if err != nil {
-				yield(chunksum{}, fmt.Errorf("invalid digest: %q", s.Bytes()))
-				return
-			}
-
-			if !s.Scan() {
-				err := s.Err()
-				if err == nil {
-					err = fmt.Errorf("missing chunk range for digest %s", d)
-				}
-				yield(chunksum{}, err)
-				return
-			}
-			chunk, err := parseChunk(s.Bytes())
-			if err != nil {
-				yield(chunksum{}, fmt.Errorf("invalid chunk range for digest %s: %q", d, s.Bytes()))
-				return
-			}
-
-			cs := chunksum{
-				URL:    blobURL,
-				Chunk:  chunk,
-				Digest: d,
-			}
-			if !yield(cs, nil) {
-				return
-			}
+		if !fn(cs) {
+			return nil
 		}
 	}
 }
@@ -1176,8 +1147,8 @@ func splitExtended(s string) (scheme, name, digest string) {
 	return scheme, s, digest
 }
 
-// parseChunk parses a string in the form "start-end" and returns the Chunk.
-func parseChunk[S ~string | ~[]byte](s S) (blob.Chunk, error) {
+// parseChunk parses a byte slice in the form "start-end" and returns the Chunk.
+func parseChunk(s []byte) (blob.Chunk, error) {
 	startPart, endPart, found := strings.Cut(string(s), "-")
 	if !found {
 		return blob.Chunk{}, fmt.Errorf("chunks: invalid range %q: missing '-'", s)

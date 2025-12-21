@@ -466,12 +466,9 @@ func testManifestNameReuse(t *testing.T) {
 		t.Fatalf("g = %v, want %v", g, w)
 	}
 
-	var got []string
-	for l, err := range c.links() {
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, l)
+	got, err := c.links()
+	if err != nil {
+		t.Fatal(err)
 	}
 	want := []string{"manifests/h/n/m/t"}
 	if !slices.Equal(got, want) {
@@ -487,12 +484,9 @@ func testManifestNameReuse(t *testing.T) {
 	err = c.Link("h/n/m:T", d1)
 	check(err)
 
-	got = got[:0]
-	for l, err := range c.links() {
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, l)
+	got, err = c.links()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// we should have only one link that is same case as the last link
@@ -554,12 +548,9 @@ func TestNames(t *testing.T) {
 	check(c.Link("h/n/m:t", mkdigest("1")))
 	check(c.Link("h/n/m:u", mkdigest("2")))
 
-	var got []string
-	for l, err := range c.Links() {
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, l)
+	got, err := c.Links()
+	if err != nil {
+		t.Fatal(err)
 	}
 	want := []string{"h/n/m:t", "h/n/m:u"}
 	if !slices.Equal(got, want) {
