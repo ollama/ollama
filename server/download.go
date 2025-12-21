@@ -133,11 +133,11 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 var (
-	downloadPartSize    = int64(getEnvInt("OLLAMA_DOWNLOAD_PART_SIZE", 64)) * format.MegaByte
-	downloadConcurrency = getEnvInt("OLLAMA_DOWNLOAD_CONCURRENCY", 32)
+	downloadPartSize    = int64(envInt("OLLAMA_DOWNLOAD_PART_SIZE", 64)) * format.MegaByte
+	downloadConcurrency = envInt("OLLAMA_DOWNLOAD_CONCURRENCY", 48)
 )
 
-func getEnvInt(key string, defaultVal int) int {
+func envInt(key string, defaultVal int) int {
 	if s := os.Getenv(key); s != "" {
 		if v, err := strconv.Atoi(s); err == nil {
 			return v
@@ -430,11 +430,10 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				spread := dlPct - hPct
 				spreadBytes := downloaded - hashed
 
-				msg := fmt.Sprintf("progress: downloaded %d%% | hashed %d%% | spread %d%%", dlPct, hPct, spread)
+				slog.Debug(fmt.Sprintf("progress: downloaded %d%% | hashed %d%% | spread %d%%", dlPct, hPct, spread))
 				if spreadBytes > pageCacheWarningBytes {
-					msg += fmt.Sprintf(" [WARNING: %.1fGB ahead, page cache pressure]", float64(spreadBytes)/(1<<30))
+					slog.Debug("page cache pressure", "ahead", fmt.Sprintf("%.1fGB", float64(spreadBytes)/(1<<30)))
 				}
-				slog.Info(msg)
 			case <-progressDone:
 				return
 			}
