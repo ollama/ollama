@@ -13,7 +13,7 @@ func TestSpeedTracker_Median(t *testing.T) {
 	s := &speedTracker{}
 
 	// Less than 10 samples returns 0
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		s.Record(float64(100 + i*10))
 	}
 	if got := s.Median(); got != 0 {
@@ -40,7 +40,7 @@ func TestSpeedTracker_RollingWindow(t *testing.T) {
 	s := &speedTracker{}
 
 	// Add 35 samples (should keep only last 30)
-	for i := 0; i < 35; i++ {
+	for i := range 35 {
 		s.Record(float64(i))
 	}
 
@@ -59,7 +59,7 @@ func TestSpeedTracker_Concurrent(t *testing.T) {
 	s := &speedTracker{}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(v int) {
 			defer wg.Done()
@@ -79,7 +79,7 @@ func TestSpeedTracker_Concurrent(t *testing.T) {
 
 func TestStreamHasher_Sequential(t *testing.T) {
 	// Create temp file
-	f, err := os.CreateTemp("", "streamhasher_test")
+	f, err := os.CreateTemp(t.TempDir(), "streamhasher_test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestStreamHasher_Sequential(t *testing.T) {
 
 func TestStreamHasher_OutOfOrderCompletion(t *testing.T) {
 	// Create temp file
-	f, err := os.CreateTemp("", "streamhasher_test")
+	f, err := os.CreateTemp(t.TempDir(), "streamhasher_test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestStreamHasher_OutOfOrderCompletion(t *testing.T) {
 
 func TestStreamHasher_Stop(t *testing.T) {
 	// Create temp file
-	f, err := os.CreateTemp("", "streamhasher_test")
+	f, err := os.CreateTemp(t.TempDir(), "streamhasher_test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestStreamHasher_Stop(t *testing.T) {
 
 func TestStreamHasher_HashedProgress(t *testing.T) {
 	// Create temp file with known data
-	f, err := os.CreateTemp("", "streamhasher_test")
+	f, err := os.CreateTemp(t.TempDir(), "streamhasher_test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestStreamHasher_HashedProgress(t *testing.T) {
 	sh.Done(0)
 
 	// Give hasher time to process
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if sh.Hashed() >= 500 {
 			break
 		}
@@ -250,7 +250,7 @@ func TestStreamHasher_HashedProgress(t *testing.T) {
 func BenchmarkSpeedTracker_Record(b *testing.B) {
 	s := &speedTracker{}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		s.Record(float64(i))
 	}
 }
@@ -258,18 +258,18 @@ func BenchmarkSpeedTracker_Record(b *testing.B) {
 func BenchmarkSpeedTracker_Median(b *testing.B) {
 	s := &speedTracker{}
 	// Pre-populate with 100 samples
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		s.Record(float64(i))
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		s.Median()
 	}
 }
 
 func BenchmarkStreamHasher(b *testing.B) {
 	// Create temp file with test data
-	f, err := os.CreateTemp("", "streamhasher_bench")
+	f, err := os.CreateTemp(b.TempDir(), "streamhasher_bench")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func BenchmarkStreamHasher(b *testing.B) {
 	b.SetBytes(int64(size))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		sh := newStreamHasher(f, parts, int64(size))
 		sh.Done(0)
 
@@ -312,7 +312,7 @@ func BenchmarkHashThroughput(b *testing.B) {
 	b.SetBytes(int64(size))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		h := sha256.New()
 		h.Write(data)
 		h.Sum(nil)
