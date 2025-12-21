@@ -83,6 +83,7 @@ extern "C" {
         LLAMA_ROPE_TYPE_NORM   = 0,
         LLAMA_ROPE_TYPE_NEOX   = GGML_ROPE_TYPE_NEOX,
         LLAMA_ROPE_TYPE_MROPE  = GGML_ROPE_TYPE_MROPE,
+        LLAMA_ROPE_TYPE_IMROPE = GGML_ROPE_TYPE_IMROPE,
         LLAMA_ROPE_TYPE_VISION = GGML_ROPE_TYPE_VISION,
     };
 
@@ -245,6 +246,21 @@ extern "C" {
         LLAMA_KV_OVERRIDE_TYPE_STR,
     };
 
+    enum llama_model_meta_key {
+        LLAMA_MODEL_META_KEY_SAMPLING_SEQUENCE,
+        LLAMA_MODEL_META_KEY_SAMPLING_TOP_K,
+        LLAMA_MODEL_META_KEY_SAMPLING_TOP_P,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIN_P,
+        LLAMA_MODEL_META_KEY_SAMPLING_XTC_PROBABILITY,
+        LLAMA_MODEL_META_KEY_SAMPLING_XTC_THRESHOLD,
+        LLAMA_MODEL_META_KEY_SAMPLING_TEMP,
+        LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_LAST_N,
+        LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_REPEAT,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_TAU,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA,
+    };
+
     struct llama_model_kv_override {
         enum llama_model_kv_override_type tag;
 
@@ -297,6 +313,7 @@ extern "C" {
         bool check_tensors;   // validate model tensor data
         bool use_extra_bufts; // use extra buffer types (used for weight repacking)
         bool no_host;         // bypass host buffer allowing extra buffers to be used
+        bool no_alloc;        // only load metadata and simulate memory allocations
     };
 
     // NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may cause crashes or incorrect results in certain configurations
@@ -450,17 +467,35 @@ extern "C" {
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
 
+    // fits mparams and cparams to free device memory (assumes system memory is unlimited)
+    // returns true if the parameters could be successfully modified to fit device memory
+    // this function is NOT thread safe because it modifies the global llama logger state
+    LLAMA_API bool llama_params_fit(
+                                   const char   * path_model,
+                    struct llama_model_params   * mparams,
+                    struct llama_context_params * cparams,
+                                          float * tensor_split,          // writable buffer for tensor split, needs at least llama_max_devices elements
+        struct llama_model_tensor_buft_override * tensor_buft_overrides, // writable buffer for overrides, needs at least llama_max_tensor_buft_overrides elements
+                                         size_t   margin,                // margin of memory to leave per device in bytes
+                                       uint32_t   n_ctx_min,             // minimum context size to set when trying to reduce memory use
+                            enum ggml_log_level   log_level);            // minimum log level to print during fitting, lower levels go to debug log
+
     LLAMA_API int64_t llama_time_us(void);
 
     LLAMA_API size_t llama_max_devices(void);
     LLAMA_API size_t llama_max_parallel_sequences(void);
+    LLAMA_API size_t llama_max_tensor_buft_overrides(void);
 
     LLAMA_API bool llama_supports_mmap       (void);
     LLAMA_API bool llama_supports_mlock      (void);
     LLAMA_API bool llama_supports_gpu_offload(void);
     LLAMA_API bool llama_supports_rpc        (void);
 
+    // NOTE: After creating a llama_context, it is recommended to query the actual values using these functions
+    //       In some cases the requested values via llama_context_params may differ from the actual values used by the context
+    //       ref: https://github.com/ggml-org/llama.cpp/pull/17046#discussion_r2503085732
     LLAMA_API uint32_t llama_n_ctx      (const struct llama_context * ctx);
+    LLAMA_API uint32_t llama_n_ctx_seq  (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_batch    (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_ubatch   (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_seq_max  (const struct llama_context * ctx);
@@ -481,6 +516,7 @@ extern "C" {
 
     LLAMA_API int32_t llama_model_n_ctx_train(const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_embd     (const struct llama_model * model);
+    LLAMA_API int32_t llama_model_n_embd_inp (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_layer    (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_head     (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_head_kv  (const struct llama_model * model);
@@ -511,6 +547,9 @@ extern "C" {
 
     // Get the number of metadata key/value pairs
     LLAMA_API int32_t llama_model_meta_count(const struct llama_model * model);
+
+    // Get sampling metadata key name. Returns nullptr if the key is invalid
+    LLAMA_API const char * llama_model_meta_key_str(enum llama_model_meta_key key);
 
     // Get metadata key name by index
     LLAMA_API int32_t llama_model_meta_key_by_index(const struct llama_model * model, int32_t i, char * buf, size_t buf_size);
@@ -584,7 +623,7 @@ extern "C" {
     LLAMA_API int32_t llama_adapter_meta_val_str_by_index(const struct llama_adapter_lora * adapter, int32_t i, char * buf, size_t buf_size);
 
     // Manually free a LoRA adapter
-    // Note: loaded adapters will be free when the associated model is deleted
+    // NOTE: loaded adapters will be free when the associated model is deleted
     LLAMA_API void llama_adapter_lora_free(struct llama_adapter_lora * adapter);
 
     // Get the invocation tokens if the current lora is an alora
@@ -1110,8 +1149,6 @@ extern "C" {
     //        // sample from the logits of the last token in the batch
     //        const llama_token id = llama_sampler_sample(smpl, ctx, -1);
     //
-    //        // accepting the token updates the internal state of certain samplers (e.g. grammar, repetition, etc.)
-    //        llama_sampler_accept(smpl, id);
     //        ...
     //    }
     //
@@ -1332,7 +1369,9 @@ extern "C" {
 
     // Set callback for all future logging events.
     // If this is not called, or NULL is supplied, everything is output on stderr.
-    LLAMA_API void llama_log_set(ggml_log_callback log_callback, void * user_data);
+    // The logger state is global so these functions are NOT thread safe.
+    LLAMA_API void llama_log_get(ggml_log_callback * log_callback, void ** user_data);
+    LLAMA_API void llama_log_set(ggml_log_callback   log_callback, void *  user_data);
 
     //
     // Performance utils

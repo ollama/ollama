@@ -10,7 +10,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -42,13 +41,12 @@ type Options struct {
 	kqScale float64
 }
 
-func (o Options) RoPEOptions() []func(*rope.Options) {
-	attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
-	return []func(*rope.Options){
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, t, p ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, t, p, o.qkRopeHeadDim, o.ropeBase, 1./o.ropeScale,
 		rope.WithOriginalContextLength(o.originalContextLength),
 		rope.WithExtrapolationFactor(1.),
-		rope.WithAttentionFactor(attnFactor),
-	}
+		rope.WithAttentionFactor(float32(1.0/(1.0+0.1*math.Log(float64(o.ropeScale))))),
+	)
 }
 
 type Attention struct {
@@ -91,8 +89,8 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		compressedKV.Stride(1), compressedKV.Dim(1),
 	)
 
-	qRot := fast.RoPE(ctx, queryChunks[1], positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	qRot := opts.applyRotaryPositionEmbeddings(ctx, queryChunks[1], positions)
+	kRot = opts.applyRotaryPositionEmbeddings(ctx, kRot, positions)
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
 
 	var attention ml.Tensor
@@ -236,11 +234,6 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	if c.Uint("attention.key_length_mla") == 0 {
-		// non-MLA models aren't yet supported
-		return nil, model.ErrUnsupportedModel
-	}
-
 	layers := make([]Layer, c.Uint("block_count"))
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
@@ -259,6 +252,30 @@ func New(c fs.Config) (model.Model, error) {
 	keyLength := int(cmp.Or(c.Uint("attention.key_length_mla"), c.Uint("attention.key_length")))
 	valueLength := int(cmp.Or(c.Uint("attention.value_length_mla"), c.Uint("attention.value_length")))
 
+	var pre []string
+	switch c.String("tokenizer.ggml.pre") {
+	case "deepseek-v3":
+		pre = []string{
+			// Split regex into multiple parts (according to DeepSeek3's regex)
+			"\\p{N}{1,3}",
+			`[一-龥぀-ゟ゠-ヿ]+`,
+			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+		}
+	case "deepseek-llm":
+		// TODO: these models haven't been vetted so skip for now
+		// pre = []string{
+		// 	"[\r\n]",
+		// 	"\\s?[A-Za-zµÀ-ÖØ-öø-ƺƼ-ƿǄ-ʓʕ-ʯͰ-ͳͶͷͻ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-ՖႠ-ჅᎠ-Ᏽᏸ-ᏽᲐ-ᲺᲽ-Ჿᴀ-ᴫᵫ-ᵷᵹ-ᶚḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℴℹℼ-ℿⅅ-ⅉⅎↃↄⰀ-ⱻⱾ-ⳤⳫ-ⳮⳲⳳꙀ-ꙭꚀ-ꚛꜢ-ꝯꝱ-ꞇꞋ-ꞎꭰ-ꮿﬀ-ﬆﬓ-ﬗＡ-Ｚａ-ｚ𐐀-𐑏𐒰-𐓓𐓘-𐓻𐲀-𐲲𐳀-𐳲𑢠-𑣟𞤀-𞥃]+",
+		// 	"\\s?[!-/:-~！-／：-～‘-‟　-。]+",
+		// 	"\\s+$",
+		// 	"[一-龥ࠀ-一가-퟿]+",
+		// 	"[0-9]",
+		// }
+		fallthrough
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			&model.Vocabulary{
@@ -273,10 +290,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
-			// Split regex into multiple parts (according to DeepSeek3's regex)
-			"\\p{N}{1,3}",
-			`[一-龥぀-ゟ゠-ヿ]+`,
-			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+			pre...,
 		),
 		Layers: layers,
 		Options: &Options{
@@ -311,7 +325,7 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.qkRopeHeadDim, m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {

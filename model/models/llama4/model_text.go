@@ -8,7 +8,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model/input"
 )
@@ -33,8 +32,8 @@ func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions, attent
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
 	if useRope {
-		query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
-		key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+		query = opts.applyRotaryPositionEmbeddings(ctx, query, positions, sa.RopeFactors)
+		key = opts.applyRotaryPositionEmbeddings(ctx, key, positions, sa.RopeFactors)
 	}
 
 	if opts.useQKNorm {
@@ -152,6 +151,10 @@ type TextOptions struct {
 	attentionFloorScale           float64
 }
 
+func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions, factors ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, o.ropeDim, o.ropeBase, 1./o.ropeScale, rope.WithFactors(factors))
+}
+
 type TextModel struct {
 	Layers []TextLayer `gguf:"blk"`
 
@@ -236,5 +239,5 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, 1./m.ropeScale, rope.WithFactors(m.Layers[layer].Attention.RopeFactors)), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift, m.Layers[layer].Attention.RopeFactors), nil
 }

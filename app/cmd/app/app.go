@@ -273,10 +273,6 @@ func main() {
 		Handler: uiServer.Handler(),
 	}
 
-	if _, err := uiServer.UserData(ctx); err != nil {
-		slog.Warn("failed to load user data", "error", err)
-	}
-
 	// Start the UI server
 	slog.Info("starting ui server", "port", port)
 	go func() {
@@ -320,6 +316,17 @@ func main() {
 		slog.Debug("no URL scheme request to handle")
 	}
 
+	go func() {
+		slog.Debug("waiting for ollama server to be ready")
+		if err := ui.WaitForServer(ctx, 10*time.Second); err != nil {
+			slog.Warn("ollama server not ready, continuing anyway", "error", err)
+		}
+
+		if _, err := uiServer.UserData(ctx); err != nil {
+			slog.Warn("failed to load user data", "error", err)
+		}
+	}()
+
 	osRun(cancel, hasCompletedFirstRun, startHidden)
 
 	slog.Info("shutting down desktop server")
@@ -361,7 +368,7 @@ func checkUserLoggedIn(uiServerPort int) bool {
 		return false
 	}
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/me", uiServerPort))
+	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/api/me", uiServerPort), "application/json", nil)
 	if err != nil {
 		slog.Debug("failed to call local auth endpoint", "error", err)
 		return false
@@ -397,8 +404,8 @@ func checkUserLoggedIn(uiServerPort int) bool {
 // handleConnectURLScheme fetches the connect URL and opens it in the browser
 func handleConnectURLScheme() {
 	if checkUserLoggedIn(uiServerPort) {
-		slog.Info("user is already logged in, opening settings instead")
-		sendUIRequestMessage("/")
+		slog.Info("user is already logged in, opening app instead")
+		showWindow(wv.webview.Window())
 		return
 	}
 
@@ -466,6 +473,8 @@ func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage("/")
+		if wv.webview != nil {
+			showWindow(wv.webview.Window())
+		}
 	}
 }

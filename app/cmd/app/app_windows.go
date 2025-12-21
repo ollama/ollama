@@ -147,7 +147,9 @@ func handleURLSchemeRequest(urlScheme string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		sendUIRequestMessage("/")
+		if wv.webview != nil {
+			showWindow(wv.webview.Window())
+		}
 	}
 }
 
@@ -259,11 +261,6 @@ func createLoginShortcut() error {
 		slog.Debug("Startup link already exists", "shortcut", startupShortcut)
 	}
 	return nil
-}
-
-// Send a request to the main app thread to load a UI page
-func sendUIRequestMessage(path string) {
-	wintray.SendUIRequestMessage(path)
 }
 
 func LaunchNewApp() {

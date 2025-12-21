@@ -2,9 +2,9 @@
 
 #include "common.cuh"
 
-#if (!defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
 #define GGML_USE_WMMA_FATTN
-#endif // (!defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA) || defined(GGML_USE_MUSA)
+#endif // defined(GGML_USE_MUSA)
 
 #if defined(GGML_HIP_ROCWMMA_FATTN)
 #if defined(CDNA) && (ROCWMMA_VERSION_MAJOR < 2 || ROCWMMA_VERSION_MINOR > 0 || ROCWMMA_VERSION_PATCH > 0)
