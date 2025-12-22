@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/logutil"
 )
@@ -538,6 +539,9 @@ func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 func (d DeviceInfo) NeedsInitValidation() bool {
 	// ROCm: rocblas will crash on unsupported devices.
 	// CUDA: verify CC is supported by the version of the library
+	if d.Library == "ROCm" && envconfig.HsaOverrideGfxVersion() != "" {
+		return false
+	}
 	return d.Library == "ROCm" || d.Library == "CUDA"
 }
 

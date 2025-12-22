@@ -1,5 +1,107 @@
 #pragma once
 
+#include <cmath>
+#include <type_traits>
+
+#if defined(__HIP_PLATFORM_AMD__)
+#include <hip/amd_detail/device_library_decls.h>
+#include <hip/amd_detail/math_fwd.h>
+
+static __host__ __device__ inline float ggml_hip_max_f32(float a, float b) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_fmax_f32(a, b);
+#else
+    return a > b ? a : b;
+#endif
+}
+
+static __host__ __device__ inline double ggml_hip_max_f64(double a, double b) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_fmax_f64(a, b);
+#else
+    return a > b ? a : b;
+#endif
+}
+
+static __host__ __device__ inline float ggml_hip_min_f32(float a, float b) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_fmin_f32(a, b);
+#else
+    return a < b ? a : b;
+#endif
+}
+
+static __host__ __device__ inline double ggml_hip_min_f64(double a, double b) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_fmin_f64(a, b);
+#else
+    return a < b ? a : b;
+#endif
+}
+
+static __host__ __device__ inline float ggml_hip_pow_f32(float base, float exp) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_pow_f32(base, exp);
+#else
+    return std::pow(base, exp);
+#endif
+}
+
+static __host__ __device__ inline double ggml_hip_pow_f64(double base, double exp) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_pow_f64(base, exp);
+#else
+    return std::pow(base, exp);
+#endif
+}
+
+template <typename A, typename B,
+          typename std::enable_if<std::is_integral<A>::value && std::is_integral<B>::value, int>::type = 0>
+__host__ __device__ inline typename std::common_type<A, B>::type ggml_hip_int_max(A a, B b) {
+    using R = typename std::common_type<A, B>::type;
+    const R aa = static_cast<R>(a);
+    const R bb = static_cast<R>(b);
+    return aa > bb ? aa : bb;
+}
+
+template <typename A, typename B,
+          typename std::enable_if<std::is_integral<A>::value && std::is_integral<B>::value, int>::type = 0>
+__host__ __device__ inline typename std::common_type<A, B>::type ggml_hip_int_min(A a, B b) {
+    using R = typename std::common_type<A, B>::type;
+    const R aa = static_cast<R>(a);
+    const R bb = static_cast<R>(b);
+    return aa < bb ? aa : bb;
+}
+
+__host__ __device__ inline float max(float a, float b) {
+    return ggml_hip_max_f32(a, b);
+}
+
+__host__ __device__ inline double max(double a, double b) {
+    return ggml_hip_max_f64(a, b);
+}
+
+template <typename A, typename B,
+          typename std::enable_if<std::is_integral<A>::value && std::is_integral<B>::value, int>::type = 0>
+__host__ __device__ inline typename std::common_type<A, B>::type max(A a, B b) {
+    return ggml_hip_int_max(a, b);
+}
+
+__host__ __device__ inline float min(float a, float b) {
+    return ggml_hip_min_f32(a, b);
+}
+
+__host__ __device__ inline double min(double a, double b) {
+    return ggml_hip_min_f64(a, b);
+}
+
+template <typename A, typename B,
+          typename std::enable_if<std::is_integral<A>::value && std::is_integral<B>::value, int>::type = 0>
+__host__ __device__ inline typename std::common_type<A, B>::type min(A a, B b) {
+    return ggml_hip_int_min(a, b);
+}
+#endif // defined(__HIP_PLATFORM_AMD__)
+
 #define HIP_DISABLE_WARP_SYNC_BUILTINS 1
 #include <hip/hip_runtime.h>
 #include <hipblas/hipblas.h>
@@ -7,6 +109,232 @@
 #include <hip/hip_bf16.h>
 // for rocblas_initialize()
 #include "rocblas/rocblas.h"
+
+#if defined(__HIP_PLATFORM_AMD__)
+#undef fmaxf
+#define fmaxf(a, b) ggml_hip_max_f32((a), (b))
+#undef fminf
+#define fminf(a, b) ggml_hip_min_f32((a), (b))
+#undef powf
+#define powf(a, b) ggml_hip_pow_f32((a), (b))
+
+static __host__ __device__ inline float ggml_hip_expf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_exp_f32(x);
+#else
+    using std::exp;
+    return static_cast<float>(exp(x));
+#endif
+}
+#undef expf
+#define expf(x) ggml_hip_expf((x))
+
+static __host__ __device__ inline float ggml_hip_expm1f(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_expm1_f32(x);
+#else
+    using std::expm1;
+    return static_cast<float>(expm1(x));
+#endif
+}
+#undef expm1f
+#define expm1f(x) ggml_hip_expm1f((x))
+
+static __host__ __device__ inline float ggml_hip_logf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_log_f32(x);
+#else
+    using std::log;
+    return static_cast<float>(log(x));
+#endif
+}
+#undef logf
+#define logf(x) ggml_hip_logf((x))
+
+static __host__ __device__ inline float ggml_hip_log1pf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_log1p_f32(x);
+#else
+    using std::log1p;
+    return static_cast<float>(log1p(x));
+#endif
+}
+#undef log1pf
+#define log1pf(x) ggml_hip_log1pf((x))
+
+static __host__ __device__ inline float ggml_hip_log2f(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_log2_f32(x);
+#else
+    using std::log2;
+    return static_cast<float>(log2(x));
+#endif
+}
+#undef log2f
+#define log2f(x) ggml_hip_log2f((x))
+
+static __host__ __device__ inline float ggml_hip_tanhf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_tanh_f32(x);
+#else
+    using std::tanh;
+    return static_cast<float>(tanh(x));
+#endif
+}
+#undef tanhf
+#define tanhf(x) ggml_hip_tanhf((x))
+
+static __host__ __device__ inline float ggml_hip_sinf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_sin_f32(x);
+#else
+    using std::sin;
+    return static_cast<float>(sin(x));
+#endif
+}
+#undef sinf
+#define sinf(x) ggml_hip_sinf((x))
+
+static __host__ __device__ inline float ggml_hip_cosf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_cos_f32(x);
+#else
+    using std::cos;
+    return static_cast<float>(cos(x));
+#endif
+}
+#undef cosf
+#define cosf(x) ggml_hip_cosf((x))
+
+static __host__ __device__ inline float ggml_hip_erff(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_erf_f32(x);
+#else
+    using std::erf;
+    return static_cast<float>(erf(x));
+#endif
+}
+#undef erff
+#define erff(x) ggml_hip_erff((x))
+
+static __host__ __device__ inline float ggml_hip_fabsf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_fabs_f32(x);
+#else
+    using std::fabs;
+    return static_cast<float>(fabs(x));
+#endif
+}
+#undef fabsf
+#define fabsf(x) ggml_hip_fabsf((x))
+
+static __host__ __device__ inline float ggml_hip_floorf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_floor_f32(x);
+#else
+    using std::floor;
+    return static_cast<float>(floor(x));
+#endif
+}
+#undef floorf
+#define floorf(x) ggml_hip_floorf((x))
+
+static __host__ __device__ inline float ggml_hip_ceilf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_ceil_f32(x);
+#else
+    using std::ceil;
+    return static_cast<float>(ceil(x));
+#endif
+}
+#undef ceilf
+#define ceilf(x) ggml_hip_ceilf((x))
+
+static __host__ __device__ inline float ggml_hip_roundf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_round_f32(x);
+#else
+    using std::round;
+    return static_cast<float>(round(x));
+#endif
+}
+#undef roundf
+#define roundf(x) ggml_hip_roundf((x))
+
+static __host__ __device__ inline float ggml_hip_round_scalar(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_round_f32(x);
+#else
+    using std::round;
+    return static_cast<float>(round(x));
+#endif
+}
+
+static __host__ __device__ inline double ggml_hip_round_scalar(double x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_round_f64(x);
+#else
+    using std::round;
+    return round(x);
+#endif
+}
+#undef round
+#define round(x) ggml_hip_round_scalar((x))
+
+static __host__ __device__ inline float ggml_hip_sqrtf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_sqrt_f32(x);
+#else
+    using std::sqrt;
+    return static_cast<float>(sqrt(x));
+#endif
+}
+#undef sqrtf
+#define sqrtf(x) ggml_hip_sqrtf((x))
+
+static __host__ __device__ inline float ggml_hip_rsqrtf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_rsqrt_f32(x);
+#else
+    using std::sqrt;
+    return 1.0f / static_cast<float>(sqrt(x));
+#endif
+}
+#undef rsqrtf
+#define rsqrtf(x) ggml_hip_rsqrtf((x))
+
+static __host__ __device__ inline float ggml_hip_trunc_scalar(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_trunc_f32(x);
+#else
+    using std::trunc;
+    return static_cast<float>(trunc(x));
+#endif
+}
+
+static __host__ __device__ inline double ggml_hip_trunc_scalar(double x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_trunc_f64(x);
+#else
+    using std::trunc;
+    return trunc(x);
+#endif
+}
+#undef trunc
+#define trunc(x) ggml_hip_trunc_scalar((x))
+
+static __host__ __device__ inline int ggml_hip_isinf(float x) {
+#if defined(__HIP_DEVICE_COMPILE__)
+    return __ocml_isinf_f32(x);
+#else
+    using std::isinf;
+    return static_cast<int>(isinf(x));
+#endif
+}
+#undef isinf
+#define isinf(x) ggml_hip_isinf((x))
+
+#endif
 
 #if defined(GGML_HIP_ROCWMMA_FATTN)
 #include <rocwmma/rocwmma-version.hpp>
