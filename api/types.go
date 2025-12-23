@@ -34,7 +34,7 @@ func (e StatusError) Error() string {
 		return e.ErrorMessage
 	default:
 		// this should not happen
-		return "something went wrong, please see the ollama server logs for details"
+		return "something went wrong, please see the Ollama server logs for details"
 	}
 }
 
@@ -48,7 +48,7 @@ func (e AuthorizationError) Error() string {
 	if e.Status != "" {
 		return e.Status
 	}
-	return "something went wrong, please see the ollama server logs for details"
+	return "something went wrong, please see the Ollama server logs for details"
 }
 
 // ImageData represents the raw binary data of an image file.
@@ -527,7 +527,7 @@ type CreateRequest struct {
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
 
-	// RemoteHost is the URL of the upstream ollama API for the model (if any).
+	// RemoteHost is the URL of the upstream Ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
 
 	// Files is a map of files include when creating the model.
