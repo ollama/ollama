@@ -463,6 +463,8 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
     const std::string drmGTTTotalMemoryFile = "mem_info_gtt_total";
     const std::string drmGTTUsedMemoryFile = "mem_info_gtt_used";
     const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
+    const std::string drmGttTotalMemoryFile = "mem_info_gtt_total";
+    const std::string drmGttUsedMemoryFile = "mem_info_gtt_used";
 
 
     glob_t glob_result;
@@ -499,7 +501,29 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
                     uint64_t memory;
                     totalFileStream >> memory;
 
-                    std::string usedFile = dir + "/" + drmUsedMemoryFile;
+                    // AMD APUs report zero VRAM due to unified CPU/GPU memory
+                    // GPU-accessible memory is exposed via GTT
+                    if (memory == 0) {
+                        std::string gttTotalFile = dir + "/" + drmGttTotalMemoryFile;
+                        std::ifstream gttTotalFileStream(gttTotalFile.c_str());
+                        if (!gttTotalFileStream.is_open()) {
+                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, gttTotalFile.c_str());
+                            file.close();
+                            globfree(&glob_result);
+                            return 1;
+                        }
+
+                        gttTotalFileStream >> memory;
+                        *total = memory;
+                    }
+
+                    std::string usedFile;
+                    if (*total == 0) {
+                        usedFile = dir + "/" + drmGttUsedMemoryFile;
+                    } else {
+                        usedFile = dir + "/" + drmUsedMemoryFile;
+                    }
+
                     std::ifstream usedFileStream(usedFile.c_str());
                     if (!usedFileStream.is_open()) {
                         GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
