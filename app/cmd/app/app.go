@@ -209,6 +209,9 @@ func main() {
 
 	st := &store.Store{}
 
+	// Initialize native settings with store
+	SetSettingsStore(st)
+
 	// Enable CORS in development mode
 	if devMode {
 		os.Setenv("OLLAMA_CORS", "1")
@@ -253,21 +256,26 @@ func main() {
 		done <- osrv.Run(octx)
 	}()
 
+	restartServer := func() {
+		ocancel()
+		<-done
+		octx, ocancel = context.WithCancel(ctx)
+		go func() {
+			done <- osrv.Run(octx)
+		}()
+	}
+
 	uiServer := ui.Server{
-		Token: token,
-		Restart: func() {
-			ocancel()
-			<-done
-			octx, ocancel = context.WithCancel(ctx)
-			go func() {
-				done <- osrv.Run(octx)
-			}()
-		},
+		Token:        token,
+		Restart:      restartServer,
 		Store:        st,
 		ToolRegistry: toolRegistry,
 		Dev:          devMode,
 		Logger:       slog.Default(),
 	}
+
+	// Set restart callback for native settings
+	SetRestartCallback(restartServer)
 
 	srv := &http.Server{
 		Handler: uiServer.Handler(),

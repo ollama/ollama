@@ -1,5 +1,6 @@
 #import "app_darwin.h"
 #import "menu.h"
+#import "settings_darwin.h"
 #import "../../updater/updater_darwin.h"
 #import <AppKit/AppKit.h>
 #import <Cocoa/Cocoa.h>
@@ -252,7 +253,7 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 }
 
 - (void)settingsUI {
-    [self uiRequest:@"/settings"];
+    openNativeSettings();
 }
 
 - (void)openUI {
