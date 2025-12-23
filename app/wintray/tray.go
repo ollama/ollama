@@ -369,24 +369,24 @@ func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
 	return nil
 }
 
-// func (t *winTray) hideMenuItem(menuItemId, parentId uint32) error {
-// 	const ERROR_SUCCESS syscall.Errno = 0
+func (t *winTray) removeMenuItem(menuItemId, parentId uint32) error {
+	const ERROR_SUCCESS syscall.Errno = 0
 
-// 	t.muMenus.RLock()
-// 	menu := uintptr(t.menus[parentId])
-// 	t.muMenus.RUnlock()
-// 	res, _, err := pRemoveMenu.Call(
-// 		menu,
-// 		uintptr(menuItemId),
-// 		MF_BYCOMMAND,
-// 	)
-// 	if res == 0 && err.(syscall.Errno) != ERROR_SUCCESS {
-// 		return err
-// 	}
-// 	t.delFromVisibleItems(parentId, menuItemId)
+	t.muMenus.RLock()
+	menu := uintptr(t.menus[parentId])
+	t.muMenus.RUnlock()
+	res, _, err := pRemoveMenu.Call(
+		menu,
+		uintptr(menuItemId),
+		MF_BYCOMMAND,
+	)
+	if res == 0 && err.(syscall.Errno) != ERROR_SUCCESS {
+		return err
+	}
+	t.delFromVisibleItems(parentId, menuItemId)
 
-// 	return nil
-// }
+	return nil
+}
 
 func (t *winTray) showMenu() error {
 	p := point{}
