@@ -1,0 +1,121 @@
+<svg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradient for the glow effect -->
+    <radialGradient id="hiveGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00cc88" stop-opacity="0.8"/>
+      <stop offset="40%" stop-color="#0099ff" stop-opacity="0.4"/>
+      <stop offset="70%" stop-color="#9966ff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#9966ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Gradient for the core -->
+    <radialGradient id="coreGradient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00cc88"/>
+      <stop offset="100%" stop-color="#0099ff"/>
+    </radialGradient>
+
+    <!-- Gradient for orbital rings -->
+    <linearGradient id="orbitalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0099ff"/>
+      <stop offset="50%" stop-color="#9966ff"/>
+      <stop offset="100%" stop-color="#00cc88"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark background -->
+  <rect x="0" y="0" width="400" height="400" fill="#0a0a1a"/>
+
+  <!-- Outer glow -->
+  <circle cx="200" cy="200" r="160" fill="url(#hiveGlow)" opacity="0.6"/>
+
+  <!-- Hexagonal hive pattern (background) -->
+  <g opacity="0.15" stroke="#00cc88" stroke-width="1" fill="none">
+    <!-- Row 1 -->
+    <polygon points="200,80 220,90 220,110 200,120 180,110 180,90"/>
+    <!-- Row 2 -->
+    <polygon points="160,105 180,115 180,135 160,145 140,135 140,115"/>
+    <polygon points="200,105 220,115 220,135 200,145 180,135 180,115"/>
+    <polygon points="240,105 260,115 260,135 240,145 220,135 220,115"/>
+    <!-- Row 3 -->
+    <polygon points="140,140 160,150 160,170 140,180 120,170 120,150"/>
+    <polygon points="180,140 200,150 200,170 180,180 160,170 160,150"/>
+    <polygon points="220,140 240,150 240,170 220,180 200,170 200,150"/>
+    <polygon points="260,140 280,150 280,170 260,180 240,170 240,150"/>
+    <!-- Row 4 -->
+    <polygon points="160,175 180,185 180,205 160,215 140,205 140,185"/>
+    <polygon points="200,175 220,185 220,205 200,215 180,205 180,185"/>
+    <polygon points="240,175 260,185 260,205 240,215 220,205 220,185"/>
+    <!-- Row 5 -->
+    <polygon points="140,210 160,220 160,240 140,250 120,240 120,220"/>
+    <polygon points="180,210 200,220 200,240 180,250 160,240 160,220"/>
+    <polygon points="220,210 240,220 240,240 220,250 200,240 200,220"/>
+    <polygon points="260,210 280,220 280,240 260,250 240,240 240,220"/>
+    <!-- Row 6 -->
+    <polygon points="160,245 180,255 180,275 160,285 140,275 140,255"/>
+    <polygon points="200,245 220,255 220,275 200,285 180,275 180,255"/>
+    <polygon points="240,245 260,255 260,275 240,285 220,275 220,255"/>
+    <!-- Row 7 -->
+    <polygon points="200,280 220,290 220,310 200,320 180,310 180,290"/>
+  </g>
+
+  <!-- Multi-agent orbital rings -->
+  <g fill="none" stroke="url(#orbitalGradient)" stroke-width="2.5" opacity="0.8">
+    <!-- Outer orbit (Queen agent) -->
+    <ellipse cx="200" cy="200" rx="130" ry="70" transform="rotate(30 200 200)"/>
+    <!-- Middle orbit (Specialist agents) -->
+    <ellipse cx="200" cy="200" rx="110" ry="60" transform="rotate(-15 200 200)"/>
+    <!-- Inner orbit (Memory agent) -->
+    <ellipse cx="200" cy="200" rx="90" ry="50" transform="rotate(60 200 200)"/>
+  </g>
+
+  <!-- Agent nodes on orbits -->
+  <g>
+    <!-- Queen agent (top) -->
+    <circle cx="200" cy="110" r="8" fill="#ffaa00" stroke="#00cc88" stroke-width="2">
+      <animate attributeName="r" values="8;10;8" dur="2s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Coder agent -->
+    <circle cx="280" cy="180" r="6" fill="#0099ff" stroke="#00cc88" stroke-width="2">
+      <animate attributeName="r" values="6;8;6" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Analyst agent -->
+    <circle cx="240" cy="270" r="6" fill="#9966ff" stroke="#00cc88" stroke-width="2">
+      <animate attributeName="r" values="6;8;6" dur="3s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Creative agent -->
+    <circle cx="120" cy="240" r="6" fill="#ff6600" stroke="#00cc88" stroke-width="2">
+      <animate attributeName="r" values="6;8;6" dur="2.7s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Memory agent -->
+    <circle cx="140" cy="150" r="6" fill="#00cc88" stroke="#0099ff" stroke-width="2">
+      <animate attributeName="r" values="6;8;6" dur="3.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- Central core (hive center) -->
+  <circle cx="200" cy="200" r="50" fill="url(#coreGradient)" opacity="0.9"/>
+  <circle cx="200" cy="200" r="45" fill="none" stroke="#001133" stroke-width="3"/>
+
+  <!-- K'uhul text -->
+  <text x="200" y="195" fill="#001133" font-size="32" font-family="'Courier New', monospace" font-weight="bold" text-anchor="middle" letter-spacing="2">K'UHUL</text>
+  <text x="200" y="215" fill="#001133" font-size="10" font-family="monospace" text-anchor="middle" opacity="0.9">MULTI HIVE</text>
+
+  <!-- Bottom subtitle -->
+  <text x="200" y="360" fill="#00cc88" font-size="14" font-family="'Courier New', monospace" text-anchor="middle" letter-spacing="1" opacity="0.9">OLLAMA · MULTI-AGENT OS</text>
+
+  <!-- Corner accents -->
+  <g stroke="#0099ff" stroke-width="2" fill="none" opacity="0.5">
+    <!-- Top left -->
+    <path d="M 20,20 L 60,20 M 20,20 L 20,60"/>
+    <!-- Top right -->
+    <path d="M 340,20 L 380,20 M 380,20 L 380,60"/>
+    <!-- Bottom left -->
+    <path d="M 20,340 L 20,380 M 20,380 L 60,380"/>
+    <!-- Bottom right -->
+    <path d="M 380,340 L 380,380 M 340,380 L 380,380"/>
+  </g>
+</svg>

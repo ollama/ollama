@@ -1,0 +1,522 @@
+<div align="center">
+
+<img width="60%" src="assets/kuhul-hive-logo.svg" alt="K'uhul Multi Hive OS" />
+
+# 🛸 K'UHUL MULTI HIVE OS
+
+### **The K'uhul Engine - Execution Core of the ASX Ecosystem**
+
+![Status](https://img.shields.io/badge/Status-Active-00cc88?style=for-the-badge)
+![ASX](https://img.shields.io/badge/ASX-Execution_Core-9966ff?style=for-the-badge)
+![Ecosystem](https://img.shields.io/badge/Ecosystem-XJSON·KLH·SCXQ2-0099ff?style=for-the-badge)
+![Python](https://img.shields.io/badge/Python-3.9+-ffaa00?style=for-the-badge)
+
+**The official execution core for the [ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework) ecosystem.**
+**Multi-agent AI orchestration with XJSON, KLH, SCXQ2, and Tape Runtime.**
+
+[🚀 Quick Start](#-quick-start) • [📦 Install](INSTALL.md) • [🌐 Ecosystem](ECOSYSTEM.md) • [📖 Docs](#-documentation)
+
+</div>
+
+---
+
+## 🌟 Overview
+
+**K'uhul Multi Hive OS** is the **execution core** of the ASX Language Framework - a sophisticated multi-agent orchestration system that creates a "hive mind" of specialized AI agents working in harmony. As the **K'uhul Engine**, it serves as the runtime foundation for:
+
+### **ASX Ecosystem Components**
+- **[@xjson/klh-orchestrator](https://www.npmjs.com/package/@xjson/klh-orchestrator)** - Multi-hive coordination
+- **[@xjson/xjson-server](https://www.npmjs.com/package/@xjson/xjson-server)** - XJSON execution server
+- **[@xjson/asx-blocks-core](https://www.npmjs.com/package/@xjson/asx-blocks-core)** - Atomic UI/Logic blocks
+
+### **Core Capabilities**
+
+- **🐝 Multi-Agent Hive Architecture**: Queen + specialized worker agents
+- **⚡ Ollama Integration**: Local, private, powerful LLM execution
+- **🧬 XJSON Runtime**: Executable JSON for agent workflows
+- **🎯 KLH Orchestration**: Multi-hive coordination patterns
+- **🔐 SCXQ2 Compression**: Symbolic compression and cipher layer
+- **📼 Tape Runtime**: Modular execution containers
+- **🌐 Quantum Torrent**: Distributed data sharding with integrity verification
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    K'UHUL MULTI HIVE OS                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │    QUEEN     │  │    CODER     │  │   ANALYST    │      │
+│  │ Orchestrator │  │   Specialist │  │  Specialist  │      │
+│  │ qwen2.5:3b   │  │ qwen2.5-coder│  │ llama3.2:3b  │      │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
+│         │                 │                  │              │
+│         └─────────────────┴──────────────────┘              │
+│                           │                                 │
+│                  ┌────────▼────────┐                        │
+│                  │  HIVE CORE API  │                        │
+│                  │   FastAPI       │                        │
+│                  └────────┬────────┘                        │
+│                           │                                 │
+│         ┌─────────────────┼─────────────────┐              │
+│         │                 │                 │              │
+│   ┌─────▼─────┐   ┌──────▼──────┐   ┌──────▼──────┐       │
+│   │  MEMORY   │   │  CREATIVE   │   │   OLLAMA    │       │
+│   │ Knowledge │   │  Specialist │   │   Backend   │       │
+│   │llama3.2:3b│   │ mistral:7b  │   │ :11434      │       │
+│   └───────────┘   └─────────────┘   └─────────────┘       │
+│                                                              │
+├─────────────────────────────────────────────────────────────┤
+│                    ASX INTEGRATION LAYER                     │
+├─────────────────────────────────────────────────────────────┤
+│  XJSON Engine  │  KLH Orchestrator  │  Quantum Torrent     │
+│  SCXQ2 Cipher  │  Tape Runtime      │  Shard Manager       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Agent Roles
+
+| Agent    | Model              | Role                    | Temperature | Specialty                  |
+|----------|--------------------|-------------------------|-------------|----------------------------|
+| **Queen**    | qwen2.5:latest     | Orchestrator            | 0.7         | Task coordination & synthesis |
+| **Coder**    | qwen2.5-coder:latest | Code specialist       | 0.3         | Code generation & analysis |
+| **Analyst**  | llama3.2:latest    | Data analyst            | 0.5         | Pattern recognition & insights |
+| **Creative** | mistral:latest     | Creative specialist     | 0.9         | Innovation & ideation      |
+| **Memory**   | llama3.2:latest    | Knowledge keeper        | 0.2         | Information storage & retrieval |
+
+---
+
+## 🚀 Quick Start
+
+> **📦 For detailed installation instructions, see [INSTALL.md](INSTALL.md)**
+
+### 🎯 Easiest: NPM Installation (Recommended)
+
+```bash
+# Install K'uhul globally via NPM
+npm install -g @kuhul/multi-hive-os
+
+# Install Ollama (if not already installed)
+curl -fsSL https://ollama.ai/install.sh | sh  # Linux/macOS
+# Or download from https://ollama.ai for Windows
+
+# Pull at least one model
+ollama pull qwen2.5:latest
+
+# Start K'uhul
+kuhul start
+
+# Access at http://localhost:8080
+```
+
+### Alternative: Git Clone (Linux/macOS)
+
+```bash
+# 1. Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# 2. Pull at least one model
+ollama pull qwen2.5:latest
+
+# 3. Clone and start
+git clone https://github.com/cannaseedus-bot/KUHUL.git
+cd KUHUL
+pip install -r backend/requirements.txt
+./start_hive.sh
+```
+
+### Alternative: Git Clone (Windows)
+
+```cmd
+REM 1. Download Ollama from https://ollama.ai and install
+
+REM 2. Pull at least one model
+ollama pull qwen2.5:latest
+
+REM 3. Clone and start
+git clone https://github.com/cannaseedus-bot/KUHUL.git
+cd KUHUL
+pip install -r backend\requirements.txt
+start_hive.bat
+```
+
+### What You Need
+
+- **Ollama**: [ollama.ai](https://ollama.ai) - Local LLM runtime
+- **Python 3.9+**: [python.org](https://python.org)
+- **At least 8GB RAM** (16GB recommended)
+- **~2-11GB disk space** for models (start with 1 model)
+
+### Access Points
+
+- **Frontend**: http://localhost:8080
+- **API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+
+---
+
+## 📖 Usage
+
+### Web Interface
+
+The K'uhul Multi Hive OS provides a beautiful cyberpunk-themed web interface:
+
+1. **Status Dashboard**: Monitor hive health and agent activity
+2. **Agent Panel**: View all available agents and their specializations
+3. **Communication Terminal**: Chat with the hive (multi-agent orchestration)
+4. **Knowledge Management**: Upload files and trigger hive optimization
+
+### API Endpoints
+
+#### Get Hive Status
+```bash
+curl http://localhost:8000/api/status
+```
+
+Response:
+```json
+{
+  "status": "online",
+  "ollama_connected": true,
+  "agents_available": ["queen", "coder", "analyst", "creative", "memory"],
+  "agents_active": ["queen", "memory"],
+  "files_ingested": 5,
+  "knowledge_base_size": 5
+}
+```
+
+#### Chat with the Hive
+```bash
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Explain quantum computing"}'
+```
+
+Response:
+```json
+{
+  "response": "Quantum computing harnesses quantum mechanics principles...",
+  "agents_used": ["queen", "memory", "analyst"],
+  "orchestration": {
+    "analysis": "Query requires technical analysis and knowledge retrieval",
+    "specialists": 2
+  }
+}
+```
+
+#### Ingest Files
+```bash
+curl -X POST http://localhost:8000/api/ingest \
+  -F "files=@document.txt" \
+  -F "files=@code.py"
+```
+
+#### List Agents
+```bash
+curl http://localhost:8000/api/agents
+```
+
+#### Get Knowledge Base
+```bash
+curl http://localhost:8000/api/knowledge
+```
+
+---
+
+## 🧬 ASX Integration
+
+K'uhul Multi Hive OS seamlessly integrates with the ASX Language Framework:
+
+### XJSON Execution
+
+Execute XJSON (Executable JSON) workflows:
+
+```python
+from integration.asx_bridge import run_xjson_async
+
+xjson_code = {
+    "@hive.query": {
+        "agent": "coder",
+        "message": "Write a Python function to calculate fibonacci",
+        "capture": "ctx.code_result"
+    }
+}
+
+result = await run_xjson_async(xjson_code, hive_client)
+```
+
+### XJSON Tape Example
+
+See `config/example_tape.xjson` for a complete multi-agent analysis tape.
+
+### KLH Orchestration
+
+Distribute tasks across multiple hive nodes:
+
+```python
+from integration.asx_bridge import KLHOrchestrator
+
+orchestrator = KLHOrchestrator(hive_nodes=[
+    "http://localhost:8000",
+    "http://localhost:8001"
+])
+
+results = await orchestrator.distribute_task({
+    "message": "Analyze this dataset",
+    "data": large_dataset
+})
+```
+
+### Quantum Torrent Sharding
+
+Shard data for distributed processing:
+
+```python
+from backend.quantum_torrent import QuantumTorrentManager
+
+manager = QuantumTorrentManager()
+
+# Create shards
+shards = manager.create_data_shard(
+    training_data,
+    shard_size=1000,
+    category="training"
+)
+
+# Validate integrity
+validation = manager.validate_data_integrity()
+print(f"Integrity: {validation['integrity_valid']}")
+```
+
+---
+
+## 🎯 Features
+
+### ✅ Implemented
+
+- [x] **Multi-Agent Orchestration**: Queen-led coordination with specialist agents
+- [x] **Ollama Integration**: Full local LLM support
+- [x] **File Ingestion**: Upload and process documents into hive memory
+- [x] **Knowledge Base**: Persistent storage with summarization
+- [x] **Web Interface**: Beautiful cyberpunk-themed UI
+- [x] **RESTful API**: Complete HTTP API for all operations
+- [x] **XJSON Engine**: Execute XJSON workflows
+- [x] **Quantum Torrent**: Distributed data sharding with SHA3-512 verification
+- [x] **Agent Status Tracking**: Real-time agent activity monitoring
+
+### 🚧 Planned
+
+- [ ] **Multi-Hive Clustering**: Connect multiple K'uhul instances
+- [ ] **SCXQ2 Compression**: Full symbolic compression implementation
+- [ ] **Tape Runtime**: Production-ready tape execution system
+- [ ] **RAG Integration**: Vector database for advanced retrieval
+- [ ] **Model Fine-tuning**: Custom model training from ingested data
+- [ ] **P2P Synchronization**: Torrent-style hive synchronization
+- [ ] **WebSocket Streaming**: Real-time streaming responses
+- [ ] **Agent Specialization Learning**: Dynamic agent improvement
+
+---
+
+## 📁 Project Structure
+
+```
+kuhul-multi-hive-os/
+├── backend/
+│   ├── kuhul_server.py        # Main FastAPI server
+│   ├── quantum_torrent.py     # Distributed sharding system
+│   └── requirements.txt       # Python dependencies
+├── frontend/
+│   └── index.html             # Web interface
+├── integration/
+│   └── asx_bridge.py          # ASX Framework integration (XJSON, KLH)
+├── config/
+│   ├── hive_config.json       # Hive configuration
+│   └── example_tape.xjson     # Example XJSON tape
+├── agents/                    # Agent-specific configurations
+├── memory/                    # Knowledge base storage
+├── docs/                      # Documentation
+└── README.md                  # This file
+```
+
+---
+
+## 🔧 Configuration
+
+Edit `config/hive_config.json` to customize:
+
+- Agent models and parameters
+- Ollama host URL
+- Storage paths
+- Multi-hive settings
+- Feature flags
+
+Example:
+```json
+{
+  "hive_id": "kuhul-primary",
+  "ollama_host": "http://localhost:11434",
+  "api_port": 8000,
+  "agents": {
+    "queen": {
+      "model": "qwen2.5:latest",
+      "temperature": 0.7
+    }
+  }
+}
+```
+
+---
+
+## 🎨 Screenshots
+
+### Web Interface
+The K'uhul Multi Hive OS features a stunning cyberpunk-themed interface with:
+- Real-time status monitoring
+- Interactive agent cards
+- Terminal-style chat interface
+- Progress visualization
+- File upload and management
+
+---
+
+## 🤝 Integration with ASX Framework
+
+K'uhul Multi Hive OS is designed to work seamlessly with:
+
+- **[@asx/xjson-runtime-js](https://github.com/cannaseedus-bot/asx-language-framework)**: XJSON execution
+- **[@asx/klh-orchestrator](https://github.com/cannaseedus-bot/asx-language-framework)**: Hive orchestration
+- **[@asx/scxq2-engine](https://github.com/cannaseedus-bot/asx-language-framework)**: Symbolic compression
+- **[@asx/tape-runtime](https://github.com/cannaseedus-bot/asx-language-framework)**: Tape execution
+
+---
+
+## 📚 Documentation
+
+- [API Documentation](docs/API.md) - Complete API reference
+- [Agent Guide](docs/AGENTS.md) - Understanding hive agents
+- [XJSON Tutorial](docs/XJSON.md) - Writing XJSON workflows
+- [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment
+
+---
+
+## 🐛 Troubleshooting
+
+### Ollama Connection Failed
+```bash
+# Verify Ollama is running
+ollama list
+
+# Start Ollama service
+ollama serve
+```
+
+### Agent Query Timeout
+- Ensure models are pulled: `ollama pull qwen2.5:latest`
+- Check system resources (RAM, GPU)
+- Try smaller models: `ollama pull qwen2.5:3b`
+
+### Frontend Can't Connect
+- Verify backend is running on port 8000
+- Check CORS settings if running on different domain
+- Open browser console for detailed error messages
+
+---
+
+## 🔒 Security
+
+- **Local First**: All processing happens on your machine
+- **No Cloud Dependencies**: Works completely offline
+- **Data Privacy**: Your data never leaves your system
+- **Quantum-Resistant Hashing**: SHA3-512 for data integrity
+
+---
+
+## 🌐 ASX Ecosystem
+
+K'uhul is the **execution core** of the ASX Language Framework ecosystem:
+
+### **Core Framework**
+- **[ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework)** - The official framework
+- **[K'uhul Repository](https://github.com/cannaseedus-bot/KUHUL)** - This project's official home
+
+### **NPM Packages**
+- **[@xjson/klh-orchestrator](https://www.npmjs.com/package/@xjson/klh-orchestrator)** - Multi-hive coordination
+- **[@xjson/xjson-server](https://www.npmjs.com/package/@xjson/xjson-server)** - XJSON execution server
+- **[@xjson/asx-blocks-core](https://www.npmjs.com/package/@xjson/asx-blocks-core)** - Atomic blocks
+
+### **Integration Guides**
+- **[ECOSYSTEM.md](ECOSYSTEM.md)** - Complete ASX integration guide
+- **[MIGRATION.md](MIGRATION.md)** - Moving to standalone repository
+
+---
+
+## 🌟 Credits & Acknowledgments
+
+**Built on:**
+- **[ASX Language Framework](https://github.com/cannaseedus-bot/asx-language-framework)** - The foundation
+- **[Ollama](https://ollama.ai)** - Local LLM runtime
+- **[FastAPI](https://fastapi.tiangolo.com)** - Modern Python web framework
+
+**Ecosystem Components:**
+- XJSON - Executable JSON language
+- KLH - Hive orchestrator protocol
+- SCXQ2 - Symbolic compression engine
+- Tape Runtime - Modular execution containers
+
+---
+
+## 📄 License
+
+MIT License - See [LICENSE](../LICENSE) file for details.
+
+---
+
+## 🚀 What's Next?
+
+### For Users
+1. 📖 **[Read ECOSYSTEM.md](ECOSYSTEM.md)** - Learn ASX integration
+2. 📥 **Upload Documents** - Build your knowledge base
+3. 🎯 **Create XJSON Tapes** - Automate complex workflows
+4. 🌐 **Scale with KLH** - Deploy multi-hive clusters
+
+### For Developers
+1. 🔌 **Integrate ASX Packages** - Use @xjson/* NPM packages
+2. 🛠️ **Build Custom Agents** - Extend the hive
+3. 📡 **Implement KP Protocol** - Connect to other hives
+4. 🤝 **Contribute** - Help build the future
+
+---
+
+## 💬 Community & Support
+
+### K'uhul Specific
+- **Issues**: [KUHUL Issues](https://github.com/cannaseedus-bot/KUHUL/issues)
+- **Discussions**: [KUHUL Discussions](https://github.com/cannaseedus-bot/KUHUL/discussions)
+
+### ASX Ecosystem
+- **Framework Repo**: [asx-language-framework](https://github.com/cannaseedus-bot/asx-language-framework)
+- **NPM Packages**: [@xjson](https://www.npmjs.com/org/xjson)
+- **Ollama Community**: [ollama.ai/docs](https://ollama.ai/docs)
+
+---
+
+<div align="center">
+
+## 🛸 K'UHUL - THE HEART OF THE ASX ECOSYSTEM 🐝
+
+**Multi-Agent Intelligence • XJSON Runtime • KLH Orchestration • Quantum Torrent**
+
+*Where Multiple Agents Work as One*
+
+---
+
+[![ASX Framework](https://img.shields.io/badge/ASX-Framework-9966ff?style=for-the-badge)](https://github.com/cannaseedus-bot/asx-language-framework)
+[![NPM Packages](https://img.shields.io/badge/NPM-@xjson-0099ff?style=for-the-badge)](https://www.npmjs.com/org/xjson)
+[![K'uhul Repo](https://img.shields.io/badge/K'uhul-Repository-00cc88?style=for-the-badge)](https://github.com/cannaseedus-bot/KUHUL)
+
+**[⭐ Star on GitHub](https://github.com/cannaseedus-bot/KUHUL)** • **[📦 View on NPM](https://www.npmjs.com/package/@kuhul/multi-hive-os)** • **[📖 Read the Docs](https://github.com/cannaseedus-bot/KUHUL#readme)**
+
+</div>

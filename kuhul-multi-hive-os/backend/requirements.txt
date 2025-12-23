@@ -1,0 +1,5 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+aiohttp==3.9.1
+python-multipart==0.0.6
+pydantic==2.5.3
