@@ -439,7 +439,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map
 
 	logutil.Trace("starting runner for device discovery", "libDirs", ollamaLibDirs, "extraEnvs", extraEnvs)
 	cmd, port, err := llm.StartRunner(
-		true, // ollama engine
+		true, // Ollama engine
 		"",   // no model
 		ollamaLibDirs,
 		out,
