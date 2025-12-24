@@ -15,7 +15,7 @@ These M3U playlist files can be loaded into compatible TV Box applications or IP
 
 ### Compatible Applications
 
-- Tivimate
+- TiviMate
 - Various Android TV Box applications
 - IPTV players supporting M3U playlists
 
@@ -30,6 +30,8 @@ The playlist includes sources from:
 - 夢澤河
 - And more...
 
-## Note
+## Important Legal Notice
 
-Please respect copyright and licensing when using these streaming sources. The availability and legality of these sources may vary by region.
+**WARNING**: Many of these streaming sources may be unauthorized IPTV sources that could violate copyright laws in your jurisdiction. Users are solely responsible for ensuring their use of these sources complies with all applicable laws and regulations. The availability, legality, and content of these sources may vary significantly by region.
+
+Please respect copyright and licensing when using these streaming sources. Use at your own risk and discretion.

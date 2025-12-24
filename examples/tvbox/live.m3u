@@ -24,7 +24,7 @@ https://smart.pendy.dpdns.org/m3u/gongyi_judy.m3u
 #EXTINF:-1 group-title="直播源倉庫", AKTV 直播
 https://aktv.space/live.m3u
 
-#EXTINF:-1 group-title="直播源倉庫", 夢澤河 (Tivimate專用)
+#EXTINF:-1 group-title="直播源倉庫", 夢澤河 (TiviMate專用)
 https://ghproxy.net/https://raw.githubusercontent.com/mengzehe/tvbox/main/live.m3u
 
 #EXTINF:-1 group-title="單線直播", 雲星家庭
@@ -33,7 +33,7 @@ http://itvbox.cc/tvbox/云星日记/1.m3u8
 #EXTINF:-1 group-title="單線直播", 雲星嗶哩
 http://itvbox.cc/tvbox/云星日记/bili.m3u8
 
-#EXTINF:-1 group-title="單線直播", 螞蚁論壇接口
+#EXTINF:-1 group-title="單線直播", 螞蟻論壇接口
 https://download.kstore.space/download/2883/m3u8/dsj/guochan/mp1/1.m3u8
 
 #EXTINF:-1 group-title="單線直播", 不良帥源
