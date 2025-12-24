@@ -895,11 +895,11 @@ curl http://localhost:11434/api/chat -d '{
       "tool_calls": [
         {
           "function": {
-            "name": "get_temperature",
+            "name": "get_weather",
             "arguments": {
               "city": "Toronto"
             }
-          },
+          }
         }
       ]
     },
@@ -907,7 +907,7 @@ curl http://localhost:11434/api/chat -d '{
     {
       "role": "tool",
       "content": "11 degrees celsius",
-      "tool_name": "get_temperature",
+      "tool_name": "get_weather"
     }
   ],
   "stream": false,
