@@ -153,7 +153,10 @@ function ChatForm({
   const supportsWebSearch =
     modelLower.startsWith("gpt-oss") ||
     modelLower.startsWith("qwen3") ||
-    modelLower.startsWith("deepseek-v3");
+    modelLower.startsWith("deepseek-v3") ||
+    modelLower.startsWith("kimi-k2") ||
+    modelLower.startsWith("minimax") ||
+    modelLower.startsWith("glm");
   // Use per-chat thinking level instead of global
   const thinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
