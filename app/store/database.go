@@ -513,7 +513,7 @@ func (db *database) getAllChats() ([]Chat, error) {
 			WHERE role = 'user'
 			GROUP BY chat_id
 		) first_msg ON c.id = first_msg.chat_id
-		LEFT JOIN messages m ON c.id = m.chat_id
+		LEFT JOIN messages m ON c.id = m.chat_id AND m.role = 'user'
 		GROUP BY c.id, c.title, c.created_at, first_msg.content
 		ORDER BY last_updated DESC
 	`
