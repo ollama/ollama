@@ -21,7 +21,7 @@ const paddings = {
   lg: "p-6",
 };
 
-const radius = {
+const radiuses = {
   none: "rounded-none",
   sm: "rounded-sm",
   md: "rounded-md",
@@ -35,7 +35,7 @@ export const Box = forwardRef<HTMLElement, BoxProps>(
       as: Component = "div",
       variant = "default",
       padding = "none",
-      radius: radiusProp = "none",
+      radius = "none",
       className,
       children,
       ...props
@@ -49,7 +49,7 @@ export const Box = forwardRef<HTMLElement, BoxProps>(
         className={clsx(
           variants[variant],
           paddings[padding],
-          radius[radiusProp],
+          radiuses[radius],
           className,
         )}
       >
