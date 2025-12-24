@@ -8,6 +8,56 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// FuzzResponsesInputMessage tests ResponsesInputMessage JSON unmarshaling
+func FuzzResponsesInputMessage(f *testing.F) {
+	seeds := []string{
+		`{"type": "message", "role": "user", "content": "hello"}`,
+		`{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]}`,
+		`{"type": "message", "role": "user", "content": [{"type": "input_image", "detail": "auto"}]}`,
+		`{"type": "message", "role": "system", "content": []}`,
+		`{}`,
+		`{"content": null}`,
+		`{"content": 123}`,
+		`{"content": [{"type": "unknown"}]}`,
+		`{"role": "user"}`,
+		`{"type": "message", "role": "user", "content": [{"type": "output_text", "text": "hi"}]}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var m ResponsesInputMessage
+		_ = json.Unmarshal([]byte(input), &m)
+	})
+}
+
+// FuzzResponsesInput tests ResponsesInput JSON unmarshaling
+func FuzzResponsesInput(f *testing.F) {
+	seeds := []string{
+		`"hello world"`,
+		`[]`,
+		`[{"type": "message", "role": "user", "content": "hi"}]`,
+		`[{"type": "function_call", "call_id": "123", "name": "test"}]`,
+		`[{"type": "function_call_output", "call_id": "123", "output": "result"}]`,
+		`[{"type": "reasoning", "id": "r1"}]`,
+		`[{"type": "unknown"}]`,
+		`null`,
+		`123`,
+		`{}`,
+		`[null]`,
+		`[{"type": "message"}, {"type": "function_call"}]`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var r ResponsesInput
+		_ = json.Unmarshal([]byte(input), &r)
+	})
+}
+
 func TestResponsesInputMessage_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -3,6 +3,7 @@ package convert
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,55 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/x448/float16"
 )
+
+// FuzzSafetensorsMetadata tests safetensors JSON metadata parsing
+func FuzzSafetensorsMetadata(f *testing.F) {
+	// Add seed corpus with valid and edge case metadata
+	seeds := []string{
+		`{"tensor1": {"dtype": "F32", "shape": [4, 4], "data_offsets": [0, 64]}}`,
+		`{"tensor1": {"dtype": "F16", "shape": [2, 3], "data_offsets": [0, 12]}}`,
+		`{"tensor1": {"dtype": "BF16", "shape": [1], "data_offsets": [0, 2]}}`,
+		`{}`,
+		`{"__metadata__": {"format": "pt"}}`,
+		`{"tensor1": {"dtype": "F32", "shape": [], "data_offsets": [0, 0]}}`,
+		`{"tensor1": {"dtype": "", "shape": [1], "data_offsets": [0, 4]}}`,
+		`{"a": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}, "b": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]}}`,
+		`null`,
+		`[]`,
+		`"string"`,
+		`{"tensor1": null}`,
+		`{"tensor1": {"dtype": "F32", "shape": [-1], "data_offsets": [0, 4]}}`,
+		`{"tensor1": {"dtype": "F32", "shape": [999999999999], "data_offsets": [0, 4]}}`,
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var headers map[string]safetensorMetadata
+		if err := json.Unmarshal([]byte(input), &headers); err != nil {
+			return
+		}
+		// Exercise the parsed data to ensure fields are properly set
+		for key, meta := range headers {
+			_ = key
+			_ = meta.Type
+			_ = len(meta.Shape)
+			_ = len(meta.Offsets)
+			// Check shape calculation like parseSafetensors does
+			if len(meta.Shape) > 0 {
+				var elements uint64 = 1
+				for _, dim := range meta.Shape {
+					elements *= dim
+				}
+			}
+			// Check offset calculation
+			if len(meta.Offsets) >= 2 {
+				_ = meta.Offsets[1] - meta.Offsets[0]
+			}
+		}
+	})
+}
 
 func TestSafetensors(t *testing.T) {
 	t.Parallel()
