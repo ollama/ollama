@@ -166,7 +166,7 @@ func (p *FunctionGemmaParser) parseToolCall(content string) (api.ToolCall, error
 
 // parseArguments parses the key:value,key:value format
 func (p *FunctionGemmaParser) parseArguments(argsStr string) api.ToolCallFunctionArguments {
-	args := make(api.ToolCallFunctionArguments)
+	args := api.NewToolCallFunctionArguments()
 	if argsStr == "" {
 		return args
 	}
@@ -185,7 +185,7 @@ func (p *FunctionGemmaParser) parseArguments(argsStr string) api.ToolCallFunctio
 		value := part[colonIdx+1:]
 
 		// Parse the value
-		args[key] = p.parseValue(value)
+		args.Set(key, p.parseValue(value))
 	}
 
 	return args

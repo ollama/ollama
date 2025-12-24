@@ -11,6 +11,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests, order not preserved)
+func testPropsMap(m map[string]ToolProperty) *ToolPropertiesMap {
+	props := NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests, order not preserved)
+func testArgs(m map[string]any) ToolCallFunctionArguments {
+	args := NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
 func TestKeepAliveParsingFromJSON(t *testing.T) {
 	tests := []struct {
 		name string
@@ -309,9 +327,9 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 			input: ToolFunctionParameters{
 				Type:     "object",
 				Required: []string{"name"},
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"name": {Type: PropertyType{"string"}},
-				},
+				}),
 			},
 			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
 		},
@@ -319,9 +337,9 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 			name: "no required",
 			input: ToolFunctionParameters{
 				Type: "object",
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"name": {Type: PropertyType{"string"}},
-				},
+				}),
 			},
 			expected: `{"type":"object","properties":{"name":{"type":"string"}}}`,
 		},
@@ -339,7 +357,7 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
 	fn := ToolCallFunction{
 		Name:      "echo",
-		Arguments: ToolCallFunctionArguments{"message": "hi"},
+		Arguments: testArgs(map[string]any{"message": "hi"}),
 	}
 
 	data, err := json.Marshal(fn)
@@ -529,7 +547,7 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			expected: ToolProperty{
 				Type:        PropertyType{"object"},
 				Description: "Location details",
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"address": {
 						Type:        PropertyType{"string"},
 						Description: "Street address",
@@ -538,7 +556,7 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 						Type:        PropertyType{"string"},
 						Description: "City name",
 					},
-				},
+				}),
 			},
 		},
 		{
@@ -566,22 +584,22 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			expected: ToolProperty{
 				Type:        PropertyType{"object"},
 				Description: "Event",
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"location": {
 						Type:        PropertyType{"object"},
 						Description: "Location",
-						Properties: map[string]ToolProperty{
+						Properties: testPropsMap(map[string]ToolProperty{
 							"coordinates": {
 								Type:        PropertyType{"object"},
 								Description: "GPS coordinates",
-								Properties: map[string]ToolProperty{
+								Properties: testPropsMap(map[string]ToolProperty{
 									"lat": {Type: PropertyType{"number"}, Description: "Latitude"},
 									"lng": {Type: PropertyType{"number"}, Description: "Longitude"},
-								},
+								}),
 							},
-						},
+						}),
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -591,7 +609,13 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			var prop ToolProperty
 			err := json.Unmarshal([]byte(tt.input), &prop)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, prop)
+
+			// Compare JSON representations since pointer comparison doesn't work
+			expectedJSON, err := json.Marshal(tt.expected)
+			require.NoError(t, err)
+			actualJSON, err := json.Marshal(prop)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expectedJSON), string(actualJSON))
 
 			// Round-trip test: marshal and unmarshal again
 			data, err := json.Marshal(prop)
@@ -600,7 +624,10 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			var prop2 ToolProperty
 			err = json.Unmarshal(data, &prop2)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, prop2)
+
+			prop2JSON, err := json.Marshal(prop2)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expectedJSON), string(prop2JSON))
 		})
 	}
 }
@@ -616,12 +643,12 @@ func TestToolFunctionParameters_String(t *testing.T) {
 			params: ToolFunctionParameters{
 				Type:     "object",
 				Required: []string{"name"},
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"name": {
 						Type:        PropertyType{"string"},
 						Description: "The name of the person",
 					},
-				},
+				}),
 			},
 			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"The name of the person"}}}`,
 		},
@@ -638,7 +665,7 @@ func TestToolFunctionParameters_String(t *testing.T) {
 					s.Self = s
 					return s
 				}(),
-				Properties: map[string]ToolProperty{},
+				Properties: testPropsMap(map[string]ToolProperty{}),
 			},
 			expected: "",
 		},

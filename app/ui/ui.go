@@ -997,7 +997,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				for _, toolCall := range res.Message.ToolCalls {
 					// continues loop as tools were executed
 					toolsExecuted = true
-					result, content, err := registry.Execute(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
+					result, content, err := registry.Execute(ctx, toolCall.Function.Name, toolCall.Function.Arguments.ToMap())
 					if err != nil {
 						errContent := fmt.Sprintf("Error: %v", err)
 						toolErrMsg := store.NewMessage("tool", errContent, nil)
@@ -1558,13 +1558,13 @@ func convertToOllamaTool(toolSchema map[string]any) api.Tool {
 
 	tool.Function.Parameters.Type = "object"
 	tool.Function.Parameters.Required = []string{}
-	tool.Function.Parameters.Properties = make(map[string]api.ToolProperty)
+	tool.Function.Parameters.Properties = api.NewToolPropertiesMap()
 
 	if schemaProps, ok := toolSchema["schema"].(map[string]any); ok {
 		tool.Function.Parameters.Type = getStringFromMap(schemaProps, "type", "object")
 
 		if props, ok := schemaProps["properties"].(map[string]any); ok {
-			tool.Function.Parameters.Properties = make(map[string]api.ToolProperty)
+			tool.Function.Parameters.Properties = api.NewToolPropertiesMap()
 
 			for propName, propDef := range props {
 				if propMap, ok := propDef.(map[string]any); ok {
@@ -1572,7 +1572,7 @@ func convertToOllamaTool(toolSchema map[string]any) api.Tool {
 						Type:        api.PropertyType{getStringFromMap(propMap, "type", "string")},
 						Description: getStringFromMap(propMap, "description", ""),
 					}
-					tool.Function.Parameters.Properties[propName] = prop
+					tool.Function.Parameters.Properties.Set(propName, prop)
 				}
 			}
 		}

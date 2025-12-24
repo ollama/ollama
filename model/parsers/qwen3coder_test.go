@@ -11,7 +11,7 @@ import (
 func tool(name string, props map[string]api.ToolProperty) api.Tool {
 	t := api.Tool{Type: "function", Function: api.ToolFunction{Name: name}}
 	t.Function.Parameters.Type = "object"
-	t.Function.Parameters.Properties = props
+	t.Function.Parameters.Properties = testPropsMap(props)
 	return t
 }
 
@@ -369,10 +369,10 @@ celsius
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_current_temperature",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"location": "San Francisco",
 						"unit":     "celsius",
-					},
+					}),
 				},
 			},
 		},
@@ -390,10 +390,10 @@ celsius
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get current temperature",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"location with spaces": "San Francisco",
 						"unit with spaces":     "celsius",
-					},
+					}),
 				},
 			},
 		},
@@ -415,10 +415,10 @@ San Francisco
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "\"get current temperature\"",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"\"location with spaces\"": "San Francisco",
 						"\"unit with spaces\"":     "\"celsius\"",
-					},
+					}),
 				},
 			},
 		},
@@ -449,12 +449,12 @@ true
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "calculate",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"x":       3.14,
 						"y":       42,
 						"enabled": true,
 						"items":   []any{"a", "b", "c"},
-					},
+					}),
 				},
 			},
 		},
@@ -470,9 +470,9 @@ ls && echo "done"
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"command": "ls && echo \"done\"",
-					},
+					}),
 				},
 			},
 		},
@@ -487,9 +487,9 @@ ls && echo "a > b and a < b"
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"command": "ls && echo \"a > b and a < b\"",
-					},
+					}),
 				},
 			},
 		},
@@ -507,10 +507,10 @@ Hello! 你好! 🌟 مرحبا
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "获取天气",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"城市":      "北京",
 						"message": "Hello! 你好! 🌟 مرحبا",
-					},
+					}),
 				},
 			},
 		},
@@ -521,7 +521,7 @@ Hello! 你好! 🌟 مرحبا
 		if err != nil {
 			t.Errorf("step %d (%s): %v", i, step.name, err)
 		}
-		if !reflect.DeepEqual(gotToolCall, step.wantToolCall) {
+		if !toolCallEqual(gotToolCall, step.wantToolCall) {
 			t.Errorf("step %d (%s): got tool call %#v, want %#v", i, step.name, gotToolCall, step.wantToolCall)
 		}
 	}

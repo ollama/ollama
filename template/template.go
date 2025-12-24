@@ -272,8 +272,8 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	} else if !v.forceLegacy && slices.Contains(vars, "messages") {
 		return t.Template.Execute(w, map[string]any{
 			"System":     system,
-			"Messages":   messages,
-			"Tools":      v.Tools,
+			"Messages":   convertMessagesForTemplate(messages),
+			"Tools":      convertToolsForTemplate(v.Tools),
 			"Response":   "",
 			"Think":      v.Think,
 			"ThinkLevel": v.ThinkLevel,
@@ -371,6 +371,110 @@ func collate(msgs []api.Message) (string, []*api.Message) {
 	}
 
 	return strings.Join(system, "\n\n"), collated
+}
+
+// templateTool is a template-compatible representation of api.Tool
+// with Properties as a regular map for template ranging.
+type templateTool struct {
+	Type     string
+	Items    any
+	Function templateToolFunction
+}
+
+type templateToolFunction struct {
+	Name        string
+	Description string
+	Parameters  templateToolFunctionParameters
+}
+
+type templateToolFunctionParameters struct {
+	Type       string
+	Defs       any
+	Items      any
+	Required   []string
+	Properties map[string]api.ToolProperty
+}
+
+// templateToolCall is a template-compatible representation of api.ToolCall
+// with Arguments as a regular map for template ranging.
+type templateToolCall struct {
+	ID       string
+	Function templateToolCallFunction
+}
+
+type templateToolCallFunction struct {
+	Index     int
+	Name      string
+	Arguments map[string]any
+}
+
+// templateMessage is a template-compatible representation of api.Message
+// with ToolCalls converted for template use.
+type templateMessage struct {
+	Role       string
+	Content    string
+	Thinking   string
+	Images     []api.ImageData
+	ToolCalls  []templateToolCall
+	ToolName   string
+	ToolCallID string
+}
+
+// convertToolsForTemplate converts Tools to template-compatible format.
+func convertToolsForTemplate(tools api.Tools) []templateTool {
+	if tools == nil {
+		return nil
+	}
+	result := make([]templateTool, len(tools))
+	for i, tool := range tools {
+		result[i] = templateTool{
+			Type:  tool.Type,
+			Items: tool.Items,
+			Function: templateToolFunction{
+				Name:        tool.Function.Name,
+				Description: tool.Function.Description,
+				Parameters: templateToolFunctionParameters{
+					Type:       tool.Function.Parameters.Type,
+					Defs:       tool.Function.Parameters.Defs,
+					Items:      tool.Function.Parameters.Items,
+					Required:   tool.Function.Parameters.Required,
+					Properties: tool.Function.Parameters.Properties.ToMap(),
+				},
+			},
+		}
+	}
+	return result
+}
+
+// convertMessagesForTemplate converts Messages to template-compatible format.
+func convertMessagesForTemplate(messages []*api.Message) []*templateMessage {
+	if messages == nil {
+		return nil
+	}
+	result := make([]*templateMessage, len(messages))
+	for i, msg := range messages {
+		var toolCalls []templateToolCall
+		for _, tc := range msg.ToolCalls {
+			toolCalls = append(toolCalls, templateToolCall{
+				ID: tc.ID,
+				Function: templateToolCallFunction{
+					Index:     tc.Function.Index,
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments.ToMap(),
+				},
+			})
+		}
+		result[i] = &templateMessage{
+			Role:       msg.Role,
+			Content:    msg.Content,
+			Thinking:   msg.Thinking,
+			Images:     msg.Images,
+			ToolCalls:  toolCalls,
+			ToolName:   msg.ToolName,
+			ToolCallID: msg.ToolCallID,
+		}
+	}
+	return result
 }
 
 // Identifiers walks the node tree returning any identifiers it finds along the way

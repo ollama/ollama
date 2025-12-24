@@ -225,7 +225,7 @@ func (p *Nemotron3NanoParser) parseToolCall(content string) (api.ToolCall, error
 	toolCall.Function.Name = fnMatch[1]
 
 	// Extract parameters
-	toolCall.Function.Arguments = make(api.ToolCallFunctionArguments)
+	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
 	paramMatches := nemotronParameterRegex.FindAllStringSubmatch(content, -1)
 	for _, match := range paramMatches {
 		if len(match) >= 3 {
@@ -233,7 +233,7 @@ func (p *Nemotron3NanoParser) parseToolCall(content string) (api.ToolCall, error
 			paramValue := strings.TrimSpace(match[2])
 
 			// Try to parse as typed value based on tool definition
-			toolCall.Function.Arguments[paramName] = p.parseParamValue(paramName, paramValue)
+			toolCall.Function.Arguments.Set(paramName, p.parseParamValue(paramName, paramValue))
 		}
 	}
 
@@ -244,9 +244,11 @@ func (p *Nemotron3NanoParser) parseParamValue(paramName string, raw string) any 
 	// Find the matching tool to get parameter type
 	var paramType api.PropertyType
 	for _, tool := range p.tools {
-		if prop, ok := tool.Function.Parameters.Properties[paramName]; ok {
-			paramType = prop.Type
-			break
+		if tool.Function.Parameters.Properties != nil {
+			if prop, ok := tool.Function.Parameters.Properties.Get(paramName); ok {
+				paramType = prop.Type
+				break
+			}
 		}
 	}
 

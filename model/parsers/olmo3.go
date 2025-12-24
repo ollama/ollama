@@ -242,8 +242,8 @@ func parseOlmo3SingleFunctionCall(s string) (api.ToolCall, error) {
 
 // parseOlmo3Arguments parses comma-separated key=value pairs
 // Handles nested parentheses, brackets, braces, and quoted strings
-func parseOlmo3Arguments(s string) (map[string]any, error) {
-	args := make(map[string]any)
+func parseOlmo3Arguments(s string) (api.ToolCallFunctionArguments, error) {
+	args := api.NewToolCallFunctionArguments()
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return args, nil
@@ -261,7 +261,7 @@ func parseOlmo3Arguments(s string) (map[string]any, error) {
 		// Find the first = sign
 		eqIdx := strings.Index(part, "=")
 		if eqIdx == -1 {
-			return nil, fmt.Errorf("invalid argument format: %s", part)
+			return api.ToolCallFunctionArguments{}, fmt.Errorf("invalid argument format: %s", part)
 		}
 
 		key := strings.TrimSpace(part[:eqIdx])
@@ -269,10 +269,10 @@ func parseOlmo3Arguments(s string) (map[string]any, error) {
 
 		value, err := parseOlmo3Value(valueStr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse value for %s: %w", key, err)
+			return api.ToolCallFunctionArguments{}, fmt.Errorf("failed to parse value for %s: %w", key, err)
 		}
 
-		args[key] = value
+		args.Set(key, value)
 	}
 
 	return args, nil

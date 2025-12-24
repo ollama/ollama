@@ -39,9 +39,9 @@ Hello, how are you?<|im_end|>
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: map[string]any{
+								Arguments: testArgs(map[string]any{
 									"unit": "fahrenheit",
-								},
+								}),
 							},
 						},
 					},
@@ -55,7 +55,7 @@ Hello, how are you?<|im_end|>
 					Description: "Get the current weather in a given location",
 					Parameters: api.ToolFunctionParameters{
 						Required: []string{"unit"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"unit": {Type: api.PropertyType{"string"}, Enum: []any{"celsius", "fahrenheit"}, Description: "The unit of temperature"},
 							// TODO(drifkin): add multiple params back once we have predictable
 							// order via some sort of ordered map type (see
@@ -63,7 +63,7 @@ Hello, how are you?<|im_end|>
 							/*
 								"location": {Type: api.PropertyType{"string"}, Description: "The city and state, e.g. San Francisco, CA"},
 							*/
-						},
+						}),
 					},
 				}},
 			},
@@ -140,19 +140,19 @@ That sounds nice! What about New York?<|im_end|>
 				{Role: "system", Content: "You are a helpful assistant with access to tools."},
 				{Role: "user", Content: "call double(1) and triple(2)"},
 				{Role: "assistant", Content: "I'll call double(1) and triple(2) for you.", ToolCalls: []api.ToolCall{
-					{Function: api.ToolCallFunction{Name: "double", Arguments: map[string]any{"number": "1"}}},
-					{Function: api.ToolCallFunction{Name: "triple", Arguments: map[string]any{"number": "2"}}},
+					{Function: api.ToolCallFunction{Name: "double", Arguments: testArgs(map[string]any{"number": "1"})}},
+					{Function: api.ToolCallFunction{Name: "triple", Arguments: testArgs(map[string]any{"number": "2"})}},
 				}},
 				{Role: "tool", Content: "{\"number\": 2}", ToolName: "double"},
 				{Role: "tool", Content: "{\"number\": 6}", ToolName: "triple"},
 			},
 			tools: []api.Tool{
-				{Function: api.ToolFunction{Name: "double", Description: "Double a number", Parameters: api.ToolFunctionParameters{Properties: map[string]api.ToolProperty{
+				{Function: api.ToolFunction{Name: "double", Description: "Double a number", Parameters: api.ToolFunctionParameters{Properties: testPropsMap(map[string]api.ToolProperty{
 					"number": {Type: api.PropertyType{"string"}, Description: "The number to double"},
-				}}}},
-				{Function: api.ToolFunction{Name: "triple", Description: "Triple a number", Parameters: api.ToolFunctionParameters{Properties: map[string]api.ToolProperty{
+				})}}},
+				{Function: api.ToolFunction{Name: "triple", Description: "Triple a number", Parameters: api.ToolFunctionParameters{Properties: testPropsMap(map[string]api.ToolProperty{
 					"number": {Type: api.PropertyType{"string"}, Description: "The number to triple"},
-				}}}},
+				})}}},
 			},
 			expected: `<|im_start|>system
 You are a helpful assistant with access to tools.
@@ -259,9 +259,9 @@ I'll tell you something interesting about cats`,
 				{Role: "assistant", ToolCalls: []api.ToolCall{
 					{Function: api.ToolCallFunction{
 						Name: "echo",
-						Arguments: map[string]any{
+						Arguments: testArgs(map[string]any{
 							"payload": map[string]any{"foo": "bar"},
-						},
+						}),
 					}},
 				}},
 				{Role: "tool", Content: "{\"payload\": {\"foo\": \"bar\"}}", ToolName: "echo"},
