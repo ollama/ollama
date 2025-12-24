@@ -263,6 +263,31 @@
             });
         }
 
+        // Try stream with fallback
+        function tryStream(streams, index) {
+            if (index >= streams.length) {
+                handleError(new Error('所有流媒體源均無法播放'));
+                return;
+            }
+            
+            const stream = streams[index];
+            video.src = stream.url;
+            video.load();
+            
+            // Set up one-time error handler for this stream
+            const errorHandler = () => {
+                console.log(`Stream ${index + 1} failed, trying next...`);
+                video.removeEventListener('error', errorHandler);
+                tryStream(streams, index + 1);
+            };
+            
+            video.addEventListener('error', errorHandler, { once: true });
+            video.play().catch(() => {
+                video.removeEventListener('error', errorHandler);
+                tryStream(streams, index + 1);
+            });
+        }
+
         // Play channel
         function playChannel(channel, element) {
             // Remove active class from all items
@@ -284,15 +309,14 @@
                 video.load();
                 video.play().catch(handleError);
             } else if (channel.type === 'm3u') {
-                // M3U playlist - fetch and play first stream
+                // M3U playlist - fetch and try streams with fallback
                 fetch(channel.url)
                     .then(response => response.text())
                     .then(m3uContent => {
                         const streams = parseM3U(m3uContent);
                         if (streams.length > 0) {
-                            video.src = streams[0].url;
-                            video.load();
-                            video.play().catch(handleError);
+                            // Try first stream with fallback to next streams
+                            tryStream(streams, 0);
                         } else {
                             throw new Error('未找到可用的流媒體');
                         }
@@ -310,8 +334,10 @@
             lines.forEach(line => {
                 line = line.trim();
                 if (line.startsWith('#EXTINF:')) {
-                    const name = line.split(',')[1] || 'Unknown';
-                    currentStream = { name: name.trim() };
+                    // Handle malformed EXTINF entries
+                    const parts = line.split(',');
+                    const name = parts.length > 1 ? parts[1].trim() : 'Unknown Channel';
+                    currentStream = { name: name };
                 } else if (line && !line.startsWith('#') && currentStream.name) {
                     currentStream.url = line;
                     streams.push(currentStream);
@@ -371,13 +397,38 @@
             const focused = document.activeElement;
             
             if (e.key === 'ArrowDown' && focused.classList.contains('channel-item')) {
-                const next = focused.nextElementSibling;
-                if (next && next.classList.contains('channel-item')) {
+                let next = focused.nextElementSibling;
+                // Skip group titles
+                while (next && !next.classList.contains('channel-item')) {
+                    next = next.nextElementSibling;
+                }
+                // If no next item in current group, find first item in next group
+                if (!next) {
+                    const currentGroup = focused.closest('.channel-group');
+                    const nextGroup = currentGroup.nextElementSibling;
+                    if (nextGroup) {
+                        next = nextGroup.querySelector('.channel-item');
+                    }
+                }
+                if (next) {
                     next.focus();
                 }
             } else if (e.key === 'ArrowUp' && focused.classList.contains('channel-item')) {
-                const prev = focused.previousElementSibling;
-                if (prev && prev.classList.contains('channel-item')) {
+                let prev = focused.previousElementSibling;
+                // Skip group titles
+                while (prev && !prev.classList.contains('channel-item')) {
+                    prev = prev.previousElementSibling;
+                }
+                // If no prev item in current group, find last item in previous group
+                if (!prev) {
+                    const currentGroup = focused.closest('.channel-group');
+                    const prevGroup = currentGroup.previousElementSibling;
+                    if (prevGroup) {
+                        const items = prevGroup.querySelectorAll('.channel-item');
+                        prev = items[items.length - 1];
+                    }
+                }
+                if (prev) {
                     prev.focus();
                 }
             }
