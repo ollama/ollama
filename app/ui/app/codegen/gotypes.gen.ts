@@ -159,6 +159,7 @@ export class Chat {
     title: string;
     created_at: Time;
     browser_state?: BrowserStateData;
+    draft?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -167,6 +168,7 @@ export class Chat {
         this.title = source["title"];
         this.created_at = this.convertValues(source["created_at"], Time);
         this.browser_state = source["browser_state"];
+        this.draft = source["draft"];
     }
 
 	convertValues(a: any, classs: any, asMap: boolean = false): any {
