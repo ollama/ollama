@@ -1078,6 +1078,8 @@ struct common_init_result::impl {
     impl() = default;
     ~impl() = default;
 
+    // note: the order in which model, context, etc. are declared matters because their destructors will be called bottom-to-top
+
     llama_model_ptr   model;
     llama_context_ptr context;
 
