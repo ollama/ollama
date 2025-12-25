@@ -4,20 +4,18 @@ Date: Thu, 25 Dec 2025 22:19:35 +0100
 Subject: [PATCH] GPU discovery enhancements
 
 ---
- ggml/include/ggml-backend.h               |     6 +
- ggml/src/CMakeLists.txt                   |     2 +
- ggml/src/ggml-cuda/ggml-cuda.cu           |    65 +
- ggml/src/ggml-cuda/ggml-cuda.cu.orig      |  5118 +++++++
- ggml/src/ggml-cuda/vendors/hip.h          |     3 +
- ggml/src/ggml-impl.h                      |     8 +
- ggml/src/ggml-metal/ggml-metal.cpp        |     2 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp      |   169 +-
- ggml/src/ggml-vulkan/ggml-vulkan.cpp.orig | 15422 ++++++++++++++++++++
- ggml/src/mem_hip.cpp                      |   558 +
- ggml/src/mem_nvml.cpp                     |   209 +
- 11 files changed, 21545 insertions(+), 17 deletions(-)
+ ggml/include/ggml-backend.h          |    6 +
+ ggml/src/CMakeLists.txt              |    2 +
+ ggml/src/ggml-cuda/ggml-cuda.cu      |   65 +
+ ggml/src/ggml-cuda/ggml-cuda.cu.orig | 5118 ++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/vendors/hip.h     |    3 +
+ ggml/src/ggml-impl.h                 |    8 +
+ ggml/src/ggml-metal/ggml-metal.cpp   |    2 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |  169 +-
+ ggml/src/mem_hip.cpp                 |  558 +++
+ ggml/src/mem_nvml.cpp                |  209 ++
+ 10 files changed, 6123 insertions(+), 17 deletions(-)
  create mode 100644 ggml/src/ggml-cuda/ggml-cuda.cu.orig
- create mode 100644 ggml/src/ggml-vulkan/ggml-vulkan.cpp.orig
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
