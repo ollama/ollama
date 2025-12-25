@@ -425,6 +425,7 @@ func TestRunEmbeddingModel(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().String("tools", "", "")
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -517,6 +518,7 @@ func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().String("tools", "", "")
 
 	if err := cmd.Flags().Set("truncate", "true"); err != nil {
 		t.Fatalf("failed to set truncate flag: %v", err)
@@ -618,6 +620,7 @@ func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().String("tools", "", "")
 
 	// Capture stdin
 	oldStdin := os.Stdin
@@ -693,6 +696,7 @@ func TestRunEmbeddingModelNoInput(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().String("tools", "", "")
 
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
