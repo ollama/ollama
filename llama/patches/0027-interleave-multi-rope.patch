@@ -82,10 +82,10 @@ index 236838e9e..c98d269d1 100644
              } else {
                  if (sector < args.sect_0) {
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
-index 9726b722d..1c8c69422 100644
+index aacec9846..0163d8bbc 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
-@@ -148,14 +148,14 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
+@@ -155,14 +155,14 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
  
      float theta_base = 0.0;
      if (p.is_imrope != 0) {
