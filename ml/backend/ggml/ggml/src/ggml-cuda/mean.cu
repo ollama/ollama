@@ -63,6 +63,9 @@ void ggml_cuda_op_mean(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
     const int id  = ggml_cuda_get_device();
     const int nsm = ggml_cuda_info().devices[id].nsm;
+
+    // Heuristic for block size selection to optimize occupancy.
+    // See discussion in: https://github.com/ggml-org/llama.cpp/pull/15132
     if ((nrows / nsm) < 2) {
         const dim3 block_dims(512, 1, 1);
         reduce_rows_f32</*norm=*/true><<<block_nums, block_dims, 0, stream>>>(src0_d, dst_d, ncols);
