@@ -459,23 +459,22 @@ llama_context::llama_context(
 }
 
 llama_context::~llama_context() {
-    // FIXME this currently results in a use-after-free bug if the model is freed before the context
-    // if (!model.hparams.no_alloc) {
-    //     for (size_t i = 0; i < backend_ptrs.size(); ++i) {
-    //         ggml_backend_t             backend = backend_ptrs[i];
-    //         ggml_backend_buffer_type_t buft    = backend_buft[i];
+    if (!model.hparams.no_alloc) {
+        for (size_t i = 0; i < backend_ptrs.size(); ++i) {
+            ggml_backend_t             backend = backend_ptrs[i];
+            ggml_backend_buffer_type_t buft    = backend_buft[i];
 
-    //         const size_t size_exp = backend_buf_exp_size[i];
-    //         const size_t size_act = ggml_backend_sched_get_buffer_size(sched.get(), backend);
-    //         if (size_exp == size_act) {
-    //             LLAMA_LOG_DEBUG("%s: %10s compute buffer size is %8.4f MiB, matches expectation of %8.4f MiB\n",
-    //                 __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
-    //         } else {
-    //             LLAMA_LOG_WARN("%s: %10s compute buffer size of %8.4f MiB, does not match expectation of %8.4f MiB\n",
-    //                 __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
-    //         }
-    //     }
-    // }
+            const size_t size_exp = backend_buf_exp_size[i];
+            const size_t size_act = ggml_backend_sched_get_buffer_size(sched.get(), backend);
+            if (size_exp == size_act) {
+                LLAMA_LOG_DEBUG("%s: %10s compute buffer size is %8.4f MiB, matches expectation of %8.4f MiB\n",
+                    __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
+            } else {
+                LLAMA_LOG_WARN("%s: %10s compute buffer size of %8.4f MiB, does not match expectation of %8.4f MiB\n",
+                    __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
+            }
+        }
+    }
     ggml_opt_free(opt_ctx);
 }
 

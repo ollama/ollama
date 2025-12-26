@@ -49,8 +49,8 @@ void rope_norm(const uint i0, const uint i1, rope_params p) {
     uint idst = i1*ne0 + i0;
     const uint ix = rope_a_coord(i0, i01, i02, p);
 
-    // Fusion optimization: ROPE + VIEW + SET_ROWS..
-    // The rope output is viewed as a 1D tensor and offset based on a row index in data_i.
+    // Fusion optimization: ROPE + VIEW + SET_ROWS.
+    // The rope output is viewed as a 1D tensor and offset based on a row index in rope_data_i.
     if (p.set_rows_stride != 0) {
         idst = i01*ne0 + i0;
         idst += rope_data_i[i02].x * p.set_rows_stride;
@@ -91,7 +91,7 @@ void rope_neox(const uint i0, const uint i1, rope_params p) {
     uint idst = i1*ne0 + i0/2;
     const uint ix = rope_a_coord(i0/2, i01, i02, p);
 
-    // Fusion optimization: ROPE + VIEW + SET_ROWS..
+    // Fusion optimization: ROPE + VIEW + SET_ROWS.
     // The rope output is viewed as a 1D tensor and offset based on a row index in rope_data_i.
     if (p.set_rows_stride != 0) {
         idst = i01*ne0 + i0/2;
@@ -132,8 +132,15 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
     const uint i01 = i1 % ne1;
     const uint i02 = i1 / ne1;
 
-    const uint idst = i1*ne0 + i0/2;
+    uint idst = i1*ne0 + i0/2;
     const uint ix = rope_a_coord(i0/2, i01, i02, p);
+
+    // Fusion optimization: ROPE + VIEW + SET_ROWS.
+    // The rope output is viewed as a 1D tensor and offset based on a row index in rope_data_i.
+    if (p.set_rows_stride != 0) {
+        idst = i01*ne0 + i0/2;
+        idst += rope_data_i[i02].x * p.set_rows_stride;
+    }
 
     if (i0 >= p.n_dims) {
         rope_data_d[idst + i0/2 + 0] = ROPE_D_TYPE(rope_data_a[ix + i0/2 + 0]);

@@ -3220,8 +3220,11 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
         ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3, node_idx + 9 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx];
         ggml_tensor * weights = cgraph->nodes[node_idx + 9];
+        ggml_tensor * get_rows = cgraph->nodes[node_idx + 4];
+        ggml_tensor * argsort = cgraph->nodes[node_idx + 2];
+        int n_expert = cgraph->nodes[node_idx]->src[0]->ne[0];
 
-        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+        if (ggml_cuda_should_use_topk_moe(softmax, weights, get_rows, argsort, nullptr, n_expert)) {
             return true;
         }
     }
@@ -3229,7 +3232,11 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
     if (is_equal(topk_moe_ops, ops) && ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3, node_idx + 4 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx];
         ggml_tensor * weights = cgraph->nodes[node_idx + 4];
-        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+        ggml_tensor * get_rows = cgraph->nodes[node_idx + 4];
+        ggml_tensor * argsort = cgraph->nodes[node_idx + 2];
+        int n_expert = cgraph->nodes[node_idx]->src[0]->ne[0];
+
+        if (ggml_cuda_should_use_topk_moe(softmax, weights, get_rows, argsort, nullptr, n_expert)) {
             return true;
         }
     }
@@ -3238,8 +3245,11 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
         ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 1, node_idx + 5 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx + 4];
         ggml_tensor * weights = cgraph->nodes[node_idx + 5];
+        ggml_tensor * get_rows = cgraph->nodes[node_idx + 2];
+        ggml_tensor * argsort = cgraph->nodes[node_idx + 0];
+        int n_expert = cgraph->nodes[node_idx]->src[0]->ne[0];
 
-        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+        if (ggml_cuda_should_use_topk_moe(softmax, weights, get_rows, argsort, nullptr, n_expert)) {
             return true;
         }
     }

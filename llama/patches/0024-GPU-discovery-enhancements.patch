@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Daniel Hiltgen <daniel@ollama.com>
-Date: Tue, 26 Aug 2025 12:48:29 -0700
+From: inforithmics <thomas.stocker@gmail.com>
+Date: Fri, 26 Dec 2025 16:41:00 +0100
 Subject: [PATCH] GPU discovery enhancements
 
 ---
