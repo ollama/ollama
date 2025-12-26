@@ -1317,15 +1317,18 @@ func TestGenerateLogprobs(t *testing.T) {
 		expectedPrimary := llm.TokenLogprob{
 			Token:   "Hi",
 			Logprob: -0.01,
+			Bytes:   []byte("Hi"),
 		}
 		expectedAlternatives := []llm.TokenLogprob{
 			{
 				Token:   "Hello",
 				Logprob: -0.25,
+				Bytes:   []byte("Hello"),
 			},
 			{
 				Token:   "Hey",
 				Logprob: -0.5,
+				Bytes:   []byte("Hey"),
 			},
 		}
 
@@ -1492,15 +1495,18 @@ func TestChatLogprobs(t *testing.T) {
 		expectedPrimary := llm.TokenLogprob{
 			Token:   "Hi",
 			Logprob: -0.02,
+			Bytes:   []byte("Hi"),
 		}
 		expectedAlternatives := []llm.TokenLogprob{
 			{
 				Token:   "Hello",
 				Logprob: -0.3,
+				Bytes:   []byte("Hello"),
 			},
 			{
 				Token:   "Hey",
 				Logprob: -0.45,
+				Bytes:   []byte("Hey"),
 			},
 		}
 		expectedPrimaryBytes := stringToByteInts(expectedPrimary.Token)
