@@ -3,7 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
+
 	"math"
 	"os"
 	"reflect"
@@ -802,8 +802,7 @@ func (opts *Options) FromMap(m map[string]any) error {
 	for key, val := range m {
 		opt, ok := jsonOpts[key]
 		if !ok {
-			slog.Warn("invalid option provided", "option", key)
-			continue
+			return fmt.Errorf("invalid option %q", key)
 		}
 
 		field := valueOpts.FieldByName(opt.Name)
