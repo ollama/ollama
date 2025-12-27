@@ -261,7 +261,7 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 	return true
 }
 
-func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
+func LoadModelFromFile(modelPath string, extraModelPaths []string, params ModelParams) (*Model, error) {
 	cparams := C.llama_model_default_params()
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
@@ -305,7 +305,17 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
-	m := Model{c: C.llama_model_load_from_file(C.CString(modelPath), cparams)}
+	var splitPaths []*C.char
+	mp := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(mp))
+	splitPaths = append(splitPaths, mp)
+	for i := range extraModelPaths {
+		mp := C.CString(extraModelPaths[i])
+		defer C.free(unsafe.Pointer(mp))
+		splitPaths = append(splitPaths, mp)
+	}
+
+	m := Model{c: C.llama_model_load_from_splits(&splitPaths[0], C.size_t(len(splitPaths)), cparams)}
 	if m.c == nil {
 		return nil, fmt.Errorf("unable to load model: %s", modelPath)
 	}
