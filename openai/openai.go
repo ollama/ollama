@@ -54,6 +54,7 @@ type Choice struct {
 type ChunkChoice struct {
 	Index        int             `json:"index"`
 	Delta        Message         `json:"delta"`
+	Message      *Message        `json:"message,omitempty"`
 	FinishReason *string         `json:"finish_reason"`
 	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
@@ -96,24 +97,25 @@ type Reasoning struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	StreamOptions    *StreamOptions  `json:"stream_options"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
-	Stop             any             `json:"stop"`
-	Temperature      *float64        `json:"temperature"`
-	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty"`
-	TopP             *float64        `json:"top_p"`
-	ResponseFormat   *ResponseFormat `json:"response_format"`
-	Tools            []api.Tool      `json:"tools"`
-	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
-	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
-	Logprobs         *bool           `json:"logprobs"`
-	TopLogprobs      int             `json:"top_logprobs"`
-	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	Model             string          `json:"model"`
+	Messages          []Message       `json:"messages"`
+	Stream            bool            `json:"stream"`
+	StreamOptions     *StreamOptions  `json:"stream_options,omitempty"`
+	MaxTokens         *int            `json:"max_tokens"`
+	Seed              *int            `json:"seed"`
+	Stop              any             `json:"stop,omitempty"`
+	Temperature       *float64        `json:"temperature"`
+	FrequencyPenalty  *float64        `json:"frequency_penalty"`
+	PresencePenalty   *float64        `json:"presence_penalty"`
+	TopP              *float64        `json:"top_p"`
+	ResponseFormat    *ResponseFormat `json:"response_format"`
+	Tools             []api.Tool      `json:"tools,omitempty"`
+	Reasoning         *Reasoning      `json:"reasoning,omitempty"`
+	ReasoningEffort   *string         `json:"reasoning_effort,omitempty"`
+	Logprobs          *bool           `json:"logprobs,omitempty"`
+	TopLogprobs       int             `json:"top_logprobs,omitempty"`
+	ToolChoice        any             `json:"tool_choice,omitempty"`
+	DebugRenderOnly   bool            `json:"_debug_render_only,omitempty"`
 }
 
 type ChatCompletion struct {
@@ -247,6 +249,11 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 		toolCalls[i].Function.Name = tc.Function.Name
 		toolCalls[i].Index = tc.Function.Index
 
+		if raw, ok := rawArgumentsFrom(tc.Function.Arguments); ok {
+			toolCalls[i].Function.Arguments = raw
+			continue
+		}
+
 		args, err := json.Marshal(tc.Function.Arguments)
 		if err != nil {
 			slog.Error("could not marshall function arguments to json", "error", err)
@@ -256,6 +263,18 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 		toolCalls[i].Function.Arguments = string(args)
 	}
 	return toolCalls
+}
+
+func rawArgumentsFrom(args api.ToolCallFunctionArguments) (string, bool) {
+	if args == nil {
+		return "", false
+	}
+	raw, ok := args[rawArgumentsKey]
+	if !ok {
+		return "", false
+	}
+	s, ok := raw.(string)
+	return s, ok
 }
 
 // ToChatCompletion converts an api.ChatResponse to ChatCompletion
@@ -663,10 +682,17 @@ func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 	for i, tc := range toolCalls {
 		apiToolCalls[i].ID = tc.ID
 		apiToolCalls[i].Function.Name = tc.Function.Name
-		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
-		if err != nil {
-			return nil, errors.New("invalid tool call arguments")
+		argStr := strings.TrimSpace(tc.Function.Arguments)
+		if argStr == "" {
+			apiToolCalls[i].Function.Arguments = api.ToolCallFunctionArguments{}
+			continue
 		}
+		if parsed, ok := parseToolCallArguments(argStr); ok {
+			apiToolCalls[i].Function.Arguments = parsed
+			continue
+		}
+		// Preserve raw arguments when parsing fails; downstream can decide how to handle.
+		apiToolCalls[i].Function.Arguments = api.ToolCallFunctionArguments{rawArgumentsKey: argStr}
 	}
 
 	return apiToolCalls, nil

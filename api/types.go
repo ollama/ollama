@@ -529,6 +529,10 @@ type CreateRequest struct {
 
 	// RemoteHost is the URL of the upstream ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
+	// RemoteProvider identifies the upstream provider type (if any).
+	RemoteProvider string `json:"remote_provider,omitempty"`
+	// RemoteChannel identifies the configured channel for OpenAI-compatible remotes.
+	RemoteChannel string `json:"remote_channel,omitempty"`
 
 	// Files is a map of files include when creating the model.
 	Files map[string]string `json:"files,omitempty"`
@@ -591,23 +595,25 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License       string             `json:"license,omitempty"`
-	Modelfile     string             `json:"modelfile,omitempty"`
-	Parameters    string             `json:"parameters,omitempty"`
-	Template      string             `json:"template,omitempty"`
-	System        string             `json:"system,omitempty"`
-	Renderer      string             `json:"renderer,omitempty"`
-	Parser        string             `json:"parser,omitempty"`
-	Details       ModelDetails       `json:"details,omitempty"`
-	Messages      []Message          `json:"messages,omitempty"`
-	RemoteModel   string             `json:"remote_model,omitempty"`
-	RemoteHost    string             `json:"remote_host,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info,omitempty"`
-	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
-	Tensors       []Tensor           `json:"tensors,omitempty"`
-	Capabilities  []model.Capability `json:"capabilities,omitempty"`
-	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
-	Requires      string             `json:"requires,omitempty"`
+	License        string             `json:"license,omitempty"`
+	Modelfile      string             `json:"modelfile,omitempty"`
+	Parameters     string             `json:"parameters,omitempty"`
+	Template       string             `json:"template,omitempty"`
+	System         string             `json:"system,omitempty"`
+	Renderer       string             `json:"renderer,omitempty"`
+	Parser         string             `json:"parser,omitempty"`
+	Details        ModelDetails       `json:"details,omitempty"`
+	Messages       []Message          `json:"messages,omitempty"`
+	RemoteModel    string             `json:"remote_model,omitempty"`
+	RemoteHost     string             `json:"remote_host,omitempty"`
+	RemoteProvider string             `json:"remote_provider,omitempty"`
+	RemoteChannel  string             `json:"remote_channel,omitempty"`
+	ModelInfo      map[string]any     `json:"model_info,omitempty"`
+	ProjectorInfo  map[string]any     `json:"projector_info,omitempty"`
+	Tensors        []Tensor           `json:"tensors,omitempty"`
+	Capabilities   []model.Capability `json:"capabilities,omitempty"`
+	ModifiedAt     time.Time          `json:"modified_at,omitempty"`
+	Requires       string             `json:"requires,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -661,14 +667,16 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name        string       `json:"name"`
-	Model       string       `json:"model"`
-	RemoteModel string       `json:"remote_model,omitempty"`
-	RemoteHost  string       `json:"remote_host,omitempty"`
-	ModifiedAt  time.Time    `json:"modified_at"`
-	Size        int64        `json:"size"`
-	Digest      string       `json:"digest"`
-	Details     ModelDetails `json:"details,omitempty"`
+	Name           string       `json:"name"`
+	Model          string       `json:"model"`
+	RemoteModel    string       `json:"remote_model,omitempty"`
+	RemoteHost     string       `json:"remote_host,omitempty"`
+	RemoteProvider string       `json:"remote_provider,omitempty"`
+	RemoteChannel  string       `json:"remote_channel,omitempty"`
+	ModifiedAt     time.Time    `json:"modified_at"`
+	Size           int64        `json:"size"`
+	Digest         string       `json:"digest"`
+	Details        ModelDetails `json:"details,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
@@ -685,6 +693,32 @@ type ProcessModelResponse struct {
 
 type TokenResponse struct {
 	Token string `json:"token"`
+}
+
+// RemoteProviderRequest is used to create or update a remote provider channel.
+type RemoteProviderRequest struct {
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	BaseURL      string            `json:"base_url"`
+	APIKey       string            `json:"api_key,omitempty"`
+	DefaultModel string            `json:"default_model,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+}
+
+// RemoteProviderResponse is a redacted view of a remote provider channel.
+type RemoteProviderResponse struct {
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	BaseURL      string            `json:"base_url"`
+	DefaultModel string            `json:"default_model,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	APIKeyMasked string            `json:"api_key_masked,omitempty"`
+	HasAPIKey    bool              `json:"has_api_key,omitempty"`
+}
+
+// RemoteProviderListResponse is the list response for remote providers.
+type RemoteProviderListResponse struct {
+	Providers []RemoteProviderResponse `json:"providers"`
 }
 
 // GenerateResponse is the response passed into [GenerateResponseFunc].
