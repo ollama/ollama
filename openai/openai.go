@@ -108,7 +108,7 @@ type ChatCompletionRequest struct {
 	FrequencyPenalty  *float64        `json:"frequency_penalty"`
 	PresencePenalty   *float64        `json:"presence_penalty"`
 	TopP              *float64        `json:"top_p"`
-	ResponseFormat    *ResponseFormat `json:"response_format"`
+	ResponseFormat    *ResponseFormat `json:"response_format,omitempty"`
 	Tools             []api.Tool      `json:"tools,omitempty"`
 	Reasoning         *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort   *string         `json:"reasoning_effort,omitempty"`
