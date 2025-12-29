@@ -62,6 +62,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
 	config.Requires = r.Requires
+	config.Skills = r.Skills
+	config.AgentType = r.AgentType
 
 	for v := range r.Files {
 		if !fs.ValidPath(v) {
@@ -543,6 +545,12 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		return err
 	}
 
+	// Handle skill layers for agents
+	layers, config.Skills, err = setSkillLayers(layers, config.Skills, fn)
+	if err != nil {
+		return err
+	}
+
 	configLayer, err := createConfigLayer(layers, *config)
 	if err != nil {
 		return err
@@ -791,6 +799,99 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 	}
 	layers = append(layers, layer)
 	return layers, nil
+}
+
+// setSkillLayers creates skill layers for local skill paths and updates the skill refs.
+// Local paths are converted to bundled skill layers with digests.
+// Registry references are kept as-is for later resolution during pull.
+func setSkillLayers(layers []Layer, skills []model.SkillRef, fn func(resp api.ProgressResponse)) ([]Layer, []model.SkillRef, error) {
+	if len(skills) == 0 {
+		return layers, skills, nil
+	}
+
+	// Remove any existing skill layers
+	layers = removeLayer(layers, MediaTypeSkill)
+
+	var updatedSkills []model.SkillRef
+
+	for _, skill := range skills {
+		// Check if this is a local path
+		if IsLocalSkillPath(skill.Name) {
+			// Expand home directory if needed
+			skillPath := skill.Name
+			if strings.HasPrefix(skillPath, "~") {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return nil, nil, fmt.Errorf("expanding home directory: %w", err)
+				}
+				skillPath = filepath.Join(home, skillPath[1:])
+			}
+
+			// Make absolute
+			absPath, err := filepath.Abs(skillPath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("resolving skill path %q: %w", skill.Name, err)
+			}
+
+			// Check if this is a direct skill directory or a parent containing skills
+			skillMdPath := filepath.Join(absPath, "SKILL.md")
+			if _, err := os.Stat(skillMdPath); err == nil {
+				// Direct skill directory
+				fn(api.ProgressResponse{Status: fmt.Sprintf("packaging skill: %s", filepath.Base(absPath))})
+
+				layer, err := CreateSkillLayer(absPath)
+				if err != nil {
+					return nil, nil, fmt.Errorf("creating skill layer for %q: %w", skill.Name, err)
+				}
+
+				layers = append(layers, layer)
+				updatedSkills = append(updatedSkills, model.SkillRef{
+					Name:   filepath.Base(absPath),
+					Digest: layer.Digest,
+				})
+			} else {
+				// Parent directory - walk to find skill subdirectories
+				err := filepath.WalkDir(absPath, func(path string, entry fs.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					if entry.IsDir() {
+						return nil
+					}
+					if entry.Name() != "SKILL.md" {
+						return nil
+					}
+
+					skillDir := filepath.Dir(path)
+					skillName := filepath.Base(skillDir)
+					fn(api.ProgressResponse{Status: fmt.Sprintf("packaging skill: %s", skillName)})
+
+					layer, err := CreateSkillLayer(skillDir)
+					if err != nil {
+						return fmt.Errorf("creating skill layer for %q: %w", skillDir, err)
+					}
+
+					layers = append(layers, layer)
+					updatedSkills = append(updatedSkills, model.SkillRef{
+						Name:   skillName,
+						Digest: layer.Digest,
+					})
+					return nil
+				})
+				if err != nil {
+					return nil, nil, fmt.Errorf("walking skill directory %q: %w", skill.Name, err)
+				}
+			}
+		} else if skill.Digest != "" {
+			// Already has a digest (from a pulled agent), keep as-is
+			updatedSkills = append(updatedSkills, skill)
+		} else {
+			// Registry reference - keep as-is for later resolution
+			updatedSkills = append(updatedSkills, skill)
+		}
+	}
+
+	return layers, updatedSkills, nil
 }
 
 func createConfigLayer(layers []Layer, config model.ConfigV2) (*Layer, error) {

@@ -657,6 +657,16 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 	}
 
+	// Extract skill layers to the skills cache
+	for _, layer := range manifest.Layers {
+		if layer.MediaType == MediaTypeSkill {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("extracting skill %s", layer.Digest)})
+			if _, err := ExtractSkillBlob(layer.Digest); err != nil {
+				return fmt.Errorf("extracting skill layer %s: %w", layer.Digest, err)
+			}
+		}
+	}
+
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
 	manifestJSON, err := json.Marshal(manifest)
