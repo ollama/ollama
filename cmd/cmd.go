@@ -217,7 +217,7 @@ func RemoteListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	providers, err := client.ListRemoteProviders(context.Background())
+	providers, err := client.ListRemoteProviders(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func RemoteShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	providers, err := client.ListRemoteProviders(context.Background())
+	providers, err := client.ListRemoteProviders(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func RemoteAddHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := client.UpsertRemoteProvider(context.Background(), req)
+	resp, err := client.UpsertRemoteProvider(cmd.Context(), req)
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func RemoteRemoveHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := client.DeleteRemoteProvider(context.Background(), id); err != nil {
+	if err := client.DeleteRemoteProvider(cmd.Context(), id); err != nil {
 		return err
 	}
 
@@ -356,7 +356,7 @@ func RemoteModelListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	lr, err := client.List(context.Background())
+	lr, err := client.List(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -400,7 +400,7 @@ func RemoteModelShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := client.Show(context.Background(), &api.ShowRequest{Model: name})
+	resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
 	if err != nil {
 		return err
 	}
@@ -484,7 +484,7 @@ func RemoteModelRemoveHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := client.Delete(context.Background(), &api.DeleteRequest{Model: name}); err != nil {
+	if err := client.Delete(cmd.Context(), &api.DeleteRequest{Model: name}); err != nil {
 		return err
 	}
 
