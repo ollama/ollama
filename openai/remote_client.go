@@ -24,10 +24,18 @@ type RemoteClient struct {
 }
 
 func NewRemoteClient(base *url.URL, apiKey string, headers map[string]string) *RemoteClient {
+	var headersCopy map[string]string
+	if headers != nil {
+		headersCopy = make(map[string]string, len(headers))
+		for k, v := range headers {
+			headersCopy[k] = v
+		}
+	}
+
 	return &RemoteClient{
 		base:    base,
 		apiKey:  apiKey,
-		headers: headers,
+		headers: headersCopy,
 		http:    http.DefaultClient,
 	}
 }
