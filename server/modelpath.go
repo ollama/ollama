@@ -18,6 +18,7 @@ type ModelPath struct {
 	ProtocolScheme string
 	Registry       string
 	Namespace      string
+	Kind           string // Optional: "skill", "agent", or empty for models
 	Repository     string
 	Tag            string
 }
@@ -42,6 +43,7 @@ func ParseModelPath(name string) ModelPath {
 		ProtocolScheme: DefaultProtocolScheme,
 		Registry:       DefaultRegistry,
 		Namespace:      DefaultNamespace,
+		Kind:           "",
 		Repository:     "",
 		Tag:            DefaultTag,
 	}
@@ -55,13 +57,41 @@ func ParseModelPath(name string) ModelPath {
 	name = strings.ReplaceAll(name, string(os.PathSeparator), "/")
 	parts := strings.Split(name, "/")
 	switch len(parts) {
-	case 3:
+	case 4:
+		// host/namespace/kind/model or host/namespace/model:tag with kind
 		mp.Registry = parts[0]
 		mp.Namespace = parts[1]
-		mp.Repository = parts[2]
+		if model.ValidKinds[parts[2]] {
+			mp.Kind = parts[2]
+			mp.Repository = parts[3]
+		} else {
+			// Not a valid kind, treat as old format with extra part
+			mp.Repository = parts[3]
+		}
+	case 3:
+		// Could be: host/namespace/model OR namespace/kind/model
+		if model.ValidKinds[parts[1]] {
+			// namespace/kind/model
+			mp.Namespace = parts[0]
+			mp.Kind = parts[1]
+			mp.Repository = parts[2]
+		} else {
+			// host/namespace/model
+			mp.Registry = parts[0]
+			mp.Namespace = parts[1]
+			mp.Repository = parts[2]
+		}
 	case 2:
-		mp.Namespace = parts[0]
-		mp.Repository = parts[1]
+		// Could be: namespace/model OR kind/model
+		if model.ValidKinds[parts[0]] {
+			// kind/model (library skill)
+			mp.Kind = parts[0]
+			mp.Repository = parts[1]
+		} else {
+			// namespace/model
+			mp.Namespace = parts[0]
+			mp.Repository = parts[1]
+		}
 	case 1:
 		mp.Repository = parts[0]
 	}
@@ -75,19 +105,34 @@ func ParseModelPath(name string) ModelPath {
 }
 
 func (mp ModelPath) GetNamespaceRepository() string {
+	if mp.Kind != "" {
+		return fmt.Sprintf("%s/%s/%s", mp.Namespace, mp.Kind, mp.Repository)
+	}
 	return fmt.Sprintf("%s/%s", mp.Namespace, mp.Repository)
 }
 
 func (mp ModelPath) GetFullTagname() string {
+	if mp.Kind != "" {
+		return fmt.Sprintf("%s/%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Kind, mp.Repository, mp.Tag)
+	}
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
 func (mp ModelPath) GetShortTagname() string {
 	if mp.Registry == DefaultRegistry {
 		if mp.Namespace == DefaultNamespace {
+			if mp.Kind != "" {
+				return fmt.Sprintf("%s/%s:%s", mp.Kind, mp.Repository, mp.Tag)
+			}
 			return fmt.Sprintf("%s:%s", mp.Repository, mp.Tag)
 		}
+		if mp.Kind != "" {
+			return fmt.Sprintf("%s/%s/%s:%s", mp.Namespace, mp.Kind, mp.Repository, mp.Tag)
+		}
 		return fmt.Sprintf("%s/%s:%s", mp.Namespace, mp.Repository, mp.Tag)
+	}
+	if mp.Kind != "" {
+		return fmt.Sprintf("%s/%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Kind, mp.Repository, mp.Tag)
 	}
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
@@ -97,6 +142,7 @@ func (mp ModelPath) GetManifestPath() (string, error) {
 	name := model.Name{
 		Host:      mp.Registry,
 		Namespace: mp.Namespace,
+		Kind:      mp.Kind,
 		Model:     mp.Repository,
 		Tag:       mp.Tag,
 	}
