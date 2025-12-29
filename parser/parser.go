@@ -58,6 +58,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 
 	var messages []api.Message
 	var licenses []string
+	var skills []api.SkillRef
 	params := make(map[string]any)
 
 	for _, c := range f.Commands {
@@ -118,6 +119,10 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 		case "message":
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
+		case "skill":
+			skills = append(skills, api.SkillRef{Name: c.Args})
+		case "agent_type":
+			req.AgentType = c.Args
 		default:
 			if slices.Contains(deprecatedParameters, c.Name) {
 				fmt.Printf("warning: parameter %s is deprecated\n", c.Name)
@@ -149,6 +154,9 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	}
 	if len(licenses) > 0 {
 		req.License = licenses
+	}
+	if len(skills) > 0 {
+		req.Skills = skills
 	}
 
 	return req, nil
@@ -333,7 +341,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter", "renderer", "parser", "requires":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "skill", "agent_type":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -359,7 +367,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", \"requires\", \"skill\", or \"agent_type\"")
 )
 
 type ParserError struct {
@@ -518,7 +526,7 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 		}
 	case stateName:
 		switch {
-		case isAlpha(r):
+		case isAlpha(r), r == '_':
 			return stateName, r, nil
 		case isSpace(r):
 			return stateValue, 0, nil
@@ -619,7 +627,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires":
+	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires", "skill", "agent_type":
 		return true
 	default:
 		return false
