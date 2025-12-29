@@ -495,6 +495,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	opts.ParentModel = info.Details.ParentModel
 
+	// Check if this is an agent
+	isAgent := info.AgentType != "" || len(info.Skills) > 0
+	if isAgent {
+		opts.IsAgent = true
+		opts.AgentType = info.AgentType
+		opts.Skills = info.Skills
+	}
+
 	// Check if this is an embedding model
 	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
 
@@ -554,6 +562,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 		return generateInteractive(cmd, opts)
 	}
+
+	// For agents, use chat API even in non-interactive mode to support tools
+	if opts.IsAgent {
+		opts.Messages = append(opts.Messages, api.Message{Role: "user", Content: opts.Prompt})
+		_, err := chat(cmd, opts)
+		return err
+	}
+
 	return generate(cmd, opts)
 }
 
@@ -1198,6 +1214,9 @@ type runOptions struct {
 	Think        *api.ThinkValue
 	HideThinking bool
 	ShowConnect  bool
+	IsAgent      bool
+	AgentType    string
+	Skills       []api.SkillRef
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1227,6 +1246,12 @@ func (r runOptions) Copy() runOptions {
 		think = &cThink
 	}
 
+	var skills []api.SkillRef
+	if r.Skills != nil {
+		skills = make([]api.SkillRef, len(r.Skills))
+		copy(skills, r.Skills)
+	}
+
 	return runOptions{
 		Model:        r.Model,
 		ParentModel:  r.ParentModel,
@@ -1242,6 +1267,9 @@ func (r runOptions) Copy() runOptions {
 		Think:        think,
 		HideThinking: r.HideThinking,
 		ShowConnect:  r.ShowConnect,
+		IsAgent:      r.IsAgent,
+		AgentType:    r.AgentType,
+		Skills:       skills,
 	}
 }
 
@@ -1325,6 +1353,22 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil, err
 	}
 
+	// Load skills for agents
+	var skillsCatalog *skillCatalog
+	if opts.IsAgent && len(opts.Skills) > 0 {
+		skillsCatalog, err = loadSkillsFromRefs(opts.Skills)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load skills: %w", err)
+		}
+		if skillsCatalog != nil && len(skillsCatalog.Skills) > 0 {
+			var skillNames []string
+			for _, s := range skillsCatalog.Skills {
+				skillNames = append(skillNames, s.Name)
+			}
+			fmt.Fprintf(os.Stderr, "Loaded skills: %s\n", strings.Join(skillNames, ", "))
+		}
+	}
+
 	p := progress.NewProgress(os.Stderr)
 	defer p.StopAndClear()
 
@@ -1348,6 +1392,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	var fullResponse strings.Builder
 	var thinkTagOpened bool = false
 	var thinkTagClosed bool = false
+	var pendingToolCalls []api.ToolCall
 
 	role := "assistant"
 
@@ -1388,7 +1433,13 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		if response.Message.ToolCalls != nil {
 			toolCalls := response.Message.ToolCalls
 			if len(toolCalls) > 0 {
-				fmt.Print(renderToolCalls(toolCalls, false))
+				if skillsCatalog != nil {
+					// Store tool calls for execution after response is complete
+					pendingToolCalls = append(pendingToolCalls, toolCalls...)
+				} else {
+					// No skills catalog, just display tool calls
+					fmt.Print(renderToolCalls(toolCalls, false))
+				}
 			}
 		}
 
@@ -1401,12 +1452,35 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		opts.Format = `"` + opts.Format + `"`
 	}
 
+	// Prepare messages with agent-specific system prompt
+	messages := opts.Messages
+	if skillsCatalog != nil {
+		// Add skills system prompt as the first system message
+		skillsPrompt := skillsCatalog.SystemPrompt()
+		if skillsPrompt != "" {
+			// Insert skills prompt at the beginning, or append to existing system message
+			if len(messages) > 0 && messages[0].Role == "system" {
+				// Append to existing system message
+				messages[0].Content = messages[0].Content + "\n\n" + skillsPrompt
+			} else {
+				// Insert new system message at the beginning
+				systemMsg := api.Message{Role: "system", Content: skillsPrompt}
+				messages = append([]api.Message{systemMsg}, messages...)
+			}
+		}
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
-		Messages: opts.Messages,
+		Messages: messages,
 		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
 		Think:    opts.Think,
+	}
+
+	// Add tools for agents
+	if skillsCatalog != nil {
+		req.Tools = skillsCatalog.Tools()
 	}
 
 	if opts.KeepAlive != nil {
@@ -1426,6 +1500,45 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 			return nil, nil
 		}
 		return nil, err
+	}
+
+	// Execute tool calls for agents
+	if len(pendingToolCalls) > 0 && skillsCatalog != nil {
+		fmt.Fprintf(os.Stderr, "\n")
+
+		// Execute each tool call and collect results
+		for _, call := range pendingToolCalls {
+			// Show what's being executed
+			switch call.Function.Name {
+			case "run_skill_script":
+				skill, _ := call.Function.Arguments["skill"].(string)
+				command, _ := call.Function.Arguments["command"].(string)
+				fmt.Fprintf(os.Stderr, "Running script in %s: %s\n", skill, command)
+			case "read_skill_file":
+				skill, _ := call.Function.Arguments["skill"].(string)
+				path, _ := call.Function.Arguments["path"].(string)
+				fmt.Fprintf(os.Stderr, "Reading file from %s: %s\n", skill, path)
+			default:
+				fmt.Fprintf(os.Stderr, "Executing: %s\n", call.Function.Name)
+			}
+
+			result, handled, err := skillsCatalog.RunToolCall(call)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				continue
+			}
+			if !handled {
+				fmt.Fprintf(os.Stderr, "Warning: Unknown tool %s\n", call.Function.Name)
+				continue
+			}
+
+			// Display tool output
+			if result.Content != "" {
+				fmt.Fprintf(os.Stderr, "Output:\n%s\n", result.Content)
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "\n")
 	}
 
 	if len(opts.Messages) > 0 {
@@ -1918,6 +2031,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		NewSkillCommand(),
 	)
 
 	return rootCmd

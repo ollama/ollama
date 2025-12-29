@@ -34,6 +34,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /skills         Show available skills")
+		fmt.Fprintln(os.Stderr, "  /skill          Add or remove skills dynamically")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
@@ -444,6 +446,177 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usageShow()
 			}
+		case strings.HasPrefix(line, "/skill "):
+			args := strings.Fields(line)
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "Usage:")
+				fmt.Fprintln(os.Stderr, "  /skill add <path>      Add a skill from local path")
+				fmt.Fprintln(os.Stderr, "  /skill remove <name>   Remove a skill by name")
+				fmt.Fprintln(os.Stderr, "  /skill list            List current skills")
+				continue
+			}
+
+			switch args[1] {
+			case "add":
+				if len(args) < 3 {
+					fmt.Println("Usage: /skill add <path>")
+					continue
+				}
+				skillPath := args[2]
+
+				// Expand ~ to home directory
+				if strings.HasPrefix(skillPath, "~") {
+					home, err := os.UserHomeDir()
+					if err != nil {
+						fmt.Printf("Error expanding path: %v\n", err)
+						continue
+					}
+					skillPath = filepath.Join(home, skillPath[1:])
+				}
+
+				// Make absolute
+				absPath, err := filepath.Abs(skillPath)
+				if err != nil {
+					fmt.Printf("Error resolving path: %v\n", err)
+					continue
+				}
+
+				// Verify SKILL.md exists
+				skillMdPath := filepath.Join(absPath, "SKILL.md")
+				if _, err := os.Stat(skillMdPath); err != nil {
+					fmt.Printf("Error: %s does not contain SKILL.md\n", skillPath)
+					continue
+				}
+
+				// Extract skill name from SKILL.md
+				content, err := os.ReadFile(skillMdPath)
+				if err != nil {
+					fmt.Printf("Error reading SKILL.md: %v\n", err)
+					continue
+				}
+				skillName, _ := extractSkillMetadata(string(content))
+				if skillName == "" {
+					skillName = filepath.Base(absPath)
+				}
+
+				// Check if already added
+				for _, s := range opts.Skills {
+					if s.Name == skillName {
+						fmt.Printf("Skill '%s' is already loaded\n", skillName)
+						continue
+					}
+				}
+
+				// Add to skills (using path as Name, no digest for local skills)
+				opts.Skills = append(opts.Skills, api.SkillRef{Name: absPath})
+				opts.IsAgent = true // Enable agent mode if not already
+				fmt.Printf("Added skill '%s' from %s\n", skillName, skillPath)
+
+			case "remove", "rm":
+				if len(args) < 3 {
+					fmt.Println("Usage: /skill remove <name>")
+					continue
+				}
+				skillName := args[2]
+
+				found := false
+				newSkills := make([]api.SkillRef, 0, len(opts.Skills))
+				for _, s := range opts.Skills {
+					// Match by name or by path basename
+					name := s.Name
+					if strings.Contains(name, string(os.PathSeparator)) {
+						name = filepath.Base(name)
+					}
+					if name == skillName || s.Name == skillName {
+						found = true
+						fmt.Printf("Removed skill '%s'\n", skillName)
+					} else {
+						newSkills = append(newSkills, s)
+					}
+				}
+				if !found {
+					fmt.Printf("Skill '%s' not found\n", skillName)
+				} else {
+					opts.Skills = newSkills
+				}
+
+			case "list", "ls":
+				if len(opts.Skills) == 0 {
+					fmt.Println("No skills loaded in this session.")
+				} else {
+					fmt.Println("Skills loaded in this session:")
+					for _, skill := range opts.Skills {
+						if skill.Digest != "" {
+							fmt.Printf("  %s (%s)\n", skill.Name, skill.Digest[:19])
+						} else {
+							// For local paths, show basename
+							name := skill.Name
+							if strings.Contains(name, string(os.PathSeparator)) {
+								name = filepath.Base(name) + " (local: " + skill.Name + ")"
+							}
+							fmt.Printf("  %s\n", name)
+						}
+					}
+				}
+				fmt.Println()
+
+			default:
+				fmt.Printf("Unknown skill command '%s'. Use /skill add, /skill remove, or /skill list\n", args[1])
+			}
+			continue
+
+		case strings.HasPrefix(line, "/skills"):
+			// Show skills from model (bundled) + session skills
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				return err
+			}
+			req := &api.ShowRequest{
+				Name: opts.Model,
+			}
+			resp, err := client.Show(cmd.Context(), req)
+			if err != nil {
+				fmt.Println("error: couldn't get model info")
+				return err
+			}
+
+			// Combine model skills with session skills
+			allSkills := make([]api.SkillRef, 0)
+			allSkills = append(allSkills, resp.Skills...)
+
+			// Add session skills that aren't already in model skills
+			for _, sessionSkill := range opts.Skills {
+				found := false
+				for _, modelSkill := range resp.Skills {
+					if modelSkill.Name == sessionSkill.Name || modelSkill.Digest == sessionSkill.Digest {
+						found = true
+						break
+					}
+				}
+				if !found {
+					allSkills = append(allSkills, sessionSkill)
+				}
+			}
+
+			if len(allSkills) == 0 {
+				fmt.Println("No skills available.")
+			} else {
+				fmt.Println("Available Skills:")
+				for _, skill := range allSkills {
+					if skill.Digest != "" {
+						fmt.Printf("  %s (%s)\n", skill.Name, skill.Digest[:19])
+					} else {
+						name := skill.Name
+						if strings.Contains(name, string(os.PathSeparator)) {
+							name = filepath.Base(name) + " (session)"
+						}
+						fmt.Printf("  %s\n", name)
+					}
+				}
+			}
+			fmt.Println()
+			continue
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
@@ -452,6 +625,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					usageSet()
 				case "show", "/show":
 					usageShow()
+				case "skill", "/skill":
+					fmt.Fprintln(os.Stderr, "Available Commands:")
+					fmt.Fprintln(os.Stderr, "  /skill add <path>      Add a skill from local path")
+					fmt.Fprintln(os.Stderr, "  /skill remove <name>   Remove a skill by name")
+					fmt.Fprintln(os.Stderr, "  /skill list            List current session skills")
+					fmt.Fprintln(os.Stderr, "")
 				case "shortcut", "shortcuts":
 					usageShortcuts()
 				}
