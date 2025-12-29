@@ -19,6 +19,9 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+// SkillRef is an alias for model.SkillRef representing a skill reference.
+type SkillRef = model.SkillRef
+
 // StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int
@@ -690,6 +693,12 @@ type CreateRequest struct {
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
 
+	// Skills is a list of skill references for the agent (local paths or registry refs)
+	Skills []SkillRef `json:"skills,omitempty"`
+
+	// AgentType defines the type of agent (e.g., "conversational", "task-based")
+	AgentType string `json:"agent_type,omitempty"`
+
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
 
@@ -741,6 +750,8 @@ type ShowResponse struct {
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 	Requires      string             `json:"requires,omitempty"`
+	Skills        []SkillRef         `json:"skills,omitempty"`
+	AgentType     string             `json:"agent_type,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].

@@ -1,5 +1,13 @@
 package model
 
+// SkillRef represents a reference to a skill, either by local path or by registry digest.
+type SkillRef struct {
+	// Name is the local path (for development) or registry name (e.g., "skill/calculator:1.0.0")
+	Name string `json:"name,omitempty"`
+	// Digest is the content-addressable digest of the skill blob (e.g., "sha256:abc123...")
+	Digest string `json:"digest,omitempty"`
+}
+
 // ConfigV2 represents the configuration metadata for a model.
 type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
@@ -19,6 +27,10 @@ type ConfigV2 struct {
 	ContextLen   int      `json:"context_length,omitempty"`
 	EmbedLen     int      `json:"embedding_length,omitempty"`
 	BaseName     string   `json:"base_name,omitempty"`
+
+	// agent-specific fields
+	Skills    []SkillRef `json:"skills,omitempty"`
+	AgentType string     `json:"agent_type,omitempty"`
 
 	// required by spec
 	Architecture string `json:"architecture"`

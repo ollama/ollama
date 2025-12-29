@@ -148,6 +148,16 @@ func Remotes() []string {
 	return r
 }
 
+// Skills returns the list of skill directories. Skills directories can be configured via the OLLAMA_SKILLS environment variable.
+// Returns empty slice if not configured.
+func Skills() []string {
+	raw := strings.TrimSpace(Var("OLLAMA_SKILLS"))
+	if raw == "" {
+		return []string{}
+	}
+	return strings.Split(raw, ",")
+}
+
 func BoolWithDefault(k string) func(defaultValue bool) bool {
 	return func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
@@ -316,6 +326,9 @@ func AsMap() map[string]EnvVar {
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Enable experimental Vulkan support"}
 	}
+
+	// Skills configuration would go here when added
+	ret["OLLAMA_SKILLS"] = EnvVar{"OLLAMA_SKILLS", Skills(), "Comma-separated list of skill directories"}
 
 	return ret
 }
