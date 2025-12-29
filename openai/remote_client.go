@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 )
@@ -21,6 +23,29 @@ type RemoteClient struct {
 	apiKey  string
 	headers map[string]string
 	http    *http.Client
+}
+
+const (
+	remoteClientDialTimeout           = 10 * time.Second
+	remoteClientTLSHandshakeTimeout   = 10 * time.Second
+	remoteClientResponseHeaderTimeout = 60 * time.Second
+)
+
+func newRemoteHTTPClient() *http.Client {
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// Fallback: should never happen, but keep behavior safe.
+		return http.DefaultClient
+	}
+
+	clone := tr.Clone()
+	clone.DialContext = (&net.Dialer{Timeout: remoteClientDialTimeout}).DialContext
+	clone.TLSHandshakeTimeout = remoteClientTLSHandshakeTimeout
+	clone.ResponseHeaderTimeout = remoteClientResponseHeaderTimeout
+
+	// Do NOT set http.Client.Timeout here; overall request lifetime is controlled
+	// by the caller via context (LLM responses/streams can be long).
+	return &http.Client{Transport: clone}
 }
 
 func NewRemoteClient(base *url.URL, apiKey string, headers map[string]string) *RemoteClient {
@@ -36,7 +61,7 @@ func NewRemoteClient(base *url.URL, apiKey string, headers map[string]string) *R
 		base:    base,
 		apiKey:  apiKey,
 		headers: headersCopy,
-		http:    http.DefaultClient,
+		http:    newRemoteHTTPClient(),
 	}
 }
 

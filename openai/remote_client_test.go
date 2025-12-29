@@ -1,8 +1,10 @@
 package openai
 
 import (
+	"net/http"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestNewRemoteClient_DefensiveCopyHeaders(t *testing.T) {
@@ -35,5 +37,37 @@ func TestNewRemoteClient_NilHeaders(t *testing.T) {
 	c := NewRemoteClient(base, "sk-test", nil)
 	if c.headers != nil {
 		t.Fatalf("expected nil headers to remain nil, got %#v", c.headers)
+	}
+}
+
+func TestNewRemoteClient_UsesPhaseTimeoutTransport(t *testing.T) {
+	base, err := url.Parse("https://example.com/v1")
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+
+	c := NewRemoteClient(base, "sk-test", nil)
+	if c.http == nil {
+		t.Fatalf("expected http client to be set")
+	}
+	if c.http == http.DefaultClient {
+		t.Fatalf("expected NewRemoteClient to not use http.DefaultClient")
+	}
+	if c.http.Timeout != 0 {
+		t.Fatalf("expected http.Client.Timeout to be 0 (overall lifetime controlled by context), got %v", c.http.Timeout)
+	}
+
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected Transport to be *http.Transport, got %T", c.http.Transport)
+	}
+	if tr.ResponseHeaderTimeout != 60*time.Second {
+		t.Fatalf("expected ResponseHeaderTimeout 60s, got %v", tr.ResponseHeaderTimeout)
+	}
+	if tr.TLSHandshakeTimeout != 10*time.Second {
+		t.Fatalf("expected TLSHandshakeTimeout 10s, got %v", tr.TLSHandshakeTimeout)
+	}
+	if tr.DialContext == nil {
+		t.Fatalf("expected DialContext to be set")
 	}
 }
