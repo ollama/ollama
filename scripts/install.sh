@@ -75,11 +75,17 @@ if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
     $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
 fi
+
+PROGRESS_BAR_OPTION=""
+if [ "${USE_PROGRESS_BAR:-1}" -eq 1 ]; then
+    PROGRESS_BAR_OPTION="--progress-bar"
+fi
+
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
 status "Downloading Linux ${ARCH} bundle"
-curl --fail --show-error --location --progress-bar \
+curl --fail --show-error --location $PROGRESS_BAR_OPTION \
     "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
     $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
 
@@ -92,12 +98,12 @@ fi
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
         status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
+        curl --fail --show-error --location $PROGRESS_BAR_OPTION \
             "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
             $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
         status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
+        curl --fail --show-error --location $PROGRESS_BAR_OPTION \
             "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
             $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
     else
@@ -223,7 +229,7 @@ fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     status "Downloading Linux ROCm ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
+    curl --fail --show-error --location $PROGRESS_BAR_OPTION \
         "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
         $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
 
