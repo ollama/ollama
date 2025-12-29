@@ -1,8 +1,12 @@
 package openai
 
 import (
+	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,4 +74,53 @@ func TestNewRemoteClient_UsesPhaseTimeoutTransport(t *testing.T) {
 	if tr.DialContext == nil {
 		t.Fatalf("expected DialContext to be set")
 	}
+}
+
+type errReadCloser struct{}
+
+func (errReadCloser) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (errReadCloser) Close() error             { return nil }
+
+func TestStreamChatCompletion_ReadAllErrorIsReturned(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer ts.Close()
+
+	base, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+
+	c := NewRemoteClient(base, "sk-test", nil)
+	// Swap transport to inject a response body that errors on Read.
+	c.http.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       errReadCloser{},
+			Header:     make(http.Header),
+			Request:    &http.Request{Method: http.MethodPost},
+		}, nil
+	})
+
+	err = c.StreamChatCompletion(context.Background(), ChatCompletionRequest{}, func(ChatCompletionChunk) error { return nil })
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, []string{"upstream error (400)", "read response body"}) {
+		t.Fatalf("expected error to mention status and read failure, got %q", got)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func containsAll(s string, subs []string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
 }

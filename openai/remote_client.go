@@ -98,7 +98,10 @@ func (c *RemoteClient) StreamChatCompletion(ctx context.Context, req ChatComplet
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("upstream error (%d): read response body: %w", resp.StatusCode, err)
+		}
 		return parseOpenAIError(resp.StatusCode, body)
 	}
 
