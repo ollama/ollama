@@ -55,12 +55,14 @@ ollama run gemma3
 
 ### 推薦模型
 
+> **注意**：沒有標籤的模型名稱（如 `gemma3`）會自動使用默認版本（通常是最平衡的版本）。
+
 | 模型名稱 | 參數量 | 大小 | 下載命令 | 適用場景 |
 |---------|--------|------|----------|---------|
 | Gemma 3 | 1B | 815MB | `ollama run gemma3:1b` | 輕量級對話 |
-| Gemma 3 | 4B | 3.3GB | `ollama run gemma3` | 通用對話 |
+| Gemma 3 | 4B | 3.3GB | `ollama run gemma3` | 通用對話（默認） |
 | Llama 3.2 | 1B | 1.3GB | `ollama run llama3.2:1b` | 快速響應 |
-| Llama 3.2 | 3B | 2.0GB | `ollama run llama3.2` | 平衡性能 |
+| Llama 3.2 | 3B | 2.0GB | `ollama run llama3.2` | 平衡性能（默認） |
 | QwQ | 32B | 20GB | `ollama run qwq` | 複雜推理 |
 | DeepSeek-R1 | 7B | 4.7GB | `ollama run deepseek-r1` | 代碼生成 |
 | CodeLlama | 7B | 3.8GB | `ollama run codellama` | 編程助手 |

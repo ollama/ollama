@@ -535,7 +535,7 @@ ollama pull gemma3
 
 1. **查看官方文檔**
    - [GitHub 倉庫](https://github.com/ollama/ollama)
-   - [故障排除文檔](../troubleshooting.md)
+   - [英文故障排除文檔](../troubleshooting.md)
 
 2. **搜索已知問題**
    - [GitHub Issues](https://github.com/ollama/ollama/issues)

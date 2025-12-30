@@ -386,7 +386,7 @@ rm -rf test-ollama-js
 - [完整安裝指南](./install.md)
 - [快速入門指南](./quickstart.md)
 - [API 文檔](../api.md)
-- [故障排除指南](../troubleshooting.md)
+- [故障排除指南](./troubleshooting.md)
 
 ---
 
