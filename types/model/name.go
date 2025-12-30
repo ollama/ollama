@@ -137,6 +137,7 @@ func ParseName(s string) Name {
 var ValidKinds = map[string]bool{
 	"skill": true,
 	"agent": true,
+	"mcp":   true,
 }
 
 // ParseNameBare parses s as a name string and returns a Name. No merge with

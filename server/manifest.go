@@ -129,10 +129,29 @@ func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 		return nil, err
 	}
 
-	// TODO(mxyng): use something less brittle
-	matches, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*"))
+	// Find both 4-part (models) and 5-part (skills/agents) manifest paths
+	matches4, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*"))
 	if err != nil {
 		return nil, err
+	}
+	matches5, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*", "*"))
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine matches, filtering to only include files
+	var matches []string
+	for _, match := range matches4 {
+		fi, err := os.Stat(match)
+		if err == nil && !fi.IsDir() {
+			matches = append(matches, match)
+		}
+	}
+	for _, match := range matches5 {
+		fi, err := os.Stat(match)
+		if err == nil && !fi.IsDir() {
+			matches = append(matches, match)
+		}
 	}
 
 	ms := make(map[model.Name]*Manifest)

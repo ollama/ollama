@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,6 +60,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	var messages []api.Message
 	var licenses []string
 	var skills []api.SkillRef
+	var mcps []api.MCPRef
 	params := make(map[string]any)
 
 	for _, c := range f.Commands {
@@ -121,8 +123,21 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			messages = append(messages, api.Message{Role: role, Content: msg})
 		case "skill":
 			skills = append(skills, api.SkillRef{Name: c.Args})
+		case "mcp":
+			mcpRef, err := parseMCPArg(c.Args, relativeDir)
+			if err != nil {
+				return nil, fmt.Errorf("invalid MCP: %w", err)
+			}
+			mcps = append(mcps, mcpRef)
 		case "agent_type":
-			req.AgentType = c.Args
+			// Handle "AGENT TYPE conversational" -> strip "TYPE " prefix
+			args := c.Args
+			if strings.HasPrefix(strings.ToLower(args), "type ") {
+				args = strings.TrimSpace(args[5:])
+			}
+			req.AgentType = args
+		case "entrypoint":
+			req.Entrypoint = c.Args
 		default:
 			if slices.Contains(deprecatedParameters, c.Name) {
 				fmt.Printf("warning: parameter %s is deprecated\n", c.Name)
@@ -157,6 +172,9 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	}
 	if len(skills) > 0 {
 		req.Skills = skills
+	}
+	if len(mcps) > 0 {
+		req.MCPs = mcps
 	}
 
 	return req, nil
@@ -341,7 +359,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "skill", "agent_type":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "skill", "agent_type", "entrypoint":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -367,7 +385,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", \"requires\", \"skill\", or \"agent_type\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", \"requires\", \"skill\", \"agent_type\", \"mcp\", or \"entrypoint\"")
 )
 
 type ParserError struct {
@@ -431,6 +449,9 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 				switch s := strings.ToLower(b.String()); s {
 				case "from":
 					cmd.Name = "model"
+				case "agent":
+					// "AGENT TYPE" -> "agent_type", consume next word
+					cmd.Name = "agent_type"
 				case "parameter":
 					// transition to stateParameter which sets command name
 					next = stateParameter
@@ -506,6 +527,10 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 
 	for _, cmd := range f.Commands {
 		if cmd.Name == "model" {
+			return &f, nil
+		}
+		// Allow entrypoint-only agents without FROM
+		if cmd.Name == "entrypoint" {
 			return &f, nil
 		}
 	}
@@ -627,7 +652,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires", "skill", "agent_type":
+	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires", "skill", "agent_type", "agent", "mcp", "entrypoint":
 		return true
 	default:
 		return false
@@ -673,4 +698,80 @@ func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User
 
 func expandPath(path, relativeDir string) (string, error) {
 	return expandPathImpl(path, relativeDir, user.Current, user.Lookup)
+}
+
+// parseMCPArg parses MCP command arguments.
+// Supports two formats:
+//
+//	JSON: {"name": "web-search", "command": "uv", "args": ["run", "./script.py"]}
+//	Simple: web-search uv run ./script.py (name, command, args...)
+func parseMCPArg(args string, relativeDir string) (api.MCPRef, error) {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return api.MCPRef{}, errors.New("MCP requires arguments")
+	}
+
+	// Try JSON format first
+	if strings.HasPrefix(args, "{") {
+		var ref api.MCPRef
+		if err := json.Unmarshal([]byte(args), &ref); err != nil {
+			return api.MCPRef{}, fmt.Errorf("invalid JSON: %w", err)
+		}
+		if ref.Name == "" {
+			return api.MCPRef{}, errors.New("MCP name is required")
+		}
+		if ref.Command == "" {
+			return api.MCPRef{}, errors.New("MCP command is required")
+		}
+		if ref.Type == "" {
+			ref.Type = "stdio"
+		}
+		// Expand relative paths in args
+		for i, arg := range ref.Args {
+			if isLocalPath(arg) {
+				expanded, err := expandPath(arg, relativeDir)
+				if err != nil {
+					return api.MCPRef{}, fmt.Errorf("expanding path %q: %w", arg, err)
+				}
+				ref.Args[i] = expanded
+			}
+		}
+		return ref, nil
+	}
+
+	// Simple format: name command args...
+	parts := strings.Fields(args)
+	if len(parts) < 2 {
+		return api.MCPRef{}, errors.New("MCP requires at least name and command")
+	}
+
+	ref := api.MCPRef{
+		Name:    parts[0],
+		Command: parts[1],
+		Type:    "stdio",
+	}
+	if len(parts) > 2 {
+		ref.Args = parts[2:]
+	}
+
+	// Expand relative paths in args
+	for i, arg := range ref.Args {
+		if isLocalPath(arg) {
+			expanded, err := expandPath(arg, relativeDir)
+			if err != nil {
+				return api.MCPRef{}, fmt.Errorf("expanding path %q: %w", arg, err)
+			}
+			ref.Args[i] = expanded
+		}
+	}
+
+	return ref, nil
+}
+
+// isLocalPath checks if a string looks like a local filesystem path.
+func isLocalPath(s string) bool {
+	return strings.HasPrefix(s, "/") ||
+		strings.HasPrefix(s, "./") ||
+		strings.HasPrefix(s, "../") ||
+		strings.HasPrefix(s, "~")
 }

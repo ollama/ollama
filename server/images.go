@@ -232,6 +232,13 @@ func (m *Model) String() string {
 		})
 	}
 
+	if m.Config.Entrypoint != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "entrypoint",
+			Args: m.Config.Entrypoint,
+		})
+	}
+
 	for k, v := range m.Options {
 		switch v := v.(type) {
 		case []any:

@@ -63,7 +63,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Parser = r.Parser
 	config.Requires = r.Requires
 	config.Skills = r.Skills
+	config.MCPs = r.MCPs
 	config.AgentType = r.AgentType
+	config.Entrypoint = r.Entrypoint
 
 	for v := range r.Files {
 		if !fs.ValidPath(v) {
@@ -159,6 +161,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				ch <- gin.H{"error": err.Error()}
 				return
 			}
+		} else if r.Entrypoint != "" {
+			// Entrypoint-only agent: no base model needed
+			slog.Debug("create entrypoint-only agent", "entrypoint", r.Entrypoint)
 		} else {
 			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
@@ -551,6 +556,12 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		return err
 	}
 
+	// Handle MCP layers for agents
+	layers, config.MCPs, err = setMCPLayers(layers, config.MCPs, fn)
+	if err != nil {
+		return err
+	}
+
 	configLayer, err := createConfigLayer(layers, *config)
 	if err != nil {
 		return err
@@ -892,6 +903,42 @@ func setSkillLayers(layers []Layer, skills []model.SkillRef, fn func(resp api.Pr
 	}
 
 	return layers, updatedSkills, nil
+}
+
+// setMCPLayers handles MCP server references.
+// Currently, MCPs are stored as config data (command/args).
+// Future: support bundling MCP server directories as layers.
+func setMCPLayers(layers []Layer, mcps []model.MCPRef, fn func(resp api.ProgressResponse)) ([]Layer, []model.MCPRef, error) {
+	if len(mcps) == 0 {
+		return layers, mcps, nil
+	}
+
+	// Remove any existing MCP layers
+	layers = removeLayer(layers, MediaTypeMCP)
+
+	var updatedMCPs []model.MCPRef
+
+	for _, mcp := range mcps {
+		// Validate MCP has required fields
+		if mcp.Name == "" {
+			return nil, nil, fmt.Errorf("MCP server requires a name")
+		}
+		if mcp.Command == "" {
+			return nil, nil, fmt.Errorf("MCP server %q requires a command", mcp.Name)
+		}
+
+		// Set default type if not specified
+		if mcp.Type == "" {
+			mcp.Type = "stdio"
+		}
+
+		// For now, just keep MCPs as config data
+		// Future: detect local paths in args and bundle them
+		updatedMCPs = append(updatedMCPs, mcp)
+		fn(api.ProgressResponse{Status: fmt.Sprintf("configuring MCP: %s", mcp.Name)})
+	}
+
+	return layers, updatedMCPs, nil
 }
 
 func createConfigLayer(layers []Layer, config model.ConfigV2) (*Layer, error) {

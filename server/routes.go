@@ -978,6 +978,9 @@ func getExistingName(n model.Name) (model.Name, error) {
 		if set.Namespace == "" && strings.EqualFold(e.Namespace, n.Namespace) {
 			n.Namespace = e.Namespace
 		}
+		if set.Kind == "" && strings.EqualFold(e.Kind, n.Kind) {
+			n.Kind = e.Kind
+		}
 		if set.Model == "" && strings.EqualFold(e.Model, n.Model) {
 			n.Model = e.Model
 		}
@@ -1117,7 +1120,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		ModifiedAt:   manifest.fi.ModTime(),
 		Requires:     m.Config.Requires,
 		Skills:       m.Config.Skills,
+		MCPs:         m.Config.MCPs,
 		AgentType:    m.Config.AgentType,
+		Entrypoint:   m.Config.Entrypoint,
 	}
 
 	if m.Config.RemoteHost != "" {
@@ -1172,8 +1177,13 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
-	// skip loading tensor information if this is a remote model
+	// skip loading tensor information if this is a remote model or a skill
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		return resp, nil
+	}
+
+	// Skills don't have model weights, skip tensor loading
+	if m.ModelPath == "" {
 		return resp, nil
 	}
 

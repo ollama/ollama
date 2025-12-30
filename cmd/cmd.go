@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -496,11 +497,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts.ParentModel = info.Details.ParentModel
 
 	// Check if this is an agent
-	isAgent := info.AgentType != "" || len(info.Skills) > 0
+	isAgent := info.AgentType != "" || len(info.Skills) > 0 || len(info.MCPs) > 0 || info.Entrypoint != ""
 	if isAgent {
 		opts.IsAgent = true
 		opts.AgentType = info.AgentType
 		opts.Skills = info.Skills
+		opts.MCPs = info.MCPs
+		opts.Entrypoint = info.Entrypoint
 	}
 
 	// Check if this is an embedding model
@@ -528,6 +531,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	// Check for experimental flag
 	isExperimental, _ := cmd.Flags().GetBool("experimental")
+	// If agent has entrypoint, run it instead of chat loop
+	if opts.Entrypoint != "" {
+		return runEntrypoint(cmd, opts)
+	}
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -571,6 +578,51 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	return generate(cmd, opts)
+}
+
+// runEntrypoint executes the agent's entrypoint command instead of the built-in chat loop.
+func runEntrypoint(cmd *cobra.Command, opts runOptions) error {
+	entrypoint := opts.Entrypoint
+
+	// Check if entrypoint contains $PROMPT placeholder
+	hasPlaceholder := strings.Contains(entrypoint, "$PROMPT")
+
+	if hasPlaceholder && opts.Prompt != "" {
+		// Replace $PROMPT with the actual prompt
+		entrypoint = strings.ReplaceAll(entrypoint, "$PROMPT", opts.Prompt)
+	} else if hasPlaceholder {
+		// No prompt provided but placeholder exists - remove placeholder
+		entrypoint = strings.ReplaceAll(entrypoint, "$PROMPT", "")
+	}
+
+	// Parse entrypoint into command and args
+	parts := strings.Fields(entrypoint)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty entrypoint")
+	}
+
+	command := parts[0]
+	args := parts[1:]
+
+	// If user provided a prompt and no placeholder was used, append it as argument
+	if opts.Prompt != "" && !hasPlaceholder {
+		args = append(args, opts.Prompt)
+	}
+
+	// Look up command in PATH
+	execPath, err := exec.LookPath(command)
+	if err != nil {
+		return fmt.Errorf("entrypoint command not found: %s", command)
+	}
+
+	// Create subprocess
+	proc := exec.Command(execPath, args...)
+	proc.Stdin = os.Stdin
+	proc.Stdout = os.Stdout
+	proc.Stderr = os.Stderr
+
+	// Run and wait
+	return proc.Run()
 }
 
 func SigninHandler(cmd *cobra.Command, args []string) error {
@@ -932,47 +984,96 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		fmt.Fprintln(w)
 	}
 
-	tableRender("Model", func() (rows [][]string) {
-		if resp.RemoteHost != "" {
-			rows = append(rows, []string{"", "Remote model", resp.RemoteModel})
-			rows = append(rows, []string{"", "Remote URL", resp.RemoteHost})
-		}
-
-		if resp.ModelInfo != nil {
-			arch := resp.ModelInfo["general.architecture"].(string)
-			rows = append(rows, []string{"", "architecture", arch})
-
-			var paramStr string
-			if resp.Details.ParameterSize != "" {
-				paramStr = resp.Details.ParameterSize
-			} else if v, ok := resp.ModelInfo["general.parameter_count"]; ok {
-				if f, ok := v.(float64); ok {
-					paramStr = format.HumanNumber(uint64(f))
-				}
-			}
-			rows = append(rows, []string{"", "parameters", paramStr})
-
-			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
-				if f, ok := v.(float64); ok {
-					rows = append(rows, []string{"", "context length", strconv.FormatFloat(f, 'f', -1, 64)})
-				}
+	// Only show Model section if there's actual model info (not for entrypoint-only agents)
+	hasModelInfo := resp.RemoteHost != "" || resp.ModelInfo != nil || resp.Details.Family != "" || resp.Details.ParameterSize != "" || resp.Details.QuantizationLevel != ""
+	if hasModelInfo {
+		tableRender("Model", func() (rows [][]string) {
+			if resp.RemoteHost != "" {
+				rows = append(rows, []string{"", "Remote model", resp.RemoteModel})
+				rows = append(rows, []string{"", "Remote URL", resp.RemoteHost})
 			}
 
-			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
-				if f, ok := v.(float64); ok {
-					rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(f, 'f', -1, 64)})
+			if resp.ModelInfo != nil {
+				arch := resp.ModelInfo["general.architecture"].(string)
+				rows = append(rows, []string{"", "architecture", arch})
+
+				var paramStr string
+				if resp.Details.ParameterSize != "" {
+					paramStr = resp.Details.ParameterSize
+				} else if v, ok := resp.ModelInfo["general.parameter_count"]; ok {
+					if f, ok := v.(float64); ok {
+						paramStr = format.HumanNumber(uint64(f))
+					}
+				}
+				rows = append(rows, []string{"", "parameters", paramStr})
+
+				if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
+					if f, ok := v.(float64); ok {
+						rows = append(rows, []string{"", "context length", strconv.FormatFloat(f, 'f', -1, 64)})
+					}
+				}
+
+				if v, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
+					if f, ok := v.(float64); ok {
+						rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(f, 'f', -1, 64)})
+					}
+				}
+			} else {
+				rows = append(rows, []string{"", "architecture", resp.Details.Family})
+				rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
+			}
+			rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
+			if resp.Requires != "" {
+				rows = append(rows, []string{"", "requires", resp.Requires})
+			}
+			return
+		})
+	}
+
+	// Display agent information if this is an agent
+	if resp.AgentType != "" || len(resp.Skills) > 0 || len(resp.MCPs) > 0 || resp.Entrypoint != "" {
+		tableRender("Agent", func() (rows [][]string) {
+			if resp.AgentType != "" {
+				rows = append(rows, []string{"", "type", resp.AgentType})
+			}
+			if resp.Entrypoint != "" {
+				rows = append(rows, []string{"", "entrypoint", resp.Entrypoint})
+			}
+			if len(resp.Skills) > 0 {
+				for i, skill := range resp.Skills {
+					label := "skill"
+					if i > 0 {
+						label = ""
+					}
+					// Show skill name or digest
+					skillDisplay := skill.Name
+					if skillDisplay == "" && skill.Digest != "" {
+						skillDisplay = skill.Digest[:12] + "..."
+					}
+					rows = append(rows, []string{"", label, skillDisplay})
 				}
 			}
-		} else {
-			rows = append(rows, []string{"", "architecture", resp.Details.Family})
-			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
-		}
-		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
-		if resp.Requires != "" {
-			rows = append(rows, []string{"", "requires", resp.Requires})
-		}
-		return
-	})
+			if len(resp.MCPs) > 0 {
+				for i, mcp := range resp.MCPs {
+					label := "mcp"
+					if i > 0 {
+						label = ""
+					}
+					// Show MCP name and command
+					mcpDisplay := mcp.Name
+					if mcp.Command != "" {
+						cmdLine := mcp.Command
+						if len(mcp.Args) > 0 {
+							cmdLine += " " + strings.Join(mcp.Args, " ")
+						}
+						mcpDisplay += " (" + cmdLine + ")"
+					}
+					rows = append(rows, []string{"", label, mcpDisplay})
+				}
+			}
+			return
+		})
+	}
 
 	if len(resp.Capabilities) > 0 {
 		tableRender("Capabilities", func() (rows [][]string) {
@@ -1217,6 +1318,8 @@ type runOptions struct {
 	IsAgent      bool
 	AgentType    string
 	Skills       []api.SkillRef
+	MCPs         []api.MCPRef
+	Entrypoint   string
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1369,6 +1472,49 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		}
 	}
 
+	// Load MCP servers for agents (from opts and global config)
+	var mcpMgr *mcpManager
+	allMCPs := opts.MCPs
+
+	// Load global MCPs from ~/.ollama/mcp.json
+	if globalConfig, err := loadMCPConfig(); err == nil && len(globalConfig.MCPServers) > 0 {
+		for name, srv := range globalConfig.MCPServers {
+			// Skip disabled MCPs
+			if srv.Disabled {
+				continue
+			}
+			// Check if already in opts.MCPs (model takes precedence)
+			found := false
+			for _, m := range opts.MCPs {
+				if m.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allMCPs = append(allMCPs, api.MCPRef{
+					Name:    name,
+					Command: srv.Command,
+					Args:    srv.Args,
+					Env:     srv.Env,
+					Type:    srv.Type,
+				})
+			}
+		}
+	}
+
+	if len(allMCPs) > 0 {
+		mcpMgr = newMCPManager()
+		if err := mcpMgr.loadMCPsFromRefs(allMCPs); err != nil {
+			return nil, fmt.Errorf("failed to load MCP servers: %w", err)
+		}
+		if mcpMgr.ToolCount() > 0 {
+			fmt.Fprintf(os.Stderr, "Loaded MCP servers: %s (%d tools)\n",
+				strings.Join(mcpMgr.ServerNames(), ", "), mcpMgr.ToolCount())
+		}
+		defer mcpMgr.Shutdown()
+	}
+
 	p := progress.NewProgress(os.Stderr)
 	defer p.StopAndClear()
 
@@ -1433,11 +1579,11 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		if response.Message.ToolCalls != nil {
 			toolCalls := response.Message.ToolCalls
 			if len(toolCalls) > 0 {
-				if skillsCatalog != nil {
+				if skillsCatalog != nil || mcpMgr != nil {
 					// Store tool calls for execution after response is complete
 					pendingToolCalls = append(pendingToolCalls, toolCalls...)
 				} else {
-					// No skills catalog, just display tool calls
+					// No skills catalog or MCP, just display tool calls
 					fmt.Print(renderToolCalls(toolCalls, false))
 				}
 			}
@@ -1470,43 +1616,65 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		}
 	}
 
-	req := &api.ChatRequest{
-		Model:    opts.Model,
-		Messages: messages,
-		Format:   json.RawMessage(opts.Format),
-		Options:  opts.Options,
-		Think:    opts.Think,
-	}
-
-	// Add tools for agents
-	if skillsCatalog != nil {
-		req.Tools = skillsCatalog.Tools()
-	}
-
-	if opts.KeepAlive != nil {
-		req.KeepAlive = opts.KeepAlive
-	}
-
-	if err := client.Chat(cancelCtx, req, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil, nil
+	// Agentic loop: continue until no more tool calls
+	for {
+		req := &api.ChatRequest{
+			Model:    opts.Model,
+			Messages: messages,
+			Format:   json.RawMessage(opts.Format),
+			Options:  opts.Options,
+			Think:    opts.Think,
 		}
 
-		// this error should ideally be wrapped properly by the client
-		if strings.Contains(err.Error(), "upstream error") {
-			p.StopAndClear()
-			fmt.Println("An error occurred while processing your message. Please try again.")
-			fmt.Println()
-			return nil, nil
+		// Add tools for agents (combine skills and MCP tools)
+		var allTools api.Tools
+		if skillsCatalog != nil {
+			allTools = append(allTools, skillsCatalog.Tools()...)
 		}
-		return nil, err
-	}
+		if mcpMgr != nil {
+			allTools = append(allTools, mcpMgr.Tools()...)
+		}
+		if len(allTools) > 0 {
+			req.Tools = allTools
+		}
 
-	// Execute tool calls for agents
-	if len(pendingToolCalls) > 0 && skillsCatalog != nil {
+		if opts.KeepAlive != nil {
+			req.KeepAlive = opts.KeepAlive
+		}
+
+		if err := client.Chat(cancelCtx, req, fn); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil, nil
+			}
+
+			// this error should ideally be wrapped properly by the client
+			if strings.Contains(err.Error(), "upstream error") {
+				p.StopAndClear()
+				fmt.Println("An error occurred while processing your message. Please try again.")
+				fmt.Println()
+				return nil, nil
+			}
+			return nil, err
+		}
+
+		// If no tool calls, we're done
+		if len(pendingToolCalls) == 0 || (skillsCatalog == nil && mcpMgr == nil) {
+			break
+		}
+
+		// Execute tool calls and continue the conversation
 		fmt.Fprintf(os.Stderr, "\n")
 
+		// Add assistant's tool call message to history
+		assistantMsg := api.Message{
+			Role:      "assistant",
+			Content:   fullResponse.String(),
+			ToolCalls: pendingToolCalls,
+		}
+		messages = append(messages, assistantMsg)
+
 		// Execute each tool call and collect results
+		var toolResults []api.Message
 		for _, call := range pendingToolCalls {
 			// Show what's being executed
 			switch call.Function.Name {
@@ -1522,13 +1690,35 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 				fmt.Fprintf(os.Stderr, "Executing: %s\n", call.Function.Name)
 			}
 
-			result, handled, err := skillsCatalog.RunToolCall(call)
+			var result api.Message
+			var handled bool
+			var err error
+
+			// Try skill catalog first
+			if skillsCatalog != nil {
+				result, handled, err = skillsCatalog.RunToolCall(call)
+			}
+
+			// If not handled by skills, try MCP
+			if !handled && mcpMgr != nil {
+				result, handled, err = mcpMgr.RunToolCall(call)
+			}
+
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				// Add error result
+				toolResults = append(toolResults, api.Message{
+					Role:    "tool",
+					Content: fmt.Sprintf("Error: %v", err),
+				})
 				continue
 			}
 			if !handled {
 				fmt.Fprintf(os.Stderr, "Warning: Unknown tool %s\n", call.Function.Name)
+				toolResults = append(toolResults, api.Message{
+					Role:    "tool",
+					Content: fmt.Sprintf("Unknown tool: %s", call.Function.Name),
+				})
 				continue
 			}
 
@@ -1536,9 +1726,31 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 			if result.Content != "" {
 				fmt.Fprintf(os.Stderr, "Output:\n%s\n", result.Content)
 			}
+
+			// Add tool result to messages
+			toolResults = append(toolResults, api.Message{
+				Role:    "tool",
+				Content: result.Content,
+			})
 		}
 
+		// Add tool results to message history
+		messages = append(messages, toolResults...)
+
 		fmt.Fprintf(os.Stderr, "\n")
+
+		// Reset state for next iteration
+		fullResponse.Reset()
+		thinkingContent.Reset()
+		thinkTagOpened = false
+		thinkTagClosed = false
+		pendingToolCalls = nil
+		state = &displayResponseState{}
+
+		// Start new progress spinner for next API call
+		p = progress.NewProgress(os.Stderr)
+		spinner = progress.NewSpinner("")
+		p.Add("", spinner)
 	}
 
 	if len(opts.Messages) > 0 {
@@ -2032,6 +2244,7 @@ func NewCLI() *cobra.Command {
 		deleteCmd,
 		runnerCmd,
 		NewSkillCommand(),
+		NewMCPCommand(),
 	)
 
 	return rootCmd

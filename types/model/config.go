@@ -8,6 +8,22 @@ type SkillRef struct {
 	Digest string `json:"digest,omitempty"`
 }
 
+// MCPRef represents a reference to an MCP (Model Context Protocol) server.
+type MCPRef struct {
+	// Name is the identifier for the MCP server (used for tool namespacing)
+	Name string `json:"name,omitempty"`
+	// Digest is the content-addressable digest of the bundled MCP server blob
+	Digest string `json:"digest,omitempty"`
+	// Command is the executable to run (e.g., "uv", "node", "python3")
+	Command string `json:"command,omitempty"`
+	// Args are the arguments to pass to the command
+	Args []string `json:"args,omitempty"`
+	// Env is optional environment variables for the MCP server
+	Env map[string]string `json:"env,omitempty"`
+	// Type is the transport type (currently only "stdio" is supported)
+	Type string `json:"type,omitempty"`
+}
+
 // ConfigV2 represents the configuration metadata for a model.
 type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
@@ -29,8 +45,10 @@ type ConfigV2 struct {
 	BaseName     string   `json:"base_name,omitempty"`
 
 	// agent-specific fields
-	Skills    []SkillRef `json:"skills,omitempty"`
-	AgentType string     `json:"agent_type,omitempty"`
+	Skills     []SkillRef `json:"skills,omitempty"`
+	MCPs       []MCPRef   `json:"mcps,omitempty"`
+	AgentType  string     `json:"agent_type,omitempty"`
+	Entrypoint string     `json:"entrypoint,omitempty"`
 
 	// required by spec
 	Architecture string `json:"architecture"`

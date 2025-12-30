@@ -36,6 +36,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
 		fmt.Fprintln(os.Stderr, "  /skills         Show available skills")
 		fmt.Fprintln(os.Stderr, "  /skill          Add or remove skills dynamically")
+		fmt.Fprintln(os.Stderr, "  /mcp            Show/add/remove MCP servers")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
@@ -617,6 +618,240 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 			fmt.Println()
 			continue
+
+		case strings.HasPrefix(line, "/mcp"):
+			args := strings.Fields(line)
+
+			// If just "/mcp" with no args, show all MCP servers
+			if len(args) == 1 {
+				// Show MCPs from model (bundled) + global config
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					fmt.Println("error: couldn't connect to ollama server")
+					return err
+				}
+				req := &api.ShowRequest{
+					Name: opts.Model,
+				}
+				resp, err := client.Show(cmd.Context(), req)
+				if err != nil {
+					fmt.Println("error: couldn't get model info")
+					return err
+				}
+
+				// Combine model MCPs with global config MCPs
+				allMCPs := make([]api.MCPRef, 0)
+				allMCPs = append(allMCPs, resp.MCPs...)
+
+				// Load global config
+				globalConfig, _ := loadMCPConfig()
+				globalMCPNames := make(map[string]bool)
+
+				if globalConfig != nil {
+					for name, srv := range globalConfig.MCPServers {
+						// Check if already in model MCPs
+						found := false
+						for _, modelMCP := range resp.MCPs {
+							if modelMCP.Name == name {
+								found = true
+								break
+							}
+						}
+						if !found {
+							allMCPs = append(allMCPs, api.MCPRef{
+								Name:    name,
+								Command: srv.Command,
+								Args:    srv.Args,
+								Env:     srv.Env,
+								Type:    srv.Type,
+							})
+						}
+						globalMCPNames[name] = true
+					}
+				}
+
+				if len(allMCPs) == 0 {
+					fmt.Println("No MCP servers available.")
+					fmt.Println("Use '/mcp add <name> <command> [args...]' to add one.")
+				} else {
+					fmt.Println("Available MCP Servers:")
+					for _, mcp := range allMCPs {
+						cmdLine := mcp.Command
+						if len(mcp.Args) > 0 {
+							cmdLine += " " + strings.Join(mcp.Args, " ")
+						}
+						source := ""
+						disabled := ""
+						// Check if it's from model or global config
+						isFromModel := false
+						for _, modelMCP := range resp.MCPs {
+							if modelMCP.Name == mcp.Name {
+								isFromModel = true
+								break
+							}
+						}
+						if isFromModel {
+							source = " (model)"
+						} else if globalMCPNames[mcp.Name] {
+							source = " (global)"
+							// Check if disabled
+							if srv, ok := globalConfig.MCPServers[mcp.Name]; ok && srv.Disabled {
+								disabled = " [disabled]"
+							}
+						}
+						fmt.Printf("  %s: %s%s%s\n", mcp.Name, cmdLine, source, disabled)
+					}
+				}
+				fmt.Println()
+				continue
+			}
+
+			switch args[1] {
+			case "add":
+				if len(args) < 4 {
+					fmt.Println("Usage: /mcp add <name> <command> [args...]")
+					continue
+				}
+				mcpName := args[2]
+				mcpCommand := args[3]
+				mcpArgs := args[4:]
+
+				// Load global config
+				config, err := loadMCPConfig()
+				if err != nil {
+					fmt.Printf("Error loading MCP config: %v\n", err)
+					continue
+				}
+
+				// Check if already exists
+				if _, exists := config.MCPServers[mcpName]; exists {
+					fmt.Printf("Warning: overwriting existing MCP server '%s'\n", mcpName)
+				}
+
+				// Add to global config
+				config.MCPServers[mcpName] = MCPServerConfig{
+					Type:    "stdio",
+					Command: mcpCommand,
+					Args:    mcpArgs,
+				}
+
+				// Save config
+				if err := saveMCPConfig(config); err != nil {
+					fmt.Printf("Error saving MCP config: %v\n", err)
+					continue
+				}
+
+				cmdLine := mcpCommand
+				if len(mcpArgs) > 0 {
+					cmdLine += " " + strings.Join(mcpArgs, " ")
+				}
+				fmt.Printf("Added MCP server '%s' (%s) to %s\n", mcpName, cmdLine, getMCPConfigPath())
+				fmt.Println("Note: MCP server will be started on next message.")
+
+			case "remove", "rm":
+				if len(args) < 3 {
+					fmt.Println("Usage: /mcp remove <name>")
+					continue
+				}
+				mcpName := args[2]
+
+				// Load global config
+				config, err := loadMCPConfig()
+				if err != nil {
+					fmt.Printf("Error loading MCP config: %v\n", err)
+					continue
+				}
+
+				if _, exists := config.MCPServers[mcpName]; !exists {
+					fmt.Printf("MCP server '%s' not found in global config\n", mcpName)
+					continue
+				}
+
+				delete(config.MCPServers, mcpName)
+
+				if err := saveMCPConfig(config); err != nil {
+					fmt.Printf("Error saving MCP config: %v\n", err)
+					continue
+				}
+
+				fmt.Printf("Removed MCP server '%s' from %s\n", mcpName, getMCPConfigPath())
+				fmt.Println("Note: Changes will take effect on next message.")
+
+			case "disable":
+				if len(args) < 3 {
+					fmt.Println("Usage: /mcp disable <name>")
+					continue
+				}
+				mcpName := args[2]
+
+				config, err := loadMCPConfig()
+				if err != nil {
+					fmt.Printf("Error loading MCP config: %v\n", err)
+					continue
+				}
+
+				srv, exists := config.MCPServers[mcpName]
+				if !exists {
+					fmt.Printf("MCP server '%s' not found in global config\n", mcpName)
+					continue
+				}
+
+				if srv.Disabled {
+					fmt.Printf("MCP server '%s' is already disabled\n", mcpName)
+					continue
+				}
+
+				srv.Disabled = true
+				config.MCPServers[mcpName] = srv
+
+				if err := saveMCPConfig(config); err != nil {
+					fmt.Printf("Error saving MCP config: %v\n", err)
+					continue
+				}
+
+				fmt.Printf("Disabled MCP server '%s'\n", mcpName)
+				fmt.Println("Note: Changes will take effect on next message.")
+
+			case "enable":
+				if len(args) < 3 {
+					fmt.Println("Usage: /mcp enable <name>")
+					continue
+				}
+				mcpName := args[2]
+
+				config, err := loadMCPConfig()
+				if err != nil {
+					fmt.Printf("Error loading MCP config: %v\n", err)
+					continue
+				}
+
+				srv, exists := config.MCPServers[mcpName]
+				if !exists {
+					fmt.Printf("MCP server '%s' not found in global config\n", mcpName)
+					continue
+				}
+
+				if !srv.Disabled {
+					fmt.Printf("MCP server '%s' is already enabled\n", mcpName)
+					continue
+				}
+
+				srv.Disabled = false
+				config.MCPServers[mcpName] = srv
+
+				if err := saveMCPConfig(config); err != nil {
+					fmt.Printf("Error saving MCP config: %v\n", err)
+					continue
+				}
+
+				fmt.Printf("Enabled MCP server '%s'\n", mcpName)
+				fmt.Println("Note: Changes will take effect on next message.")
+
+			default:
+				fmt.Printf("Unknown mcp command '%s'. Use /mcp, /mcp add, /mcp remove, /mcp disable, or /mcp enable\n", args[1])
+			}
+			continue
+
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
@@ -630,6 +865,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					fmt.Fprintln(os.Stderr, "  /skill add <path>      Add a skill from local path")
 					fmt.Fprintln(os.Stderr, "  /skill remove <name>   Remove a skill by name")
 					fmt.Fprintln(os.Stderr, "  /skill list            List current session skills")
+					fmt.Fprintln(os.Stderr, "")
+				case "mcp", "/mcp":
+					fmt.Fprintln(os.Stderr, "Available Commands:")
+					fmt.Fprintln(os.Stderr, "  /mcp                                  Show all MCP servers")
+					fmt.Fprintln(os.Stderr, "  /mcp add <name> <command> [args...]   Add an MCP server to global config")
+					fmt.Fprintln(os.Stderr, "  /mcp remove <name>                    Remove an MCP server from global config")
+					fmt.Fprintln(os.Stderr, "  /mcp disable <name>                   Disable an MCP server (keep in config)")
+					fmt.Fprintln(os.Stderr, "  /mcp enable <name>                    Re-enable a disabled MCP server")
 					fmt.Fprintln(os.Stderr, "")
 				case "shortcut", "shortcuts":
 					usageShortcuts()
