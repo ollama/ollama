@@ -8,6 +8,11 @@
 
 Get up and running with large language models.
 
+## Documentation
+
+- [English Documentation](./docs)
+- [中文文檔 (Chinese Documentation)](./docs/zh-CN) - 完整的中文安裝和使用指南
+
 ### macOS
 
 [Download](https://ollama.com/download/Ollama.dmg)
