@@ -7,11 +7,12 @@
 ### 🚀 快速開始
 - **[快速入門指南](./quickstart.md)** - 5 分鐘快速上手 Ollama
 - **[安裝指南](./install.md)** - 詳細的安裝步驟和故障排除
+- **[測試指南](./testing.md)** - 完整的安裝測試流程
 
 ### 📖 其他文檔資源
+- [故障排除指南](./troubleshooting.md) - 常見問題解決方案
 - [API 文檔](../api.md)（英文）
 - [Modelfile 文檔](../modelfile.md)（英文）
-- [故障排除](../troubleshooting.md)（英文）
 - [開發指南](../development.md)（英文）
 
 ## 🎯 推薦閱讀路徑
