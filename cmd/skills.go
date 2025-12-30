@@ -140,6 +140,13 @@ func loadSkillsFromRefs(refs []api.SkillRef) (*skillCatalog, error) {
 
 			skillDir = path
 		} else if ref.Name != "" {
+			// Check if this is a local path or a registry reference
+			if !server.IsLocalSkillPath(ref.Name) {
+				// Registry reference without a digest - skill needs to be pulled first
+				// This happens when an agent references a skill that hasn't been bundled
+				return nil, fmt.Errorf("skill %q is a registry reference but has no digest - the agent may need to be recreated or the skill pulled separately", ref.Name)
+			}
+
 			// Local path - resolve it
 			skillPath := ref.Name
 			if strings.HasPrefix(skillPath, "~") {
@@ -485,6 +492,14 @@ func runSkillScript(skillDir, command string) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = absSkillDir
+
+	// Inject the current working directory (where ollama run was called from)
+	// as an environment variable so scripts can reference files in that directory
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+	cmd.Env = append(os.Environ(), "OLLAMA_WORKING_DIR="+workingDir)
 
 	// Capture both stdout and stderr
 	var stdout, stderr bytes.Buffer

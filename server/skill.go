@@ -250,13 +250,14 @@ func CreateSkillLayer(skillDir string) (Layer, error) {
 }
 
 // IsLocalSkillPath checks if a skill reference looks like a local path.
+// Local paths are explicitly prefixed with /, ./, ../, or ~.
+// Registry references like "skill/calculator:1.0.0" should NOT be treated as local paths.
 func IsLocalSkillPath(name string) bool {
-	// Local paths start with /, ./, or contain path separators
+	// Local paths are explicitly indicated by path prefixes
 	return strings.HasPrefix(name, "/") ||
 		strings.HasPrefix(name, "./") ||
 		strings.HasPrefix(name, "../") ||
-		strings.HasPrefix(name, "~") ||
-		strings.Contains(name, string(os.PathSeparator))
+		strings.HasPrefix(name, "~")
 }
 
 // SkillNamespace is the namespace used for standalone skills in the registry.
