@@ -1489,6 +1489,10 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
+	// Disable automatic redirects to ensure CORS middleware processes all requests.
+	// Without this, paths like //api/tags get redirected to /api/tags without CORS headers.
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
