@@ -183,17 +183,35 @@ docker exec -it ollama ollama run gemma3
 
 安裝完成後，您可以通過以下步驟驗證 Ollama 是否正常工作：
 
-### 1. 檢查版本
+### 使用自動驗證腳本
+
+我們提供了一個自動驗證腳本來檢查您的安裝：
+
+```bash
+# 在 Ollama 源碼目錄中運行
+bash scripts/verify-installation.sh
+```
+
+此腳本將檢查：
+- Ollama 是否已安裝
+- 服務是否正在運行
+- 系統記憶體是否充足
+- 磁碟空間是否足夠
+- GPU 支援（如果有）
+
+### 手動驗證步驟
+
+#### 1. 檢查版本
 ```bash
 ollama --version
 ```
 
-### 2. 啟動服務（如果尚未運行）
+#### 2. 啟動服務（如果尚未運行）
 ```bash
 ollama serve
 ```
 
-### 3. 下載並運行您的第一個模型
+#### 3. 下載並運行您的第一個模型
 ```bash
 # 運行 Gemma 3 模型（約 3.3GB）
 ollama run gemma3
@@ -202,7 +220,7 @@ ollama run gemma3
 ollama run gemma3:1b
 ```
 
-### 4. 測試 API
+#### 4. 測試 API
 ```bash
 curl http://localhost:11434/api/generate -d '{
   "model": "gemma3",
