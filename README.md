@@ -24,6 +24,9 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 [Manual install instructions](https://docs.ollama.com/linux#manual-install)
 
+> [!TIP]
+> Running ROCm on UMA-only AMD APUs (e.g., Radeon 760M) requires staging additional ROCm runtime files and enabling experimental discovery flags. See [docs/rocm-apu.md](docs/rocm-apu.md) for the exact build and runtime steps used on this branch.
+
 ### Docker
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
@@ -32,6 +35,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 - [ollama-python](https://github.com/ollama/ollama-python)
 - [ollama-js](https://github.com/ollama/ollama-js)
+- [Experimental ROCm iGPU Guide](docs/rocm-apu.md)
 
 ### Community
 
