@@ -120,6 +120,7 @@ enum llm_type {
     LLM_TYPE_31B_A3_5B,
     LLM_TYPE_80B_A3B, // Qwen3 Next
     LLM_TYPE_100B_A6B,
+    LLM_TYPE_102B_A12B, // Solar-Open
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
     LLM_TYPE_230B_A10B, // Minimax M2
     LLM_TYPE_235B_A22B,

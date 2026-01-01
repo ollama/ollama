@@ -178,10 +178,10 @@ index f4713a421..92ba577a5 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ff0624b78..17464770d 100644
+index 3d2afac43..1e09cf1f0 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2901,7 +2901,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+@@ -2891,7 +2891,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
  
  #ifdef USE_CUDA_GRAPH
  static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
@@ -190,7 +190,7 @@ index ff0624b78..17464770d 100644
  
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
  
-@@ -2934,24 +2934,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+@@ -2924,24 +2924,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
  #endif
          }
  
@@ -241,7 +241,7 @@ index ff0624b78..17464770d 100644
          }
  
          if (!use_cuda_graph) {
-@@ -3752,7 +3762,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+@@ -3742,7 +3752,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
      }
  }
  
@@ -250,7 +250,7 @@ index ff0624b78..17464770d 100644
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
      ggml_cuda_set_device(cuda_ctx->device);
-@@ -3790,7 +3800,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3780,7 +3790,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      if (use_cuda_graph) {
          cuda_graph_update_required = is_cuda_graph_update_required(cuda_ctx, cgraph);
  

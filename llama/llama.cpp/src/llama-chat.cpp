@@ -74,6 +74,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "seed_oss",          LLM_CHAT_TEMPLATE_SEED_OSS          },
     { "grok-2",            LLM_CHAT_TEMPLATE_GROK_2            },
     { "pangu-embedded",    LLM_CHAT_TEMPLATE_PANGU_EMBED       },
+    { "solar-open",        LLM_CHAT_TEMPLATE_SOLAR_OPEN        },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -216,6 +217,8 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_GROK_2;
     } else if (tmpl_contains(LU8("[unused9]系统：[unused10]"))) {
         return LLM_CHAT_TEMPLATE_PANGU_EMBED;
+    } else if (tmpl_contains("<|begin|>") && tmpl_contains("<|end|>") && tmpl_contains("<|content|>")) {
+        return LLM_CHAT_TEMPLATE_SOLAR_OPEN;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -844,6 +847,14 @@ int32_t llm_chat_apply_template(
         }
         if (add_ass) {
             ss << "[unused9]助手：";
+        }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_SOLAR_OPEN) {
+        for (auto message : chat) {
+            std::string role(message->role);
+            ss << "<|begin|>" << role << "<|content|>" << message->content << "<|end|>";
+        }
+        if (add_ass) {
+            ss << "<|begin|>assistant";
         }
     } else {
         // template not supported

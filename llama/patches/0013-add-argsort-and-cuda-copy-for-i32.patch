@@ -234,10 +234,10 @@ index 7697c292d..00d773dd3 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index c4ceb4fc5..0e53ecc39 100644
+index ee84303ef..178e82d76 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -352,6 +352,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -369,6 +369,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
@@ -281,7 +281,7 @@ index c4ceb4fc5..0e53ecc39 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -481,6 +518,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -495,6 +532,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
              ggml_cpy_scalar_cuda<half, float>
                  (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
          }

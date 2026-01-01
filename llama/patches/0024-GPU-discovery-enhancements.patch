@@ -48,10 +48,10 @@ index 5a1403c4b..f0f734a6c 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 547d9d366..d7cf48691 100644
+index 03cbdec8f..eb383bba7 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -267,6 +267,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
+@@ -257,6 +257,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
      for (int id = 0; id < info.device_count; ++id) {
          int device_vmm = 0;
  
@@ -68,7 +68,7 @@ index 547d9d366..d7cf48691 100644
  #if defined(GGML_USE_VMM)
          CUdevice device;
          CU_CHECK(cuDeviceGet(&device, id));
-@@ -320,6 +330,11 @@ static ggml_cuda_device_info ggml_cuda_init() {
+@@ -310,6 +320,11 @@ static ggml_cuda_device_info ggml_cuda_init() {
  #else
          info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
          info.devices[id].cc = 100*prop.major + 10*prop.minor;
@@ -80,7 +80,7 @@ index 547d9d366..d7cf48691 100644
          GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
                          id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
                          ggml_cuda_parse_uuid(prop, id).c_str());
-@@ -4327,6 +4342,11 @@ struct ggml_backend_cuda_device_context {
+@@ -4317,6 +4332,11 @@ struct ggml_backend_cuda_device_context {
      std::string description;
      std::string pci_bus_id;
      std::string id;
@@ -92,7 +92,7 @@ index 547d9d366..d7cf48691 100644
  };
  
  static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
-@@ -4423,6 +4443,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
+@@ -4413,6 +4433,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
  static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
      ggml_cuda_set_device(ctx->device);
@@ -121,7 +121,7 @@ index 547d9d366..d7cf48691 100644
      CUDA_CHECK(cudaMemGetInfo(free, total));
  
  // ref: https://github.com/ggml-org/llama.cpp/pull/17368
-@@ -4455,6 +4497,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+@@ -4445,6 +4487,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
      return GGML_BACKEND_DEVICE_TYPE_GPU;
  }
  
@@ -129,7 +129,7 @@ index 547d9d366..d7cf48691 100644
  static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
  
-@@ -4468,6 +4511,19 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+@@ -4458,6 +4501,19 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
      // If you need the memory data, call ggml_backend_dev_memory() explicitly.
      props->memory_total = props->memory_free = 0;
  
@@ -149,7 +149,7 @@ index 547d9d366..d7cf48691 100644
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
      bool events = false;
-@@ -5067,6 +5123,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5057,6 +5113,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
@@ -157,7 +157,7 @@ index 547d9d366..d7cf48691 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -5082,6 +5139,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5072,6 +5129,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
  

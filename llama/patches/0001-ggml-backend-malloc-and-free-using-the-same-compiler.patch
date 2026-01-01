@@ -84,10 +84,10 @@ index ef23ec78d..581f26ed3 100644
  
  /**
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 55e1c20c9..da2eb6760 100644
+index 84eccea3f..b388e363e 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -583,6 +583,7 @@ struct ggml_backend_cuda_buffer_context {
+@@ -573,6 +573,7 @@ struct ggml_backend_cuda_buffer_context {
  static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
      delete ctx;
@@ -95,7 +95,7 @@ index 55e1c20c9..da2eb6760 100644
  }
  
  static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
-@@ -838,6 +839,7 @@ struct ggml_backend_cuda_split_buffer_context {
+@@ -828,6 +829,7 @@ struct ggml_backend_cuda_split_buffer_context {
  static void ggml_backend_cuda_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_split_buffer_context * ctx = (ggml_backend_cuda_split_buffer_context *)buffer->context;
      delete ctx;
@@ -103,7 +103,7 @@ index 55e1c20c9..da2eb6760 100644
  }
  
  static void * ggml_backend_cuda_split_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -1119,6 +1121,7 @@ static bool ggml_backend_buft_is_cuda_host(ggml_backend_buffer_type_t buft) {
+@@ -1109,6 +1111,7 @@ static bool ggml_backend_buft_is_cuda_host(ggml_backend_buffer_type_t buft) {
  
  static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      CUDA_CHECK(cudaFreeHost(buffer->context));
