@@ -140,6 +140,10 @@ enum layer_fraction_t {
 };
 // this enum is only used in llama_params_fit_impl but needs to be defined outside of it to fix a Windows compilation issue
 
+class llama_params_fit_exception : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 static void llama_params_fit_impl(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
         float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
@@ -181,12 +185,11 @@ static void llama_params_fit_impl(
         }
     }
 
-    int64_t sum_total           = 0;
+    int64_t sum_free            = 0;
     int64_t sum_projected_free  = 0;
     int64_t min_projected_free  = INT64_MAX;
     int64_t sum_projected_used  = 0;
     int64_t sum_projected_model = 0;
-    int64_t sum_projected_ctx   = 0;
 
     if (nd > 1) {
         LLAMA_LOG_INFO("%s: projected memory use with initial parameters [MiB]:\n", __func__);
@@ -197,12 +200,11 @@ static void llama_params_fit_impl(
         const int64_t projected_used = dmd.mb.total();
         const int64_t projected_free = dmd.free - projected_used;
 
-        sum_total           += dmd.total;
+        sum_free            += dmd.free;
         sum_projected_used  += projected_used;
         sum_projected_free  += projected_free;
         min_projected_free   = std::min(min_projected_free, projected_free);
         sum_projected_model += dmd.mb.model;
-        sum_projected_ctx   += dmd.mb.context;
 
         if (nd > 1) {
             LLAMA_LOG_INFO("%s:   - %s: %6" PRId64 " total, %6" PRId64 " used, %6" PRId64 " %s\n",
@@ -210,10 +212,9 @@ static void llama_params_fit_impl(
                 projected_free >= 0 ? "surplus" : "deficit");
         }
     }
-    assert(sum_total >= 0 && sum_projected_used >= 0 && sum_projected_ctx >= 0);
-    assert(sum_projected_used >= sum_projected_ctx);
+    assert(sum_free >= 0 && sum_projected_used >= 0);
     LLAMA_LOG_INFO("%s: projected to use %" PRId64 " MiB of device memory vs. %" PRId64 " MiB of free device memory\n",
-        __func__, sum_projected_used/MiB, sum_total/MiB);
+        __func__, sum_projected_used/MiB, sum_free/MiB);
     if (min_projected_free >= margin) {
         if (nd == 1) {
             LLAMA_LOG_INFO("%s: will leave %" PRId64 " >= %" PRId64 " MiB of free device memory, no changes needed\n",
@@ -236,9 +237,7 @@ static void llama_params_fit_impl(
                 __func__, margin/MiB, -global_surplus/MiB);
             if (cparams->n_ctx == 0) {
                 if (hp_nct > n_ctx_min) {
-                    const int64_t bytes_per_ctx = sum_projected_ctx / hp_nct;
-
-                    int64_t memory_reduction = -global_surplus;
+                    int64_t sum_used_target = sum_free - nd*margin_s;
                     if (nd > 1) {
                         // for multiple devices we need to be more conservative in terms of how much context we think can fit:
                         //   - for dense models only whole layers can be assigned to devices
@@ -246,24 +245,34 @@ static void llama_params_fit_impl(
                         //   - on average we expect a waste of 0.5 layers/tensors per device
                         //   - use slightly more than the expected average for nd devices to be safe
                         const int64_t model_per_layer = sum_projected_model / std::min(uint32_t(mparams->n_gpu_layers), hp_ngl);
-                        memory_reduction += (nd + 1) * model_per_layer / (hp_nex == 0 ? 2 : 6);
+                        sum_used_target -= (nd + 1) * model_per_layer / (hp_nex == 0 ? 2 : 6);
                     }
 
-                    uint32_t ctx_reduction = std::min(uint32_t((memory_reduction + bytes_per_ctx - 1) / bytes_per_ctx), hp_nct - n_ctx_min);
-                    cparams->n_ctx = hp_nct - ctx_reduction;
-                    cparams->n_ctx = std::max(cparams->n_ctx - cparams->n_ctx % 256, n_ctx_min); // round down context for CUDA backend
+                    int64_t sum_projected_used_min_ctx = 0;
+                    cparams->n_ctx = n_ctx_min;
+                    const dmds_t dmds_min_ctx = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+                    for (const auto & dmd : dmds_min_ctx) {
+                        sum_projected_used_min_ctx += dmd.mb.total();
+                    }
+                    if (sum_used_target > sum_projected_used_min_ctx) {
+                        // linear interpolation between minimum and maximum context size:
+                        cparams->n_ctx += (hp_nct - n_ctx_min) * (sum_used_target - sum_projected_used_min_ctx)
+                            / (sum_projected_used - sum_projected_used_min_ctx);
+                        cparams->n_ctx = std::max(cparams->n_ctx - cparams->n_ctx % 256, n_ctx_min); // round down context for CUDA backend
 
-                    ctx_reduction = hp_nct - cparams->n_ctx;
-                    memory_reduction = ctx_reduction * bytes_per_ctx;
-                    global_surplus += memory_reduction;
-                    LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %" PRId64 " MiB less memory in total\n",
-                        __func__, hp_nct, cparams->n_ctx, memory_reduction/MiB);
-                    if (global_surplus >= 0) {
+                        const int64_t bytes_per_ctx = (sum_projected_used - sum_projected_used_min_ctx) / (hp_nct - n_ctx_min);
+                        const int64_t memory_reduction = (hp_nct - cparams->n_ctx) * bytes_per_ctx;
+                        LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %" PRId64 " MiB less memory in total\n",
+                            __func__, hp_nct, cparams->n_ctx, memory_reduction/MiB);
                         if (nd == 1) {
                             LLAMA_LOG_INFO("%s: entire model can be fit by reducing context\n", __func__);
                             return;
                         }
                         LLAMA_LOG_INFO("%s: entire model should be fit across devices by reducing context\n", __func__);
+                    } else {
+                        const int64_t memory_reduction = sum_projected_used - sum_projected_used_min_ctx;
+                        LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %" PRId64 " MiB less memory in total\n",
+                            __func__, hp_nct, cparams->n_ctx, memory_reduction/MiB);
                     }
                 } else {
                     LLAMA_LOG_INFO("%s: default model context size is %" PRIu32 " which is <= the min. context size of %" PRIu32 " -> no change\n",
@@ -276,28 +285,28 @@ static void llama_params_fit_impl(
     }
 
     if (mparams->n_gpu_layers != default_mparams.n_gpu_layers) {
-        throw std::runtime_error("n_gpu_layers already set by user to " + std::to_string(mparams->n_gpu_layers) + ", abort");
+        throw llama_params_fit_exception("n_gpu_layers already set by user to " + std::to_string(mparams->n_gpu_layers) + ", abort");
     }
     if (nd > 1) {
         if (!tensor_split) {
-            throw std::runtime_error("did not provide a buffer to write the tensor_split to, abort");
+            throw llama_params_fit_exception("did not provide a buffer to write the tensor_split to, abort");
         }
         if (mparams->tensor_split) {
             for (size_t id = 0; id < nd; id++) {
                 if (mparams->tensor_split[id] != 0.0f) {
-                    throw std::runtime_error("model_params::tensor_split already set by user, abort");
+                    throw llama_params_fit_exception("model_params::tensor_split already set by user, abort");
                 }
             }
         }
         if (mparams->split_mode == LLAMA_SPLIT_MODE_ROW) {
-            throw std::runtime_error("changing weight allocation for LLAMA_SPLIT_MODE_ROW not implemented, abort");
+            throw llama_params_fit_exception("changing weight allocation for LLAMA_SPLIT_MODE_ROW not implemented, abort");
         }
     }
     if (!tensor_buft_overrides) {
-        throw std::runtime_error("did not provide buffer to set tensor_buft_overrides, abort");
+        throw llama_params_fit_exception("did not provide buffer to set tensor_buft_overrides, abort");
     }
     if (mparams->tensor_buft_overrides && (mparams->tensor_buft_overrides->pattern || mparams->tensor_buft_overrides->buft)) {
-        throw std::runtime_error("model_params::tensor_buft_overrides already set by user, abort");
+        throw llama_params_fit_exception("model_params::tensor_buft_overrides already set by user, abort");
     }
 
     // step 3: iteratively fill the back to front with "dense" layers
@@ -380,8 +389,8 @@ static void llama_params_fit_impl(
                     tensor_buft_overrides[itbo].buft    = nullptr;
                     itbo++;
                     mparams.tensor_buft_overrides = tensor_buft_overrides;
-                    throw std::runtime_error("llama_params_fit_n_tensor_buft_overrides() == "
-                        + std::to_string(ntbo) + " is insufficient for model\n");
+                    throw llama_params_fit_exception("llama_max_tensor_buft_overrides() == "
+                        + std::to_string(ntbo) + " is insufficient for model");
                 }
                 tensor_buft_overrides[itbo].pattern = get_overflow_pattern(il, il == il0 ? ngl_per_device[id].overflow_type : LAYER_FRACTION_MOE);
                 tensor_buft_overrides[itbo].buft = overflow_bufts[id];
@@ -503,6 +512,9 @@ static void llama_params_fit_impl(
             if (mem_high[id] > targets[id]) {
                 assert(ngl_per_device_high[id].n_layer > ngl_per_device[id].n_layer);
                 uint32_t delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
+                if (hp_nex > 0 && size_t(id) == nd - 1) {
+                    delta--;
+                }
                 LLAMA_LOG_DEBUG("%s: start filling device %" PRIu32 ", delta=%" PRIu32 "\n", __func__, id, delta);
                 while (delta > 1) {
                     uint32_t step_size = int64_t(delta) * (targets[id] - mem[id]) / (mem_high[id] - mem[id]);
@@ -638,7 +650,7 @@ static void llama_params_fit_impl(
             ngl_per_device_test[id].overflow_type = LAYER_FRACTION_UP;
             LLAMA_LOG_DEBUG("%s: trying to fit one extra layer with overflow_type=LAYER_FRACTION_UP\n", __func__);
             std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts);
-            if (mem_test[id] < targets[id]) {
+            if (mem_test[id] < targets[id] && (id + 1 == nd || mem_test[id + 1] < targets[id + 1])) {
                 ngl_per_device = ngl_per_device_test;
                 mem            = mem_test;
                 id_dense_start = id_dense_start_test;
@@ -648,7 +660,7 @@ static void llama_params_fit_impl(
                 ngl_per_device_test[id].overflow_type = LAYER_FRACTION_GATE;
                 LLAMA_LOG_DEBUG("%s: trying to fit one extra layer with overflow_type=LAYER_FRACTION_GATE\n", __func__);
                 mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts);
-                if (mem_test[id] < targets[id]) {
+                if (mem_test[id] < targets[id] && (id + 1 == nd || mem_test[id + 1] < targets[id + 1])) {
                     ngl_per_device = ngl_per_device_test;
                     mem            = mem_test;
                     id_dense_start = id_dense_start_test;
@@ -659,7 +671,7 @@ static void llama_params_fit_impl(
                 ngl_per_device_test[id].overflow_type = LAYER_FRACTION_ATTN;
                 LLAMA_LOG_DEBUG("%s: trying to fit one extra layer with overflow_type=LAYER_FRACTION_ATTN\n", __func__);
                 mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts);
-                if (mem_test[id] < targets[id]) {
+                if (mem_test[id] < targets[id] && (id + 1 == nd || mem_test[id + 1] < targets[id + 1])) {
                     ngl_per_device = ngl_per_device_test;
                     mem            = mem_test;
                     id_dense_start = id_dense_start_test;
@@ -678,22 +690,25 @@ static void llama_params_fit_impl(
     set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams);
 }
 
-bool llama_params_fit(
+enum llama_params_fit_status llama_params_fit(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
         float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
         size_t margin_s, uint32_t n_ctx_min, enum ggml_log_level log_level) {
     const int64_t t0_us = llama_time_us();
-    bool ok = true;
+    llama_params_fit_status status = LLAMA_PARAMS_FIT_STATUS_SUCCESS;
     try {
         llama_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, margin_s, n_ctx_min, log_level);
         LLAMA_LOG_INFO("%s: successfully fit params to free device memory\n", __func__);
-    } catch (const std::runtime_error & e) {
+    } catch (const llama_params_fit_exception & e) {
         LLAMA_LOG_WARN("%s: failed to fit params to free device memory: %s\n", __func__, e.what());
-        ok = false;
+        status = LLAMA_PARAMS_FIT_STATUS_FAILURE;
+    } catch (const std::runtime_error & e) {
+        LLAMA_LOG_ERROR("%s: encountered an error while trying to fit params to free device memory: %s\n", __func__, e.what());
+        status = LLAMA_PARAMS_FIT_STATUS_ERROR;
     }
     const int64_t t1_us = llama_time_us();
     LLAMA_LOG_INFO("%s: fitting params to free memory took %.2f seconds\n", __func__, (t1_us - t0_us) * 1e-6);
-    return ok;
+    return status;
 }
 
 struct llama_sampler_chain_params llama_sampler_chain_default_params() {

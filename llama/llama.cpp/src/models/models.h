@@ -406,6 +406,11 @@ struct llm_build_plamo : public llm_graph_context {
     llm_build_plamo(const llama_model & model, const llm_graph_params & params);
 };
 
+template <bool iswa>
+struct llm_build_plamo3 : public llm_graph_context {
+    llm_build_plamo3(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_plm : public llm_graph_context {
     llm_build_plm(const llama_model & model, const llm_graph_params & params);
 };

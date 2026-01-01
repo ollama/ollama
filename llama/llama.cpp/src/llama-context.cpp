@@ -294,8 +294,8 @@ llama_context::llama_context(
         // enabling pipeline parallelism in the scheduler increases memory usage, so it is only done when necessary
         bool pipeline_parallel =
             model.n_devices() > 1 &&
-            model.params.n_gpu_layers > (int) model.hparams.n_layer &&
-            model.params.split_mode == LLAMA_SPLIT_MODE_LAYER &&
+            model.n_gpu_layers() > model.hparams.n_layer &&
+            model.split_mode() == LLAMA_SPLIT_MODE_LAYER &&
             cparams.offload_kqv &&
             !model.has_tensor_overrides();
 
@@ -1441,7 +1441,9 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
     if (model.arch == LLM_ARCH_QWEN3NEXT) {
         return std::max<uint32_t>(n_tokens * 40, 32u * model.n_tensors());
     }
-    return std::max<uint32_t>(1024u, 8u*model.n_tensors());
+    uint32_t res = std::max<uint32_t>(1024u, 8u*model.n_tensors());
+    res += model.n_lora_nodes;
+    return res;
 }
 
 llm_graph_result * llama_context::get_gf_res_reserve() const {
@@ -1569,7 +1571,7 @@ llm_graph_cb llama_context::graph_get_cb() const {
 
         // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
         // FIXME: fix in ggml_backend_sched
-        const bool full_offload = model.params.n_gpu_layers > (int) model.hparams.n_layer;
+        const bool full_offload = model.n_gpu_layers() > model.hparams.n_layer;
         if (ubatch.n_tokens < 32 || full_offload) {
             if (il != -1 && strcmp(name, "norm") == 0) {
                 const auto & dev_layer = model.dev_layer(il);

@@ -24,10 +24,6 @@
 #include <arm_neon.h>
 #endif
 
-#if defined(__F16C__)
-#include <immintrin.h>
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif

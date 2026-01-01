@@ -561,9 +561,9 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
         # Fetch KleidiAI sources:
         include(FetchContent)
-        set(KLEIDIAI_COMMIT_TAG "v1.14.0")
+        set(KLEIDIAI_COMMIT_TAG "v1.16.0")
         set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/archive/refs/tags/${KLEIDIAI_COMMIT_TAG}.tar.gz")
-        set(KLEIDIAI_ARCHIVE_MD5  "45e110675d93f99f82c23a1afcca76bc")
+        set(KLEIDIAI_ARCHIVE_MD5  "0a9e9008adb6031f9e8cf70dff4a3321")
 
         if (POLICY CMP0135)
             cmake_policy(SET CMP0135 NEW)
@@ -615,6 +615,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         string(FIND "${ARCH_FLAGS_TEMP}" "+dotprod" DOTPROD_ENABLED)
         string(FIND "${ARCH_FLAGS_TEMP}" "+i8mm" I8MM_ENABLED)
         string(FIND "${ARCH_FLAGS_TEMP}" "+sme" SME_ENABLED)
+        string(FIND "${ARCH_FLAGS_TEMP}" "+sve" SVE_ENABLED)
 
         set(PRIVATE_ARCH_FLAGS ${ARCH_FLAGS_TEMP})
 
@@ -657,6 +658,15 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_kxn_bf16p2vlx2b_f32_x32_sme.c
                 ${KLEIDIAI_SRC}/kai/kai_common_sme_asm.S)
             set(PRIVATE_ARCH_FLAGS "-fno-tree-vectorize;${PRIVATE_ARCH_FLAGS}+sve+sve2")
+        endif()
+
+        if (NOT SVE_ENABLED MATCHES -1)
+            list(APPEND GGML_KLEIDIAI_SOURCES
+                ${KLEIDIAI_SRC}/kai/kai_common_sve_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x8_qsi4c32p8x8_1x8_sve_dotprod_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x8_qsi4c32p8x8_1x8_sve_dotprod.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p8x8_16x8_sve_i8mm_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p8x8_16x8_sve_i8mm.c)
         endif()
 
         set_source_files_properties(${GGML_KLEIDIAI_SOURCES} PROPERTIES COMPILE_OPTIONS "${PRIVATE_ARCH_FLAGS}")

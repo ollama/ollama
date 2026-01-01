@@ -180,6 +180,7 @@ enum projector_type {
     PROJECTOR_TYPE_GLMA,
     PROJECTOR_TYPE_QWEN25O, // will be replaced by QWEN2A or QWEN25VL depending on clip_ctx
     PROJECTOR_TYPE_VOXTRAL,
+    PROJECTOR_TYPE_MUSIC_FLAMINGO,
     PROJECTOR_TYPE_LFM2,
     PROJECTOR_TYPE_KIMIVL,
     PROJECTOR_TYPE_LIGHTONOCR,
@@ -209,6 +210,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_GLMA,      "glma"},
     { PROJECTOR_TYPE_QWEN25O,   "qwen2.5o"},
     { PROJECTOR_TYPE_VOXTRAL,   "voxtral"},
+    { PROJECTOR_TYPE_MUSIC_FLAMINGO, "musicflamingo"},
     { PROJECTOR_TYPE_LFM2,      "lfm2"},
     { PROJECTOR_TYPE_KIMIVL,    "kimivl"},
     { PROJECTOR_TYPE_LIGHTONOCR,"lightonocr"},

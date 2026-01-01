@@ -329,7 +329,7 @@ struct common_params {
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
 
-    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM (-1 - use default)
+    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM, -1 is auto, <= -2 is all
     int32_t main_gpu           = 0;                // the GPU that is used for scratch and small tensors
     float   tensor_split[128]  = {0};              // how split tensors should be distributed across GPUs
     bool    fit_params         = true;             // whether to fit unset model/context parameters to free device memory

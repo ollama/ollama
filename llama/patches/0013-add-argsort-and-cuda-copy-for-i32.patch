@@ -292,10 +292,10 @@ index c4ceb4fc5..0e53ecc39 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 51bcbae30..236838e9e 100644
+index 67b30e0d9..4736731b4 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4954,8 +4954,77 @@ kernel void kernel_argsort_f32_i32(
+@@ -4955,8 +4955,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  
@@ -373,7 +373,7 @@ index 51bcbae30..236838e9e 100644
  
  typedef void (argsort_merge_t)(
          constant   ggml_metal_kargs_argsort_merge & args,
-@@ -5110,8 +5179,154 @@ kernel void kernel_argsort_merge_f32_i32(
+@@ -5111,8 +5180,154 @@ kernel void kernel_argsort_merge_f32_i32(
      }
  }
  

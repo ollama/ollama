@@ -23,7 +23,7 @@ problem.
  8 files changed, 21 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 8547ecc84..9f37ca70c 100644
+index 1b59924b8..a8a61b1e2 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -112,7 +112,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
@@ -84,7 +84,7 @@ index ef23ec78d..581f26ed3 100644
  
  /**
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 55fa2e6a7..58eaf45b4 100644
+index 55e1c20c9..da2eb6760 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -583,6 +583,7 @@ struct ggml_backend_cuda_buffer_context {
@@ -132,10 +132,10 @@ index 70bf6f3d9..f2b7fe692 100644
  
  static void * ggml_backend_metal_buffer_private_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
-index 639715537..84d9f93f3 100644
+index 353f6a4b4..bbbb5e825 100644
 --- a/ggml/src/ggml-opencl/ggml-opencl.cpp
 +++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
-@@ -3421,6 +3421,7 @@ struct ggml_backend_opencl_buffer_context {
+@@ -3448,6 +3448,7 @@ struct ggml_backend_opencl_buffer_context {
  static void ggml_backend_opencl_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_opencl_buffer_context * ctx = (ggml_backend_opencl_buffer_context *) buffer->context;
      delete ctx;
@@ -144,10 +144,10 @@ index 639715537..84d9f93f3 100644
  
  static void * ggml_backend_opencl_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
-index e7890a5ee..d1f38235a 100644
+index 164b39d01..b4646bdb6 100644
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -556,6 +556,7 @@ static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -557,6 +557,7 @@ static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      bool status = send_rpc_cmd(ctx->sock, RPC_CMD_FREE_BUFFER, &request, sizeof(request), nullptr, 0);
      RPC_STATUS_ASSERT(status);
      delete ctx;
@@ -184,10 +184,10 @@ index e996d98be..84b679315 100644
  
  static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 493ee9c9a..bfd9ce1fd 100644
+index 541e4a50b..eccaef426 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -12498,6 +12498,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -12564,6 +12564,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
      ggml_vk_destroy_buffer(ctx->dev_buffer);
      delete ctx;
@@ -195,7 +195,7 @@ index 493ee9c9a..bfd9ce1fd 100644
  }
  
  static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -12641,6 +12642,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
+@@ -12707,6 +12708,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
  static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
      ggml_vk_host_free(vk_instance.devices[0], buffer->context);

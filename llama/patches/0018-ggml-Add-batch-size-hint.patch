@@ -20,7 +20,7 @@ consistent performance.
  8 files changed, 58 insertions(+), 32 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 03557bb31..93c95602d 100644
+index 609209459..9a4adf697 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -98,7 +98,7 @@ extern "C" {
@@ -58,7 +58,7 @@ index 6792ba986..0f5b03cef 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 1459d16dd..498186a7c 100644
+index 259e10257..1b91123d9 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -353,14 +353,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
@@ -178,7 +178,7 @@ index f4713a421..92ba577a5 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 693d5dd7c..ed33f8f20 100644
+index ff0624b78..17464770d 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -2901,7 +2901,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
@@ -278,10 +278,10 @@ index 8fc1c2fb5..ba95b4acc 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index bfd9ce1fd..1a419d01c 100644
+index eccaef426..f76ee7737 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13267,7 +13267,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13353,7 +13353,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -290,7 +290,7 @@ index bfd9ce1fd..1a419d01c 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -13533,6 +13533,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -13640,6 +13640,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);

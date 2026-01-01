@@ -16,7 +16,7 @@ must be recreated with no-alloc set to false before loading data.
  5 files changed, 333 insertions(+), 45 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 93c95602d..dbbb61d9c 100644
+index 9a4adf697..9751bd82a 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -305,6 +305,7 @@ extern "C" {
@@ -75,7 +75,7 @@ index 0f5b03cef..7bdf9d81f 100644
  
      struct ggml_backend {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 498186a7c..7746e8b92 100644
+index 1b91123d9..4cf0ec913 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -36,11 +36,25 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
@@ -323,7 +323,7 @@ index 62e618850..dac9cfcdf 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ed33f8f20..3a7fd31e0 100644
+index 17464770d..d73cb0e47 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -365,6 +365,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {

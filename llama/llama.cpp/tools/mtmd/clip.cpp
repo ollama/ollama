@@ -831,6 +831,7 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         case PROJECTOR_TYPE_VOXTRAL:
         case PROJECTOR_TYPE_QWEN2A:
         case PROJECTOR_TYPE_GLMA:
+        case PROJECTOR_TYPE_MUSIC_FLAMINGO:
             {
                 builder = std::make_unique<clip_graph_whisper_enc>(ctx, img);
             } break;
@@ -1193,6 +1194,7 @@ struct clip_model_loader {
                 case PROJECTOR_TYPE_QWEN2A:
                 case PROJECTOR_TYPE_GLMA:
                 case PROJECTOR_TYPE_VOXTRAL:
+                case PROJECTOR_TYPE_MUSIC_FLAMINGO:
                     {
                         bool require_stack = model.proj_type == PROJECTOR_TYPE_ULTRAVOX ||
                                              model.proj_type == PROJECTOR_TYPE_VOXTRAL ||
@@ -1592,6 +1594,17 @@ struct clip_model_loader {
                     model.conv1d_2_b = get_tensor(string_format(TN_CONV1D, 2, "bias"));
                     model.mm_1_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 1, "weight"));
                     model.mm_2_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 2, "weight"));
+                } break;
+            case PROJECTOR_TYPE_MUSIC_FLAMINGO:
+                {
+                    model.conv1d_1_w = get_tensor(string_format(TN_CONV1D, 1, "weight"));
+                    model.conv1d_1_b = get_tensor(string_format(TN_CONV1D, 1, "bias"));
+                    model.conv1d_2_w = get_tensor(string_format(TN_CONV1D, 2, "weight"));
+                    model.conv1d_2_b = get_tensor(string_format(TN_CONV1D, 2, "bias"));
+                    model.mm_1_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 1, "weight"));
+                    model.mm_1_b = get_tensor(string_format(TN_MM_AUDIO_MLP, 1, "bias"));
+                    model.mm_2_w = get_tensor(string_format(TN_MM_AUDIO_MLP, 2, "weight"));
+                    model.mm_2_b = get_tensor(string_format(TN_MM_AUDIO_MLP, 2, "bias"));
                 } break;
             case PROJECTOR_TYPE_INTERNVL:
                 {
@@ -3074,6 +3087,7 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
         case PROJECTOR_TYPE_VOXTRAL:
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_QWEN2A:
+        case PROJECTOR_TYPE_MUSIC_FLAMINGO:
             {
                 n_patches = img->nx;
 
@@ -3446,6 +3460,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_LFM2:
         case PROJECTOR_TYPE_VOXTRAL:
+        case PROJECTOR_TYPE_MUSIC_FLAMINGO:
         case PROJECTOR_TYPE_JANUS_PRO:
         case PROJECTOR_TYPE_COGVLM:
             {
@@ -3569,6 +3584,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
             return ctx->model.projection->ne[1];
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_VOXTRAL:
+        case PROJECTOR_TYPE_MUSIC_FLAMINGO:
             return ctx->model.mm_2_w->ne[1];
         case PROJECTOR_TYPE_INTERNVL:
             return ctx->model.mm_3_w->ne[1];
@@ -3630,7 +3646,8 @@ bool clip_has_whisper_encoder(const struct clip_ctx * ctx) {
     return ctx->proj_type() == PROJECTOR_TYPE_ULTRAVOX
         || ctx->proj_type() == PROJECTOR_TYPE_QWEN2A
         || ctx->proj_type() == PROJECTOR_TYPE_GLMA
-        || ctx->proj_type() == PROJECTOR_TYPE_VOXTRAL;
+        || ctx->proj_type() == PROJECTOR_TYPE_VOXTRAL
+        || ctx->proj_type() == PROJECTOR_TYPE_MUSIC_FLAMINGO;
 }
 
 bool clip_encode_float_image (struct clip_ctx * ctx, int n_threads, float * img, int h, int w, float * vec) {

@@ -9,16 +9,16 @@ disable amx as it reduces performance on some systems
  1 file changed, 4 deletions(-)
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 76cb339ca..676fb5b5e 100644
+index 993ec027f..5a1403c4b 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -365,10 +365,6 @@ if (GGML_CPU_ALL_VARIANTS)
-         ggml_add_cpu_backend_variant(skylakex     SSE42 AVX F16C AVX2 BMI2 FMA AVX512)
-         ggml_add_cpu_backend_variant(icelake      SSE42 AVX F16C AVX2 BMI2 FMA AVX512 AVX512_VBMI AVX512_VNNI)
-         ggml_add_cpu_backend_variant(alderlake    SSE42 AVX F16C AVX2 BMI2 FMA AVX_VNNI)
+@@ -379,10 +379,6 @@ if (GGML_CPU_ALL_VARIANTS)
+             ggml_add_cpu_backend_variant(zen4           SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
+         endif()
+         ggml_add_cpu_backend_variant(alderlake          SSE42 AVX F16C FMA AVX2 BMI2 AVX_VNNI)
 -        if (NOT MSVC)
 -            # MSVC doesn't support AMX
--            ggml_add_cpu_backend_variant(sapphirerapids SSE42 AVX F16C AVX2 BMI2 FMA AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
+-            ggml_add_cpu_backend_variant(sapphirerapids SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
 -        endif()
      elseif(GGML_SYSTEM_ARCH STREQUAL "ARM")
          if (CMAKE_SYSTEM_NAME MATCHES "Linux")
