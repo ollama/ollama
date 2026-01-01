@@ -901,7 +901,7 @@ func DefaultOptions() Options {
 			// options set when the model is loaded
 			NumCtx:    int(envconfig.ContextLength()),
 			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
+			NumGPU:    envconfig.DefaultNumGPU(), // -1 lets the scheduler decide, 0 forces CPU-only
 			NumThread: 0,  // let the runtime decide
 			UseMMap:   nil,
 		},
