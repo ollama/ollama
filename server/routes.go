@@ -752,9 +752,15 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				return err
 			}
 			// TODO: this first normalization should be done by the model
-			embedding = normalize(embedding)
+			embedding, err = normalize(embedding)
+			if err != nil {
+				return err
+			}
 			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
-				embedding = normalize(embedding[:req.Dimensions])
+				embedding, err = normalize(embedding[:req.Dimensions])
+				if err != nil {
+					return err
+				}
 			}
 			embeddings[i] = embedding
 			atomic.AddUint64(&totalTokens, uint64(tokenCount))
@@ -787,9 +793,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func normalize(vec []float32) []float32 {
+func normalize(vec []float32) ([]float32, error) {
 	var sum float32
 	for _, v := range vec {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return nil, errors.New("embedding contains NaN or Inf values")
+		}
 		sum += v * v
 	}
 
@@ -797,7 +806,7 @@ func normalize(vec []float32) []float32 {
 	for i := range vec {
 		vec[i] *= norm
 	}
-	return vec
+	return vec, nil
 }
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
@@ -2395,4 +2404,3 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 	}
 	return msgs
 }
-
