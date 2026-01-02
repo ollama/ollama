@@ -60,7 +60,7 @@ type MessagesRequest struct {
 	Model         string          `json:"model"`
 	MaxTokens     int             `json:"max_tokens"`
 	Messages      []MessageParam  `json:"messages"`
-	System        any             `json:"system,omitempty"`        // string or []ContentBlock
+	System        any             `json:"system,omitempty"` // string or []ContentBlock
 	Stream        bool            `json:"stream,omitempty"`
 	Temperature   *float64        `json:"temperature,omitempty"`
 	TopP          *float64        `json:"top_p,omitempty"`
@@ -74,7 +74,7 @@ type MessagesRequest struct {
 
 // MessageParam represents a message in the request
 type MessageParam struct {
-	Role    string `json:"role"` // "user" or "assistant"
+	Role    string `json:"role"`    // "user" or "assistant"
 	Content any    `json:"content"` // string or []ContentBlock
 }
 
@@ -181,11 +181,11 @@ type ContentBlockDeltaEvent struct {
 
 // Delta represents an incremental update
 type Delta struct {
-	Type       string `json:"type"` // "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
-	Text       string `json:"text,omitempty"`
+	Type        string `json:"type"` // "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
+	Text        string `json:"text,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
-	Thinking   string `json:"thinking,omitempty"`
-	Signature  string `json:"signature,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`
+	Signature   string `json:"signature,omitempty"`
 }
 
 // ContentBlockStopEvent signals the end of a content block
