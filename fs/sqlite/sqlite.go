@@ -469,6 +469,49 @@ func (v *Vocabulary) GetAllTokens() ([]string, error) {
 	return tokens, rows.Err()
 }
 
+// --- TokenEncoder/TokenDecoder implementations ---
+// These implement model.TokenEncoder and model.TokenDecoder interfaces
+// to enable direct SQLite queries instead of preloading all tokens.
+
+// SQLiteTokenEncoder implements model.TokenEncoder using SQLite B-tree lookup.
+// This bypasses the in-memory map that requires loading all tokens.
+type SQLiteTokenEncoder struct {
+	vocab *Vocabulary
+}
+
+// NewTokenEncoder creates a TokenEncoder backed by SQLite.
+func (v *Vocabulary) NewTokenEncoder() *SQLiteTokenEncoder {
+	return &SQLiteTokenEncoder{vocab: v}
+}
+
+// Encode returns the token ID for a string using SQLite indexed lookup.
+func (e *SQLiteTokenEncoder) Encode(s string) int32 {
+	id, err := e.vocab.GetTokenID(s)
+	if err != nil || id < 0 {
+		return -1
+	}
+	return int32(id)
+}
+
+// SQLiteTokenDecoder implements model.TokenDecoder using SQLite lookup.
+type SQLiteTokenDecoder struct {
+	vocab *Vocabulary
+}
+
+// NewTokenDecoder creates a TokenDecoder backed by SQLite.
+func (v *Vocabulary) NewTokenDecoder() *SQLiteTokenDecoder {
+	return &SQLiteTokenDecoder{vocab: v}
+}
+
+// Decode returns the token string for an ID using SQLite lookup.
+func (d *SQLiteTokenDecoder) Decode(id int32) string {
+	s, err := d.vocab.GetTokenString(int(id))
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
 // --- Training support ---
 
 // GetAccessedTensorIDs returns the IDs of tensors accessed since last clear.

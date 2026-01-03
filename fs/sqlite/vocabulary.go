@@ -54,6 +54,9 @@ func (m *Model) LoadVocabulary() (*model.Vocabulary, error) {
 		AddEOS: addEOS,
 		BOS:    []int32{bosID},
 		EOS:    eosIDs,
+		// Use SQLite-backed encoder/decoder to bypass map preloading
+		Encoder: vocab.NewTokenEncoder(),
+		Decoder: vocab.NewTokenDecoder(),
 	}, nil
 }
 
@@ -67,7 +70,31 @@ func (m *Model) LoadVocabularyMinimal() (*model.Vocabulary, error) {
 	}
 
 	return &model.Vocabulary{
-		Values: tokens,
+		Values:  tokens,
+		Encoder: vocab.NewTokenEncoder(),
+		Decoder: vocab.NewTokenDecoder(),
+	}, nil
+}
+
+// LoadVocabularyLazy loads vocabulary without preloading tokens.
+// This is the most memory-efficient option - tokens are fetched on-demand via SQLite.
+func (m *Model) LoadVocabularyLazy() (*model.Vocabulary, error) {
+	vocab := m.db.GetVocabulary()
+
+	// Get special token settings without loading all tokens
+	addBOS := m.KV().Bool("tokenizer.ggml.add_bos_token", true)
+	addEOS := m.KV().Bool("tokenizer.ggml.add_eos_token", false)
+	bosID := int32(m.KV().Uint("tokenizer.ggml.bos_token_id"))
+	eosID := int32(m.KV().Uint("tokenizer.ggml.eos_token_id"))
+
+	return &model.Vocabulary{
+		// Values is empty - all lookups go through Encoder/Decoder
+		AddBOS:  addBOS,
+		AddEOS:  addEOS,
+		BOS:     []int32{bosID},
+		EOS:     []int32{eosID},
+		Encoder: vocab.NewTokenEncoder(),
+		Decoder: vocab.NewTokenDecoder(),
 	}, nil
 }
 

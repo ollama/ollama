@@ -13,6 +13,19 @@ const (
 	SpecialEOS
 )
 
+// TokenEncoder provides token string to ID lookup.
+// Implement this interface to bypass the default map-based lookup.
+type TokenEncoder interface {
+	// Encode returns the token ID for a string, or -1 if not found.
+	Encode(s string) int32
+}
+
+// TokenDecoder provides token ID to string lookup.
+type TokenDecoder interface {
+	// Decode returns the token string for an ID.
+	Decode(id int32) string
+}
+
 type Vocabulary struct {
 	Values []string
 	Types  []int32
@@ -21,6 +34,11 @@ type Vocabulary struct {
 
 	BOS, EOS       []int32
 	AddBOS, AddEOS bool
+
+	// External encoder/decoder for database-backed lookups.
+	// When set, Encode() uses this instead of building the values map.
+	Encoder TokenEncoder
+	Decoder TokenDecoder
 
 	specialOnce sync.Once
 	special     []string
@@ -66,6 +84,13 @@ func (v *Vocabulary) addSpecials(ids []int32) []int32 {
 }
 
 func (v *Vocabulary) Encode(s string) int32 {
+	// Use external encoder if available (e.g., SQLite direct query)
+	// This bypasses the map construction that forces loading all tokens
+	if v.Encoder != nil {
+		return v.Encoder.Encode(s)
+	}
+
+	// Fallback: build map on first use (requires all tokens in memory)
 	v.valuesOnce.Do(func() {
 		v.values = make(map[string]int32, len(v.Values))
 		for i, value := range v.Values {
@@ -81,6 +106,15 @@ func (v *Vocabulary) Encode(s string) int32 {
 }
 
 func (v *Vocabulary) Decode(id int32) string {
+	// Use external decoder if available
+	if v.Decoder != nil {
+		return v.Decoder.Decode(id)
+	}
+
+	// Fallback: direct array access (requires all tokens in memory)
+	if id < 0 || int(id) >= len(v.Values) {
+		return ""
+	}
 	return v.Values[id]
 }
 
