@@ -50,7 +50,7 @@ func (r registryChallenge) URL() (*url.URL, error) {
 	return redirectURL, nil
 }
 
-func getAuthorizationToken(ctx context.Context, challenge registryChallenge) (string, error) {
+func getAuthorizationToken(ctx context.Context, challenge registryChallenge, regOpts *registryOptions) (string, error) {
 	redirectURL, err := challenge.URL()
 	if err != nil {
 		return "", err
@@ -67,7 +67,7 @@ func getAuthorizationToken(ctx context.Context, challenge registryChallenge) (st
 
 	headers.Add("Authorization", signature)
 
-	response, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, &registryOptions{})
+	response, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, regOpts)
 	if err != nil {
 		return "", err
 	}
