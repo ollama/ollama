@@ -84,6 +84,15 @@ func RegisterBackend(name string, f func(string, BackendParams) (Backend, error)
 }
 
 func NewBackend(modelPath string, params BackendParams) (Backend, error) {
+	// Auto-detect backend based on file extension
+	if strings.HasSuffix(modelPath, ".db") || strings.HasSuffix(modelPath, ".sqlite") {
+		if backend, ok := backends["sqlite"]; ok {
+			return backend(modelPath, params)
+		}
+		return nil, fmt.Errorf("sqlite backend not available")
+	}
+
+	// Default to GGML backend for .gguf files
 	if backend, ok := backends["ggml"]; ok {
 		return backend(modelPath, params)
 	}
