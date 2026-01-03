@@ -203,7 +203,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	if err := client.Create(cmd.Context(), req, fn); err != nil {
 		if strings.Contains(err.Error(), "path or Modelfile are required") {
-			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+			return fmt.Errorf("the Ollama server must be updated to use `ollama create` with this client")
 		}
 		return err
 	}
@@ -1641,7 +1641,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return fmt.Errorf("ollama server not responding - %w", err)
+			return fmt.Errorf("Ollama server not responding - %w", err)
 		}
 	}
 	return nil
@@ -1659,7 +1659,7 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 
 	if serverVersion != "" {
-		fmt.Printf("ollama version is %s\n", serverVersion)
+		fmt.Printf("Ollama version is %s\n", serverVersion)
 	}
 
 	if serverVersion != version.Version {
@@ -1691,7 +1691,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	rootCmd := &cobra.Command{
-		Use:           "ollama",
+		Use:           "Ollama",
 		Short:         "Large language model runner",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -1766,7 +1766,7 @@ func NewCLI() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
-		Short:   "Start ollama",
+		Short:   "Start Ollama",
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}

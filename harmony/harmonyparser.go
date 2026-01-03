@@ -261,7 +261,7 @@ const (
 )
 
 // HarmonyMessageHandler processes harmony events and accumulates content appropriately.
-// This is a higher level interface that maps harmony concepts into ollama concepts
+// This is a higher level interface that maps harmony concepts into Ollama concepts
 type HarmonyMessageHandler struct {
 	state           harmonyMessageState
 	HarmonyParser   *HarmonyParser
