@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -739,7 +740,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
-			token, err := getAuthorizationToken(ctx, challenge)
+			token, err := getAuthorizationToken(ctx, challenge, regOpts)
 			if err != nil {
 				return nil, err
 			}
@@ -816,10 +817,20 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	c := &http.Client{
-		CheckRedirect: regOpts.CheckRedirect,
+	c := &http.Client{}
+
+	if regOpts != nil && regOpts.CheckRedirect != nil {
+		c.CheckRedirect = regOpts.CheckRedirect
 	}
-	if testMakeRequestDialContext != nil {
+
+	// Configure TLS to skip certificate verification if insecure mode is enabled
+	if regOpts != nil && regOpts.Insecure {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		c.Transport = tr
+	} else if testMakeRequestDialContext != nil {
 		tr := http.DefaultTransport.(*http.Transport).Clone()
 		tr.DialContext = testMakeRequestDialContext
 		c.Transport = tr

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,7 +283,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err = b.downloadChunk(inner, directURL, w, part)
+				err = b.downloadChunk(inner, directURL, w, part, opts)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
@@ -326,7 +327,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
+func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
@@ -334,7 +335,20 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 			return err
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
-		resp, err := http.DefaultClient.Do(req)
+
+		// Use custom HTTP client with insecure TLS if needed
+		httpClient := http.DefaultClient
+		if opts != nil && opts.Insecure {
+			tr := http.DefaultTransport.(*http.Transport).Clone()
+			tr.TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true,
+			}
+			httpClient = &http.Client{
+				Transport: tr,
+			}
+		}
+
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return err
 		}
