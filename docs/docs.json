@@ -139,7 +139,8 @@
               "/api/streaming",
               "/api/usage",
               "/api/errors",
-              "/api/openai-compatibility"
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
             ]
           },
           {
