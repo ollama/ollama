@@ -400,6 +400,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [aichat](https://github.com/sigoden/aichat) All-in-one LLM CLI tool featuring Shell Assistant, Chat-REPL, RAG, AI tools & agents, with access to OpenAI, Claude, Gemini, Ollama, Groq, and more.
 - [PowershAI](https://github.com/rrg92/powershai) PowerShell module that brings AI to terminal on Windows, including support for Ollama
 - [orbiton](https://github.com/xyproto/orbiton) Configuration-free text editor and IDE with support for tab completion with Ollama.
+- - [osync](https://github.com/mann1x/osync/) Swiss-army knife tool to manage models locally and remotely, copy models remotely and even remote to remote server. Quantization Comparison feature to test and evaluate quants quality; logprobes and token metrics, optional judgment process.
 
 ### Apple Vision Pro
 
