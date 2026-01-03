@@ -11,6 +11,126 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// FuzzDurationUnmarshal tests Duration JSON unmarshaling with random inputs
+func FuzzDurationUnmarshal(f *testing.F) {
+	// Add seed corpus
+	seeds := []any{
+		42,
+		42.5,
+		-1,
+		-3.14,
+		"5m",
+		"1h30m",
+		"-1m",
+		"0s",
+		"",
+		nil,
+		"invalid",
+		[]any{},
+		map[string]any{},
+		true,
+		"999999999999999999999h",
+	}
+	for _, seed := range seeds {
+		addFuzzSeed(f, seed)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var d Duration
+		_ = d.UnmarshalJSON([]byte(input))
+		// We're testing for panics, not correctness
+	})
+}
+
+// FuzzMessageUnmarshal tests Message JSON unmarshaling with random inputs
+func FuzzMessageUnmarshal(f *testing.F) {
+	seeds := []any{
+		Message{Role: "user", Content: "hello"},
+		Message{Role: "SYSTEM", Content: "init"},
+		Message{Role: "Assistant", Content: "hi"},
+		Message{Role: "", Content: ""},
+		map[string]any{},
+		map[string]any{"role": 123},
+		map[string]any{"content": nil},
+		map[string]any{"role": "user", "images": []string{"base64data"}},
+		map[string]any{"role": "tool", "tool_calls": []any{}},
+	}
+	for _, seed := range seeds {
+		addFuzzSeed(f, seed)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var m Message
+		_ = json.Unmarshal([]byte(input), &m)
+	})
+}
+
+// FuzzPropertyTypeUnmarshal tests PropertyType JSON unmarshaling
+func FuzzPropertyTypeUnmarshal(f *testing.F) {
+	seeds := []any{
+		"string",
+		"number",
+		[]string{"string", "number"},
+		[]string{"string"},
+		[]string{},
+		nil,
+		123,
+		map[string]any{},
+		[]any{nil},
+		[]string{"", ""},
+	}
+	for _, seed := range seeds {
+		addFuzzSeed(f, seed)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var pt PropertyType
+		err := json.Unmarshal([]byte(input), &pt)
+		if err == nil {
+			// Round-trip test
+			data, err := json.Marshal(pt)
+			if err != nil {
+				return
+			}
+			var pt2 PropertyType
+			_ = json.Unmarshal(data, &pt2)
+		}
+	})
+}
+
+// FuzzThinkValueUnmarshal tests ThinkValue JSON unmarshaling
+func FuzzThinkValueUnmarshal(f *testing.F) {
+	seeds := []any{
+		true,
+		false,
+		"high",
+		"medium",
+		"low",
+		"invalid",
+		"",
+		nil,
+		123,
+		[]any{},
+		map[string]any{},
+	}
+	for _, seed := range seeds {
+		addFuzzSeed(f, seed)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var tv ThinkValue
+		_ = tv.UnmarshalJSON([]byte(input))
+	})
+}
+
+func addFuzzSeed(f *testing.F, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		f.Fatalf("marshal seed: %v", err)
+	}
+	f.Add(string(b))
+}
+
 func TestKeepAliveParsingFromJSON(t *testing.T) {
 	tests := []struct {
 		name string

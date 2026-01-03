@@ -11,6 +11,79 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+// FuzzParseFileType tests ParseFileType with random inputs
+func FuzzParseFileType(f *testing.F) {
+	seeds := []string{
+		"F32", "F16", "Q8_0", "Q4_K_S", "Q4_K_M", "Q4_K", "BF16",
+		"", "invalid", "f32", "Q4_0", "Q5_0", "Q6_K",
+		"MXFP4", "TQ1_0", "TQ2_0",
+		strings.Repeat("A", 1000),
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		ft, err := ParseFileType(input)
+		if err == nil {
+			// Valid type - check string round-trip
+			_ = ft.String()
+		}
+	})
+}
+
+// FuzzParseTensorType tests ParseTensorType with random inputs
+func FuzzParseTensorType(f *testing.F) {
+	seeds := []string{
+		"F32", "F16", "Q4_0", "Q4_1", "Q5_0", "Q5_1",
+		"Q8_0", "Q8_1", "Q2_K", "Q3_K", "Q4_K", "Q5_K",
+		"Q6_K", "Q8_K", "F64", "BF16", "MXFP4",
+		"", "invalid", "f32", "I8", "I16", "I32", "I64",
+		strings.Repeat("B", 1000),
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		tt, err := ParseTensorType(input)
+		if err == nil {
+			// Valid type - check string and methods
+			_ = tt.String()
+			_ = tt.TypeSize()
+			_ = tt.BlockSize()
+		}
+	})
+}
+
+// FuzzDetectContentType tests DetectContentType with random inputs
+func FuzzDetectContentType(f *testing.F) {
+	// Add seeds with various magic numbers
+	seeds := [][]byte{
+		{0x67, 0x67, 0x6d, 0x6c}, // ggml
+		{0x67, 0x67, 0x6d, 0x66}, // ggmf
+		{0x67, 0x67, 0x6a, 0x74}, // ggjt
+		{0x67, 0x67, 0x6C, 0x61}, // ggla
+		{0x46, 0x55, 0x47, 0x47}, // GGUF LE
+		{0x47, 0x47, 0x55, 0x46}, // GGUF BE
+		{0x00, 0x00, 0x00, 0x00},
+		{0xFF, 0xFF, 0xFF, 0xFF},
+		{},
+		{0x00},
+		{0x67, 0x67},
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input []byte) {
+		if len(input) < 4 {
+			return
+		}
+		_ = DetectContentType(input)
+	})
+}
+
 func TestTensorLayers(t *testing.T) {
 	tensors := make(map[string]*Tensor)
 	for _, name := range []string{
