@@ -4,6 +4,7 @@
 #include "clip.h"
 #include "clip-impl.h"
 
+#include <array>
 #include <vector>
 #include <unordered_set>
 #include <cstdint>
@@ -60,6 +61,7 @@ struct clip_hparams {
     std::unordered_set<int32_t> vision_feature_layer;
     int32_t attn_window_size = 0;
     int32_t n_wa_pattern = 0;
+    std::unordered_set<int32_t> wa_layer_indexes; // explicit layer indexes that use full attention (for irregular patterns like YoutuVL)
 
     // audio
     int32_t n_mel_bins = 0; // whisper preprocessor
@@ -141,6 +143,30 @@ struct clip_layer {
     ggml_tensor * deepstack_fc1_b = nullptr;
     ggml_tensor * deepstack_fc2_w = nullptr;
     ggml_tensor * deepstack_fc2_b = nullptr;
+
+    // lfm2
+    ggml_tensor * ff_norm_w     = nullptr;
+    ggml_tensor * ff_norm_b     = nullptr;
+    ggml_tensor * ff_norm_1_w   = nullptr;
+    ggml_tensor * ff_norm_1_b   = nullptr;
+    ggml_tensor * ff_up_1_w     = nullptr;
+    ggml_tensor * ff_up_1_b     = nullptr;
+    ggml_tensor * ff_down_1_w   = nullptr;
+    ggml_tensor * ff_down_1_b   = nullptr;
+    ggml_tensor * pos_bias_u    = nullptr;
+    ggml_tensor * pos_bias_v    = nullptr;
+    ggml_tensor * norm_conv_w   = nullptr;
+    ggml_tensor * norm_conv_b   = nullptr;
+    ggml_tensor * linear_pos_w  = nullptr;
+
+    ggml_tensor * conv_norm_w   = nullptr;
+    ggml_tensor * conv_norm_b   = nullptr;
+    ggml_tensor * conv_dw_w     = nullptr;
+    ggml_tensor * conv_dw_b     = nullptr;
+    ggml_tensor * conv_pw1_w    = nullptr;
+    ggml_tensor * conv_pw1_b    = nullptr;
+    ggml_tensor * conv_pw2_w    = nullptr;
+    ggml_tensor * conv_pw2_b    = nullptr;
 
     bool has_deepstack() const {
         return deepstack_fc1_w != nullptr;
@@ -286,9 +312,16 @@ struct clip_model {
     ggml_tensor * mm_boi = nullptr;
     ggml_tensor * mm_eoi = nullptr;
 
+    // lfm2 audio
+    std::array<ggml_tensor *, 7> pre_encode_conv_X_w = {nullptr};
+    std::array<ggml_tensor *, 7> pre_encode_conv_X_b = {nullptr};
+    ggml_tensor * pre_encode_out_w = nullptr;
+    ggml_tensor * pre_encode_out_b = nullptr;
+
     bool audio_has_avgpool() const {
         return proj_type == PROJECTOR_TYPE_QWEN2A
-            || proj_type == PROJECTOR_TYPE_VOXTRAL;
+            || proj_type == PROJECTOR_TYPE_VOXTRAL
+            || proj_type == PROJECTOR_TYPE_MUSIC_FLAMINGO;
     }
 
     bool audio_has_stack_frames() const {

@@ -20,7 +20,7 @@ consistent performance.
  8 files changed, 58 insertions(+), 32 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 03557bb31..93c95602d 100644
+index 609209459..9a4adf697 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -98,7 +98,7 @@ extern "C" {
@@ -58,7 +58,7 @@ index 6792ba986..0f5b03cef 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 1459d16dd..498186a7c 100644
+index 259e10257..1b91123d9 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -353,14 +353,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
@@ -178,10 +178,10 @@ index f4713a421..92ba577a5 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index c9d3a2b03..25548629d 100644
+index 3d2afac43..1e09cf1f0 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2901,7 +2901,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+@@ -2891,7 +2891,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
  
  #ifdef USE_CUDA_GRAPH
  static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
@@ -190,7 +190,7 @@ index c9d3a2b03..25548629d 100644
  
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
  
-@@ -2934,24 +2934,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+@@ -2924,24 +2924,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
  #endif
          }
  
@@ -278,10 +278,10 @@ index 8fc1c2fb5..ba95b4acc 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 120191ca0..5349bce24 100644
+index aecd8ee59..317914c3b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13099,7 +13099,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13419,7 +13419,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -290,7 +290,7 @@ index 120191ca0..5349bce24 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -13334,6 +13334,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -13706,6 +13706,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);

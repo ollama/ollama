@@ -251,7 +251,7 @@ bool set_process_priority(enum ggml_sched_priority prio) {
         case GGML_SCHED_PRIO_REALTIME: p = -20; break;
     }
 
-    if (!setpriority(PRIO_PROCESS, 0, p)) {
+    if (setpriority(PRIO_PROCESS, 0, p) != 0) {
         LOG_WRN("failed to set process priority %d : %s (%d)\n", prio, strerror(errno), errno);
         return false;
     }
@@ -1078,6 +1078,8 @@ struct common_init_result::impl {
     impl() = default;
     ~impl() = default;
 
+    // note: the order in which model, context, etc. are declared matters because their destructors will be called bottom-to-top
+
     llama_model_ptr   model;
     llama_context_ptr context;
 
@@ -1092,7 +1094,7 @@ common_init_result::common_init_result(common_params & params) :
     auto cparams = common_context_params_to_llama(params);
 
     if (params.fit_params) {
-        LOG_INF("%s: fitting params to device memory, to report bugs during this step use -fit off (or --verbose if you can't)\n", __func__);
+        LOG_INF("%s: fitting params to device memory, for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on\n", __func__);
         llama_params_fit(params.model.path.c_str(), &mparams, &cparams,
             params.tensor_split, params.tensor_buft_overrides.data(), params.fit_params_target, params.fit_params_min_ctx,
             params.verbosity >= 4 ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
@@ -1106,6 +1108,25 @@ common_init_result::common_init_result(common_params & params) :
     pimpl->model.reset(model);
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
+
+    // load and optionally apply lora adapters (must be loaded before context creation)
+    for (auto & la : params.lora_adapters) {
+        llama_adapter_lora_ptr lora;
+        lora.reset(llama_adapter_lora_init(model, la.path.c_str()));
+        if (lora == nullptr) {
+            LOG_ERR("%s: failed to load lora adapter '%s'\n", __func__, la.path.c_str());
+            pimpl->model.reset(model);
+            return;
+        }
+
+        char buf[1024];
+        la.ptr = lora.get();
+        llama_adapter_meta_val_str(la.ptr, "adapter.lora.task_name", buf, sizeof(buf));
+        la.task_name = buf;
+        llama_adapter_meta_val_str(la.ptr, "adapter.lora.prompt_prefix", buf, sizeof(buf));
+        la.prompt_prefix = buf;
+        pimpl->lora.emplace_back(std::move(lora)); // copy to list of loaded adapters
+    }
 
     // updates params.sampling
     // TODO: fix naming
@@ -1243,24 +1264,6 @@ common_init_result_ptr common_init_from_params(common_params & params) {
         }
     }
 
-    // load and optionally apply lora adapters
-    for (auto & la : params.lora_adapters) {
-        llama_adapter_lora_ptr lora;
-        lora.reset(llama_adapter_lora_init(model, la.path.c_str()));
-        if (lora == nullptr) {
-            LOG_ERR("%s: failed to apply lora adapter '%s'\n", __func__, la.path.c_str());
-            return res;
-        }
-
-        char buf[1024];
-        la.ptr = lora.get();
-        llama_adapter_meta_val_str(la.ptr, "adapter.lora.task_name", buf, sizeof(buf));
-        la.task_name = buf;
-        llama_adapter_meta_val_str(la.ptr, "adapter.lora.prompt_prefix", buf, sizeof(buf));
-        la.prompt_prefix = buf;
-        res->lora().emplace_back(std::move(lora)); // copy to list of loaded adapters
-    }
-
     if (!params.lora_init_without_apply) {
         common_set_adapter_lora(lctx, params.lora_adapters);
     }
@@ -1339,10 +1342,7 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
         mparams.devices = params.devices.data();
     }
 
-    if (params.n_gpu_layers != -1) {
-        mparams.n_gpu_layers = params.n_gpu_layers;
-    }
-
+    mparams.n_gpu_layers    = params.n_gpu_layers;
     mparams.main_gpu        = params.main_gpu;
     mparams.split_mode      = params.split_mode;
     mparams.tensor_split    = params.tensor_split;

@@ -14,10 +14,6 @@
 #include <arm_neon.h>
 #endif
 
-#if defined(__F16C__)
-#include <immintrin.h>
-#endif
-
 #if defined(__riscv_v_intrinsic)
 #include <riscv_vector.h>
 #endif

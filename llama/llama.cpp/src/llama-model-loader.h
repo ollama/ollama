@@ -131,6 +131,8 @@ struct llama_model_loader {
     template<typename T>
     bool get_key_or_arr(enum llm_kv kid, T & result, uint32_t n, bool required = true);
 
+    bool get_key_or_arr(enum llm_kv kid, uint32_t & result, bool required = true);
+
     std::string get_arch_name() const;
 
     enum llm_arch get_arch() const;

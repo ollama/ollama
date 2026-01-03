@@ -251,16 +251,6 @@ static ggml_cuda_device_info ggml_cuda_init() {
     GGML_ASSERT(info.device_count <= GGML_CUDA_MAX_DEVICES);
 
     int64_t total_vram = 0;
-#ifdef GGML_CUDA_FORCE_MMQ
-    GGML_LOG_INFO("%s: GGML_CUDA_FORCE_MMQ:    yes\n", __func__);
-#else
-    GGML_LOG_INFO("%s: GGML_CUDA_FORCE_MMQ:    no\n", __func__);
-#endif // GGML_CUDA_FORCE_MMQ
-#ifdef GGML_CUDA_FORCE_CUBLAS
-    GGML_LOG_INFO("%s: GGML_CUDA_FORCE_CUBLAS: yes\n", __func__);
-#else
-    GGML_LOG_INFO("%s: GGML_CUDA_FORCE_CUBLAS: no\n", __func__);
-#endif // GGML_CUDA_FORCE_CUBLAS
     GGML_LOG_INFO("%s: found %d " GGML_CUDA_NAME " devices:\n", __func__, info.device_count);
 
     std::vector<std::pair<int, std::string>> turing_devices_without_mma;
@@ -2345,7 +2335,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 
             const int cc            = ggml_cuda_info().devices[id].cc;
             const int warp_size     = ggml_cuda_info().devices[id].warp_size;
-            use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1]);
+            use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1], /*n_experts=*/0);
             use_mul_mat_f           = use_mul_mat_f             && ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, src1->ne[1], /*mul_mat_id=*/false);
             use_mul_mat_vec_f       = use_mul_mat_vec_f         && ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]);
             any_gpus_with_slow_fp16 = any_gpus_with_slow_fp16   || !fast_fp16_hardware_available(cc);
@@ -2353,7 +2343,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     } else {
         const int cc            = ggml_cuda_info().devices[ctx.device].cc;
         const int warp_size     = ggml_cuda_info().devices[ctx.device].warp_size;
-        use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1]);
+        use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1], /*n_experts=*/0);
         use_mul_mat_f           = use_mul_mat_f             && ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, src1->ne[1], /*mul_mat_id=*/false);
         use_mul_mat_vec_f       = use_mul_mat_vec_f         && ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]);
         any_gpus_with_slow_fp16 = any_gpus_with_slow_fp16   || !fast_fp16_hardware_available(cc);
@@ -2421,7 +2411,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
             return;
         }
 
-        if (ggml_cuda_should_use_mmq(src0->type, cc, ne12)) {
+        if (ggml_cuda_should_use_mmq(src0->type, cc, ne12, /*n_experts=*/ne02)) {
             ggml_cuda_mul_mat_q(ctx, src0, src1, ids, dst);
             return;
         }
@@ -3220,8 +3210,11 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
         ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3, node_idx + 9 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx];
         ggml_tensor * weights = cgraph->nodes[node_idx + 9];
+        ggml_tensor * get_rows = cgraph->nodes[node_idx + 4];
+        ggml_tensor * argsort = cgraph->nodes[node_idx + 2];
+        int n_expert = cgraph->nodes[node_idx]->src[0]->ne[0];
 
-        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+        if (ggml_cuda_should_use_topk_moe(softmax, weights, get_rows, argsort, nullptr, n_expert)) {
             return true;
         }
     }
@@ -3229,7 +3222,11 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
     if (is_equal(topk_moe_ops, ops) && ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3, node_idx + 4 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx];
         ggml_tensor * weights = cgraph->nodes[node_idx + 4];
-        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+        ggml_tensor * get_rows = cgraph->nodes[node_idx + 4];
+        ggml_tensor * argsort = cgraph->nodes[node_idx + 2];
+        int n_expert = cgraph->nodes[node_idx]->src[0]->ne[0];
+
+        if (ggml_cuda_should_use_topk_moe(softmax, weights, get_rows, argsort, nullptr, n_expert)) {
             return true;
         }
     }
@@ -3238,8 +3235,11 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx, 
         ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 1, node_idx + 5 })) {
         ggml_tensor * softmax = cgraph->nodes[node_idx + 4];
         ggml_tensor * weights = cgraph->nodes[node_idx + 5];
+        ggml_tensor * get_rows = cgraph->nodes[node_idx + 2];
+        ggml_tensor * argsort = cgraph->nodes[node_idx + 0];
+        int n_expert = cgraph->nodes[node_idx]->src[0]->ne[0];
 
-        if (ggml_cuda_should_use_topk_moe(softmax, weights)) {
+        if (ggml_cuda_should_use_topk_moe(softmax, weights, get_rows, argsort, nullptr, n_expert)) {
             return true;
         }
     }
@@ -5058,6 +5058,16 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t 
     #ifdef GGML_CUDA_FA_ALL_QUANTS
         features.push_back({ "FA_ALL_QUANTS", "1" });
     #endif
+
+    {
+        const auto & info = ggml_cuda_info();
+        for (int id = 0; id < info.device_count; ++id) {
+            if (blackwell_mma_available(info.devices[id].cc)) {
+                features.push_back({ "BLACKWELL_NATIVE_FP4", "1"});
+                break;
+            }
+        }
+    }
 
     #undef _STRINGIFY
     #undef STRINGIFY
