@@ -320,6 +320,29 @@ func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc
 	})
 }
 
+// ListRemoteProviders returns configured remote providers (redacted).
+func (c *Client) ListRemoteProviders(ctx context.Context) ([]RemoteProviderResponse, error) {
+	var resp RemoteProviderListResponse
+	if err := c.do(ctx, http.MethodGet, "/api/remote-providers", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Providers, nil
+}
+
+// UpsertRemoteProvider creates or updates a remote provider channel.
+func (c *Client) UpsertRemoteProvider(ctx context.Context, req *RemoteProviderRequest) (*RemoteProviderResponse, error) {
+	var resp RemoteProviderResponse
+	if err := c.do(ctx, http.MethodPost, "/api/remote-providers", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DeleteRemoteProvider removes a remote provider channel by id.
+func (c *Client) DeleteRemoteProvider(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/api/remote-providers/"+url.PathEscape(id), nil, nil)
+}
+
 // PushProgressFunc is a function that [Client.Push] invokes when progress is
 // made.
 // It's similar to other progress function types like [PullProgressFunc].

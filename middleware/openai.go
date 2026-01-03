@@ -275,6 +275,12 @@ func (w *EmbedWriter) Write(data []byte) (int, error) {
 
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// If Codex is requesting the models list, bypass the OpenAI list wrapper.
+		if c.Query("client_version") != "" {
+			c.Next()
+			return
+		}
+
 		w := &ListWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
 		}
@@ -537,6 +543,7 @@ func ResponsesMiddleware() gin.HandlerFunc {
 			c.Writer.Header().Set("Connection", "keep-alive")
 		}
 
+		c.Set("ollama.responses", true)
 		c.Writer = w
 		c.Next()
 	}
