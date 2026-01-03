@@ -510,6 +510,7 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `mcp_servers`: (experimental) list of MCP server configurations for autonomous tool execution. See [MCP documentation](./mcp.md)
 
 ### Tool calling
 

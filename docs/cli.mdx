@@ -25,6 +25,14 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
+#### MCP tools (experimental)
+
+```
+ollama run qwen2.5:7b --tools /path/to/directory
+```
+
+Enables MCP (Model Context Protocol) servers for autonomous tool execution. See [MCP documentation](./mcp.md).
+
 ### Generate embeddings
 
 ```
