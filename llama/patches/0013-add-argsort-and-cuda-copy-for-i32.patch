@@ -73,7 +73,7 @@ index 303278397..7d1733adb 100644
              {
                  GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
-index da9652c3b..b82be371c 100644
+index 99669200f..5e261fd2d 100644
 --- a/ggml/src/ggml-cuda/argsort.cu
 +++ b/ggml/src/ggml-cuda/argsort.cu
 @@ -168,13 +168,107 @@ static void argsort_f32_i32_cuda_bitonic(const float *   x,
