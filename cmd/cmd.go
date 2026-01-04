@@ -1665,10 +1665,11 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		// Execute tool calls and continue the conversation
 		fmt.Fprintf(os.Stderr, "\n")
 
-		// Add assistant's tool call message to history
+		// Add assistant's tool call message to history (include thinking for proper rendering)
 		assistantMsg := api.Message{
 			Role:      "assistant",
 			Content:   fullResponse.String(),
+			Thinking:  thinkingContent.String(),
 			ToolCalls: pendingToolCalls,
 		}
 		messages = append(messages, assistantMsg)
@@ -1727,11 +1728,8 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 				fmt.Fprintf(os.Stderr, "Output:\n%s\n", result.Content)
 			}
 
-			// Add tool result to messages
-			toolResults = append(toolResults, api.Message{
-				Role:    "tool",
-				Content: result.Content,
-			})
+			// Add tool result to messages (preserves ToolName, ToolCallID from result)
+			toolResults = append(toolResults, result)
 		}
 
 		// Add tool results to message history

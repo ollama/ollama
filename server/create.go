@@ -125,7 +125,10 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
+				// Inherit config from base model (Renderer, Parser, Requires, Capabilities, etc.)
+				// This is especially important for cloud models which don't have GGUF files
+				// to detect capabilities from.
+				if err == nil && !remote {
 					manifest, mErr := ParseNamedManifest(fromName)
 					if mErr == nil && manifest.Config.Digest != "" {
 						configPath, pErr := GetBlobsPath(manifest.Config.Digest)
@@ -141,6 +144,29 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									}
 									if config.Requires == "" {
 										config.Requires = baseConfig.Requires
+									}
+									// Inherit capabilities for cloud/remote models
+									// (local models detect capabilities from GGUF file)
+									if len(config.Capabilities) == 0 && len(baseConfig.Capabilities) > 0 {
+										config.Capabilities = baseConfig.Capabilities
+									}
+									// Inherit remote host/model if base is a cloud model
+									if config.RemoteHost == "" && baseConfig.RemoteHost != "" {
+										config.RemoteHost = baseConfig.RemoteHost
+									}
+									if config.RemoteModel == "" && baseConfig.RemoteModel != "" {
+										config.RemoteModel = baseConfig.RemoteModel
+									}
+									// Inherit model family for proper rendering
+									if config.ModelFamily == "" && baseConfig.ModelFamily != "" {
+										config.ModelFamily = baseConfig.ModelFamily
+									}
+									if len(config.ModelFamilies) == 0 && len(baseConfig.ModelFamilies) > 0 {
+										config.ModelFamilies = baseConfig.ModelFamilies
+									}
+									// Inherit context length for cloud models
+									if config.ContextLen == 0 && baseConfig.ContextLen > 0 {
+										config.ContextLen = baseConfig.ContextLen
 									}
 								}
 								cfgFile.Close()
