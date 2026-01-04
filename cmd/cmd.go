@@ -416,6 +416,26 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		opts.KeepAlive = &api.Duration{Duration: d}
 	}
 
+	fitVRAM, err := cmd.Flags().GetBool("fit-vram")
+	if err != nil {
+		return err
+	}
+	if fitVRAM {
+		opts.Options["fit_vram"] = true
+	}
+
+	maxVRAMStr, err := cmd.Flags().GetString("max-vram")
+	if err != nil {
+		return err
+	}
+	if maxVRAMStr != "" {
+		maxVRAM, err := parseBytes(maxVRAMStr)
+		if err != nil {
+			return fmt.Errorf("invalid max-vram value: %w", err)
+		}
+		opts.Options["max_vram"] = maxVRAM
+	}
+
 	prompts := args[1:]
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -1754,6 +1774,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	runCmd.Flags().Bool("fit-vram", false, "Fit num_ctx to VRAM budget (recalc on model switch)")
+	runCmd.Flags().String("max-vram", "", "Max VRAM budget (e.g. 6GB)")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -1978,4 +2000,49 @@ func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {
 		out += readline.ColorDefault
 	}
 	return out
+}
+
+func parseBytes(s string) (uint64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	s = strings.ToUpper(strings.TrimSpace(s))
+
+	var multiplier uint64 = 1
+	switch {
+	case strings.HasSuffix(s, "TB"):
+		multiplier = 1000 * 1000 * 1000 * 1000
+		s = strings.TrimSuffix(s, "TB")
+	case strings.HasSuffix(s, "GB"):
+		multiplier = 1000 * 1000 * 1000
+		s = strings.TrimSuffix(s, "GB")
+	case strings.HasSuffix(s, "MB"):
+		multiplier = 1000 * 1000
+		s = strings.TrimSuffix(s, "MB")
+	case strings.HasSuffix(s, "KB"):
+		multiplier = 1000
+		s = strings.TrimSuffix(s, "KB")
+	case strings.HasSuffix(s, "B"):
+		multiplier = 1
+		s = strings.TrimSuffix(s, "B")
+	case strings.HasSuffix(s, "TIB"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "TIB")
+	case strings.HasSuffix(s, "GIB"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "GIB")
+	case strings.HasSuffix(s, "MIB"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "MIB")
+	case strings.HasSuffix(s, "KIB"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "KIB")
+	}
+
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint64(val * float64(multiplier)), nil
 }
