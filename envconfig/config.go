@@ -24,6 +24,9 @@ func Host() *url.URL {
 	switch {
 	case !ok:
 		scheme, hostport = "http", s
+		if s == "ollama.com" {
+			scheme, hostport = "https", "ollama.com:443"
+		}
 	case scheme == "http":
 		defaultPort = "80"
 	case scheme == "https":
@@ -53,8 +56,8 @@ func Host() *url.URL {
 	}
 }
 
-// Origins returns a list of allowed origins. Origins can be configured via the OLLAMA_ORIGINS environment variable.
-func Origins() (origins []string) {
+// AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
+func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
 		origins = strings.Split(s, ",")
 	}
@@ -73,6 +76,7 @@ func Origins() (origins []string) {
 		"file://*",
 		"tauri://*",
 		"vscode-webview://*",
+		"vscode-file://*",
 	)
 
 	return origins
@@ -133,8 +137,19 @@ func LoadTimeout() (loadTimeout time.Duration) {
 	return loadTimeout
 }
 
-func Bool(k string) func() bool {
-	return func() bool {
+func Remotes() []string {
+	var r []string
+	raw := strings.TrimSpace(Var("OLLAMA_REMOTES"))
+	if raw == "" {
+		r = []string{"ollama.com"}
+	} else {
+		r = strings.Split(raw, ",")
+	}
+	return r
+}
+
+func BoolWithDefault(k string) func(defaultValue bool) bool {
+	return func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
 			b, err := strconv.ParseBool(s)
 			if err != nil {
@@ -144,15 +159,35 @@ func Bool(k string) func() bool {
 			return b
 		}
 
-		return false
+		return defaultValue
 	}
 }
 
+func Bool(k string) func() bool {
+	withDefault := BoolWithDefault(k)
+	return func() bool {
+		return withDefault(false)
+	}
+}
+
+// LogLevel returns the log level for the application.
+// Values are 0 or false INFO (Default), 1 or true DEBUG, 2 TRACE
+func LogLevel() slog.Level {
+	level := slog.LevelInfo
+	if s := Var("OLLAMA_DEBUG"); s != "" {
+		if b, _ := strconv.ParseBool(s); b {
+			level = slog.LevelDebug
+		} else if i, _ := strconv.ParseInt(s, 10, 64); i != 0 {
+			level = slog.Level(i * -4)
+		}
+	}
+
+	return level
+}
+
 var (
-	// Debug enabled additional debug information.
-	Debug = Bool("OLLAMA_DEBUG")
 	// FlashAttention enables the experimental flash attention feature.
-	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
+	FlashAttention = BoolWithDefault("OLLAMA_FLASH_ATTENTION")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
 	// NoHistory disables readline history.
@@ -161,10 +196,16 @@ var (
 	NoPrune = Bool("OLLAMA_NOPRUNE")
 	// SchedSpread allows scheduling models across all GPUs.
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
-	// IntelGPU enables experimental Intel GPU detection.
-	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
+	// Enable the new Ollama engine
+	NewEngine = Bool("OLLAMA_NEW_ENGINE")
+	// ContextLength sets the default context length
+	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
+	// Auth enables authentication between the Ollama client and server
+	UseAuth = Bool("OLLAMA_AUTH")
+	// Enable Vulkan backend
+	EnableVulkan = Bool("OLLAMA_VULKAN")
 )
 
 func String(s string) func() string {
@@ -179,6 +220,7 @@ var (
 	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
+	VkVisibleDevices      = String("GGML_VK_VISIBLE_DEVICES")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
@@ -199,13 +241,11 @@ func Uint(key string, defaultValue uint) func() uint {
 
 var (
 	// NumParallel sets the number of parallel model requests. NumParallel can be configured via the OLLAMA_NUM_PARALLEL environment variable.
-	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 0)
+	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 1)
 	// MaxRunners sets the maximum number of loaded models. MaxRunners can be configured via the OLLAMA_MAX_LOADED_MODELS environment variable.
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
-	// MaxVRAM sets a maximum VRAM override in bytes. MaxVRAM can be configured via the OLLAMA_MAX_VRAM environment variable.
-	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
 func Uint64(key string, defaultValue uint64) func() uint64 {
@@ -233,8 +273,8 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
@@ -247,9 +287,12 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
+		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
+		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
+		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
@@ -268,9 +311,10 @@ func AsMap() map[string]EnvVar {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
 		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible by numeric ID"}
 		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible by UUID or numeric ID"}
+		ret["GGML_VK_VISIBLE_DEVICES"] = EnvVar{"GGML_VK_VISIBLE_DEVICES", VkVisibleDevices(), "Set which Vulkan devices are visible by numeric ID"}
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
-		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Enable experimental Vulkan support"}
 	}
 
 	return ret
@@ -287,13 +331,4 @@ func Values() map[string]string {
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
-}
-
-// On windows, we keep the binary at the top directory, but
-// other platforms use a "bin" directory, so this returns ".."
-func LibRelativeToExe() string {
-	if runtime.GOOS == "windows" {
-		return "."
-	}
-	return ".."
 }

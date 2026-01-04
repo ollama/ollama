@@ -3,7 +3,9 @@ ollama
 app
 macapp
 dist
+build
 .env
 .cache
 test_data
-llama/build
+.git
+

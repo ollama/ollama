@@ -9,6 +9,14 @@ body:
       description: What happened? What did you expect to happen?
     validations:
       required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. See [Troubleshooting Guide](https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md#how-to-troubleshoot-issues) for details.
+      render: shell
+    validations:
+      required: false
   - type: dropdown
     id: os
     attributes:

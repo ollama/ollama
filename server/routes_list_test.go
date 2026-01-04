@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -31,9 +30,11 @@ func TestList(t *testing.T) {
 
 	var s Server
 	for _, n := range expectNames {
+		_, digest := createBinFile(t, nil, nil)
+
 		createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      n,
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+			Name:  n,
+			Files: map[string]string{"test.gguf": digest},
 		})
 	}
 

@@ -28,7 +28,7 @@ if echo $PLATFORM | grep "amd64" > /dev/null; then
         ${LOAD_OR_PUSH} \
         --platform=linux/amd64 \
         ${OLLAMA_COMMON_BUILD_ARGS} \
-        --target runtime-rocm \
+        --build-arg FLAVOR=rocm \
         -f Dockerfile \
         -t ${FINAL_IMAGE_REPO}:$VERSION-rocm \
         .

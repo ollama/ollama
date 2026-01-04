@@ -10,14 +10,13 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=GOFLAGS \
     --build-arg=OLLAMA_CUSTOM_CPU_DEFS \
     --build-arg=OLLAMA_SKIP_CUDA_GENERATE \
-    --build-arg=OLLAMA_SKIP_CUDA_11_GENERATE \
     --build-arg=OLLAMA_SKIP_CUDA_12_GENERATE \
-    --build-arg=CUDA_V11_ARCHITECTURES \
     --build-arg=CUDA_V12_ARCHITECTURES \
     --build-arg=OLLAMA_SKIP_ROCM_GENERATE \
     --build-arg=OLLAMA_FAST_BUILD \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
+    --build-arg=PARALLEL \
     --build-arg=AMDGPU_TARGETS"
 
 echo "Building Ollama"

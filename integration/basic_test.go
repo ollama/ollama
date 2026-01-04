@@ -11,35 +11,45 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
 )
 
-func TestOrcaMiniBlueSky(t *testing.T) {
+func TestBlueSky(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	// Set up the test data
-	req := api.GenerateRequest{
-		Model:  "orca-mini",
-		Prompt: "why is the sky blue?",
+	req := api.ChatRequest{
+		Model: smol,
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: blueSkyPrompt,
+			},
+		},
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"rayleigh", "scattering"})
+	ChatTestHelper(ctx, t, req, blueSkyExpected)
 }
 
 func TestUnicode(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	// Set up the test data
-	req := api.GenerateRequest{
+	req := api.ChatRequest{
 		// DeepSeek has a Unicode tokenizer regex, making it a unicode torture test
-		Model:  "deepseek-coder-v2:16b-lite-instruct-q2_K",
-		Prompt: "天空为什么是蓝色的?",
+		Model: "deepseek-coder-v2:16b-lite-instruct-q2_K", // TODO is there an ollama-engine model we can switch to and keep the coverage?
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: "天空为什么是蓝色的?", // Why is the sky blue?
+			},
+		},
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 			// Workaround deepseek context shifting bug
@@ -49,27 +59,51 @@ func TestUnicode(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	DoGenerate(ctx, t, client, req, []string{"散射", "频率"}, 120*time.Second, 120*time.Second)
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatal(err)
+	}
+	slog.Info("loading", "model", req.Model)
+	err := client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
+	if err != nil {
+		t.Fatalf("failed to load model %s: %s", req.Model, err)
+	}
+	defer func() {
+		// best effort unload once we're done with the model
+		client.Generate(ctx, &api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
+	}()
+
+	skipIfNotGPULoaded(ctx, t, client, req.Model, 100)
+
+	DoChat(ctx, t, client, req, []string{
+		"散射", // scattering
+		"频率", // frequency
+	}, 120*time.Second, 120*time.Second)
 }
 
 func TestExtendedUnicodeOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	// Set up the test data
-	req := api.GenerateRequest{
-		Model:  "gemma2:2b",
-		Prompt: "Output some smily face emoji",
+	req := api.ChatRequest{
+		Model: "gemma2:2b",
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: "Output some smily face emoji",
+			},
+		},
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	DoGenerate(ctx, t, client, req, []string{"😀", "😊", "😁", "😂", "😄", "😃"}, 120*time.Second, 120*time.Second)
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatal(err)
+	}
+	DoChat(ctx, t, client, req, []string{"😀", "😊", "😁", "😂", "😄", "😃"}, 120*time.Second, 120*time.Second)
 }
 
 func TestUnicodeModelDir(t *testing.T) {
@@ -83,7 +117,9 @@ func TestUnicodeModelDir(t *testing.T) {
 	}
 
 	modelDir, err := os.MkdirTemp("", "ollama_埃")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(modelDir)
 	slog.Info("unicode", "OLLAMA_MODELS", modelDir)
 
@@ -92,14 +128,19 @@ func TestUnicodeModelDir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	req := api.GenerateRequest{
-		Model:  "orca-mini",
-		Prompt: "why is the sky blue?",
+	req := api.ChatRequest{
+		Model: smol,
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: blueSkyPrompt,
+			},
+		},
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"rayleigh", "scattering"})
+	ChatTestHelper(ctx, t, req, blueSkyExpected)
 }

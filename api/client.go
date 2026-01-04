@@ -10,7 +10,7 @@
 // repository].
 //
 // [the API documentation]: https://github.com/ollama/ollama/blob/main/docs/api.md
-// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/examples
+// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/api/examples
 package api
 
 import (
@@ -24,7 +24,10 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
+	"time"
 
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
@@ -40,6 +43,12 @@ type Client struct {
 func checkError(resp *http.Response, body []byte) error {
 	if resp.StatusCode < http.StatusBadRequest {
 		return nil
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		authError := AuthorizationError{StatusCode: resp.StatusCode}
+		json.Unmarshal(body, &authError)
+		return authError
 	}
 
 	apiError := StatusError{StatusCode: resp.StatusCode}
@@ -76,6 +85,14 @@ func NewClient(base *url.URL, http *http.Client) *Client {
 	}
 }
 
+func getAuthorizationToken(ctx context.Context, challenge string) (string, error) {
+	token, err := auth.Sign(ctx, []byte(challenge))
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
 	var reqBody io.Reader
 	var data []byte
@@ -97,6 +114,21 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	}
 
 	requestURL := c.base.JoinPath(path)
+
+	var token string
+	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
+		now := strconv.FormatInt(time.Now().Unix(), 10)
+		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
+		token, err = getAuthorizationToken(ctx, chal)
+		if err != nil {
+			return err
+		}
+
+		q := requestURL.Query()
+		q.Set("ts", now)
+		requestURL.RawQuery = q.Encode()
+	}
+
 	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), reqBody)
 	if err != nil {
 		return err
@@ -105,6 +137,10 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	if token != "" {
+		request.Header.Set("Authorization", token)
+	}
 
 	respObj, err := c.http.Do(request)
 	if err != nil {
@@ -132,7 +168,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 const maxBufferSize = 512 * format.KiloByte
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
-	var buf *bytes.Buffer
+	var buf io.Reader
 	if data != nil {
 		bts, err := json.Marshal(data)
 		if err != nil {
@@ -143,6 +179,22 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	}
 
 	requestURL := c.base.JoinPath(path)
+
+	var token string
+	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
+		var err error
+		now := strconv.FormatInt(time.Now().Unix(), 10)
+		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
+		token, err = getAuthorizationToken(ctx, chal)
+		if err != nil {
+			return err
+		}
+
+		q := requestURL.Query()
+		q.Set("ts", now)
+		requestURL.RawQuery = q.Encode()
+	}
+
 	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
 	if err != nil {
 		return err
@@ -151,6 +203,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/x-ndjson")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	if token != "" {
+		request.Header.Set("Authorization", token)
+	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -164,24 +220,38 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
-			Error string `json:"error,omitempty"`
+			Error     string `json:"error,omitempty"`
+			SigninURL string `json:"signin_url,omitempty"`
 		}
 
 		bts := scanner.Bytes()
 		if err := json.Unmarshal(bts, &errorResponse); err != nil {
-			return fmt.Errorf("unmarshal: %w", err)
+			if response.StatusCode >= http.StatusBadRequest {
+				return StatusError{
+					StatusCode:   response.StatusCode,
+					Status:       response.Status,
+					ErrorMessage: string(bts),
+				}
+			}
+			return errors.New(string(bts))
 		}
 
-		if errorResponse.Error != "" {
-			return errors.New(errorResponse.Error)
-		}
-
-		if response.StatusCode >= http.StatusBadRequest {
+		if response.StatusCode == http.StatusUnauthorized {
+			return AuthorizationError{
+				StatusCode: response.StatusCode,
+				Status:     response.Status,
+				SigninURL:  errorResponse.SigninURL,
+			}
+		} else if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
 				ErrorMessage: errorResponse.Error,
 			}
+		}
+
+		if errorResponse.Error != "" {
+			return errors.New(errorResponse.Error)
 		}
 
 		if err := fn(bts); err != nil {
@@ -277,7 +347,7 @@ type CreateProgressFunc func(ProgressResponse) error
 // Create creates a model from a [Modelfile]. fn is a progress function that
 // behaves similarly to other methods (see [Client.Pull]).
 //
-// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.md
+// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.mdx
 func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/create", req, func(bts []byte) error {
 		var resp ProgressResponse
@@ -377,4 +447,22 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+// Signout will signout a client for a local ollama server.
+func (c *Client) Signout(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)
+}
+
+// Disconnect will disconnect an ollama instance from ollama.com.
+func (c *Client) Disconnect(ctx context.Context, encodedKey string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
+}
+
+func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
+	var resp UserResponse
+	if err := c.do(ctx, http.MethodPost, "/api/me", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

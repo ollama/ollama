@@ -1,0 +1,49 @@
+#version 450
+
+#include "types.glsl"
+#include "generic_unary_head.glsl"
+
+#extension GL_EXT_control_flow_attributes : require
+
+const uint num_threads = 128;
+
+layout(local_size_x = num_threads, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint idx = get_idx();
+
+    // num_threads * num_iter must equal 512, to match the wg_denoms and get_idx calculation
+    const uint num_iter = 4;
+
+    // fast path for when all four iterations are in-bounds
+    if (idx + (num_iter-1)*num_threads < p.ne) {
+        [[unroll]] for (uint i = 0; i < num_iter; ++i) {
+
+#if defined(DATA_D_BF16)
+            float f = float(data_a[get_aoffset() + idx]);
+            data_d[get_doffset() + idx] = D_TYPE(fp32_to_bf16(f));
+#elif !defined(OPTIMIZATION_ERROR_WORKAROUND)
+            data_d[get_doffset() + idx] = D_TYPE(data_a[get_aoffset() + idx]);
+#else
+            data_d[get_doffset() + idx] = data_a[get_aoffset() + idx];
+#endif
+            idx += num_threads;
+        }
+    } else {
+        [[unroll]] for (uint i = 0; i < num_iter; ++i) {
+            if (idx >= p.ne) {
+                continue;
+            }
+
+#if defined(DATA_D_BF16)
+            float f = float(data_a[get_aoffset() + idx]);
+            data_d[get_doffset() + idx] = D_TYPE(fp32_to_bf16(f));
+#elif !defined(OPTIMIZATION_ERROR_WORKAROUND)
+            data_d[get_doffset() + idx] = D_TYPE(data_a[get_aoffset() + idx]);
+#else
+            data_d[get_doffset() + idx] = data_a[get_aoffset() + idx];
+#endif
+            idx += num_threads;
+        }
+    }
+}

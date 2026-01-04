@@ -1,0 +1,67 @@
+{{- if or .Tools .System }}<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>
+{{- if .Tools }}# Safety Preamble
+The instructions in this section override those in the task description and style guide sections. Don't answer questions that are harmful or immoral.
+
+# System Preamble
+## Basic Rules
+You are a powerful conversational AI trained by Cohere to help people. You are augmented by a number of tools, and your job is to use and consume the output of these tools to best help the user. You will see a conversation history between yourself and a user, ending with an utterance from the user. You will then see a specific instruction instructing you what kind of response to generate. When you answer the user's requests, you cite your sources in your answers, according to those instructions.
+
+{{ if .System }}# User Preamble
+{{ .System }}
+{{- end }}
+
+## Available Tools
+Here is a list of tools that you have available to you:
+{{- range .Tools }}
+
+```python
+def {{ .Function.Name }}(
+{{- range $name, $property := .Function.Parameters.Properties }}{{ $name }}: {{ $property.Type }}, {{ end }}) -> List[Dict]:
+    '''{{ .Function.Description }}
+
+{{- if .Function.Parameters.Properties }}
+
+    Args:
+{{- range $name, $property := .Function.Parameters.Properties }}
+        {{ $name }} ({{ $property.Type }}): {{ $property.Description }}
+{{- end }}
+{{- end }}
+    '''
+    pass
+```
+{{- end }}
+{{- else if .System }}{{ .System }}
+{{- end }}<|END_OF_TURN_TOKEN|>
+{{- end }}
+{{- range .Messages }}
+{{- if eq .Role "system" }}
+{{- continue }}
+{{- end }}<|START_OF_TURN_TOKEN|>
+{{- if eq .Role "user" }}<|USER_TOKEN|>{{ .Content }}
+{{- if $.Tools }}<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>Write 'Action:' followed by a json-formatted list of actions that you want to perform in order to produce a good response to the user's last input. You can use any of the supplied tools any number of times, but you should aim to execute the minimum number of necessary actions for the input. You should use the `directly-answer` tool if calling the other tools is unnecessary. The list of actions you want to call should be formatted as a list of json objects, for example:
+```json
+[
+    {
+        "tool_name": title of the tool in the specification,
+        "parameters": a dict of parameters to input into the tool as they are defined in the specs, or {} if it takes no parameters
+    }
+]```
+{{- end }}
+{{- else if eq .Role "assistant" }}<|CHATBOT_TOKEN|>
+{{- if .Content }}{{ .Content }}
+{{- else if .ToolCalls }}
+Action: ```json
+[
+{{- range .ToolCalls }}
+    {
+        "tool_name": "{{ .Function.Name }}",
+        "parameters": {{ .Function.Arguments }}
+    }
+{{- end }}
+]```
+{{- end }}
+{{- else if eq .Role "tool" }}<|SYSTEM_TOKEN|><results>
+console_output: {{ .Content }}
+</results>
+{{- end }}<|END_OF_TURN_TOKEN|>
+{{- end }}<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>

@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 15:34:37 -0700
+Subject: [PATCH] clip-unicode
+
+fixes loading vision models in llama.cpp on windows
+filesystems for paths that include wide characters
+---
+ tools/mtmd/clip.cpp | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index 35e3aef0a..84a3796b5 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -24,6 +24,19 @@
+ #include <array>
+ #include <functional>
+ 
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++    #define NOMINMAX
++#endif
++#include <windows.h>
++#if __GLIBCXX__
++#include <cstdio>
++#include <ext/stdio_filebuf.h>
++#include <fcntl.h>
++#endif
++#endif
++
+ struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
+ 
+ //#define CLIP_DEBUG_FUNCTIONS
+@@ -1619,7 +1632,29 @@ struct clip_model_loader {
+         {
+             std::vector<uint8_t> read_buf;
+ 
++#ifdef _WIN32
++            int wlen = MultiByteToWideChar(CP_UTF8, 0, fname.c_str(), -1, NULL, 0);
++            if (!wlen) {
++                throw std::runtime_error(string_format("%s: failed to convert filename to wide string\n", __func__));
++            }
++            wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
++            wlen = MultiByteToWideChar(CP_UTF8, 0, fname.c_str(), -1, wbuf, wlen);
++            if (!wlen) {
++                free(wbuf);
++                throw std::runtime_error(string_format("%s: failed to convert filename to wide string\n", __func__));
++            }
++#if __GLIBCXX__
++            int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
++            __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
++            std::istream fin(&buffer);
++#else // MSVC
++            // unused in our current build
++            auto fin = std::ifstream(wbuf, std::ios::binary);
++#endif
++            free(wbuf);
++#else
+             auto fin = std::ifstream(fname, std::ios::binary);
++#endif
+             if (!fin) {
+                 throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
+             }
+@@ -1646,7 +1681,11 @@ struct clip_model_loader {
+                     ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+                 }
+             }
++#if defined(_WIN32) && defined(__GLIBCXX__)
++            close(fd);
++#else
+             fin.close();
++#endif
+ 
+             LOG_DBG("%s: loaded %zu tensors from %s\n", __func__, tensors_to_load.size(), fname.c_str());
+         }

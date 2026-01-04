@@ -1,18 +1,10 @@
 package openai
 
 import (
-	"bytes"
 	"encoding/base64"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
@@ -23,707 +15,422 @@ const (
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
-var (
-	False = false
-	True  = true
-)
+func TestFromChatRequest_Basic(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
 
-func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		bodyBytes, _ := io.ReadAll(c.Request.Body)
-		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		err := json.Unmarshal(bodyBytes, capturedRequest)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, "failed to unmarshal request")
-		}
-		c.Next()
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	if result.Messages[0].Role != "user" || result.Messages[0].Content != "Hello" {
+		t.Errorf("unexpected message: %+v", result.Messages[0])
 	}
 }
 
-func TestChatMiddleware(t *testing.T) {
-	type testCase struct {
-		name string
-		body string
-		req  api.ChatRequest
-		err  ErrorResponse
-	}
+func TestFromChatRequest_WithImage(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(image)
 
-	var capturedRequest *api.ChatRequest
-
-	testCases := []testCase{
-		{
-			name: "chat handler",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "Hello"}
-				]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": "text", "text": "Hello"},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image},
 					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with options",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "Hello"}
-				],
-				"stream":            true,
-				"max_tokens":        999,
-				"seed":              123,
-				"stop":              ["\n", "stop"],
-				"temperature":       3.0,
-				"frequency_penalty": 4.0,
-				"presence_penalty":  5.0,
-				"top_p":             6.0,
-				"response_format":   {"type": "json_object"}
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-				},
-				Options: map[string]any{
-					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
-					"seed":              123.0,
-					"stop":              []any{"\n", "stop"},
-					"temperature":       3.0,
-					"frequency_penalty": 4.0,
-					"presence_penalty":  5.0,
-					"top_p":             6.0,
-				},
-				Format: json.RawMessage(`"json"`),
-				Stream: &True,
-			},
-		},
-		{
-			name: "chat handler with streaming usage",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "Hello"}
-				],
-				"stream":            true,
-				"stream_options":    {"include_usage": true},
-				"max_tokens":        999,
-				"seed":              123,
-				"stop":              ["\n", "stop"],
-				"temperature":       3.0,
-				"frequency_penalty": 4.0,
-				"presence_penalty":  5.0,
-				"top_p":             6.0,
-				"response_format":   {"type": "json_object"}
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-				},
-				Options: map[string]any{
-					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
-					"seed":              123.0,
-					"stop":              []any{"\n", "stop"},
-					"temperature":       3.0,
-					"frequency_penalty": 4.0,
-					"presence_penalty":  5.0,
-					"top_p":             6.0,
-				},
-				Format: json.RawMessage(`"json"`),
-				Stream: &True,
-			},
-		},
-		{
-			name: "chat handler with image content",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "Hello"
-							},
-							{
-								"type": "image_url",
-								"image_url": {
-									"url": "` + prefix + image + `"
-								}
-							}
-						]
-					}
-				]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-					{
-						Role: "user",
-						Images: []api.ImageData{
-							func() []byte {
-								img, _ := base64.StdEncoding.DecodeString(image)
-								return img
-							}(),
-						},
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with tools",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "What's the weather like in Paris Today?"},
-					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
-				]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "What's the weather like in Paris Today?",
-					},
-					{
-						Role: "assistant",
-						ToolCalls: []api.ToolCall{
-							{
-								Function: api.ToolCallFunction{
-									Name: "get_current_weather",
-									Arguments: map[string]interface{}{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
-								},
-							},
-						},
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with streaming tools",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "What's the weather like in Paris?"}
-				],
-				"stream": true,
-				"tools": [{
-					"type": "function",
-					"function": {
-						"name": "get_weather",
-						"description": "Get the current weather",
-						"parameters": {
-							"type": "object",
-							"required": ["location"],
-							"properties": {
-								"location": {
-									"type": "string",
-									"description": "The city and state"
-								},
-								"unit": {
-									"type": "string",
-									"enum": ["celsius", "fahrenheit"]
-								}
-							}
-						}
-					}
-				}]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "What's the weather like in Paris?",
-					},
-				},
-				Tools: []api.Tool{
-					{
-						Type: "function",
-						Function: api.ToolFunction{
-							Name:        "get_weather",
-							Description: "Get the current weather",
-							Parameters: struct {
-								Type       string   `json:"type"`
-								Required   []string `json:"required"`
-								Properties map[string]struct {
-									Type        string   `json:"type"`
-									Description string   `json:"description"`
-									Enum        []string `json:"enum,omitempty"`
-								} `json:"properties"`
-							}{
-								Type:     "object",
-								Required: []string{"location"},
-								Properties: map[string]struct {
-									Type        string   `json:"type"`
-									Description string   `json:"description"`
-									Enum        []string `json:"enum,omitempty"`
-								}{
-									"location": {
-										Type:        "string",
-										Description: "The city and state",
-									},
-									"unit": {
-										Type: "string",
-										Enum: []string{"celsius", "fahrenheit"},
-									},
-								},
-							},
-						},
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &True,
-			},
-		},
-		{
-			name: "chat handler error forwarding",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": 2}
-				]
-			}`,
-			err: ErrorResponse{
-				Error: Error{
-					Message: "invalid message content type: float64",
-					Type:    "invalid_request_error",
 				},
 			},
 		},
 	}
 
-	endpoint := func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(ChatMiddleware(), captureRequestMiddleware(&capturedRequest))
-	router.Handle(http.MethodPost, "/api/chat", endpoint)
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
+	if result.Messages[0].Content != "Hello" {
+		t.Errorf("expected first message content 'Hello', got %q", result.Messages[0].Content)
+	}
 
-			defer func() { capturedRequest = nil }()
+	if len(result.Messages[1].Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(result.Messages[1].Images))
+	}
 
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
+	if string(result.Messages[1].Images[0]) != string(imgData) {
+		t.Error("image data mismatch")
+	}
+}
 
-			var errResp ErrorResponse
-			if resp.Code != http.StatusOK {
-				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
-				}
-				return
+func TestFromCompleteRequest_Basic(t *testing.T) {
+	temp := float32(0.8)
+	req := CompletionRequest{
+		Model:       "test-model",
+		Prompt:      "Hello",
+		Temperature: &temp,
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if result.Prompt != "Hello" {
+		t.Errorf("expected prompt 'Hello', got %q", result.Prompt)
+	}
+
+	if tempVal, ok := result.Options["temperature"].(float32); !ok || tempVal != 0.8 {
+		t.Errorf("expected temperature 0.8, got %v", result.Options["temperature"])
+	}
+}
+
+func TestToUsage(t *testing.T) {
+	resp := api.ChatResponse{
+		Metrics: api.Metrics{
+			PromptEvalCount: 10,
+			EvalCount:       20,
+		},
+	}
+
+	usage := ToUsage(resp)
+
+	if usage.PromptTokens != 10 {
+		t.Errorf("expected PromptTokens 10, got %d", usage.PromptTokens)
+	}
+
+	if usage.CompletionTokens != 20 {
+		t.Errorf("expected CompletionTokens 20, got %d", usage.CompletionTokens)
+	}
+
+	if usage.TotalTokens != 30 {
+		t.Errorf("expected TotalTokens 30, got %d", usage.TotalTokens)
+	}
+}
+
+func TestNewError(t *testing.T) {
+	tests := []struct {
+		code int
+		want string
+	}{
+		{400, "invalid_request_error"},
+		{404, "not_found_error"},
+		{500, "api_error"},
+	}
+
+	for _, tt := range tests {
+		result := NewError(tt.code, "test message")
+		if result.Error.Type != tt.want {
+			t.Errorf("NewError(%d) type = %q, want %q", tt.code, result.Error.Type, tt.want)
+		}
+		if result.Error.Message != "test message" {
+			t.Errorf("NewError(%d) message = %q, want %q", tt.code, result.Error.Message, "test message")
+		}
+	}
+}
+
+func TestToToolCallsPreservesIDs(t *testing.T) {
+	original := []api.ToolCall{
+		{
+			ID: "call_abc123",
+			Function: api.ToolCallFunction{
+				Index: 2,
+				Name:  "get_weather",
+				Arguments: api.ToolCallFunctionArguments{
+					"location": "Seattle",
+				},
+			},
+		},
+		{
+			ID: "call_def456",
+			Function: api.ToolCallFunction{
+				Index: 7,
+				Name:  "get_time",
+				Arguments: api.ToolCallFunctionArguments{
+					"timezone": "UTC",
+				},
+			},
+		},
+	}
+
+	toolCalls := make([]api.ToolCall, len(original))
+	copy(toolCalls, original)
+	got := ToToolCalls(toolCalls)
+
+	if len(got) != len(original) {
+		t.Fatalf("expected %d tool calls, got %d", len(original), len(got))
+	}
+
+	expected := []ToolCall{
+		{
+			ID:    "call_abc123",
+			Type:  "function",
+			Index: 2,
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      "get_weather",
+				Arguments: `{"location":"Seattle"}`,
+			},
+		},
+		{
+			ID:    "call_def456",
+			Type:  "function",
+			Index: 7,
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      "get_time",
+				Arguments: `{"timezone":"UTC"}`,
+			},
+		},
+	}
+
+	if diff := cmp.Diff(expected, got); diff != "" {
+		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(original, toolCalls); diff != "" {
+		t.Errorf("input tool calls mutated (-want +got):\n%s", diff)
+	}
+}
+
+func TestFromChatRequest_WithLogprobs(t *testing.T) {
+	trueVal := true
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Logprobs:    &trueVal,
+		TopLogprobs: 5,
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Logprobs {
+		t.Error("expected Logprobs to be true")
+	}
+
+	if result.TopLogprobs != 5 {
+		t.Errorf("expected TopLogprobs to be 5, got %d", result.TopLogprobs)
+	}
+}
+
+func TestFromChatRequest_LogprobsDefault(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Logprobs {
+		t.Error("expected Logprobs to be false by default")
+	}
+
+	if result.TopLogprobs != 0 {
+		t.Errorf("expected TopLogprobs to be 0 by default, got %d", result.TopLogprobs)
+	}
+}
+
+func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
+	logprobsVal := 5
+
+	req := CompletionRequest{
+		Model:    "test-model",
+		Prompt:   "Hello",
+		Logprobs: &logprobsVal,
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Logprobs {
+		t.Error("expected Logprobs to be true")
+	}
+
+	if result.TopLogprobs != 5 {
+		t.Errorf("expected TopLogprobs to be 5, got %d", result.TopLogprobs)
+	}
+}
+
+func TestToChatCompletion_WithLogprobs(t *testing.T) {
+	createdAt := time.Unix(1234567890, 0)
+	resp := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: createdAt,
+		Message:   api.Message{Role: "assistant", Content: "Hello there"},
+		Logprobs: []api.Logprob{
+			{
+				TokenLogprob: api.TokenLogprob{
+					Token:   "Hello",
+					Logprob: -0.5,
+				},
+				TopLogprobs: []api.TokenLogprob{
+					{Token: "Hello", Logprob: -0.5},
+					{Token: "Hi", Logprob: -1.2},
+				},
+			},
+			{
+				TokenLogprob: api.TokenLogprob{
+					Token:   " there",
+					Logprob: -0.3,
+				},
+				TopLogprobs: []api.TokenLogprob{
+					{Token: " there", Logprob: -0.3},
+					{Token: " world", Logprob: -1.5},
+				},
+			},
+		},
+		Done: true,
+		Metrics: api.Metrics{
+			PromptEvalCount: 5,
+			EvalCount:       2,
+		},
+	}
+
+	id := "test-id"
+
+	result := ToChatCompletion(id, resp)
+
+	if result.Id != id {
+		t.Errorf("expected Id %q, got %q", id, result.Id)
+	}
+
+	if result.Created != 1234567890 {
+		t.Errorf("expected Created %d, got %d", int64(1234567890), result.Created)
+	}
+
+	if len(result.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(result.Choices))
+	}
+
+	choice := result.Choices[0]
+	if choice.Message.Content != "Hello there" {
+		t.Errorf("expected content %q, got %q", "Hello there", choice.Message.Content)
+	}
+
+	if choice.Logprobs == nil {
+		t.Fatal("expected Logprobs to be present")
+	}
+
+	if len(choice.Logprobs.Content) != 2 {
+		t.Fatalf("expected 2 logprobs, got %d", len(choice.Logprobs.Content))
+	}
+
+	// Verify first logprob
+	if choice.Logprobs.Content[0].Token != "Hello" {
+		t.Errorf("expected first token %q, got %q", "Hello", choice.Logprobs.Content[0].Token)
+	}
+	if choice.Logprobs.Content[0].Logprob != -0.5 {
+		t.Errorf("expected first logprob -0.5, got %f", choice.Logprobs.Content[0].Logprob)
+	}
+	if len(choice.Logprobs.Content[0].TopLogprobs) != 2 {
+		t.Errorf("expected 2 top_logprobs, got %d", len(choice.Logprobs.Content[0].TopLogprobs))
+	}
+
+	// Verify second logprob
+	if choice.Logprobs.Content[1].Token != " there" {
+		t.Errorf("expected second token %q, got %q", " there", choice.Logprobs.Content[1].Token)
+	}
+}
+
+func TestToChatCompletion_WithoutLogprobs(t *testing.T) {
+	createdAt := time.Unix(1234567890, 0)
+	resp := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: createdAt,
+		Message:   api.Message{Role: "assistant", Content: "Hello"},
+		Done:      true,
+		Metrics: api.Metrics{
+			PromptEvalCount: 5,
+			EvalCount:       1,
+		},
+	}
+
+	id := "test-id"
+
+	result := ToChatCompletion(id, resp)
+
+	if len(result.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(result.Choices))
+	}
+
+	// When no logprobs, Logprobs should be nil
+	if result.Choices[0].Logprobs != nil {
+		t.Error("expected Logprobs to be nil when not requested")
+	}
+}
+
+func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
+	tests := []struct {
+		name        string
+		topLogprobs int
+		expectValid bool
+	}{
+		{name: "valid: 0", topLogprobs: 0, expectValid: true},
+		{name: "valid: 1", topLogprobs: 1, expectValid: true},
+		{name: "valid: 10", topLogprobs: 10, expectValid: true},
+		{name: "valid: 20", topLogprobs: 20, expectValid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			trueVal := true
+			req := ChatCompletionRequest{
+				Model: "test-model",
+				Messages: []Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Logprobs:    &trueVal,
+				TopLogprobs: tt.topLogprobs,
 			}
-			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
-				t.Fatalf("requests did not match: %+v", diff)
+
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if diff := cmp.Diff(tc.err, errResp); diff != "" {
-				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
+
+			if result.TopLogprobs != tt.topLogprobs {
+				t.Errorf("expected TopLogprobs %d, got %d", tt.topLogprobs, result.TopLogprobs)
 			}
 		})
-	}
-}
-
-func TestCompletionsMiddleware(t *testing.T) {
-	type testCase struct {
-		name string
-		body string
-		req  api.GenerateRequest
-		err  ErrorResponse
-	}
-
-	var capturedRequest *api.GenerateRequest
-
-	testCases := []testCase{
-		{
-			name: "completions handler",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"temperature": 0.8,
-				"stop": ["\n", "stop"],
-				"suffix": "suffix"
-			}`,
-			req: api.GenerateRequest{
-				Model:  "test-model",
-				Prompt: "Hello",
-				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
-				},
-				Suffix: "suffix",
-				Stream: &False,
-			},
-		},
-		{
-			name: "completions handler stream",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"stream": true,
-				"temperature": 0.8,
-				"stop": ["\n", "stop"],
-				"suffix": "suffix"
-			}`,
-			req: api.GenerateRequest{
-				Model:  "test-model",
-				Prompt: "Hello",
-				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
-				},
-				Suffix: "suffix",
-				Stream: &True,
-			},
-		},
-		{
-			name: "completions handler stream with usage",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"stream": true,
-				"stream_options": {"include_usage": true},
-				"temperature": 0.8,
-				"stop": ["\n", "stop"],
-				"suffix": "suffix"
-			}`,
-			req: api.GenerateRequest{
-				Model:  "test-model",
-				Prompt: "Hello",
-				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
-				},
-				Suffix: "suffix",
-				Stream: &True,
-			},
-		},
-		{
-			name: "completions handler error forwarding",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"temperature": null,
-				"stop": [1, 2],
-				"suffix": "suffix"
-			}`,
-			err: ErrorResponse{
-				Error: Error{
-					Message: "invalid type for 'stop' field: float64",
-					Type:    "invalid_request_error",
-				},
-			},
-		},
-	}
-
-	endpoint := func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	}
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(CompletionsMiddleware(), captureRequestMiddleware(&capturedRequest))
-	router.Handle(http.MethodPost, "/api/generate", endpoint)
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			var errResp ErrorResponse
-			if resp.Code != http.StatusOK {
-				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
-			}
-
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
-			}
-
-			capturedRequest = nil
-		})
-	}
-}
-
-func TestEmbeddingsMiddleware(t *testing.T) {
-	type testCase struct {
-		name string
-		body string
-		req  api.EmbedRequest
-		err  ErrorResponse
-	}
-
-	var capturedRequest *api.EmbedRequest
-
-	testCases := []testCase{
-		{
-			name: "embed handler single input",
-			body: `{
-				"input": "Hello",
-				"model": "test-model"
-			}`,
-			req: api.EmbedRequest{
-				Input: "Hello",
-				Model: "test-model",
-			},
-		},
-		{
-			name: "embed handler batch input",
-			body: `{
-				"input": ["Hello", "World"],
-				"model": "test-model"
-			}`,
-			req: api.EmbedRequest{
-				Input: []any{"Hello", "World"},
-				Model: "test-model",
-			},
-		},
-		{
-			name: "embed handler error forwarding",
-			body: `{
-				"model": "test-model"
-			}`,
-			err: ErrorResponse{
-				Error: Error{
-					Message: "invalid input",
-					Type:    "invalid_request_error",
-				},
-			},
-		},
-	}
-
-	endpoint := func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	}
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(EmbeddingsMiddleware(), captureRequestMiddleware(&capturedRequest))
-	router.Handle(http.MethodPost, "/api/embed", endpoint)
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			var errResp ErrorResponse
-			if resp.Code != http.StatusOK {
-				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
-			}
-
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
-			}
-
-			capturedRequest = nil
-		})
-	}
-}
-
-func TestListMiddleware(t *testing.T) {
-	type testCase struct {
-		name     string
-		endpoint func(c *gin.Context)
-		resp     string
-	}
-
-	testCases := []testCase{
-		{
-			name: "list handler",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ListResponse{
-					Models: []api.ListModelResponse{
-						{
-							Name:       "test-model",
-							ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
-						},
-					},
-				})
-			},
-			resp: `{
-				"object": "list",
-				"data": [
-					{
-						"id": "test-model",
-						"object": "model",
-						"created": 1686935002,
-						"owned_by": "library"
-					}
-				]
-			}`,
-		},
-		{
-			name: "list handler empty output",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ListResponse{})
-			},
-			resp: `{
-				"object": "list",
-				"data": null
-			}`,
-		},
-	}
-
-	gin.SetMode(gin.TestMode)
-
-	for _, tc := range testCases {
-		router := gin.New()
-		router.Use(ListMiddleware())
-		router.Handle(http.MethodGet, "/api/tags", tc.endpoint)
-		req, _ := http.NewRequest(http.MethodGet, "/api/tags", nil)
-
-		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, req)
-
-		var expected, actual map[string]any
-		err := json.Unmarshal([]byte(tc.resp), &expected)
-		if err != nil {
-			t.Fatalf("failed to unmarshal expected response: %v", err)
-		}
-
-		err = json.Unmarshal(resp.Body.Bytes(), &actual)
-		if err != nil {
-			t.Fatalf("failed to unmarshal actual response: %v", err)
-		}
-
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
-		}
-	}
-}
-
-func TestRetrieveMiddleware(t *testing.T) {
-	type testCase struct {
-		name     string
-		endpoint func(c *gin.Context)
-		resp     string
-	}
-
-	testCases := []testCase{
-		{
-			name: "retrieve handler",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ShowResponse{
-					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
-				})
-			},
-			resp: `{
-				"id":"test-model",
-				"object":"model",
-				"created":1686935002,
-				"owned_by":"library"}
-			`,
-		},
-		{
-			name: "retrieve handler error forwarding",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found"})
-			},
-			resp: `{
-				"error": {
-				  "code": null,
-				  "message": "model not found",
-				  "param": null,
-				  "type": "api_error"
-				}
-			}`,
-		},
-	}
-
-	gin.SetMode(gin.TestMode)
-
-	for _, tc := range testCases {
-		router := gin.New()
-		router.Use(RetrieveMiddleware())
-		router.Handle(http.MethodGet, "/api/show/:model", tc.endpoint)
-		req, _ := http.NewRequest(http.MethodGet, "/api/show/test-model", nil)
-
-		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, req)
-
-		var expected, actual map[string]any
-		err := json.Unmarshal([]byte(tc.resp), &expected)
-		if err != nil {
-			t.Fatalf("failed to unmarshal expected response: %v", err)
-		}
-
-		err = json.Unmarshal(resp.Body.Bytes(), &actual)
-		if err != nil {
-			t.Fatalf("failed to unmarshal actual response: %v", err)
-		}
-
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
-		}
 	}
 }
