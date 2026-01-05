@@ -6,7 +6,7 @@ Ollama provides compatibility with the [Anthropic Messages API](https://docs.ant
 
 ## Recommended models
 
-For coding use cases, models like `qwen3-coder` are recommended.
+For coding use cases, models like `glm-4.7:cloud`, `minimax-m2.1:cloud`, and `qwen3-coder` are recommended.
 
 Pull a model before use:
 ```shell
@@ -206,7 +206,7 @@ curl -X POST http://localhost:11434/v1/messages \
 
 ## Using with Claude Code
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) can be configured to use Ollama as its backend:
+[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend:
 
 ```shell
 ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
