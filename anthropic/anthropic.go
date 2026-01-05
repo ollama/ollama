@@ -82,8 +82,8 @@ type MessageParam struct {
 type ContentBlock struct {
 	Type string `json:"type"` // text, image, tool_use, tool_result, thinking
 
-	// For text blocks
-	Text string `json:"text,omitempty"`
+	// For text blocks (no omitempty - SDK requires field to be present for accumulation)
+	Text string `json:"text"`
 
 	// For image blocks
 	Source *ImageSource `json:"source,omitempty"`
@@ -98,8 +98,8 @@ type ContentBlock struct {
 	Content   any    `json:"content,omitempty"` // string or []ContentBlock
 	IsError   bool   `json:"is_error,omitempty"`
 
-	// For thinking blocks
-	Thinking  string `json:"thinking,omitempty"`
+	// For thinking blocks (no omitempty - SDK requires field to be present for accumulation)
+	Thinking  string `json:"thinking"`
 	Signature string `json:"signature,omitempty"`
 }
 
