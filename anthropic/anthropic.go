@@ -1,4 +1,3 @@
-// Package anthropic provides core transformation logic for compatibility with the Anthropic Messages API
 package anthropic
 
 import (
@@ -7,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -673,6 +673,13 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			c.textStarted = false
 		}
 
+		// Marshal arguments first to check for errors before starting block
+		argsJSON, err := json.Marshal(tc.Function.Arguments)
+		if err != nil {
+			slog.Error("failed to marshal tool arguments", "error", err, "tool_id", tc.ID)
+			continue
+		}
+
 		// Start tool use block
 		events = append(events, StreamEvent{
 			Event: "content_block_start",
@@ -689,7 +696,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		})
 
 		// Send input as JSON delta
-		argsJSON, _ := json.Marshal(tc.Function.Arguments)
 		events = append(events, StreamEvent{
 			Event: "content_block_delta",
 			Data: ContentBlockDeltaEvent{

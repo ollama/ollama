@@ -4,6 +4,16 @@ title: Anthropic compatibility
 
 Ollama provides compatibility with the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) to help connect existing applications to Ollama, including tools like Claude Code.
 
+## Recommended models
+
+For coding use cases, models like `qwen3-coder` are recommended.
+
+Pull a model before use:
+```shell
+ollama pull qwen3-coder
+ollama pull glm-4.7:cloud
+```
+
 ## Usage
 
 ### Environment variables
@@ -28,7 +38,7 @@ client = anthropic.Anthropic(
 )
 
 message = client.messages.create(
-    model='llama3.2:3b',
+    model='qwen3-coder',
     max_tokens=1024,
     messages=[
         {'role': 'user', 'content': 'Hello, how are you?'}
@@ -46,7 +56,7 @@ const anthropic = new Anthropic({
 });
 
 const message = await anthropic.messages.create({
-  model: "llama3.2:3b",
+  model: "qwen3-coder",
   max_tokens: 1024,
   messages: [{ role: "user", content: "Hello, how are you?" }],
 });
@@ -60,7 +70,7 @@ curl -X POST http://localhost:11434/v1/messages \
 -H "x-api-key: ollama" \
 -H "anthropic-version: 2023-06-01" \
 -d '{
-  "model": "llama3.2:3b",
+  "model": "qwen3-coder",
   "max_tokens": 1024,
   "messages": [{ "role": "user", "content": "Hello, how are you?" }]
 }'
@@ -81,7 +91,7 @@ client = anthropic.Anthropic(
 )
 
 with client.messages.stream(
-    model='llama3.2:3b',
+    model='qwen3-coder',
     max_tokens=1024,
     messages=[{'role': 'user', 'content': 'Count from 1 to 10'}]
 ) as stream:
@@ -98,7 +108,7 @@ const anthropic = new Anthropic({
 });
 
 const stream = await anthropic.messages.stream({
-  model: "llama3.2:3b",
+  model: "qwen3-coder",
   max_tokens: 1024,
   messages: [{ role: "user", content: "Count from 1 to 10" }],
 });
@@ -117,7 +127,7 @@ for await (const event of stream) {
 curl -X POST http://localhost:11434/v1/messages \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "llama3.2:3b",
+  "model": "qwen3-coder",
   "max_tokens": 1024,
   "stream": true,
   "messages": [{ "role": "user", "content": "Count from 1 to 10" }]
@@ -139,7 +149,7 @@ client = anthropic.Anthropic(
 )
 
 message = client.messages.create(
-    model='llama3.2:3b',
+    model='qwen3-coder',
     max_tokens=1024,
     tools=[
         {
@@ -170,7 +180,7 @@ for block in message.content:
 curl -X POST http://localhost:11434/v1/messages \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "llama3.2:3b",
+  "model": "qwen3-coder",
   "max_tokens": 1024,
   "tools": [
     {
@@ -199,7 +209,7 @@ curl -X POST http://localhost:11434/v1/messages \
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) can be configured to use Ollama as its backend:
 
 ```shell
-ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model llama3.2:3b
+ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
 ```
 
 Or set the environment variables in your shell profile:
@@ -212,9 +222,13 @@ export ANTHROPIC_API_KEY=ollama
 Then run Claude Code with any Ollama model:
 
 ```shell
-claude --model llama3.2:3b
-claude --model qwen3:8b
-claude --model deepseek-r1:14b
+# Local models
+claude --model qwen3-coder
+claude --model gpt-oss:20b
+
+# Cloud models
+claude --model glm-4.7:cloud
+claude --model minimax-m2.1:cloud
 ```
 
 ## Endpoints
@@ -277,18 +291,33 @@ claude --model deepseek-r1:14b
 
 ## Models
 
-Before using a model, pull it locally with `ollama pull`:
+Ollama supports both local and cloud models.
+
+### Local models
+
+Pull a local model before use:
 
 ```shell
-ollama pull llama3.2:3b
+ollama pull qwen3-coder
 ```
+
+Recommended local models:
+- `qwen3-coder` - Excellent for coding tasks
+- `gpt-oss:20b` - Strong general-purpose model
+
+### Cloud models
+
+Cloud models are available immediately without pulling:
+
+- `glm-4.7:cloud` - High-performance cloud model
+- `minimax-m2.1:cloud` - Fast cloud model
 
 ### Default model names
 
 For tooling that relies on default Anthropic model names such as `claude-3-5-sonnet`, use `ollama cp` to copy an existing model name:
 
 ```shell
-ollama cp llama3.2:3b claude-3-5-sonnet
+ollama cp qwen3-coder claude-3-5-sonnet
 ```
 
 Afterwards, this new model name can be specified in the `model` field:

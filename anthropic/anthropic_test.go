@@ -665,3 +665,113 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 		t.Error("expected input_json_delta event")
 	}
 }
+
+func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
+	// Test that unmarshalable arguments (like channels) are handled gracefully
+	// and don't cause a panic or corrupt stream
+	conv := NewStreamConverter("msg_123", "test-model")
+
+	// Create a channel which cannot be JSON marshaled
+	unmarshalable := make(chan int)
+
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_bad",
+					Function: api.ToolCallFunction{
+						Name:      "bad_function",
+						Arguments: map[string]any{"channel": unmarshalable},
+					},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	// Should not panic and should skip the unmarshalable tool call
+	events := conv.Process(resp)
+
+	// Verify no tool_use block was started (since marshal failed before block start)
+	hasToolStart := false
+	for _, e := range events {
+		if e.Event == "content_block_start" {
+			if start, ok := e.Data.(ContentBlockStartEvent); ok {
+				if start.ContentBlock.Type == "tool_use" {
+					hasToolStart = true
+				}
+			}
+		}
+	}
+
+	if hasToolStart {
+		t.Error("expected no tool_use block when arguments cannot be marshaled")
+	}
+}
+
+func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
+	// Test that valid tool calls still work when mixed with invalid ones
+	conv := NewStreamConverter("msg_123", "test-model")
+
+	unmarshalable := make(chan int)
+
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_good",
+					Function: api.ToolCallFunction{
+						Name:      "good_function",
+						Arguments: map[string]any{"location": "Paris"},
+					},
+				},
+				{
+					ID: "call_bad",
+					Function: api.ToolCallFunction{
+						Name:      "bad_function",
+						Arguments: map[string]any{"channel": unmarshalable},
+					},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	events := conv.Process(resp)
+
+	// Count tool_use blocks - should only have 1 (the valid one)
+	toolStartCount := 0
+	toolDeltaCount := 0
+	for _, e := range events {
+		if e.Event == "content_block_start" {
+			if start, ok := e.Data.(ContentBlockStartEvent); ok {
+				if start.ContentBlock.Type == "tool_use" {
+					toolStartCount++
+					if start.ContentBlock.Name != "good_function" {
+						t.Errorf("expected tool name 'good_function', got %q", start.ContentBlock.Name)
+					}
+				}
+			}
+		}
+		if e.Event == "content_block_delta" {
+			if delta, ok := e.Data.(ContentBlockDeltaEvent); ok {
+				if delta.Delta.Type == "input_json_delta" {
+					toolDeltaCount++
+				}
+			}
+		}
+	}
+
+	if toolStartCount != 1 {
+		t.Errorf("expected 1 tool_use block, got %d", toolStartCount)
+	}
+	if toolDeltaCount != 1 {
+		t.Errorf("expected 1 input_json_delta, got %d", toolDeltaCount)
+	}
+}
