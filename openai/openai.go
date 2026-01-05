@@ -95,6 +95,132 @@ type Reasoning struct {
 	Effort string `json:"effort,omitempty"`
 }
 
+type ToolChoiceFunctionRef struct {
+	Name string `json:"name"`
+}
+
+type ToolChoiceAllowedTool struct {
+	Type string `json:"type"` // "function"
+	Name string `json:"name"`
+}
+
+type ToolChoiceObject struct {
+	Type     string                  `json:"type,omitempty"`
+	Name     string                  `json:"name,omitempty"`
+	Function *ToolChoiceFunctionRef  `json:"function,omitempty"`
+	Mode     string                  `json:"mode,omitempty"`
+	Tools    []ToolChoiceAllowedTool `json:"tools,omitempty"`
+}
+
+type ToolChoice struct {
+	Mode   string
+	Object *ToolChoiceObject
+}
+
+// UnmarshalJSON handles both string and object forms of tool_choice
+func (tc *ToolChoice) UnmarshalJSON(data []byte) error {
+	// Try string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		tc.Mode = s
+		tc.Object = nil
+		return nil
+	}
+
+	// Try object
+	var obj ToolChoiceObject
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("invalid tool_choice: must be string or object")
+	}
+	tc.Object = &obj
+	return nil
+}
+
+// MarshalJSON serializes ToolChoice back to JSON
+func (tc ToolChoice) MarshalJSON() ([]byte, error) {
+	if tc.Object != nil {
+		return json.Marshal(tc.Object)
+	}
+	return json.Marshal(tc.Mode)
+}
+
+// IsNone returns true if tool_choice is "none"
+func (tc *ToolChoice) IsNone() bool {
+	return tc != nil && tc.Mode == "none"
+}
+
+// IsRequired returns true if tool_choice is "required"
+func (tc *ToolChoice) IsRequired() bool {
+	return tc != nil && tc.Mode == "required"
+}
+
+// IsAuto returns true if tool_choice is "auto" or not specified
+func (tc *ToolChoice) IsAuto() bool {
+	if tc == nil {
+		return true
+	}
+	// If there's an object, check if it's allowed_tools with auto mode
+	if tc.Object != nil {
+		// allowed_tools with "auto" mode is still considered auto
+		if tc.Object.Type == "allowed_tools" && (tc.Object.Mode == "" || tc.Object.Mode == "auto") {
+			return true
+		}
+		// Any other object (forced function, allowed_tools with required) is not auto
+		return false
+	}
+	return tc.Mode == "" || tc.Mode == "auto"
+}
+
+// IsForcedFunction returns true if a specific function is forced
+func (tc *ToolChoice) IsForcedFunction() bool {
+	if tc == nil || tc.Object == nil {
+		return false
+	}
+	return tc.Object.Type == "function" || tc.Object.Name != "" || tc.Object.Function != nil
+}
+
+// GetForcedFunctionName returns the name of the forced function, if any
+func (tc *ToolChoice) GetForcedFunctionName() string {
+	if tc == nil || tc.Object == nil {
+		return ""
+	}
+	if tc.Object.Name != "" {
+		return tc.Object.Name
+	}
+	if tc.Object.Function != nil {
+		return tc.Object.Function.Name
+	}
+	return ""
+}
+
+// IsAllowedTools returns true if tool_choice uses allowed_tools mode
+func (tc *ToolChoice) IsAllowedTools() bool {
+	return tc != nil && tc.Object != nil && tc.Object.Type == "allowed_tools"
+}
+
+// GetAllowedToolNames returns the list of allowed tool names
+func (tc *ToolChoice) GetAllowedToolNames() []string {
+	if !tc.IsAllowedTools() || tc.Object.Tools == nil {
+		return nil
+	}
+	names := make([]string, len(tc.Object.Tools))
+	for i, t := range tc.Object.Tools {
+		names[i] = t.Name
+	}
+	return names
+}
+
+// GetAllowedToolsMode returns the mode for allowed_tools ("auto" or "required")
+func (tc *ToolChoice) GetAllowedToolsMode() string {
+	if !tc.IsAllowedTools() {
+		return ""
+	}
+	if tc.Object.Mode == "" {
+		return "auto"
+	}
+	return tc.Object.Mode
+}
+
 type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
@@ -109,6 +235,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	ToolChoice       *ToolChoice     `json:"tool_choice,omitempty"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
 	Logprobs         *bool           `json:"logprobs"`
@@ -444,6 +571,171 @@ func ToModel(r api.ShowResponse, m string) Model {
 	}
 }
 
+// filterToolsByNames returns only the tools that match the given names
+func filterToolsByNames(tools []api.Tool, names []string) []api.Tool {
+	if len(names) == 0 {
+		return tools
+	}
+	nameSet := make(map[string]bool)
+	for _, name := range names {
+		nameSet[name] = true
+	}
+	var filtered []api.Tool
+	for _, tool := range tools {
+		if nameSet[tool.Function.Name] {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
+// findToolByName returns the tool with the given name, or nil if not found
+func findToolByName(tools []api.Tool, name string) *api.Tool {
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return &tool
+		}
+	}
+	return nil
+}
+
+// generateToolCallSchema creates a JSON schema that constrains output to valid tool calls
+func generateToolCallSchema(tools []api.Tool) json.RawMessage {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	// Collect all tool names for the enum
+	toolNames := make([]string, len(tools))
+	for i, tool := range tools {
+		toolNames[i] = tool.Function.Name
+	}
+
+	// Build a schema that allows any of the tools
+	// Using oneOf for each tool with its specific parameter schema
+	var oneOfSchemas []map[string]any
+	for _, tool := range tools {
+		toolSchema := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{
+					"type":  "string",
+					"const": tool.Function.Name,
+				},
+				"arguments": tool.Function.Parameters,
+			},
+			"required":             []string{"name", "arguments"},
+			"additionalProperties": false,
+		}
+		oneOfSchemas = append(oneOfSchemas, toolSchema)
+	}
+
+	var schema map[string]any
+	if len(oneOfSchemas) == 1 {
+		// Single tool - use its schema directly
+		schema = oneOfSchemas[0]
+	} else {
+		// Multiple tools - use oneOf
+		schema = map[string]any{
+			"oneOf": oneOfSchemas,
+		}
+	}
+
+	bytes, err := json.Marshal(schema)
+	if err != nil {
+		slog.Error("failed to marshal tool call schema", "error", err)
+		return nil
+	}
+	return bytes
+}
+
+// generateForcedFunctionSchema creates a JSON schema for a specific forced function
+func generateForcedFunctionSchema(tool api.Tool) json.RawMessage {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":  "string",
+				"const": tool.Function.Name,
+			},
+			"arguments": tool.Function.Parameters,
+		},
+		"required":             []string{"name", "arguments"},
+		"additionalProperties": false,
+	}
+
+	bytes, err := json.Marshal(schema)
+	if err != nil {
+		slog.Error("failed to marshal forced function schema", "error", err)
+		return nil
+	}
+	return bytes
+}
+
+// ApplyToolChoice processes tool_choice and returns filtered tools and optional format schema
+// Returns:
+// - filteredTools: the tools to pass to the model (may be empty for "none")
+// - format: JSON schema to constrain output (for "required" or forced function)
+// - forcedToolCall: true if the response should be parsed as a tool call
+// - error: if tool_choice references a non-existent tool
+func ApplyToolChoice(tools []api.Tool, toolChoice *ToolChoice) (filteredTools []api.Tool, format json.RawMessage, forcedToolCall bool, err error) {
+	// Default: auto mode, return all tools without format constraint
+	if toolChoice == nil || toolChoice.IsAuto() {
+		// Check for allowed_tools with auto mode
+		if toolChoice != nil && toolChoice.IsAllowedTools() {
+			allowedNames := toolChoice.GetAllowedToolNames()
+			filteredTools = filterToolsByNames(tools, allowedNames)
+			if toolChoice.GetAllowedToolsMode() == "required" {
+				format = generateToolCallSchema(filteredTools)
+				forcedToolCall = true
+			}
+			return filteredTools, format, forcedToolCall, nil
+		}
+		return tools, nil, false, nil
+	}
+
+	// "none" mode: don't pass any tools
+	if toolChoice.IsNone() {
+		return nil, nil, false, nil
+	}
+
+	// "required" mode: must call at least one tool
+	if toolChoice.IsRequired() {
+		format = generateToolCallSchema(tools)
+		return tools, format, true, nil
+	}
+
+	// Forced function mode
+	if toolChoice.IsForcedFunction() {
+		funcName := toolChoice.GetForcedFunctionName()
+		if funcName == "" {
+			return nil, nil, false, errors.New("tool_choice function name is required")
+		}
+
+		tool := findToolByName(tools, funcName)
+		if tool == nil {
+			return nil, nil, false, fmt.Errorf("tool_choice references unknown function: %s", funcName)
+		}
+
+		format = generateForcedFunctionSchema(*tool)
+		return []api.Tool{*tool}, format, true, nil
+	}
+
+	// allowed_tools mode (already handled in IsAuto check, but handle explicit type here)
+	if toolChoice.IsAllowedTools() {
+		allowedNames := toolChoice.GetAllowedToolNames()
+		filteredTools = filterToolsByNames(tools, allowedNames)
+		if toolChoice.GetAllowedToolsMode() == "required" {
+			format = generateToolCallSchema(filteredTools)
+			forcedToolCall = true
+		}
+		return filteredTools, format, forcedToolCall, nil
+	}
+
+	// Unknown mode, default to auto
+	return tools, nil, false, nil
+}
+
 // FromChatRequest converts a ChatCompletionRequest to api.ChatRequest
 func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
@@ -579,6 +871,18 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	// Apply tool_choice to filter tools and potentially set format constraint
+	filteredTools, toolChoiceFormat, _, err := ApplyToolChoice(r.Tools, r.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+
+	// If tool_choice requires a format constraint and no explicit response_format was set,
+	// apply the tool call schema
+	if toolChoiceFormat != nil && format == nil {
+		format = toolChoiceFormat
+	}
+
 	var think *api.ThinkValue
 	var effort string
 
@@ -606,7 +910,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Format:          format,
 		Options:         options,
 		Stream:          &r.Stream,
-		Tools:           r.Tools,
+		Tools:           filteredTools,
 		Think:           think,
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,

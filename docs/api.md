@@ -493,6 +493,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
+- `tool_choice`: controls how the model uses tools (see [Tool choice](#tool-choice) below)
 - `think`: (for thinking models) should the model think before responding?
 
 The `message` object has the following fields:
@@ -518,6 +519,39 @@ Tool calling is supported by providing a list of tools in the `tools` parameter.
 Models can also explain the result of the tool call in the response. See the [Chat request (With history, with tools)](#chat-request-with-history-with-tools) example below.
 
 [See models with tool calling capabilities](https://ollama.com/search?c=tool).
+
+### Tool choice
+
+By default, the model will determine when and how many tools to use. You can control this behavior with the `tool_choice` parameter:
+
+- `"auto"` (default): The model decides whether to call zero, one, or multiple tools.
+- `"none"`: The model won't call any tools, even if they are provided.
+- `"required"`: The model must call at least one tool. The output is constrained to produce a valid tool call.
+- `{"function": {"name": "function_name"}}`: The model must call the specified function.
+
+Example with `tool_choice: "required"`:
+
+```json
+{
+  "model": "qwen3",
+  "messages": [{"role": "user", "content": "What is the weather in Paris?"}],
+  "tools": [...],
+  "tool_choice": "required",
+  "stream": false
+}
+```
+
+Example with a forced function:
+
+```json
+{
+  "model": "qwen3",
+  "messages": [{"role": "user", "content": "What is the weather in Paris?"}],
+  "tools": [...],
+  "tool_choice": {"function": {"name": "get_weather"}},
+  "stream": false
+}
+```
 
 ### Structured outputs
 

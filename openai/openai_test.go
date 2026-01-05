@@ -434,3 +434,480 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 		})
 	}
 }
+
+func TestToolChoice_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		wantMode string
+		wantObj  bool
+	}{
+		{
+			name:     "string auto",
+			json:     `"auto"`,
+			wantMode: "auto",
+			wantObj:  false,
+		},
+		{
+			name:     "string none",
+			json:     `"none"`,
+			wantMode: "none",
+			wantObj:  false,
+		},
+		{
+			name:     "string required",
+			json:     `"required"`,
+			wantMode: "required",
+			wantObj:  false,
+		},
+		{
+			name:     "object function with name",
+			json:     `{"type": "function", "name": "get_weather"}`,
+			wantMode: "",
+			wantObj:  true,
+		},
+		{
+			name:     "object function with function.name",
+			json:     `{"type": "function", "function": {"name": "get_weather"}}`,
+			wantMode: "",
+			wantObj:  true,
+		},
+		{
+			name:     "object allowed_tools",
+			json:     `{"type": "allowed_tools", "mode": "required", "tools": [{"type": "function", "name": "get_weather"}]}`,
+			wantMode: "",
+			wantObj:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tc ToolChoice
+			if err := tc.UnmarshalJSON([]byte(tt.json)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tc.Mode != tt.wantMode {
+				t.Errorf("Mode = %q, want %q", tc.Mode, tt.wantMode)
+			}
+
+			if (tc.Object != nil) != tt.wantObj {
+				t.Errorf("Object = %v, wantObj = %v", tc.Object, tt.wantObj)
+			}
+		})
+	}
+}
+
+func TestToolChoice_Methods(t *testing.T) {
+	tests := []struct {
+		name             string
+		toolChoice       *ToolChoice
+		isNone           bool
+		isRequired       bool
+		isAuto           bool
+		isForcedFunction bool
+		forcedFuncName   string
+		isAllowedTools   bool
+		allowedToolNames []string
+		allowedToolsMode string
+	}{
+		{
+			name:       "nil",
+			toolChoice: nil,
+			isNone:     false,
+			isRequired: false,
+			isAuto:     true,
+		},
+		{
+			name:       "auto string",
+			toolChoice: &ToolChoice{Mode: "auto"},
+			isNone:     false,
+			isRequired: false,
+			isAuto:     true,
+		},
+		{
+			name:       "none string",
+			toolChoice: &ToolChoice{Mode: "none"},
+			isNone:     true,
+			isRequired: false,
+			isAuto:     false,
+		},
+		{
+			name:       "required string",
+			toolChoice: &ToolChoice{Mode: "required"},
+			isNone:     false,
+			isRequired: true,
+			isAuto:     false,
+		},
+		{
+			name: "forced function with name",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{Type: "function", Name: "get_weather"},
+			},
+			isNone:           false,
+			isRequired:       false,
+			isAuto:           false,
+			isForcedFunction: true,
+			forcedFuncName:   "get_weather",
+		},
+		{
+			name: "forced function with function.name",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{
+					Type:     "function",
+					Function: &ToolChoiceFunctionRef{Name: "search"},
+				},
+			},
+			isNone:           false,
+			isRequired:       false,
+			isAuto:           false,
+			isForcedFunction: true,
+			forcedFuncName:   "search",
+		},
+		{
+			name: "allowed_tools auto",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{
+					Type: "allowed_tools",
+					Mode: "auto",
+					Tools: []ToolChoiceAllowedTool{
+						{Type: "function", Name: "get_weather"},
+						{Type: "function", Name: "search"},
+					},
+				},
+			},
+			isNone:           false,
+			isRequired:       false,
+			isAuto:           true,
+			isForcedFunction: false,
+			isAllowedTools:   true,
+			allowedToolNames: []string{"get_weather", "search"},
+			allowedToolsMode: "auto",
+		},
+		{
+			name: "allowed_tools required",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{
+					Type: "allowed_tools",
+					Mode: "required",
+					Tools: []ToolChoiceAllowedTool{
+						{Type: "function", Name: "get_weather"},
+					},
+				},
+			},
+			isNone:           false,
+			isRequired:       false,
+			isAuto:           false,
+			isForcedFunction: false,
+			isAllowedTools:   true,
+			allowedToolNames: []string{"get_weather"},
+			allowedToolsMode: "required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.toolChoice.IsNone(); got != tt.isNone {
+				t.Errorf("IsNone() = %v, want %v", got, tt.isNone)
+			}
+			if got := tt.toolChoice.IsRequired(); got != tt.isRequired {
+				t.Errorf("IsRequired() = %v, want %v", got, tt.isRequired)
+			}
+			if got := tt.toolChoice.IsAuto(); got != tt.isAuto {
+				t.Errorf("IsAuto() = %v, want %v", got, tt.isAuto)
+			}
+			if got := tt.toolChoice.IsForcedFunction(); got != tt.isForcedFunction {
+				t.Errorf("IsForcedFunction() = %v, want %v", got, tt.isForcedFunction)
+			}
+			if got := tt.toolChoice.GetForcedFunctionName(); got != tt.forcedFuncName {
+				t.Errorf("GetForcedFunctionName() = %q, want %q", got, tt.forcedFuncName)
+			}
+			if got := tt.toolChoice.IsAllowedTools(); got != tt.isAllowedTools {
+				t.Errorf("IsAllowedTools() = %v, want %v", got, tt.isAllowedTools)
+			}
+			if tt.isAllowedTools {
+				if got := tt.toolChoice.GetAllowedToolNames(); !cmp.Equal(got, tt.allowedToolNames) {
+					t.Errorf("GetAllowedToolNames() = %v, want %v", got, tt.allowedToolNames)
+				}
+				if got := tt.toolChoice.GetAllowedToolsMode(); got != tt.allowedToolsMode {
+					t.Errorf("GetAllowedToolsMode() = %q, want %q", got, tt.allowedToolsMode)
+				}
+			}
+		})
+	}
+}
+
+func TestApplyToolChoice(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: map[string]api.ToolProperty{
+						"location": {Type: []string{"string"}},
+					},
+					Required: []string{"location"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "search",
+				Description: "Search the web",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: map[string]api.ToolProperty{
+						"query": {Type: []string{"string"}},
+					},
+					Required: []string{"query"},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		toolChoice    *ToolChoice
+		wantToolCount int
+		wantFormat    bool
+		wantForced    bool
+		wantError     bool
+		wantToolNames []string
+	}{
+		{
+			name:          "nil (auto)",
+			toolChoice:    nil,
+			wantToolCount: 2,
+			wantFormat:    false,
+			wantForced:    false,
+		},
+		{
+			name:          "auto string",
+			toolChoice:    &ToolChoice{Mode: "auto"},
+			wantToolCount: 2,
+			wantFormat:    false,
+			wantForced:    false,
+		},
+		{
+			name:          "none string",
+			toolChoice:    &ToolChoice{Mode: "none"},
+			wantToolCount: 0,
+			wantFormat:    false,
+			wantForced:    false,
+		},
+		{
+			name:          "required string",
+			toolChoice:    &ToolChoice{Mode: "required"},
+			wantToolCount: 2,
+			wantFormat:    true,
+			wantForced:    true,
+		},
+		{
+			name: "forced function",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{Type: "function", Name: "get_weather"},
+			},
+			wantToolCount: 1,
+			wantFormat:    true,
+			wantForced:    true,
+			wantToolNames: []string{"get_weather"},
+		},
+		{
+			name: "forced unknown function",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{Type: "function", Name: "unknown_func"},
+			},
+			wantError: true,
+		},
+		{
+			name: "allowed_tools auto",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{
+					Type: "allowed_tools",
+					Mode: "auto",
+					Tools: []ToolChoiceAllowedTool{
+						{Type: "function", Name: "get_weather"},
+					},
+				},
+			},
+			wantToolCount: 1,
+			wantFormat:    false,
+			wantForced:    false,
+			wantToolNames: []string{"get_weather"},
+		},
+		{
+			name: "allowed_tools required",
+			toolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{
+					Type: "allowed_tools",
+					Mode: "required",
+					Tools: []ToolChoiceAllowedTool{
+						{Type: "function", Name: "search"},
+					},
+				},
+			},
+			wantToolCount: 1,
+			wantFormat:    true,
+			wantForced:    true,
+			wantToolNames: []string{"search"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filteredTools, format, forced, err := ApplyToolChoice(tools, tt.toolChoice)
+
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(filteredTools) != tt.wantToolCount {
+				t.Errorf("got %d tools, want %d", len(filteredTools), tt.wantToolCount)
+			}
+
+			if (format != nil) != tt.wantFormat {
+				t.Errorf("format = %v, wantFormat = %v", format != nil, tt.wantFormat)
+			}
+
+			if forced != tt.wantForced {
+				t.Errorf("forced = %v, want %v", forced, tt.wantForced)
+			}
+
+			if tt.wantToolNames != nil {
+				gotNames := make([]string, len(filteredTools))
+				for i, tool := range filteredTools {
+					gotNames[i] = tool.Function.Name
+				}
+				if !cmp.Equal(gotNames, tt.wantToolNames) {
+					t.Errorf("tool names = %v, want %v", gotNames, tt.wantToolNames)
+				}
+			}
+		})
+	}
+}
+
+func TestFromChatRequest_WithToolChoice(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: map[string]api.ToolProperty{
+						"location": {Type: []string{"string"}},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "search",
+				Description: "Search",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: map[string]api.ToolProperty{
+						"query": {Type: []string{"string"}},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("tool_choice none removes tools", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model:      "test-model",
+			Messages:   []Message{{Role: "user", Content: "Hello"}},
+			Tools:      tools,
+			ToolChoice: &ToolChoice{Mode: "none"},
+		}
+
+		result, err := FromChatRequest(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(result.Tools) != 0 {
+			t.Errorf("expected 0 tools, got %d", len(result.Tools))
+		}
+	})
+
+	t.Run("tool_choice required adds format", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model:      "test-model",
+			Messages:   []Message{{Role: "user", Content: "Hello"}},
+			Tools:      tools,
+			ToolChoice: &ToolChoice{Mode: "required"},
+		}
+
+		result, err := FromChatRequest(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(result.Tools) != 2 {
+			t.Errorf("expected 2 tools, got %d", len(result.Tools))
+		}
+
+		if result.Format == nil {
+			t.Error("expected format to be set for required tool_choice")
+		}
+	})
+
+	t.Run("tool_choice forced function filters and adds format", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model:    "test-model",
+			Messages: []Message{{Role: "user", Content: "Hello"}},
+			Tools:    tools,
+			ToolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{Type: "function", Name: "get_weather"},
+			},
+		}
+
+		result, err := FromChatRequest(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(result.Tools) != 1 {
+			t.Errorf("expected 1 tool, got %d", len(result.Tools))
+		}
+
+		if result.Tools[0].Function.Name != "get_weather" {
+			t.Errorf("expected tool 'get_weather', got %q", result.Tools[0].Function.Name)
+		}
+
+		if result.Format == nil {
+			t.Error("expected format to be set for forced function")
+		}
+	})
+
+	t.Run("tool_choice unknown function returns error", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model:    "test-model",
+			Messages: []Message{{Role: "user", Content: "Hello"}},
+			Tools:    tools,
+			ToolChoice: &ToolChoice{
+				Object: &ToolChoiceObject{Type: "function", Name: "unknown"},
+			},
+		}
+
+		_, err := FromChatRequest(req)
+		if err == nil {
+			t.Error("expected error for unknown function")
+		}
+	})
+}

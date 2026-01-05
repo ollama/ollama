@@ -1861,6 +1861,112 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
+// findToolByName returns the tool with the given name, or nil if not found.
+func findToolByName(tools []api.Tool, name string) *api.Tool {
+	for i := range tools {
+		if tools[i].Function.Name == name {
+			return &tools[i]
+		}
+	}
+	return nil
+}
+
+// generateToolCallSchema creates a JSON schema that constrains output to valid tool calls.
+func generateToolCallSchema(tools []api.Tool) json.RawMessage {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	var oneOfSchemas []map[string]any
+	for _, tool := range tools {
+		toolSchema := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{
+					"type":  "string",
+					"const": tool.Function.Name,
+				},
+				"arguments": tool.Function.Parameters,
+			},
+			"required":             []string{"name", "arguments"},
+			"additionalProperties": false,
+		}
+		oneOfSchemas = append(oneOfSchemas, toolSchema)
+	}
+
+	var schema map[string]any
+	if len(oneOfSchemas) == 1 {
+		schema = oneOfSchemas[0]
+	} else {
+		schema = map[string]any{
+			"oneOf": oneOfSchemas,
+		}
+	}
+
+	bytes, err := json.Marshal(schema)
+	if err != nil {
+		slog.Error("failed to marshal tool call schema", "error", err)
+		return nil
+	}
+	return bytes
+}
+
+// generateForcedFunctionSchema creates a JSON schema for a specific forced function.
+func generateForcedFunctionSchema(tool api.Tool) json.RawMessage {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":  "string",
+				"const": tool.Function.Name,
+			},
+			"arguments": tool.Function.Parameters,
+		},
+		"required":             []string{"name", "arguments"},
+		"additionalProperties": false,
+	}
+
+	bytes, err := json.Marshal(schema)
+	if err != nil {
+		slog.Error("failed to marshal forced function schema", "error", err)
+		return nil
+	}
+	return bytes
+}
+
+// parseForcedToolCallContent parses content as a forced tool call JSON.
+func parseForcedToolCallContent(content string, forcedToolName string) *api.ToolCall {
+	if content == "" {
+		return nil
+	}
+
+	var toolCallJSON struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
+
+	if err := json.Unmarshal([]byte(content), &toolCallJSON); err != nil {
+		return nil
+	}
+
+	name := toolCallJSON.Name
+	if forcedToolName != "" {
+		name = forcedToolName
+	}
+
+	if name == "" {
+		return nil
+	}
+
+	return &api.ToolCall{
+		ID: toolCallId(),
+		Function: api.ToolCallFunction{
+			Name:      name,
+			Arguments: toolCallJSON.Arguments,
+		},
+	}
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -2075,6 +2181,36 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
+	// Handle tool_choice
+	var forcedToolCall bool
+	var forcedToolName string
+	if req.ToolChoice != nil && len(req.Tools) > 0 {
+		if req.ToolChoice.IsNone() {
+			// "none" mode: don't pass any tools
+			processedTools = nil
+		} else if req.ToolChoice.IsRequired() {
+			// "required" mode: must call at least one tool, generate JSON schema
+			if req.Format == nil {
+				req.Format = generateToolCallSchema(req.Tools)
+			}
+			forcedToolCall = true
+		} else if req.ToolChoice.IsForcedFunction() {
+			// Forced function mode: must call this specific function
+			funcName := req.ToolChoice.GetForcedFunctionName()
+			tool := findToolByName(req.Tools, funcName)
+			if tool == nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("tool_choice references unknown function: %s", funcName)})
+				return
+			}
+			if req.Format == nil {
+				req.Format = generateForcedFunctionSchema(*tool)
+			}
+			processedTools = []api.Tool{*tool}
+			forcedToolCall = true
+			forcedToolName = funcName
+		}
+	}
+
 	truncate := req.Truncate == nil || *req.Truncate
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
@@ -2206,6 +2342,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 
+					// If tool_choice forced a tool call and builtinParser didn't find any,
+					// try to parse the content as a forced tool call JSON
+					if r.Done && forcedToolCall && len(res.Message.ToolCalls) == 0 && res.Message.Content != "" {
+						if toolCall := parseForcedToolCallContent(res.Message.Content, forcedToolName); toolCall != nil {
+							res.Message.ToolCalls = []api.ToolCall{*toolCall}
+							res.Message.Content = ""
+						}
+					}
+
 					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
@@ -2235,7 +2380,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.Content = remainingContent
 				}
 
-				if len(req.Tools) > 0 {
+				if len(req.Tools) > 0 && toolParser != nil {
 					toolCalls, content := toolParser.Add(res.Message.Content)
 					if len(content) > 0 {
 						res.Message.Content = content
@@ -2258,9 +2403,25 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 						if r.Done {
 							res.Message.Content = toolParser.Content()
+							// If tool_choice forced a tool call, try to parse the buffered content
+							if forcedToolCall && len(res.Message.ToolCalls) == 0 && res.Message.Content != "" {
+								if toolCall := parseForcedToolCallContent(res.Message.Content, forcedToolName); toolCall != nil {
+									res.Message.ToolCalls = []api.ToolCall{*toolCall}
+									res.Message.Content = ""
+								}
+							}
 							ch <- res
 						}
 						return
+					}
+				}
+
+				// If tool_choice forced a tool call and we have content but no tool calls,
+				// try to parse the content as a tool call (used when format constraint was applied)
+				if r.Done && forcedToolCall && len(res.Message.ToolCalls) == 0 && res.Message.Content != "" {
+					if toolCall := parseForcedToolCallContent(res.Message.Content, forcedToolName); toolCall != nil {
+						res.Message.ToolCalls = []api.ToolCall{*toolCall}
+						res.Message.Content = ""
 					}
 				}
 
@@ -2353,6 +2514,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		if len(toolCalls) > 0 {
 			resp.Message.ToolCalls = toolCalls
+			// If we have tool calls from forced tool_choice, the "content" was actually
+			// the JSON that got parsed into tool calls, so clear it
+			if forcedToolCall {
+				resp.Message.Content = ""
+			}
+		} else if forcedToolCall && resp.Message.Content != "" {
+			// No tool calls were parsed in callbacks, but we have forced tool_choice.
+			// Try to parse the accumulated content as a tool call JSON.
+			if toolCall := parseForcedToolCallContent(resp.Message.Content, forcedToolName); toolCall != nil {
+				resp.Message.ToolCalls = []api.ToolCall{*toolCall}
+				resp.Message.Content = ""
+			}
 		}
 
 		c.JSON(http.StatusOK, resp)
