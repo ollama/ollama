@@ -72,7 +72,6 @@ func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 		return len(data), nil
 	}
 
-	// Non-streaming response
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	response := anthropic.ToMessagesResponse(w.id, chatResponse)
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
@@ -97,7 +96,6 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Validate required fields
 		if req.Model == "" {
 			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "model is required"))
 			return
@@ -113,7 +111,6 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Convert to internal format
 		chatReq, err := anthropic.FromMessagesRequest(req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
@@ -138,7 +135,6 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			converter:  anthropic.NewStreamConverter(messageID, req.Model),
 		}
 
-		// Set headers based on streaming mode
 		if req.Stream {
 			c.Writer.Header().Set("Content-Type", "text/event-stream")
 			c.Writer.Header().Set("Cache-Control", "no-cache")

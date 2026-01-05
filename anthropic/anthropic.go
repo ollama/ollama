@@ -232,7 +232,6 @@ type StreamErrorEvent struct {
 func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 
-	// Handle system prompt
 	if r.System != nil {
 		switch sys := r.System.(type) {
 		case string:
@@ -257,7 +256,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	// Convert messages
 	for _, msg := range r.Messages {
 		converted, err := convertMessage(msg)
 		if err != nil {
@@ -266,7 +264,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		messages = append(messages, converted...)
 	}
 
-	// Build options
 	options := make(map[string]any)
 
 	options["num_predict"] = r.MaxTokens
@@ -287,7 +284,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		options["stop"] = r.StopSequences
 	}
 
-	// Convert tools
 	var tools api.Tools
 	for _, t := range r.Tools {
 		tool, err := convertTool(t)
@@ -297,7 +293,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		tools = append(tools, tool)
 	}
 
-	// Handle thinking
 	var think *api.ThinkValue
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
@@ -325,7 +320,6 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		messages = append(messages, api.Message{Role: role, Content: content})
 
 	case []any:
-		// Handle array of content blocks
 		var textContent strings.Builder
 		var images []api.ImageData
 		var toolCalls []api.ToolCall
@@ -360,6 +354,8 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 						return nil, fmt.Errorf("invalid base64 image data: %w", err)
 					}
 					images = append(images, decoded)
+				} else {
+					return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", sourceType)
 				}
 				// URL images would need to be fetched - skip for now
 
@@ -391,7 +387,6 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				case string:
 					resultContent = c
 				case []any:
-					// Extract text from content blocks
 					for _, cb := range c {
 						if cbMap, ok := cb.(map[string]any); ok {
 							if cbMap["type"] == "text" {
@@ -416,7 +411,6 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 			}
 		}
 
-		// Build the main message
 		if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 {
 			m := api.Message{
 				Role:      role,
@@ -461,7 +455,6 @@ func convertTool(t Tool) (api.Tool, error) {
 func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 	var content []ContentBlock
 
-	// Add thinking block if present
 	if r.Message.Thinking != "" {
 		content = append(content, ContentBlock{
 			Type:     "thinking",
@@ -469,7 +462,6 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		})
 	}
 
-	// Add text content if present
 	if r.Message.Content != "" {
 		content = append(content, ContentBlock{
 			Type: "text",
@@ -477,7 +469,6 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		})
 	}
 
-	// Add tool use blocks
 	for _, tc := range r.Message.ToolCalls {
 		content = append(content, ContentBlock{
 			Type:  "tool_use",
@@ -487,7 +478,6 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		})
 	}
 
-	// Map stop reason
 	stopReason := mapStopReason(r.DoneReason, len(r.Message.ToolCalls) > 0)
 
 	return MessagesResponse{
@@ -537,7 +527,6 @@ type StreamConverter struct {
 	toolCallsSent   map[string]bool
 }
 
-// NewStreamConverter creates a new StreamConverter
 func NewStreamConverter(id, model string) *StreamConverter {
 	return &StreamConverter{
 		ID:            id,
@@ -557,7 +546,6 @@ type StreamEvent struct {
 func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	var events []StreamEvent
 
-	// First write: emit message_start
 	if c.firstWrite {
 		c.firstWrite = false
 		c.inputTokens = r.Metrics.PromptEvalCount
@@ -581,7 +569,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		})
 	}
 
-	// Handle thinking content
 	if r.Message.Thinking != "" && !c.thinkingDone {
 		if !c.thinkingStarted {
 			c.thinkingStarted = true
@@ -611,9 +598,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		})
 	}
 
-	// Handle text content
 	if r.Message.Content != "" {
-		// Close thinking block if it was open
 		if c.thinkingStarted && !c.thinkingDone {
 			c.thinkingDone = true
 			events = append(events, StreamEvent{
@@ -654,13 +639,11 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		})
 	}
 
-	// Handle tool calls
 	for _, tc := range r.Message.ToolCalls {
 		if c.toolCallsSent[tc.ID] {
 			continue
 		}
 
-		// Close any previous block
 		if c.textStarted {
 			events = append(events, StreamEvent{
 				Event: "content_block_stop",
@@ -673,14 +656,12 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			c.textStarted = false
 		}
 
-		// Marshal arguments first to check for errors before starting block
 		argsJSON, err := json.Marshal(tc.Function.Arguments)
 		if err != nil {
 			slog.Error("failed to marshal tool arguments", "error", err, "tool_id", tc.ID)
 			continue
 		}
 
-		// Start tool use block
 		events = append(events, StreamEvent{
 			Event: "content_block_start",
 			Data: ContentBlockStartEvent{
@@ -695,7 +676,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			},
 		})
 
-		// Send input as JSON delta
 		events = append(events, StreamEvent{
 			Event: "content_block_delta",
 			Data: ContentBlockDeltaEvent{
@@ -708,7 +688,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			},
 		})
 
-		// Close tool use block
 		events = append(events, StreamEvent{
 			Event: "content_block_stop",
 			Data: ContentBlockStopEvent{
@@ -721,9 +700,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		c.contentIndex++
 	}
 
-	// Handle done
 	if r.Done {
-		// Close any open block
 		if c.textStarted {
 			events = append(events, StreamEvent{
 				Event: "content_block_stop",
