@@ -156,7 +156,19 @@ func (tc *ToolChoice) IsRequired() bool {
 
 // IsAuto returns true if tool_choice is "auto" or not specified
 func (tc *ToolChoice) IsAuto() bool {
-	return tc == nil || tc.Mode == "" || tc.Mode == "auto"
+	if tc == nil {
+		return true
+	}
+	// If there's an object, check if it's allowed_tools with auto mode
+	if tc.Object != nil {
+		// allowed_tools with "auto" mode is still considered auto
+		if tc.Object.Type == "allowed_tools" && (tc.Object.Mode == "" || tc.Object.Mode == "auto") {
+			return true
+		}
+		// Any other object (forced function, allowed_tools with required) is not auto
+		return false
+	}
+	return tc.Mode == "" || tc.Mode == "auto"
 }
 
 // IsForcedFunction returns true if a specific function is forced

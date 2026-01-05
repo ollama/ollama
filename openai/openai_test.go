@@ -646,7 +646,7 @@ func TestApplyToolChoice(t *testing.T) {
 				Description: "Get weather",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.Property{
+					Properties: map[string]api.ToolProperty{
 						"location": {Type: []string{"string"}},
 					},
 					Required: []string{"location"},
@@ -660,7 +660,7 @@ func TestApplyToolChoice(t *testing.T) {
 				Description: "Search the web",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.Property{
+					Properties: map[string]api.ToolProperty{
 						"query": {Type: []string{"string"}},
 					},
 					Required: []string{"query"},
@@ -806,7 +806,7 @@ func TestFromChatRequest_WithToolChoice(t *testing.T) {
 				Description: "Get weather",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.Property{
+					Properties: map[string]api.ToolProperty{
 						"location": {Type: []string{"string"}},
 					},
 				},
@@ -819,7 +819,7 @@ func TestFromChatRequest_WithToolChoice(t *testing.T) {
 				Description: "Search",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.Property{
+					Properties: map[string]api.ToolProperty{
 						"query": {Type: []string{"string"}},
 					},
 				},
