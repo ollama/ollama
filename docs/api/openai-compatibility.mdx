@@ -103,6 +103,89 @@ curl -X POST http://localhost:11434/v1/responses \
 
 </CodeGroup>
 
+### Tool calling with `tool_choice`
+
+The `tool_choice` parameter controls how the model uses tools:
+
+<CodeGroup dropdown>
+
+```python tool_choice.py
+from openai import OpenAI
+
+client = OpenAI(
+    base_url='http://localhost:11434/v1/',
+    api_key='ollama',
+)
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City name"}
+                },
+                "required": ["location"]
+            }
+        }
+    }
+]
+
+# Force the model to call a tool (any tool)
+response = client.chat.completions.create(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "What's the weather in Paris?"}],
+    tools=tools,
+    tool_choice="required"  # Must call at least one tool
+)
+
+# Force a specific function
+response = client.chat.completions.create(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Tell me about Paris"}],
+    tools=tools,
+    tool_choice={"type": "function", "name": "get_weather"}  # Must call get_weather
+)
+
+# Disable tool calling
+response = client.chat.completions.create(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "What's the weather?"}],
+    tools=tools,
+    tool_choice="none"  # Don't call any tools
+)
+```
+
+```shell tool_choice.sh
+# Force the model to call a tool
+curl http://localhost:11434/v1/chat/completions \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "llama3.2",
+  "messages": [{"role": "user", "content": "What is the weather in Paris?"}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Get weather for a location",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {"type": "string"}
+        },
+        "required": ["location"]
+      }
+    }
+  }],
+  "tool_choice": "required"
+}'
+```
+
+</CodeGroup>
+
 ### v1/chat/completions with vision example
 
 <CodeGroup dropdown>
@@ -207,7 +290,12 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [x] `top_p`
 - [x] `max_tokens`
 - [x] `tools`
-- [ ] `tool_choice`
+- [x] `tool_choice`
+  - [x] `"auto"` (default)
+  - [x] `"none"`
+  - [x] `"required"`
+  - [x] `{"type": "function", "name": "function_name"}`
+  - [x] `{"type": "allowed_tools", "mode": "auto"|"required", "tools": [...]}`
 - [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`

@@ -978,3 +978,227 @@ func TestWaitForStream(t *testing.T) {
 		})
 	}
 }
+
+func TestFindToolByName(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather for a location",
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "search_web",
+				Description: "Search the web",
+			},
+		},
+	}
+
+	t.Run("found", func(t *testing.T) {
+		tool := findToolByName(tools, "get_weather")
+		if tool == nil {
+			t.Fatal("expected to find tool")
+		}
+		if tool.Function.Name != "get_weather" {
+			t.Errorf("expected get_weather, got %s", tool.Function.Name)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		tool := findToolByName(tools, "nonexistent")
+		if tool != nil {
+			t.Error("expected nil for nonexistent tool")
+		}
+	})
+
+	t.Run("empty tools", func(t *testing.T) {
+		tool := findToolByName([]api.Tool{}, "get_weather")
+		if tool != nil {
+			t.Error("expected nil for empty tools")
+		}
+	})
+}
+
+func TestGenerateToolCallSchema(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type:     "object",
+					Required: []string{"location"},
+					Properties: map[string]api.ToolProperty{
+						"location": {Type: api.PropertyType{"string"}},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("single tool", func(t *testing.T) {
+		schema := generateToolCallSchema(tools)
+		if schema == nil {
+			t.Fatal("expected schema, got nil")
+		}
+
+		var parsed map[string]any
+		if err := json.Unmarshal(schema, &parsed); err != nil {
+			t.Fatalf("failed to parse schema: %v", err)
+		}
+
+		// Should have properties with name and arguments
+		props, ok := parsed["properties"].(map[string]any)
+		if !ok {
+			t.Fatal("expected properties in schema")
+		}
+
+		if _, ok := props["name"]; !ok {
+			t.Error("expected name property")
+		}
+		if _, ok := props["arguments"]; !ok {
+			t.Error("expected arguments property")
+		}
+	})
+
+	t.Run("multiple tools", func(t *testing.T) {
+		multiTools := append(tools, api.Tool{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "search_web",
+			},
+		})
+
+		schema := generateToolCallSchema(multiTools)
+		if schema == nil {
+			t.Fatal("expected schema, got nil")
+		}
+
+		var parsed map[string]any
+		if err := json.Unmarshal(schema, &parsed); err != nil {
+			t.Fatalf("failed to parse schema: %v", err)
+		}
+
+		// Should have oneOf for multiple tools
+		if _, ok := parsed["oneOf"]; !ok {
+			t.Error("expected oneOf for multiple tools")
+		}
+	})
+
+	t.Run("empty tools", func(t *testing.T) {
+		schema := generateToolCallSchema([]api.Tool{})
+		if schema != nil {
+			t.Error("expected nil for empty tools")
+		}
+	})
+}
+
+func TestGenerateForcedFunctionSchema(t *testing.T) {
+	tool := api.Tool{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters: api.ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"location"},
+				Properties: map[string]api.ToolProperty{
+					"location": {Type: api.PropertyType{"string"}},
+				},
+			},
+		},
+	}
+
+	schema := generateForcedFunctionSchema(tool)
+	if schema == nil {
+		t.Fatal("expected schema, got nil")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(schema, &parsed); err != nil {
+		t.Fatalf("failed to parse schema: %v", err)
+	}
+
+	// Check that name has const constraint
+	props := parsed["properties"].(map[string]any)
+	nameSchema := props["name"].(map[string]any)
+	if nameSchema["const"] != "get_weather" {
+		t.Errorf("expected const get_weather, got %v", nameSchema["const"])
+	}
+}
+
+func TestParseForcedToolCallContent(t *testing.T) {
+	t.Run("valid tool call JSON", func(t *testing.T) {
+		content := `{"name": "get_weather", "arguments": {"location": "Paris"}}`
+		toolCall := parseForcedToolCallContent(content, "")
+
+		if toolCall == nil {
+			t.Fatal("expected tool call, got nil")
+		}
+
+		if toolCall.Function.Name != "get_weather" {
+			t.Errorf("expected get_weather, got %s", toolCall.Function.Name)
+		}
+
+		if toolCall.Function.Arguments["location"] != "Paris" {
+			t.Errorf("expected Paris, got %v", toolCall.Function.Arguments["location"])
+		}
+
+		if toolCall.ID == "" {
+			t.Error("expected non-empty tool call ID")
+		}
+	})
+
+	t.Run("forced tool name override", func(t *testing.T) {
+		content := `{"name": "other_tool", "arguments": {"location": "Paris"}}`
+		toolCall := parseForcedToolCallContent(content, "get_weather")
+
+		if toolCall == nil {
+			t.Fatal("expected tool call, got nil")
+		}
+
+		// Should use the forced name, not the one in JSON
+		if toolCall.Function.Name != "get_weather" {
+			t.Errorf("expected get_weather (forced), got %s", toolCall.Function.Name)
+		}
+	})
+
+	t.Run("empty content", func(t *testing.T) {
+		toolCall := parseForcedToolCallContent("", "")
+		if toolCall != nil {
+			t.Error("expected nil for empty content")
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		toolCall := parseForcedToolCallContent("not json", "")
+		if toolCall != nil {
+			t.Error("expected nil for invalid JSON")
+		}
+	})
+
+	t.Run("missing name", func(t *testing.T) {
+		content := `{"arguments": {"location": "Paris"}}`
+		toolCall := parseForcedToolCallContent(content, "")
+		if toolCall != nil {
+			t.Error("expected nil when name is missing and not forced")
+		}
+	})
+
+	t.Run("missing name but forced", func(t *testing.T) {
+		content := `{"arguments": {"location": "Paris"}}`
+		toolCall := parseForcedToolCallContent(content, "get_weather")
+
+		if toolCall == nil {
+			t.Fatal("expected tool call with forced name")
+		}
+
+		if toolCall.Function.Name != "get_weather" {
+			t.Errorf("expected get_weather, got %s", toolCall.Function.Name)
+		}
+	})
+}

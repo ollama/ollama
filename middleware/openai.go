@@ -20,10 +20,12 @@ type BaseWriter struct {
 }
 
 type ChatWriter struct {
-	stream        bool
-	streamOptions *openai.StreamOptions
-	id            string
-	toolCallSent  bool
+	stream         bool
+	streamOptions  *openai.StreamOptions
+	id             string
+	toolCallSent   bool
+	forcedToolCall bool
+	forcedToolName string
 	BaseWriter
 }
 
@@ -65,11 +67,54 @@ func (w *BaseWriter) writeError(data []byte) (int, error) {
 	return len(data), nil
 }
 
+func parseForcedToolCall(content string, forcedToolName string) *api.ToolCall {
+	if content == "" {
+		return nil
+	}
+
+	// Try to parse as tool call structure: {"name": "...", "arguments": {...}}
+	var toolCallJSON struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
+
+	if err := json.Unmarshal([]byte(content), &toolCallJSON); err != nil {
+		return nil
+	}
+
+	// If a specific tool was forced, use that name
+	name := toolCallJSON.Name
+	if forcedToolName != "" {
+		name = forcedToolName
+	}
+
+	if name == "" {
+		return nil
+	}
+
+	return &api.ToolCall{
+		ID: fmt.Sprintf("call_%d", rand.Intn(999999)),
+		Function: api.ToolCallFunction{
+			Name:      name,
+			Arguments: toolCallJSON.Arguments,
+		},
+	}
+}
+
 func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
 		return 0, err
+	}
+
+	// If tool_choice forced a tool call and we have content but no tool calls,
+	// try to parse the content as a tool call
+	if w.forcedToolCall && len(chatResponse.Message.ToolCalls) == 0 && chatResponse.Message.Content != "" {
+		if toolCall := parseForcedToolCall(chatResponse.Message.Content, w.forcedToolName); toolCall != nil {
+			chatResponse.Message.ToolCalls = []api.ToolCall{*toolCall}
+			chatResponse.Message.Content = ""
+		}
 	}
 
 	// chat chunk
@@ -406,6 +451,16 @@ func ChatMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Determine if tool_choice forces a tool call
+		var forcedToolCall bool
+		var forcedToolName string
+		if req.ToolChoice != nil && len(req.Tools) > 0 {
+			_, _, forcedToolCall, _ = openai.ApplyToolChoice(req.Tools, req.ToolChoice)
+			if req.ToolChoice.IsForcedFunction() {
+				forcedToolName = req.ToolChoice.GetForcedFunctionName()
+			}
+		}
+
 		var b bytes.Buffer
 
 		chatReq, err := openai.FromChatRequest(req)
@@ -422,10 +477,12 @@ func ChatMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &ChatWriter{
-			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
-			stream:        req.Stream,
-			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
-			streamOptions: req.StreamOptions,
+			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
+			stream:         req.Stream,
+			id:             fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			streamOptions:  req.StreamOptions,
+			forcedToolCall: forcedToolCall,
+			forcedToolName: forcedToolName,
 		}
 
 		c.Writer = w

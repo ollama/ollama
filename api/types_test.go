@@ -651,3 +651,170 @@ func TestToolFunctionParameters_String(t *testing.T) {
 		})
 	}
 }
+
+func TestToolChoice_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedMode  string
+		expectedFunc  string
+		expectedError bool
+	}{
+		{
+			name:         "auto string",
+			input:        `{"tool_choice": "auto"}`,
+			expectedMode: "auto",
+			expectedFunc: "",
+		},
+		{
+			name:         "none string",
+			input:        `{"tool_choice": "none"}`,
+			expectedMode: "none",
+			expectedFunc: "",
+		},
+		{
+			name:         "required string",
+			input:        `{"tool_choice": "required"}`,
+			expectedMode: "required",
+			expectedFunc: "",
+		},
+		{
+			name:         "function object with nested function",
+			input:        `{"tool_choice": {"function": {"name": "get_weather"}}}`,
+			expectedMode: "",
+			expectedFunc: "get_weather",
+		},
+		{
+			name:         "function object with direct name",
+			input:        `{"tool_choice": {"name": "get_weather"}}`,
+			expectedMode: "",
+			expectedFunc: "get_weather",
+		},
+		{
+			name:         "unset",
+			input:        `{}`,
+			expectedMode: "",
+			expectedFunc: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var req ChatRequest
+			err := json.Unmarshal([]byte(test.input), &req)
+
+			if test.expectedError {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+
+			if test.expectedMode == "" && test.expectedFunc == "" && test.name == "unset" {
+				assert.Nil(t, req.ToolChoice)
+				return
+			}
+
+			require.NotNil(t, req.ToolChoice)
+
+			if test.expectedMode != "" {
+				assert.Equal(t, test.expectedMode, req.ToolChoice.Mode)
+			}
+
+			if test.expectedFunc != "" {
+				require.NotNil(t, req.ToolChoice.Function)
+				assert.Equal(t, test.expectedFunc, req.ToolChoice.Function.Name)
+			}
+		})
+	}
+}
+
+func TestToolChoice_Methods(t *testing.T) {
+	t.Run("IsNone", func(t *testing.T) {
+		tc := &ToolChoice{Mode: "none"}
+		assert.True(t, tc.IsNone())
+
+		tc = &ToolChoice{Mode: "auto"}
+		assert.False(t, tc.IsNone())
+
+		var nilTc *ToolChoice
+		assert.False(t, nilTc.IsNone())
+	})
+
+	t.Run("IsRequired", func(t *testing.T) {
+		tc := &ToolChoice{Mode: "required"}
+		assert.True(t, tc.IsRequired())
+
+		tc = &ToolChoice{Mode: "auto"}
+		assert.False(t, tc.IsRequired())
+
+		var nilTc *ToolChoice
+		assert.False(t, nilTc.IsRequired())
+	})
+
+	t.Run("IsAuto", func(t *testing.T) {
+		tc := &ToolChoice{Mode: "auto"}
+		assert.True(t, tc.IsAuto())
+
+		tc = &ToolChoice{Mode: ""}
+		assert.True(t, tc.IsAuto())
+
+		var nilTc *ToolChoice
+		assert.True(t, nilTc.IsAuto())
+
+		tc = &ToolChoice{Mode: "required"}
+		assert.False(t, tc.IsAuto())
+	})
+
+	t.Run("IsForcedFunction", func(t *testing.T) {
+		tc := &ToolChoice{Function: &ToolChoiceFunction{Name: "get_weather"}}
+		assert.True(t, tc.IsForcedFunction())
+
+		tc = &ToolChoice{Mode: "required"}
+		assert.False(t, tc.IsForcedFunction())
+
+		tc = &ToolChoice{Function: &ToolChoiceFunction{Name: ""}}
+		assert.False(t, tc.IsForcedFunction())
+
+		var nilTc *ToolChoice
+		assert.False(t, nilTc.IsForcedFunction())
+	})
+
+	t.Run("GetForcedFunctionName", func(t *testing.T) {
+		tc := &ToolChoice{Function: &ToolChoiceFunction{Name: "get_weather"}}
+		assert.Equal(t, "get_weather", tc.GetForcedFunctionName())
+
+		tc = &ToolChoice{Mode: "required"}
+		assert.Equal(t, "", tc.GetForcedFunctionName())
+
+		var nilTc *ToolChoice
+		assert.Equal(t, "", nilTc.GetForcedFunctionName())
+	})
+}
+
+func TestToolChoice_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		tc       ToolChoice
+		expected string
+	}{
+		{
+			name:     "mode string",
+			tc:       ToolChoice{Mode: "required"},
+			expected: `"required"`,
+		},
+		{
+			name:     "function object",
+			tc:       ToolChoice{Function: &ToolChoiceFunction{Name: "get_weather"}},
+			expected: `{"function":{"name":"get_weather"}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.tc)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, string(data))
+		})
+	}
+}

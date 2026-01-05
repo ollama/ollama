@@ -148,6 +148,13 @@ type ChatRequest struct {
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
 
+	// ToolChoice controls how the model uses tools. Can be:
+	// - "auto" (default): model decides whether to call tools
+	// - "none": model won't call any tools
+	// - "required": model must call at least one tool
+	// - ToolChoiceFunction{Name: "func_name"}: model must call this specific function
+	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
+
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
 
@@ -182,6 +189,87 @@ type Tools []Tool
 func (t Tools) String() string {
 	bts, _ := json.Marshal(t)
 	return string(bts)
+}
+
+// ToolChoice controls how the model uses tools.
+// It can be a string ("auto", "none", "required") or a ToolChoiceFunction.
+type ToolChoice struct {
+	// Mode is the tool choice mode: "auto", "none", or "required"
+	Mode string `json:"-"`
+	// Function specifies a specific function to call (when forcing a specific tool)
+	Function *ToolChoiceFunction `json:"-"`
+}
+
+// ToolChoiceFunction specifies a specific function that the model must call.
+type ToolChoiceFunction struct {
+	Name string `json:"name"`
+}
+
+// UnmarshalJSON handles both string and object forms of tool_choice.
+func (tc *ToolChoice) UnmarshalJSON(data []byte) error {
+	// Try string first: "auto", "none", "required"
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		tc.Mode = s
+		tc.Function = nil
+		return nil
+	}
+
+	// Try object with function name: {"function": {"name": "func_name"}}
+	var obj struct {
+		Function *ToolChoiceFunction `json:"function"`
+	}
+	if err := json.Unmarshal(data, &obj); err == nil && obj.Function != nil {
+		tc.Function = obj.Function
+		tc.Mode = ""
+		return nil
+	}
+
+	// Try simple object with just name: {"name": "func_name"}
+	var simple ToolChoiceFunction
+	if err := json.Unmarshal(data, &simple); err == nil && simple.Name != "" {
+		tc.Function = &simple
+		tc.Mode = ""
+		return nil
+	}
+
+	return fmt.Errorf("invalid tool_choice: must be string or object with function name")
+}
+
+// MarshalJSON serializes ToolChoice back to JSON.
+func (tc ToolChoice) MarshalJSON() ([]byte, error) {
+	if tc.Function != nil {
+		return json.Marshal(map[string]any{"function": tc.Function})
+	}
+	return json.Marshal(tc.Mode)
+}
+
+// IsNone returns true if tool_choice is "none".
+func (tc *ToolChoice) IsNone() bool {
+	return tc != nil && tc.Mode == "none"
+}
+
+// IsRequired returns true if tool_choice is "required".
+func (tc *ToolChoice) IsRequired() bool {
+	return tc != nil && tc.Mode == "required"
+}
+
+// IsAuto returns true if tool_choice is "auto" or not specified.
+func (tc *ToolChoice) IsAuto() bool {
+	return tc == nil || tc.Mode == "" || tc.Mode == "auto"
+}
+
+// IsForcedFunction returns true if a specific function is forced.
+func (tc *ToolChoice) IsForcedFunction() bool {
+	return tc != nil && tc.Function != nil && tc.Function.Name != ""
+}
+
+// GetForcedFunctionName returns the name of the forced function, if any.
+func (tc *ToolChoice) GetForcedFunctionName() string {
+	if tc == nil || tc.Function == nil {
+		return ""
+	}
+	return tc.Function.Name
 }
 
 func (t Tool) String() string {
