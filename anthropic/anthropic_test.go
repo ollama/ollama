@@ -775,3 +775,131 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 		t.Errorf("expected 1 input_json_delta, got %d", toolDeltaCount)
 	}
 }
+
+// TestContentBlockJSON_EmptyFieldsPresent verifies that empty text and thinking fields
+// are serialized in JSON output. The Anthropic SDK requires these fields to be present
+// (even when empty) in content_block_start events to properly accumulate streaming deltas.
+// Without these fields, the SDK throws: "TypeError: unsupported operand type(s) for +=: 'NoneType' and 'str'"
+func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
+	tests := []struct {
+		name     string
+		block    ContentBlock
+		wantKeys []string
+	}{
+		{
+			name: "text block includes empty text field",
+			block: ContentBlock{
+				Type: "text",
+				Text: "",
+			},
+			wantKeys: []string{"type", "text"},
+		},
+		{
+			name: "thinking block includes empty thinking field",
+			block: ContentBlock{
+				Type:     "thinking",
+				Thinking: "",
+			},
+			wantKeys: []string{"type", "thinking"},
+		},
+		{
+			name: "text block with content",
+			block: ContentBlock{
+				Type: "text",
+				Text: "hello",
+			},
+			wantKeys: []string{"type", "text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.block)
+			if err != nil {
+				t.Fatalf("failed to marshal: %v", err)
+			}
+
+			var result map[string]any
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			for _, key := range tt.wantKeys {
+				if _, ok := result[key]; !ok {
+					t.Errorf("expected key %q to be present in JSON output, got: %s", key, string(data))
+				}
+			}
+		})
+	}
+}
+
+// TestStreamConverter_ContentBlockStartIncludesEmptyFields verifies that content_block_start
+// events include the required empty fields for SDK compatibility.
+func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
+	t.Run("text block start includes empty text", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model")
+
+		resp := api.ChatResponse{
+			Model:   "test-model",
+			Message: api.Message{Role: "assistant", Content: "hello"},
+		}
+
+		events := conv.Process(resp)
+
+		var foundTextStart bool
+		for _, e := range events {
+			if e.Event == "content_block_start" {
+				if start, ok := e.Data.(ContentBlockStartEvent); ok {
+					if start.ContentBlock.Type == "text" {
+						foundTextStart = true
+						// Marshal and verify the text field is present
+						data, _ := json.Marshal(start)
+						var result map[string]any
+						json.Unmarshal(data, &result)
+						cb := result["content_block"].(map[string]any)
+						if _, ok := cb["text"]; !ok {
+							t.Error("content_block_start for text should include 'text' field")
+						}
+					}
+				}
+			}
+		}
+
+		if !foundTextStart {
+			t.Error("expected text content_block_start event")
+		}
+	})
+
+	t.Run("thinking block start includes empty thinking", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model")
+
+		resp := api.ChatResponse{
+			Model:   "test-model",
+			Message: api.Message{Role: "assistant", Thinking: "let me think..."},
+		}
+
+		events := conv.Process(resp)
+
+		var foundThinkingStart bool
+		for _, e := range events {
+			if e.Event == "content_block_start" {
+				if start, ok := e.Data.(ContentBlockStartEvent); ok {
+					if start.ContentBlock.Type == "thinking" {
+						foundThinkingStart = true
+						data, _ := json.Marshal(start)
+						var result map[string]any
+						json.Unmarshal(data, &result)
+						cb := result["content_block"].(map[string]any)
+						if _, ok := cb["thinking"]; !ok {
+							t.Error("content_block_start for thinking should include 'thinking' field")
+						}
+					}
+				}
+			}
+		}
+
+		if !foundThinkingStart {
+			t.Error("expected thinking content_block_start event")
+		}
+	})
+}
