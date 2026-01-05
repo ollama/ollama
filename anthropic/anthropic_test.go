@@ -447,7 +447,7 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 	if len(result.Content) != 1 {
 		t.Fatalf("expected 1 content block, got %d", len(result.Content))
 	}
-	if result.Content[0].Type != "text" || result.Content[0].Text != "Hello there!" {
+	if result.Content[0].Type != "text" || result.Content[0].Text == nil || *result.Content[0].Text != "Hello there!" {
 		t.Errorf("unexpected content: %+v", result.Content[0])
 	}
 	if result.StopReason != "end_turn" {
@@ -516,8 +516,8 @@ func TestToMessagesResponse_WithThinking(t *testing.T) {
 	if result.Content[0].Type != "thinking" {
 		t.Errorf("expected first block type 'thinking', got %q", result.Content[0].Type)
 	}
-	if result.Content[0].Thinking != "Let me think about this..." {
-		t.Errorf("unexpected thinking content: %q", result.Content[0].Thinking)
+	if result.Content[0].Thinking == nil || *result.Content[0].Thinking != "Let me think about this..." {
+		t.Errorf("unexpected thinking content: %v", result.Content[0].Thinking)
 	}
 	if result.Content[1].Type != "text" {
 		t.Errorf("expected second block type 'text', got %q", result.Content[1].Type)
@@ -825,7 +825,7 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 			name: "text block includes empty text field",
 			block: ContentBlock{
 				Type: "text",
-				Text: "",
+				Text: ptr(""),
 			},
 			wantKeys: []string{"type", "text"},
 		},
@@ -833,7 +833,7 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 			name: "thinking block includes empty thinking field",
 			block: ContentBlock{
 				Type:     "thinking",
-				Thinking: "",
+				Thinking: ptr(""),
 			},
 			wantKeys: []string{"type", "thinking"},
 		},
@@ -841,7 +841,7 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 			name: "text block with content",
 			block: ContentBlock{
 				Type: "text",
-				Text: "hello",
+				Text: ptr("hello"),
 			},
 			wantKeys: []string{"type", "text"},
 		},

@@ -78,12 +78,14 @@ type MessageParam struct {
 	Content any    `json:"content"` // string or []ContentBlock
 }
 
-// ContentBlock represents a content block in a message
+// ContentBlock represents a content block in a message.
+// Text and Thinking use pointers so they serialize as the field being present (even if empty)
+// only when set, which is required for SDK streaming accumulation.
 type ContentBlock struct {
 	Type string `json:"type"` // text, image, tool_use, tool_result, thinking
 
-	// For text blocks (no omitempty - SDK requires field to be present for accumulation)
-	Text string `json:"text"`
+	// For text blocks - pointer so field only appears when set (SDK requires it for accumulation)
+	Text *string `json:"text,omitempty"`
 
 	// For image blocks
 	Source *ImageSource `json:"source,omitempty"`
@@ -98,9 +100,9 @@ type ContentBlock struct {
 	Content   any    `json:"content,omitempty"` // string or []ContentBlock
 	IsError   bool   `json:"is_error,omitempty"`
 
-	// For thinking blocks (no omitempty - SDK requires field to be present for accumulation)
-	Thinking  string `json:"thinking"`
-	Signature string `json:"signature,omitempty"`
+	// For thinking blocks - pointer so field only appears when set (SDK requires it for accumulation)
+	Thinking  *string `json:"thinking,omitempty"`
+	Signature string  `json:"signature,omitempty"`
 }
 
 // ImageSource represents the source of an image
@@ -458,14 +460,14 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 	if r.Message.Thinking != "" {
 		content = append(content, ContentBlock{
 			Type:     "thinking",
-			Thinking: r.Message.Thinking,
+			Thinking: ptr(r.Message.Thinking),
 		})
 	}
 
 	if r.Message.Content != "" {
 		content = append(content, ContentBlock{
 			Type: "text",
-			Text: r.Message.Content,
+			Text: ptr(r.Message.Content),
 		})
 	}
 
@@ -579,7 +581,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Index: c.contentIndex,
 					ContentBlock: ContentBlock{
 						Type:     "thinking",
-						Thinking: "",
+						Thinking: ptr(""),
 					},
 				},
 			})
@@ -620,7 +622,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Index: c.contentIndex,
 					ContentBlock: ContentBlock{
 						Type: "text",
-						Text: "",
+						Text: ptr(""),
 					},
 				},
 			})
@@ -759,4 +761,9 @@ func generateID(prefix string) string {
 // GenerateMessageID generates a unique message ID
 func GenerateMessageID() string {
 	return generateID("msg")
+}
+
+// ptr returns a pointer to the given string value
+func ptr(s string) *string {
+	return &s
 }
