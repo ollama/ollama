@@ -267,9 +267,9 @@ func main() {
 		},
 		Store:        st,
 		ToolRegistry: toolRegistry,
-		Dev:     devMode,
-		Logger:  slog.Default(),
-		Updater: upd,
+		Dev:          devMode,
+		Logger:       slog.Default(),
+		Updater:      upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
 		},

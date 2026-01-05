@@ -303,37 +303,37 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 				// Regular interval check
 			}
 
-		// Always check for updates
-		available, resp := u.checkForUpdate(ctx)
-		if !available {
-			continue
-		}
+			// Always check for updates
+			available, resp := u.checkForUpdate(ctx)
+			if !available {
+				continue
+			}
 
-		// Update is available - check if auto-update is enabled for downloading
-		settings, err := u.Store.Settings()
-		if err != nil {
-			slog.Error("failed to load settings", "error", err)
-			continue
-		}
+			// Update is available - check if auto-update is enabled for downloading
+			settings, err := u.Store.Settings()
+			if err != nil {
+				slog.Error("failed to load settings", "error", err)
+				continue
+			}
 
-		if !settings.AutoUpdateEnabled {
-			// Auto-update disabled - don't download, just log
-			slog.Debug("update available but auto-update disabled", "version", resp.UpdateVersion)
-			continue
-		}
+			if !settings.AutoUpdateEnabled {
+				// Auto-update disabled - don't download, just log
+				slog.Debug("update available but auto-update disabled", "version", resp.UpdateVersion)
+				continue
+			}
 
-		// Auto-update is enabled - download
-		err = u.DownloadNewRelease(ctx, resp)
-		if err != nil {
-			slog.Error("failed to download new release", "error", err)
-			continue
-		}
+			// Auto-update is enabled - download
+			err = u.DownloadNewRelease(ctx, resp)
+			if err != nil {
+				slog.Error("failed to download new release", "error", err)
+				continue
+			}
 
-		// Download successful - show tray notification (regardless of toggle state)
-		err = cb(resp.UpdateVersion)
-		if err != nil {
-			slog.Warn("failed to register update available with tray", "error", err)
-		}
+			// Download successful - show tray notification (regardless of toggle state)
+			err = cb(resp.UpdateVersion)
+			if err != nil {
+				slog.Warn("failed to register update available with tray", "error", err)
+			}
 		}
 	}()
 }
