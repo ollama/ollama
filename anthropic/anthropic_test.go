@@ -312,6 +312,41 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	}
 }
 
+// TestFromMessagesRequest_ThinkingOnlyBlock verifies that messages containing only
+// a thinking block (no text, images, or tool calls) are preserved and not dropped.
+func TestFromMessagesRequest_ThinkingOnlyBlock(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{Role: "user", Content: "Hello"},
+			{
+				Role: "assistant",
+				Content: []any{
+					map[string]any{
+						"type":     "thinking",
+						"thinking": "Let me think about this...",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+
+	assistantMsg := result.Messages[1]
+	if assistantMsg.Thinking != "Let me think about this..." {
+		t.Errorf("expected thinking content, got %q", assistantMsg.Thinking)
+	}
+}
+
 func TestFromMessagesRequest_ToolUseMissingID(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",

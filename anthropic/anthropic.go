@@ -411,7 +411,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 			}
 		}
 
-		if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 {
+		if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
 			m := api.Message{
 				Role:      role,
 				Content:   textContent.String(),
