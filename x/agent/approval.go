@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
-	"time"
 
 	"golang.org/x/term"
 )
@@ -176,28 +174,6 @@ func IsDenied(command string) (bool, string) {
 // FormatDeniedResult returns the tool result message when a command is blocked.
 func FormatDeniedResult(command string, pattern string) string {
 	return fmt.Sprintf("Command blocked: this command matches a dangerous pattern (%s) and cannot be executed. If this command is necessary, please ask the user to run it manually.", pattern)
-}
-
-// flushStdin drains any buffered input from stdin.
-// This prevents leftover input from previous operations from affecting the selector.
-func flushStdin(fd int) {
-	// Set non-blocking mode
-	if err := syscall.SetNonblock(fd, true); err != nil {
-		return
-	}
-	defer syscall.SetNonblock(fd, false)
-
-	// Give a tiny window for any pending input to arrive
-	time.Sleep(5 * time.Millisecond)
-
-	// Drain any buffered input
-	buf := make([]byte, 256)
-	for {
-		n, err := syscall.Read(fd, buf)
-		if n <= 0 || err != nil {
-			break
-		}
-	}
 }
 
 // extractBashPrefix extracts a prefix pattern from a bash command.
@@ -597,10 +573,11 @@ func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning boo
 				}
 				return selected, "", nil
 
-			// Backspace - delete from reason
+			// Backspace - delete from reason (UTF-8 safe)
 			case ch == 127 || ch == 8:
 				if len(state.denyReason) > 0 {
-					state.denyReason = state.denyReason[:len(state.denyReason)-1]
+					runes := []rune(state.denyReason)
+					state.denyReason = string(runes[:len(runes)-1])
 					updateReasonInput(state)
 				}
 
