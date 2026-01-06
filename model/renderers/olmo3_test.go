@@ -53,9 +53,9 @@ func TestOlmo3Renderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}, Description: "The city"},
-							},
+							}),
 						},
 					},
 				},
@@ -80,9 +80,9 @@ func TestOlmo3Renderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}, Description: "The city"},
-							},
+							}),
 						},
 					},
 				},
@@ -108,9 +108,9 @@ func TestOlmo3Renderer(t *testing.T) {
 							ID: "call_1",
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: map[string]any{
+								Arguments: testArgs(map[string]any{
 									"location": "San Francisco",
-								},
+								}),
 							},
 						},
 					},
@@ -126,9 +126,9 @@ func TestOlmo3Renderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}, Description: "The city"},
-							},
+							}),
 						},
 					},
 				},
@@ -172,14 +172,14 @@ func TestOlmo3Renderer(t *testing.T) {
 							ID: "call_1",
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"location": "San Francisco"},
+								Arguments: testArgs(map[string]any{"location": "San Francisco"}),
 							},
 						},
 						{
 							ID: "call_2",
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"location": "New York"},
+								Arguments: testArgs(map[string]any{"location": "New York"}),
 							},
 						},
 					},
@@ -194,9 +194,9 @@ func TestOlmo3Renderer(t *testing.T) {
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -227,10 +227,10 @@ func TestOlmo3Renderer(t *testing.T) {
 							ID: "call_1",
 							Function: api.ToolCallFunction{
 								Name: "book_flight",
-								Arguments: map[string]any{
+								Arguments: testArgs(map[string]any{
 									"from": "SFO",
 									"to":   "NYC",
-								},
+								}),
 							},
 						},
 					},
@@ -243,10 +243,10 @@ func TestOlmo3Renderer(t *testing.T) {
 						Name: "book_flight",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"from": {Type: api.PropertyType{"string"}},
 								"to":   {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},

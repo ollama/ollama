@@ -22,6 +22,29 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
 type mockRunner struct {
 	llm.LlamaServer
 
@@ -488,7 +511,7 @@ func TestGenerateChat(t *testing.T) {
 					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -497,7 +520,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -559,15 +582,15 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
 		expectedToolCall.ID = gotToolCall.ID
-		if diff := cmp.Diff(gotToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(gotToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -582,7 +605,7 @@ func TestGenerateChat(t *testing.T) {
 					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -591,7 +614,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -688,10 +711,10 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
@@ -703,7 +726,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		expectedToolCall.ID = finalToolCall.ID
-		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(finalToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -716,9 +739,9 @@ func TestGenerateChat(t *testing.T) {
 					Name: "get_weather",
 					Parameters: api.ToolFunctionParameters{
 						Type: "object",
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {Type: api.PropertyType{"string"}},
-						},
+						}),
 					},
 				},
 			},
