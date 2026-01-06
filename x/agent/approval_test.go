@@ -223,6 +223,23 @@ func TestApprovalManager_HierarchicalPrefixAllowlist(t *testing.T) {
 	}
 }
 
+func TestApprovalManager_HierarchicalPrefixAllowlist_CrossPlatform(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Allow with forward slashes (Unix-style)
+	am.AddToAllowlist("bash", map[string]any{"command": "cat tools/file.go"})
+
+	// Should work with backslashes too (Windows-style) - normalized internally
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools\\subdir\\file.go"}) {
+		t.Error("expected cat tools\\subdir\\file.go to be allowed via hierarchical prefix (Windows path)")
+	}
+
+	// Mixed slashes should also work
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools\\a/b\\c/deep.go"}) {
+		t.Error("expected mixed slash path to be allowed via hierarchical prefix")
+	}
+}
+
 func TestMatchesHierarchicalPrefix(t *testing.T) {
 	am := NewApprovalManager()
 

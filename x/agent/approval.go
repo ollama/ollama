@@ -204,8 +204,8 @@ func extractBashPrefix(command string) string {
 		return ""
 	}
 
-	// Find the first path-like argument (must contain / or start with .)
-	// First pass: look for clear paths (containing / or starting with .)
+	// Find the first path-like argument (must contain / or \ or start with .)
+	// First pass: look for clear paths (containing path separators or starting with .)
 	for _, arg := range fields[1:] {
 		// Skip flags
 		if strings.HasPrefix(arg, "-") {
@@ -215,17 +215,27 @@ func extractBashPrefix(command string) string {
 		if isNumeric(arg) {
 			continue
 		}
-		// Only process if it looks like a path (contains / or starts with .)
-		if !strings.Contains(arg, "/") && !strings.HasPrefix(arg, ".") {
+		// Only process if it looks like a path (contains / or \ or starts with .)
+		if !strings.Contains(arg, "/") && !strings.Contains(arg, "\\") && !strings.HasPrefix(arg, ".") {
 			continue
 		}
+		// Normalize to forward slashes for consistent cross-platform matching
+		// Replace backslashes first (for Windows paths), then use filepath.ToSlash for any remaining
+		arg = strings.ReplaceAll(arg, "\\", "/")
 		// If arg ends with /, it's a directory - use it directly
 		if strings.HasSuffix(arg, "/") {
 			return fmt.Sprintf("%s:%s", baseCmd, arg)
 		}
-		// Get the directory part of a file path
-		dir := filepath.Dir(arg)
-		if dir == "." {
+		// Get the directory part of a file path using forward-slash split
+		// (don't use filepath.Dir as it's platform-specific)
+		lastSlash := strings.LastIndex(arg, "/")
+		var dir string
+		if lastSlash == -1 {
+			dir = "."
+		} else {
+			dir = arg[:lastSlash]
+		}
+		if dir == "." || dir == "" {
 			// Path is just a directory like "tools" or "src" (no trailing /)
 			return fmt.Sprintf("%s:%s/", baseCmd, arg)
 		}
