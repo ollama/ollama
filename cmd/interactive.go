@@ -41,15 +41,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
 
-		// Show experimental commands if enabled
-		experimental, _ := cmd.Flags().GetBool("experimental")
-		beta, _ := cmd.Flags().GetBool("beta")
-		if experimental || beta {
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "Experimental Commands:")
-			fmt.Fprintln(os.Stderr, "  /tools          Show available tools")
-		}
-
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
@@ -469,19 +460,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
-		case strings.HasPrefix(line, "/tools"):
-			// Check if experimental mode is enabled
-			experimental, _ := cmd.Flags().GetBool("experimental")
-			beta, _ := cmd.Flags().GetBool("beta")
-			if !experimental && !beta {
-				fmt.Println("/tools requires --experimental or --beta flag")
-				continue
-			}
-			fmt.Println("Available tools:")
-			fmt.Println("  web_search - Search the web for current information")
-			fmt.Println("  bash       - Execute bash commands")
-			fmt.Println()
-			continue
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			isFile := false
