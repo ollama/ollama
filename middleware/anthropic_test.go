@@ -472,8 +472,8 @@ func TestAnthropicWriter_NonStreaming(t *testing.T) {
 	if len(result.Content) != 1 {
 		t.Fatalf("expected 1 content block, got %d", len(result.Content))
 	}
-	if result.Content[0].Text != "Hello there!" {
-		t.Errorf("expected text 'Hello there!', got %q", result.Content[0].Text)
+	if result.Content[0].Text == nil || *result.Content[0].Text != "Hello there!" {
+		t.Errorf("expected text 'Hello there!', got %v", result.Content[0].Text)
 	}
 	if result.StopReason != "end_turn" {
 		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
