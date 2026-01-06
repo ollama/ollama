@@ -485,3 +485,89 @@ func TestAnthropicWriter_NonStreaming(t *testing.T) {
 		t.Errorf("expected output_tokens 5, got %d", result.Usage.OutputTokens)
 	}
 }
+
+// TestAnthropicWriter_ErrorFromRoutes tests error handling when routes.go sends
+// gin.H{"error": "message"} without a StatusCode field (which is the common case)
+func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		statusCode     int
+		errorPayload   any
+		wantErrorType  string
+		wantMessage    string
+	}{
+		// routes.go sends errors without StatusCode in JSON, so we must use HTTP status
+		{
+			name:          "404 with gin.H error (model not found)",
+			statusCode:    http.StatusNotFound,
+			errorPayload:  gin.H{"error": "model 'nonexistent' not found"},
+			wantErrorType: "not_found_error",
+			wantMessage:   "model 'nonexistent' not found",
+		},
+		{
+			name:          "400 with gin.H error (bad request)",
+			statusCode:    http.StatusBadRequest,
+			errorPayload:  gin.H{"error": "model is required"},
+			wantErrorType: "invalid_request_error",
+			wantMessage:   "model is required",
+		},
+		{
+			name:          "500 with gin.H error (internal error)",
+			statusCode:    http.StatusInternalServerError,
+			errorPayload:  gin.H{"error": "something went wrong"},
+			wantErrorType: "api_error",
+			wantMessage:   "something went wrong",
+		},
+		{
+			name:       "404 with api.StatusError",
+			statusCode: http.StatusNotFound,
+			errorPayload: api.StatusError{
+				StatusCode:   http.StatusNotFound,
+				ErrorMessage: "model not found via StatusError",
+			},
+			wantErrorType: "not_found_error",
+			wantMessage:   "model not found via StatusError",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(AnthropicMessagesMiddleware())
+			router.POST("/v1/messages", func(c *gin.Context) {
+				// Simulate what routes.go does - set status and write error JSON
+				data, _ := json.Marshal(tt.errorPayload)
+				c.Writer.WriteHeader(tt.statusCode)
+				_, _ = c.Writer.Write(data)
+			})
+
+			body := `{"model": "test-model", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}`
+			req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != tt.statusCode {
+				t.Errorf("expected status %d, got %d", tt.statusCode, resp.Code)
+			}
+
+			var errResp anthropic.ErrorResponse
+			if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+				t.Fatalf("failed to unmarshal error response: %v\nbody: %s", err, resp.Body.String())
+			}
+
+			if errResp.Type != "error" {
+				t.Errorf("expected type 'error', got %q", errResp.Type)
+			}
+			if errResp.Error.Type != tt.wantErrorType {
+				t.Errorf("expected error type %q, got %q", tt.wantErrorType, errResp.Error.Type)
+			}
+			if errResp.Error.Message != tt.wantMessage {
+				t.Errorf("expected message %q, got %q", tt.wantMessage, errResp.Error.Message)
+			}
+		})
+	}
+}

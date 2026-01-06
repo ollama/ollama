@@ -23,14 +23,15 @@ type AnthropicWriter struct {
 }
 
 func (w *AnthropicWriter) writeError(data []byte) (int, error) {
-	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
-	if err != nil {
+	var errData struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &errData); err != nil {
 		return 0, err
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(serr.StatusCode, serr.Error()))
+	err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.ResponseWriter.Status(), errData.Error))
 	if err != nil {
 		return 0, err
 	}
