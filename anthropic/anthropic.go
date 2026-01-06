@@ -377,7 +377,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 					},
 				}
 				if input, ok := blockMap["input"].(map[string]any); ok {
-					tc.Function.Arguments = api.ToolCallFunctionArguments(input)
+					tc.Function.Arguments = mapToArgs(input)
 				}
 				toolCalls = append(toolCalls, tc)
 
@@ -766,4 +766,13 @@ func GenerateMessageID() string {
 // ptr returns a pointer to the given string value
 func ptr(s string) *string {
 	return &s
+}
+
+// mapToArgs converts a map to ToolCallFunctionArguments
+func mapToArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
 }

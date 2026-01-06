@@ -14,6 +14,15 @@ const (
 	testImage = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
 func TestFromMessagesRequest_Basic(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
@@ -468,7 +477,7 @@ func TestToMessagesResponse_WithToolCalls(t *testing.T) {
 					ID: "call_123",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"location": "Paris"},
+						Arguments: testArgs(map[string]any{"location": "Paris"}),
 					},
 				},
 			},
@@ -662,7 +671,7 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 					ID: "call_123",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"location": "Paris"},
+						Arguments: testArgs(map[string]any{"location": "Paris"}),
 					},
 				},
 			},
@@ -708,6 +717,8 @@ func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 
 	// Create a channel which cannot be JSON marshaled
 	unmarshalable := make(chan int)
+	badArgs := api.NewToolCallFunctionArguments()
+	badArgs.Set("channel", unmarshalable)
 
 	resp := api.ChatResponse{
 		Model: "test-model",
@@ -718,7 +729,7 @@ func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 					ID: "call_bad",
 					Function: api.ToolCallFunction{
 						Name:      "bad_function",
-						Arguments: map[string]any{"channel": unmarshalable},
+						Arguments: badArgs,
 					},
 				},
 			},
@@ -752,6 +763,8 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 	conv := NewStreamConverter("msg_123", "test-model")
 
 	unmarshalable := make(chan int)
+	badArgs := api.NewToolCallFunctionArguments()
+	badArgs.Set("channel", unmarshalable)
 
 	resp := api.ChatResponse{
 		Model: "test-model",
@@ -762,14 +775,14 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 					ID: "call_good",
 					Function: api.ToolCallFunction{
 						Name:      "good_function",
-						Arguments: map[string]any{"location": "Paris"},
+						Arguments: testArgs(map[string]any{"location": "Paris"}),
 					},
 				},
 				{
 					ID: "call_bad",
 					Function: api.ToolCallFunction{
 						Name:      "bad_function",
-						Arguments: map[string]any{"channel": unmarshalable},
+						Arguments: badArgs,
 					},
 				},
 			},

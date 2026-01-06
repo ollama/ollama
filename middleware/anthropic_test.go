@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/api"
@@ -23,6 +24,15 @@ func captureAnthropicRequest(capturedRequest any) gin.HandlerFunc {
 		_ = json.Unmarshal(bodyBytes, capturedRequest)
 		c.Next()
 	}
+}
+
+// testProps creates ToolPropertiesMap from a map (convenience function for tests)
+func testProps(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
 }
 
 func TestAnthropicMessagesMiddleware(t *testing.T) {
@@ -156,9 +166,9 @@ func TestAnthropicMessagesMiddleware(t *testing.T) {
 							Parameters: api.ToolFunctionParameters{
 								Type:     "object",
 								Required: []string{"location"},
-								Properties: map[string]api.ToolProperty{
+								Properties: testProps(map[string]api.ToolProperty{
 									"location": {Type: api.PropertyType{"string"}},
-								},
+								}),
 							},
 						},
 					},
@@ -193,7 +203,7 @@ func TestAnthropicMessagesMiddleware(t *testing.T) {
 								ID: "call_123",
 								Function: api.ToolCallFunction{
 									Name:      "get_weather",
-									Arguments: api.ToolCallFunctionArguments{"location": "Paris"},
+									Arguments: testArgs(map[string]any{"location": "Paris"}),
 								},
 							},
 						},
@@ -344,7 +354,8 @@ func TestAnthropicMessagesMiddleware(t *testing.T) {
 				t.Errorf("model mismatch: got %q, want %q", capturedRequest.Model, tc.req.Model)
 			}
 
-			if diff := cmp.Diff(tc.req.Messages, capturedRequest.Messages); diff != "" {
+			if diff := cmp.Diff(tc.req.Messages, capturedRequest.Messages,
+				cmpopts.IgnoreUnexported(api.ToolCallFunctionArguments{}, api.ToolPropertiesMap{})); diff != "" {
 				t.Errorf("messages mismatch (-want +got):\n%s", diff)
 			}
 
@@ -492,11 +503,11 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name           string
-		statusCode     int
-		errorPayload   any
-		wantErrorType  string
-		wantMessage    string
+		name          string
+		statusCode    int
+		errorPayload  any
+		wantErrorType string
+		wantMessage   string
 	}{
 		// routes.go sends errors without StatusCode in JSON, so we must use HTTP status
 		{
