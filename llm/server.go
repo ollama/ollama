@@ -257,6 +257,63 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}
 
+	if opts.FitVRAM {
+		var availableVRAM uint64
+		for _, gpu := range gpus {
+			availableVRAM += gpu.FreeMemory
+		}
+
+		// Reserve 15% headroom
+		availableVRAM = uint64(float64(availableVRAM) * 0.85)
+
+		if opts.MaxVRAM > 0 && opts.MaxVRAM < availableVRAM {
+			availableVRAM = opts.MaxVRAM
+		}
+
+		trainCtx := f.KV().ContextLength()
+		low := 2048
+		high := int(trainCtx)
+		if high <= 0 {
+			high = 32768
+		}
+		if high < low {
+			low = high
+		}
+
+		best := low
+		est := estimateMemoryUsage(f, low, opts.NumBatch, numParallel, loadRequest.KvCacheType, loadRequest.FlashAttention)
+		if est > availableVRAM {
+			slog.Warn("minimal context does not fit in VRAM", "num_ctx", low, "required", format.HumanBytes(int64(est)), "available", format.HumanBytes(int64(availableVRAM)))
+			best = low
+		} else {
+			for low <= high {
+				mid := (low + high) / 2
+				// Align to 256
+				mid = (mid / 256) * 256
+				if mid < best {
+					mid = best
+				}
+
+				est := estimateMemoryUsage(f, mid, opts.NumBatch, numParallel, loadRequest.KvCacheType, loadRequest.FlashAttention)
+				if est <= availableVRAM {
+					best = mid
+					low = mid + 256
+				} else {
+					high = mid - 256
+				}
+			}
+		}
+
+		slog.Info("auto-sized num_ctx", "original", opts.NumCtx, "new", best, "available_vram", format.HumanBytes(int64(availableVRAM)))
+		opts.NumCtx = best
+		loadRequest.KvSize = opts.NumCtx * numParallel
+
+		if opts.NumBatch > opts.NumCtx {
+			opts.NumBatch = opts.NumCtx
+			loadRequest.BatchSize = opts.NumBatch
+		}
+	}
+
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 	cmd, port, err := StartRunner(
@@ -1896,4 +1953,38 @@ func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 		// else no longer running so suppress logging as a failure is expected
 	}
 	return devices
+}
+
+func estimateMemoryUsage(f *ggml.GGML, numCtx int, batchSize int, numParallel int, kvCacheType string, fa ml.FlashAttentionType) uint64 {
+	// 1. Calculate weights size
+	var weights uint64
+	layers := f.Tensors().GroupLayers()
+
+	// Sum all block layers
+	for i := uint64(0); i < f.KV().BlockCount(); i++ {
+		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+			weights += blk.Size()
+		}
+	}
+
+	// Add output/token embeddings
+	if layer, ok := layers["output_norm"]; ok {
+		weights += layer.Size()
+	}
+	if layer, ok := layers["output"]; ok {
+		weights += layer.Size()
+	} else if layer, ok := layers["token_embd"]; ok {
+		weights += layer.Size()
+	}
+
+	// 2. Calculate Graph & KV size
+	kv, _, graphFull := f.GraphSize(uint64(numCtx), uint64(batchSize), numParallel, kvCacheType, fa)
+
+	var kvTotal uint64
+	for _, k := range kv {
+		kvTotal += k
+	}
+
+	// Total estimate: Weights + KV + Graph Scratch
+	return weights + kvTotal + graphFull
 }

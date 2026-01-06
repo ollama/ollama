@@ -17,7 +17,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 	}
 	link, err := os.Readlink(exe)
 	if err != nil {
-		return err
+		return errors.New("could not connect to ollama server, run 'ollama serve' to start it")
 	}
 	r := regexp.MustCompile(`^.*/Ollama\s?\d*.app`)
 	m := r.FindStringSubmatch(link)
