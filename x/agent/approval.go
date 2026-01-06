@@ -284,6 +284,11 @@ func isCommandOutsideCwd(command string) bool {
 				continue
 			}
 
+			// Treat POSIX-style absolute paths as outside cwd on all platforms.
+			if strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "\\") {
+				return true
+			}
+
 			// Check for absolute paths outside cwd
 			if filepath.IsAbs(arg) {
 				absPath := filepath.Clean(arg)
