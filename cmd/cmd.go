@@ -45,6 +45,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
+	xcmd "github.com/ollama/ollama/x/cmd"
 )
 
 const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
@@ -517,6 +518,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
 	}
 
+	// Check for experimental/beta flag
+	experimental, _ := cmd.Flags().GetBool("experimental")
+	beta, _ := cmd.Flags().GetBool("beta")
+	isExperimental := experimental || beta
+
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
@@ -541,6 +547,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				fmt.Println()
 				fmt.Println()
 			}
+		}
+
+		// Use experimental agent loop with MCP support if flag is set
+		if isExperimental {
+			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -1754,6 +1765,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	runCmd.Flags().Bool("experimental", false, "Enable experimental features (MCP, agent loop)")
+	runCmd.Flags().Bool("beta", false, "Alias for --experimental")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
