@@ -176,6 +176,44 @@ for block in message.content:
         print(f'Input: {block.input}')
 ```
 
+```javascript tools.js
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama",
+});
+
+const message = await anthropic.messages.create({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get the current weather in a location",
+      input_schema: {
+        type: "object",
+        properties: {
+          location: {
+            type: "string",
+            description: "The city and state, e.g. San Francisco, CA",
+          },
+        },
+        required: ["location"],
+      },
+    },
+  ],
+  messages: [{ role: "user", content: "What's the weather in San Francisco?" }],
+});
+
+for (const block of message.content) {
+  if (block.type === "tool_use") {
+    console.log("Tool:", block.name);
+    console.log("Input:", block.input);
+  }
+}
+```
+
 ```shell tools.sh
 curl -X POST http://localhost:11434/v1/messages \
 -H "Content-Type: application/json" \
