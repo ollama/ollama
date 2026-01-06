@@ -24,11 +24,13 @@ import (
 	"github.com/ollama/ollama/x/tools"
 )
 
-// Local model output capping constants
+// Tool output capping constants
 const (
-	// localModelTokenLimit is the approximate token limit for local models.
-	// TODO: Consider dynamically fetching context length via /api/show
+	// localModelTokenLimit is the token limit for local models (smaller context).
 	localModelTokenLimit = 4000
+
+	// defaultTokenLimit is the token limit for cloud/remote models.
+	defaultTokenLimit = 10000
 
 	// charsPerToken is a rough estimate of characters per token.
 	// TODO: Estimate tokens more accurately using tokenizer if available
@@ -59,16 +61,19 @@ func isLocalServer() bool {
 	return hostname == "localhost" || hostname == "127.0.0.1" || strings.Contains(parsed.Host, ":11434")
 }
 
-// truncateToolOutputForLocalModel truncates tool output if running on a local model
-// to prevent context overflow.
-func truncateToolOutputForLocalModel(output, modelName string) string {
-	if !isLocalModel(modelName) || !isLocalServer() {
-		return output
+// truncateToolOutput truncates tool output to prevent context overflow.
+// Uses a smaller limit (4k tokens) for local models, larger (10k) for cloud/remote.
+func truncateToolOutput(output, modelName string) string {
+	var tokenLimit int
+	if isLocalModel(modelName) && isLocalServer() {
+		tokenLimit = localModelTokenLimit
+	} else {
+		tokenLimit = defaultTokenLimit
 	}
 
-	maxChars := localModelTokenLimit * charsPerToken
+	maxChars := tokenLimit * charsPerToken
 	if len(output) > maxChars {
-		return output[:maxChars] + "\n... (output truncated for local model context limit)"
+		return output[:maxChars] + "\n... (output truncated)"
 	}
 	return output
 }
@@ -396,8 +401,8 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				*opts.LastToolOutputTruncated = truncatedOutput
 			}
 
-			// Truncate output for local models to prevent context overflow
-			toolResultForLLM := truncateToolOutputForLocalModel(toolResult, opts.Model)
+			// Truncate output to prevent context overflow
+			toolResultForLLM := truncateToolOutput(toolResult, opts.Model)
 
 			toolResults = append(toolResults, api.Message{
 				Role:       "tool",

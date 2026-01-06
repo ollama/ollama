@@ -96,58 +96,75 @@ func TestIsLocalServer(t *testing.T) {
 	}
 }
 
-func TestTruncateToolOutputForLocalModel(t *testing.T) {
-	// Create a string longer than the limit (4000 * 4 = 16000 chars)
-	longOutput := make([]byte, 20000)
-	for i := range longOutput {
-		longOutput[i] = 'a'
+func TestTruncateToolOutput(t *testing.T) {
+	// Create outputs of different sizes
+	localLimitOutput := make([]byte, 20000)   // > 4k tokens (16k chars)
+	defaultLimitOutput := make([]byte, 50000) // > 10k tokens (40k chars)
+	for i := range localLimitOutput {
+		localLimitOutput[i] = 'a'
+	}
+	for i := range defaultLimitOutput {
+		defaultLimitOutput[i] = 'b'
 	}
 
 	tests := []struct {
-		name       string
-		output     string
-		modelName  string
-		host       string
-		shouldTrim bool
+		name          string
+		output        string
+		modelName     string
+		host          string
+		shouldTrim    bool
+		expectedLimit int
 	}{
 		{
-			name:       "short output local model",
-			output:     "hello world",
-			modelName:  "llama3.2",
-			host:       "",
-			shouldTrim: false,
+			name:          "short output local model",
+			output:        "hello world",
+			modelName:     "llama3.2",
+			host:          "",
+			shouldTrim:    false,
+			expectedLimit: localModelTokenLimit,
 		},
 		{
-			name:       "long output local model",
-			output:     string(longOutput),
-			modelName:  "llama3.2",
-			host:       "",
-			shouldTrim: true,
+			name:          "long output local model - trimmed at 4k",
+			output:        string(localLimitOutput),
+			modelName:     "llama3.2",
+			host:          "",
+			shouldTrim:    true,
+			expectedLimit: localModelTokenLimit,
 		},
 		{
-			name:       "long output cloud model",
-			output:     string(longOutput),
-			modelName:  "gpt-4-cloud",
-			host:       "",
-			shouldTrim: false,
+			name:          "long output cloud model - uses 10k limit",
+			output:        string(localLimitOutput), // 20k chars, under 10k token limit
+			modelName:     "gpt-4-cloud",
+			host:          "",
+			shouldTrim:    false,
+			expectedLimit: defaultTokenLimit,
 		},
 		{
-			name:       "long output remote server",
-			output:     string(longOutput),
-			modelName:  "llama3.2",
-			host:       "http://remote.example.com:8080",
-			shouldTrim: false,
+			name:          "very long output cloud model - trimmed at 10k",
+			output:        string(defaultLimitOutput),
+			modelName:     "gpt-4-cloud",
+			host:          "",
+			shouldTrim:    true,
+			expectedLimit: defaultTokenLimit,
+		},
+		{
+			name:          "long output remote server - uses 10k limit",
+			output:        string(localLimitOutput),
+			modelName:     "llama3.2",
+			host:          "http://remote.example.com:8080",
+			shouldTrim:    false,
+			expectedLimit: defaultTokenLimit,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", tt.host)
-			result := truncateToolOutputForLocalModel(tt.output, tt.modelName)
+			result := truncateToolOutput(tt.output, tt.modelName)
 
 			if tt.shouldTrim {
-				maxLen := localModelTokenLimit * charsPerToken
-				if len(result) > maxLen+100 { // +100 for the truncation message
+				maxLen := tt.expectedLimit * charsPerToken
+				if len(result) > maxLen+50 { // +50 for the truncation message
 					t.Errorf("expected output to be truncated to ~%d chars, got %d", maxLen, len(result))
 				}
 				if result == tt.output {
