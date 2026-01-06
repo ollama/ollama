@@ -151,6 +151,27 @@ func TestExtractBashPrefix(t *testing.T) {
 			command:  "head -n 100",
 			expected: "",
 		},
+		// Path traversal security tests
+		{
+			name:     "path traversal - parent escape",
+			command:  "cat tools/../../etc/passwd",
+			expected: "", // Should NOT create a prefix - path escapes
+		},
+		{
+			name:     "path traversal - deep escape",
+			command:  "cat tools/a/b/../../../etc/passwd",
+			expected: "", // Normalizes to "../etc/passwd" - escapes
+		},
+		{
+			name:     "path traversal - absolute path",
+			command:  "cat /etc/passwd",
+			expected: "", // Absolute paths should not create prefix
+		},
+		{
+			name:     "path with dotdot - rejected for prefix",
+			command:  "cat tools/subdir/../file.go",
+			expected: "", // Any ".." in path prevents prefix creation for security
+		},
 	}
 
 	for _, tt := range tests {
@@ -161,6 +182,62 @@ func TestExtractBashPrefix(t *testing.T) {
 					tt.command, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestNormalizePath(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected string
+	}{
+		{"tools/file.go", "tools/file.go"},
+		{"tools/subdir/../file.go", "tools/file.go"},
+		{"tools/../src/file.go", "src/file.go"},
+		{"tools/../../etc/passwd", "../etc/passwd"},
+		{"./file.go", "file.go"},
+		{"../file.go", "../file.go"},
+		{"a/b/c/../../../d", "d"},
+		{"a/b/c/../../../../d", "../d"},
+		{"", "."},
+		{"tools/", "tools/"},
+		{"tools/subdir/", "tools/subdir/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			result := normalizePath(tt.path)
+			if result != tt.expected {
+				t.Errorf("normalizePath(%q) = %q, expected %q", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestApprovalManager_PathTraversalBlocked(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Allow "cat tools/file.go" - creates prefix "cat:tools/"
+	am.AddToAllowlist("bash", map[string]any{"command": "cat tools/file.go"})
+
+	// Path traversal attack: should NOT be allowed
+	if am.IsAllowed("bash", map[string]any{"command": "cat tools/../../etc/passwd"}) {
+		t.Error("SECURITY: path traversal attack should NOT be allowed")
+	}
+
+	// Another traversal variant
+	if am.IsAllowed("bash", map[string]any{"command": "cat tools/../../../etc/shadow"}) {
+		t.Error("SECURITY: deep path traversal should NOT be allowed")
+	}
+
+	// Valid subdirectory access should still work
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/file.go"}) {
+		t.Error("expected cat tools/subdir/file.go to be allowed")
+	}
+
+	// Commands with ".." require individual approval (no prefix matching)
+	// This is intentional - any ".." in a path is treated as potentially dangerous
+	if am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/../other.go"}) {
+		t.Error("expected cat tools/subdir/../other.go to NOT be allowed (paths with .. need individual approval)")
 	}
 }
 
