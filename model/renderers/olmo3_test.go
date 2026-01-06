@@ -227,9 +227,9 @@ func TestOlmo3Renderer(t *testing.T) {
 							ID: "call_1",
 							Function: api.ToolCallFunction{
 								Name: "book_flight",
-								Arguments: testArgs(map[string]any{
-									"from": "SFO",
-									"to":   "NYC",
+								Arguments: testArgsOrdered([]orderedArg{
+									{"from", "SFO"},
+									{"to", "NYC"},
 								}),
 							},
 						},
@@ -243,9 +243,9 @@ func TestOlmo3Renderer(t *testing.T) {
 						Name: "book_flight",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: testPropsMap(map[string]api.ToolProperty{
-								"from": {Type: api.PropertyType{"string"}},
-								"to":   {Type: api.PropertyType{"string"}},
+							Properties: testPropsOrdered([]orderedProp{
+								{"from", api.ToolProperty{Type: api.PropertyType{"string"}}},
+								{"to", api.ToolProperty{Type: api.PropertyType{"string"}}},
 							}),
 						},
 					},
