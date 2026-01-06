@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -21,6 +23,96 @@ import (
 	"github.com/ollama/ollama/x/agent"
 	"github.com/ollama/ollama/x/tools"
 )
+
+// Local model output capping constants
+const (
+	// localModelTokenLimit is the approximate token limit for local models.
+	// TODO: Consider dynamically fetching context length via /api/show
+	localModelTokenLimit = 4000
+
+	// charsPerToken is a rough estimate of characters per token.
+	// TODO: Estimate tokens more accurately using tokenizer if available
+	charsPerToken = 4
+)
+
+// isLocalModel checks if the model is running locally (not a cloud model).
+// TODO: Improve local/cloud model identification - could check model metadata
+func isLocalModel(modelName string) bool {
+	return !strings.HasSuffix(modelName, "-cloud")
+}
+
+// isLocalServer checks if connecting to a local Ollama server.
+// TODO: Could also check other indicators of local vs cloud server
+func isLocalServer() bool {
+	host := os.Getenv("OLLAMA_HOST")
+	if host == "" {
+		return true // Default is localhost:11434
+	}
+
+	// Parse the URL to check host
+	parsed, err := url.Parse(host)
+	if err != nil {
+		return true // If can't parse, assume local
+	}
+
+	hostname := parsed.Hostname()
+	return hostname == "localhost" || hostname == "127.0.0.1" || strings.Contains(parsed.Host, ":11434")
+}
+
+// truncateToolOutputForLocalModel truncates tool output if running on a local model
+// to prevent context overflow.
+func truncateToolOutputForLocalModel(output, modelName string) string {
+	if !isLocalModel(modelName) || !isLocalServer() {
+		return output
+	}
+
+	maxChars := localModelTokenLimit * charsPerToken
+	if len(output) > maxChars {
+		return output[:maxChars] + "\n... (output truncated for local model context limit)"
+	}
+	return output
+}
+
+// waitForOllamaSignin shows the signin URL and polls until authentication completes.
+func waitForOllamaSignin(ctx context.Context) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	// Get signin URL from initial Whoami call
+	_, err = client.Whoami(ctx)
+	if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.SigninURL != "" {
+			fmt.Fprintf(os.Stderr, "\n  To sign in, navigate to:\n")
+			fmt.Fprintf(os.Stderr, "      \033[36m%s\033[0m\n\n", aErr.SigninURL)
+			fmt.Fprintf(os.Stderr, "  \033[90mWaiting for sign in to complete...\033[0m")
+
+			// Poll until auth succeeds
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					fmt.Fprintf(os.Stderr, "\n")
+					return ctx.Err()
+				case <-ticker.C:
+					user, whoamiErr := client.Whoami(ctx)
+					if whoamiErr == nil && user != nil && user.Name != "" {
+						fmt.Fprintf(os.Stderr, "\r\033[K  \033[32mSigned in as %s\033[0m\n", user.Name)
+						return nil
+					}
+					// Still waiting, show dot
+					fmt.Fprintf(os.Stderr, ".")
+				}
+			}
+		}
+		return err
+	}
+	return nil
+}
 
 // RunOptions contains options for running an interactive agent session.
 type RunOptions struct {
@@ -37,6 +129,13 @@ type RunOptions struct {
 	// Agent fields (managed externally for session persistence)
 	Tools    *tools.Registry
 	Approval *agent.ApprovalManager
+
+	// LastToolOutput stores the full output of the last tool execution
+	// for Ctrl+O expansion. Updated by Chat(), read by caller.
+	LastToolOutput *string
+
+	// LastToolOutputTruncated stores the truncated version shown inline
+	LastToolOutputTruncated *string
 }
 
 // Chat runs an agent chat loop with tool support.
@@ -250,6 +349,23 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			// Execute the tool
 			toolResult, err := toolRegistry.Execute(call)
 			if err != nil {
+				// Check if web search needs authentication
+				if errors.Is(err, tools.ErrWebSearchAuthRequired) {
+					// Prompt user to sign in
+					fmt.Fprintf(os.Stderr, "\033[33m  Web search requires authentication.\033[0m\n")
+					result, promptErr := agent.PromptYesNo("Sign in to Ollama?")
+					if promptErr == nil && result {
+						// Get signin URL and wait for auth completion
+						if signinErr := waitForOllamaSignin(ctx); signinErr == nil {
+							// Retry the web search
+							fmt.Fprintf(os.Stderr, "\033[90m  Retrying web search...\033[0m\n")
+							toolResult, err = toolRegistry.Execute(call)
+							if err == nil {
+								goto toolSuccess
+							}
+						}
+					}
+				}
 				fmt.Fprintf(os.Stderr, "\033[31m  Error: %v\033[0m\n", err)
 				toolResults = append(toolResults, api.Message{
 					Role:       "tool",
@@ -258,20 +374,34 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				})
 				continue
 			}
+		toolSuccess:
 
 			// Display tool output (truncated for display)
+			truncatedOutput := ""
 			if toolResult != "" {
 				output := toolResult
 				if len(output) > 300 {
-					output = output[:300] + "... (truncated)"
+					output = output[:300] + "... (truncated, press Ctrl+O to expand)"
 				}
+				truncatedOutput = output
 				// Show result in grey, indented
 				fmt.Fprintf(os.Stderr, "\033[90m  %s\033[0m\n", strings.ReplaceAll(output, "\n", "\n  "))
 			}
 
+			// Store full and truncated output for Ctrl+O toggle
+			if opts.LastToolOutput != nil {
+				*opts.LastToolOutput = toolResult
+			}
+			if opts.LastToolOutputTruncated != nil {
+				*opts.LastToolOutputTruncated = truncatedOutput
+			}
+
+			// Truncate output for local models to prevent context overflow
+			toolResultForLLM := truncateToolOutputForLocalModel(toolResult, opts.Model)
+
 			toolResults = append(toolResults, api.Message{
 				Role:       "tool",
-				Content:    toolResult,
+				Content:    toolResultForLLM,
 				ToolCallID: call.ID,
 			})
 		}
@@ -474,11 +604,8 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	var toolRegistry *tools.Registry
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
-		fmt.Fprintf(os.Stderr, "Tools available: %s\n", strings.Join(toolRegistry.Names(), ", "))
-
-		// Check for OLLAMA_API_KEY for web search
-		if os.Getenv("OLLAMA_API_KEY") == "" {
-			fmt.Fprintf(os.Stderr, "\033[33mWarning: OLLAMA_API_KEY not set - web search will not work\033[0m\n")
+		if toolRegistry.Count() > 0 {
+			fmt.Fprintf(os.Stderr, "\033[90mTools available: %s\033[0m\n", strings.Join(toolRegistry.Names(), ", "))
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "\033[33mNote: Model does not support tools - running in chat-only mode\033[0m\n")
@@ -489,6 +616,11 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 
 	var messages []api.Message
 	var sb strings.Builder
+
+	// Track last tool output for Ctrl+O toggle
+	var lastToolOutput string
+	var lastToolOutputTruncated string
+	var toolOutputExpanded bool
 
 	for {
 		line, err := scanner.Readline()
@@ -501,6 +633,20 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 				fmt.Println("\nUse Ctrl + d or /bye to exit.")
 			}
 			sb.Reset()
+			continue
+		case errors.Is(err, readline.ErrExpandOutput):
+			// Ctrl+O pressed - toggle between expanded and collapsed tool output
+			if lastToolOutput == "" {
+				fmt.Fprintf(os.Stderr, "\033[90mNo tool output to expand\033[0m\n")
+			} else if toolOutputExpanded {
+				// Currently expanded, show truncated
+				fmt.Fprintf(os.Stderr, "\033[90m  %s\033[0m\n", strings.ReplaceAll(lastToolOutputTruncated, "\n", "\n  "))
+				toolOutputExpanded = false
+			} else {
+				// Currently collapsed, show full
+				fmt.Fprintf(os.Stderr, "\033[90m  %s\033[0m\n", strings.ReplaceAll(lastToolOutput, "\n", "\n  "))
+				toolOutputExpanded = true
+			}
 			continue
 		case err != nil:
 			return err
@@ -524,6 +670,9 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			fmt.Fprintln(os.Stderr, "  /bye            Exit")
 			fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Keyboard Shortcuts:")
+			fmt.Fprintln(os.Stderr, "  Ctrl+O          Expand last tool output")
+			fmt.Fprintln(os.Stderr, "")
 			continue
 		case strings.HasPrefix(line, "/"):
 			fmt.Printf("Unknown command '%s'. Type /? for help\n", strings.Fields(line)[0])
@@ -537,16 +686,20 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			messages = append(messages, newMessage)
 
 			opts := RunOptions{
-				Model:        modelName,
-				Messages:     messages,
-				WordWrap:     wordWrap,
-				Options:      options,
-				Think:        think,
-				HideThinking: hideThinking,
-				KeepAlive:    keepAlive,
-				Tools:        toolRegistry,
-				Approval:     approval,
+				Model:                   modelName,
+				Messages:                messages,
+				WordWrap:                wordWrap,
+				Options:                 options,
+				Think:                   think,
+				HideThinking:            hideThinking,
+				KeepAlive:               keepAlive,
+				Tools:                   toolRegistry,
+				Approval:                approval,
+				LastToolOutput:          &lastToolOutput,
+				LastToolOutputTruncated: &lastToolOutputTruncated,
 			}
+			// Reset expanded state for new tool execution
+			toolOutputExpanded = false
 
 			assistant, err := Chat(cmd.Context(), opts)
 			if err != nil {
