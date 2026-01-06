@@ -332,6 +332,8 @@ func AllowlistKey(toolName string, args map[string]any) string {
 }
 
 // IsAllowed checks if a tool/command is allowed (exact match or prefix match).
+// For bash commands, hierarchical path matching is used - if "cat:tools/" is allowed,
+// then "cat:tools/subdir/" is also allowed (subdirectories inherit parent permissions).
 func (a *ApprovalManager) IsAllowed(toolName string, args map[string]any) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -342,12 +344,20 @@ func (a *ApprovalManager) IsAllowed(toolName string, args map[string]any) bool {
 		return true
 	}
 
-	// For bash commands, check prefix matches
+	// For bash commands, check prefix matches with hierarchical path support
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
 			prefix := extractBashPrefix(cmd)
-			if prefix != "" && a.prefixes[prefix] {
-				return true
+			if prefix != "" {
+				// Check exact prefix match first
+				if a.prefixes[prefix] {
+					return true
+				}
+				// Check hierarchical match: if any stored prefix is a parent of current prefix
+				// e.g., stored "cat:tools/" should match current "cat:tools/subdir/"
+				if a.matchesHierarchicalPrefix(prefix) {
+					return true
+				}
 			}
 		}
 	}
@@ -355,6 +365,40 @@ func (a *ApprovalManager) IsAllowed(toolName string, args map[string]any) bool {
 	// Check if tool itself is allowed (non-bash)
 	if toolName != "bash" && a.allowlist[toolName] {
 		return true
+	}
+
+	return false
+}
+
+// matchesHierarchicalPrefix checks if the given prefix matches any stored prefix hierarchically.
+// For example, if "cat:tools/" is stored, it will match "cat:tools/subdir/" or "cat:tools/a/b/c/".
+func (a *ApprovalManager) matchesHierarchicalPrefix(currentPrefix string) bool {
+	// Split prefix into command and path parts (format: "cmd:path/")
+	colonIdx := strings.Index(currentPrefix, ":")
+	if colonIdx == -1 {
+		return false
+	}
+	currentCmd := currentPrefix[:colonIdx]
+	currentPath := currentPrefix[colonIdx+1:]
+
+	for storedPrefix := range a.prefixes {
+		storedColonIdx := strings.Index(storedPrefix, ":")
+		if storedColonIdx == -1 {
+			continue
+		}
+		storedCmd := storedPrefix[:storedColonIdx]
+		storedPath := storedPrefix[storedColonIdx+1:]
+
+		// Commands must match exactly
+		if currentCmd != storedCmd {
+			continue
+		}
+
+		// Check if current path starts with stored path (hierarchical match)
+		// e.g., "tools/subdir/" starts with "tools/"
+		if strings.HasPrefix(currentPath, storedPath) {
+			return true
+		}
 	}
 
 	return false
@@ -443,11 +487,12 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 		}
 	}
 
-	// For web search, show query
+	// For web search, show query and internet notice
 	if toolName == "web_search" {
 		if query, ok := args["query"].(string); ok {
 			sb.WriteString(fmt.Sprintf("Tool: %s\n", toolName))
-			sb.WriteString(fmt.Sprintf("Query: %s", query))
+			sb.WriteString(fmt.Sprintf("Query: %s\n", query))
+			sb.WriteString("Uses internet via ollama.com")
 			return sb.String()
 		}
 	}
@@ -950,4 +995,80 @@ func FormatDenyResult(toolName string, reason string) string {
 		return fmt.Sprintf("User denied execution of %s. Reason: %s", toolName, reason)
 	}
 	return fmt.Sprintf("User denied execution of %s.", toolName)
+}
+
+// PromptYesNo displays a simple Yes/No prompt and returns the user's choice.
+// Returns true for Yes, false for No.
+func PromptYesNo(question string) (bool, error) {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return false, err
+	}
+	defer term.Restore(fd, oldState)
+
+	selected := 0 // 0 = Yes, 1 = No
+	options := []string{"Yes", "No"}
+
+	// Hide cursor
+	fmt.Fprint(os.Stderr, "\033[?25l")
+	defer fmt.Fprint(os.Stderr, "\033[?25h")
+
+	renderYesNo := func() {
+		// Move to start of line and clear
+		fmt.Fprintf(os.Stderr, "\r\033[K")
+		fmt.Fprintf(os.Stderr, "\033[36m%s\033[0m ", question)
+		for i, opt := range options {
+			if i == selected {
+				fmt.Fprintf(os.Stderr, "\033[1;32m[%s]\033[0m ", opt)
+			} else {
+				fmt.Fprintf(os.Stderr, "\033[90m %s \033[0m ", opt)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\033[90m(←/→ or y/n, Enter to confirm)\033[0m")
+	}
+
+	renderYesNo()
+
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return false, err
+		}
+
+		if n == 1 {
+			switch buf[0] {
+			case 'y', 'Y':
+				selected = 0
+				renderYesNo()
+			case 'n', 'N':
+				selected = 1
+				renderYesNo()
+			case '\r', '\n': // Enter
+				fmt.Fprintf(os.Stderr, "\r\033[K") // Clear line
+				return selected == 0, nil
+			case 3: // Ctrl+C
+				fmt.Fprintf(os.Stderr, "\r\033[K")
+				return false, nil
+			case 27: // Escape - could be arrow key
+				// Read more bytes for arrow keys
+				continue
+			}
+		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
+			// Arrow keys
+			switch buf[2] {
+			case 'D': // Left
+				if selected > 0 {
+					selected--
+				}
+				renderYesNo()
+			case 'C': // Right
+				if selected < len(options)-1 {
+					selected++
+				}
+				renderYesNo()
+			}
+		}
+	}
 }

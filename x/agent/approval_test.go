@@ -186,6 +186,102 @@ func TestApprovalManager_PrefixAllowlist(t *testing.T) {
 	}
 }
 
+func TestApprovalManager_HierarchicalPrefixAllowlist(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Allow "cat tools/file.go" - this creates prefix "cat:tools/"
+	am.AddToAllowlist("bash", map[string]any{"command": "cat tools/file.go"})
+
+	// Should allow subdirectories (hierarchical matching)
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/file.go"}) {
+		t.Error("expected cat tools/subdir/file.go to be allowed via hierarchical prefix")
+	}
+
+	// Should allow deeply nested subdirectories
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/a/b/c/deep.go"}) {
+		t.Error("expected cat tools/a/b/c/deep.go to be allowed via hierarchical prefix")
+	}
+
+	// Should still allow same directory
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/another.go"}) {
+		t.Error("expected cat tools/another.go to be allowed")
+	}
+
+	// Should NOT allow different base directory
+	if am.IsAllowed("bash", map[string]any{"command": "cat src/main.go"}) {
+		t.Error("expected cat src/main.go to NOT be allowed")
+	}
+
+	// Should NOT allow different command even in subdirectory
+	if am.IsAllowed("bash", map[string]any{"command": "ls tools/subdir/"}) {
+		t.Error("expected ls tools/subdir/ to NOT be allowed (different command)")
+	}
+
+	// Should NOT allow similar but different directory name
+	if am.IsAllowed("bash", map[string]any{"command": "cat toolsbin/file.go"}) {
+		t.Error("expected cat toolsbin/file.go to NOT be allowed (different directory)")
+	}
+}
+
+func TestMatchesHierarchicalPrefix(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Add prefix for "cat:tools/"
+	am.prefixes["cat:tools/"] = true
+
+	tests := []struct {
+		name     string
+		prefix   string
+		expected bool
+	}{
+		{
+			name:     "exact match",
+			prefix:   "cat:tools/",
+			expected: true, // exact match also passes HasPrefix - caller handles exact match first
+		},
+		{
+			name:     "subdirectory",
+			prefix:   "cat:tools/subdir/",
+			expected: true,
+		},
+		{
+			name:     "deeply nested",
+			prefix:   "cat:tools/a/b/c/",
+			expected: true,
+		},
+		{
+			name:     "different base directory",
+			prefix:   "cat:src/",
+			expected: false,
+		},
+		{
+			name:     "different command same path",
+			prefix:   "ls:tools/",
+			expected: false,
+		},
+		{
+			name:     "similar directory name",
+			prefix:   "cat:toolsbin/",
+			expected: false,
+		},
+		{
+			name:     "invalid prefix format",
+			prefix:   "cattools",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := am.matchesHierarchicalPrefix(tt.prefix)
+			if result != tt.expected {
+				t.Errorf("matchesHierarchicalPrefix(%q) = %v, expected %v",
+					tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestFormatApprovalResult(t *testing.T) {
 	tests := []struct {
 		name     string
