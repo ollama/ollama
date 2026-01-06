@@ -2,21 +2,28 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 )
 
 const (
 	webSearchAPI     = "https://ollama.com/api/web_search"
 	webSearchTimeout = 15 * time.Second
 )
+
+// ErrWebSearchAuthRequired is returned when web search requires authentication
+var ErrWebSearchAuthRequired = errors.New("web search requires authentication")
 
 // WebSearchTool implements web search using Ollama's hosted API.
 type WebSearchTool struct{}
@@ -68,15 +75,11 @@ type webSearchResult struct {
 }
 
 // Execute performs the web search.
+// Uses Ollama key signing for authentication - this makes requests via ollama.com API.
 func (w *WebSearchTool) Execute(args map[string]any) (string, error) {
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
 		return "", fmt.Errorf("query parameter is required")
-	}
-
-	apiKey := os.Getenv("OLLAMA_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("OLLAMA_API_KEY environment variable is required for web search")
 	}
 
 	// Prepare request
@@ -90,13 +93,34 @@ func (w *WebSearchTool) Execute(args map[string]any) (string, error) {
 		return "", fmt.Errorf("marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", webSearchAPI, bytes.NewBuffer(jsonBody))
+	// Parse URL and add timestamp for signing
+	searchURL, err := url.Parse(webSearchAPI)
+	if err != nil {
+		return "", fmt.Errorf("parsing search URL: %w", err)
+	}
+
+	q := searchURL.Query()
+	q.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	searchURL.RawQuery = q.Encode()
+
+	// Sign the request using Ollama key (~/.ollama/id_ed25519)
+	// This authenticates with ollama.com using the local signing key
+	ctx := context.Background()
+	data := fmt.Appendf(nil, "%s,%s", http.MethodPost, searchURL.RequestURI())
+	signature, err := auth.Sign(ctx, data)
+	if err != nil {
+		return "", fmt.Errorf("signing request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, searchURL.String(), bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if signature != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", signature))
+	}
 
 	// Send request
 	client := &http.Client{Timeout: webSearchTimeout}
@@ -111,6 +135,9 @@ func (w *WebSearchTool) Execute(args map[string]any) (string, error) {
 		return "", fmt.Errorf("reading response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", ErrWebSearchAuthRequired
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("web search API returned status %d: %s", resp.StatusCode, string(body))
 	}
