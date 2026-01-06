@@ -3,6 +3,7 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/ollama/ollama/api"
@@ -88,9 +89,16 @@ func (r *Registry) Count() int {
 }
 
 // DefaultRegistry creates a registry with all built-in tools.
+// Tools can be disabled via environment variables:
+// - OLLAMA_AGENT_DISABLE_WEBSEARCH=1 disables web_search
+// - OLLAMA_AGENT_DISABLE_BASH=1 disables bash
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
-	r.Register(&WebSearchTool{})
-	r.Register(&BashTool{})
+	if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
+		r.Register(&WebSearchTool{})
+	}
+	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" {
+		r.Register(&BashTool{})
+	}
 	return r
 }
