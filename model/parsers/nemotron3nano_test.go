@@ -51,7 +51,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},
@@ -65,7 +65,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "NYC"},
+						Arguments: testArgs(map[string]any{"city": "NYC"}),
 					},
 				},
 			},
@@ -78,10 +78,10 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "book_flight",
-						Arguments: map[string]any{
+						Arguments: testArgs(map[string]any{
 							"from": "SFO",
 							"to":   "NYC",
-						},
+						}),
 					},
 				},
 			},
@@ -95,13 +95,13 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "San Francisco"},
+						Arguments: testArgs(map[string]any{"city": "San Francisco"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "New York"},
+						Arguments: testArgs(map[string]any{"city": "New York"}),
 					},
 				},
 			},
@@ -115,7 +115,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},
@@ -130,7 +130,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "search",
-						Arguments: map[string]any{"query": "test"},
+						Arguments: testArgs(map[string]any{"query": "test"}),
 					},
 				},
 			},
@@ -143,7 +143,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "create_note",
-						Arguments: map[string]any{"content": "Line 1\nLine 2\nLine 3"},
+						Arguments: testArgs(map[string]any{"content": "Line 1\nLine 2\nLine 3"}),
 					},
 				},
 			},
@@ -165,7 +165,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 			name:          "tool call with no function name - returns empty tool call",
 			input:         "<tool_call>\n<function=>\n</function>\n</tool_call>",
 			thinkValue:    nil,
-			expectedCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "", Arguments: nil}}},
+			expectedCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "", Arguments: api.NewToolCallFunctionArguments()}}},
 		},
 		{
 			name:            "content with newlines preserved",
@@ -194,7 +194,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "set_temp",
-						Arguments: map[string]any{"value": "42"},
+						Arguments: testArgs(map[string]any{"value": "42"}),
 					},
 				},
 			},
@@ -226,7 +226,7 @@ func TestNemotron3NanoParser(t *testing.T) {
 			if diff := cmp.Diff(thinking, tt.expectedThinking); diff != "" {
 				t.Errorf("thinking mismatch (-got +want):\n%s", diff)
 			}
-			if diff := cmp.Diff(calls, tt.expectedCalls); diff != "" {
+			if diff := cmp.Diff(calls, tt.expectedCalls, argsComparer); diff != "" {
 				t.Errorf("calls mismatch (-got +want):\n%s", diff)
 			}
 		})
@@ -276,7 +276,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},
@@ -290,7 +290,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "NYC"},
+						Arguments: testArgs(map[string]any{"city": "NYC"}),
 					},
 				},
 			},
@@ -302,7 +302,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "test",
-						Arguments: map[string]any{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -329,10 +329,10 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "book_flight",
-						Arguments: map[string]any{
+						Arguments: testArgs(map[string]any{
 							"from": "SFO",
 							"to":   "NYC",
-						},
+						}),
 					},
 				},
 			},
@@ -347,7 +347,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "search",
-						Arguments: map[string]any{"query": "test query"},
+						Arguments: testArgs(map[string]any{"query": "test query"}),
 					},
 				},
 			},
@@ -367,13 +367,13 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "San Francisco"},
+						Arguments: testArgs(map[string]any{"city": "San Francisco"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: map[string]any{"city": "New York"},
+						Arguments: testArgs(map[string]any{"city": "New York"}),
 					},
 				},
 			},
@@ -386,7 +386,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "create_note",
-						Arguments: map[string]any{"content": "Line 1\nLine 2\nLine 3"},
+						Arguments: testArgs(map[string]any{"content": "Line 1\nLine 2\nLine 3"}),
 					},
 				},
 			},
@@ -413,7 +413,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "test",
-						Arguments: map[string]any{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -426,7 +426,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "test",
-						Arguments: map[string]any{"name": ""},
+						Arguments: testArgs(map[string]any{"name": ""}),
 					},
 				},
 			},
@@ -473,7 +473,7 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 			if diff := cmp.Diff(allThinking, tt.expectedThinking); diff != "" {
 				t.Errorf("thinking mismatch (-got +want):\n%s", diff)
 			}
-			if diff := cmp.Diff(allCalls, tt.expectedCalls); diff != "" {
+			if diff := cmp.Diff(allCalls, tt.expectedCalls, argsComparer); diff != "" {
 				t.Errorf("calls mismatch (-got +want):\n%s", diff)
 			}
 		})
@@ -537,9 +537,9 @@ func TestNemotron3NanoParser_WithTools(t *testing.T) {
 				Name: "get_weather",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"city": {Type: api.PropertyType{"string"}},
-					},
+					}),
 				},
 			},
 		},
@@ -548,7 +548,7 @@ func TestNemotron3NanoParser_WithTools(t *testing.T) {
 	p := &Nemotron3NanoParser{}
 	returnedTools := p.Init(tools, nil, nil)
 
-	if diff := cmp.Diff(returnedTools, tools); diff != "" {
+	if diff := cmp.Diff(returnedTools, tools, toolsComparer); diff != "" {
 		t.Errorf("tools mismatch (-got +want):\n%s", diff)
 	}
 
@@ -563,12 +563,12 @@ func TestNemotron3NanoParser_WithTools(t *testing.T) {
 		{
 			Function: api.ToolCallFunction{
 				Name:      "get_weather",
-				Arguments: map[string]any{"city": "Paris"},
+				Arguments: testArgs(map[string]any{"city": "Paris"}),
 			},
 		},
 	}
 
-	if diff := cmp.Diff(calls, expectedCalls); diff != "" {
+	if diff := cmp.Diff(calls, expectedCalls, argsComparer); diff != "" {
 		t.Errorf("calls mismatch (-got +want):\n%s", diff)
 	}
 }
