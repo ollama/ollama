@@ -547,7 +547,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Use experimental agent loop with MCP support if flag is set
+		// Use experimental agent loop with
 		if isExperimental {
 			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive)
 		}

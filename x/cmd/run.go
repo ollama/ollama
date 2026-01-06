@@ -192,6 +192,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			args := call.Function.Arguments.ToMap()
 
 			// For bash commands, check denylist first
+			skipApproval := false
 			if toolName == "bash" {
 				if cmd, ok := args["command"].(string); ok {
 					// Check if command is denied (dangerous pattern)
@@ -209,13 +210,13 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 					// Check if command is auto-allowed (safe command)
 					if agent.IsAutoAllowed(cmd) {
 						fmt.Fprintf(os.Stderr, "\033[90m▶ Auto-allowed: %s\033[0m\n", formatToolShort(toolName, args))
-						goto execute
+						skipApproval = true
 					}
 				}
 			}
 
 			// Check approval (uses prefix matching for bash commands)
-			if !approval.IsAllowed(toolName, args) {
+			if !skipApproval && !approval.IsAllowed(toolName, args) {
 				result, err := approval.RequestApproval(toolName, args)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error requesting approval: %v\n", err)
@@ -241,12 +242,10 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				case agent.ApprovalAlways:
 					approval.AddToAllowlist(toolName, args)
 				}
-			} else {
+			} else if !skipApproval {
 				// Already allowed - show running indicator
 				fmt.Fprintf(os.Stderr, "\033[90m▶ Running: %s\033[0m\n", formatToolShort(toolName, args))
 			}
-
-		execute:
 
 			// Execute the tool
 			toolResult, err := toolRegistry.Execute(call)
