@@ -206,6 +206,9 @@ func (i *Instance) Readline() (string, error) {
 			buf.DeleteBefore()
 		case CharCtrlL:
 			buf.ClearScreen()
+		case CharCtrlO:
+			// Ctrl+O - expand tool output
+			return "", ErrExpandOutput
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
