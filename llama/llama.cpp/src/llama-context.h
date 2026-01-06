@@ -1,11 +1,9 @@
 #pragma once
 
 #include "llama.h"
-#include "llama-batch.h"
 #include "llama-cparams.h"
 #include "llama-graph.h"
 #include "llama-adapter.h"
-#include "llama-kv-cache.h"
 
 #include "ggml-cpp.h"
 #include "ggml-opt.h"
@@ -14,10 +12,25 @@
 #include <vector>
 
 struct llama_model;
-struct llama_kv_cache;
+class llama_batch_allocr;
 
 class llama_io_read_i;
 class llama_io_write_i;
+
+// "memory" as in abstract memory for the context
+struct llama_memory_i;
+struct llama_memory_context_i;
+
+// "memory" as in physical memory for a buffer type, in bytes
+struct llama_memory_breakdown_data {
+    size_t model   = 0; // memory allocated for the model
+    size_t context = 0; // memory allocated for the context
+    size_t compute = 0; // memory allocated for temporary compute buffers
+
+    size_t total() const {
+        return model + context + compute;
+    }
+};
 
 struct llama_context {
     // init scheduler and compute buffers, reserve worst-case graphs
@@ -34,21 +47,19 @@ struct llama_context {
 
     ggml_backend_sched_t get_sched() const;
 
-    ggml_context * get_ctx_compute() const;
-
-    uint32_t n_ctx()         const;
-    uint32_t n_ctx_per_seq() const;
-    uint32_t n_batch()       const;
-    uint32_t n_ubatch()      const;
-    uint32_t n_seq_max()     const;
+    uint32_t n_ctx()     const;
+    uint32_t n_ctx_seq() const;
+    uint32_t n_batch()   const;
+    uint32_t n_ubatch()  const;
+    uint32_t n_seq_max() const;
 
     uint32_t n_threads()       const;
     uint32_t n_threads_batch() const;
 
-          llama_kv_cache * get_kv_self();
-    const llama_kv_cache * get_kv_self() const;
+    llama_memory_t get_memory() const;
 
-    void kv_self_update();
+    // return true if the memory was updated
+    bool memory_update(bool optimize);
 
     enum llama_pooling_type pooling_type() const;
 
@@ -89,8 +100,18 @@ struct llama_context {
                 int32_t   il_start,
                 int32_t   il_end);
 
-    int encode(llama_batch & inp_batch);
-    int decode(llama_batch & inp_batch);
+    // process a single ubatch with a specific graph type
+    // if memory_context is provided, it will be applied first to the context's memory
+    // ret contains the status of the graph computation
+    // returns nullptr only if ret != GGML_STATUS_SUCCESS
+    llm_graph_result * process_ubatch(
+                const llama_ubatch & ubatch,
+                    llm_graph_type   gtype,
+            llama_memory_context_i * mctx,
+                       ggml_status & ret);
+
+    int encode(const llama_batch & batch_inp);
+    int decode(const llama_batch & batch_inp);
 
     //
     // state save/load
@@ -100,9 +121,9 @@ struct llama_context {
     size_t state_get_data(      uint8_t * dst, size_t size);
     size_t state_set_data(const uint8_t * src, size_t size);
 
-    size_t state_seq_get_size(llama_seq_id seq_id);
-    size_t state_seq_get_data(llama_seq_id seq_id,       uint8_t * dst, size_t size);
-    size_t state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size);
+    size_t state_seq_get_size(llama_seq_id seq_id, llama_state_seq_flags flags);
+    size_t state_seq_get_data(llama_seq_id seq_id,       uint8_t * dst, size_t size, llama_state_seq_flags flags);
+    size_t state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size, llama_state_seq_flags flags);
 
     bool state_load_file(
             const char * filepath,
@@ -135,12 +156,15 @@ struct llama_context {
     llama_perf_context_data perf_get_data() const;
     void perf_reset();
 
+    std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> memory_breakdown() const;
+
     //
     // training
     //
 
     void opt_init(struct llama_model * model, struct llama_opt_params lopt_params);
 
+    // TODO: more flexible combinations of logical/physical batch size and context size
     void opt_epoch(
             ggml_opt_dataset_t      dataset,
             ggml_opt_result_t       result_train,
@@ -168,29 +192,33 @@ private:
 
     // Make sure enough space is available for outputs.
     // Returns max number of outputs for which space was reserved.
-    int32_t output_reserve(int32_t n_outputs);
+    uint32_t output_reserve(int32_t n_outputs);
+
+    void output_reorder();
 
     //
     // graph
     //
 
 public:
-    int32_t graph_max_nodes() const;
+    uint32_t graph_max_nodes(uint32_t n_tokens) const;
 
-    // zero-out inputs and create the ctx_compute for the compute graph
-    ggml_cgraph * graph_init();
+    // can reuse the llm_graph_result instance of the context (for example to update a memory module)
+    llm_graph_result * get_gf_res_reserve() const;
 
     // returns the result of ggml_backend_sched_graph_compute_async execution
-    ggml_status graph_compute(
-            ggml_cgraph * gf,
-                   bool   batched);
+    ggml_status graph_compute(ggml_cgraph * gf, bool batched);
+
+    // reserve a graph with a dummy ubatch of the specified size
+    ggml_cgraph * graph_reserve(
+        uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx, bool split_only = false, size_t * sizes = nullptr);
 
 private:
-    llm_graph_result_ptr graph_build(
-            ggml_context * ctx,
-             ggml_cgraph * gf,
-      const llama_ubatch & ubatch,
-          llm_graph_type   gtype);
+    llm_graph_params graph_params(
+                        llm_graph_result * res,
+                      const llama_ubatch & ubatch,
+            const llama_memory_context_i * mctx,
+                          llm_graph_type   gtype) const;
 
     llm_graph_cb graph_get_cb() const;
 
@@ -198,8 +226,8 @@ private:
     size_t state_write_data(llama_io_write_i & io);
     size_t state_read_data (llama_io_read_i  & io);
 
-    size_t state_seq_write_data(llama_io_write_i & io, llama_seq_id seq_id);
-    size_t state_seq_read_data (llama_io_read_i  & io, llama_seq_id seq_id);
+    size_t state_seq_write_data(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags);
+    size_t state_seq_read_data (llama_io_read_i  & io, llama_seq_id seq_id, llama_state_seq_flags flags);
 
     //
     // members
@@ -228,17 +256,24 @@ private:
     // populated only when pooling_type != LLAMA_POOLING_TYPE_NONE
     std::map<llama_seq_id, std::vector<float>> embd_seq;
 
-    int32_t n_outputs     = 0; // number of actually-used outputs in the current ubatch or last logical batch
-    int32_t n_outputs_max = 0; // capacity (of tokens positions) for the output buffers
+    // reuse the batch_allocr to avoid unnecessary memory allocations
+    std::unique_ptr<llama_batch_allocr> balloc;
+
+    uint32_t n_outputs = 0; // number of actually-used outputs in the current ubatch or last logical batch
 
     std::vector<int32_t> output_ids; // map batch token positions to ids of the logits and embd buffers
+
+    struct swap_info {
+        uint32_t i0;
+        uint32_t i1;
+    };
+
+    std::vector<swap_info> output_swaps;
 
     ggml_backend_sched_ptr sched;
 
     ggml_backend_t backend_cpu = nullptr;
     std::vector<ggml_backend_ptr> backends;
-
-    ggml_context_ptr ctx_compute;
 
     // training
     ggml_opt_context_t opt_ctx = nullptr;
@@ -251,17 +286,21 @@ private:
 
     std::vector<std::pair<ggml_backend_t, ggml_backend_set_n_threads_t>> set_n_threads_fns;
 
-    // buffer types used for the compute buffer of each backend
+    // pointers and buffer types used for the compute buffer of each backend
     std::vector<ggml_backend_t>             backend_ptrs;
     std::vector<ggml_backend_buffer_type_t> backend_buft;
+    std::vector<size_t>                     backend_buf_exp_size; // expected buffer sizes
 
-    // memory buffers used to evaluate the model
-    std::vector<uint8_t> buf_compute_meta;
+    llm_graph_result_ptr gf_res_prev;
+    llm_graph_result_ptr gf_res_reserve;
 
     // host buffer for the model output (logits and embeddings)
     ggml_backend_buffer_ptr buf_output;
 
     bool has_evaluated_once = false;
+
+    // env: LLAMA_GRAPH_REUSE_DISABLE
+    bool graph_reuse_disable = false;
 
     // perf
     mutable int64_t t_start_us  = 0;
@@ -274,4 +313,6 @@ private:
 
     mutable int32_t n_p_eval = 0; // number of tokens in eval calls for the prompt (with batch size > 1)
     mutable int32_t n_eval   = 0; // number of eval calls
+
+    mutable int32_t n_reused = 0; // number of times the previous graph was reused
 };

@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 11 Nov 2025 11:39:43 -0800
+Subject: [PATCH] fix bakllava regression
+
+Rever to prior logic of assuming an empty projector type is mlp
+---
+ tools/mtmd/clip.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index 84a3796b5..d3a37842d 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -960,6 +960,10 @@ struct clip_model_loader {
+             if (proj_type.empty()) {
+                 if (modality == CLIP_MODALITY_VISION) {
+                     get_string(KEY_VISION_PROJ_TYPE, proj_type, false);
++                    if (proj_type.empty()) {
++                        // Assume MLP if no projector type listed
++                        proj_type = "mlp";
++                    }
+                 } else if (modality == CLIP_MODALITY_AUDIO) {
+                     get_string(KEY_AUDIO_PROJ_TYPE, proj_type, false);
+                 } else {

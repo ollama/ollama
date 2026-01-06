@@ -10,10 +10,10 @@ logs instead of throwing an error
  1 file changed, 3 insertions(+), 11 deletions(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 9389ca80..806c1b3d 100644
+index 7b01a2edf..63250cdf1 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -1503,16 +1503,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -1825,16 +1825,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
          if (type == LLAMA_VOCAB_TYPE_BPE) {
              add_space_prefix = false;
              clean_spaces = true;
@@ -31,8 +31,8 @@ index 9389ca80..806c1b3d 100644
                  pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
              } else if (
                      tokenizer_pre == "llama3"   ||
-@@ -1651,7 +1642,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
-                 pre_type = LLAMA_VOCAB_PRE_TYPE_SEED_CODER;
+@@ -2015,7 +2006,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2;
                  clean_spaces = false;
              } else {
 -                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));

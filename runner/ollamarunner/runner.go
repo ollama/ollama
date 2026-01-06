@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -27,9 +28,11 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
@@ -37,6 +40,12 @@ import (
 
 	_ "github.com/ollama/ollama/model/models"
 )
+
+// response contains a piece of generated text along with optional logprobs
+type response struct {
+	content  string
+	logprobs []llm.Logprob
+}
 
 type Sequence struct {
 	// ctxs are used for allocating tensors that last the lifetime of the sequence, such as
@@ -50,19 +59,22 @@ type Sequence struct {
 	iBatch int
 
 	// prompt inputs left to evaluate
-	inputs []input.Input
+	inputs []*input.Input
 
 	// inputs that have been added to a batch but not yet submitted to Forward
-	pendingInputs []input.Input
+	pendingInputs []*input.Input
 
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
+
+	// logprobs for tokens that haven't been returned yet
+	pendingLogprobs []llm.Logprob
 
 	// input cache being used by this sequence
 	cache *InputCacheSlot
 
 	// channel to send responses over
-	responses chan string
+	responses chan response
 
 	// channel to stop decoding (such as if the remote connection is closed)
 	quit chan bool
@@ -85,27 +97,39 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
+	// shift if context window is exceeded
+	shift bool
+
 	doneReason llm.DoneReason
 
+	// logprobs configuration
+	logprobs    bool
+	topLogprobs int
+
 	// Metrics
-	startProcessingTime time.Time
-	startGenerationTime time.Time
-	numPredicted        int
-	numPromptInputs     int
+	startedAt, lastUpdatedAt time.Time
+	processingDuration       time.Duration
+	samplingDuration         time.Duration
+	numPredicted             int
+	numPromptInputs          int
 }
 
 type NewSequenceParams struct {
-	numPredict int
-	stop       []string
-	numKeep    int32
-	sampler    sample.Sampler
-	embedding  bool
+	numPredict  int
+	stop        []string
+	numKeep     int32
+	sampler     sample.Sampler
+	embedding   bool
+	shift       bool
+	truncate    bool
+	logprobs    bool
+	topLogprobs int
 }
+
+var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
-
-	startTime := time.Now()
 
 	inputs, ctxs, mmStore, err := s.inputs(prompt, images)
 	if err != nil {
@@ -122,7 +146,12 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if int32(len(inputs)) > s.cache.numCtx {
+		if !params.truncate {
+			return nil, errorInputTooLong
+		}
+
 		discard := int32(len(inputs)) - s.cache.numCtx
+
 		promptStart := params.numKeep + discard
 
 		// If we need to truncate in the middle of a unbreakable batch, remove the entire batch
@@ -161,28 +190,39 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// TODO(jessegross): Ingest cached history for grammar
 
 	return &Sequence{
-		ctxs:                ctxs,
-		mmStore:             mmStore,
-		inputs:              inputs,
-		numPromptInputs:     len(inputs),
-		startProcessingTime: startTime,
-		numPredict:          params.numPredict,
-		pendingResponses:    make([]string, 0),
-		responses:           make(chan string, 100),
-		quit:                make(chan bool, 1),
-		embedding:           make(chan []float32, 1),
-		sampler:             params.sampler,
-		embeddingOnly:       params.embedding,
-		stop:                params.stop,
-		numKeep:             params.numKeep,
+		ctxs:             ctxs,
+		mmStore:          mmStore,
+		inputs:           inputs,
+		numPromptInputs:  len(inputs),
+		numPredict:       params.numPredict,
+		pendingResponses: make([]string, 0),
+		responses:        make(chan response, 100),
+		quit:             make(chan bool, 1),
+		embedding:        make(chan []float32, 1),
+		sampler:          params.sampler,
+		embeddingOnly:    params.embedding,
+		stop:             params.stop,
+		numKeep:          params.numKeep,
+		shift:            params.shift,
+		logprobs:         params.logprobs,
+		topLogprobs:      params.topLogprobs,
 	}, nil
+}
+
+// calculateLogprobs converts raw logits to log probabilities and finds top K tokens
+func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []llm.Logprob {
+	decoder := func(tokenID int) string {
+		text, _ := textProcessor.Decode([]int32{int32(tokenID)})
+		return text
+	}
+	return common.CalculateLogprobs(logits, int(selectedToken), topK, decoder)
 }
 
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, multimodalStore, error) {
-	var inputs []input.Input
+func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, []ml.Context, multimodalStore, error) {
+	var inputs []*input.Input
 	var ctxs []ml.Context
 	var mmStore multimodalStore
 
@@ -200,7 +240,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		parts = []string{prompt}
 	}
 
-	postTokenize := false
 	for i, part := range parts {
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
@@ -209,7 +248,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		}
 
 		for _, t := range tokens {
-			inputs = append(inputs, input.Input{Token: t})
+			inputs = append(inputs, &input.Input{Token: t})
 		}
 
 		// image - decode and store
@@ -242,12 +281,11 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 
 			mmStore.addMultimodal(imageEmbeddings)
 
-			inputs = append(inputs, input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
-			postTokenize = true
+			inputs = append(inputs, &input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
 		}
 	}
 
-	if visionModel && postTokenize {
+	if visionModel {
 		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
@@ -258,7 +296,48 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 	return inputs, ctxs, mmStore, nil
 }
 
+type batchState struct {
+	// id provides a counter for trace logging batches
+	id int
+
+	// ctx holds the backend context used for this batch
+	ctx ml.Context
+
+	// modelOutput holds the outputs from this batch
+	modelOutput ml.Tensor
+
+	// batchInputs holds the input token pointers which may start as
+	// placeholders later filled in before calling ctx.Compute
+	batchInputs []*input.Input
+
+	// batch contains the inputs for a model forward pass
+	batch input.Batch
+
+	// full set of seqs at the time this batch was initiated
+	seqs []*Sequence
+
+	// Signaled when this batches inputs are ready and compute can proceed
+	inputsReadyCh chan struct{}
+
+	// Signaling when Compute is about to begin on this batch, and
+	// seqs have been updated to prepare for the next batch
+	computeStartedCh chan struct{}
+
+	// Signaled when this batches outputs are complete and the next batch can proceed
+	outputsReadyCh chan struct{}
+}
+
 type Server struct {
+	// modelPath is the location of the model to be loaded
+	modelPath string
+
+	// loadMu prevents more than one load attempt from occurring at a time
+	loadMu sync.Mutex
+
+	// lastLoad is the load request from the previous load attempt. Used to
+	// detect if we can reuse an existing memory allocation.
+	lastLoad llm.LoadRequest
+
 	// is the server ready to process requests?
 	// protects access to model and image
 	ready sync.WaitGroup
@@ -278,6 +357,9 @@ type Server struct {
 	// maximum number of elements in a batch (per sequence)
 	// TODO (jmorganca): make this n_batch
 	batchSize int
+
+	// Simple counter used only for trace logging batches
+	batchID int
 
 	// protects access to everything below this line
 	// this is context state needed for decoding
@@ -315,7 +397,9 @@ func (s *Server) allNil() bool {
 
 func flushPending(seq *Sequence) bool {
 	joined := strings.Join(seq.pendingResponses, "")
+	logprobs := seq.pendingLogprobs
 	seq.pendingResponses = []string{}
+	seq.pendingLogprobs = []llm.Logprob{}
 
 	// Check if there are any partial UTF-8 characters remaining.
 	// We already check and queue as we are generating but some may
@@ -332,7 +416,7 @@ func flushPending(seq *Sequence) bool {
 	}
 
 	select {
-	case seq.responses <- joined:
+	case seq.responses <- response{content: joined, logprobs: logprobs}:
 		return true
 	case <-seq.quit:
 		return false
@@ -351,33 +435,74 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	s.seqsSem.Release(1)
 }
 
+// track batch state between forwardBatch, computeBatch and predictForwardBatch
+
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
+	supportsAsync := pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone
+
+	var previousBatch batchState
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			err := s.processBatch()
+			var err error
+			nextBatch, err := s.forwardBatch(previousBatch)
 			if err != nil {
 				panic(err)
 			}
+
+			if supportsAsync {
+				go s.computeBatch(nextBatch)
+			} else {
+				s.computeBatch(nextBatch)
+			}
+
+			previousBatch = nextBatch
 		}
 	}
 }
 
-func (s *Server) processBatch() error {
+// forwardBatch will calculate a batch.
+func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, err error) {
+	// If we have a pending batch still processing, wait until Compute has started
+	// before setting up the next batch so the seqs inputs are ready to receive their
+	// token values and we get the correct input pointers for the batchInputs
+	if pendingBatch.ctx != nil {
+		logutil.Trace("forwardBatch waiting for compute to start", "pendingBatch.id", pendingBatch.id)
+		<-pendingBatch.computeStartedCh
+		logutil.Trace("forwardBatch compute started, setting up next batch", "pendingBatch.id", pendingBatch.id, "id", s.batchID)
+		nextBatch.inputsReadyCh = pendingBatch.outputsReadyCh // Chain the ouputs from the pending batch to the next inputs batch
+	} else {
+		logutil.Trace("forwardBatch no pending batch detected", "batchID", s.batchID)
+		// No pendingBatch, so the inputs will be ready in the seqs immediately
+		nextBatch.inputsReadyCh = make(chan struct{}, 1)
+		nextBatch.inputsReadyCh <- struct{}{}
+	}
+
 	s.mu.Lock()
 	for s.allNil() {
 		s.cond.Wait() // Wait until an item is added
 	}
 	defer s.mu.Unlock()
 
-	ctx := s.model.Backend().NewContext()
-	defer ctx.Close()
+	nextBatch.ctx = s.model.Backend().NewContext()
+	defer func() {
+		if err != nil {
+			nextBatch.ctx.Close()
+			nextBatch.ctx = nil
+		}
+	}()
+	nextBatch.id = s.batchID
+	nextBatch.seqs = append([]*Sequence{}, s.seqs...)
+	nextBatch.computeStartedCh = make(chan struct{}, 1)
+	nextBatch.outputsReadyCh = make(chan struct{}, 1)
 
-	var batchInputs []int32
+	// Prepare the seqs and batch, but defer the input token values as we may not be ready yet
+	var batchInputs []*input.Input
+	var batchOutputs []int32
 	var batch input.Batch
 
 	resumeSeq := -1
@@ -385,7 +510,6 @@ func (s *Server) processBatch() error {
 	for range s.seqs {
 		seqIdx = (seqIdx + 1) % len(s.seqs)
 		seq := s.seqs[seqIdx]
-
 		if seq == nil {
 			continue
 		}
@@ -393,12 +517,13 @@ func (s *Server) processBatch() error {
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
 			s.removeSequence(seqIdx, llm.DoneReasonLength)
+			nextBatch.seqs[seqIdx] = nil
 			continue
 		}
 
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
-			seq.cache.Inputs = []input.Input{}
+			seq.cache.Inputs = []*input.Input{}
 		}
 
 		batchSize := s.batchSize
@@ -431,25 +556,34 @@ func (s *Server) processBatch() error {
 					break
 				}
 
-				err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
+				if !seq.shift {
+					s.removeSequence(seqIdx, llm.DoneReasonLength)
+					nextBatch.seqs[seqIdx] = nil
+					break
+				}
+
+				err = s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 				if err != nil {
 					var reprocess *ErrReprocessInputs
 					if errors.As(err, &reprocess) {
 						// Prepend these inputs to the sequence's inputs queue for reprocessing
 						seq.inputs = append(reprocess.Inputs, seq.inputs...)
 						// Skip this sequence but continue processing the rest
+						nextBatch.seqs[seqIdx] = nil // clear this sequence for this batch
+						err = nil
 						continue
 					} else {
-						return err
+						return
 					}
 				}
 			}
 
-			batchInputs = append(batchInputs, inp.Token)
+			batchInputs = append(batchInputs, seq.inputs[i])
 			if inp.Multimodal != nil {
-				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, false)
+				var mm []input.Multimodal
+				mm, err = seq.mmStore.getMultimodal(s.model.Backend(), nextBatch.ctx, inp.Multimodal, false)
 				if err != nil {
-					return err
+					return
 				}
 				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})
 			}
@@ -457,14 +591,22 @@ func (s *Server) processBatch() error {
 			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
 			batch.Sequences = append(batch.Sequences, seq.cache.Id)
 
-			seq.iBatch = len(batch.Outputs)
-			if i+1 == len(seq.inputs) {
-				batch.Outputs = append(batch.Outputs, int32(len(batchInputs)-1))
+			seq.iBatch = len(batchOutputs)
+			if i+1 == len(seq.inputs) || seq.embeddingOnly {
+				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
 			}
+			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
 			seq.pendingInputs = append(seq.pendingInputs, inp)
 		}
 
 		seq.inputs = seq.inputs[len(seq.pendingInputs):]
+	}
+
+	startedAt := time.Now()
+	for i := range nextBatch.seqs {
+		if nextBatch.seqs[i] != nil && nextBatch.seqs[i].startedAt.IsZero() {
+			nextBatch.seqs[i].startedAt = startedAt
+		}
 	}
 
 	if resumeSeq != -1 {
@@ -474,72 +616,175 @@ func (s *Server) processBatch() error {
 	}
 
 	if len(batchInputs) == 0 {
-		return nil
+		logutil.Trace("forwardBatch no batchInputs, going idle", "batchID", s.batchID)
+		nextBatch.ctx.Close()
+		nextBatch.ctx = nil
+		return
 	}
+	s.batchID++
 
-	modelOutput, err := model.Forward(ctx, s.model, batchInputs, batch)
+	// Actual batchInputs values will be injected into the batch.Inputs tensor before calling Compute
+	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
+	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
+	nextBatch.ctx.SetBatchSize(len(batchInputs))
+	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
-		return fmt.Errorf("failed to decode batch: %w", err)
+		err = fmt.Errorf("failed to build graph: %w", err)
+		return
+	}
+	nextBatch.batchInputs = batchInputs
+	nextBatch.batch = batch
+
+	return
+}
+
+// Async processing of the next batch
+func (s *Server) computeBatch(activeBatch batchState) {
+	if activeBatch.ctx == nil {
+		// Nothing to compute
+		return
+	}
+	defer activeBatch.ctx.Close()
+
+	// Wait until inputs are ready
+	logutil.Trace("computeBatch: waiting for inputs to be ready", "batchID", activeBatch.id)
+	<-activeBatch.inputsReadyCh
+	logutil.Trace("computeBatch: inputs are ready", "batchID", activeBatch.id)
+
+	// Once we complete, signal the next batch of inputs are ready
+	// This will unblock the next computeBatch, or forwardBatch if new seqs come in
+	defer func() {
+		logutil.Trace("computeBatch: outputs are ready", "batchID", activeBatch.id)
+		activeBatch.outputsReadyCh <- struct{}{}
+	}()
+
+	s.mu.Lock()
+
+	// Gather the actual input token values now that they're ready
+	batchInputs := make([]int32, len(activeBatch.batchInputs))
+	for i := range batchInputs {
+		batchInputs[i] = activeBatch.batchInputs[i].Token
 	}
 
-	logits := modelOutput.Floats()
-
+	// Now we run part of the decoding algorithm to adjust the seq.inputs with placeholder tokens
+	// so that forwardBatch can build a batchInputs set which will eventually contain the actual
+	// decoded tokens.
+	nextBatchTokens := make([]*input.Input, len(s.seqs))
+	iBatches := make([]int, len(s.seqs)) // Record the iBatch values before releasing the lock
 	for i, seq := range s.seqs {
+		iBatches[i] = -1
 		if seq == nil {
 			continue
 		}
+		// Skip over any newly added or skipped sequences
+		if activeBatch.seqs[i] == nil {
+			continue
+		}
 
-		// After calling Forward, pending inputs are now in the cache
+		// Detect if the sequence we're processing has already been completed and replaced
+		// with a new sequence
+		if seq != activeBatch.seqs[i] {
+			logutil.Trace("computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
+			continue
+		}
+
+		// Pending inputs will actually be in the cache after we call Compute.
+		// However, we have already resolved any placeholder tokens.
+		//
+		// It's possible for incoming sequences to look at the values that we've
+		// added to the cache here and start relying on them before we've done
+		// the computation. This is OK as long as we ensure that this batch's
+		// computation happens before any future batch's and we never fail
+		// (unless we take down the whole runner).
 		if len(seq.pendingInputs) > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
-			seq.pendingInputs = []input.Input{}
+			seq.pendingInputs = []*input.Input{}
 		}
 
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			if !s.cache.enabled {
-				return errors.New("caching disabled but unable to fit entire input in a batch")
+				panic("caching disabled but unable to fit entire input in a batch")
 			}
 			continue
 		}
 
 		seq.numPredicted++
+		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
+		seq.inputs = []*input.Input{nextToken}
+		nextBatchTokens[i] = nextToken
+		iBatches[i] = seq.iBatch
+	}
+
+	// At this point the seqs are ready for forwardBatch to move forward so unblock
+	s.mu.Unlock()
+
+	activeBatch.batch.Inputs.FromInts(batchInputs)
+	activeBatch.ctx.ComputeWithNotify(
+		func() {
+			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
+			activeBatch.computeStartedCh <- struct{}{}
+		},
+		activeBatch.modelOutput)
+
+	outputs := activeBatch.modelOutput.Floats()
+	t := time.Now()
+
+	logutil.Trace("computeBatch: logits ready", "batchID", activeBatch.id)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logutil.Trace("computeBatch: decoding", "batchID", activeBatch.id)
+	for i, seq := range s.seqs {
+		if seq == nil || nextBatchTokens[i] == nil {
+			continue
+		}
+
+		seq.lastUpdatedAt = t
 		if seq.numPredicted == 1 {
-			seq.startGenerationTime = time.Now()
+			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
+			seq.startedAt = seq.lastUpdatedAt
 		}
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			// TODO(jessegross): Embedding support
-			slog.Warn("generation of embedding outputs not yet supported")
+			seq.embedding <- outputs
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
 		// sample a token
-		vocabSize := len(logits) / len(batch.Outputs)
-
-		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
+		vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)
+		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
+		logits := outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize]
+		token, err := seq.sampler.Sample(logits)
 		if err != nil {
-			return fmt.Errorf("failed to sample token: %w", err)
+			panic("failed to sample token")
 		}
+
+		nextBatchTokens[i].Token = token
 
 		// if it's an end of sequence token, break
 		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
 			// TODO (jmorganca): we should send this back
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
-
+			logutil.Trace("computeBatch: EOS", "batchID", activeBatch.id, "seqIdx", i)
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
 		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
 		if err != nil {
-			return err
+			panic("failed to decode token")
 		}
 
-		seq.inputs = []input.Input{{Token: token}}
+		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
+		if seq.logprobs {
+			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(model.TextProcessor))
+			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
+		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")
@@ -551,6 +796,17 @@ func (s *Server) processBatch() error {
 			origLen := len(seq.pendingResponses)
 			seq.pendingResponses, tokenTruncated = common.TruncateStop(seq.pendingResponses, stop)
 			newLen := len(seq.pendingResponses)
+
+			// Truncate logprobs to match the truncated responses
+			if seq.logprobs {
+				origLogprobsLen := len(seq.pendingLogprobs)
+				numTokensRemoved := origLen - newLen
+				newLogprobsLen := origLogprobsLen - numTokensRemoved
+				if newLogprobsLen < 0 {
+					newLogprobsLen = 0
+				}
+				seq.pendingLogprobs = seq.pendingLogprobs[:newLogprobsLen]
+			}
 
 			// Update the cache based on the tokens that will be returned:
 			// - We have 1 token more than is currently in the cache because
@@ -564,6 +820,7 @@ func (s *Server) processBatch() error {
 			if tokenTruncated || origLen == newLen {
 				tokenLen--
 			}
+
 			seq.cache.Inputs = seq.cache.Inputs[:tokenLen]
 
 			s.removeSequence(i, llm.DoneReasonStop)
@@ -583,7 +840,12 @@ func (s *Server) processBatch() error {
 		}
 	}
 
-	return nil
+	samplingDuration := time.Since(t)
+	for i, seq := range s.seqs {
+		if seq != nil && nextBatchTokens[i] != nil {
+			s.seqs[i].samplingDuration += samplingDuration
+		}
+	}
 }
 
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
@@ -629,13 +891,21 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
-		numPredict: req.Options.NumPredict,
-		stop:       req.Options.Stop,
-		numKeep:    int32(req.Options.NumKeep),
-		sampler:    sampler,
-		embedding:  false,
+		numPredict:  req.Options.NumPredict,
+		stop:        req.Options.Stop,
+		numKeep:     int32(req.Options.NumKeep),
+		sampler:     sampler,
+		embedding:   false,
+		shift:       req.Shift,
+		truncate:    req.Truncate,
+		logprobs:    req.Logprobs,
+		topLogprobs: req.TopLogprobs,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -654,7 +924,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	found := false
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, true)
 			if err != nil {
 				s.mu.Unlock()
 				s.seqsSem.Release(1)
@@ -681,10 +951,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			close(seq.quit)
 			return
-		case content, ok := <-seq.responses:
+		case resp, ok := <-seq.responses:
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content: content,
+					Content:  resp.content,
+					Logprobs: resp.logprobs,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
@@ -697,9 +968,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
-					PromptEvalDuration: seq.startGenerationTime.Sub(seq.startProcessingTime),
+					PromptEvalDuration: seq.processingDuration,
 					EvalCount:          seq.numPredicted,
-					EvalDuration:       time.Since(seq.startGenerationTime),
+					EvalDuration:       seq.lastUpdatedAt.Sub(seq.startedAt) - seq.samplingDuration,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode final response: %v", err), http.StatusInternalServerError)
 				}
@@ -707,6 +978,75 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
+		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
+		return
+	}
+
+	var req llm.EmbeddingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad request: %s", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
+		embedding: true,
+		truncate:  false,
+	})
+	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embedding request due to client closing the connection")
+		} else {
+			http.Error(w, fmt.Sprintf("failed to acquire semaphore: %v", err), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	s.mu.Lock()
+	found := false
+	for i, sq := range s.seqs {
+		if sq == nil {
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, false)
+			if err != nil {
+				s.mu.Unlock()
+				s.seqsSem.Release(1)
+				http.Error(w, fmt.Sprintf("failed to load cache: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			s.seqs[i] = seq
+			s.cond.Signal()
+			found = true
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if !found {
+		s.seqsSem.Release(1)
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
+		Embedding:       <-seq.embedding,
+		PromptEvalCount: seq.numPromptInputs,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
 
@@ -720,23 +1060,20 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type multiLPath []string
-
-func (m *multiLPath) Set(value string) error {
-	*m = append(*m, value)
-	return nil
-}
-
-func (m *multiLPath) String() string {
-	return strings.Join(*m, ", ")
-}
-
-func (s *Server) reserveWorstCaseGraph() error {
+func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
 
 	var err error
-	inputs := make([]input.Input, s.batchSize)
+	batchSize := 1
+	if prompt {
+		batchSize = s.batchSize
+	}
+
+	inputs := make([]*input.Input, batchSize)
+	for i := range inputs {
+		inputs[i] = &input.Input{}
+	}
 	mmStore := newMultimodalStore()
 
 	// Multimodal strategy:
@@ -750,7 +1087,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 	// - The result may now be larger than a batch (images may not fit in a
 	//   single batch), so trim based on what will fit and must be grouped together.
 	// - Fill out the rest of the space with text tokens.
-	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); ok {
+	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); prompt && ok {
 		mmCtx := s.model.Backend().NewContext()
 		defer mmCtx.Close()
 
@@ -777,9 +1114,12 @@ func (s *Server) reserveWorstCaseGraph() error {
 				}
 			}
 
-			if len(inputs) < s.batchSize {
-				newInputs := make([]input.Input, s.batchSize)
+			if len(inputs) < batchSize {
+				newInputs := make([]*input.Input, batchSize)
 				copy(newInputs, inputs)
+				for i := len(inputs); i < batchSize; i++ {
+					newInputs[i] = &input.Input{}
+				}
 				inputs = newInputs
 			}
 		}
@@ -803,12 +1143,8 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Positions[i] = int32(i)
 	}
 
-	batch.Outputs = make([]int32, s.parallel)
-	for i := range batch.Outputs {
-		batch.Outputs[i] = int32(i)
-	}
-
-	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
+	batch.Inputs = ctx.Input().FromInts(batchInputs, len(batchInputs))
+	batch.Outputs = ctx.Input().Empty(ml.DTypeI32, s.parallel)
 
 	cache := s.model.Config().Cache
 	if cache != nil {
@@ -823,20 +1159,39 @@ func (s *Server) reserveWorstCaseGraph() error {
 		return err
 	}
 
+	ctx.SetBatchSize(batchSize)
 	ctx.Forward(t).Reserve()
 
 	return nil
 }
 
-func (s *Server) initModel(
+// allocModel pre-allocates the maximum needed memory for a model
+// based on the given parameters
+func (s *Server) allocModel(
 	mpath string,
 	params ml.BackendParams,
-	lpath multiLPath,
+	loraPath []string,
 	parallel int,
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
-) error {
+) (panicErr error) {
+	// Convert memory allocation panics to errors
+	defer func() {
+		if r := recover(); r != nil {
+			if err, ok := r.(error); ok {
+				var noMem ml.ErrNoMem
+				if errors.As(err, &noMem) {
+					panicErr = noMem
+				} else {
+					panic(r)
+				}
+			} else {
+				panic(r)
+			}
+		}
+	}()
+
 	var err error
 	s.model, err = model.New(mpath, params)
 	if err != nil {
@@ -844,8 +1199,19 @@ func (s *Server) initModel(
 	}
 
 	// TODO(jessegross): LoRA loading
-	if lpath.String() != "" {
+	if len(loraPath) > 0 {
 		return errors.New("loras are not yet implemented")
+	}
+
+	if s.model.Config().Cache == nil {
+		if parallel > 1 {
+			parallel = 1
+			slog.Warn("model does not support caching, disabling parallel processing")
+		}
+		if s.batchSize < kvSize {
+			s.batchSize = kvSize
+			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
+		}
 	}
 
 	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
@@ -853,66 +1219,180 @@ func (s *Server) initModel(
 		return err
 	}
 
-	if !s.cache.enabled && parallel > 1 {
-		parallel = 1
-		slog.Warn("model does not support caching, disabling parallel processing")
-	}
-
 	s.parallel = parallel
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	return s.reserveWorstCaseGraph()
-}
-
-func (s *Server) load(
-	ctx context.Context,
-	mpath string,
-	params ml.BackendParams,
-	lpath multiLPath,
-	parallel int,
-	kvCacheType string,
-	kvSize int,
-	multiUserCache bool,
-) {
-	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
+	err = s.reserveWorstCaseGraph(true)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 
-	slog.Debug("memory", "allocated", s.model.Backend().BackendMemory())
+	return s.reserveWorstCaseGraph(false)
+}
 
-	err = s.model.Backend().Load(ctx,
+// closeModel frees all memory associated with a model
+func (s *Server) closeModel() {
+	s.cache.Close()
+	s.cache = nil
+	if s.model != nil {
+		s.model.Backend().Close()
+		s.model = nil
+	}
+}
+
+// loadModel loads the weights for a model. The memory must already
+// have been allocated with allocModel
+func (s *Server) loadModel() {
+	err := s.model.Backend().Load(context.TODO(),
 		func(progress float32) {
 			s.progress = progress
 		})
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to load model: %v", err))
 	}
 
 	s.status = llm.ServerStatusReady
 	s.ready.Done()
 }
 
+// load is the handler called by the Ollama server to process different
+// load operations
+func (s *Server) load(w http.ResponseWriter, r *http.Request) {
+	s.loadMu.Lock()
+	defer s.loadMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if s.status != llm.ServerStatusLaunched {
+		http.Error(w, "model already loaded", http.StatusInternalServerError)
+		return
+	}
+
+	var req llm.LoadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	slog.Info("load", "request", req)
+
+	if req.Operation == llm.LoadOperationClose {
+		s.closeModel()
+		if err := json.NewEncoder(w).Encode(&llm.LoadResponse{}); err != nil {
+			http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	s.lastLoad.Operation = req.Operation
+	loadModel := s.model == nil || !reflect.DeepEqual(req, s.lastLoad)
+
+	s.lastLoad = req
+
+	if loadModel {
+		s.closeModel()
+
+		params := ml.BackendParams{
+			AllocMemory:    req.Operation != llm.LoadOperationFit,
+			NumThreads:     req.NumThreads,
+			GPULayers:      req.GPULayers,
+			FlashAttention: req.FlashAttention,
+		}
+
+		s.batchSize = req.BatchSize
+
+		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		if err != nil {
+			s.closeModel()
+
+			var noMem ml.ErrNoMem
+			if errors.As(err, &noMem) {
+				resp := llm.LoadResponse{Success: false, Memory: noMem.BackendMemory}
+				if err := json.NewEncoder(w).Encode(&resp); err != nil {
+					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+				}
+
+				return
+			}
+
+			http.Error(w, fmt.Sprintf("failed to initialize model: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	mem := s.model.Backend().BackendMemory()
+
+	switch req.Operation {
+	case llm.LoadOperationFit:
+		// LoadOperationFit can't be used for anything else, so just close it
+		s.closeModel()
+
+	// LoadOperationAlloc should stay open for future operations
+
+	case llm.LoadOperationCommit:
+		s.status = llm.ServerStatusLoadingModel
+		go s.loadModel()
+	}
+
+	resp := llm.LoadResponse{Success: true, Memory: mem}
+	if err := json.NewEncoder(w).Encode(&resp); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// info is the handler called by the Ollama server to report information
+// about the GPU devices in use by this runner
+func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	s.loadMu.Lock()
+	defer s.loadMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	m := s.model
+
+	if m == nil {
+		startLoad := time.Now()
+
+		// Dummy load to get the backend wired up
+		f, err := os.CreateTemp("", "*.bin")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+		defer os.Remove(f.Name())
+
+		if err := ggml.WriteGGUF(f, ggml.KV{
+			"general.architecture": "llama",
+			"tokenizer.ggml.model": "gpt2",
+		}, nil); err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			return
+		}
+		slog.Debug("dummy model load took", "duration", time.Since(startLoad))
+	}
+
+	startDevices := time.Now()
+	infos := m.Backend().BackendDevices()
+	slog.Debug("gathering device infos took", "duration", time.Since(startDevices))
+	if err := json.NewEncoder(w).Encode(&infos); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
 func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
-	parallel := fs.Int("parallel", 1, "Number of sequences to handle simultaneously")
-	batchSize := fs.Int("batch-size", 512, "Batch size")
-	numGPULayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
-	mainGPU := fs.Int("main-gpu", 0, "Main GPU")
-	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
-	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
-	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
-	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
-	_ = fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
-	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
-	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
-
-	var lpaths multiLPath
-	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Runner usage\n")
@@ -924,39 +1404,17 @@ func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("starting ollama engine")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	server := &Server{
-		batchSize: *batchSize,
-		status:    llm.ServerStatusLoadingModel,
+		modelPath: *mpath,
+		status:    llm.ServerStatusLaunched,
 	}
 
 	server.cond = sync.NewCond(&server.mu)
 	server.ready.Add(1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// TODO(jessegross): Parameters that need to be implemented:
-	//	no-mmap
-
-	var tensorSplitFloats []float32
-	if *tensorSplit != "" {
-		splits := strings.Split(*tensorSplit, ",")
-		tensorSplitFloats = make([]float32, len(splits))
-		for i, s := range splits {
-			f, _ := strconv.ParseFloat(s, 32)
-			tensorSplitFloats[i] = float32(f)
-		}
-	}
-
-	params := ml.BackendParams{
-		NumThreads:     *threads,
-		NumGPULayers:   *numGPULayers,
-		MainGPU:        *mainGPU,
-		TensorSplit:    tensorSplitFloats,
-		FlashAttention: *flashAttention,
-	}
-
-	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
@@ -969,10 +1427,9 @@ func Execute(args []string) error {
 
 	mux := http.NewServeMux()
 	// TODO: support embeddings
-	mux.HandleFunc("POST /embedding", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
-	})
-
+	mux.HandleFunc("GET /info", server.info)
+	mux.HandleFunc("POST /load", server.load)
+	mux.HandleFunc("POST /embedding", server.embeddings)
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
 

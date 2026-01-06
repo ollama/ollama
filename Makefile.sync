@@ -1,6 +1,6 @@
-UPSTREAM=https://github.com/ggerganov/llama.cpp.git
+UPSTREAM=https://github.com/ggml-org/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=de4c07f93783a1a96456a44dc16b9db538ee1618
+FETCH_HEAD=ec98e2002
 
 .PHONY: help
 help:
@@ -12,7 +12,7 @@ help:
 	@echo "    clean                Clean local repository"
 	@echo
 	@echo "Example:"
-	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean sync"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean apply-patches sync"
 
 .PHONY: sync
 sync: llama/build-info.cpp ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal
@@ -24,12 +24,12 @@ ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal: ml/backend/ggml/ggml
 	go generate ./$(@D)
 
 .PHONY: llama/llama.cpp
-llama/llama.cpp: llama/vendor/
-	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+llama/llama.cpp: llama/vendor
+	rsync -arvzc --delete -f "include LICENSE" -f "merge $@/.rsync-filter" $(addprefix $<,/LICENSE /) $@
 
 .PHONY: ml/backend/ggml/ggml
-ml/backend/ggml/ggml: llama/vendor/ggml/
-	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+ml/backend/ggml/ggml: llama/vendor
+	rsync -arvzc --delete -f "include LICENSE" -f "merge $@/.rsync-filter" $(addprefix $<,/LICENSE /ggml/) $@
 
 PATCHES=$(wildcard llama/patches/*.patch)
 PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATCHES)))))
@@ -39,7 +39,15 @@ PATCHED=$(join $(dir $(PATCHES)), $(addsuffix ed, $(addprefix ., $(notdir $(PATC
 apply-patches: $(PATCHED)
 
 llama/patches/.%.patched: llama/patches/%.patch
-	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
+	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then \
+		touch $@;                                                                           \
+	else                                                                                    \
+		echo "Patch failed. Resolve any conflicts then continue.";                          \
+		echo "1. Run 'git -C $(WORKDIR) am --continue'";                                    \
+		echo "2. Run 'make -f $(lastword $(MAKEFILE_LIST)) format-patches'";                \
+		echo "3. Run 'make -f $(lastword $(MAKEFILE_LIST)) clean apply-patches'";           \
+		exit 1;                                                                             \
+	fi
 
 .PHONY: checkout
 checkout: $(WORKDIR)
@@ -49,7 +57,7 @@ checkout: $(WORKDIR)
 $(WORKDIR):
 	git clone $(UPSTREAM) $(WORKDIR)
 
-.PHONE: format-patches
+.PHONY: format-patches
 format-patches: llama/patches
 	git -C $(WORKDIR) format-patch \
 		--no-signature \
@@ -58,6 +66,11 @@ format-patches: llama/patches
 		-o $(realpath $<) \
 		$(FETCH_HEAD)
 
-.PHONE: clean
+.PHONY: clean
 clean: checkout
+	@git -C $(WORKDIR) am --abort || true
 	$(RM) llama/patches/.*.patched
+
+.PHONY: print-base
+print-base:
+	@echo $(FETCH_HEAD)

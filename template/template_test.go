@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -154,24 +155,55 @@ func TestTemplate(t *testing.T) {
 }
 
 func TestParse(t *testing.T) {
-	cases := []struct {
+	validCases := []struct {
+		name     string
 		template string
 		vars     []string
 	}{
-		{"{{ .Prompt }}", []string{"prompt", "response"}},
-		{"{{ .System }} {{ .Prompt }}", []string{"prompt", "response", "system"}},
-		{"{{ .System }} {{ .Prompt }} {{ .Response }}", []string{"prompt", "response", "system"}},
-		{"{{ with .Tools }}{{ . }}{{ end }} {{ .System }} {{ .Prompt }}", []string{"prompt", "response", "system", "tools"}},
-		{"{{ range .Messages }}{{ .Role }} {{ .Content }}{{ end }}", []string{"content", "messages", "role"}},
-		{"{{ range .Messages }}{{ if eq .Role \"tool\" }}Tool Result: {{ .ToolName }} {{ .Content }}{{ end }}{{ end }}", []string{"content", "messages", "role", "toolname"}},
-		{`{{- range .Messages }}
+		{
+			name:     "PromptOnly",
+			template: "{{ .Prompt }}",
+			vars:     []string{"prompt", "response"},
+		},
+		{
+			name:     "SystemAndPrompt",
+			template: "{{ .System }} {{ .Prompt }}",
+			vars:     []string{"prompt", "response", "system"},
+		},
+		{
+			name:     "PromptResponseSystem",
+			template: "{{ .System }} {{ .Prompt }} {{ .Response }}",
+			vars:     []string{"prompt", "response", "system"},
+		},
+		{
+			name:     "ToolsBlock",
+			template: "{{ with .Tools }}{{ . }}{{ end }} {{ .System }} {{ .Prompt }}",
+			vars:     []string{"prompt", "response", "system", "tools"},
+		},
+		{
+			name:     "MessagesRange",
+			template: "{{ range .Messages }}{{ .Role }} {{ .Content }}{{ end }}",
+			vars:     []string{"content", "messages", "role"},
+		},
+		{
+			name:     "ToolResultConditional",
+			template: "{{ range .Messages }}{{ if eq .Role \"tool\" }}Tool Result: {{ .ToolName }} {{ .Content }}{{ end }}{{ end }}",
+			vars:     []string{"content", "messages", "role", "toolname"},
+		},
+		{
+			name: "MultilineSystemUserAssistant",
+			template: `{{- range .Messages }}
 {{- if eq .Role "system" }}SYSTEM:
 {{- else if eq .Role "user" }}USER:
 {{- else if eq .Role "assistant" }}ASSISTANT:
-{{- else if eq .Role "tool" }}TOOL: 
+{{- else if eq .Role "tool" }}TOOL:
 {{- end }} {{ .Content }}
-{{- end }}`, []string{"content", "messages", "role"}},
-		{`{{- if .Messages }}
+{{- end }}`,
+			vars: []string{"content", "messages", "role"},
+		},
+		{
+			name: "ChatMLLike",
+			template: `{{- if .Messages }}
 {{- range .Messages }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
 {{ end }}<|im_start|>assistant
@@ -182,18 +214,59 @@ func TestParse(t *testing.T) {
 {{ .Prompt }}<|im_end|>
 {{ end }}<|im_start|>assistant
 {{ .Response }}<|im_end|>
-{{- end -}}`, []string{"content", "messages", "prompt", "response", "role", "system"}},
+{{- end -}}`,
+			vars: []string{"content", "messages", "prompt", "response", "role", "system"},
+		},
 	}
 
-	for _, tt := range cases {
-		t.Run("", func(t *testing.T) {
+	for _, tt := range validCases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			tmpl, err := Parse(tt.template)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("Parse returned unexpected error: %v", err)
 			}
 
-			if diff := cmp.Diff(tmpl.Vars(), tt.vars); diff != "" {
-				t.Errorf("mismatch (-got +want):\n%s", diff)
+			gotVars, err := tmpl.Vars()
+			if err != nil {
+				t.Fatalf("Vars returned unexpected error: %v", err)
+			}
+
+			if diff := cmp.Diff(gotVars, tt.vars); diff != "" {
+				t.Errorf("Vars mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseError(t *testing.T) {
+	invalidCases := []struct {
+		name     string
+		template string
+		errorStr string
+	}{
+		{
+			"TemplateNotClosed",
+			"{{ .Prompt ",
+			"unclosed action",
+		},
+		{
+			"Template",
+			`{{define "x"}}{{template "x"}}{{end}}{{template "x"}}`,
+			"undefined template specified",
+		},
+	}
+
+	for _, tt := range invalidCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.template)
+			if err == nil {
+				t.Fatalf("expected Parse to return an error for an invalid template, got nil")
+			}
+
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.errorStr)) {
+				t.Errorf("unexpected error message.\n got: %q\n want substring (case‑insensitive): %q", err.Error(), tt.errorStr)
 			}
 		})
 	}
@@ -377,6 +450,72 @@ func TestExecuteWithSuffix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDateFunctions(t *testing.T) {
+	t.Run("currentDate", func(t *testing.T) {
+		tmpl, err := Parse("{{- range .Messages }}{{ .Content }}{{ end }} Today is {{ currentDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+
+		expected := "Hello Today is " + time.Now().Format("2006-01-02")
+		if b.String() != expected {
+			t.Errorf("got %q, want %q", b.String(), expected)
+		}
+	})
+
+	t.Run("yesterdayDate", func(t *testing.T) {
+		tmpl, err := Parse("{{- range .Messages }}{{ .Content }}{{ end }} Yesterday was {{ yesterdayDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+
+		expected := "Hello Yesterday was " + time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+		if b.String() != expected {
+			t.Errorf("got %q, want %q", b.String(), expected)
+		}
+	})
+
+	t.Run("yesterdayDate format", func(t *testing.T) {
+		tmpl, err := Parse("{{- range .Messages }}{{ end }}{{ yesterdayDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify the format matches YYYY-MM-DD
+		result := b.String()
+		if len(result) != 10 {
+			t.Errorf("expected date length 10, got %d: %q", len(result), result)
+		}
+
+		// Parse and verify it's a valid date
+		parsed, err := time.Parse("2006-01-02", result)
+		if err != nil {
+			t.Errorf("failed to parse date %q: %v", result, err)
+		}
+
+		// Verify it's yesterday
+		yesterday := time.Now().AddDate(0, 0, -1)
+		if parsed.Year() != yesterday.Year() || parsed.Month() != yesterday.Month() || parsed.Day() != yesterday.Day() {
+			t.Errorf("expected yesterday's date, got %v", parsed)
+		}
+	})
 }
 
 func TestCollate(t *testing.T) {

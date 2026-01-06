@@ -14,9 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/ml"
 )
 
 func getTestTools() []api.Tool {
@@ -26,13 +26,7 @@ func getTestTools() []api.Tool {
 			Function: api.ToolFunction{
 				Name:        "get_weather",
 				Description: "Get the current weather in a given location",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"location"},
 					Properties: map[string]api.ToolProperty{
@@ -49,13 +43,7 @@ func getTestTools() []api.Tool {
 			Function: api.ToolFunction{
 				Name:        "calculate",
 				Description: "Calculate a mathematical expression",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"expression"},
 					Properties: map[string]api.ToolProperty{
@@ -268,19 +256,20 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 
 			s := Server{
 				sched: &Scheduler{
-					pendingReqCh:  make(chan *LlmRequest, 1),
-					finishedReqCh: make(chan *LlmRequest, 1),
-					expiredCh:     make(chan *runnerRef, 1),
-					unloadedCh:    make(chan any, 1),
-					loaded:        make(map[string]*runnerRef),
-					newServerFn:   newMockServer(&mock),
-					getGpuFn:      discover.GetGPUInfo,
-					getCpuFn:      discover.GetCPUInfo,
-					reschedDelay:  100 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
+					pendingReqCh:    make(chan *LlmRequest, 1),
+					finishedReqCh:   make(chan *LlmRequest, 1),
+					expiredCh:       make(chan *runnerRef, 1),
+					unloadedCh:      make(chan any, 1),
+					loaded:          make(map[string]*runnerRef),
+					newServerFn:     newMockServer(&mock),
+					getGpuFn:        getGpuFn,
+					getSystemInfoFn: getSystemInfoFn,
+					waitForRecovery: 100 * time.Millisecond,
+					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}
+						return false
 					},
 				},
 			}
@@ -418,19 +407,20 @@ func TestChatHarmonyParserStreamingSimple(t *testing.T) {
 
 	s := Server{
 		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded:        make(map[string]*runnerRef),
-			newServerFn:   newMockServer(&mock),
-			getGpuFn:      discover.GetGPUInfo,
-			getCpuFn:      discover.GetCPUInfo,
-			reschedDelay:  100 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 100 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
+				return false
 			},
 		},
 	}
@@ -599,19 +589,20 @@ func TestChatHarmonyParserStreaming(t *testing.T) {
 
 			s := Server{
 				sched: &Scheduler{
-					pendingReqCh:  make(chan *LlmRequest, 1),
-					finishedReqCh: make(chan *LlmRequest, 1),
-					expiredCh:     make(chan *runnerRef, 1),
-					unloadedCh:    make(chan any, 1),
-					loaded:        make(map[string]*runnerRef),
-					newServerFn:   newMockServer(&mock),
-					getGpuFn:      discover.GetGPUInfo,
-					getCpuFn:      discover.GetCPUInfo,
-					reschedDelay:  250 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
+					pendingReqCh:    make(chan *LlmRequest, 1),
+					finishedReqCh:   make(chan *LlmRequest, 1),
+					expiredCh:       make(chan *runnerRef, 1),
+					unloadedCh:      make(chan any, 1),
+					loaded:          make(map[string]*runnerRef),
+					newServerFn:     newMockServer(&mock),
+					getGpuFn:        getGpuFn,
+					getSystemInfoFn: getSystemInfoFn,
+					waitForRecovery: 250 * time.Millisecond,
+					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}
+						return false
 					},
 				},
 			}

@@ -2,10 +2,8 @@ package model
 
 import (
 	"cmp"
-	"context"
-	"fmt"
 	"iter"
-	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/dlclark/regexp2"
@@ -14,16 +12,28 @@ import (
 )
 
 type BytePairEncoding struct {
-	pre   *regexp2.Regexp
-	vocab *Vocabulary
+	vocab   *Vocabulary
+	regexps []*regexp2.Regexp
 }
 
 var _ TextProcessor = (*BytePairEncoding)(nil)
 
-func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
+func NewBytePairEncoding(vocab *Vocabulary, pretokenizers ...string) BytePairEncoding {
+	if len(pretokenizers) == 0 {
+		// set default byte-level pretokenizer if none provided, e.g.
+		// https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/pre_tokenizers/byte_level.rs#L44
+		pretokenizers = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
+	}
+
 	return BytePairEncoding{
-		pre:   regexp2.MustCompile(pre, regexp2.None),
 		vocab: vocab,
+		regexps: slices.Collect(func(yield func(*regexp2.Regexp) bool) {
+			for _, p := range pretokenizers {
+				if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
+					return
+				}
+			}
+		}),
 	}
 }
 
@@ -36,13 +46,36 @@ func (bpe BytePairEncoding) Is(id int32, special Special) bool {
 }
 
 func (bpe *BytePairEncoding) split(s string) iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for m, _ := bpe.pre.FindStringMatch(s); m != nil; m, _ = bpe.pre.FindNextMatch(m) {
-			if !yield(m.String()) {
-				break
+	parts := []string{s}
+	for _, re := range bpe.regexps {
+		parts = slices.Collect(func(yield func(string) bool) {
+			for _, part := range parts {
+				r := []rune(part)
+				var offset int
+				for m, _ := re.FindRunesMatch(r); m != nil; m, _ = re.FindNextMatch(m) {
+					if offset-m.Index != 0 {
+						if !yield(string(r[:m.Index])) {
+							return
+						}
+					}
+
+					if !yield(m.String()) {
+						return
+					}
+
+					offset = m.Index + m.Length
+				}
+
+				if offset < len(r) {
+					if !yield(string(r[offset:])) {
+						return
+					}
+				}
 			}
-		}
+		})
 	}
+
+	return slices.Values(parts)
 }
 
 // fragment is a string fragment and their corresponding token IDs
@@ -109,7 +142,7 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 					r = 0x0143
 				case r <= 0x0020:
 					r = r + 0x0100
-				case r >= 0x007e && r <= 0x00a0:
+				case r >= 0x007f && r <= 0x00a0:
 					r = r + 0x00a2
 				}
 
@@ -202,21 +235,12 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "string", s, "ids", ids)
-
-	if addSpecial && len(ids) > 0 {
+	if addSpecial {
 		ids = bpe.vocab.addSpecials(ids)
 	}
 
+	logutil.Trace("encoded", "string", s, "ids", ids)
 	return ids, nil
-}
-
-type lazyIdsString struct {
-	ids []int32
-}
-
-func (l lazyIdsString) LogValue() slog.Value {
-	return slog.AnyValue(fmt.Sprint(l.ids))
 }
 
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
@@ -243,6 +267,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
+	logutil.Trace("decoded", "string", sb.String(), "from", ids)
 	return sb.String(), nil
 }

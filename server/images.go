@@ -24,6 +24,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
@@ -53,7 +54,7 @@ type registryOptions struct {
 
 type Model struct {
 	Name           string `json:"name"`
-	Config         ConfigV2
+	Config         model.ConfigV2
 	ShortName      string
 	ModelPath      string
 	ParentModel    string
@@ -73,34 +74,47 @@ func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
 	// Check for completion capability
-	f, err := gguf.Open(m.ModelPath)
-	if err == nil {
-		defer f.Close()
+	if m.ModelPath != "" {
+		f, err := gguf.Open(m.ModelPath)
+		if err == nil {
+			defer f.Close()
 
-		if f.KeyValue("pooling_type").Valid() {
-			capabilities = append(capabilities, model.CapabilityEmbedding)
+			if f.KeyValue("pooling_type").Valid() {
+				capabilities = append(capabilities, model.CapabilityEmbedding)
+			} else {
+				// If no embedding is specified, we assume the model supports completion
+				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
+			if f.KeyValue("vision.block_count").Valid() {
+				capabilities = append(capabilities, model.CapabilityVision)
+			}
 		} else {
-			// If no embedding is specified, we assume the model supports completion
-			capabilities = append(capabilities, model.CapabilityCompletion)
+			slog.Error("couldn't open model file", "error", err)
 		}
-		if f.KeyValue("vision.block_count").Valid() {
-			capabilities = append(capabilities, model.CapabilityVision)
+	} else if len(m.Config.Capabilities) > 0 {
+		for _, c := range m.Config.Capabilities {
+			capabilities = append(capabilities, model.Capability(c))
 		}
 	} else {
-		slog.Error("couldn't open model file", "error", err)
+		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 
 	if m.Template == nil {
 		return capabilities
 	}
 
+	builtinParser := parsers.ParserForName(m.Config.Parser)
 	// Check for tools capability
-	if slices.Contains(m.Template.Vars(), "tools") {
+	v, err := m.Template.Vars()
+	if err != nil {
+		slog.Warn("model template contains errors", "error", err)
+	}
+	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
 		capabilities = append(capabilities, model.CapabilityTools)
 	}
 
 	// Check for insert capability
-	if slices.Contains(m.Template.Vars(), "suffix") {
+	if slices.Contains(v, "suffix") {
 		capabilities = append(capabilities, model.CapabilityInsert)
 	}
 
@@ -109,10 +123,16 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
+	// Skip the thinking check if it's already set
+	if slices.Contains(capabilities, "thinking") {
+		return capabilities
+	}
+
 	// Check for thinking capability
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	hasTags := openingTag != "" && closingTag != ""
-	if hasTags || m.Config.ModelFamily == "gptoss" {
+	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
+	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
@@ -198,6 +218,20 @@ func (m *Model) String() string {
 		})
 	}
 
+	if m.Config.Renderer != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "renderer",
+			Args: m.Config.Renderer,
+		})
+	}
+
+	if m.Config.Parser != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "parser",
+			Args: m.Config.Parser,
+		})
+	}
+
 	for k, v := range m.Options {
 		switch v := v.(type) {
 		case []any:
@@ -230,24 +264,6 @@ func (m *Model) String() string {
 	}
 
 	return modelfile.String()
-}
-
-type ConfigV2 struct {
-	ModelFormat   string   `json:"model_format"`
-	ModelFamily   string   `json:"model_family"`
-	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"`
-	FileType      string   `json:"file_type"`
-
-	// required by spec
-	Architecture string `json:"architecture"`
-	OS           string `json:"os"`
-	RootFS       RootFS `json:"rootfs"`
-}
-
-type RootFS struct {
-	Type    string   `json:"type"`
-	DiffIDs []string `json:"diff_ids"`
 }
 
 func GetManifest(mp ModelPath) (*Manifest, string, error) {

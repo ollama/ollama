@@ -2,12 +2,19 @@
 
 #pragma once
 
+#include "ggml-opt.h"
 #include "llama-cpp.h"
 
 #include <set>
-#include <string>
-#include <vector>
 #include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <map>
+
+#if defined(_WIN32) && !defined(_WIN32_WINNT)
+#define _WIN32_WINNT 0x0A00
+#endif
 
 #ifdef _WIN32
 #define DIRECTORY_SEPARATOR '\\'
@@ -23,11 +30,21 @@
     fprintf(stderr, "%s: built with %s for %s\n", __func__, LLAMA_COMPILER, LLAMA_BUILD_TARGET);    \
 } while(0)
 
-#define DEFAULT_MODEL_PATH "models/7B/ggml-model-f16.gguf"
+struct common_time_meas {
+    common_time_meas(int64_t & t_acc, bool disable = false);
+    ~common_time_meas();
+
+    const int64_t t_start_us;
+
+    int64_t & t_acc;
+};
 
 struct common_adapter_lora_info {
     std::string path;
     float scale;
+
+    std::string task_name;
+    std::string prompt_prefix;
 
     struct llama_adapter_lora * ptr;
 };
@@ -65,7 +82,8 @@ int32_t cpu_get_num_math();
 enum llama_example {
     LLAMA_EXAMPLE_COMMON,
     LLAMA_EXAMPLE_SPECULATIVE,
-    LLAMA_EXAMPLE_MAIN,
+    LLAMA_EXAMPLE_COMPLETION,
+    LLAMA_EXAMPLE_CLI,
     LLAMA_EXAMPLE_EMBEDDING,
     LLAMA_EXAMPLE_PERPLEXITY,
     LLAMA_EXAMPLE_RETRIEVAL,
@@ -75,10 +93,13 @@ enum llama_example {
     LLAMA_EXAMPLE_SERVER,
     LLAMA_EXAMPLE_CVECTOR_GENERATOR,
     LLAMA_EXAMPLE_EXPORT_LORA,
-    LLAMA_EXAMPLE_LLAVA,
+    LLAMA_EXAMPLE_MTMD,
     LLAMA_EXAMPLE_LOOKUP,
     LLAMA_EXAMPLE_PARALLEL,
     LLAMA_EXAMPLE_TTS,
+    LLAMA_EXAMPLE_DIFFUSION,
+    LLAMA_EXAMPLE_FINETUNE,
+    LLAMA_EXAMPLE_FIT_PARAMS,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -114,7 +135,7 @@ enum common_grammar_trigger_type {
     COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN,
     COMMON_GRAMMAR_TRIGGER_TYPE_WORD,
     COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN,
-    COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_START,
+    COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_FULL,
 };
 
 struct common_grammar_trigger {
@@ -122,6 +143,22 @@ struct common_grammar_trigger {
     std::string value;
     llama_token token = LLAMA_TOKEN_NULL;
 };
+
+enum common_params_sampling_config : uint64_t {
+    COMMON_PARAMS_SAMPLING_CONFIG_SAMPLERS        = 1 << 0,
+    COMMON_PARAMS_SAMPLING_CONFIG_TOP_K           = 1 << 1,
+    COMMON_PARAMS_SAMPLING_CONFIG_TOP_P           = 1 << 2,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIN_P           = 1 << 3,
+    COMMON_PARAMS_SAMPLING_CONFIG_XTC_PROBABILITY = 1 << 4,
+    COMMON_PARAMS_SAMPLING_CONFIG_XTC_THRESHOLD   = 1 << 5,
+    COMMON_PARAMS_SAMPLING_CONFIG_TEMP            = 1 << 6,
+    COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_LAST_N  = 1 << 7,
+    COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_REPEAT  = 1 << 8,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT        = 1 << 9,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_TAU    = 1 << 10,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_ETA    = 1 << 11,
+};
+
 
 // sampling parameters
 struct common_params_sampling {
@@ -155,8 +192,9 @@ struct common_params_sampling {
     bool    no_perf            = false; // disable performance metrics
     bool    timing_per_token   = false;
 
-    std::vector<std::string> dry_sequence_breakers = {"\n", ":", "\"", "*"};     // default sequence breakers for DRY
+    uint64_t user_sampling_config = 0; // bitfield to track user-specified samplers
 
+    std::vector<std::string> dry_sequence_breakers = {"\n", ":", "\"", "*"};     // default sequence breakers for DRY
 
     std::vector<enum common_sampler_type> samplers = {
         COMMON_SAMPLER_TYPE_PENALTIES,
@@ -175,17 +213,24 @@ struct common_params_sampling {
     std::vector<common_grammar_trigger> grammar_triggers; // optional triggers (for lazy grammars)
     std::set<llama_token>               preserved_tokens;
 
-    std::vector<llama_logit_bias> logit_bias; // logit biases to apply
+    std::vector<llama_logit_bias> logit_bias;     // logit biases to apply
+    std::vector<llama_logit_bias> logit_bias_eog; // pre-calculated logit biases for EOG tokens
+
+    bool has_logit_bias() const {
+        return !logit_bias.empty();
+    }
 
     // print the parameters into a string
     std::string print() const;
 };
 
 struct common_params_model {
-    std::string path    = ""; // model local path                                           // NOLINT
-    std::string url     = ""; // model url to download                                      // NOLINT
-    std::string hf_repo = ""; // HF repo                                                    // NOLINT
-    std::string hf_file = ""; // HF file                                                    // NOLINT
+    std::string path        = ""; // model local path                                       // NOLINT
+    std::string url         = ""; // model url to download                                  // NOLINT
+    std::string hf_repo     = ""; // HF repo                                                // NOLINT
+    std::string hf_file     = ""; // HF file                                                // NOLINT
+    std::string docker_repo = ""; // Docker repo                                            // NOLINT
+    std::string name        = ""; // in format <user>/<model>[:<tag>] (tag is optional)     // NOLINT
 };
 
 struct common_params_speculative {
@@ -197,6 +242,11 @@ struct common_params_speculative {
     int32_t n_gpu_layers =    -1; // number of layers to store in VRAM for the draft model (-1 - use default)
     float   p_split      =  0.1f; // speculative decoding split probability
     float   p_min        = 0.75f; // minimum speculative decoding probability (greedy)
+    std::vector<std::pair<std::string, std::string>> replacements; // main to speculative model replacements
+    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
+
+    ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
+    ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
 
     struct cpu_params cpuparams;
     struct cpu_params cpuparams_batch;
@@ -212,14 +262,53 @@ struct common_params_vocoder {
     bool use_guide_tokens = false; // enable guide tokens to improve TTS accuracy            // NOLINT
 };
 
-enum common_reasoning_format {
-    COMMON_REASONING_FORMAT_NONE,
-    COMMON_REASONING_FORMAT_DEEPSEEK, // Extract thinking tag contents and return as `message.reasoning_content`
+struct common_params_diffusion {
+    int32_t steps         = 128;
+    bool    visual_mode   = false;
+
+    float   eps           = 0;        // epsilon for timesteps
+    int32_t block_length  = 0;        // block length for generation
+
+    int32_t algorithm     = 4;        // default algorithm: low-confidence
+    float   alg_temp      = 0.0f;     // algorithm temperature
+
+    float   cfg_scale     = 0;        // classifier-free guidance scale
+    bool    add_gumbel_noise = false; // add gumbel noise to the logits if temp > 0.0
 };
 
+// reasoning API response format (not to be confused as chat template's reasoning format)
+enum common_reasoning_format {
+    COMMON_REASONING_FORMAT_NONE,
+    COMMON_REASONING_FORMAT_AUTO,            // Same as deepseek, using `message.reasoning_content`
+    COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY, // Extract thinking tag contents and return as `message.reasoning_content`, or leave inline in <think> tags in stream mode
+    COMMON_REASONING_FORMAT_DEEPSEEK,        // Extract thinking tag contents and return as `message.reasoning_content`, including in streaming deltas.
+    // do not extend this enum unless you absolutely have to
+    // in most cases, use COMMON_REASONING_FORMAT_AUTO
+    // see: https://github.com/ggml-org/llama.cpp/pull/15408
+};
+
+
+struct lr_opt {
+    float    lr0          = 1e-5; // learning rate at first epoch
+    float    lr_min       = -1;
+    float    decay_epochs = -1;   // if >0, the learning rate starts at lr0 and decays to lr_min after this many epochs
+    float    scale_epoch  = 0;
+    float    wd           = 0;
+    unsigned epochs       = 2;
+
+    unsigned epoch; // set by optimizer outer (epochs) loop
+    // learning rate decay - constant LR per epoch only for now
+    float get_lr(float e) const;
+    float get_lr() const { return get_lr(epoch); }
+    // must call after arg parse, before get_lr
+    void init();
+};
+
+struct ggml_opt_optimizer_params common_opt_lr_pars(void * userdata);
+
 struct common_params {
-    int32_t n_predict             =    -1; // new tokens to predict
-    int32_t n_ctx                 =  4096; // context size
+    int32_t n_predict             =    -1; // max. number of new tokens to predict, -1 == no limit
+    int32_t n_ctx                 =     0; // context size, 0 == context the model was trained with
     int32_t n_batch               =  2048; // logical batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_ubatch              =   512; // physical batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_keep                =     0; // number of tokens to keep from initial prompt
@@ -232,18 +321,20 @@ struct common_params {
     float   rope_freq_base        =  0.0f; // RoPE base frequency
     float   rope_freq_scale       =  0.0f; // RoPE frequency scaling factor
     float   yarn_ext_factor       = -1.0f; // YaRN extrapolation mix factor
-    float   yarn_attn_factor      =  1.0f; // YaRN magnitude scaling factor
-    float   yarn_beta_fast        = 32.0f; // YaRN low correction dim
-    float   yarn_beta_slow        =  1.0f; // YaRN high correction dim
+    float   yarn_attn_factor      = -1.0f; // YaRN magnitude scaling factor
+    float   yarn_beta_fast        = -1.0f; // YaRN low correction dim
+    float   yarn_beta_slow        = -1.0f; // YaRN high correction dim
     int32_t yarn_orig_ctx         =     0; // YaRN original context length
-    float   defrag_thold          =  0.1f; // KV cache defragmentation threshold
 
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
 
-    int32_t n_gpu_layers      = -1;  // number of layers to store in VRAM (-1 - use default)
-    int32_t main_gpu          = 0;   // the GPU that is used for scratch and small tensors
-    float   tensor_split[128] = {0}; // how split tensors should be distributed across GPUs
+    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM (-1 - use default)
+    int32_t main_gpu           = 0;                // the GPU that is used for scratch and small tensors
+    float   tensor_split[128]  = {0};              // how split tensors should be distributed across GPUs
+    bool    fit_params         = true;             // whether to fit unset model/context parameters to free device memory
+    size_t  fit_params_target  = 1024 * 1024*1024; // margin per device in bytes for fitting parameters to free memory
+    int32_t fit_params_min_ctx = 4096;             // minimum context size to set when trying to reduce memory use
 
     enum llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER; // how to split the model across GPUs
 
@@ -258,10 +349,12 @@ struct common_params {
     enum llama_rope_scaling_type rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED;
     enum llama_pooling_type      pooling_type      = LLAMA_POOLING_TYPE_UNSPECIFIED; // pooling type for embeddings
     enum llama_attention_type    attention_type    = LLAMA_ATTENTION_TYPE_UNSPECIFIED; // attention type for embeddings
+    enum llama_flash_attn_type   flash_attn_type   = LLAMA_FLASH_ATTN_TYPE_AUTO; // whether to use Flash Attention
 
     struct common_params_sampling    sampling;
     struct common_params_speculative speculative;
     struct common_params_vocoder     vocoder;
+    struct common_params_diffusion   diffusion;
 
     struct common_params_model model;
 
@@ -287,9 +380,10 @@ struct common_params {
 
     std::vector<common_control_vector_load_info> control_vectors; // control vector with user defined scale
 
-    int32_t verbosity                  = 0;
+    int32_t verbosity                  = 3;  // LOG_LEVEL_INFO
     int32_t control_vector_layer_start = -1; // layer range for control vector
     int32_t control_vector_layer_end   = -1; // layer range for control vector
+    bool    offline                    = false;
 
     int32_t ppl_stride      = 0;     // stride for perplexity calculations. If left at 0, the pre-existing approach will be used.
     int32_t ppl_output_type = 0;     // = 0 -> ppl output is as usual, = 1 -> ppl output is num_tokens, ppl, one per line
@@ -319,20 +413,23 @@ struct common_params {
     bool multiline_input   = false; // reverse the usage of `\`
     bool simple_io         = false; // improves compatibility with subprocesses and limited consoles
     bool cont_batching     = true;  // insert new sequences for decoding on-the-fly
-    bool flash_attn        = false; // flash attention
     bool no_perf           = false; // disable performance metrics
-    bool ctx_shift         = true;  // context shift on inifinite text generation
+    bool show_timings      = true;  // show timing information on CLI
+    bool ctx_shift         = false; // context shift on infinite text generation
+    bool swa_full          = false; // use full-size SWA cache (https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
+    bool kv_unified        = false; // enable unified KV cache
 
     bool input_prefix_bos  = false; // prefix BOS to user inputs, preceding input_prefix
     bool use_mmap          = true;  // use mmap for faster loads
     bool use_mlock         = false; // use mlock to keep model in memory
     bool verbose_prompt    = false; // print prompt tokens before generation
     bool display_prompt    = true;  // print prompt before generation
-    bool dump_kv_cache     = false; // dump the KV cache contents for debugging purposes
     bool no_kv_offload     = false; // disable KV offloading
     bool warmup            = true;  // warmup run
     bool check_tensors     = false; // validate tensor data
     bool no_op_offload     = false; // globally disable offload host tensor operations to device
+    bool no_extra_bufts    = false; // disable extra buffer types (used for weight repacking)
+    bool no_host           = false; // bypass host buffer allowing extra buffers to be used
 
     bool single_turn       = false; // single turn chat conversation
 
@@ -346,47 +443,69 @@ struct common_params {
     bool mmproj_use_gpu = true;     // use GPU for multimodal model
     bool no_mmproj = false;         // explicitly disable multimodal model
     std::vector<std::string> image; // path to image file(s)
+    int image_min_tokens = -1;
+    int image_max_tokens = -1;
+
+    // finetune
+    struct lr_opt lr;
+    enum ggml_opt_optimizer_type optimizer = GGML_OPT_OPTIMIZER_TYPE_ADAMW;
+    float val_split = 0.05f; // fraction of the data used for the validation set
 
     // embedding
     bool embedding         = false; // get only sentence embedding
     int32_t embd_normalize = 2;     // normalisation for embeddings (-1=none, 0=max absolute int16, 1=taxicab, 2=euclidean, >2=p-norm)
     std::string embd_out   = "";    // empty = default, "array" = [[],[]...], "json" = openai style, "json+" = same "json" + cosine similarity matrix
     std::string embd_sep   = "\n";  // separator of embeddings
-    bool reranking         = false; // enable reranking support on server
+    std::string cls_sep    = "\t";  // separator of classification sequences
 
     // server params
-    int32_t port           = 8080;         // server listens on this network port
-    int32_t timeout_read   = 600;          // http read timeout in seconds
-    int32_t timeout_write  = timeout_read; // http write timeout in seconds
-    int32_t n_threads_http = -1;           // number of threads to process HTTP requests (TODO: support threadpool)
-    int32_t n_cache_reuse  = 0;            // min chunk size to reuse from the cache via KV shifting
+    int32_t port              = 8080;         // server listens on this network port
+    int32_t timeout_read      = 600;          // http read timeout in seconds
+    int32_t timeout_write     = timeout_read; // http write timeout in seconds
+    int32_t n_threads_http    = -1;           // number of threads to process HTTP requests (TODO: support threadpool)
+    int32_t n_cache_reuse     = 0;            // min chunk size to reuse from the cache via KV shifting
+    int32_t n_ctx_checkpoints = 8;            // max number of context checkpoints per slot
+    int32_t cache_ram_mib     = 8192;         // -1 = no limit, 0 - disable, 1 = 1 MiB, etc.
 
     std::string hostname      = "127.0.0.1";
     std::string public_path   = "";                                                                         // NOLINT
+    std::string api_prefix    = "";                                                                         // NOLINT
     std::string chat_template = "";                                                                         // NOLINT
-    bool use_jinja = false;                                                                                 // NOLINT
+    bool use_jinja = true;                                                                                  // NOLINT
     bool enable_chat_template = true;
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
+    int reasoning_budget = -1;
+    bool prefill_assistant = true;                                                                          // if true, any trailing assistant message will be prefilled into the response
 
     std::vector<std::string> api_keys;
 
     std::string ssl_file_key  = "";                                                                         // NOLINT
     std::string ssl_file_cert = "";                                                                         // NOLINT
 
+    std::map<std::string, std::string> default_template_kwargs;
+
     // "advanced" endpoints are disabled by default for better security
     bool webui            = true;
-    bool endpoint_slots   = false;
+    bool endpoint_slots   = true;
     bool endpoint_props   = false; // only control POST requests, not GET
     bool endpoint_metrics = false;
+
+    // router server configs
+    std::string models_dir    = ""; // directory containing models for the router server
+    std::string models_preset = ""; // directory containing model presets for the router server
+    int models_max = 4;             // maximum number of models to load simultaneously
+    bool models_autoload = true;    // automatically load models when requested via the router server
 
     bool log_json = false;
 
     std::string slot_save_path;
+    std::string media_path; // path to directory for loading media files
 
-    float slot_prompt_similarity = 0.5f;
+    float slot_prompt_similarity = 0.1f;
 
     // batched-bench params
-    bool is_pp_shared = false;
+    bool is_pp_shared   = false;
+    bool is_tg_separate = false;
 
     std::vector<int32_t> n_pp;
     std::vector<int32_t> n_tg;
@@ -407,10 +526,12 @@ struct common_params {
     int32_t n_out_freq  = 10; // output the imatrix every n_out_freq iterations
     int32_t n_save_freq =  0; // save the imatrix every n_save_freq iterations
     int32_t i_chunk     =  0; // start processing from this chunk
+    int8_t  imat_dat    =  0; // whether the legacy imatrix.dat format should be output (gguf <= 0 < dat)
 
-    bool process_output = false; // collect data for the output tensor
-    bool compute_ppl    = true;  // whether to compute perplexity
-    bool parse_special  = false; // whether to parse special tokens during imatrix tokenization
+    bool process_output  = false; // collect data for the output tensor
+    bool compute_ppl     = true;  // whether to compute perplexity
+    bool show_statistics = false; // show imatrix statistics per tensor
+    bool parse_special   = false; // whether to parse special tokens during imatrix tokenization
 
     // cvector-generator params
     int n_pca_batch = 100;
@@ -426,6 +547,15 @@ struct common_params {
 
     // common params
     std::string out_file; // output filename for all example programs
+    // optional callback for model loading progress and cancellation:
+    // called with a progress value between 0.0 and 1.0.
+    // return false from callback to abort model loading or true to continue
+    llama_progress_callback load_progress_callback = NULL;
+    void *                  load_progress_callback_user_data = NULL;
+
+    bool has_speculative() const {
+        return !speculative.model.path.empty() || !speculative.model.hf_repo.empty();
+    }
 };
 
 // call once at the start of a program if it uses libcommon
@@ -503,10 +633,10 @@ static bool string_starts_with(const std::string & str,
     return str.rfind(prefix, 0) == 0;
 }
 
-static bool string_ends_with(const std::string & str,
-                               const std::string & suffix) {  // While we wait for C++20's std::string::ends_with...
-    return str.size() >= suffix.size() && str.compare(str.size()-suffix.size(), suffix.size(), suffix) == 0;
-}
+// While we wait for C++20's std::string::ends_with...
+bool string_ends_with(const std::string_view & str, const std::string_view & suffix);
+bool string_remove_suffix(std::string & str, const std::string_view & suffix);
+size_t string_find_partial_stop(const std::string_view & str, const std::string_view & stop);
 
 bool string_parse_kv_override(const char * data, std::vector<llama_model_kv_override> & overrides);
 void string_process_escapes(std::string & input);
@@ -520,25 +650,55 @@ std::string string_from(const struct llama_context * ctx, const struct llama_bat
 // Filesystem utils
 //
 
-bool fs_validate_filename(const std::string & filename);
+bool fs_validate_filename(const std::string & filename, bool allow_subdirs = false);
 bool fs_create_directory_with_parents(const std::string & path);
+bool fs_is_directory(const std::string & path);
 
 std::string fs_get_cache_directory();
 std::string fs_get_cache_file(const std::string & filename);
+
+struct common_file_info {
+    std::string path;
+    std::string name;
+    size_t      size = 0; // in bytes
+    bool        is_dir = false;
+};
+std::vector<common_file_info> fs_list(const std::string & path, bool include_directories);
+
+//
+// TTY utils
+//
+
+// Auto-detect if colors can be enabled based on terminal and environment
+bool tty_can_use_colors();
 
 //
 // Model utils
 //
 
-// note: defines object's lifetime
-struct common_init_result {
-    llama_model_ptr   model;
-    llama_context_ptr context;
+struct common_sampler;
 
-    std::vector<llama_adapter_lora_ptr> lora;
+// note: defines the model, context, samplers, ets. lifetimes
+struct common_init_result {
+    common_init_result(common_params & params);
+    ~common_init_result();
+
+    llama_model * model();
+    llama_context * context();
+    common_sampler * sampler(llama_seq_id seq_id);
+
+    std::vector<llama_adapter_lora_ptr> & lora();
+
+    void free_context();
+
+private:
+    struct impl;
+    std::unique_ptr<impl> pimpl;
 };
 
-struct common_init_result     common_init_from_params(common_params & params);
+using common_init_result_ptr = std::unique_ptr<common_init_result>;
+
+common_init_result_ptr common_init_from_params(common_params & params);
 
 struct llama_model_params     common_model_params_to_llama  (      common_params & params);
 struct llama_context_params   common_context_params_to_llama(const common_params & params);
@@ -616,16 +776,6 @@ std::string common_detokenize(
                                   bool   special = true);
 
 //
-// KV cache utils
-//
-
-// Dump the KV cache view with the number of sequences per cell.
-void common_kv_cache_dump_view(const llama_kv_cache_view & view, int row_size = 80);
-
-// Dump the KV cache view showing individual sequences in each cell (long output).
-void common_kv_cache_dump_view_seqs(const llama_kv_cache_view & view, int row_size = 40);
-
-//
 // Embedding utils
 //
 
@@ -668,7 +818,24 @@ const char * const LLM_KV_SPLIT_TENSORS_COUNT = "split.tensors.count";
 }
 
 //
+// MoE utils
+//
+
+const char * const LLM_FFN_EXPS_REGEX = "\\.ffn_(up|down|gate)_(ch|)exps";
+
+static std::string llm_ffn_exps_block_regex(int idx) {
+    return string_format("blk\\.%d%s", idx, LLM_FFN_EXPS_REGEX);
+}
+
+static llama_model_tensor_buft_override llm_ffn_exps_cpu_override() {
+    return { LLM_FFN_EXPS_REGEX, ggml_backend_cpu_buffer_type() };
+}
+
+//
 // training utils
 //
 
 ggml_opt_dataset_t common_opt_dataset_init(struct llama_context * ctx, const std::vector<llama_token> & tokens, int64_t stride);
+
+// "adamw" or "sgd" (case insensitive)
+enum ggml_opt_optimizer_type common_opt_get_optimizer(const char *);

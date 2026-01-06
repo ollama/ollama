@@ -19,8 +19,8 @@ type ImageProcessor struct {
 	maxPixels         int
 	factor            int
 	rescaleFactor     float32
-	imageMean         []float32
-	imageStd          []float32
+	imageMean         [3]float32
+	imageStd          [3]float32
 }
 
 // newImageProcessor creates a new image processor with default values
@@ -34,11 +34,11 @@ func newImageProcessor(c fs.Config) ImageProcessor {
 		temporalPatchSize: 2,
 		mergeSize:         mergeSize,
 		minPixels:         56 * 56,
-		maxPixels:         int(c.Uint("vision.max_pixels", 28*28*1280)), // 1MP limit
+		maxPixels:         int(c.Uint("vision.max_pixels", 2<<20)), // 2M limit
 		factor:            patchSize * mergeSize,
 		rescaleFactor:     1.0 / 255.0,
-		imageMean:         imageproc.ClipDefaultMean[:],
-		imageStd:          imageproc.ClipDefaultSTD[:],
+		imageMean:         imageproc.ClipDefaultMean,
+		imageStd:          imageproc.ClipDefaultSTD,
 	}
 }
 
@@ -79,6 +79,8 @@ type Grid struct {
 }
 
 func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error) {
+	img = imageproc.Composite(img)
+
 	origWidth := img.Bounds().Dx()
 	origHeight := img.Bounds().Dy()
 
@@ -88,13 +90,7 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error)
 	// Resize image using existing functions
 	resizedImg := imageproc.Resize(img, image.Point{X: resizedWidth, Y: resizedHeight}, imageproc.ResizeBilinear)
 
-	normalizedPixels := imageproc.Normalize(
-		resizedImg,
-		[3]float32{p.imageMean[0], p.imageMean[1], p.imageMean[2]},
-		[3]float32{p.imageStd[0], p.imageStd[1], p.imageStd[2]},
-		true, // rescale
-		true, // channelFirst
-	)
+	normalizedPixels := imageproc.Normalize(resizedImg, p.imageMean, p.imageStd, true, true)
 
 	// Calculate grid dimensions
 	grid := &Grid{

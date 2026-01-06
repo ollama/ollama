@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Fri, 11 Jul 2025 15:59:19 -0600
+Subject: [PATCH] no power throttling win32 with gnuc
+
+---
+ ggml/src/ggml-cpu/ggml-cpu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 53891a91f..8d4851312 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2479,7 +2479,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
+         // Newer Windows 11 versions aggresively park (offline) CPU cores and often place
+         // all our threads onto the first 4 cores which results in terrible performance with
+         // n_threads > 4
+-        #if _WIN32_WINNT >= 0x0602
++        #if (_WIN32_WINNT >= 0x0602) && !defined(__GNUC__)
+         THREAD_POWER_THROTTLING_STATE t;
+         ZeroMemory(&t, sizeof(t));
+         t.Version     = THREAD_POWER_THROTTLING_CURRENT_VERSION;

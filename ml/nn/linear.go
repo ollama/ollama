@@ -24,16 +24,7 @@ type LinearBatch struct {
 func (m *LinearBatch) Forward(ctx ml.Context, t, indices ml.Tensor) ml.Tensor {
 	t = m.Weight.MulmatID(ctx, t, indices)
 	if m.Bias != nil {
-		var bias ml.Tensor
-		if len(indices.Shape()) > 1 {
-			// FIXME: Rows does not support 2D indices for a 2D input tensor so reshape indices to 1D.
-			bias = m.Bias.Rows(ctx, indices.Contiguous(ctx, indices.Dim(0)*indices.Dim(1))).
-				Duplicate(ctx).
-				Reshape(ctx, m.Bias.Dim(0), indices.Dim(0), indices.Dim(1))
-		} else {
-			bias = m.Bias.Rows(ctx, indices)
-		}
-		t = t.Add(ctx, bias)
+		t = t.AddID(ctx, m.Bias, indices)
 	}
 
 	return t

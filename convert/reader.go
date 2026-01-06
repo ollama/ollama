@@ -33,17 +33,21 @@ func (t tensorBase) Shape() []uint64 {
 const (
 	tensorKindFP32 uint32 = iota
 	tensorKindFP16
-	tensorKindMXFP4 = 4
 	tensorKindBF16  = 30
+	tensorKindMXFP4 = 39
 )
 
 func (t tensorBase) Kind() uint32 {
 	if strings.HasSuffix(t.name, ".ffn_gate_inp.weight") ||
+		strings.HasSuffix(t.name, ".bias") ||
 		t.name == "token_types.weight" ||
 		t.name == "v.positional_embedding_vlm" ||
 		t.name == "v.tile_position_embd.weight" ||
 		t.name == "v.pre_tile_position_embd.weight" ||
-		t.name == "v.post_tile_position_embd.weight" {
+		t.name == "v.post_tile_position_embd.weight" ||
+		t.name == "s.position_embd" ||
+		strings.HasSuffix(t.name, "rel_pos_h") ||
+		strings.HasSuffix(t.name, "rel_pos_w") {
 		// these tensors are always F32
 		return tensorKindFP32
 	}

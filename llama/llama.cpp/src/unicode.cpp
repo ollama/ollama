@@ -224,12 +224,17 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
     // disable C++17 deprecation warning for std::codecvt_utf8
 #    pragma clang diagnostic push
 #    pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(__GNUC__)
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
     std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
 
 #if defined(__clang__)
 #    pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#    pragma GCC diagnostic pop
 #endif
 
     return conv.from_bytes(s);
@@ -515,7 +520,7 @@ static std::vector<size_t> unicode_regex_split_custom_llama3(const std::string &
 
 // use std::wregex to split the text
 static std::vector<size_t> unicode_regex_split_stl(const std::wstring & wtext, const std::wstring & regex_expr, const std::vector<size_t> & offsets) {
-    std::wregex expr(regex_expr);
+    std::wregex expr(regex_expr, std::regex_constants::optimize | std::regex_constants::nosubs);
     std::vector<size_t> bpe_offsets; // store the offset of each word
     bpe_offsets.reserve(offsets.size()); // Reserve memory for the approximate size
     size_t start = 0;
@@ -545,7 +550,7 @@ static std::vector<size_t> unicode_regex_split_stl(const std::wstring & wtext, c
 
 // use std::regex to split the text
 static std::vector<size_t> unicode_regex_split_stl(const std::string & text, const std::string & regex_expr, const std::vector<size_t> & offsets) {
-    std::regex expr(regex_expr);
+    std::regex expr(regex_expr, std::regex_constants::optimize | std::regex_constants::nosubs);
     std::vector<size_t> bpe_offsets; // store the offset of each word
     bpe_offsets.reserve(offsets.size()); // Reserve memory for the approximate size
     size_t start = 0;
@@ -573,6 +578,252 @@ static std::vector<size_t> unicode_regex_split_stl(const std::string & text, con
     return bpe_offsets;
 }
 
+// K2 system regex patterns (from tokenization_kimi.py):
+// [\p{Han}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+
+static std::vector<size_t> unicode_regex_split_custom_kimi_k2(const std::string & text, const std::vector<size_t> & offsets) {
+    std::vector<size_t> bpe_offsets;
+    bpe_offsets.reserve(offsets.size());
+
+    const auto cpts = unicode_cpts_from_utf8(text);
+
+    size_t start = 0;
+    for (auto offset : offsets) {
+        const size_t offset_ini = start;
+        const size_t offset_end = start + offset;
+        assert(offset_end <= cpts.size());
+        start = offset_end;
+
+        static const uint32_t OUT_OF_RANGE = 0xFFFFFFFF;
+        auto _get_cpt = [&] (const size_t pos) -> uint32_t {
+            return (offset_ini <= pos && pos < offset_end) ? cpts[pos] : OUT_OF_RANGE;
+        };
+
+        auto _get_flags = [&] (const size_t pos) -> unicode_cpt_flags {
+            return (offset_ini <= pos && pos < offset_end) ? unicode_cpt_flags_from_cpt(cpts[pos]) : unicode_cpt_flags{};
+        };
+
+        size_t _prev_end = offset_ini;
+        auto _add_token = [&] (const size_t end) -> size_t {
+            assert(_prev_end <= end && end <= offset_end);
+            size_t len = end - _prev_end;
+            if (len > 0) {
+                bpe_offsets.push_back(len);
+            }
+            _prev_end = end;
+            return len;
+        };
+
+        for (size_t pos = offset_ini; pos < offset_end; /*pos++*/ ) {
+            const uint32_t cpt = _get_cpt(pos);
+            const auto flags = _get_flags(pos);
+
+            // Pattern 1: [\p{Han}]+ (Chinese characters)
+            if (unicode_cpt_is_han(cpt)) {
+                while (unicode_cpt_is_han(_get_cpt(pos))) {
+                    pos++;
+                }
+                _add_token(pos);
+                continue;
+            }
+
+            // Pattern 2 & 3: Letter words excluding Han characters with optional contractions
+            // [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+(?:'s|'t|'re|'ve|'m|'ll|'d)?
+            // [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*(?:'s|'t|'re|'ve|'m|'ll|'d)?
+            // Check if current char is a letter OR if current char could be a leading char and next char is a letter
+            bool is_letter_pattern = (flags.is_letter && !unicode_cpt_is_han(cpt)) ||
+                                     (!(cpt == '\r' || cpt == '\n' || flags.is_letter || flags.is_number) &&
+                                      _get_flags(pos + 1).is_letter && !unicode_cpt_is_han(_get_cpt(pos + 1)));
+
+            if (is_letter_pattern) {
+                // Handle optional leading non-letter/non-number character
+                bool has_leading_char = false;
+                if (!(cpt == '\r' || cpt == '\n' || flags.is_letter || flags.is_number)) {
+                    has_leading_char = true;
+                    pos++;
+                }
+
+                // Match letter sequence (excluding Han characters)
+                bool has_letters = false;
+                while (_get_flags(pos).is_letter && !unicode_cpt_is_han(_get_cpt(pos))) {
+                    has_letters = true;
+                    pos++;
+                }
+
+                // Only proceed if we found letters (after potentially skipping leading char)
+                if (has_letters || (!has_leading_char && _get_flags(pos).is_letter && !unicode_cpt_is_han(_get_cpt(pos)))) {
+                    if (!has_letters) pos++; // consume the first letter if we didn't already
+
+                    // Continue consuming letters
+                    while (_get_flags(pos).is_letter && !unicode_cpt_is_han(_get_cpt(pos))) {
+                        pos++;
+                    }
+
+                    // Check for optional contractions (?:'s|'t|'re|'ve|'m|'ll|'d)
+                    if (_get_cpt(pos) == '\'' && pos + 1 < offset_end) {
+                        uint32_t cpt_next = unicode_tolower(_get_cpt(pos + 1));
+                        if (cpt_next == 's' || cpt_next == 't' || cpt_next == 'm' || cpt_next == 'd') {
+                            pos += 2;
+                        } else if (pos + 2 < offset_end) {
+                            uint32_t cpt_next_next = unicode_tolower(_get_cpt(pos + 2));
+                            if ((cpt_next == 'r' && cpt_next_next == 'e') ||
+                                (cpt_next == 'v' && cpt_next_next == 'e') ||
+                                (cpt_next == 'l' && cpt_next_next == 'l')) {
+                                pos += 3;
+                            }
+                        }
+                    }
+
+                    _add_token(pos);
+                    continue;
+                } else if (has_leading_char) {
+                    // We consumed a leading char but found no letters, backtrack
+                    pos--;
+                }
+            }
+
+            // Pattern 4: \p{N}{1,3} (numbers 1-3 digits)
+            if (flags.is_number) {
+                size_t ini = pos;
+                while (_get_flags(pos).is_number) {
+                    if (++pos - ini >= 3) {
+                        _add_token(pos);
+                        ini = pos;
+                    }
+                }
+                _add_token(pos);
+                continue;
+            }
+
+            // Pattern 5:  ?[^\s\p{L}\p{N}]+[\r\n]* (optional space + non-word chars + optional newlines)
+            auto flags2 = (cpt == ' ' ? _get_flags(pos + 1) : flags);
+            if (!(flags2.is_whitespace || flags2.is_letter || flags2.is_number) && flags2.as_uint()) {
+                pos += (cpt == ' ');
+                while (!(flags2.is_whitespace || flags2.is_letter || flags2.is_number) && flags2.as_uint()) {
+                    flags2 = _get_flags(++pos);
+                }
+                // Match optional [\r\n]*
+                uint32_t cpt2 = _get_cpt(pos);
+                while (cpt2 == '\r' || cpt2 == '\n') {
+                    cpt2 = _get_cpt(++pos);
+                }
+                _add_token(pos);
+                continue;
+            }
+
+            // Count whitespace characters
+            size_t num_whitespaces = 0;
+            size_t last_end_r_or_n = 0;
+            while (_get_flags(pos + num_whitespaces).is_whitespace) {
+                uint32_t cpt2 = _get_cpt(pos + num_whitespaces);
+                if (cpt2 == '\r' || cpt2 == '\n') {
+                    last_end_r_or_n = pos + num_whitespaces + 1;
+                }
+                num_whitespaces++;
+            }
+
+            // Pattern 6: \s*[\r\n]+ (whitespace with newlines)
+            if (last_end_r_or_n > 0) {
+                pos = last_end_r_or_n;
+                _add_token(pos);
+                continue;
+            }
+
+            // Pattern 7: \s+(?!\S) (trailing whitespace)
+            if (num_whitespaces > 1 && _get_cpt(pos + num_whitespaces) != OUT_OF_RANGE) {
+                pos += num_whitespaces - 1;
+                _add_token(pos);
+                continue;
+            }
+
+            // Pattern 8: \s+ (general whitespace)
+            if (num_whitespaces > 0) {
+                pos += num_whitespaces;
+                _add_token(pos);
+                continue;
+            }
+
+            // No matches - consume single character
+            _add_token(++pos);
+        }
+    }
+
+    return bpe_offsets;
+}
+
+// AFMOE digit handling: splits digits with leading 1-2 based on total length modulo 3
+static std::vector<size_t> unicode_regex_split_custom_afmoe(const std::string & text, const std::vector<size_t> & offsets) {
+    std::vector<size_t> bpe_offsets;
+    bpe_offsets.reserve(offsets.size());
+
+    const auto cpts = unicode_cpts_from_utf8(text);
+
+    size_t start = 0;
+    for (auto offset : offsets) {
+        const size_t offset_ini = start;
+        const size_t offset_end = start + offset;
+        assert(offset_end <= cpts.size());
+        start = offset_end;
+
+        auto _get_flags = [&] (const size_t pos) -> unicode_cpt_flags {
+            return (offset_ini <= pos && pos < offset_end) ? unicode_cpt_flags_from_cpt(cpts[pos]) : unicode_cpt_flags{};
+        };
+
+        size_t _prev_end = offset_ini;
+        auto _add_token = [&] (const size_t end) -> size_t {
+            assert(_prev_end <= end && end <= offset_end);
+            size_t len = end - _prev_end;
+            if (len > 0) {
+                bpe_offsets.push_back(len);
+            }
+            _prev_end = end;
+            return len;
+        };
+
+        for (size_t pos = offset_ini; pos < offset_end; ) {
+            const auto flags = _get_flags(pos);
+
+            // Handle digit sequences with special splitting logic
+            if (flags.is_number) {
+                size_t digit_start = pos;
+                size_t digit_count = 0;
+
+                // Count consecutive digits
+                while (_get_flags(pos).is_number && pos < offset_end) {
+                    digit_count++;
+                    pos++;
+                }
+
+                // Split based on total length modulo 3
+                size_t remainder = digit_count % 3;
+                size_t current = digit_start;
+
+                // Emit leading 1-2 digits if needed
+                if (remainder > 0) {
+                    _add_token(current + remainder);
+                    current += remainder;
+                }
+
+                // Emit groups of 3
+                while (current < digit_start + digit_count) {
+                    _add_token(current + 3);
+                    current += 3;
+                }
+                continue;
+            }
+
+            // For non-digits, just move forward
+            pos++;
+        }
+
+        // Add any remaining content
+        if (_prev_end < offset_end) {
+            _add_token(offset_end);
+        }
+    }
+
+    return bpe_offsets;
+}
+
 static std::vector<size_t> unicode_regex_split_custom(const std::string & text, const std::string & regex_expr, const std::vector<size_t> & offsets) {
     std::vector<size_t> bpe_offsets;
 
@@ -583,6 +834,12 @@ static std::vector<size_t> unicode_regex_split_custom(const std::string & text, 
             regex_expr == "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+") {
 
         bpe_offsets = unicode_regex_split_custom_llama3(text, offsets);
+    } else if (regex_expr == "\\p{Han}+") {
+        // K2's first pattern - handle all K2 patterns together
+        bpe_offsets = unicode_regex_split_custom_kimi_k2(text, offsets);
+    } else if (regex_expr == "\\p{AFMoE_digits}") {
+        // AFMOE digit pattern - use custom implementation for proper splitting
+        bpe_offsets = unicode_regex_split_custom_afmoe(text, offsets);
     }
 
     return bpe_offsets;
@@ -686,6 +943,38 @@ uint32_t unicode_tolower(uint32_t cpt) {
         return it->second;
     }
     return cpt;  // Return the original code point if no lowercase mapping is found
+}
+
+bool unicode_cpt_is_han(uint32_t cpt) {
+    // Han character ranges (Chinese/CJK characters)
+    // CJK Unified Ideographs (most common)
+    if (cpt >= 0x4E00 && cpt <= 0x9FFF) return true;
+
+    // CJK Extension A
+    if (cpt >= 0x3400 && cpt <= 0x4DBF) return true;
+
+    // CJK Extension B
+    if (cpt >= 0x20000 && cpt <= 0x2A6DF) return true;
+
+    // CJK Extension C
+    if (cpt >= 0x2A700 && cpt <= 0x2B73F) return true;
+
+    // CJK Extension D
+    if (cpt >= 0x2B740 && cpt <= 0x2B81F) return true;
+
+    // CJK Extension E
+    if (cpt >= 0x2B820 && cpt <= 0x2CEAF) return true;
+
+    // CJK Extension F
+    if (cpt >= 0x2CEB0 && cpt <= 0x2EBEF) return true;
+
+    // CJK Compatibility Ideographs
+    if (cpt >= 0xF900 && cpt <= 0xFAFF) return true;
+
+    // CJK Compatibility Ideographs Supplement
+    if (cpt >= 0x2F800 && cpt <= 0x2FA1F) return true;
+
+    return false;
 }
 
 std::vector<std::string> unicode_regex_split(const std::string & text, const std::vector<std::string> & regex_exprs) {

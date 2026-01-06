@@ -1,18 +1,17 @@
 #pragma once
 
-#define HIP_ENABLE_WARP_SYNC_BUILTINS 1
+#define HIP_DISABLE_WARP_SYNC_BUILTINS 1
 #include <hip/hip_runtime.h>
 #include <hipblas/hipblas.h>
 #include <hip/hip_fp16.h>
-#include <hip/hip_bfloat16.h>
-#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_bf16.h>
 // for rocblas_initialize()
 #include "rocblas/rocblas.h"
-#endif // __HIP_PLATFORM_AMD__
 
-#define CUBLAS_COMPUTE_16F HIPBLAS_R_16F
-#define CUBLAS_COMPUTE_32F HIPBLAS_R_32F
-#define CUBLAS_COMPUTE_32F_FAST_16F HIPBLAS_R_32F
+#if defined(GGML_HIP_ROCWMMA_FATTN)
+#include <rocwmma/rocwmma-version.hpp>
+#endif // defined(GGML_HIP_ROCWMMA_FATTN)
+
 #define CUBLAS_GEMM_DEFAULT HIPBLAS_GEMM_DEFAULT
 #define CUBLAS_GEMM_DEFAULT_TENSOR_OP HIPBLAS_GEMM_DEFAULT
 #define CUBLAS_OP_N HIPBLAS_OP_N
@@ -22,6 +21,9 @@
 #define CUDA_R_16F  HIPBLAS_R_16F
 #define CUDA_R_16BF HIPBLAS_R_16B
 #define CUDA_R_32F  HIPBLAS_R_32F
+#define CUBLAS_SIDE_RIGHT HIPBLAS_SIDE_RIGHT
+#define CUBLAS_FILL_MODE_UPPER HIPBLAS_FILL_MODE_UPPER
+#define CUBLAS_DIAG_NON_UNIT HIPBLAS_DIAG_NON_UNIT
 #define CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED hipDeviceAttributeVirtualMemoryManagementSupported
 #define CU_MEM_ALLOC_GRANULARITY_RECOMMENDED hipMemAllocationGranularityRecommended
 #define CU_MEM_ALLOCATION_TYPE_PINNED hipMemAllocationTypePinned
@@ -29,8 +31,11 @@
 #define CU_MEM_ACCESS_FLAGS_PROT_READWRITE hipMemAccessFlagsProtReadWrite
 #define CU_CHECK(fn) {hipError_t err = fn; if(err != hipSuccess) { GGML_ABORT("HipVMM Failure: %s\n", hipGetErrorString(err)); }}
 #define __shfl_sync(mask, var, laneMask, width) __shfl(var, laneMask, width)
+#define __shfl_up_sync(mask, var, laneMask, width) __shfl_up(var, laneMask, width)
 #define __shfl_xor_sync(mask, var, laneMask, width) __shfl_xor(var, laneMask, width)
-#define cublasComputeType_t hipblasDatatype_t //deprecated, new hipblasComputeType_t not in 5.6
+#define __all_sync(mask, var) __all(var)
+#define __any_sync(mask, var) __any(var)
+#define cublasStrsmBatched hipblasStrsmBatched
 #define cublasCreate hipblasCreate
 #define cublasDestroy hipblasDestroy
 #define cublasGemmEx hipblasGemmEx
@@ -42,12 +47,13 @@
 #define cublasSgemm hipblasSgemm
 #define cublasStatus_t hipblasStatus_t
 #define cublasOperation_t hipblasOperation_t
-#define cudaDataType_t hipblasDatatype_t //deprecated, new hipblasDatatype not in 5.6
 #define cudaDeviceCanAccessPeer hipDeviceCanAccessPeer
 #define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
 #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
 #define cudaDeviceProp hipDeviceProp_t
+#define cudaDeviceReset hipDeviceReset
 #define cudaDeviceSynchronize hipDeviceSynchronize
+#define cudaDriverGetVersion hipDriverGetVersion
 #define cudaError_t hipError_t
 #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
@@ -107,7 +113,7 @@
 #define cudaStreamNonBlocking hipStreamNonBlocking
 #define cudaStreamPerThread hipStreamPerThread
 #define cudaStreamSynchronize hipStreamSynchronize
-#define cudaStreamWaitEvent(stream, event, flags) hipStreamWaitEvent(stream, event, flags)
+#define cudaStreamWaitEvent hipStreamWaitEvent
 #define cudaGraphExec_t hipGraphExec_t
 #define cudaGraphNode_t hipGraphNode_t
 #define cudaKernelNodeParams hipKernelNodeParams
@@ -144,24 +150,61 @@
 #define CUBLAS_STATUS_INTERNAL_ERROR HIPBLAS_STATUS_INTERNAL_ERROR
 #define CUBLAS_STATUS_NOT_SUPPORTED HIPBLAS_STATUS_NOT_SUPPORTED
 
+#if HIP_VERSION >= 60500000
+#define CUBLAS_COMPUTE_16F HIPBLAS_COMPUTE_16F
+#define CUBLAS_COMPUTE_32F HIPBLAS_COMPUTE_32F
+#define CUBLAS_COMPUTE_32F_FAST_16F HIPBLAS_COMPUTE_32F_FAST_16F
+#define cublasComputeType_t hipblasComputeType_t
+#define cudaDataType_t hipDataType
+#else
+#define CUBLAS_COMPUTE_16F HIPBLAS_R_16F
+#define CUBLAS_COMPUTE_32F HIPBLAS_R_32F
+#define CUBLAS_COMPUTE_32F_FAST_16F HIPBLAS_R_32F
+#define cublasComputeType_t hipblasDatatype_t
+#define cudaDataType_t hipblasDatatype_t
+#endif // HIP_VERSION >= 6050000
+
+#if !defined(__HIP_PLATFORM_AMD__)
+#error "The HIP backend supports only AMD targets"
+#endif // !defined(__HIP_PLATFORM_AMD__)
+
 #define __CUDA_ARCH__ 1300
 
-#if defined(__gfx803__) || defined(__gfx900__) || defined(__gfx906__)
-#define GCN
-#endif
+#if defined(__gfx900__) || defined(__gfx906__)
+#define GCN5
+#endif // defined(__gfx900__) || defined(__gfx906__)
 
-#if defined(__gfx908__) || defined(__gfx90a__) || defined(__gfx942__)
-#define CDNA
-#endif
+#if defined(__gfx803__)
+#define GCN4
+#endif // defined(__gfx803__)
+
+#if defined(GCN5) || defined(GCN4)
+#define GCN
+#endif // defined(GCN5) || defined(GCN4)
+
+#if defined(__gfx942__)
+#define CDNA3
+#endif // defined(__gfx942__)
+
+#if defined(__gfx90a__)
+#define CDNA2
+#endif // defined(__gfx90a__)
+
+#if defined(__gfx908__)
+#define CDNA1
+#endif // defined(__gfx908__)
+
+#if defined(CDNA3) || defined(CDNA2) || defined(CDNA1)
+#define CDNA // For the entire family
+#endif // defined(CDNA3) || defined(CDNA2) || defined(CDNA1)
 
 #if defined(__GFX12__)
 #define RDNA4
-#endif
+#endif // defined(__GFX12__)
 
-#if defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__) || defined(__gfx1103__) || \
-    defined(__gfx1150__) || defined(__gfx1151__)
+#if defined(__GFX11__)
 #define RDNA3
-#endif
+#endif // defined(__GFX11__)
 
 #if defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
     defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__) || defined(__gfx1037__)
@@ -170,13 +213,18 @@
 
 #if defined(__gfx1010__) || defined(__gfx1012__)
 #define RDNA1
-#endif
+#endif // defined(__gfx1010__) || defined(__gfx1012__)
+
+#if defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(RDNA1)
+#define RDNA // For the entire family
+#endif // defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(RDNA1)
 
 #ifndef __has_builtin
     #define __has_builtin(x) 0
 #endif
 
-typedef hip_bfloat16 nv_bfloat16;
+typedef __hip_bfloat16 nv_bfloat16;
+typedef __hip_bfloat162 nv_bfloat162;
 
 typedef int8_t int8x4_t __attribute__((ext_vector_type(4)));
 typedef uint8_t uint8x4_t __attribute__((ext_vector_type(4)));
@@ -227,17 +275,3 @@ static __device__ __forceinline__ unsigned int __vcmpne4(unsigned int a, unsigne
     }
     return c;
 }
-
-#if defined(__HIP_PLATFORM_AMD__) && HIP_VERSION < 50600000
-// __shfl_xor() for half2 was added in ROCm 5.6
-static __device__ __forceinline__ half2 __shfl_xor(half2 var, int laneMask, int width) {
-    typedef union half2_b32 {
-        half2 val;
-        int   b32;
-    } half2_b32_t;
-    half2_b32_t tmp;
-    tmp.val = var;
-    tmp.b32 = __shfl_xor(tmp.b32, laneMask, width);
-    return tmp.val;
-}
-#endif // defined(__HIP_PLATFORM_AMD__) && HIP_VERSION < 50600000

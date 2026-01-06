@@ -12,11 +12,16 @@
 #define CUBLAS_GEMM_DEFAULT_TENSOR_OP MUBLAS_GEMM_DEFAULT
 #define CUBLAS_OP_N MUBLAS_OP_N
 #define CUBLAS_OP_T MUBLAS_OP_T
+#define CUBLAS_DEFAULT_MATH MUBLAS_DEFAULT_MATH
+#define CUBLAS_SIDE_RIGHT MUBLAS_SIDE_RIGHT
+#define CUBLAS_FILL_MODE_UPPER MUBLAS_FILL_MODE_UPPER
+#define CUBLAS_DIAG_NON_UNIT MUBLAS_DIAG_NON_UNIT
 #define CUBLAS_STATUS_SUCCESS MUBLAS_STATUS_SUCCESS
-#define CUBLAS_TF32_TENSOR_OP_MATH MUBLAS_MATH_MODE_DEFAULT
+#define CUBLAS_TF32_TENSOR_OP_MATH MUBLAS_TENSOR_OP_MATH
 #define CUDA_R_16F  MUSA_R_16F
 #define CUDA_R_16BF MUSA_R_16BF
 #define CUDA_R_32F  MUSA_R_32F
+#define cublasStrsmBatched mublasStrsmBatched
 #define cublasComputeType_t cudaDataType_t
 #define cublasCreate mublasCreate
 #define cublasDestroy mublasDestroy
@@ -29,7 +34,7 @@
 #define cublasSgemm mublasSgemm
 #define cublasStatus_t mublasStatus_t
 #define cublasOperation_t mublasOperation_t
-#define cublasGetStatusString mublasStatus_to_string
+#define cublasGetStatusString mublasGetStatusString
 #define cudaDataType_t musaDataType_t
 #define cudaDeviceCanAccessPeer musaDeviceCanAccessPeer
 #define cudaDeviceDisablePeerAccess musaDeviceDisablePeerAccess
@@ -137,4 +142,5 @@
 #define cudaStreamEndCapture musaStreamEndCapture
 #define cudaOccupancyMaxActiveBlocksPerMultiprocessor musaOccupancyMaxActiveBlocksPerMultiprocessor
 
-typedef mt_bfloat16 nv_bfloat16;
+typedef __mt_bfloat16 nv_bfloat16;
+typedef __mt_bfloat162 nv_bfloat162;

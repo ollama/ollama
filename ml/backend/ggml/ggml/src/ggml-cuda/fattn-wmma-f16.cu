@@ -6,16 +6,19 @@
 #include "fattn-common.cuh"
 #include "fattn-wmma-f16.cuh"
 
-#ifdef FP16_MMA_AVAILABLE
-#if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#ifdef GGML_USE_WMMA_FATTN
+#if !defined(GGML_USE_HIP)
 #include <mma.h>
+#if defined(GGML_USE_MUSA)
+namespace wmma = mtmusa::wmma;
+#else // GGML_USE_MUSA
 namespace wmma = nvcuda::wmma;
-#elif defined(GGML_HIP_ROCWMMA_FATTN) && defined(FP16_MMA_AVAILABLE)
-#undef HIP_ENABLE_WARP_SYNC_BUILTINS // conflicts with rocWMMA headers
+#endif // GGML_USE_MUSA
+#elif defined(GGML_USE_HIP)
 #include <rocwmma/rocwmma.hpp>
 namespace wmma = rocwmma;
-#endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
-#endif // FP16_MMA_AVAILABLE
+#endif // !defined(GGML_USE_HIP)
+#endif // GGML_USE_WMMA_FATTN
 
 // D == head size, VKQ_stride == num VKQ rows calculated in parallel:
 template<int D, int ncols, int nwarps, int VKQ_stride, typename KQ_acc_t, bool use_logit_softcap>
@@ -25,6 +28,8 @@ static __global__ void flash_attn_ext_f16(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
+        const char * __restrict__ sinks,
+        const int  * __restrict__ KV_max,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -33,30 +38,14 @@ static __global__ void flash_attn_ext_f16(
         const float m1,
         const uint32_t n_head_log2,
         const float logit_softcap,
-        const int ne00,
-        const int ne01,
-        const int ne02,
-        const int ne03,
-        const int ne10,
-        const int ne11,
-        const int ne12,
-        const int ne13,
-        const int ne31,
-        const int nb31,
-        const int nb01,
-        const int nb02,
-        const int nb03,
-        const int nb11,
-        const int nb12,
-        const int nb13,
-        const int nb21,
-        const int nb22,
-        const int nb23,
-        const int ne0,
-        const int ne1,
-        const int ne2,
-        const int ne3) {
-#if defined(FLASH_ATTN_AVAILABLE) && (__CUDA_ARCH__ == GGML_CUDA_CC_VOLTA || (defined(GGML_HIP_ROCWMMA_FATTN) && defined(FP16_MMA_AVAILABLE)))
+        const int32_t ne00, const uint3   ne01, const int32_t ne02, const int32_t ne03,
+                            const int32_t nb01, const int32_t nb02, const int32_t nb03,
+        const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
+                            const int32_t nb11, const int32_t nb12, const int64_t nb13,
+                            const int32_t nb21, const int32_t nb22, const int64_t nb23,
+                            const int32_t ne31, const int32_t ne32, const int32_t ne33,
+                            const int32_t nb31, const int32_t nb32, const int64_t nb33) {
+#if defined(FLASH_ATTN_AVAILABLE) && (defined(GGML_HIP_ROCWMMA_FATTN) && defined(GGML_USE_WMMA_FATTN))
     // Skip unused kernel variants for faster compilation:
     if (use_logit_softcap && !(D == 128 || D == 256)) {
         NO_DEVICE_CODE;
@@ -89,17 +78,20 @@ static __global__ void flash_attn_ext_f16(
     constexpr int kqs_padded = FATTN_KQ_STRIDE + 8;
     constexpr int kqar = sizeof(KQ_acc_t)/sizeof(half);
 
+    const int sequence = blockIdx.z / ne02;
+    const int head = blockIdx.z - sequence*ne02;
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    const float * Q_f   = (const float *) (Q + nb02* blockIdx.z              + nb01*ic0);
-    const half  * K_h   = (const half  *) (K + nb12*(blockIdx.z / gqa_ratio));
-    const half  * V_h   = (const half  *) (V + nb12*(blockIdx.z / gqa_ratio)); // K and V have same shape
-    const half  * maskh = (const half  *)  mask + (nb31/sizeof(half))* ic0;
-    const half2 * mask2 = (const half2 *)  mask + (nb31/sizeof(half))*(ic0/2);
+    const float * Q_f    = (const float *) (Q    + nb03* sequence         + nb02* head              + nb01*ic0);
+    const half  * K_h    = (const half  *) (K    + nb13* sequence         + nb12*(head / gqa_ratio));
+    const half  * V_h    = (const half  *) (V    + nb13* sequence         + nb12*(head / gqa_ratio)); // K and V have same shape
+    const half  * maskh  = (const half  *) (mask + nb33*(sequence % ne33)                           + nb31*ic0);
+    const half2 * mask2  = (const half2 *)  maskh;
+    const float * sinksf = (const float *) sinks;
 
     const int stride_Q  = nb01 / sizeof(float);
     const int stride_KV = nb11 / sizeof(half);
 
-    const float slopef = get_alibi_slope(max_bias, blockIdx.z, n_head_log2, m0, m1);
+    const float slopef = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
     const half  slopeh = __float2half(slopef);
     const half2 slope2 = make_half2(slopef, slopef);
 
@@ -157,7 +149,7 @@ static __global__ void flash_attn_ext_f16(
             if (i0 + warp_size > D && i >= D) {
                 break;
             }
-            KQ[j*D_padded + i] = ic0 + j < ne01 ? Q_f[j*stride_Q + i] * scale : 0.0f;
+            KQ[j*D_padded + i] = ic0 + j < int(ne01.z) ? Q_f[j*stride_Q + i] * scale : 0.0f;
         }
     }
 
@@ -175,7 +167,8 @@ static __global__ void flash_attn_ext_f16(
     __syncthreads();
 
     // Iterate over ne11 == previous tokens:
-    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*FATTN_KQ_STRIDE) {
+    const int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
+    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*FATTN_KQ_STRIDE) {
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += KQ_stride_tc) {
@@ -187,7 +180,7 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 16) {
                 frag_a_K K_a;
-                wmma::load_matrix_sync(K_a, K_h + (k_VKQ_0 + i_KQ_0 + frag_m*threadIdx.y)*stride_KV + k_KQ_0, stride_KV);
+                wmma::load_matrix_sync(K_a, K_h + int64_t(k_VKQ_0 + i_KQ_0 + frag_m*threadIdx.y)*stride_KV + k_KQ_0, stride_KV);
 #pragma unroll
                 for (int j = 0; j < ncols/frag_n; ++j) {
                     wmma::mma_sync(KQ_c[j], K_a, Q_b[k_KQ_0/16][j], KQ_c[j]);
@@ -225,8 +218,9 @@ static __global__ void flash_attn_ext_f16(
                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += warp_size) {
                     const int k = k0 + threadIdx.x;
 
-                    KQ_f_tmp[k0/warp_size] += mask ? __half2float(slopeh*maskh[j*(nb31/sizeof(half)) + k_VKQ_0 + k]) : 0.0f;
-                    KQ_max_new = max(KQ_max_new, KQ_f_tmp[k0/warp_size]);
+                    KQ_f_tmp[k0/warp_size] += mask && ic0 + j < int(ne01.z) ?
+                        __half2float(slopeh*maskh[j*(nb31/sizeof(half)) + k_VKQ_0 + k]) : 0.0f;
+                    KQ_max_new = max(KQ_max_new, KQ_f_tmp[k0/warp_size] + FATTN_KQ_MAX_OFFSET);
                 }
                 KQ_max_new = warp_reduce_max<warp_size>(KQ_max_new);
 
@@ -277,7 +271,7 @@ static __global__ void flash_attn_ext_f16(
                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += warp_size) {
                     const int k = k0 + threadIdx.x;
 
-                    KQ2_tmp[k0/warp_size] += mask ? slope2*mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
+                    KQ2_tmp[k0/warp_size] += mask && ic0 + j < int(ne01.z) ? slope2*mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
                     KQ_max_new = ggml_cuda_hmax2(KQ_max_new, KQ2_tmp[k0/warp_size]);
                 }
                 KQ_max_new = __half2half2(warp_reduce_max<warp_size>(ggml_cuda_hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
@@ -334,7 +328,7 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + (threadIdx.y % VKQ_ratio)*16;
 
                 frag_a_V v_a;
-                wmma::load_matrix_sync(v_a, V_h + (k_VKQ_0 + k)*stride_KV + i_VKQ_0 + frag_m*(threadIdx.y/VKQ_ratio), stride_KV);
+                wmma::load_matrix_sync(v_a, V_h + int64_t(k_VKQ_0 + k)*stride_KV + i_VKQ_0 + frag_m*(threadIdx.y/VKQ_ratio), stride_KV);
 #pragma unroll
                 for (int j = 0; j < ncols/frag_n; ++j) {
                     wmma::mma_sync(VKQ_c[i_VKQ_0/VKQ_stride][j], v_a, KQ_b[k0/(VKQ_ratio*16)][j], VKQ_c[i_VKQ_0/VKQ_stride][j]);
@@ -388,13 +382,59 @@ static __global__ void flash_attn_ext_f16(
         __syncthreads();
     }
 
+    // Apply attention sinks
+    if (sinksf && blockIdx.y == 0) {
+        const float sinkf = sinksf[head];
+        const half  sinkh = __float2half(sinkf);
+
+#pragma unroll
+        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
+
+            if (std::is_same<KQ_acc_t, float>::value) {
+                float kqmax_new = fmaxf(KQ_max_f[j0/nwarps], sinkf);
+
+                const float KQ_max_scale = expf(KQ_max_f[j0/nwarps] - kqmax_new);
+                KQ_max_f[j0/nwarps] = kqmax_new;
+
+                KQ_rowsum_f[j0/nwarps] = KQ_rowsum_f[j0/nwarps] * KQ_max_scale + expf(sinkf - KQ_max_f[j0/nwarps]);
+
+                const half2 scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    const int i = i0 + threadIdx.x;
+                    if (i0 + warp_size > D/2 && i >= D/2) break;
+                    VKQ2[j*(D_padded/2) + i] *= scale_h2;
+                }
+            } else {
+                half kqmax_old = __low2half(KQ_max_h2[j0/nwarps]);
+                half kqmax_new = fmaxf(kqmax_old, sinkh);
+                KQ_max_h2[j0/nwarps] = __half2half2(kqmax_new);
+
+                const half  KQ_max_scale_h = hexp(kqmax_old - kqmax_new);
+                const half2 KQ_max_scale   = __half2half2(KQ_max_scale_h);
+
+                KQ_rowsum_h2[j0/nwarps] = KQ_rowsum_h2[j0/nwarps] * KQ_max_scale;
+                const half val = hexp(sinkh - kqmax_new);
+                KQ_rowsum_h2[j0/nwarps].x = __hadd(KQ_rowsum_h2[j0/nwarps].x, val);
+
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    const int i = i0 + threadIdx.x;
+                    if (i0 + warp_size > D/2 && i >= D/2) break;
+                    VKQ2[j*(D_padded/2) + i] *= KQ_max_scale;
+                }
+            }
+        }
+
+        __syncthreads();
+    }
 #pragma unroll
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         const int j_VKQ = j0 + threadIdx.y;
-        if (ic0 + j_VKQ >= ne01) {
+        if (ic0 + j_VKQ >= int(ne01.z)) {
             return;
         }
-        const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
 
         float KQ_rowsum_j;
         if (std::is_same<KQ_acc_t, float>::value) {
@@ -402,6 +442,8 @@ static __global__ void flash_attn_ext_f16(
         } else {
             KQ_rowsum_j = __low2float(KQ_rowsum_h2[j0/nwarps]) + __high2float(KQ_rowsum_h2[j0/nwarps]);
         }
+
+        const int j_dst_unrolled = ((sequence*int(ne01.z) + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y;
 
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += warp_size) {
@@ -413,7 +455,7 @@ static __global__ void flash_attn_ext_f16(
             if (gridDim.y == 1) {
                 dst_val /= KQ_rowsum_j;
             }
-            dst[j_dst*gridDim.z*D + blockIdx.z*D + i] = dst_val;
+            dst[j_dst_unrolled*D + i] = dst_val;
         }
 
         if (gridDim.y == 1 || threadIdx.x != 0) {
@@ -427,21 +469,20 @@ static __global__ void flash_attn_ext_f16(
             dst_meta_val.x = __low2float(KQ_max_h2[j0/nwarps]);
         }
         dst_meta_val.y = KQ_rowsum_j;
-        dst_meta[((ic0 + j_VKQ)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y] = dst_meta_val;
+        dst_meta[j_dst_unrolled] = dst_meta_val;
     }
 #else
-    GGML_UNUSED(Q); GGML_UNUSED(K); GGML_UNUSED(V); GGML_UNUSED(mask);
-    GGML_UNUSED(dst); GGML_UNUSED(dst_meta); GGML_UNUSED(scale);
-    GGML_UNUSED(max_bias); GGML_UNUSED(m0); GGML_UNUSED(m1);
-    GGML_UNUSED(n_head_log2); GGML_UNUSED(logit_softcap);
-    GGML_UNUSED(ne00); GGML_UNUSED(ne01); GGML_UNUSED(ne02); GGML_UNUSED(ne03);
-    GGML_UNUSED(ne10); GGML_UNUSED(ne11); GGML_UNUSED(ne12); GGML_UNUSED(ne13);
-    GGML_UNUSED(ne31); GGML_UNUSED(nb31); GGML_UNUSED(nb01); GGML_UNUSED(nb02);
-    GGML_UNUSED(nb03); GGML_UNUSED(nb11); GGML_UNUSED(nb12); GGML_UNUSED(nb13);
-    GGML_UNUSED(nb21); GGML_UNUSED(nb22); GGML_UNUSED(nb23);
-    GGML_UNUSED(ne0); GGML_UNUSED(ne1); GGML_UNUSED(ne2); GGML_UNUSED(ne3);
+    GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
+        max_bias, m0, m1, n_head_log2, logit_softcap,
+        ne00, ne01, ne02, ne03,
+              nb01, nb02, nb03,
+        ne10, ne11, ne12, ne13,
+              nb11, nb12, nb13,
+              nb21, nb22, nb23,
+              ne31, ne32, ne33,
+              nb31, nb32, nb33);
     NO_DEVICE_CODE;
-#endif // defined(FLASH_ATTN_AVAILABLE) && (__CUDA_ARCH__ == GGML_CUDA_CC_VOLTA || (defined(GGML_HIP_ROCWMMA_FATTN) && defined(FP16_MMA_AVAILABLE)))
+#endif // defined(FLASH_ATTN_AVAILABLE) && (defined(GGML_HIP_ROCWMMA_FATTN) && defined(GGML_USE_WMMA_FATTN))
 }
 
 constexpr int get_max_power_of_2(int x) {
@@ -555,7 +596,7 @@ void ggml_cuda_flash_attn_ext_wmma_f16(ggml_backend_cuda_context & ctx, ggml_ten
         return;
     }
 
-#if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#if !defined(GGML_USE_HIP)
     if (Q->ne[1] <= 8 && Q->ne[0] % warp_size == 0) {
         constexpr int cols_per_block = 8;
         switch (Q->ne[0]) {
@@ -577,7 +618,7 @@ void ggml_cuda_flash_attn_ext_wmma_f16(ggml_backend_cuda_context & ctx, ggml_ten
         }
         return;
     }
-#endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#endif // !defined(GGML_USE_HIP)
 
     if (Q->ne[1] <= 32) {
         constexpr int cols_per_block = 16;

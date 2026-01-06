@@ -1,0 +1,124 @@
+#version 450
+
+layout (push_constant) uniform parameter
+{
+    uint ne; uint a_offset; uint d_offset;
+    uint ne00; uint ne01;
+    uint nb00; uint nb01; uint nb02; uint nb03;
+    uint ne10; uint ne11; uint ne12; uint ne13;
+    float sf0; float sf1; float sf2; float sf3;
+    float pixel_offset;
+} p;
+
+#include "types.glsl"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+// from ggml.h: enum ggml_scale_mode, enum ggml_scale_flag
+#define NEAREST  0
+#define BILINEAR 1
+#define BICUBIC  2
+
+layout (constant_id = 0) const uint scale_mode = 0;
+
+float fetch_nearest(uint i10, uint i11, uint i12, uint i13) {
+    const uint i00 = uint(i10 / p.sf0);
+    const uint i01 = uint(i11 / p.sf1);
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+
+    return data_a[p.a_offset + i03 * p.nb03 + i02 * p.nb02 + i01 * p.nb01 + i00 * p.nb00];
+}
+
+float fetch_bilinear(ivec2 c0, ivec2 c1, vec2 d, uint i12, uint i13) {
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+    const uint base = p.a_offset + i03 * p.nb03 + i02 * p.nb02;
+
+    const float v00 = data_a[base + c0.y * p.nb01 + c0.x * p.nb00];
+    const float v01 = data_a[base + c0.y * p.nb01 + c1.x * p.nb00];
+    const float v10 = data_a[base + c1.y * p.nb01 + c0.x * p.nb00];
+    const float v11 = data_a[base + c1.y * p.nb01 + c1.x * p.nb00];
+
+    return
+        v00 * (1.0-d.x) * (1.0-d.y) +
+        v01 * d.x       * (1.0-d.y) +
+        v10 * (1.0-d.x) * d.y +
+        v11 * d.x       * d.y;
+}
+
+float interpolate_bilinear(uint i10, uint i11, uint i12, uint i13) {
+    const ivec2 ne0 = ivec2(p.ne00, p.ne01);
+
+    const vec2 c = (vec2(i10, i11) + p.pixel_offset) / vec2(p.sf0, p.sf1) - p.pixel_offset;
+    const vec2 c0f = floor(c);
+    const vec2 d = c - c0f;
+    const ivec2 c0 = max(ivec2(c0f), 0);
+    const ivec2 c1 = min(ivec2(c0f + 1), ne0 - 1);
+
+    return fetch_bilinear(c0, c1, d, i12, i13);
+}
+
+// Bicubic interpolation with alpha = -0.75
+// https://en.wikipedia.org/wiki/Bicubic_interpolation#Bicubic_convolution_algorithm
+const vec4 bcoeffs1 = vec4( 1.25, -2.25,  0.0, 1.0);
+const vec4 bcoeffs2 = vec4(-0.75,  3.75, -6.0, 3.0);
+vec4 powers(float x) { return vec4(x*x*x, x*x, x, 1); }
+
+float bicubic(float p0, float p1, float p2, float p3, float x) {
+    return p0 * dot(bcoeffs2, powers(x + 1)) +
+           p1 * dot(bcoeffs1, powers(x    )) +
+           p2 * dot(bcoeffs1, powers(1 - x)) +
+           p3 * dot(bcoeffs2, powers(2 - x));
+}
+
+#define FETCH(a,b) data_a[base + clamp(i.x+(a), 0, res.x) * p.nb00 + clamp(i.y+(b), 0, res.y) * p.nb01]
+
+float interpolate_bicubic(uint i10, uint i11, uint i12, uint i13) {
+    const ivec2 res = ivec2(p.ne00 - 1, p.ne01 - 1);
+
+    const vec2 coord = (vec2(i10, i11) + p.pixel_offset) / vec2(p.sf0, p.sf1) - p.pixel_offset;
+    const vec2 d = fract(coord);
+    const ivec2 i = ivec2(floor(coord));
+
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+    const uint base = p.a_offset + i03 * p.nb03 + i02 * p.nb02;
+
+    return bicubic(
+        bicubic(FETCH(-1,-1), FETCH(0,-1), FETCH(1,-1), FETCH(2,-1), d.x),
+        bicubic(FETCH(-1, 0), FETCH(0, 0), FETCH(1, 0), FETCH(2, 0), d.x),
+        bicubic(FETCH(-1, 1), FETCH(0, 1), FETCH(1, 1), FETCH(2, 1), d.x),
+        bicubic(FETCH(-1, 2), FETCH(0, 2), FETCH(1, 2), FETCH(2, 2), d.x), d.y);
+}
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+    const uint i10 = idx % p.ne10;
+    const uint i11 = (idx / p.ne10) % p.ne11;
+    const uint i12 = (idx / (p.ne10 * p.ne11)) % p.ne12;
+    const uint i13 = (idx / (p.ne10 * p.ne11 * p.ne12)) % p.ne13;
+
+    float result;
+    switch (scale_mode) {
+        case NEAREST:
+            result = fetch_nearest(i10, i11, i12, i13);
+            break;
+        case BILINEAR:
+            result = interpolate_bilinear(i10, i11, i12, i13);
+            break;
+        case BICUBIC:
+            result = interpolate_bicubic(i10, i11, i12, i13);
+            break;
+    }
+
+    data_d[p.d_offset + idx] = D_TYPE(result);
+}

@@ -6,6 +6,7 @@
 #include "llama-model.h"
 #include "llama-model-loader.h"
 #include "llama-grammar.h"
+#include "nlohmann/json.hpp"
 
 struct common_sampler *common_sampler_cinit(const struct llama_model *model, struct common_sampler_cparams *params) {
     try {
@@ -71,7 +72,7 @@ struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
     try {
         const auto kv = LLM_KV(LLM_ARCH_UNKNOWN);
         std::vector<std::string> splits = {};
-        llama_model_loader ml(std::string(fname), splits, false, false, nullptr, nullptr);
+        llama_model_loader ml(std::string(fname), splits, false, false, false, nullptr, nullptr);
         vocab->load(ml, kv);
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
@@ -94,7 +95,7 @@ struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tok
         ollama_vocab *vocab = new ollama_vocab();
         vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
         vocab->add_token_pieces(tokens, n_tokens, pieces);
-        
+
         struct llama_grammar *g = llama_grammar_init_impl(nullptr, vocab, grammar, "root", false, nullptr, 0, nullptr, 0);
         if (g == nullptr) {
             LLAMA_LOG_ERROR("%s: failed to initialize grammar\n", __func__);

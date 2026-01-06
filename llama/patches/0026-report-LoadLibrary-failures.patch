@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Fri, 17 Oct 2025 14:17:00 -0700
+Subject: [PATCH] report LoadLibrary failures
+
+---
+ ggml/src/ggml-backend-reg.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
+index 079dba211..2474e0ed6 100644
+--- a/ggml/src/ggml-backend-reg.cpp
++++ b/ggml/src/ggml-backend-reg.cpp
+@@ -126,6 +126,18 @@ static dl_handle * dl_load_library(const fs::path & path) {
+     SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
+ 
+     HMODULE handle = LoadLibraryW(path.wstring().c_str());
++    if (!handle) {
++        DWORD error_code = GetLastError();
++        std::string msg;
++        LPSTR lpMsgBuf = NULL;
++        DWORD bufLen = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
++                                      NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&lpMsgBuf, 0, NULL);
++        if (bufLen) {
++            msg = lpMsgBuf;
++            LocalFree(lpMsgBuf);
++            GGML_LOG_INFO("%s unable to load library %s: %s\n", __func__, path_str(path).c_str(), msg.c_str());
++        }
++    }
+ 
+     SetErrorMode(old_mode);
+ 

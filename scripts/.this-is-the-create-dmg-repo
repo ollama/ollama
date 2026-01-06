@@ -1,0 +1,2 @@
+This is just a dummy file so create-dmg can tell whether it's being run from
+inside the Git repo or from an installed location.

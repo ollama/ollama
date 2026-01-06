@@ -1,0 +1,103 @@
+---
+title: CLI Reference
+---
+
+### Run a model
+
+```
+ollama run gemma3
+```
+
+#### Multiline input
+
+For multiline input, you can wrap text with `"""`:
+
+```
+>>> """Hello,
+... world!
+... """
+I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+
+#### Multimodal models
+
+```
+ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
+```
+
+### Generate embeddings
+
+```
+ollama run embeddinggemma "Hello world"
+```
+
+Output is a JSON array:
+
+```
+echo "Hello world" | ollama run nomic-embed-text
+```
+
+### Download a model
+
+```
+ollama pull gemma3
+```
+
+### Remove a model
+
+```
+ollama rm gemma3
+```
+
+### List models
+
+```
+ollama ls
+```
+
+### Sign in to Ollama
+
+```
+ollama signin
+```
+
+### Sign out of Ollama
+
+```
+ollama signout
+```
+
+### Create a customized model
+
+First, create a `Modelfile`
+
+```
+FROM gemma3
+SYSTEM """You are a happy cat."""
+```
+
+Then run `ollama create`:
+
+```
+ollama create -f Modelfile
+```
+
+### List running models
+
+```
+ollama ps
+```
+
+### Stop a running model
+
+```
+ollama stop gemma3
+```
+
+### Start Ollama
+
+```
+ollama serve
+```
+
+To view a list of environment variables that can be set run `ollama serve --help`

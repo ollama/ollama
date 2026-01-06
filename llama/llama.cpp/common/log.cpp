@@ -1,13 +1,25 @@
+#include "common.h"
 #include "log.h"
 
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <sstream>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#    include <io.h>
+#    include <windows.h>
+#    define isatty _isatty
+#    define fileno _fileno
+#else
+#    include <unistd.h>
+#endif // defined(_WIN32)
 
 int common_log_verbosity_thold = LOG_DEFAULT_LLAMA;
 
@@ -353,6 +365,11 @@ struct common_log * common_log_init() {
 
 struct common_log * common_log_main() {
     static struct common_log log;
+    static std::once_flag    init_flag;
+    std::call_once(init_flag, [&]() {
+        // Set default to auto-detect colors
+        log.set_colors(tty_can_use_colors());
+    });
 
     return &log;
 }
@@ -380,8 +397,19 @@ void common_log_set_file(struct common_log * log, const char * file) {
     log->set_file(file);
 }
 
-void common_log_set_colors(struct common_log * log, bool colors) {
-    log->set_colors(colors);
+void common_log_set_colors(struct common_log * log, log_colors colors) {
+    if (colors == LOG_COLORS_AUTO) {
+        log->set_colors(tty_can_use_colors());
+        return;
+    }
+
+    if (colors == LOG_COLORS_DISABLED) {
+        log->set_colors(false);
+        return;
+    }
+
+    GGML_ASSERT(colors == LOG_COLORS_ENABLED);
+    log->set_colors(true);
 }
 
 void common_log_set_prefix(struct common_log * log, bool prefix) {
@@ -390,4 +418,29 @@ void common_log_set_prefix(struct common_log * log, bool prefix) {
 
 void common_log_set_timestamps(struct common_log * log, bool timestamps) {
     log->set_timestamps(timestamps);
+}
+
+void common_log_flush(struct common_log * log) {
+    log->pause();
+    log->resume();
+}
+
+static int common_get_verbosity(enum ggml_log_level level) {
+    switch (level) {
+        case GGML_LOG_LEVEL_DEBUG: return LOG_LEVEL_DEBUG;
+        case GGML_LOG_LEVEL_INFO:  return LOG_LEVEL_INFO;
+        case GGML_LOG_LEVEL_WARN:  return LOG_LEVEL_WARN;
+        case GGML_LOG_LEVEL_ERROR: return LOG_LEVEL_ERROR;
+        case GGML_LOG_LEVEL_CONT:  return LOG_LEVEL_INFO; // same as INFO
+        case GGML_LOG_LEVEL_NONE:
+        default:
+            return LOG_LEVEL_OUTPUT;
+    }
+}
+
+void common_log_default_callback(enum ggml_log_level level, const char * text, void * /*user_data*/) {
+    auto verbosity = common_get_verbosity(level);
+    if (verbosity <= common_log_verbosity_thold) {
+        common_log_add(common_log_main(), level, "%s", text);
+    }
 }

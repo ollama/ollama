@@ -401,7 +401,7 @@ struct llama_mmap::impl {
                 }
             }
 #else
-            throw std::runtime_error("PrefetchVirtualMemory unavailable");
+            LLAMA_LOG_DEBUG("skipping PrefetchVirtualMemory because _WIN32_WINNT < 0x602\n");
 #endif
         }
     }
@@ -485,7 +485,7 @@ struct llama_mlock::impl {
         if (suggest && getrlimit(RLIMIT_MEMLOCK, &lock_limit)) {
             suggest = false;
         }
-        if (suggest && (lock_limit.rlim_max > lock_limit.rlim_cur + size)) {
+        if (suggest && ((uint64_t)lock_limit.rlim_max > (uint64_t)lock_limit.rlim_cur + size)) {
             suggest = false;
         }
 #endif
