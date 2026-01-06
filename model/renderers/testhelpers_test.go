@@ -34,3 +34,18 @@ func testArgsOrdered(pairs []orderedArg) api.ToolCallFunctionArguments {
 	}
 	return args
 }
+
+// orderedProp represents a key-value pair for ordered property creation
+type orderedProp struct {
+	Key   string
+	Value api.ToolProperty
+}
+
+// testPropsOrdered creates a ToolPropertiesMap with a specific key order
+func testPropsOrdered(pairs []orderedProp) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for _, p := range pairs {
+		props.Set(p.Key, p.Value)
+	}
+	return props
+}
