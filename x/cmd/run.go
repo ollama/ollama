@@ -263,6 +263,22 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				return nil, nil
 			}
 
+			// Check for 401 Unauthorized - prompt user to sign in
+			var authErr api.AuthorizationError
+			if errors.As(err, &authErr) {
+				p.StopAndClear()
+				fmt.Fprintf(os.Stderr, "\033[33mAuthentication required to use this model.\033[0m\n")
+				result, promptErr := agent.PromptYesNo("Sign in to Ollama?")
+				if promptErr == nil && result {
+					if signinErr := waitForOllamaSignin(ctx); signinErr == nil {
+						// Retry the chat request
+						fmt.Fprintf(os.Stderr, "\033[90mRetrying...\033[0m\n")
+						continue // Retry the loop
+					}
+				}
+				return nil, fmt.Errorf("authentication required - run 'ollama signin' to authenticate")
+			}
+
 			if strings.Contains(err.Error(), "upstream error") {
 				p.StopAndClear()
 				fmt.Println("An error occurred while processing your message. Please try again.")
