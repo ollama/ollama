@@ -4,45 +4,56 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMap_BasicOperations(t *testing.T) {
 	m := New[string, int]()
 
 	// Test empty map
-	assert.Equal(t, 0, m.Len())
+	if m.Len() != 0 {
+		t.Errorf("expected Len() = 0, got %d", m.Len())
+	}
 	v, ok := m.Get("a")
-	assert.False(t, ok)
-	assert.Equal(t, 0, v)
+	if ok {
+		t.Error("expected Get on empty map to return false")
+	}
+	if v != 0 {
+		t.Errorf("expected zero value, got %d", v)
+	}
 
 	// Test Set and Get
 	m.Set("a", 1)
 	m.Set("b", 2)
 	m.Set("c", 3)
 
-	assert.Equal(t, 3, m.Len())
+	if m.Len() != 3 {
+		t.Errorf("expected Len() = 3, got %d", m.Len())
+	}
 
 	v, ok = m.Get("a")
-	assert.True(t, ok)
-	assert.Equal(t, 1, v)
+	if !ok || v != 1 {
+		t.Errorf("expected Get(a) = (1, true), got (%d, %v)", v, ok)
+	}
 
 	v, ok = m.Get("b")
-	assert.True(t, ok)
-	assert.Equal(t, 2, v)
+	if !ok || v != 2 {
+		t.Errorf("expected Get(b) = (2, true), got (%d, %v)", v, ok)
+	}
 
 	v, ok = m.Get("c")
-	assert.True(t, ok)
-	assert.Equal(t, 3, v)
+	if !ok || v != 3 {
+		t.Errorf("expected Get(c) = (3, true), got (%d, %v)", v, ok)
+	}
 
 	// Test updating existing key preserves position
 	m.Set("a", 10)
 	v, ok = m.Get("a")
-	assert.True(t, ok)
-	assert.Equal(t, 10, v)
-	assert.Equal(t, 3, m.Len()) // Length unchanged
+	if !ok || v != 10 {
+		t.Errorf("expected Get(a) = (10, true), got (%d, %v)", v, ok)
+	}
+	if m.Len() != 3 {
+		t.Errorf("expected Len() = 3 after update, got %d", m.Len())
+	}
 }
 
 func TestMap_InsertionOrderPreserved(t *testing.T) {
@@ -62,8 +73,15 @@ func TestMap_InsertionOrderPreserved(t *testing.T) {
 		values = append(values, v)
 	}
 
-	assert.Equal(t, []string{"z", "a", "m", "b"}, keys)
-	assert.Equal(t, []int{1, 2, 3, 4}, values)
+	expectedKeys := []string{"z", "a", "m", "b"}
+	expectedValues := []int{1, 2, 3, 4}
+
+	if !slices.Equal(keys, expectedKeys) {
+		t.Errorf("expected keys %v, got %v", expectedKeys, keys)
+	}
+	if !slices.Equal(values, expectedValues) {
+		t.Errorf("expected values %v, got %v", expectedValues, values)
+	}
 }
 
 func TestMap_UpdatePreservesPosition(t *testing.T) {
@@ -82,7 +100,10 @@ func TestMap_UpdatePreservesPosition(t *testing.T) {
 	}
 
 	// Order should still be first, second, third
-	assert.Equal(t, []string{"first", "second", "third"}, keys)
+	expected := []string{"first", "second", "third"}
+	if !slices.Equal(keys, expected) {
+		t.Errorf("expected keys %v, got %v", expected, keys)
+	}
 }
 
 func TestMap_MarshalJSON_PreservesOrder(t *testing.T) {
@@ -94,10 +115,15 @@ func TestMap_MarshalJSON_PreservesOrder(t *testing.T) {
 	m.Set("m", 3)
 
 	data, err := json.Marshal(m)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
 
 	// JSON should preserve insertion order, not alphabetical
-	assert.Equal(t, `{"z":1,"a":2,"m":3}`, string(data))
+	expected := `{"z":1,"a":2,"m":3}`
+	if string(data) != expected {
+		t.Errorf("expected %s, got %s", expected, string(data))
+	}
 }
 
 func TestMap_UnmarshalJSON_PreservesOrder(t *testing.T) {
@@ -105,8 +131,9 @@ func TestMap_UnmarshalJSON_PreservesOrder(t *testing.T) {
 	jsonData := `{"z":1,"a":2,"m":3}`
 
 	m := New[string, int]()
-	err := json.Unmarshal([]byte(jsonData), m)
-	require.NoError(t, err)
+	if err := json.Unmarshal([]byte(jsonData), m); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
 
 	// Verify iteration order matches JSON order
 	var keys []string
@@ -114,7 +141,10 @@ func TestMap_UnmarshalJSON_PreservesOrder(t *testing.T) {
 		keys = append(keys, k)
 	}
 
-	assert.Equal(t, []string{"z", "a", "m"}, keys)
+	expected := []string{"z", "a", "m"}
+	if !slices.Equal(keys, expected) {
+		t.Errorf("expected keys %v, got %v", expected, keys)
+	}
 }
 
 func TestMap_JSONRoundTrip(t *testing.T) {
@@ -122,13 +152,18 @@ func TestMap_JSONRoundTrip(t *testing.T) {
 	original := `{"zebra":"z","apple":"a","mango":"m","banana":"b"}`
 
 	m := New[string, string]()
-	err := json.Unmarshal([]byte(original), m)
-	require.NoError(t, err)
+	if err := json.Unmarshal([]byte(original), m); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
 
 	data, err := json.Marshal(m)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
 
-	assert.Equal(t, original, string(data))
+	if string(data) != original {
+		t.Errorf("round trip failed: expected %s, got %s", original, string(data))
+	}
 }
 
 func TestMap_ToMap(t *testing.T) {
@@ -138,47 +173,73 @@ func TestMap_ToMap(t *testing.T) {
 
 	regular := m.ToMap()
 
-	assert.Equal(t, 2, len(regular))
-	assert.Equal(t, 1, regular["a"])
-	assert.Equal(t, 2, regular["b"])
+	if len(regular) != 2 {
+		t.Errorf("expected len 2, got %d", len(regular))
+	}
+	if regular["a"] != 1 {
+		t.Errorf("expected regular[a] = 1, got %d", regular["a"])
+	}
+	if regular["b"] != 2 {
+		t.Errorf("expected regular[b] = 2, got %d", regular["b"])
+	}
 }
 
 func TestMap_NilSafety(t *testing.T) {
 	var m *Map[string, int]
 
 	// All operations should be safe on nil
-	assert.Equal(t, 0, m.Len())
+	if m.Len() != 0 {
+		t.Errorf("expected Len() = 0 on nil map, got %d", m.Len())
+	}
 
 	v, ok := m.Get("a")
-	assert.False(t, ok)
-	assert.Equal(t, 0, v)
+	if ok {
+		t.Error("expected Get on nil map to return false")
+	}
+	if v != 0 {
+		t.Errorf("expected zero value from nil map, got %d", v)
+	}
 
 	// Set on nil is a no-op
 	m.Set("a", 1)
-	assert.Equal(t, 0, m.Len())
+	if m.Len() != 0 {
+		t.Errorf("expected Len() = 0 after Set on nil, got %d", m.Len())
+	}
 
 	// All returns empty iterator
 	var keys []string
 	for k := range m.All() {
 		keys = append(keys, k)
 	}
-	assert.Empty(t, keys)
+	if len(keys) != 0 {
+		t.Errorf("expected empty iteration on nil map, got %v", keys)
+	}
 
 	// ToMap returns nil
-	assert.Nil(t, m.ToMap())
+	if m.ToMap() != nil {
+		t.Error("expected ToMap to return nil on nil map")
+	}
 
 	// MarshalJSON returns null
 	data, err := json.Marshal(m)
-	require.NoError(t, err)
-	assert.Equal(t, "null", string(data))
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if string(data) != "null" {
+		t.Errorf("expected null, got %s", string(data))
+	}
 }
 
 func TestMap_EmptyMapMarshal(t *testing.T) {
 	m := New[string, int]()
 
 	data, err := json.Marshal(m)
-	require.NoError(t, err)
-	assert.Equal(t, "{}", string(data))
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if string(data) != "{}" {
+		t.Errorf("expected {}, got %s", string(data))
+	}
 }
 
 func TestMap_NestedValues(t *testing.T) {
@@ -189,10 +250,14 @@ func TestMap_NestedValues(t *testing.T) {
 	m.Set("nested", map[string]int{"x": 1})
 
 	data, err := json.Marshal(m)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
 
 	expected := `{"string":"hello","number":42,"bool":true,"nested":{"x":1}}`
-	assert.Equal(t, expected, string(data))
+	if string(data) != expected {
+		t.Errorf("expected %s, got %s", expected, string(data))
+	}
 }
 
 func TestMap_AllIteratorEarlyExit(t *testing.T) {
@@ -211,7 +276,10 @@ func TestMap_AllIteratorEarlyExit(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, []string{"a", "b"}, keys)
+	expected := []string{"a", "b"}
+	if !slices.Equal(keys, expected) {
+		t.Errorf("expected %v, got %v", expected, keys)
+	}
 }
 
 func TestMap_IntegerKeys(t *testing.T) {
@@ -226,7 +294,10 @@ func TestMap_IntegerKeys(t *testing.T) {
 	}
 
 	// Should preserve insertion order, not numerical order
-	assert.Equal(t, []int{3, 1, 2}, keys)
+	expected := []int{3, 1, 2}
+	if !slices.Equal(keys, expected) {
+		t.Errorf("expected %v, got %v", expected, keys)
+	}
 }
 
 func TestMap_UnmarshalIntoExisting(t *testing.T) {
@@ -234,15 +305,19 @@ func TestMap_UnmarshalIntoExisting(t *testing.T) {
 	m.Set("existing", 999)
 
 	// Unmarshal should replace contents
-	err := json.Unmarshal([]byte(`{"new":1}`), m)
-	require.NoError(t, err)
+	if err := json.Unmarshal([]byte(`{"new":1}`), m); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
 
 	_, ok := m.Get("existing")
-	assert.False(t, ok, "existing key should be gone after unmarshal")
+	if ok {
+		t.Error("existing key should be gone after unmarshal")
+	}
 
 	v, ok := m.Get("new")
-	assert.True(t, ok)
-	assert.Equal(t, 1, v)
+	if !ok || v != 1 {
+		t.Errorf("expected Get(new) = (1, true), got (%d, %v)", v, ok)
+	}
 }
 
 func TestMap_LargeOrderPreservation(t *testing.T) {
@@ -267,5 +342,7 @@ func TestMap_LargeOrderPreservation(t *testing.T) {
 		resultKeys = append(resultKeys, k)
 	}
 
-	assert.True(t, slices.Equal(keys, resultKeys), "large map should preserve insertion order")
+	if !slices.Equal(keys, resultKeys) {
+		t.Error("large map should preserve insertion order")
+	}
 }
