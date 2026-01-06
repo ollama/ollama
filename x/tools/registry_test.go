@@ -108,6 +108,57 @@ func TestDefaultRegistry(t *testing.T) {
 	}
 }
 
+func TestDefaultRegistry_DisableWebsearch(t *testing.T) {
+	t.Setenv("OLLAMA_AGENT_DISABLE_WEBSEARCH", "1")
+
+	r := DefaultRegistry()
+
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool with websearch disabled, got %d", r.Count())
+	}
+
+	_, ok := r.Get("bash")
+	if !ok {
+		t.Error("expected bash tool in registry")
+	}
+
+	_, ok = r.Get("web_search")
+	if ok {
+		t.Error("expected web_search to be disabled")
+	}
+}
+
+func TestDefaultRegistry_DisableBash(t *testing.T) {
+	t.Setenv("OLLAMA_AGENT_DISABLE_BASH", "1")
+
+	r := DefaultRegistry()
+
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool with bash disabled, got %d", r.Count())
+	}
+
+	_, ok := r.Get("web_search")
+	if !ok {
+		t.Error("expected web_search tool in registry")
+	}
+
+	_, ok = r.Get("bash")
+	if ok {
+		t.Error("expected bash to be disabled")
+	}
+}
+
+func TestDefaultRegistry_DisableBoth(t *testing.T) {
+	t.Setenv("OLLAMA_AGENT_DISABLE_WEBSEARCH", "1")
+	t.Setenv("OLLAMA_AGENT_DISABLE_BASH", "1")
+
+	r := DefaultRegistry()
+
+	if r.Count() != 0 {
+		t.Errorf("expected 0 tools with both disabled, got %d", r.Count())
+	}
+}
+
 func TestBashTool_Schema(t *testing.T) {
 	tool := &BashTool{}
 
