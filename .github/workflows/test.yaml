@@ -222,21 +222,55 @@ jobs:
       - name: Run go generate
         run: go generate ./...
 
-      - name: Install ffmpeg (ubuntu)
+      # Install FFmpeg library build dependencies
+      - name: Install FFmpeg library build dependencies (ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y nasm yasm wget
 
-      - name: Install ffmpeg (macos)
+      - name: Install FFmpeg build dependencies (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install nasm wget
+
+      # Cache FFmpeg library build
+      - name: Cache FFmpeg libraries
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg/install
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/ffmpeg/build.sh') }}
+
+      # Build minimal FFmpeg library
+      - name: Build minimal FFmpeg
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: ./third_party/ffmpeg/build.sh
+        shell: bash
+
+      # Test with embedded FFmpeg
+      - name: Run tests with embedded FFmpeg
+        if: always()
+        run: go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
+        shell: bash
+
+      # NEW: Install system ffmpeg for fallback testing using local binary
+      - name: Install system ffmpeg (ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install system ffmpeg (macos)
         if: startsWith(matrix.os, 'macos')
         run: brew install ffmpeg
 
-      - name: Install ffmpeg (windows)
+      - name: Install system ffmpeg (windows)
         if: startsWith(matrix.os, 'windows')
         run: choco install -y ffmpeg
 
-      - name: go test
+      # NEW: Test fallback mode (without embedded FFmpeg)
+      - name: Run tests in fallback mode
         if: always()
         run: go test -count=1 -benchtime=1x ./...
+        shell: bash
 
       - uses: golangci/golangci-lint-action@v9
         with:
