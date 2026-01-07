@@ -131,7 +131,35 @@ COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'Vulkan' \
         && cmake --build --parallel --preset 'Vulkan' \
-        && cmake --install build --component Vulkan --strip --parallel 8 
+        && cmake --install build --component Vulkan --strip --parallel 8
+
+FROM base AS mlx
+ARG CUDA13VERSION=13.0
+RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
+    && dnf install -y openblas-devel lapack-devel
+ENV PATH=/usr/local/cuda-13/bin:$PATH
+ENV BLAS_INCLUDE_DIRS=/usr/include/openblas
+ENV LAPACK_INCLUDE_DIRS=/usr/include/openblas
+ARG PARALLEL
+WORKDIR /go/src/github.com/ollama/ollama
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY x/ml/backend/mlx x/ml/backend/mlx
+COPY go.mod go.sum .
+RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'MLX' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
+        && cmake --build --parallel ${PARALLEL} --preset 'MLX' \
+        && cmake --install build --component MLX --strip --parallel ${PARALLEL}
+COPY . .
+ARG GOFLAGS="'-ldflags=-w -s'"
+ENV CGO_ENABLED=1
+ARG CGO_CFLAGS
+ARG CGO_CXXFLAGS
+# TODO wire up the actual MLX engine here instead of building the main binary...
+RUN go build -tags mlx -trimpath -buildmode=pie -o /bin/ollama-mlx-engine .
 
 
 FROM base AS build
@@ -153,6 +181,8 @@ FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
+COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
+COPY --from=mlx     /bin/ /bin/
 
 FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/

@@ -8,21 +8,28 @@ set(MLX_BUILD_SAFETENSORS ON)
 function(set_target_output_directory _target)
     if(TARGET ${_target})
         set_target_properties(${_target} PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-            ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+            RUNTIME_OUTPUT_DIRECTORY ${OLLAMA_BUILD_DIR}
+            LIBRARY_OUTPUT_DIRECTORY ${OLLAMA_BUILD_DIR}
+            ARCHIVE_OUTPUT_DIRECTORY ${OLLAMA_BUILD_DIR}
         )
     endif()
 endfunction()
 
-execute_process(
-  COMMAND
-    zsh "-c"
-    "echo \"__METAL_VERSION__\" | xcrun -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1 | tr -d '\n'"
-  OUTPUT_VARIABLE MLX_METAL_VERSION COMMAND_ERROR_IS_FATAL ANY)
+# Check for Metal support (macOS only)
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    execute_process(
+      COMMAND
+        zsh "-c"
+        "echo \"__METAL_VERSION__\" | xcrun -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1 | tr -d '\n'"
+      OUTPUT_VARIABLE MLX_METAL_VERSION COMMAND_ERROR_IS_FATAL ANY)
 
-if(NOT MLX_METAL_VERSION)
-    message(STATUS "`xcrun metal` error. Setting MLX_BUILD_METAL=OFF")
+    if(NOT MLX_METAL_VERSION)
+        message(STATUS "`xcrun metal` error. Setting MLX_BUILD_METAL=OFF")
+        set(MLX_BUILD_METAL OFF)
+    endif()
+else()
+    # On Linux, disable Metal backend
+    message(STATUS "Non-macOS platform detected. Setting MLX_BUILD_METAL=OFF")
     set(MLX_BUILD_METAL OFF)
 endif()
 

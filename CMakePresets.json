@@ -83,6 +83,14 @@
       "cacheVariables": {
         "OLLAMA_RUNNER_DIR": "vulkan"
       }
+    },
+    {
+      "name": "MLX",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "MLX_ENGINE": "ON",
+        "OLLAMA_RUNNER_DIR": "mlx"
+      }
     }
   ],
   "buildPresets": [
@@ -140,6 +148,11 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
+    },
+    {
+      "name": "MLX",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX"
     }
   ]
 }

@@ -159,7 +159,16 @@ if(Vulkan_FOUND)
     )
 endif()
 
-if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+option(MLX_ENGINE "Enable MLX backend" OFF)
+
+if(MLX_ENGINE)
     message(STATUS "Setting up MLX (this takes a while...)")
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/x/ml/backend/mlx)
+    install(TARGETS mlx mlxc
+        RUNTIME_DEPENDENCIES
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/ollama COMPONENT MLX
+        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/ollama COMPONENT MLX
+        FRAMEWORK DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/ollama COMPONENT MLX
+    )
 endif()
