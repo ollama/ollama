@@ -133,6 +133,12 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel --preset 'Vulkan' \
         && cmake --install build --component Vulkan --strip --parallel 8 
 
+# Build minimal LGPL FFmpeg libraries for embedded video support
+FROM base AS ffmpeg-build
+RUN yum install -y wget tar xz nasm yasm gcc gcc-c++ make perl pkgconfig autoconf automake libtool
+WORKDIR /tmp/ffmpeg-build
+COPY third_party/ffmpeg/build.sh .
+RUN chmod +x build.sh && ./build.sh
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
@@ -141,12 +147,15 @@ RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .
+# Copy FFmpeg libraries from ffmpeg-build stage
+COPY --from=ffmpeg-build /tmp/ffmpeg-build/install /usr/local/ffmpeg-minimal
+ENV PKG_CONFIG_PATH=/usr/local/ffmpeg-minimal/lib/pkgconfig
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
 ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -buildmode=pie -o /bin/ollama .
+    go build -trimpath -buildmode=pie -tags "ffmpeg,cgo" -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
