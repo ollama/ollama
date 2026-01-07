@@ -1,5 +1,4 @@
 //go:build ffmpeg && cgo
-// +build ffmpeg,cgo
 
 package imageproc
 
@@ -8,16 +7,31 @@ package imageproc
 import "C"
 
 import (
-	"bytes"
 	"fmt"
 	"image"
+	"log/slog"
+	"os"
 
 	"github.com/asticode/go-astiav"
 )
 
-// extractVideoFramesImpl implements video frame extraction using embedded FFmpeg libs via go-astiav.
-// This implementation is used when building with -tags ffmpeg,cgo and FFmpeg libraries are available.
+// extractVideoFramesImpl tries embedded FFmpeg first, then falls back to system ffmpeg.
 func extractVideoFramesImpl(videoData []byte, config VideoExtractionConfig) ([]image.Image, error) {
+	// Try embedded FFmpeg first
+	slog.Debug("Attempting video extraction with embedded FFmpeg", "size", len(videoData))
+	frames, err := extractVideoFramesEmbedded(videoData, config)
+	if err == nil {
+		slog.Debug("Embedded FFmpeg extraction succeeded", "num_frames", len(frames))
+		return frames, nil
+	}
+
+	slog.Debug("Embedded FFmpeg extraction failed, falling back to system ffmpeg", "error", err)
+	// Fallback to system ffmpeg
+	return extractVideoFramesSystem(videoData, config)
+}
+
+// extractVideoFramesEmbedded implements video frame extraction using embedded FFmpeg libs via go-astiav.
+func extractVideoFramesEmbedded(videoData []byte, config VideoExtractionConfig) ([]image.Image, error) {
 	// Allocate input format context
 	inputCtx := astiav.AllocFormatContext()
 	if inputCtx == nil {
@@ -25,13 +39,16 @@ func extractVideoFramesImpl(videoData []byte, config VideoExtractionConfig) ([]i
 	}
 	defer inputCtx.Free()
 
-	// Create IO context from memory buffer
-	// This allows us to decode video directly from bytes without writing to disk
-	ioCtx := astiav.NewIOContext(bytes.NewReader(videoData), nil)
-	inputCtx.SetPb(ioCtx)
+	// For now, write video data to a temp file to work around IOContext limitations
+	// TODO: Implement custom IOContext callbacks for reading from bytes
+	tempFile := fmt.Sprintf("/tmp/ollama-video-%d.tmp", len(videoData))
+	if err := os.WriteFile(tempFile, videoData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write temp file: %w", err)
+	}
+	defer os.Remove(tempFile)
 
-	// Open input (probe format and read header)
-	if err := inputCtx.OpenInput("", nil, nil); err != nil {
+	// Open input file
+	if err := inputCtx.OpenInput(tempFile, nil, nil); err != nil {
 		return nil, fmt.Errorf("failed to open input: %w", err)
 	}
 	defer inputCtx.CloseInput()
@@ -47,7 +64,7 @@ func extractVideoFramesImpl(videoData []byte, config VideoExtractionConfig) ([]i
 	for _, stream := range inputCtx.Streams() {
 		if stream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
 			videoStream = stream
-			codec = astiav.FindDecoder(stream.CodecParameters().CodecId())
+			codec = astiav.FindDecoder(stream.CodecParameters().CodecID())
 			break
 		}
 	}
@@ -189,18 +206,14 @@ func extractVideoFramesImpl(videoData []byte, config VideoExtractionConfig) ([]i
 
 // convertFrameToImage converts an AVFrame to a Go image.Image
 func convertFrameToImage(frame *astiav.Frame, width, height int, srcPixFmt astiav.PixelFormat) (image.Image, error) {
-	// Create destination image
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-
-	// Create swscale context for pixel format conversion
-	swsCtx := astiav.AllocSwsContext(
+	// Create software scale context for pixel format conversion
+	swsCtx, err := astiav.CreateSoftwareScaleContext(
 		width, height, srcPixFmt,
 		width, height, astiav.PixelFormatRgba,
-		astiav.SwsScaleFlagBilinear,
-		nil, nil, nil,
+		astiav.NewSoftwareScaleContextFlags(astiav.SoftwareScaleContextFlagBilinear),
 	)
-	if swsCtx == nil {
-		return nil, fmt.Errorf("failed to create swscale context")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create swscale context: %w", err)
 	}
 	defer swsCtx.Free()
 
@@ -221,24 +234,19 @@ func convertFrameToImage(frame *astiav.Frame, width, height int, srcPixFmt astia
 	}
 
 	// Scale and convert pixel format
-	if err := swsCtx.Scale(
-		frame.Data(), frame.Linesize(),
-		0, height,
-		dstFrame.Data(), dstFrame.Linesize(),
-	); err != nil {
+	if err := swsCtx.ScaleFrame(frame, dstFrame); err != nil {
 		return nil, fmt.Errorf("failed to scale frame: %w", err)
 	}
 
-	// Copy pixel data from AVFrame to Go image
-	// dstFrame.Data()[0] contains RGBA data
-	pixelDataSize := width * height * 4 // RGBA = 4 bytes per pixel
-	pixelData := dstFrame.Data()[0]
-
-	if len(pixelData) < pixelDataSize {
-		return nil, fmt.Errorf("pixel data size mismatch: expected %d, got %d", pixelDataSize, len(pixelData))
+	// Convert raw frame data to Go image
+	img, err := dstFrame.Data().GuessImageFormat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to guess image format: %w", err)
 	}
 
-	copy(img.Pix, pixelData[:pixelDataSize])
+	if err := dstFrame.Data().ToImage(img); err != nil {
+		return nil, fmt.Errorf("failed to convert frame to image: %w", err)
+	}
 
 	return img, nil
 }

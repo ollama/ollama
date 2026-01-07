@@ -276,8 +276,8 @@ func (p *ImageProcessor) createPatchesWithTemporal(pixels []float32, height, wid
 		}
 
 		// Iterate over spatial grid with 2x2 merging
-		for h := range grid.Height {
-			for w := range grid.Width {
+		for h := 0; h < grid.Height; h += mergeSize {
+			for w := 0; w < grid.Width; w += mergeSize {
 				// Handle the 2x2 merged patches
 				for mh := range mergeSize {
 					for mw := range mergeSize {

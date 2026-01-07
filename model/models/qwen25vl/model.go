@@ -2,6 +2,7 @@ package qwen25vl
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"slices"
 
@@ -64,7 +65,8 @@ func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *
 	}
 
 	// Calculate tensor dimensions
-	patchDim := m.numChannels * m.temporalPatchSize * m.patchSize * m.patchSize
+	patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
+		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
 	numPatches := grid.Temporal * grid.Height * grid.Width
 
 	pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
@@ -105,7 +107,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 
 			pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
 			visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
-			return []input.Multimodal{{Tensor: visionOutputs}}, nil
+			return []input.Multimodal{{Tensor: visionOutputs, Data: grid}}, nil
 		}
 
 		// Use ProcessVideoFrames for proper temporal processing (2+ frames)
@@ -120,7 +122,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 
 		pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
 		visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
-		return []input.Multimodal{{Tensor: visionOutputs}}, nil
+		return []input.Multimodal{{Tensor: visionOutputs, Data: grid}}, nil
 	}
 
 	// Single image processing

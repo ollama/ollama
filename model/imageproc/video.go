@@ -3,18 +3,15 @@ package imageproc
 import (
 	"fmt"
 	"image"
-	_ "image/jpeg"
-	"log/slog"
-	"sync"
 	"time"
 )
 
 // VideoExtractionConfig holds configuration for video frame extraction
 type VideoExtractionConfig struct {
-	// FPS specifies how many frames per second to extract from the video
+	// FPS specifies the frame rate for extraction (e.g., 1.0 = 1 frame per second)
 	FPS float64
 
-	// Quality specifies the JPEG quality for extracted frames (1-31, lower is better quality)
+	// Quality specifies JPEG quality for extracted frames (1-31, lower is better, 2 is high quality)
 	Quality int
 
 	// MaxFrames limits the maximum number of frames to extract (0 = no limit)
@@ -34,16 +31,10 @@ func DefaultVideoConfig() VideoExtractionConfig {
 	}
 }
 
-var (
-	embeddedFFmpegAvailable bool
-	checkOnce               sync.Once
-)
-
 // ExtractVideoFrames extracts frames from video data.
 //
-// This function automatically tries embedded FFmpeg libs first (if built with -tags ffmpeg,cgo),
-// via go-astiav (handled by video_astiav.go) then falls back to system ffmpeg binary
-// if embedded is unavailable or fails.
+// Uses embedded FFmpeg if built with -tags ffmpeg,cgo (via go-astiav),
+// otherwise uses system ffmpeg binary.
 //
 // Parameters:
 //   - videoData: Raw video file bytes (any format supported by ffmpeg)
@@ -63,26 +54,5 @@ func ExtractVideoFrames(videoData []byte, config VideoExtractionConfig) ([]image
 		return nil, fmt.Errorf("video data is empty")
 	}
 
-	// Check if embedded FFmpeg is available (once per process)
-	checkOnce.Do(func() {
-		embeddedFFmpegAvailable = checkEmbeddedFFmpeg()
-		if embeddedFFmpegAvailable {
-			slog.Debug("using embedded FFmpeg for video processing")
-		} else {
-			slog.Debug("embedded FFmpeg libs unavailable, will use system ffmpeg binary if available")
-		}
-	})
-
-	// Try embedded FFmpeg first
-	if embeddedFFmpegAvailable {
-		frames, err := extractVideoFramesImpl(videoData, config)
-		if err == nil {
-			return frames, nil
-		}
-		// Log warning but continue to fallback
-		slog.Warn("embedded FFmpeg libs failed, falling back to system ffmpeg binary", "error", err)
-	}
-
-	// Fallback to system ffmpeg binary (handled by video_fallback.go)
 	return extractVideoFramesImpl(videoData, config)
 }

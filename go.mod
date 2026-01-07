@@ -21,7 +21,7 @@ require (
 
 require (
 	github.com/agnivade/levenshtein v1.1.1
-	github.com/asticode/go-astiav v0.24.0
+	github.com/asticode/go-astiav v0.39.0
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/dlclark/regexp2 v1.11.4
 	github.com/emirpasic/gods/v2 v2.0.0-alpha

@@ -1,6 +1,10 @@
 #!/bin/bash
 # Builds minimal LGPL FFmpeg (decoder-only) for Ollama
 # License: LGPL 2.1+ only (no GPL components)
+#
+# Usage:
+#   ./build.sh           - Build FFmpeg libraries only
+#   ./build.sh ollama    - Build FFmpeg then build Ollama with embedded FFmpeg
 
 set -euo pipefail
 
@@ -8,6 +12,7 @@ FFMPEG_VERSION="7.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
 INSTALL_PREFIX="${SCRIPT_DIR}/install"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Detect platform and architecture
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -157,3 +162,29 @@ echo "  - MKV (H.265/H.264)"
 echo "  - AVI (H.264)"
 echo ""
 echo "License: LGPL 2.1+ (decoder-only, no GPL components)"
+
+# If "ollama" argument is passed, build Ollama with embedded FFmpeg
+if [ "${1:-}" = "ollama" ]; then
+    echo ""
+    echo "========================================"
+    echo "Building Ollama with embedded FFmpeg"
+    echo "========================================"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+
+    # Export PKG_CONFIG_PATH for our minimal FFmpeg
+    export PKG_CONFIG_PATH="${INSTALL_PREFIX}/lib/pkgconfig"
+    export CGO_ENABLED=1
+
+    echo "PKG_CONFIG_PATH: ${PKG_CONFIG_PATH}"
+    echo "FFmpeg version: $(pkg-config --modversion libavcodec)"
+    echo ""
+
+    go build -tags ffmpeg,cgo -o ./ollama .
+
+    echo ""
+    echo "✅ Ollama build complete: ./ollama"
+    echo "   - Embedded FFmpeg: YES (statically linked)"
+    echo "   - Fallback: System ffmpeg"
+fi

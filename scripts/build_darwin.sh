@@ -54,9 +54,13 @@ _build_darwin() {
 
     # Set PKG_CONFIG_PATH for FFmpeg libraries
     if [ -f "third_party/ffmpeg/install/lib/pkgconfig/libavcodec.pc" ]; then
+        # Use ONLY our local FFmpeg (prevent homebrew libs from being used)
         export PKG_CONFIG_PATH="${PWD}/third_party/ffmpeg/install/lib/pkgconfig"
+        # Explicitly set CGO flags to use our local FFmpeg include/lib paths
+        export CGO_CFLAGS="${CGO_CFLAGS} -I${PWD}/third_party/ffmpeg/install/include"
+        export CGO_LDFLAGS="${CGO_LDFLAGS} -L${PWD}/third_party/ffmpeg/install/lib"
         GO_BUILD_TAGS="-tags ffmpeg,cgo"
-        status "Building with embedded FFmpeg support"
+        status "Building with embedded FFmpeg support (local build)"
     else
         GO_BUILD_TAGS=""
         status "Building without embedded FFmpeg (will use system ffmpeg)"
