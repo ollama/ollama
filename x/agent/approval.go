@@ -4,6 +4,7 @@ package agent
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -224,38 +225,40 @@ func extractBashPrefix(command string) string {
 		arg = strings.ReplaceAll(arg, "\\", "/")
 
 		// Security: reject absolute paths
-		if strings.HasPrefix(arg, "/") {
+		if path.IsAbs(arg) {
 			return "" // Absolute path - don't create prefix
 		}
 
-		// Security: reject any path containing ".." to prevent traversal attacks
-		// If someone needs to use "..", they must approve each command individually
+		// Normalize the path using stdlib path.Clean (resolves . and ..)
+		cleaned := path.Clean(arg)
+
+		// Security: reject if cleaned path escapes to parent directory
+		if strings.HasPrefix(cleaned, "..") {
+			return "" // Path escapes - don't create prefix
+		}
+
+		// Security: if original had "..", verify cleaned path didn't escape to sibling
+		// e.g., "tools/a/b/../../../etc" -> "etc" (escaped tools/ to sibling)
 		if strings.Contains(arg, "..") {
-			return "" // Path traversal - don't create prefix
+			origBase := strings.SplitN(arg, "/", 2)[0]
+			cleanedBase := strings.SplitN(cleaned, "/", 2)[0]
+			if origBase != cleanedBase {
+				return "" // Path escaped to sibling directory
+			}
 		}
 
-		// Normalize the path (remove redundant "." components)
-		normalized := normalizePath(arg)
+		// Check if arg ends with / (explicit directory)
+		isDir := strings.HasSuffix(arg, "/")
 
-		// Double-check: reject if normalization reveals escape attempts
-		if strings.HasPrefix(normalized, "..") || strings.HasPrefix(normalized, "/") {
-			return "" // Path escapes - don't create a prefix for it
-		}
-
-		// If normalized path ends with /, it's a directory - use it directly
-		if strings.HasSuffix(normalized, "/") {
-			return fmt.Sprintf("%s:%s", baseCmd, normalized)
-		}
-		// Get the directory part of a file path using forward-slash split
-		lastSlash := strings.LastIndex(normalized, "/")
+		// Get the directory part
 		var dir string
-		if lastSlash == -1 {
-			dir = "."
+		if isDir {
+			dir = cleaned
 		} else {
-			dir = normalized[:lastSlash]
+			dir = path.Dir(cleaned)
 		}
-		if dir == "." || dir == "" {
-			// Path is just a filename in current dir
+
+		if dir == "." {
 			return fmt.Sprintf("%s:./", baseCmd)
 		}
 		return fmt.Sprintf("%s:%s/", baseCmd, dir)
@@ -274,48 +277,6 @@ func extractBashPrefix(command string) string {
 	}
 
 	return ""
-}
-
-// normalizePath normalizes a path by resolving ".." and "." components.
-// This is similar to filepath.Clean but works with forward slashes only.
-// Returns the normalized path, which may start with ".." if it escapes the base.
-func normalizePath(path string) string {
-	if path == "" {
-		return "."
-	}
-
-	// Split into components
-	parts := strings.Split(path, "/")
-	var normalized []string
-
-	for _, part := range parts {
-		switch part {
-		case "", ".":
-			// Skip empty and current directory
-			continue
-		case "..":
-			// Go up one level
-			if len(normalized) > 0 && normalized[len(normalized)-1] != ".." {
-				normalized = normalized[:len(normalized)-1]
-			} else {
-				// Can't go up further, keep the ".."
-				normalized = append(normalized, "..")
-			}
-		default:
-			normalized = append(normalized, part)
-		}
-	}
-
-	if len(normalized) == 0 {
-		return "."
-	}
-
-	result := strings.Join(normalized, "/")
-	// Preserve trailing slash if original had one
-	if strings.HasSuffix(path, "/") && !strings.HasSuffix(result, "/") {
-		result += "/"
-	}
-	return result
 }
 
 // isNumeric checks if a string is a numeric value

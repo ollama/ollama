@@ -168,9 +168,9 @@ func TestExtractBashPrefix(t *testing.T) {
 			expected: "", // Absolute paths should not create prefix
 		},
 		{
-			name:     "path with dotdot - rejected for prefix",
+			name:     "path with safe dotdot - normalized",
 			command:  "cat tools/subdir/../file.go",
-			expected: "", // Any ".." in path prevents prefix creation for security
+			expected: "cat:tools/", // Normalizes to tools/file.go - safe, creates prefix
 		},
 	}
 
@@ -180,34 +180,6 @@ func TestExtractBashPrefix(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("extractBashPrefix(%q) = %q, expected %q",
 					tt.command, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestNormalizePath(t *testing.T) {
-	tests := []struct {
-		path     string
-		expected string
-	}{
-		{"tools/file.go", "tools/file.go"},
-		{"tools/subdir/../file.go", "tools/file.go"},
-		{"tools/../src/file.go", "src/file.go"},
-		{"tools/../../etc/passwd", "../etc/passwd"},
-		{"./file.go", "file.go"},
-		{"../file.go", "../file.go"},
-		{"a/b/c/../../../d", "d"},
-		{"a/b/c/../../../../d", "../d"},
-		{"", "."},
-		{"tools/", "tools/"},
-		{"tools/subdir/", "tools/subdir/"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			result := normalizePath(tt.path)
-			if result != tt.expected {
-				t.Errorf("normalizePath(%q) = %q, expected %q", tt.path, result, tt.expected)
 			}
 		})
 	}
@@ -234,10 +206,10 @@ func TestApprovalManager_PathTraversalBlocked(t *testing.T) {
 		t.Error("expected cat tools/subdir/file.go to be allowed")
 	}
 
-	// Commands with ".." require individual approval (no prefix matching)
-	// This is intentional - any ".." in a path is treated as potentially dangerous
-	if am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/../other.go"}) {
-		t.Error("expected cat tools/subdir/../other.go to NOT be allowed (paths with .. need individual approval)")
+	// Safe ".." that normalizes to within allowed directory should work
+	// tools/subdir/../other.go normalizes to tools/other.go which is under tools/
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/../other.go"}) {
+		t.Error("expected cat tools/subdir/../other.go to be allowed (normalizes to tools/other.go)")
 	}
 }
 
