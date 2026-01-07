@@ -272,7 +272,7 @@ jobs:
           PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
         shell: pwsh
 
-      # NEW: Install system ffmpeg for fallback testing using local binary
+      # Install system ffmpeg for fallback testing using local binary
       - name: Install system ffmpeg (ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get install -y ffmpeg
@@ -285,7 +285,7 @@ jobs:
         if: startsWith(matrix.os, 'windows')
         run: choco install -y ffmpeg
 
-      # NEW: Test fallback mode (without embedded FFmpeg)
+      # Test fallback mode (without embedded FFmpeg)
       - name: Run tests in fallback mode
         if: always()
         run: go test -count=1 -benchtime=1x ./...
