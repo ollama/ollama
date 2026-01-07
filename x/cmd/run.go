@@ -135,6 +135,9 @@ type RunOptions struct {
 	Tools    *tools.Registry
 	Approval *agent.ApprovalManager
 
+	// YoloMode skips all tool approval prompts
+	YoloMode bool
+
 	// LastToolOutput stores the full output of the last tool execution
 	// for Ctrl+O expansion. Updated by Chat(), read by caller.
 	LastToolOutput *string
@@ -267,7 +270,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			var authErr api.AuthorizationError
 			if errors.As(err, &authErr) {
 				p.StopAndClear()
-				fmt.Fprintf(os.Stderr, "\033[33mAuthentication required to use this model.\033[0m\n")
+				fmt.Fprintf(os.Stderr, "\033[33mAuthentication required to use this cloud model.\033[0m\n")
 				result, promptErr := agent.PromptYesNo("Sign in to Ollama?")
 				if promptErr == nil && result {
 					if signinErr := waitForOllamaSignin(ctx); signinErr == nil {
@@ -336,7 +339,12 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			}
 
 			// Check approval (uses prefix matching for bash commands)
-			if !skipApproval && !approval.IsAllowed(toolName, args) {
+			// In yolo mode, skip all approval prompts
+			if opts.YoloMode {
+				if !skipApproval {
+					fmt.Fprintf(os.Stderr, "\033[90m▶ Running: %s\033[0m\n", formatToolShort(toolName, args))
+				}
+			} else if !skipApproval && !approval.IsAllowed(toolName, args) {
 				result, err := approval.RequestApproval(toolName, args)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error requesting approval: %v\n", err)
@@ -600,7 +608,8 @@ func checkModelCapabilities(ctx context.Context, modelName string) (supportsTool
 
 // GenerateInteractive runs an interactive agent session.
 // This is called from cmd.go when --experimental flag is set.
-func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration) error {
+// If yoloMode is true, all tool approvals are skipped.
+func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
@@ -627,6 +636,9 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 		toolRegistry = tools.DefaultRegistry()
 		if toolRegistry.Count() > 0 {
 			fmt.Fprintf(os.Stderr, "\033[90mTools available: %s\033[0m\n", strings.Join(toolRegistry.Names(), ", "))
+		}
+		if yoloMode {
+			fmt.Fprintf(os.Stderr, "\033[33m⚠ YOLO mode: All tool approvals will be skipped\033[0m\n")
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "\033[33mNote: Model does not support tools - running in chat-only mode\033[0m\n")
@@ -716,6 +728,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 				KeepAlive:               keepAlive,
 				Tools:                   toolRegistry,
 				Approval:                approval,
+				YoloMode:                yoloMode,
 				LastToolOutput:          &lastToolOutput,
 				LastToolOutputTruncated: &lastToolOutputTruncated,
 			}
