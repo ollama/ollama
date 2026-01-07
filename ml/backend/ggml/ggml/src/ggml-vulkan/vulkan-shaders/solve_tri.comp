@@ -1,0 +1,81 @@
+#version 450
+
+#include "types.glsl"
+#include "generic_binary_head.glsl"
+
+layout (constant_id = 1) const uint N = 64;
+layout (constant_id = 2) const uint K = 32;
+layout (constant_id = 3) const uint BATCH_N = 32;
+
+layout(local_size_x_id = 4, local_size_y = 1, local_size_z = 1) in;
+
+uint a_base, b_base, x_base;
+
+FLOAT_TYPE get_a(uint r, uint c) {
+    return FLOAT_TYPE(data_a[a_base + r * p.nb01 + c * p.nb00]);
+}
+
+FLOAT_TYPE get_b(uint r, uint c) {
+    return FLOAT_TYPE(data_b[b_base + r * p.nb11 + c * p.nb10]);
+}
+
+void store_x(uint r, uint c, FLOAT_TYPE v) {
+    data_d[x_base + r * p.nb21 + c * p.nb20] = D_TYPE(v);
+}
+
+shared FLOAT_TYPE shA[BATCH_N * N];
+shared FLOAT_TYPE shB[BATCH_N * K];
+
+void main() {
+    const uint batch = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
+    const uint tid = gl_LocalInvocationID.x;
+
+    if (batch >= p.ne02 * p.ne03) {
+        return;
+    }
+
+    const uint i3 = batch / p.ne22;
+    const uint i2 = batch % p.ne22;
+    a_base = get_aoffset() + i2 * p.nb02 + i3 * p.nb03;
+    b_base = get_boffset() + i2 * p.nb12 + i3 * p.nb13;
+    x_base = get_doffset() + i2 * p.nb22 + i3 * p.nb23;
+
+    FLOAT_TYPE X[N];
+
+    // Loop over batches of rows
+    [[unroll]] for (uint row_base = 0; row_base < N; row_base += BATCH_N) {
+        const uint cur_N = min(BATCH_N, N - row_base);
+
+        // Load the A matrix batch into shA
+        [[unroll]] for (uint i = 0; i < cur_N * N; i += gl_WorkGroupSize.x) {
+            uint idx = i + tid;
+            if (((cur_N * N) % gl_WorkGroupSize.x == 0) || idx < cur_N * N) {
+                shA[idx] = get_a(row_base + idx / N, idx % N);
+            }
+        }
+        // Load the B matrix batch into shB
+        [[unroll]] for (uint i = 0; i < cur_N * K; i += gl_WorkGroupSize.x) {
+            uint idx = i + tid;
+            if (((cur_N * K) % gl_WorkGroupSize.x == 0) || idx < cur_N * K) {
+                shB[idx] = get_b(row_base + idx / K, idx % K);
+            }
+        }
+        barrier();
+
+        // Each thread solves one column
+        if (tid < K) {
+            [[unroll]] for (uint row_offset = 0; row_offset < cur_N; ++row_offset) {
+                uint r = row_base + row_offset;
+                FLOAT_TYPE b = shB[row_offset * K + tid];
+                // Compute x[r,c] = (b[r,c] - sum(a[r,c]*x[c])) / a[r,r]
+                [[unroll]] for (int c = 0; c < r; ++c) {
+                    b -= shA[row_offset * N + c] * X[c];
+                }
+                FLOAT_TYPE x = b / shA[row_offset * N + r];
+                X[r] = x;
+                store_x(r, tid, x);
+            }
+        }
+        barrier();
+    }
+}

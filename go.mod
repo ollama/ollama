@@ -28,13 +28,17 @@ require (
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
 	github.com/tkrajina/typescriptify-golang-structs v0.2.0
+	github.com/wk8/go-ordered-map/v2 v2.1.8
 	golang.org/x/image v0.22.0
+	golang.org/x/mod v0.30.0
 	golang.org/x/tools v0.38.0
 	gonum.org/v1/gonum v0.15.0
 )
 
 require (
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/chewxy/hm v1.0.0 // indirect
 	github.com/chewxy/math32 v1.11.0 // indirect
@@ -44,6 +48,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
@@ -53,7 +58,6 @@ require (
 	github.com/xtgo/set v1.0.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
-	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	gorgonia.org/vecf32 v0.9.0 // indirect
 	gorgonia.org/vecf64 v0.9.0 // indirect

@@ -48,6 +48,8 @@ struct common_sampler * common_sampler_clone (struct common_sampler * gsmpl);
 // arguments can be nullptr to skip printing
 void common_perf_print(const struct llama_context * ctx, const struct common_sampler * gsmpl);
 
+struct llama_sampler * common_sampler_get(const struct common_sampler * gsmpl);
+
 // extended sampling implementation:
 //
 // - set logits
@@ -55,10 +57,7 @@ void common_perf_print(const struct llama_context * ctx, const struct common_sam
 // - check if the token fits the grammar (if any)
 // - if not: resample by first applying the grammar constraints and then sampling again (slower path)
 //
-// if grammar_first is true, the grammar is applied before the samplers (slower)
-// useful in cases where all the resulting candidates (not just the sampled one) must fit the grammar
-//
-llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first = false);
+llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx);
 
 // generalized version of common_sampler_sample
 //
@@ -76,10 +75,10 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
 //
 // returns at least 1 token, up to idxs.size()
 //
-std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft, bool grammar_first = false);
+std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft);
 
 // assume idxs == [ 0, 1, 2, ..., draft.size() ]
-std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const llama_tokens & draft, bool grammar_first = false);
+std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const llama_tokens & draft);
 
 uint32_t common_sampler_get_seed(const struct common_sampler * gsmpl);
 
@@ -107,3 +106,9 @@ std::vector<enum common_sampler_type> common_sampler_types_from_chars(const std:
 
 llama_sampler * llama_sampler_init_llg(const llama_vocab * vocab,
                 const char * grammar_kind, const char * grammar_data);
+
+struct common_sampler_deleter {
+    void operator()(common_sampler * s) { common_sampler_free(s); }
+};
+
+typedef std::unique_ptr<common_sampler, common_sampler_deleter> common_sampler_ptr;

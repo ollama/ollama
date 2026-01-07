@@ -7,6 +7,7 @@ layout (push_constant) uniform parameter
     uint nb00; uint nb01; uint nb02; uint nb03;
     uint ne10; uint ne11; uint ne12; uint ne13;
     float sf0; float sf1; float sf2; float sf3;
+    float pixel_offset;
 } p;
 
 #include "types.glsl"
@@ -19,7 +20,7 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 // from ggml.h: enum ggml_scale_mode, enum ggml_scale_flag
 #define NEAREST  0
 #define BILINEAR 1
-#define ALIGN_CORNERS (1 << 8)
+#define BICUBIC  2
 
 layout (constant_id = 0) const uint scale_mode = 0;
 
@@ -52,7 +53,7 @@ float fetch_bilinear(ivec2 c0, ivec2 c1, vec2 d, uint i12, uint i13) {
 float interpolate_bilinear(uint i10, uint i11, uint i12, uint i13) {
     const ivec2 ne0 = ivec2(p.ne00, p.ne01);
 
-    const vec2 c = (vec2(i10, i11) + 0.5) / vec2(p.sf0, p.sf1) - 0.5;
+    const vec2 c = (vec2(i10, i11) + p.pixel_offset) / vec2(p.sf0, p.sf1) - p.pixel_offset;
     const vec2 c0f = floor(c);
     const vec2 d = c - c0f;
     const ivec2 c0 = max(ivec2(c0f), 0);
@@ -61,14 +62,37 @@ float interpolate_bilinear(uint i10, uint i11, uint i12, uint i13) {
     return fetch_bilinear(c0, c1, d, i12, i13);
 }
 
-float interpolate_bilinear_align_corners(uint i10, uint i11, uint i12, uint i13) {
-    const vec2 c = vec2(i10, i11) / vec2(p.sf0, p.sf1);
-    const vec2 c0f = floor(c);
-    const vec2 d = c - c0f;
-    const ivec2 c0 = ivec2(c0f);
-    const ivec2 c1 = c0 + 1;
+// Bicubic interpolation with alpha = -0.75
+// https://en.wikipedia.org/wiki/Bicubic_interpolation#Bicubic_convolution_algorithm
+const vec4 bcoeffs1 = vec4( 1.25, -2.25,  0.0, 1.0);
+const vec4 bcoeffs2 = vec4(-0.75,  3.75, -6.0, 3.0);
+vec4 powers(float x) { return vec4(x*x*x, x*x, x, 1); }
 
-    return fetch_bilinear(c0, c1, d, i12, i13);
+float bicubic(float p0, float p1, float p2, float p3, float x) {
+    return p0 * dot(bcoeffs2, powers(x + 1)) +
+           p1 * dot(bcoeffs1, powers(x    )) +
+           p2 * dot(bcoeffs1, powers(1 - x)) +
+           p3 * dot(bcoeffs2, powers(2 - x));
+}
+
+#define FETCH(a,b) data_a[base + clamp(i.x+(a), 0, res.x) * p.nb00 + clamp(i.y+(b), 0, res.y) * p.nb01]
+
+float interpolate_bicubic(uint i10, uint i11, uint i12, uint i13) {
+    const ivec2 res = ivec2(p.ne00 - 1, p.ne01 - 1);
+
+    const vec2 coord = (vec2(i10, i11) + p.pixel_offset) / vec2(p.sf0, p.sf1) - p.pixel_offset;
+    const vec2 d = fract(coord);
+    const ivec2 i = ivec2(floor(coord));
+
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+    const uint base = p.a_offset + i03 * p.nb03 + i02 * p.nb02;
+
+    return bicubic(
+        bicubic(FETCH(-1,-1), FETCH(0,-1), FETCH(1,-1), FETCH(2,-1), d.x),
+        bicubic(FETCH(-1, 0), FETCH(0, 0), FETCH(1, 0), FETCH(2, 0), d.x),
+        bicubic(FETCH(-1, 1), FETCH(0, 1), FETCH(1, 1), FETCH(2, 1), d.x),
+        bicubic(FETCH(-1, 2), FETCH(0, 2), FETCH(1, 2), FETCH(2, 2), d.x), d.y);
 }
 
 void main() {
@@ -91,8 +115,8 @@ void main() {
         case BILINEAR:
             result = interpolate_bilinear(i10, i11, i12, i13);
             break;
-        case BILINEAR | ALIGN_CORNERS:
-            result = interpolate_bilinear_align_corners(i10, i11, i12, i13);
+        case BICUBIC:
+            result = interpolate_bicubic(i10, i11, i12, i13);
             break;
     }
 
