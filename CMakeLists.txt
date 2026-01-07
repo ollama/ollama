@@ -147,16 +147,18 @@ if(CMAKE_HIP_COMPILER)
     endif()
 endif()
 
-find_package(Vulkan)
-if(Vulkan_FOUND)
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
-    install(TARGETS ggml-vulkan
-        RUNTIME_DEPENDENCIES
-            PRE_INCLUDE_REGEXES vulkan
-            PRE_EXCLUDE_REGEXES ".*"
-        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
-        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
-    )
+if(NOT APPLE)
+    find_package(Vulkan)
+    if(Vulkan_FOUND)
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
+        install(TARGETS ggml-vulkan
+            RUNTIME_DEPENDENCIES
+                PRE_INCLUDE_REGEXES vulkan
+                PRE_EXCLUDE_REGEXES ".*"
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+        )
+    endif()
 endif()
 
 option(MLX_ENGINE "Enable MLX backend" OFF)

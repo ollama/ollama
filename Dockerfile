@@ -160,6 +160,7 @@ ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
 # TODO wire up the actual MLX engine here instead of building the main binary...
 RUN go build -tags mlx -trimpath -buildmode=pie -o /bin/ollama-mlx-engine .
+RUN go build -trimpath -buildmode=pie -o /bin/imagegen ./x/imagegen/cmd/engine
 
 
 FROM base AS build
