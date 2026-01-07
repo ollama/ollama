@@ -64,14 +64,17 @@ third_party/ffmpeg/install/
 │   ├── libavutil/
 │   └── libswscale/
 └── lib/
-    ├── libavcodec.a    (~2.0 MB)
-    ├── libavformat.a   (~800 KB)
-    ├── libavutil.a     (~400 KB)
-    ├── libswscale.a    (~300 KB)
+    ├── libavcodec.a     (4.0 MB)
+    ├── libavformat.a    (1.0 MB)
+    ├── libavutil.a      (1.3 MB)
+    ├── libswscale.a     (840 KB)
+    ├── libswresample.a  (192 KB)
+    ├── libavfilter.a    (296 KB)
+    ├── libavdevice.a    (24 KB)
     └── pkgconfig/
 ```
 
-**Total size:** ~3.5 MB
+**Total size:** 7.7 MB (measured on darwin-arm64)
 
 ## FFmpeg Configuration
 

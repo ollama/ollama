@@ -137,7 +137,18 @@ echo ""
 echo "Total library size:"
 du -sh "${INSTALL_PREFIX}/lib"
 echo ""
+
+# Clean up unnecessary files
+echo "Cleaning up unnecessary files..."
+rm -rf "${INSTALL_PREFIX}/share"  # Remove example code
+rm -rf "${BUILD_DIR}"              # Remove build directory
+echo "Removed: share/ directory (examples)"
+echo "Removed: build directory"
+echo ""
+
 echo "Libraries installed to: ${INSTALL_PREFIX}"
+echo "Final size (lib + include):"
+du -sh "${INSTALL_PREFIX}"
 echo ""
 echo "Supported formats:"
 echo "  - MP4 (H.264)"
