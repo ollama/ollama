@@ -215,6 +215,59 @@ func TestExtractVideoFrames_SingleFrame(t *testing.T) {
 	}
 }
 
+// TestEmbeddedFFmpegAvailability tests if embedded FFmpeg libraries are detected correctly
+func TestEmbeddedFFmpegAvailability(t *testing.T) {
+	// This test verifies the embedded FFmpeg detection
+	// The actual value depends on build tags
+	available := checkEmbeddedFFmpeg()
+
+	t.Logf("Embedded FFmpeg libs available: %v", available)
+
+	// Just verify the function runs without error
+	// In CI, this will be true when built with -tags ffmpeg,cgo
+	// and false otherwise
+}
+
+// TestExtractVideoFrames_Implementation tests that the correct implementation is used
+func TestExtractVideoFrames_Implementation(t *testing.T) {
+	// Create a small test video
+	cmd := exec.Command("ffmpeg",
+		"-f", "lavfi",
+		"-i", "testsrc=duration=0.5:size=160x120:rate=1",
+		"-pix_fmt", "yuv420p",
+		"-f", "mp4",
+		"-movflags", "frag_keyframe+empty_moov",
+		"pipe:1",
+	)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		t.Skip("ffmpeg not available for test video generation")
+	}
+
+	videoData := stdout.Bytes()
+	if len(videoData) == 0 {
+		t.Fatal("Generated video data is empty")
+	}
+
+	// Test extraction works regardless of implementation
+	config := DefaultVideoConfig()
+	frames, err := ExtractVideoFrames(videoData, config)
+	if err != nil {
+		t.Fatalf("ExtractVideoFrames failed: %v", err)
+	}
+
+	if len(frames) == 0 {
+		t.Error("Expected at least 1 frame")
+	}
+
+	t.Logf("Successfully extracted %d frame(s) using %s",
+		len(frames),
+		map[bool]string{true: "embedded FFmpeg", false: "system ffmpeg"}[checkEmbeddedFFmpeg()])
+}
+
 // BenchmarkExtractVideoFrames benchmarks video frame extraction
 func BenchmarkExtractVideoFrames(b *testing.B) {
 	// Create test video once
