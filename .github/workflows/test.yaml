@@ -267,7 +267,9 @@ jobs:
       # Test with embedded FFmpeg (Windows)
       - name: Run tests with embedded FFmpeg (Windows)
         if: runner.os == 'Windows'
-        run: go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
+        run: |
+          $env:PATH = "${{ github.workspace }}\third_party\ffmpeg\install\lib;$env:PATH"
+          go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
         shell: pwsh
