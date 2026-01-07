@@ -21,6 +21,7 @@ require (
 
 require (
 	github.com/agnivade/levenshtein v1.1.1
+	github.com/asticode/go-astiav v0.24.0
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/dlclark/regexp2 v1.11.4
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
@@ -35,6 +36,7 @@ require (
 
 require (
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
+	github.com/asticode/go-astikit v0.42.0 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/chewxy/hm v1.0.0 // indirect
 	github.com/chewxy/math32 v1.11.0 // indirect
