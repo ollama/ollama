@@ -459,11 +459,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// the real chat handler, but doing this as a stopgap to get renderer
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
-			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, req.Truncate == nil || *req.Truncate)
+			var numKeep int
+			prompt, images, numKeep, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, req.Truncate == nil || *req.Truncate)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			// Set numKeep to protect system prompt + tools from truncation during context shift
+			opts.NumKeep = numKeep
 			// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
 			if req.Context != nil {
 				b.WriteString(prompt)
@@ -2076,12 +2079,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	truncate := req.Truncate == nil || *req.Truncate
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
+	prompt, images, numKeep, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Set numKeep to protect system prompt + tools from truncation during context shift
+	opts.NumKeep = numKeep
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
@@ -2289,7 +2295,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				msgs = append(msgs, msg)
-				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
+				prompt, _, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 				if err != nil {
 					slog.Error("chat prompt error applying structured outputs", "error", err)
 					ch <- gin.H{"error": err.Error()}
