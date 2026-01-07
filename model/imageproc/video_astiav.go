@@ -3,7 +3,8 @@
 package imageproc
 
 // #cgo pkg-config: libavformat libavcodec libavutil libswscale
-// #cgo LDFLAGS: -lm -lpthread
+// #cgo !windows LDFLAGS: -lm -lpthread
+// #cgo windows LDFLAGS: -lole32 -lstrmiids -luuid -loleaut32 -lshlwapi -lgdi32 -lvfw32
 import "C"
 
 import (

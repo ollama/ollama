@@ -242,21 +242,35 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg/install
-          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/ffmpeg/build.sh') }}
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/ffmpeg/build.sh', 'third_party/ffmpeg/build_windows.ps1') }}
 
-      # Build minimal FFmpeg library (Linux/macOS only)
-      - name: Build minimal FFmpeg
+      # Build minimal FFmpeg library (Linux/macOS)
+      - name: Build minimal FFmpeg (Unix)
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: ./third_party/ffmpeg/build.sh
         shell: bash
 
-      # Test with embedded FFmpeg (Linux/macOS only)
-      - name: Run tests with embedded FFmpeg
+      # Build minimal FFmpeg library (Windows)
+      - name: Build minimal FFmpeg (Windows)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        run: .\third_party\ffmpeg\build_windows.ps1
+        shell: pwsh
+
+      # Test with embedded FFmpeg (Unix)
+      - name: Run tests with embedded FFmpeg (Unix)
         if: runner.os != 'Windows'
         run: go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
         shell: bash
+
+      # Test with embedded FFmpeg (Windows)
+      - name: Run tests with embedded FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
+        shell: pwsh
 
       # NEW: Install system ffmpeg for fallback testing using local binary
       - name: Install system ffmpeg (ubuntu)
