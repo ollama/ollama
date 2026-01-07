@@ -184,6 +184,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 	var thinkTagOpened bool = false
 	var thinkTagClosed bool = false
 	var pendingToolCalls []api.ToolCall
+	var consecutiveErrors int // Track consecutive 500 errors for retry limit
 
 	role := "assistant"
 	messages := opts.Messages
@@ -282,6 +283,42 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				return nil, fmt.Errorf("authentication required - run 'ollama signin' to authenticate")
 			}
 
+			// Check for 500 errors (often tool parsing failures) - inform the model
+			var statusErr api.StatusError
+			if errors.As(err, &statusErr) && statusErr.StatusCode >= 500 {
+				consecutiveErrors++
+				p.StopAndClear()
+
+				if consecutiveErrors >= 3 {
+					fmt.Fprintf(os.Stderr, "\033[31m✗ Too many consecutive errors, giving up\033[0m\n")
+					return nil, fmt.Errorf("too many consecutive server errors: %s", statusErr.ErrorMessage)
+				}
+
+				fmt.Fprintf(os.Stderr, "\033[33m⚠ Server error (attempt %d/3): %s\033[0m\n", consecutiveErrors, statusErr.ErrorMessage)
+
+				// Include both the model's response and the error so it can learn
+				assistantContent := fullResponse.String()
+				if assistantContent == "" {
+					assistantContent = "(empty response)"
+				}
+				errorMsg := fmt.Sprintf("Your previous response caused an error: %s\n\nYour response was:\n%s\n\nPlease try again with a valid response.", statusErr.ErrorMessage, assistantContent)
+				messages = append(messages,
+					api.Message{Role: "user", Content: errorMsg},
+				)
+
+				// Reset state and retry
+				fullResponse.Reset()
+				thinkingContent.Reset()
+				thinkTagOpened = false
+				thinkTagClosed = false
+				pendingToolCalls = nil
+				state = &displayResponseState{}
+				p = progress.NewProgress(os.Stderr)
+				spinner = progress.NewSpinner("")
+				p.Add("", spinner)
+				continue
+			}
+
 			if strings.Contains(err.Error(), "upstream error") {
 				p.StopAndClear()
 				fmt.Println("An error occurred while processing your message. Please try again.")
@@ -290,6 +327,9 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			}
 			return nil, err
 		}
+
+		// Reset consecutive error counter on success
+		consecutiveErrors = 0
 
 		// If no tool calls, we're done
 		if len(pendingToolCalls) == 0 || toolRegistry == nil {
