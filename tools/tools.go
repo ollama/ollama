@@ -124,14 +124,19 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 		return nil
 	}
 
-	var args map[string]any
+	var argsMap map[string]any
 	if found, i := findArguments(tool, p.buffer); found == nil {
 		return nil
 	} else {
-		args = found
+		argsMap = found
 		if i > end {
 			end = i
 		}
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range argsMap {
+		args.Set(k, v)
 	}
 
 	tc := &api.ToolCall{

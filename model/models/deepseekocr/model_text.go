@@ -6,7 +6,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 )
 
@@ -20,7 +19,7 @@ type textModel struct {
 }
 
 func (m *textModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return m.Options.applyRotaryPositionalEmbedding(ctx, key, shift), nil
+	return m.Options.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 type textOptions struct {
@@ -38,8 +37,8 @@ func (o textOptions) headDim() int {
 	return o.hiddenSize / o.numHeads
 }
 
-func (o textOptions) applyRotaryPositionalEmbedding(ctx ml.Context, t, p ml.Tensor) ml.Tensor {
-	return fast.RoPE(ctx, t, p, o.headDim(), o.ropeBase, 1/o.ropeScale, rope.WithTypeNeoX())
+func (o textOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, o.headDim(), o.ropeBase, 1/o.ropeScale, rope.WithTypeNeoX())
 }
 
 type textBlock struct {
@@ -83,8 +82,8 @@ func (m *textAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tenso
 	value := m.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, -1)
 
-	query = opts.applyRotaryPositionalEmbedding(ctx, query, positions)
-	key = opts.applyRotaryPositionalEmbedding(ctx, key, positions)
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
+	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
 	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, -1, attention.Dim(2))

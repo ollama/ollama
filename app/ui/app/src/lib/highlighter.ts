@@ -147,6 +147,7 @@ export const highlighterPromise = createHighlighter({
     "c",
     "cpp",
     "sql",
+    "swift",
     "yaml",
     "markdown",
   ],

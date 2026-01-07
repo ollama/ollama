@@ -331,7 +331,7 @@ void ggml_hip_mgmt_release() {
     if (gpus != NULL) gpus->pVtbl->Release(gpus); \
     if (gpu != NULL) gpu->pVtbl->Release(gpu)
 
-int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
     std::lock_guard<std::mutex> lock(ggml_adlx_lock);
     if (adlx.handle == NULL) {
         GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
@@ -455,12 +455,15 @@ int ggml_hip_mgmt_init() {
     return 0;
 }
 void ggml_hip_mgmt_release() {}
-int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
     GGML_LOG_INFO("%s searching for device %s\n", __func__, id);
     const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
     const std::string drmTotalMemoryFile = "mem_info_vram_total";
     const std::string drmUsedMemoryFile = "mem_info_vram_used";
+    const std::string drmGTTTotalMemoryFile = "mem_info_gtt_total";
+    const std::string drmGTTUsedMemoryFile = "mem_info_gtt_used";
     const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
+
 
     glob_t glob_result;
     glob(drmDeviceGlob.c_str(), GLOB_NOSORT, NULL, &glob_result);
@@ -495,7 +498,6 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
 
                     uint64_t memory;
                     totalFileStream >> memory;
-                    *total = memory;
 
                     std::string usedFile = dir + "/" + drmUsedMemoryFile;
                     std::ifstream usedFileStream(usedFile.c_str());
@@ -508,6 +510,33 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
 
                     uint64_t memoryUsed;
                     usedFileStream >> memoryUsed;
+
+                    if (is_integrated_gpu) {
+                        std::string totalFile = dir + "/" + drmGTTTotalMemoryFile;
+                        std::ifstream totalFileStream(totalFile.c_str());
+                        if (!totalFileStream.is_open()) {
+                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
+                            file.close();
+                            globfree(&glob_result);
+                            return 1;
+                        }
+                        uint64_t gtt;
+                        totalFileStream >> gtt;
+                        std::string usedFile = dir + "/" + drmGTTUsedMemoryFile;
+                        std::ifstream usedFileStream(usedFile.c_str());
+                        if (!usedFileStream.is_open()) {
+                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
+                            file.close();
+                            globfree(&glob_result);
+                            return 1;
+                        }
+                        uint64_t gttUsed;
+                        usedFileStream >> gttUsed;
+                        memory += gtt;
+                        memoryUsed += gttUsed;
+                    }
+
+                    *total = memory;
                     *free = memory - memoryUsed;
 
                     file.close();

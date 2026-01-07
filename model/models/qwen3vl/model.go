@@ -255,7 +255,7 @@ func New(c fs.Config) (model.Model, error) {
 	m.Cache = kvcache.NewCausalCache(func(ctx ml.Context, layer int, key, positions ml.Tensor) (ml.Tensor, error) {
 		m.positionCache = nil
 		positions = positions.Repeat(ctx, 1, 4).Reshape(ctx, -1)
-		return m.Options.applyRotaryPositionalEmbedding(ctx, key, positions), nil
+		return m.Options.applyRotaryPositionEmbeddings(ctx, key, positions), nil
 	})
 	return &m, nil
 }

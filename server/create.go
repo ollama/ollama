@@ -42,10 +42,10 @@ var (
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
-	config := &ConfigV2{
+	config := &model.ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
-		RootFS: RootFS{
+		RootFS: model.RootFS{
 			Type: "layers",
 		},
 	}
@@ -61,6 +61,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
+	config.Requires = r.Requires
 
 	for v := range r.Files {
 		if !fs.ValidPath(v) {
@@ -120,19 +121,22 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "") {
+				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
 					manifest, mErr := ParseNamedManifest(fromName)
 					if mErr == nil && manifest.Config.Digest != "" {
 						configPath, pErr := GetBlobsPath(manifest.Config.Digest)
 						if pErr == nil {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
-								var baseConfig ConfigV2
+								var baseConfig model.ConfigV2
 								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
 									if config.Renderer == "" {
 										config.Renderer = baseConfig.Renderer
 									}
 									if config.Parser == "" {
 										config.Parser = baseConfig.Parser
+									}
+									if config.Requires == "" {
+										config.Requires = baseConfig.Requires
 									}
 								}
 								cfgFile.Close()
@@ -459,7 +463,7 @@ func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
 	return ggml.KV{}, fmt.Errorf("no base model was found")
 }
 
-func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
+func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
 	var layers []Layer
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
@@ -789,7 +793,7 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 	return layers, nil
 }
 
-func createConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
+func createConfigLayer(layers []Layer, config model.ConfigV2) (*Layer, error) {
 	digests := make([]string, len(layers))
 	for i, layer := range layers {
 		digests[i] = layer.Digest

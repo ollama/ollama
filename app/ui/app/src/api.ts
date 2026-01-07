@@ -15,7 +15,7 @@ import {
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
-import { API_BASE } from "./lib/config";
+import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
 
 // Extend Model class with utility methods
 declare module "@/gotypes" {
@@ -27,7 +27,6 @@ declare module "@/gotypes" {
 Model.prototype.isCloud = function (): boolean {
   return this.model.endsWith("cloud");
 };
-
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -42,44 +41,50 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 }
 
 export async function fetchUser(): Promise<User | null> {
-  try {
-    const response = await fetch(`${API_BASE}/api/v1/me`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (response.ok) {
-      const userData: User = await response.json();
-      return userData;
-    }
-
-    return null;
-  } catch (error) {
-    console.error("Error fetching user:", error);
-    return null;
-  }
-}
-
-export async function fetchConnectUrl(): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/v1/connect`, {
-    method: "GET",
+  const response = await fetch(`${API_BASE}/api/me`, {
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch connect URL");
+  if (response.ok) {
+    const userData: User = await response.json();
+
+    if (userData.avatarurl && !userData.avatarurl.startsWith("http")) {
+      userData.avatarurl = `${OLLAMA_DOT_COM}${userData.avatarurl}`;
+    }
+
+    return userData;
   }
 
-  const data = await response.json();
-  return data.connect_url;
+  if (response.status === 401 || response.status === 403) {
+    return null;
+  }
+
+  throw new Error(`Failed to fetch user: ${response.status}`);
+}
+
+export async function fetchConnectUrl(): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/me`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (response.status === 401) {
+    const data = await response.json();
+    if (data.signin_url) {
+      return data.signin_url;
+    }
+  }
+
+  throw new Error("Failed to fetch connect URL");
 }
 
 export async function disconnectUser(): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/disconnect`, {
+  const response = await fetch(`${API_BASE}/api/signout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -204,12 +209,10 @@ export async function* sendMessage(
     data: uint8ArrayToBase64(att.data),
   }));
 
-  // Only send think parameter when actually requesting thinking
-  // Don't send false as it causes issues with some providers
+  // Send think parameter when it's explicitly set (true, false, or a non-empty string).
   const shouldSendThink =
     think !== undefined &&
-    ((typeof think === "boolean" && think) ||
-      (typeof think === "string" && think !== ""));
+    (typeof think === "boolean" || (typeof think === "string" && think !== ""));
 
   const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
     method: "POST",
@@ -391,7 +394,8 @@ export async function getInferenceCompute(): Promise<InferenceCompute[]> {
 
 export async function fetchHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/health`, {
+    // Use the /api/version endpoint as a health check
+    const response = await fetch(`${API_BASE}/api/version`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -400,7 +404,8 @@ export async function fetchHealth(): Promise<boolean> {
 
     if (response.ok) {
       const data = await response.json();
-      return data.healthy || false;
+      // If we get a version back, the server is healthy
+      return !!data.version;
     }
 
     return false;

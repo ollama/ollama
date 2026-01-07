@@ -14,11 +14,11 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## How can I view the logs?
 
-Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
+Review the [Troubleshooting](./troubleshooting) docs for more about using logs.
 
 ## Is my GPU compatible with Ollama?
 
-Please refer to the [GPU docs](./gpu.md).
+Please refer to the [GPU docs](./gpu).
 
 ## How can I specify the context window size?
 
@@ -57,8 +57,13 @@ ollama ps
 ```
 
 <Info>
-  **Output**: ``` NAME ID SIZE PROCESSOR UNTIL llama3:70b bcfb190ca3a7 42 GB
-  100% GPU 4 minutes from now ```
+
+**Output**:
+
+```
+NAME        ID            SIZE    PROCESSOR   UNTIL
+llama3:70b  bcfb190ca3a7  42 GB   100% GPU    4 minutes from now
+```
 </Info>
 
 The `Processor` column will show which memory the model was loaded in to:

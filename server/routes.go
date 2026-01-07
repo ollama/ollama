@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -262,6 +263,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			slog.Warn("embedded messages in the model not supported with '/api/generate'; try '/api/chat' instead")
 		}
 
+		contentType := "application/x-ndjson"
+		if req.Stream != nil && !*req.Stream {
+			contentType = "application/json; charset=utf-8"
+		}
+		c.Header("Content-Type", contentType)
+
 		fn := func(resp api.GenerateResponse) error {
 			resp.Model = origModel
 			resp.RemoteModel = m.Config.RemoteModel
@@ -302,12 +309,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		contentType := "application/json; charset=utf-8"
-		if req.Stream != nil && *req.Stream {
-			contentType = "application/x-ndjson"
-		}
-		c.Header("Content-Type", contentType)
 
 		return
 	}
@@ -649,11 +650,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	truncate := true
-	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
-	}
-
 	var input []string
 
 	switch i := req.Input.(type) {
@@ -701,70 +697,89 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	var count int
-	for i, s := range input {
-		tokens, err := r.Tokenize(c.Request.Context(), s)
+	ctx := c.Request.Context()
+
+	embedWithRetry := func(text string) ([]float32, int, error) {
+		emb, tokCount, err := r.Embedding(ctx, text)
+		if err == nil {
+			return emb, tokCount, nil
+		}
+
+		var serr api.StatusError
+		if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+			return nil, 0, err
+		}
+		if req.Truncate != nil && !*req.Truncate {
+			return nil, 0, err
+		}
+
+		tokens, err := r.Tokenize(ctx, text)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+			return nil, 0, err
 		}
 
+		// TODO @nicolepardal: avoid reaching into kvData here; pass required tokenizer metadata via model/options instead
 		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
-		if len(tokens) > ctxLen {
-			if !truncate {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input exceeds maximum context length"})
-				return
-			}
-
-			if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
-				ctxLen--
-			}
-
-			if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
-				ctxLen--
-			}
-
-			slog.Info("", "ctxLen", ctxLen, "tokenCount", len(tokens))
-			if ctxLen <= 0 {
-				// return error if the truncated input would be empty or just special tokens
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input after truncation exceeds maximum context length"})
-				return
-			}
-
-			tokens = tokens[:ctxLen]
-
-			s, err = r.Detokenize(c.Request.Context(), tokens)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
+		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
+			ctxLen--
+		}
+		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
+			ctxLen--
 		}
 
-		count += len(tokens)
+		if len(tokens) <= ctxLen {
+			return nil, 0, fmt.Errorf("input exceeds maximum context length and cannot be truncated further")
+		}
+		if ctxLen <= 0 {
+			return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
+		}
 
-		input[i] = s
+		truncatedTokens := tokens[:ctxLen]
+		truncated, err := r.Detokenize(ctx, truncatedTokens)
+		if err != nil {
+			return nil, 0, err
+		}
+		return r.Embedding(ctx, truncated)
 	}
 
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
+	var totalTokens uint64
 	for i, text := range input {
 		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
+			embedding, tokenCount, err := embedWithRetry(text)
 			if err != nil {
 				return err
 			}
 			// TODO: this first normalization should be done by the model
-			embedding = normalize(embedding)
+			embedding, err = normalize(embedding)
+			if err != nil {
+				return err
+			}
 			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
-				embedding = normalize(embedding[:req.Dimensions])
+				embedding, err = normalize(embedding[:req.Dimensions])
+				if err != nil {
+					return err
+				}
 			}
 			embeddings[i] = embedding
+			atomic.AddUint64(&totalTokens, uint64(tokenCount))
 			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		var serr api.StatusError
+		if errors.As(err, &serr) {
+			c.AbortWithStatusJSON(serr.StatusCode, gin.H{
+				"error": strings.TrimSpace(serr.ErrorMessage),
+			})
+			return
+		}
+
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": strings.TrimSpace(err.Error()),
+		})
 		return
 	}
 
@@ -773,14 +788,17 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: count,
+		PromptEvalCount: int(totalTokens),
 	}
 	c.JSON(http.StatusOK, resp)
 }
 
-func normalize(vec []float32) []float32 {
+func normalize(vec []float32) ([]float32, error) {
 	var sum float32
 	for _, v := range vec {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return nil, errors.New("embedding contains NaN or Inf values")
+		}
 		sum += v * v
 	}
 
@@ -788,7 +806,7 @@ func normalize(vec []float32) []float32 {
 	for i := range vec {
 		vec[i] *= norm
 	}
-	return vec
+	return vec, nil
 }
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
@@ -819,7 +837,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
@@ -1097,6 +1115,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Messages:     msgs,
 		Capabilities: m.Capabilities(),
 		ModifiedAt:   manifest.fi.ModTime(),
+		Requires:     m.Config.Requires,
 	}
 
 	if m.Config.RemoteHost != "" {
@@ -1214,7 +1233,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 
 	models := []api.ListModelResponse{}
 	for n, m := range ms {
-		var cf ConfigV2
+		var cf model.ConfigV2
 
 		if m.Config.Digest != "" {
 			f, err := m.Config.Open()
@@ -1523,6 +1542,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/v1/embeddings", middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
+	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
 
 	if rc != nil {
 		// wrap old with new
@@ -1939,6 +1959,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
+		contentType := "application/x-ndjson"
+		if req.Stream != nil && !*req.Stream {
+			contentType = "application/json; charset=utf-8"
+		}
+		c.Header("Content-Type", contentType)
+
 		fn := func(resp api.ChatResponse) error {
 			resp.Model = origModel
 			resp.RemoteModel = m.Config.RemoteModel
@@ -1979,12 +2005,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		contentType := "application/json; charset=utf-8"
-		if req.Stream != nil && *req.Stream {
-			contentType = "application/x-ndjson"
-		}
-		c.Header("Content-Type", contentType)
 
 		return
 	}
@@ -2186,7 +2206,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 
-					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done {
+					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
 					} else {
@@ -2226,8 +2246,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						res.Message.ToolCalls = toolCalls
 						res.Message.Content = ""
 					} else if res.Message.Thinking != "" {
-						// don't return
+						// don't return, fall through to send
 					} else {
+						//  Send logprobs while content is being buffered by the parser for tool calls
+						if len(res.Logprobs) > 0 && !r.Done {
+							logprobRes := res
+							logprobRes.Message.Content = ""
+							logprobRes.Message.ToolCalls = nil
+							ch <- logprobRes
+						}
+
 						if r.Done {
 							res.Message.Content = toolParser.Content()
 							ch <- res

@@ -19,8 +19,6 @@ struct llama_context;
 
 class llama_kv_cache : public llama_memory_i {
 public:
-    static uint32_t get_padding(const llama_cparams & cparams);
-
     struct stream_copy_info {
         bool empty() const {
             assert(ssrc.size() == sdst.size());
@@ -73,6 +71,23 @@ public:
 
         void clear() {
             idxs.clear();
+        }
+
+        // check if indices are contiguous starting from head()
+        bool is_contiguous() const {
+            if (idxs.empty() || idxs[0].empty()) {
+                return true;
+            }
+            if (idxs.size() > 1) {
+                return false;
+            }
+            const uint32_t h = idxs[0][0];
+            for (size_t i = 0; i < idxs[0].size(); ++i) {
+                if (idxs[0][i] != h + i) {
+                    return false;
+                }
+            }
+            return true;
         }
     };
 
@@ -217,8 +232,8 @@ private:
     // this is the SWA type of the cache - not to be confused with the model SWA type
     const llama_swa_type swa_type = LLAMA_SWA_TYPE_NONE;
 
-    std::vector<ggml_context_ptr>        ctxs;
-    std::vector<ggml_backend_buffer_ptr> bufs;
+    // ggml contexts for the KV cache along with the allocated backend buffers:
+    std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
 
     // the current index from where we start searching for a free slot in the ring buffer of KV cells (see find_slot())
     // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
@@ -266,8 +281,8 @@ private:
     void state_write_meta(llama_io_write_i & io, const cell_ranges_t & cr, llama_seq_id seq_id = -1) const;
     void state_write_data(llama_io_write_i & io, const cell_ranges_t & cr) const;
 
-    bool state_read_meta(llama_io_read_i & io, uint32_t strm, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
-    bool state_read_data(llama_io_read_i & io, uint32_t strm, uint32_t cell_count);
+    bool state_read_meta(llama_io_read_i & io, uint32_t strm, uint32_t cell_count,       slot_info & sinfo, llama_seq_id dest_seq_id = -1);
+    bool state_read_data(llama_io_read_i & io, uint32_t strm, uint32_t cell_count, const slot_info & sinfo);
 };
 
 class llama_kv_cache_context : public llama_memory_context_i {
