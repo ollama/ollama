@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,11 +13,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
 const defaultPrivateKey = "id_ed25519"
+const signInStateFile = "signin.json"
+
+// SignInState represents the locally cached sign-in state
+type SignInState struct {
+	Name     string    `json:"name"`
+	Email    string    `json:"email"`
+	CachedAt time.Time `json:"cached_at"`
+}
 
 func GetPublicKey() (string, error) {
 	home, err := os.UserHomeDir()
@@ -82,4 +92,76 @@ func Sign(ctx context.Context, bts []byte) (string, error) {
 
 	// signature is <pubkey>:<signature>
 	return fmt.Sprintf("%s:%s", bytes.TrimSpace(parts[1]), base64.StdEncoding.EncodeToString(signedData.Blob)), nil
+}
+
+// GetSignInState reads the locally cached sign-in state from ~/.ollama/signin.json
+func GetSignInState() (*SignInState, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	statePath := filepath.Join(home, ".ollama", signInStateFile)
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var state SignInState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+
+	return &state, nil
+}
+
+// SetSignInState atomically writes the sign-in state to ~/.ollama/signin.json
+func SetSignInState(state *SignInState) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	ollamaDir := filepath.Join(home, ".ollama")
+	statePath := filepath.Join(ollamaDir, signInStateFile)
+	tmpPath := statePath + ".tmp"
+
+	state.CachedAt = time.Now()
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// Write to temp file first
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return err
+	}
+
+	// Atomic rename
+	return os.Rename(tmpPath, statePath)
+}
+
+// ClearSignInState removes the locally cached sign-in state
+func ClearSignInState() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	statePath := filepath.Join(home, ".ollama", signInStateFile)
+	err = os.Remove(statePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // Already cleared
+	}
+	return err
+}
+
+// IsSignedIn returns true if there is a valid locally cached sign-in state
+func IsSignedIn() bool {
+	state, err := GetSignInState()
+	if err != nil {
+		return false
+	}
+	return state.Name != ""
 }
