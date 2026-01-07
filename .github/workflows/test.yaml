@@ -244,15 +244,15 @@ jobs:
           path: third_party/ffmpeg/install
           key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/ffmpeg/build.sh') }}
 
-      # Build minimal FFmpeg library
+      # Build minimal FFmpeg library (Linux/macOS only)
       - name: Build minimal FFmpeg
-        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: ./third_party/ffmpeg/build.sh
         shell: bash
 
-      # Test with embedded FFmpeg
+      # Test with embedded FFmpeg (Linux/macOS only)
       - name: Run tests with embedded FFmpeg
-        if: always()
+        if: runner.os != 'Windows'
         run: go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
