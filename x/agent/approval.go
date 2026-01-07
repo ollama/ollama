@@ -1104,3 +1104,108 @@ func PromptYesNo(question string) (bool, error) {
 		}
 	}
 }
+
+// CloudModelOption represents a suggested cloud model for the selection prompt.
+type CloudModelOption struct {
+	Name        string
+	Description string
+}
+
+// PromptModelChoice displays a model selection prompt with multiple options.
+// Returns the selected model name, or empty string if user declined or cancelled.
+func PromptModelChoice(question string, models []CloudModelOption) (string, error) {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(fd, oldState)
+
+	// Build options: models + "No thanks, continue"
+	optionCount := len(models) + 1
+	selected := 0
+
+	// Total lines: question + models + "no thanks" + hint = optionCount + 2
+	totalLines := optionCount + 2
+
+	// Hide cursor
+	fmt.Fprint(os.Stderr, "\033[?25l")
+	defer fmt.Fprint(os.Stderr, "\033[?25h")
+
+	firstRender := true
+
+	render := func() {
+		if !firstRender {
+			fmt.Fprintf(os.Stderr, "\033[%dA\r", totalLines-1)
+		}
+		firstRender = false
+
+		// \r\n needed in raw mode for proper line breaks
+		fmt.Fprintf(os.Stderr, "\033[K\033[36m%s\033[0m\r\n", question)
+
+		for i, model := range models {
+			fmt.Fprintf(os.Stderr, "\033[K")
+			if i == selected {
+				fmt.Fprintf(os.Stderr, "  \033[1;32m> %s\033[0m  \033[90m%s\033[0m\r\n", model.Name, model.Description)
+			} else {
+				fmt.Fprintf(os.Stderr, "    \033[90m%s  %s\033[0m\r\n", model.Name, model.Description)
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "\033[K")
+		if selected == len(models) {
+			fmt.Fprintf(os.Stderr, "  \033[1;32m> No thanks, continue\033[0m\r\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "    \033[90mNo thanks, continue\033[0m\r\n")
+		}
+
+		fmt.Fprintf(os.Stderr, "\033[K\033[90m(↑/↓ to navigate, Enter to confirm)\033[0m")
+	}
+
+	render()
+
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return "", err
+		}
+
+		if n == 1 {
+			switch buf[0] {
+			case 'j', 'J':
+				if selected < optionCount-1 {
+					selected++
+				}
+				render()
+			case 'k', 'K':
+				if selected > 0 {
+					selected--
+				}
+				render()
+			case '\r', '\n':
+				fmt.Fprintf(os.Stderr, "\n")
+				if selected < len(models) {
+					return models[selected].Name, nil
+				}
+				return "", nil
+			case 3: // Ctrl+C
+				fmt.Fprintf(os.Stderr, "\n")
+				return "", nil
+			}
+		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
+			switch buf[2] {
+			case 'A': // Up
+				if selected > 0 {
+					selected--
+				}
+				render()
+			case 'B': // Down
+				if selected < optionCount-1 {
+					selected++
+				}
+				render()
+			}
+		}
+	}
+}
