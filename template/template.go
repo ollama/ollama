@@ -381,6 +381,28 @@ func (t templateTools) String() string {
 	return string(bts)
 }
 
+// templateArgs is a map type with JSON string output for templates.
+type templateArgs map[string]any
+
+func (t templateArgs) String() string {
+	if t == nil {
+		return "{}"
+	}
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+// templateProperties is a map type with JSON string output for templates.
+type templateProperties map[string]api.ToolProperty
+
+func (t templateProperties) String() string {
+	if t == nil {
+		return "{}"
+	}
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 // templateTool is a template-compatible representation of api.Tool
 // with Properties as a regular map for template ranging.
 type templateTool struct {
@@ -396,11 +418,11 @@ type templateToolFunction struct {
 }
 
 type templateToolFunctionParameters struct {
-	Type       string                      `json:"type"`
-	Defs       any                         `json:"$defs,omitempty"`
-	Items      any                         `json:"items,omitempty"`
-	Required   []string                    `json:"required,omitempty"`
-	Properties map[string]api.ToolProperty `json:"properties"`
+	Type       string             `json:"type"`
+	Defs       any                `json:"$defs,omitempty"`
+	Items      any                `json:"items,omitempty"`
+	Required   []string           `json:"required,omitempty"`
+	Properties templateProperties `json:"properties"`
 }
 
 // templateToolCall is a template-compatible representation of api.ToolCall
@@ -413,7 +435,7 @@ type templateToolCall struct {
 type templateToolCallFunction struct {
 	Index     int
 	Name      string
-	Arguments map[string]any
+	Arguments templateArgs
 }
 
 // templateMessage is a template-compatible representation of api.Message
@@ -446,7 +468,7 @@ func convertToolsForTemplate(tools api.Tools) templateTools {
 					Defs:       tool.Function.Parameters.Defs,
 					Items:      tool.Function.Parameters.Items,
 					Required:   tool.Function.Parameters.Required,
-					Properties: tool.Function.Parameters.Properties.ToMap(),
+					Properties: templateProperties(tool.Function.Parameters.Properties.ToMap()),
 				},
 			},
 		}
@@ -468,7 +490,7 @@ func convertMessagesForTemplate(messages []*api.Message) []*templateMessage {
 				Function: templateToolCallFunction{
 					Index:     tc.Function.Index,
 					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments.ToMap(),
+					Arguments: templateArgs(tc.Function.Arguments.ToMap()),
 				},
 			})
 		}
