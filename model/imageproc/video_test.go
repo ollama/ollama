@@ -83,7 +83,7 @@ func TestExtractVideoFrames_ValidVideo(t *testing.T) {
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to create test video: %v", err)
+		t.Skip("ffmpeg not available for test video generation")
 	}
 
 	videoData := stdout.Bytes()
@@ -134,7 +134,7 @@ func TestExtractVideoFrames_MaxFrames(t *testing.T) {
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to create test video: %v", err)
+		t.Skip("ffmpeg not available for test video generation")
 	}
 
 	videoData := stdout.Bytes()
@@ -196,7 +196,7 @@ func TestExtractVideoFrames_SingleFrame(t *testing.T) {
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to create test video: %v", err)
+		t.Skip("ffmpeg not available for test video generation")
 	}
 
 	videoData := stdout.Bytes()
@@ -284,7 +284,7 @@ func BenchmarkExtractVideoFrames(b *testing.B) {
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		b.Fatalf("Failed to create test video: %v", err)
+		b.Skip("ffmpeg not available for test video generation")
 	}
 
 	videoData := stdout.Bytes()

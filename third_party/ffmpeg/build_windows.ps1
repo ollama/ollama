@@ -55,6 +55,9 @@ $PC_FILES = @(
     @{Name="libavformat"; Libs="-lavformat"; Requires="libavcodec libavutil"}
     @{Name="libavutil"; Libs="-lavutil"; Requires=""}
     @{Name="libswscale"; Libs="-lswscale"; Requires="libavutil"}
+    @{Name="libavdevice"; Libs="-lavdevice"; Requires="libavformat libavcodec libavutil"}
+    @{Name="libavfilter"; Libs="-lavfilter"; Requires="libavutil"}
+    @{Name="libswresample"; Libs="-lswresample"; Requires="libavutil"}
 )
 
 foreach ($pc in $PC_FILES) {
