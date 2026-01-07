@@ -108,11 +108,11 @@ func TestToolMessage(t *testing.T) {
 // in the tool loop should include thinking content.
 func TestAssistantMessageConstruction(t *testing.T) {
 	tests := []struct {
-		name         string
-		content      string
-		thinking     string
-		toolCalls    []api.ToolCall
-		expectedMsg  api.Message
+		name        string
+		content     string
+		thinking    string
+		toolCalls   []api.ToolCall
+		expectedMsg api.Message
 	}{
 		{
 			name:     "assistant with thinking and tool calls",
@@ -171,9 +171,9 @@ func TestAssistantMessageConstruction(t *testing.T) {
 			},
 		},
 		{
-			name:      "assistant with multiple tool calls",
-			content:   "",
-			thinking:  "I'll check both cities.",
+			name:     "assistant with multiple tool calls",
+			content:  "",
+			thinking: "I'll check both cities.",
 			toolCalls: []api.ToolCall{
 				{
 					ID: "call_a",

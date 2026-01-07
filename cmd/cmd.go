@@ -1680,12 +1680,16 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 			// Show what's being executed
 			switch call.Function.Name {
 			case "run_skill_script":
-				skill, _ := call.Function.Arguments["skill"].(string)
-				command, _ := call.Function.Arguments["command"].(string)
+				skillVal, _ := call.Function.Arguments.Get("skill")
+				skill, _ := skillVal.(string)
+				commandVal, _ := call.Function.Arguments.Get("command")
+				command, _ := commandVal.(string)
 				fmt.Fprintf(os.Stderr, "Running script in %s: %s\n", skill, command)
 			case "read_skill_file":
-				skill, _ := call.Function.Arguments["skill"].(string)
-				path, _ := call.Function.Arguments["path"].(string)
+				skillVal, _ := call.Function.Arguments.Get("skill")
+				skill, _ := skillVal.(string)
+				pathVal, _ := call.Function.Arguments.Get("path")
+				path, _ := pathVal.(string)
 				fmt.Fprintf(os.Stderr, "Reading file from %s: %s\n", skill, path)
 			default:
 				fmt.Fprintf(os.Stderr, "Executing: %s\n", call.Function.Name)

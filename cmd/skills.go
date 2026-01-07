@@ -370,6 +370,26 @@ func (c *skillCatalog) Tools() api.Tools {
 		return nil
 	}
 
+	runScriptProps := api.NewToolPropertiesMap()
+	runScriptProps.Set("skill", api.ToolProperty{
+		Type:        api.PropertyType{"string"},
+		Description: "The name of the skill containing the script",
+	})
+	runScriptProps.Set("command", api.ToolProperty{
+		Type:        api.PropertyType{"string"},
+		Description: "The command to execute (e.g., 'python scripts/calculate.py 25 4' or './scripts/run.sh')",
+	})
+
+	readFileProps := api.NewToolPropertiesMap()
+	readFileProps.Set("skill", api.ToolProperty{
+		Type:        api.PropertyType{"string"},
+		Description: "The name of the skill containing the file",
+	})
+	readFileProps.Set("path", api.ToolProperty{
+		Type:        api.PropertyType{"string"},
+		Description: "The relative path to the file within the skill directory",
+	})
+
 	return api.Tools{
 		{
 			Type: "function",
@@ -377,18 +397,9 @@ func (c *skillCatalog) Tools() api.Tools {
 				Name:        "run_skill_script",
 				Description: "Execute a script or command within a skill's directory. Use this to run Python scripts, shell scripts, or other executables bundled with a skill.",
 				Parameters: api.ToolFunctionParameters{
-					Type:     "object",
-					Required: []string{"skill", "command"},
-					Properties: map[string]api.ToolProperty{
-						"skill": {
-							Type:        api.PropertyType{"string"},
-							Description: "The name of the skill containing the script",
-						},
-						"command": {
-							Type:        api.PropertyType{"string"},
-							Description: "The command to execute (e.g., 'python scripts/calculate.py 25 4' or './scripts/run.sh')",
-						},
-					},
+					Type:       "object",
+					Required:   []string{"skill", "command"},
+					Properties: runScriptProps,
 				},
 			},
 		},
@@ -398,18 +409,9 @@ func (c *skillCatalog) Tools() api.Tools {
 				Name:        "read_skill_file",
 				Description: "Read a file from a skill's directory. Use this to read additional documentation, reference files, or data files bundled with a skill.",
 				Parameters: api.ToolFunctionParameters{
-					Type:     "object",
-					Required: []string{"skill", "path"},
-					Properties: map[string]api.ToolProperty{
-						"skill": {
-							Type:        api.PropertyType{"string"},
-							Description: "The name of the skill containing the file",
-						},
-						"path": {
-							Type:        api.PropertyType{"string"},
-							Description: "The relative path to the file within the skill directory",
-						},
-					},
+					Type:       "object",
+					Required:   []string{"skill", "path"},
+					Properties: readFileProps,
 				},
 			},
 		},
@@ -562,7 +564,7 @@ func readSkillFile(skillDir, relPath string) (string, error) {
 }
 
 func requireStringArg(args api.ToolCallFunctionArguments, name string) (string, error) {
-	value, ok := args[name]
+	value, ok := args.Get(name)
 	if !ok {
 		return "", fmt.Errorf("missing required argument %q", name)
 	}

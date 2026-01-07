@@ -122,7 +122,16 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
 		case "skill":
-			skills = append(skills, api.SkillRef{Name: c.Args})
+			skillName := c.Args
+			// Expand local paths relative to the Agentfile directory
+			if isLocalPath(skillName) {
+				expanded, err := expandPath(skillName, relativeDir)
+				if err != nil {
+					return nil, fmt.Errorf("expanding skill path %q: %w", skillName, err)
+				}
+				skillName = expanded
+			}
+			skills = append(skills, api.SkillRef{Name: skillName})
 		case "mcp":
 			mcpRef, err := parseMCPArg(c.Args, relativeDir)
 			if err != nil {
