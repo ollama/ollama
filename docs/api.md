@@ -1177,7 +1177,7 @@ Create a model from:
 
 - another model;
 - a safetensors directory; or
-- a GGUF file.
+- a GGUF file or directory.
 
 If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
 
@@ -1271,6 +1271,7 @@ A stream of JSON objects is returned:
 #### Create a model from GGUF
 
 Create a model from a GGUF file. The `files` parameter should be filled out with the file name and SHA256 digest of the GGUF file you wish to use. Use [/api/blobs/:digest](#push-a-blob) to push the GGUF file to the server before calling this API.
+For a model stored in multiple split GGUF files, includes all split GGUF files in the `files` parameter with the file names and SHA256 digests. It is recommended to provide files in split number order even though Ollama itself will sort them in order.
 
 ##### Request
 

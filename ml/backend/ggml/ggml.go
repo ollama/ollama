@@ -78,7 +78,7 @@ type Backend struct {
 	// modelPath is the location of the model data
 	modelPath string
 
-	meta *fsggml.GGML
+	meta *fsggml.MetaGGML
 
 	// allocMemory means that memory should be allocated for tensors and not
 	// just a dry run
@@ -121,7 +121,7 @@ type Backend struct {
 
 var once sync.Once
 
-func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
+func New(modelPath string, extraModelPaths []string, params ml.BackendParams) (ml.Backend, error) {
 	r, err := os.Open(modelPath)
 	if err != nil {
 		return nil, err
@@ -205,9 +205,47 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		slog.Info("RPC device enumeration complete", "total_gpus", len(gpus), "total_cpus", len(cpus), "total_accels", len(accels))
 	}
 
-	meta, err := fsggml.Decode(r, -1)
+	smallmeta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
+	}
+	var meta fsggml.MetaGGML
+	if smallmeta.KV().GGUFSplitInfo() != nil {
+		if smallmeta.KV().GGUFSplitInfo().No != 0 {
+			return nil, errors.New("not the first split of model")
+		}
+		loadedGgml := []fsggml.GGML{*smallmeta}
+		visitedSplitNo := []uint16{smallmeta.KV().GGUFSplitInfo().No}
+		for i := range extraModelPaths {
+			extraModel := extraModelPaths[i]
+			f, err := os.Open(extraModel)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+
+			smallmeta, err := fsggml.Decode(f, -1)
+			if err != nil {
+				return nil, err
+			}
+			if smallmeta.KV().GGUFSplitInfo() == nil {
+				return nil, errors.New("non-split gguf in extra model paths while main model path is split gguf")
+			}
+			visitedSplitNo = append(visitedSplitNo, smallmeta.KV().GGUFSplitInfo().No)
+			loadedGgml = append(loadedGgml, *smallmeta)
+		}
+		if len(visitedSplitNo) != int(smallmeta.KV().GGUFSplitInfo().Count) {
+			return nil, errors.New("mismatch split gguf count")
+		}
+		slices.Sort(visitedSplitNo)
+		for i := 0; i < len(visitedSplitNo)-1; i++ {
+			if visitedSplitNo[i] != visitedSplitNo[i+1]-1 {
+				return nil, errors.New("repeated or skipped split found")
+			}
+		}
+		meta = fsggml.MakeMetaGGML(loadedGgml, append([]string{modelPath}, extraModelPaths...))
+	} else {
+		meta = fsggml.MakeMetaGGML([]fsggml.GGML{*smallmeta}, []string{modelPath})
 	}
 
 	once.Do(func() {
@@ -217,7 +255,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			"file_type", meta.KV().FileType(),
 			"name", meta.KV().String("general.name"),
 			"description", meta.KV().String("general.description"),
-			"num_tensors", len(meta.Tensors().Items()),
+			"num_tensors", len(meta.Tensors.Items()),
 			"num_key_values", len(meta.KV()),
 		)
 	})
@@ -328,7 +366,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// outputs are assigned iff allowed by splits and configured number of gpu layers
 	output := assignLayer(blocks)
 
-	maxTensors := len(meta.Tensors().Items())
+	maxTensors := len(meta.Tensors.Items())
 	maxTensors += 1
 	// each layer has at most 2 extra tensors for rope operations
 	maxTensors += blocks * 2
@@ -404,11 +442,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		return false
 	}
 
-	for _, t := range meta.Tensors().Items() {
+	for _, t := range meta.Tensors.Items() {
 		switch {
 		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
 			createTensor(tensor{source: t}, input.bts, -1)
-			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
+			if _, ok := meta.Tensors.GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
 				createTensor(tensor{source: t, target: "output.weight"}, output.bts, blocks)
 			}
 		case contains(t.Name, "cls", "output", "output_norm",
@@ -479,7 +517,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(1024, len(meta.Tensors().Items())*8)
+	maxGraphNodes := max(1024, len(meta.Tensors.Items())*8)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
@@ -524,7 +562,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		modelPath:         modelPath,
 		allocMemory:       params.AllocMemory,
 		flashAttention:    params.FlashAttention,
-		meta:              meta,
+		meta:              &meta,
 		tensorLoadTargets: targets,
 		tensors:           tensors,
 		sched:             sched,
@@ -595,11 +633,12 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(b.layers)+1))
 
 	var doneBytes atomic.Uint64
-	totalBytes := uint64(b.meta.Length) - b.meta.Tensors().Offset
+	totalBytes := b.meta.TotalTensorBytes()
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
-	for _, t := range b.meta.Tensors().Items() {
+	for i := range b.meta.Tensors {
+		t := b.meta.Tensors[i]
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
@@ -618,13 +657,13 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 
 			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
 			// seeking around within an FD shared between all goroutines.
-			file, err := os.Open(b.modelPath)
+			file, err := os.Open(t.ModelPath)
 			if err != nil {
-				slog.Warn("file open error", "file", b.modelPath, "error", err)
+				slog.Warn("file open error", "file", t.ModelPath, "error", err)
 				return err
 			}
 			defer file.Close()
-			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			sr := io.NewSectionReader(file, int64(t.TensorRegionOffset+t.Offset), int64(t.Size()))
 
 			if t.Kind == 4 && tts[0]._type == 39 {
 				// source is mxfp4, target is ggml mxfp4

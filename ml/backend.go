@@ -76,9 +76,9 @@ type BackendParams struct {
 	RPCServers string
 }
 
-var backends = make(map[string]func(string, BackendParams) (Backend, error))
+var backends = make(map[string]func(string, []string, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(string, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(string, []string, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -86,9 +86,9 @@ func RegisterBackend(name string, f func(string, BackendParams) (Backend, error)
 	backends[name] = f
 }
 
-func NewBackend(modelPath string, params BackendParams) (Backend, error) {
+func NewBackend(modelPath string, extraModelPaths []string, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(modelPath, params)
+		return backend(modelPath, extraModelPaths, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")

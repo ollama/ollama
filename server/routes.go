@@ -1201,14 +1201,14 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
+func getModelData(digest string, verbose bool) (ggml.KV, ggml.ForeignTensors, error) {
 	maxArraySize := 0
 	if verbose {
 		maxArraySize = -1
 	}
-	data, err := llm.LoadModel(digest, maxArraySize)
+	data, err := llm.LoadModel(digest, make([]string, 0), maxArraySize, true)
 	if err != nil {
-		return nil, ggml.Tensors{}, err
+		return nil, make(ggml.ForeignTensors, 0), err
 	}
 
 	kv := data.KV()
@@ -1221,7 +1221,7 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 		}
 	}
 
-	return kv, data.Tensors(), nil
+	return kv, data.Tensors, nil
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
