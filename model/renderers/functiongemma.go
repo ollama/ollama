@@ -136,7 +136,7 @@ func (r *FunctionGemmaRenderer) renderToolDeclaration(tool api.Tool) string {
 		needsComma := false
 
 		// Only include properties:{} if there are actual properties
-		if len(fn.Parameters.Properties) > 0 {
+		if fn.Parameters.Properties != nil && fn.Parameters.Properties.Len() > 0 {
 			sb.WriteString("properties:{")
 			r.writeProperties(&sb, fn.Parameters.Properties)
 			sb.WriteString("}")
@@ -172,16 +172,16 @@ func (r *FunctionGemmaRenderer) renderToolDeclaration(tool api.Tool) string {
 	return sb.String()
 }
 
-func (r *FunctionGemmaRenderer) writeProperties(sb *strings.Builder, props map[string]api.ToolProperty) {
-	keys := make([]string, 0, len(props))
-	for k := range props {
+func (r *FunctionGemmaRenderer) writeProperties(sb *strings.Builder, props *api.ToolPropertiesMap) {
+	keys := make([]string, 0, props.Len())
+	for k := range props.All() {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	first := true
 	for _, name := range keys {
-		prop := props[name]
+		prop, _ := props.Get(name)
 		if !first {
 			sb.WriteString(",")
 		}
@@ -203,15 +203,15 @@ func (r *FunctionGemmaRenderer) formatToolCall(tc api.ToolCall) string {
 	var sb strings.Builder
 	sb.WriteString("<start_function_call>call:" + tc.Function.Name + "{")
 
-	keys := make([]string, 0, len(tc.Function.Arguments))
-	for k := range tc.Function.Arguments {
+	keys := make([]string, 0, tc.Function.Arguments.Len())
+	for k := range tc.Function.Arguments.All() {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	first := true
 	for _, key := range keys {
-		value := tc.Function.Arguments[key]
+		value, _ := tc.Function.Arguments.Get(key)
 		if !first {
 			sb.WriteString(",")
 		}

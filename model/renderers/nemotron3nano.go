@@ -114,7 +114,7 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 
 		sb.WriteString("\n<parameters>")
 		if fn.Parameters.Properties != nil {
-			for paramName, paramFields := range fn.Parameters.Properties {
+			for paramName, paramFields := range fn.Parameters.Properties.All() {
 				sb.WriteString("\n<parameter>")
 				sb.WriteString("\n<name>" + paramName + "</name>")
 
@@ -202,7 +202,7 @@ func (r *Nemotron3NanoRenderer) formatContent(content string, truncate bool, add
 func (r *Nemotron3NanoRenderer) writeToolCalls(sb *strings.Builder, toolCalls []api.ToolCall) {
 	for _, tc := range toolCalls {
 		sb.WriteString("<tool_call>\n<function=" + tc.Function.Name + ">\n")
-		for name, value := range tc.Function.Arguments {
+		for name, value := range tc.Function.Arguments.All() {
 			sb.WriteString("<parameter=" + name + ">\n" + r.formatArgValue(value) + "\n</parameter>\n")
 		}
 		sb.WriteString("</function>\n</tool_call>\n")
