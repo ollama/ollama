@@ -577,7 +577,7 @@ func quote(s string) string {
 }
 
 func unquote(s string) (string, bool) {
-	// TODO: single quotes
+	// Handle triple double quotes
 	if len(s) >= 3 && s[:3] == `"""` {
 		if len(s) >= 6 && s[len(s)-3:] == `"""` {
 			return s[3 : len(s)-3], true
@@ -586,8 +586,27 @@ func unquote(s string) (string, bool) {
 		return "", false
 	}
 
+	// Handle triple single quotes
+	if len(s) >= 3 && s[:3] == `'''` {
+		if len(s) >= 6 && s[len(s)-3:] == `'''` {
+			return s[3 : len(s)-3], true
+		}
+
+		return "", false
+	}
+
+	// Handle double quotes
 	if len(s) >= 1 && s[0] == '"' {
 		if len(s) >= 2 && s[len(s)-1] == '"' {
+			return s[1 : len(s)-1], true
+		}
+
+		return "", false
+	}
+
+	// Handle single quotes
+	if len(s) >= 1 && s[0] == '\'' {
+		if len(s) >= 2 && s[len(s)-1] == '\'' {
 			return s[1 : len(s)-1], true
 		}
 
