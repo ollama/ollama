@@ -70,7 +70,7 @@ deduplicate_cuda_libs() {
             if [ "${mlx_sum}" = "${cuda_sum}" ]; then
                 echo "    Deduplicating ${filename}"
                 # Calculate relative path from mlx_dir to cuda_dir
-                rel_path="../../cuda_${cuda_version}/${filename}"
+                rel_path="../cuda_${cuda_version}/${filename}"
                 rm -f "${mlx_file}"
                 ln -s "${rel_path}" "${mlx_file}"
             fi
