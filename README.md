@@ -79,6 +79,11 @@ Here are some example models that can be downloaded:
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`           |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored`   |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`               |
+| Solar              | 10.7B      | 6.1GB | `ollama run solar`               |
+| IBM Granite            | 3.48B      | 2.0GB | `ollama run granite-code:3b`               |
+| IBM Granite           | 8.05B      | 4.6GB | `ollama run granite-code:8b`               |
+| IBM Granite            | 20.1B      | 12.0GB | `ollama run granite-code:20b`               |
+| IBM Granite            | 33.7B      | 19GB | `ollama run granite-code:34b`               |
 | Granite-3.3         | 8B         | 4.9GB | `ollama run granite3.3`          |
 
 > [!NOTE]
