@@ -901,8 +901,36 @@ func (a *Array) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor
 }
 
 func (a *Array) L2Norm(ctx ml.Context, eps float32) ml.Tensor {
-	// TODO implement
-	panic("NOT YET IMPLEMENTED")
+	// L2Norm: x * rsqrt(sum(x², axis=-1, keepdims=true) + eps)
+	stream := ctx.(*Context).stream
+
+	// Step 1: x²
+	var squared C.mlx_array
+	C.mlx_square(&squared, a.a, stream)
+
+	// Step 2: sum(x², axis=-1, keepdims=true)
+	var summed C.mlx_array
+	C.mlx_sum_axis(&summed, squared, C.int(-1), true, stream)
+	C.mlx_array_free(squared)
+
+	// Step 3: sum + eps
+	epsArray := C.mlx_array_new_float(C.float(eps))
+	var sumPlusEps C.mlx_array
+	C.mlx_add(&sumPlusEps, summed, epsArray, stream)
+	C.mlx_array_free(summed)
+	C.mlx_array_free(epsArray)
+
+	// Step 4: rsqrt(sum + eps)
+	var invNorm C.mlx_array
+	C.mlx_rsqrt(&invNorm, sumPlusEps, stream)
+	C.mlx_array_free(sumPlusEps)
+
+	// Step 5: x * rsqrt(...)
+	var result C.mlx_array
+	C.mlx_multiply(&result, a.a, invNorm, stream)
+	C.mlx_array_free(invNorm)
+
+	return newArray(ctx.(*Context), result)
 }
 
 func (t Array) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
