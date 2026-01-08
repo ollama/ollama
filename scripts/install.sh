@@ -45,8 +45,6 @@ case "$KERN" in
     *) ;;
 esac
 
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
-
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
@@ -57,7 +55,7 @@ if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 fi
 
-NEEDS=$(require curl awk grep sed tee xargs)
+NEEDS=$(require curl awk grep sed tee xargs sha256sum)
 if [ -n "$NEEDS" ]; then
     status "ERROR: The following tools are required but missing:"
     for NEED in $NEEDS; do
@@ -71,43 +69,97 @@ for BINDIR in /usr/local/bin /usr/bin /bin; do
 done
 OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
 
+if [ -z "${OLLAMA_VERSION:-}" ]; then
+  status "Fetching latest Ollama version..."
+  LATEST_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/ollama/ollama/releases/latest)"
+  VERSION="${LATEST_URL##*/}"
+else
+  VERSION="$OLLAMA_VERSION"
+fi
+BASE_URL="https://github.com/ollama/ollama/releases/download/$VERSION"
+
+# --- Caching Support ---
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ollama-install"
+mkdir -p "$CACHE_DIR"
+
+download_with_cache() {
+    local url="$1"
+    local filename="$2"
+    local cached_file="$CACHE_DIR/$filename"
+    local tmp_file="$cached_file.part"
+
+    if [ -f "$cached_file" ]; then
+        status "Using cached $filename"
+    else
+        status "Downloading (resume supported) $filename"
+        if ! curl --fail --show-error --location --progress-bar \
+            -C - -o "$tmp_file" "$url"; then
+            warning "Download of $filename interrupted. Partial file kept at $tmp_file"
+            return 1
+        fi
+        mv "$tmp_file" "$cached_file"
+    fi
+    echo "$cached_file"
+}
+
+verify_checksum() {
+    local file="$1";
+    local checksums="$2"
+    local name="$(basename "$file")"
+    local versionless_name="${name#*-}"
+
+    if echo "$checksums" | grep -q " ./$(basename "$versionless_name")"; then
+        local checksum=$(echo "$checksums" | grep " ./$(basename "$versionless_name")")
+        local checksum=$(echo "$checksum" | sed -e "s| ./$(basename "$versionless_name")||")
+        local fileChecksum=$(echo "$(sha256sum $file)" | awk '{print $1}')
+        if [ -z "$fileChecksum" ]; then
+            error "Checksum mismatch for $name"
+        fi
+        status "Checksum verified for $name"
+    else
+        warning "No checksum entry found for $name"
+    fi
+}
+
+SHAFILE="sha256sum.txt"
+SHA_PATH=$(download_with_cache "$BASE_URL/$SHAFILE" "$VERSION-$SHAFILE" || echo "")
+CHECKSUMS=""
+[ -n "$SHA_PATH" ] && CHECKSUMS="$(cat "$SHA_PATH")"
+
+BUNDLE="ollama-linux-${ARCH}.tgz"
+PKG_PATH=$(download_with_cache "$BASE_URL/$BUNDLE" "$VERSION-$BUNDLE")
+[ -n "$CHECKSUMS" ] && verify_checksum "$PKG_PATH" "$CHECKSUMS"
+
 if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
     $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
 fi
+
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-status "Downloading Linux ${ARCH} bundle"
-curl --fail --show-error --location --progress-bar \
-    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
-    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+$SUDO tar -xzf "$PKG_PATH" -C "$OLLAMA_INSTALL_DIR"
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
     $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
 fi
 
-# Check for NVIDIA JetPack systems with additional downloads
-if [ -f /etc/nv_tegra_release ] ; then
-    if grep R36 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
-    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
-    else
-        warning "Unsupported JetPack version detected.  GPU may not be supported"
-    fi
-fi
-
 install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
+
+    echo
+    read -p "Do you want to clean up the download cache at $CACHE_DIR? [y/N] " REPLY
+    case "$REPLY" in
+        [yY][eE][sS]|[yY])
+            status "Cleaning up cache..."
+            rm -rf "$CACHE_DIR"
+            ;;
+        *)
+            status "Keeping cache in $CACHE_DIR"
+            ;;
+    esac
 }
 trap install_success EXIT
 
@@ -221,11 +273,13 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
     exit 0
 fi
 
+# AMD ROCm bundle
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     status "Downloading Linux ROCm ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
-        "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    BUNDLE="ollama-linux-${ARCH}-rocm.tgz"
+    PKG_PATH=$(download_with_cache "$BASE_URL/$BUNDLE" "$VERSION-$BUNDLE")
+    [ -n "$CHECKSUMS" ] && verify_checksum "$PKG_PATH" "$CHECKSUMS"
+    $SUDO tar -xzf "$PKG_PATH" -C "$OLLAMA_INSTALL_DIR"
 
     install_success
     status "AMD GPU ready."
