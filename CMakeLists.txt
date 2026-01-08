@@ -2,6 +2,22 @@ cmake_minimum_required(VERSION 3.21)
 
 project(Ollama C CXX)
 
+# Handle cross-compilation on macOS: when CMAKE_OSX_ARCHITECTURES is set to a
+# single architecture different from the host, override CMAKE_SYSTEM_PROCESSOR
+# to match. This is necessary because CMAKE_SYSTEM_PROCESSOR defaults to the
+# host architecture, but downstream projects (like MLX) use it to detect the
+# target architecture.
+if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
+    # Single architecture specified
+    if(CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" AND NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        message(STATUS "Cross-compiling for x86_64: overriding CMAKE_SYSTEM_PROCESSOR from ${CMAKE_SYSTEM_PROCESSOR} to x86_64")
+        set(CMAKE_SYSTEM_PROCESSOR "x86_64")
+    elseif(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" AND NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+        message(STATUS "Cross-compiling for arm64: overriding CMAKE_SYSTEM_PROCESSOR from ${CMAKE_SYSTEM_PROCESSOR} to arm64")
+        set(CMAKE_SYSTEM_PROCESSOR "arm64")
+    endif()
+endif()
+
 include(CheckLanguage)
 include(GNUInstallDirs)
 

@@ -46,21 +46,34 @@ _build_darwin() {
 
         if [ "$ARCH" = "amd64" ]; then
             status "Building darwin $ARCH dynamic backends"
-            cmake -B build/darwin-$ARCH \
+            BUILD_DIR=build/darwin-$ARCH
+            cmake -B $BUILD_DIR \
                 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
-            cmake --build build/darwin-$ARCH --target ggml-cpu -j
-            cmake --install build/darwin-$ARCH --component CPU
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+                -DMLX_ENGINE=ON \
+                -DMLX_ENABLE_X64_MAC=ON \
+                -DOLLAMA_RUNNER_DIR=./
+            cmake --build $BUILD_DIR --target ggml-cpu -j
+            cmake --build $BUILD_DIR --target mlx mlxc -j
+            cmake --install $BUILD_DIR --component CPU
+            cmake --install $BUILD_DIR --component MLX
+            # Override CGO flags to point to the amd64 build directory
+            MLX_CGO_CFLAGS="-O3 -I$(pwd)/$BUILD_DIR/_deps/mlx-c-src -mmacosx-version-min=14.0"
+            MLX_CGO_LDFLAGS="-L$(pwd)/$BUILD_DIR/lib/ollama -lmlxc -lmlx -Wl,-rpath,@executable_path -lc++ -framework Accelerate -mmacosx-version-min=14.0"
         else
+            BUILD_DIR=build
             cmake --preset MLX \
                 -DOLLAMA_RUNNER_DIR=./ \
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build --preset MLX --parallel
-            cmake --install build --component MLX
-            GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -tags mlx -o $INSTALL_PREFIX/imagegen ./x/imagegen/cmd/engine
+            cmake --install $BUILD_DIR --component MLX
+            # Use default CGO flags from mlx.go for arm64
+            MLX_CGO_CFLAGS="-O3 -I$(pwd)/$BUILD_DIR/_deps/mlx-c-src -mmacosx-version-min=14.0"
+            MLX_CGO_LDFLAGS="-L$(pwd)/$BUILD_DIR/lib/ollama -lmlxc -lmlx -Wl,-rpath,@executable_path -lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
         fi
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -tags mlx -o $INSTALL_PREFIX/imagegen ./x/imagegen/cmd/engine
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
     done
 }
@@ -69,10 +82,12 @@ _sign_darwin() {
     status "Creating universal binary..."
     mkdir -p dist/darwin
     lipo -create -output dist/darwin/ollama dist/darwin-*/ollama
+    lipo -create -output dist/darwin/imagegen dist/darwin-*/imagegen
     chmod +x dist/darwin/ollama
+    chmod +x dist/darwin/imagegen
 
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/* dist/darwin-*/imagegen; do
+        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/* dist/darwin/imagegen; do
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime $F
         done
 
@@ -139,12 +154,17 @@ _build_macapp() {
     mkdir -p dist/Ollama.app/Contents/Resources
     if [ -d dist/darwin-amd64 ]; then
         lipo -create -output dist/Ollama.app/Contents/Resources/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
+        lipo -create -output dist/Ollama.app/Contents/Resources/imagegen dist/darwin-amd64/imagegen dist/darwin-arm64/imagegen
+        for F in dist/darwin-amd64/lib/ollama/*mlx*.dylib ; do
+            lipo -create -output dist/darwin/$(basename $F) $F dist/darwin-arm64/lib/ollama/$(basename $F)
+        done
         cp dist/darwin-*/lib/ollama/*.so dist/darwin-*/lib/ollama/*.dylib dist/Ollama.app/Contents/Resources/
+        cp dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
     else
         cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
         cp dist/darwin/*.so dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
     fi
-    cp -a dist/darwin-arm64/imagegen dist/Ollama.app/Contents/Resources/imagegen
+    cp -a dist/darwin/imagegen dist/Ollama.app/Contents/Resources/imagegen
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     # Sign
@@ -158,7 +178,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama *.so *.dylib) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama imagegen *.so *.dylib) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then
