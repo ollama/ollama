@@ -1590,7 +1590,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	} else if err != nil {
 		slog.Error("post predict", "error", err)
-		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
+		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check Ollama server logs for details")
 	}
 	defer res.Body.Close()
 
