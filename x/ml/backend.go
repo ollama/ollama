@@ -157,7 +157,7 @@ func WithRoPEFreqs(freqs Tensor) func(*RoPEOptions) {
 type Tensor interface {
 	ToString() string
 	RoPE(ctx Context, dims int, traditional bool, scale float32, offset int, options ...func(*RoPEOptions)) Tensor
-	ScaledDotProductAttention(ctx Context, keys, values Tensor, scale float64, maskMode string, masks []Tensor, sinks Tensor) Tensor
+	ScaledDotProductAttention(ctx Context, keys, values Tensor, scale float64, maskMode string, mask Tensor, sinks Tensor) Tensor
 	TakeAxes(ctx Context, indicies Tensor, axes int) Tensor
 	// TakeAxes(ctx Context, axes int, indicies ...int) Tensor
 

@@ -980,7 +980,7 @@ func (a *Array) RoPE(ctx ml.Context, dims int, traditional bool, scale float32, 
 //   promote to the promoted type of q, k, and v.
 // - sinks (array, optional) – An optional array of attention sinks. Default: None.
 
-func (queries *Array) ScaledDotProductAttention(ctx ml.Context, keys, values ml.Tensor, scale float64, maskMode string, masks []ml.Tensor, sinks ml.Tensor) ml.Tensor {
+func (queries *Array) ScaledDotProductAttention(ctx ml.Context, keys, values ml.Tensor, scale float64, maskMode string, mask ml.Tensor, sinks ml.Tensor) ml.Tensor {
 	var r C.mlx_array
 	var s C.mlx_array
 	if sinks != nil {
@@ -988,19 +988,10 @@ func (queries *Array) ScaledDotProductAttention(ctx ml.Context, keys, values ml.
 	}
 	maskModeC := C.CString(maskMode)
 	defer C.free(unsafe.Pointer(maskModeC))
-	maskVec := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(maskVec)
-	for _, m := range masks {
-		C.mlx_vector_array_append_value(maskVec, m.(*Array).a)
+	var maskArr C.mlx_array
+	if mask != nil {
+		maskArr = mask.(*Array).a
 	}
-
-	// slog.Info("MLX.ScaledDotProductAttention", "queries", queries)
-	// slog.Info("MLX.ScaledDotProductAttention", "keys", keys)
-	// slog.Info("MLX.ScaledDotProductAttention", "values", values)
-	// if len(masks) > 0 {
-	// 	slog.Info("MLX.ScaledDotProductAttention", "masks", masks[0])
-	// }
-	// slog.Info("MLX.ScaledDotProductAttention", "scale", scale)
 
 	C.mlx_fast_scaled_dot_product_attention(
 		&r,
@@ -1009,7 +1000,7 @@ func (queries *Array) ScaledDotProductAttention(ctx ml.Context, keys, values ml.
 		values.(*Array).a,
 		C.float(scale),
 		maskModeC,
-		maskVec,
+		maskArr,
 		s,
 		ctx.(*Context).stream,
 	)

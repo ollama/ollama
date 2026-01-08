@@ -74,8 +74,8 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 
 	if cache != nil {
 		// TODO what to do with vmla?
-		// return query.Transpose(ctx, 0, 2, 1, 3).ScaledDotProductAttention(ctx, key.Transpose(ctx, 0, 2, 1, 3), value.Transpose(ctx, 0, 2, 1, 3), scale, "array", []ml.Tensor{mask}, sinks)
-		return query.ScaledDotProductAttention(ctx, key, value, scale, "causal", []ml.Tensor{}, sinks)
+		// return query.Transpose(ctx, 0, 2, 1, 3).ScaledDotProductAttention(ctx, key.Transpose(ctx, 0, 2, 1, 3), value.Transpose(ctx, 0, 2, 1, 3), scale, "array", mask, sinks)
+		return query.ScaledDotProductAttention(ctx, key, value, scale, "causal", nil, sinks)
 
 		// TODO these two produce identical output, but not similar enough - 92.9% - should be 99.999%
 	} else {

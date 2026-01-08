@@ -13,6 +13,8 @@ cmake --install --component MLX
 go build -tags mlx .
 ```
 
+On linux, use the preset "MLX CUDA 13" or "MLX CUDA 12" to enable CUDA with the default Ollama NVIDIA GPU architectures enabled. 
+
 ## Image Generation
 
 Based on the experimental MLX backend, we're working on adding imagegen support.  After running the cmake commands above:

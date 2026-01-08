@@ -280,14 +280,18 @@ func gguf_load_quantized(data unsafe.Pointer, name string, final_shape []C.int, 
 		C.extract_q8_0_data((*C.uint8_t)(data), &weights, &scales, &biases)
 		bits = 8
 	}
+	groupSize := C.mlx_optional_int{value: 32, has_value: true}
+	bitsOpt := C.mlx_optional_int{value: bits, has_value: true}
+	var dtypeOpt C.mlx_optional_dtype // has_value defaults to false
 	C.mlx_dequantize(
 		&r,
 		weights,
 		scales,
 		biases,
-		32, // group size
-		bits,
+		groupSize,
+		bitsOpt,
 		nil, // TODO mode
+		dtypeOpt,
 		stream,
 	)
 	C.mlx_array_free(weights)
