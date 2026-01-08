@@ -83,21 +83,11 @@ export default function Settings() {
 
   useEffect(() => {
     refetchUser();
-    // Check for updates
+    // Check for updates on mount
     checkForUpdate()
       .then(setUpdateInfo)
       .catch((err) => console.error("Error checking for update:", err));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refresh update info when auto-update toggle changes
-  useEffect(() => {
-    if (settings?.AutoUpdateEnabled !== undefined) {
-      checkForUpdate()
-        .then(setUpdateInfo)
-        .catch((err) => console.error("Error checking for update:", err));
-    }
-  }, [settings?.AutoUpdateEnabled]);
-
 
   useEffect(() => {
     const handleFocus = () => {
