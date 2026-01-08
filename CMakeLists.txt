@@ -179,4 +179,16 @@ if(MLX_ENGINE)
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     )
+
+    # Manually install cudart and cublas since they might not be picked up as direct dependencies
+    if(CUDAToolkit_FOUND)
+        file(GLOB CUDART_LIBS
+            "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*")
+        if(CUDART_LIBS)
+            install(FILES ${CUDART_LIBS}
+                DESTINATION ${OLLAMA_INSTALL_DIR}
+                COMPONENT MLX)
+        endif()
+    endif()
 endif()
