@@ -8,14 +8,11 @@ import (
 	"time"
 )
 
-func setupTestDir(t *testing.T) (string, func()) {
+func setupTestDir(t *testing.T) string {
 	t.Helper()
 
 	// Create a temporary directory for testing
-	tmpDir, err := os.MkdirTemp("", "ollama-auth-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
+	tmpDir := t.TempDir()
 
 	// Create .ollama subdirectory
 	ollamaDir := filepath.Join(tmpDir, ".ollama")
@@ -24,20 +21,13 @@ func setupTestDir(t *testing.T) (string, func()) {
 	}
 
 	// Override home directory for tests
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
+	t.Setenv("HOME", tmpDir)
 
-	cleanup := func() {
-		os.Setenv("HOME", origHome)
-		os.RemoveAll(tmpDir)
-	}
-
-	return tmpDir, cleanup
+	return tmpDir
 }
 
 func TestSetSignInState(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	state := &SignInState{
 		Name:  "testuser",
@@ -82,8 +72,7 @@ func TestSetSignInState(t *testing.T) {
 }
 
 func TestSetSignInState_Overwrites(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Set initial state
 	state1 := &SignInState{Name: "user1", Email: "user1@example.com"}
@@ -109,8 +98,7 @@ func TestSetSignInState_Overwrites(t *testing.T) {
 }
 
 func TestGetSignInState(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// First set a state
 	originalState := &SignInState{
@@ -137,8 +125,7 @@ func TestGetSignInState(t *testing.T) {
 }
 
 func TestGetSignInState_NoFile(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Try to read without any file existing
 	state, err := GetSignInState()
@@ -151,8 +138,7 @@ func TestGetSignInState_NoFile(t *testing.T) {
 }
 
 func TestGetSignInState_InvalidJSON(t *testing.T) {
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
+	tmpDir := setupTestDir(t)
 
 	// Write invalid JSON to the state file
 	statePath := filepath.Join(tmpDir, ".ollama", signInStateFile)
@@ -170,8 +156,7 @@ func TestGetSignInState_InvalidJSON(t *testing.T) {
 }
 
 func TestClearSignInState(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// First set a state
 	state := &SignInState{Name: "testuser", Email: "test@example.com"}
@@ -198,8 +183,7 @@ func TestClearSignInState(t *testing.T) {
 }
 
 func TestClearSignInState_NoFile(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Clear when no file exists should not error
 	err := ClearSignInState()
@@ -209,8 +193,7 @@ func TestClearSignInState_NoFile(t *testing.T) {
 }
 
 func TestClearSignInState_Idempotent(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Set a state first
 	state := &SignInState{Name: "testuser", Email: "test@example.com"}
@@ -219,7 +202,7 @@ func TestClearSignInState_Idempotent(t *testing.T) {
 	}
 
 	// Clear multiple times should not error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := ClearSignInState(); err != nil {
 			t.Errorf("ClearSignInState iteration %d failed: %v", i, err)
 		}
@@ -227,8 +210,7 @@ func TestClearSignInState_Idempotent(t *testing.T) {
 }
 
 func TestIsSignedIn(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Initially not signed in
 	if IsSignedIn() {
@@ -258,8 +240,7 @@ func TestIsSignedIn(t *testing.T) {
 }
 
 func TestIsSignedIn_EmptyName(t *testing.T) {
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
+	tmpDir := setupTestDir(t)
 
 	// Write a state with empty name directly
 	state := SignInState{
@@ -280,8 +261,7 @@ func TestIsSignedIn_EmptyName(t *testing.T) {
 }
 
 func TestSetSignInState_AtomicWrite(t *testing.T) {
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
+	tmpDir := setupTestDir(t)
 
 	state := &SignInState{Name: "testuser", Email: "test@example.com"}
 	if err := SetSignInState(state); err != nil {
@@ -302,8 +282,7 @@ func TestSetSignInState_AtomicWrite(t *testing.T) {
 }
 
 func TestSetSignInState_FilePermissions(t *testing.T) {
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
+	tmpDir := setupTestDir(t)
 
 	state := &SignInState{Name: "testuser", Email: "test@example.com"}
 	if err := SetSignInState(state); err != nil {
@@ -324,8 +303,7 @@ func TestSetSignInState_FilePermissions(t *testing.T) {
 }
 
 func TestRoundTrip(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Test full round trip: set -> get -> clear -> get
 	original := &SignInState{

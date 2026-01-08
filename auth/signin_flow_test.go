@@ -8,8 +8,7 @@ import (
 
 // TestWhoamiHandlerFlow simulates the WhoamiHandler logic flow
 func TestWhoamiHandlerFlow(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	// Scenario 1: No local cache - should indicate need for network call
 	t.Run("NoCache_RequiresNetwork", func(t *testing.T) {
@@ -76,8 +75,7 @@ func TestWhoamiHandlerFlow(t *testing.T) {
 
 // TestOfflineScenarios tests behavior when offline
 func TestOfflineScenarios(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	t.Run("Offline_WithCache_Works", func(t *testing.T) {
 		// Pre-populate cache (simulate previous sign-in)
@@ -119,8 +117,7 @@ func TestOfflineScenarios(t *testing.T) {
 
 // TestMultipleSessions tests overwriting sessions
 func TestMultipleSessions(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	t.Run("NewSignIn_OverwritesOld", func(t *testing.T) {
 		// First user signs in
@@ -141,8 +138,7 @@ func TestMultipleSessions(t *testing.T) {
 
 // TestEdgeCases tests various edge cases
 func TestEdgeCases(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	t.Run("EmptyName_NotSignedIn", func(t *testing.T) {
 		// User with empty name should not count as signed in
@@ -194,7 +190,7 @@ func TestEdgeCases(t *testing.T) {
 
 	t.Run("VeryLongEmail", func(t *testing.T) {
 		longEmail := ""
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			longEmail += "a"
 		}
 		longEmail += "@example.com"
@@ -217,8 +213,7 @@ func TestEdgeCases(t *testing.T) {
 
 // TestConcurrentAccess tests race conditions
 func TestConcurrentAccess(t *testing.T) {
-	_, cleanup := setupTestDir(t)
-	defer cleanup()
+	_ = setupTestDir(t)
 
 	t.Run("ConcurrentReads", func(t *testing.T) {
 		// Set up initial state
@@ -227,7 +222,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 		// Multiple concurrent reads should all succeed
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				read, err := GetSignInState()
 				if err != nil {
@@ -240,7 +235,7 @@ func TestConcurrentAccess(t *testing.T) {
 			}()
 		}
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -248,18 +243,18 @@ func TestConcurrentAccess(t *testing.T) {
 	t.Run("ConcurrentWrites", func(t *testing.T) {
 		// Multiple concurrent writes - last one should win
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
-			go func(n int) {
+		for range 10 {
+			go func() {
 				state := &SignInState{
 					Name:  "user",
 					Email: "user@example.com",
 				}
 				SetSignInState(state)
 				done <- true
-			}(i)
+			}()
 		}
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 
@@ -272,8 +267,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 // TestFileSystemEdgeCases tests filesystem-related edge cases
 func TestFileSystemEdgeCases(t *testing.T) {
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
+	tmpDir := setupTestDir(t)
 
 	t.Run("ReadOnlyDirectory", func(t *testing.T) {
 		// Make .ollama directory read-only
