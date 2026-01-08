@@ -29,20 +29,6 @@ type ModelParameters struct {
 		HiddenSize uint32 `json:"hidden_size"`
 		ModelType  string `json:"model_type"`
 	} `json:"text_config"`
-
-	// TODO vision config
-	/*
-		"vision_config": {
-			"hidden_size": 1152,
-			"image_size": 896,
-			"intermediate_size": 4304,
-			"model_type": "siglip_vision_model",
-			"num_attention_heads": 16,
-			"num_hidden_layers": 27,
-			"patch_size": 14,
-			"vision_use_head": false
-		}
-	*/
 }
 
 type AdapterParameters struct {
