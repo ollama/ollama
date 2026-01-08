@@ -1,3 +1,5 @@
+//go:build mlx
+
 // tokenizer.go - BPE and SentencePiece tokenizer for HuggingFace models
 //
 // Based on standard BPE algorithm (Sennrich et al. 2015) with:

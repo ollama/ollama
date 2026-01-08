@@ -1,3 +1,5 @@
+//go:build mlx
+
 // Package zimage implements the Z-Image diffusion transformer model.
 package zimage
 

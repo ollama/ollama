@@ -48,14 +48,18 @@ _build_darwin() {
             status "Building darwin $ARCH dynamic backends"
             cmake -B build/darwin-$ARCH \
                 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build build/darwin-$ARCH --target ggml-cpu -j
             cmake --install build/darwin-$ARCH --component CPU
         else
-            cmake --preset MLX -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DOLLAMA_RUNNER_DIR=./
+            cmake --preset MLX \
+                -DOLLAMA_RUNNER_DIR=./ \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build --preset MLX --parallel
             cmake --install build --component MLX
+            GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -tags mlx -o $INSTALL_PREFIX/imagegen ./x/imagegen/cmd/engine
         fi
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
     done
@@ -68,7 +72,7 @@ _sign_darwin() {
     chmod +x dist/darwin/ollama
 
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin-amd64/lib/ollama/*; do
+        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/* dist/darwin-*/imagegen; do
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime $F
         done
 
@@ -135,17 +139,18 @@ _build_macapp() {
     mkdir -p dist/Ollama.app/Contents/Resources
     if [ -d dist/darwin-amd64 ]; then
         lipo -create -output dist/Ollama.app/Contents/Resources/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
-        cp dist/darwin-amd64/lib/ollama/*.so dist/darwin-amd64/lib/ollama/*.dylib dist/Ollama.app/Contents/Resources/
+        cp dist/darwin-*/lib/ollama/*.so dist/darwin-*/lib/ollama/*.dylib dist/Ollama.app/Contents/Resources/
     else
         cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
         cp dist/darwin/*.so dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
     fi
+    cp -a dist/darwin-arm64/imagegen dist/Ollama.app/Contents/Resources/imagegen
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     # Sign
     if [ -n "$APPLE_IDENTITY" ]; then
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
-        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib ; do
+        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/imagegen ; do
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime ${lib}
         done
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier com.electron.ollama --deep --options=runtime dist/Ollama.app

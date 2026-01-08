@@ -1,3 +1,5 @@
+//go:build mlx
+
 package llama
 
 import (

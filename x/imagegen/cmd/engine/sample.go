@@ -1,3 +1,5 @@
+//go:build mlx
+
 package main
 
 import "github.com/ollama/ollama/x/imagegen/mlx"

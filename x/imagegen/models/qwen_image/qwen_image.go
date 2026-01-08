@@ -1,3 +1,5 @@
+//go:build mlx
+
 // Package qwen_image implements the Qwen-Image diffusion transformer model.
 package qwen_image
 

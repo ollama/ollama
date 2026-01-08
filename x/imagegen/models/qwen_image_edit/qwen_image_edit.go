@@ -1,3 +1,5 @@
+//go:build mlx
+
 // Package qwen_image_edit implements the Qwen-Image-Edit diffusion model for image editing.
 // It reuses components from qwen_image where possible.
 package qwen_image_edit
