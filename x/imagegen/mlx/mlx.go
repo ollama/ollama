@@ -4,7 +4,7 @@ package mlx
 #cgo CFLAGS: -O3 -I${SRCDIR}/../../../build/_deps/mlx-c-src
 #cgo LDFLAGS: -L${SRCDIR}/../../../build/lib/ollama/ -lmlxc -Wl,-rpath,${SRCDIR}/../../../build/lib/ollama/
 #cgo darwin LDFLAGS: -lc++ -framework Metal -framework Foundation -framework Accelerate
-#cgo linux LDFLAGS: -lstdc++ -L/usr/local/cuda/lib64 -lcudart
+#cgo linux LDFLAGS: -lstdc++ -lcuda -lcudart -lnvrtc
 
 #include "mlx/c/mlx.h"
 #include <stdlib.h>
