@@ -40,6 +40,7 @@ var (
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
+	errCapabilityThinkLevel = errors.New("thinklevel")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -123,6 +124,11 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
+	// Check for the ability to set the level of thinking
+	if slices.Contains(v, "thinklevel") {
+		capabilities = append(capabilities, model.CapabilityThinkLevel)
+	}
+
 	// Skip the thinking check if it's already set
 	if slices.Contains(capabilities, "thinking") {
 		return capabilities
@@ -134,6 +140,9 @@ func (m *Model) Capabilities() []model.Capability {
 	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, model.CapabilityThinking)
+	}
+	if isGptoss && !slices.Contains(capabilities, "thinklevel") {
+		capabilities = append(capabilities, model.CapabilityThinkLevel)
 	}
 
 	return capabilities
@@ -153,6 +162,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
+		model.CapabilityThinkLevel: errCapabilityThinkLevel,
 	}
 
 	for _, cap := range want {

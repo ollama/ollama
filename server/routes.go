@@ -345,12 +345,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
-		return
-	}
-
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
@@ -367,6 +361,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
 			return
 		}
+	}
+
+	// Validate Think value: string values currently only allowed for models with ThinkLevel capability
+	if req.Think != nil && req.Think.IsString() && !slices.Contains(modelCaps, model.CapabilityThinkLevel) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
+		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
@@ -2096,8 +2096,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
+	// Validate Think value: string values currently only allowed for models with ThinkLevel capability
+	if req.Think != nil && req.Think.IsString() && !slices.Contains(modelCaps, model.CapabilityThinkLevel) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
