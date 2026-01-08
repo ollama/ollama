@@ -91,8 +91,8 @@ func waitForOllamaSignin(ctx context.Context) error {
 		var aErr api.AuthorizationError
 		if errors.As(err, &aErr) && aErr.SigninURL != "" {
 			fmt.Fprintf(os.Stderr, "\n  To sign in, navigate to:\n")
-			fmt.Fprintf(os.Stderr, "      \033[36m%s\033[0m\n\n", aErr.SigninURL)
-			fmt.Fprintf(os.Stderr, "  \033[90mWaiting for sign in to complete...\033[0m")
+			fmt.Fprintf(os.Stderr, "      %s\n\n", aErr.SigninURL)
+			fmt.Fprintf(os.Stderr, "  \033[90mwaiting for sign in to complete...\033[0m")
 
 			// Poll until auth succeeds
 			ticker := time.NewTicker(2 * time.Second)
@@ -106,7 +106,7 @@ func waitForOllamaSignin(ctx context.Context) error {
 				case <-ticker.C:
 					user, whoamiErr := client.Whoami(ctx)
 					if whoamiErr == nil && user != nil && user.Name != "" {
-						fmt.Fprintf(os.Stderr, "\r\033[K  \033[32mSigned in as %s\033[0m\n", user.Name)
+						fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K  \033[1msigned in:\033[0m %s\n", user.Name)
 						return nil
 					}
 					// Still waiting, show dot
@@ -264,12 +264,12 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			var authErr api.AuthorizationError
 			if errors.As(err, &authErr) {
 				p.StopAndClear()
-				fmt.Fprintf(os.Stderr, "\033[33mAuthentication required to use this cloud model.\033[0m\n")
+				fmt.Fprintf(os.Stderr, "\033[1mauth required:\033[0m cloud model requires authentication\n")
 				result, promptErr := agent.PromptYesNo("Sign in to Ollama?")
 				if promptErr == nil && result {
 					if signinErr := waitForOllamaSignin(ctx); signinErr == nil {
 						// Retry the chat request
-						fmt.Fprintf(os.Stderr, "\033[90mRetrying...\033[0m\n")
+						fmt.Fprintf(os.Stderr, "\033[90mretrying...\033[0m\n")
 						continue // Retry the loop
 					}
 				}
@@ -283,11 +283,11 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				p.StopAndClear()
 
 				if consecutiveErrors >= 3 {
-					fmt.Fprintf(os.Stderr, "\033[31m✗ Too many consecutive errors, giving up\033[0m\n")
+					fmt.Fprintf(os.Stderr, "\033[1merror:\033[0m too many consecutive errors, giving up\n")
 					return nil, fmt.Errorf("too many consecutive server errors: %s", statusErr.ErrorMessage)
 				}
 
-				fmt.Fprintf(os.Stderr, "\033[33m⚠ Server error (attempt %d/3): %s\033[0m\n", consecutiveErrors, statusErr.ErrorMessage)
+				fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m server error (attempt %d/3): %s\n", consecutiveErrors, statusErr.ErrorMessage)
 
 				// Include both the model's response and the error so it can learn
 				assistantContent := fullResponse.String()
@@ -353,8 +353,8 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				if cmd, ok := args["command"].(string); ok {
 					// Check if command is denied (dangerous pattern)
 					if denied, pattern := agent.IsDenied(cmd); denied {
-						fmt.Fprintf(os.Stderr, "\033[91m✗ Blocked: %s\033[0m\n", formatToolShort(toolName, args))
-						fmt.Fprintf(os.Stderr, "\033[91m  Matches dangerous pattern: %s\033[0m\n", pattern)
+						fmt.Fprintf(os.Stderr, "\033[1mblocked:\033[0m %s\n", formatToolShort(toolName, args))
+						fmt.Fprintf(os.Stderr, "  matches dangerous pattern: %s\n", pattern)
 						toolResults = append(toolResults, api.Message{
 							Role:       "tool",
 							Content:    agent.FormatDeniedResult(cmd, pattern),
@@ -365,7 +365,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 
 					// Check if command is auto-allowed (safe command)
 					if agent.IsAutoAllowed(cmd) {
-						fmt.Fprintf(os.Stderr, "\033[90m▶ Auto-allowed: %s\033[0m\n", formatToolShort(toolName, args))
+						fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
 						skipApproval = true
 					}
 				}
@@ -375,7 +375,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			// In yolo mode, skip all approval prompts
 			if opts.YoloMode {
 				if !skipApproval {
-					fmt.Fprintf(os.Stderr, "\033[90m▶ Running: %s\033[0m\n", formatToolShort(toolName, args))
+					fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolShort(toolName, args))
 				}
 			} else if !skipApproval && !approval.IsAllowed(toolName, args) {
 				result, err := approval.RequestApproval(toolName, args)
@@ -405,7 +405,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				}
 			} else if !skipApproval {
 				// Already allowed - show running indicator
-				fmt.Fprintf(os.Stderr, "\033[90m▶ Running: %s\033[0m\n", formatToolShort(toolName, args))
+				fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolShort(toolName, args))
 			}
 
 			// Execute the tool
@@ -414,13 +414,13 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				// Check if web search needs authentication
 				if errors.Is(err, tools.ErrWebSearchAuthRequired) {
 					// Prompt user to sign in
-					fmt.Fprintf(os.Stderr, "\033[33m  Web search requires authentication.\033[0m\n")
+					fmt.Fprintf(os.Stderr, "\033[1mauth required:\033[0m web search requires authentication\n")
 					result, promptErr := agent.PromptYesNo("Sign in to Ollama?")
 					if promptErr == nil && result {
 						// Get signin URL and wait for auth completion
 						if signinErr := waitForOllamaSignin(ctx); signinErr == nil {
 							// Retry the web search
-							fmt.Fprintf(os.Stderr, "\033[90m  Retrying web search...\033[0m\n")
+							fmt.Fprintf(os.Stderr, "\033[90mretrying web search...\033[0m\n")
 							toolResult, err = toolRegistry.Execute(call)
 							if err == nil {
 								goto toolSuccess
@@ -428,7 +428,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 						}
 					}
 				}
-				fmt.Fprintf(os.Stderr, "\033[31m  Error: %v\033[0m\n", err)
+				fmt.Fprintf(os.Stderr, "\033[1merror:\033[0m %v\n", err)
 				toolResults = append(toolResults, api.Message{
 					Role:       "tool",
 					Content:    fmt.Sprintf("Error: %v", err),
@@ -499,17 +499,18 @@ func truncateUTF8(s string, limit int) string {
 
 // formatToolShort returns a short description of a tool call.
 func formatToolShort(toolName string, args map[string]any) string {
+	displayName := agent.ToolDisplayName(toolName)
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
-			return fmt.Sprintf("bash: %s", truncateUTF8(cmd, 50))
+			return fmt.Sprintf("%s: %s", displayName, truncateUTF8(cmd, 50))
 		}
 	}
 	if toolName == "web_search" {
 		if query, ok := args["query"].(string); ok {
-			return fmt.Sprintf("web_search: %s", truncateUTF8(query, 50))
+			return fmt.Sprintf("%s: %s", displayName, truncateUTF8(query, 50))
 		}
 	}
-	return toolName
+	return displayName
 }
 
 // Helper types and functions for display
@@ -649,7 +650,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	// Check if model supports tools
 	supportsTools, err := checkModelCapabilities(cmd.Context(), modelName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[33mWarning: Could not check model capabilities: %v\033[0m\n", err)
+		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
 		supportsTools = false
 	}
 
@@ -658,13 +659,13 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
 		if toolRegistry.Count() > 0 {
-			fmt.Fprintf(os.Stderr, "\033[90mTools available: %s\033[0m\n", strings.Join(toolRegistry.Names(), ", "))
+			fmt.Fprintf(os.Stderr, "\033[90mtools available: %s\033[0m\n", strings.Join(toolRegistry.Names(), ", "))
 		}
 		if yoloMode {
-			fmt.Fprintf(os.Stderr, "\033[33m⚠ YOLO mode: All tool approvals will be skipped\033[0m\n")
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m yolo mode - all tool approvals will be skipped\n")
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "\033[33mNote: Model does not support tools - running in chat-only mode\033[0m\n")
+		fmt.Fprintf(os.Stderr, "\033[1mnote:\033[0m model does not support tools - running in chat-only mode\n")
 	}
 
 	// Create approval manager for session
