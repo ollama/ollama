@@ -3,21 +3,16 @@ From: Jesse Gross <jesse@ollama.com>
 Date: Tue, 28 Oct 2025 17:36:54 -0700
 Subject: [PATCH] ggml: Add batch size hint
 
-Some operations use heuristics to determine the batch size, which
-affects offloading decisions. However, these are not always
-accurate when looking at single operations. This provides an
-explicit signal on the batch size from higher layers to ensure
-consistent performance.
 ---
  ggml/include/ggml-backend.h          |  5 ++-
  ggml/src/ggml-backend-impl.h         |  4 +--
  ggml/src/ggml-backend.cpp            | 19 +++++++----
  ggml/src/ggml-blas/ggml-blas.cpp     |  3 +-
  ggml/src/ggml-cpu/ggml-cpu.cpp       |  4 ++-
- ggml/src/ggml-cuda/ggml-cuda.cu      | 48 +++++++++++++++++-----------
+ ggml/src/ggml-cuda/ggml-cuda.cu      | 51 +++++++++++++++++-----------
  ggml/src/ggml-metal/ggml-metal.cpp   |  4 ++-
  ggml/src/ggml-vulkan/ggml-vulkan.cpp |  3 +-
- 8 files changed, 58 insertions(+), 32 deletions(-)
+ 8 files changed, 60 insertions(+), 33 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 609209459..9a4adf697 100644
@@ -178,19 +173,20 @@ index f4713a421..92ba577a5 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 3d2afac43..1e09cf1f0 100644
+index 42a05ac8e..36535a68a 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2891,7 +2891,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+@@ -2903,7 +2903,8 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+ }
  
  #ifdef USE_CUDA_GRAPH
- static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
--    bool use_cuda_graph) {
-+    int batch_size, bool use_cuda_graph) {
+-static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
++static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph,
++    int batch_size) {
  
+     bool use_cuda_graph = true;
      // Loop over nodes in GGML graph to obtain info needed for CUDA graph
- 
-@@ -2924,24 +2924,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+@@ -2937,24 +2938,34 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
  #endif
          }
  
@@ -241,26 +237,35 @@ index 3d2afac43..1e09cf1f0 100644
          }
  
          if (!use_cuda_graph) {
-@@ -3742,7 +3752,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+@@ -3770,7 +3781,7 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
      }
+ }
+ 
+-static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
++static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, int batch_size) {
+ 
+ #ifdef USE_CUDA_GRAPH
+ 
+@@ -3791,7 +3802,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
+ #endif // USE_CUDA_GRAPH
  }
  
 -static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
 +static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
-     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
  
      ggml_cuda_set_device(cuda_ctx->device);
-@@ -3780,7 +3790,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
-     if (use_cuda_graph) {
-         cuda_graph_update_required = is_cuda_graph_update_required(cuda_ctx, cgraph);
+@@ -3804,7 +3815,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
  
--        use_cuda_graph = check_node_graph_compatibility(cgraph, use_cuda_graph);
-+        use_cuda_graph = check_node_graph_compatibility(cgraph, batch_size, use_cuda_graph);
+     if (cuda_ctx->cuda_graph->is_enabled()) {
+         cuda_graph_update_required = ggml_cuda_graph_update_required(cuda_ctx, cgraph);
+-        use_cuda_graph             = ggml_cuda_graph_check_compability(cgraph);
++        use_cuda_graph             = ggml_cuda_graph_check_compability(cgraph, batch_size);
  
-         // Disable CUDA graphs (from the next token) if the use-case is demanding too many consecutive graph updates.
-         if (use_cuda_graph && cuda_graph_update_required) {
+         cuda_ctx->cuda_graph->record_update(use_cuda_graph, cuda_graph_update_required);
+     }
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 8fc1c2fb5..ba95b4acc 100644
+index 516d74064..a2b1592eb 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -419,10 +419,12 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
@@ -278,10 +283,10 @@ index 8fc1c2fb5..ba95b4acc 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index aecd8ee59..317914c3b 100644
+index 885864111..1ad5b6485 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13419,7 +13419,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13540,7 +13540,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -290,7 +295,7 @@ index aecd8ee59..317914c3b 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -13706,6 +13706,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -13827,6 +13827,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);
