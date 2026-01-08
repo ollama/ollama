@@ -42,8 +42,7 @@ shift $(( $OPTIND - 1 ))
 _build_darwin() {
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
-        INSTALL_PREFIX=dist/darwin-$ARCH/
-        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
+        INSTALL_PREFIX=dist/darwin-$ARCH/        
 
         if [ "$ARCH" = "amd64" ]; then
             status "Building darwin $ARCH dynamic backends"
@@ -53,7 +52,12 @@ _build_darwin() {
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build build/darwin-$ARCH --target ggml-cpu -j
             cmake --install build/darwin-$ARCH --component CPU
+        else
+            cmake --preset MLX -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DOLLAMA_RUNNER_DIR=./
+            cmake --build --preset MLX --parallel
+            cmake --install build --component MLX
         fi
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
     done
 }
 
