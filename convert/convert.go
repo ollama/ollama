@@ -88,6 +88,7 @@ func (kv KV) String(key string, defaultValue ...string) string {
 	val, _ := keyValue(kv, key, append(defaultValue, "")...)
 	return val
 }
+
 func (kv KV) Uint(key string, defaultValue ...uint32) uint32 {
 	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
 	return val
@@ -107,6 +108,7 @@ func (kv KV) Strings(key string, defaultValue ...[]string) []string {
 	val, _ := keyValue(kv, key, append(defaultValue, []string{""})...)
 	return val
 }
+
 func (kv KV) Ints(key string, defaultValue ...[]int32) []int32 {
 	val, _ := keyValue(kv, key, append(defaultValue, []int32{0})...)
 	return val
@@ -126,6 +128,7 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	val, _ := keyValue(kv, key, append(defaultValue, []bool{false})...)
 	return val
 }
+
 func (kv KV) Len() int {
 	return len(kv)
 }

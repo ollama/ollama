@@ -59,9 +59,9 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	// 2025/12/10 16:02:33 INFO XXX tensors are similar k=0.9999891519546509 shape="[1 4 13 256]" min_difference=[-0.21365738] max_difference=[0.19916534]
 	// 2025/12/10 16:02:33 INFO XXX tensors are similar v=0.9999960660934448 shape="[1 4 13 256]" min_difference=[-0.32923126] max_difference=[0.32646942]
 
-	var mask ml.Tensor
+	// var mask ml.Tensor
 	if cache != nil {
-		key, value, mask = cache.Get(ctx)
+		key, value, _ = cache.Get(ctx)
 	}
 	// ctx.CompareWith("/tmp/test", map[string]ml.Tensor{"q": query.Contiguous(ctx, false), "k": key.Contiguous(ctx, false), "v": value.Contiguous(ctx, false)}, true)
 	// panic("after cache get") //
@@ -81,24 +81,23 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	} else {
 		panic("else case not supported")
 		// TODO transpose shapes are wrong
-		query = query.Transpose(ctx, 0, 2, 1, 3)
-		key = key.Transpose(ctx, 0, 2, 1, 3)
-		value = value.Transpose(ctx, 1, 2, 0, 3).Contiguous(ctx, false)
+		// key = key.Transpose(ctx, 0, 2, 1, 3)
+		// value = value.Transpose(ctx, 1, 2, 0, 3).Contiguous(ctx, false)
 
-		kq := query.Matmul(ctx, key)
+		// kq := query.Matmul(ctx, key)
 
-		kq = kq.Scale(ctx, scale)
-		if mask != nil {
-			kq = kq.Add(ctx, mask)
-		}
-		kq = kq.Softmax(ctx)
+		// kq = kq.Scale(ctx, scale)
+		// if mask != nil {
+		// 	kq = kq.Add(ctx, mask)
+		// }
+		// kq = kq.Softmax(ctx)
 
-		kqv := kq.Matmul(ctx, value)
+		// kqv := kq.Matmul(ctx, value)
 
-		if vmla != nil {
-			kqv = kqv.Matmul(ctx, vmla)
-		}
+		// if vmla != nil {
+		// 	kqv = kqv.Matmul(ctx, vmla)
+		// }
 
-		return kqv.Transpose(ctx, 0, 2, 1, 3).Contiguous(ctx, false)
+		// return kqv.Transpose(ctx, 0, 2, 1, 3).Contiguous(ctx, false)
 	}
 }

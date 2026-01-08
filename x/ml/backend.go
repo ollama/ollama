@@ -278,21 +278,21 @@ type Tensor interface {
 // 	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, vmla Tensor, scale float64) Tensor
 // }
 
-type number interface {
-	~int | ~int8 | ~int16 | ~int32 | ~int64 |
-		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
-		~float32 | ~float64 |
-		~complex64 | ~complex128
-}
+// type number interface {
+// 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+// 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
+// 		~float32 | ~float64 |
+// 		~complex64 | ~complex128
+// }
 
-func mul[T number](s ...T) T {
-	p := T(1)
-	for _, v := range s {
-		p *= v
-	}
+// func mul[T number](s ...T) T {
+// 	p := T(1)
+// 	for _, v := range s {
+// 		p *= v
+// 	}
 
-	return p
-}
+// 	return p
+// }
 
 // type DumpOptions func(*dumpOptions)
 

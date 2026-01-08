@@ -28,5 +28,5 @@ func (m *LinearBatch) Forward(ctx ml.Context, t, indices ml.Tensor) ml.Tensor {
 	// 	t = t.AddID(ctx, m.Bias, indices)
 	// }
 
-	return t
+	// return t
 }
