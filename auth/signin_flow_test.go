@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -267,19 +268,27 @@ func TestConcurrentAccess(t *testing.T) {
 
 // TestFileSystemEdgeCases tests filesystem-related edge cases
 func TestFileSystemEdgeCases(t *testing.T) {
-	tmpDir := setupTestDir(t)
+	t.Run("DirectoryIsFile", func(t *testing.T) {
+		tmpDir := t.TempDir()
 
-	t.Run("ReadOnlyDirectory", func(t *testing.T) {
-		// Make .ollama directory read-only
-		ollamaDir := filepath.Join(tmpDir, ".ollama")
-		os.Chmod(ollamaDir, 0o500)
-		defer os.Chmod(ollamaDir, 0o755) // Restore for cleanup
+		// Create a file where .ollama directory should be
+		ollamaPath := filepath.Join(tmpDir, ".ollama")
+		if err := os.WriteFile(ollamaPath, []byte("not a directory"), 0o600); err != nil {
+			t.Fatalf("failed to create blocking file: %v", err)
+		}
 
-		// Try to write - should fail because can't create temp file
+		// Override home directory
+		if runtime.GOOS == "windows" {
+			t.Setenv("USERPROFILE", tmpDir)
+		} else {
+			t.Setenv("HOME", tmpDir)
+		}
+
+		// Try to write - should fail because .ollama is a file, not a directory
 		state := &SignInState{Name: "newuser", Email: "new@example.com"}
 		err := SetSignInState(state)
 		if err == nil {
-			t.Error("should fail to write in read-only directory")
+			t.Error("should fail when .ollama is a file instead of directory")
 		}
 	})
 }

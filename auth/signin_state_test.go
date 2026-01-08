@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -20,8 +21,12 @@ func setupTestDir(t *testing.T) string {
 		t.Fatalf("failed to create .ollama dir: %v", err)
 	}
 
-	// Override home directory for tests
-	t.Setenv("HOME", tmpDir)
+	// Override home directory for tests (platform-specific)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", tmpDir)
+	} else {
+		t.Setenv("HOME", tmpDir)
+	}
 
 	return tmpDir
 }
