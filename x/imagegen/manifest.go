@@ -168,8 +168,8 @@ func (m *ModelManifest) OpenBlob(digest string) (io.ReadCloser, error) {
 	return os.Open(m.BlobPath(digest))
 }
 
-// HasImageTensorLayers returns true if the manifest has any tensor layers.
-func (m *ModelManifest) HasImageTensorLayers() bool {
+// HasTensorLayers returns true if the manifest has any tensor layers.
+func (m *ModelManifest) HasTensorLayers() bool {
 	for _, layer := range m.Manifest.Layers {
 		if layer.MediaType == "application/vnd.ollama.image.tensor" {
 			return true

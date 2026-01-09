@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/transfer"
 )
 
 var (
@@ -562,6 +563,24 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		layers = append(layers, manifest.Config)
 	}
 
+	// Use fast transfer for models with tensor layers (many small blobs)
+	if hasTensorLayers(layers) {
+		// Read raw manifest JSON to preserve tensor metadata fields
+		manifestPath, err := mp.GetManifestPath()
+		if err != nil {
+			return err
+		}
+		manifestJSON, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return err
+		}
+		if err := pushWithFastTransfer(ctx, mp, layers, manifestJSON, regOpts, fn); err != nil {
+			return err
+		}
+		fn(api.ProgressResponse{Status: "success"})
+		return nil
+	}
+
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
 			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
@@ -627,6 +646,15 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		layers = append(layers, manifest.Config)
 	}
 
+	// Use fast transfer for models with tensor layers (many small blobs)
+	if hasTensorLayers(layers) {
+		if err := pullWithFastTransfer(ctx, mp, layers, manifest, regOpts, fn); err != nil {
+			return err
+		}
+		fn(api.ProgressResponse{Status: "success"})
+		return nil
+	}
+
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
 		cacheHit, err := downloadBlob(ctx, downloadOpts{
@@ -641,7 +669,6 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		skipVerify[layer.Digest] = cacheHit
 		delete(deleteMap, layer.Digest)
 	}
-	delete(deleteMap, manifest.Config.Digest)
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
@@ -650,19 +677,22 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 		if err := verifyBlob(layer.Digest); err != nil {
 			if errors.Is(err, errDigestMismatch) {
-				// something went wrong, delete the blob
 				fp, err := GetBlobsPath(layer.Digest)
 				if err != nil {
 					return err
 				}
 				if err := os.Remove(fp); err != nil {
-					// log this, but return the original error
 					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
 				}
 			}
 			return err
 		}
 	}
+
+	for _, layer := range layers {
+		delete(deleteMap, layer.Digest)
+	}
+	delete(deleteMap, manifest.Config.Digest)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
@@ -695,6 +725,138 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "success"})
 
 	return nil
+}
+
+// hasTensorLayers checks if any layer has tensor media type.
+func hasTensorLayers(layers []Layer) bool {
+	for _, layer := range layers {
+		if layer.MediaType == MediaTypeImageTensor {
+			return true
+		}
+	}
+	return false
+}
+
+// pullWithFastTransfer uses the simplified x/transfer package for downloading blobs.
+func pullWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifest *Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+	blobs := make([]transfer.Blob, len(layers))
+	for i, layer := range layers {
+		blobs[i] = transfer.Blob{
+			Digest: layer.Digest,
+			Size:   layer.Size,
+		}
+	}
+
+	destDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+
+	baseURL := mp.BaseURL().String()
+
+	var totalSize int64
+	for _, blob := range blobs {
+		totalSize += blob.Size
+	}
+
+	progress := func(completed, total int64) {
+		fn(api.ProgressResponse{
+			Status:    "pulling model",
+			Total:     total,
+			Completed: completed,
+		})
+	}
+
+	getToken := func(ctx context.Context, challenge transfer.AuthChallenge) (string, error) {
+		return getAuthorizationToken(ctx, registryChallenge{
+			Realm:   challenge.Realm,
+			Service: challenge.Service,
+			Scope:   challenge.Scope,
+		})
+	}
+
+	if err := transfer.Download(ctx, transfer.DownloadOptions{
+		Blobs:      blobs,
+		BaseURL:    baseURL,
+		DestDir:    destDir,
+		Repository: mp.GetNamespaceRepository(),
+		Progress:   progress,
+		Token:      regOpts.Token,
+		GetToken:   getToken,
+		Logger:     slog.Default(),
+	}); err != nil {
+		return err
+	}
+
+	// Write manifest
+	fn(api.ProgressResponse{Status: "writing manifest"})
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+
+	fp, err := mp.GetManifestPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(fp, manifestJSON, 0o644)
+}
+
+// pushWithFastTransfer uses the simplified x/transfer package for uploading blobs and manifest.
+func pushWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+	blobs := make([]transfer.Blob, len(layers))
+	for i, layer := range layers {
+		blobs[i] = transfer.Blob{
+			Digest: layer.Digest,
+			Size:   layer.Size,
+			From:   layer.From,
+		}
+	}
+
+	srcDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+
+	baseURL := mp.BaseURL().String()
+
+	var totalSize int64
+	for _, blob := range blobs {
+		totalSize += blob.Size
+	}
+
+	progress := func(completed, total int64) {
+		fn(api.ProgressResponse{
+			Status:    "pushing model",
+			Total:     total,
+			Completed: completed,
+		})
+	}
+
+	getToken := func(ctx context.Context, challenge transfer.AuthChallenge) (string, error) {
+		return getAuthorizationToken(ctx, registryChallenge{
+			Realm:   challenge.Realm,
+			Service: challenge.Service,
+			Scope:   challenge.Scope,
+		})
+	}
+
+	return transfer.Upload(ctx, transfer.UploadOptions{
+		Blobs:       blobs,
+		BaseURL:     baseURL,
+		SrcDir:      srcDir,
+		Progress:    progress,
+		Token:       regOpts.Token,
+		GetToken:    getToken,
+		Logger:      slog.Default(),
+		Manifest:    manifestJSON,
+		ManifestRef: mp.Tag,
+		Repository:  mp.GetNamespaceRepository(),
+	})
 }
 
 func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {

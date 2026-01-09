@@ -54,7 +54,7 @@ func CheckMemoryRequirements(modelName string, availableMemory uint64) error {
 // Returns the normalized model name if found, empty string otherwise.
 func ResolveModelName(modelName string) string {
 	manifest, err := LoadManifest(modelName)
-	if err == nil && manifest.HasImageTensorLayers() {
+	if err == nil && manifest.HasTensorLayers() {
 		return modelName
 	}
 	return ""

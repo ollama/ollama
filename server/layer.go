@@ -8,8 +8,7 @@ import (
 	"os"
 )
 
-// TensorMeta holds optional tensor metadata for image generation models.
-// These fields are experimental and only used by image gen models.
+// TensorMeta holds optional tensor metadata.
 type TensorMeta struct {
 	Name  string  `json:"name,omitempty"`  // e.g., "model.embed_tokens.weight"
 	Dtype string  `json:"dtype,omitempty"` // e.g., "BF16", "F32"
@@ -23,7 +22,7 @@ type Layer struct {
 	From      string `json:"from,omitempty"`
 	status    string
 
-	// Optional tensor metadata (experimental, for image gen models)
+	// Optional tensor metadata
 	TensorMeta
 }
 

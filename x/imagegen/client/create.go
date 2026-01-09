@@ -85,10 +85,9 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 
 		// Create a proper config blob with version requirement
 		configData := model.ConfigV2{
-			ModelFormat: "safetensors",
-			ModelFamily: "diffusion",
-			ModelType:   "image-generation",
-			Requires:    MinOllamaVersion,
+			ModelFormat:  "safetensors",
+			Capabilities: []string{"image"},
+			Requires:     MinOllamaVersion,
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {

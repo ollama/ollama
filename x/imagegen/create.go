@@ -1,6 +1,8 @@
 package imagegen
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -120,13 +122,42 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 
 		fn(fmt.Sprintf("importing config %s", cfgPath))
 
-		f, err := os.Open(fullPath)
-		if err != nil {
-			return fmt.Errorf("failed to open %s: %w", cfgPath, err)
+		var r io.Reader
+
+		// For model_index.json, normalize to Ollama format
+		if cfgPath == "model_index.json" {
+			data, err := os.ReadFile(fullPath)
+			if err != nil {
+				return fmt.Errorf("failed to read %s: %w", cfgPath, err)
+			}
+
+			var cfg map[string]any
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				return fmt.Errorf("failed to parse %s: %w", cfgPath, err)
+			}
+
+			// Rename _class_name to architecture, remove diffusers-specific fields
+			if className, ok := cfg["_class_name"]; ok {
+				cfg["architecture"] = className
+				delete(cfg, "_class_name")
+			}
+			delete(cfg, "_diffusers_version")
+
+			data, err = json.MarshalIndent(cfg, "", "    ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal %s: %w", cfgPath, err)
+			}
+			r = bytes.NewReader(data)
+		} else {
+			f, err := os.Open(fullPath)
+			if err != nil {
+				return fmt.Errorf("failed to open %s: %w", cfgPath, err)
+			}
+			defer f.Close()
+			r = f
 		}
 
-		layer, err := createLayer(f, "application/vnd.ollama.image.config", cfgPath)
-		f.Close()
+		layer, err := createLayer(r, "application/vnd.ollama.image.config", cfgPath)
 		if err != nil {
 			return fmt.Errorf("failed to create layer for %s: %w", cfgPath, err)
 		}
