@@ -503,6 +503,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
 - [Homebrew](https://formulae.brew.sh/formula/ollama)
+  > Note: The Homebrew formula does not support NVIDIA GPU inference (CUDA) on Linux. For CUDA support, use the [install script](#linux) or [manual installation](https://docs.ollama.com/linux#manual-install).
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 - [Nix package](https://search.nixos.org/packages?show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
