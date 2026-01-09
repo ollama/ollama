@@ -50,6 +50,11 @@ type completionResponse struct {
 
 // NewServer spawns a new image generation subprocess and waits until it's ready.
 func NewServer(modelName string) (*Server, error) {
+	// Validate platform support before attempting to start
+	if err := CheckPlatformSupport(); err != nil {
+		return nil, err
+	}
+
 	// Find a free port
 	port := 0
 	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {

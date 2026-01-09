@@ -12,6 +12,8 @@
 package client
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -20,6 +22,9 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen"
 )
+
+// MinOllamaVersion is the minimum Ollama version required for image generation models.
+const MinOllamaVersion = "0.14.0"
 
 // CreateModel imports an image generation model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
@@ -78,14 +83,25 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 			return fmt.Errorf("invalid model name: %s", modelName)
 		}
 
-		// Convert LayerInfo to server.Layer
-		configLayer := server.Layer{
-			MediaType:  config.MediaType,
-			Digest:     config.Digest,
-			Size:       config.Size,
-			TensorMeta: server.TensorMeta{Name: config.Name},
+		// Create a proper config blob with version requirement
+		configData := model.ConfigV2{
+			ModelFormat: "safetensors",
+			ModelFamily: "diffusion",
+			ModelType:   "image-generation",
+			Requires:    MinOllamaVersion,
+		}
+		configJSON, err := json.Marshal(configData)
+		if err != nil {
+			return fmt.Errorf("failed to marshal config: %w", err)
 		}
 
+		// Create config layer blob
+		configLayer, err := server.NewLayer(bytes.NewReader(configJSON), "application/vnd.ollama.image.config")
+		if err != nil {
+			return fmt.Errorf("failed to create config layer: %w", err)
+		}
+
+		// Convert LayerInfo to server.Layer (include the original model_index.json in layers)
 		serverLayers := make([]server.Layer, len(layers))
 		for i, l := range layers {
 			serverLayers[i] = server.Layer{

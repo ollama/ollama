@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,32 +18,96 @@ import (
 	"github.com/ollama/ollama/readline"
 )
 
+// ImageGenOptions holds options for image generation.
+// These can be set via environment variables or interactive commands.
+type ImageGenOptions struct {
+	Width          int
+	Height         int
+	Steps          int
+	Seed           int
+	NegativePrompt string
+}
+
+// DefaultOptions returns the default image generation options.
+func DefaultOptions() ImageGenOptions {
+	return ImageGenOptions{
+		Width:  1024,
+		Height: 1024,
+		Steps:  9,
+		Seed:   0, // 0 means random
+	}
+}
+
+// RegisterFlags adds image generation flags to the given command.
+// Flags are hidden since they only apply to image generation models.
+func RegisterFlags(cmd *cobra.Command) {
+	cmd.Flags().Int("width", 1024, "Image width")
+	cmd.Flags().Int("height", 1024, "Image height")
+	cmd.Flags().Int("steps", 9, "Denoising steps")
+	cmd.Flags().Int("seed", 0, "Random seed (0 for random)")
+	cmd.Flags().String("negative", "", "Negative prompt")
+	cmd.Flags().MarkHidden("width")
+	cmd.Flags().MarkHidden("height")
+	cmd.Flags().MarkHidden("steps")
+	cmd.Flags().MarkHidden("seed")
+	cmd.Flags().MarkHidden("negative")
+}
+
 // RunCLI handles the CLI for image generation models.
 // Returns true if it handled the request, false if the caller should continue with normal flow.
+// Supports flags: --width, --height, --steps, --seed, --negative
 func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, keepAlive *api.Duration) error {
 	// Verify it's a valid image gen model
 	if ResolveModelName(name) == "" {
 		return fmt.Errorf("unknown image generation model: %s", name)
 	}
 
+	// Get options from flags (with env var defaults)
+	opts := DefaultOptions()
+	if cmd != nil && cmd.Flags() != nil {
+		if v, err := cmd.Flags().GetInt("width"); err == nil && v > 0 {
+			opts.Width = v
+		}
+		if v, err := cmd.Flags().GetInt("height"); err == nil && v > 0 {
+			opts.Height = v
+		}
+		if v, err := cmd.Flags().GetInt("steps"); err == nil && v > 0 {
+			opts.Steps = v
+		}
+		if v, err := cmd.Flags().GetInt("seed"); err == nil && v != 0 {
+			opts.Seed = v
+		}
+		if v, err := cmd.Flags().GetString("negative"); err == nil && v != "" {
+			opts.NegativePrompt = v
+		}
+	}
+
 	if interactive {
-		return runInteractive(cmd, name, keepAlive)
+		return runInteractive(cmd, name, keepAlive, opts)
 	}
 
 	// One-shot generation
-	return generateImage(cmd, name, prompt, keepAlive)
+	return generateImageWithOptions(cmd, name, prompt, keepAlive, opts)
 }
 
-// generateImage generates a single image and displays it.
-func generateImage(cmd *cobra.Command, modelName, prompt string, keepAlive *api.Duration) error {
+// generateImageWithOptions generates an image with the given options.
+func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keepAlive *api.Duration, opts ImageGenOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
+	// Build request with image gen options encoded in Options fields
+	// NumCtx=width, NumGPU=height, NumPredict=steps, Seed=seed
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
+		Options: map[string]any{
+			"num_ctx":     opts.Width,
+			"num_gpu":     opts.Height,
+			"num_predict": opts.Steps,
+			"seed":        opts.Seed,
+		},
 	}
 	if keepAlive != nil {
 		req.KeepAlive = keepAlive
@@ -98,7 +163,7 @@ func generateImage(cmd *cobra.Command, modelName, prompt string, keepAlive *api.
 }
 
 // runInteractive runs an interactive REPL for image generation.
-func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duration) error {
+func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duration, opts ImageGenOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -106,7 +171,7 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:      ">>> ",
-		Placeholder: "Describe an image to generate (/bye to exit)",
+		Placeholder: "Describe an image to generate (/help for commands)",
 	})
 	if err != nil {
 		return err
@@ -141,19 +206,31 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 		case strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/?"), strings.HasPrefix(line, "/help"):
-			fmt.Fprintln(os.Stderr, "Type a description to generate an image.")
-			fmt.Fprintln(os.Stderr, "Use /bye to exit.")
-			fmt.Fprintln(os.Stderr)
+			printInteractiveHelp(opts)
+			continue
+		case strings.HasPrefix(line, "/set "):
+			if err := handleSetCommand(line[5:], &opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			continue
+		case strings.HasPrefix(line, "/show"):
+			printCurrentSettings(opts)
 			continue
 		case strings.HasPrefix(line, "/"):
-			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", line)
+			fmt.Fprintf(os.Stderr, "Unknown command: %s (try /help)\n", line)
 			continue
 		}
 
-		// Generate image
+		// Generate image with current options
 		req := &api.GenerateRequest{
 			Model:  modelName,
 			Prompt: line,
+			Options: map[string]any{
+				"num_ctx":     opts.Width,
+				"num_gpu":     opts.Height,
+				"num_predict": opts.Steps,
+				"seed":        opts.Seed,
+			},
 		}
 		if keepAlive != nil {
 			req.KeepAlive = keepAlive
@@ -256,6 +333,86 @@ func copyFile(src, dst string) error {
 
 	_, err = io.Copy(destFile, sourceFile)
 	return err
+}
+
+// printInteractiveHelp prints help for interactive mode commands.
+func printInteractiveHelp(opts ImageGenOptions) {
+	fmt.Fprintln(os.Stderr, "Commands:")
+	fmt.Fprintln(os.Stderr, "  /set width <n>     Set image width (current:", opts.Width, ")")
+	fmt.Fprintln(os.Stderr, "  /set height <n>    Set image height (current:", opts.Height, ")")
+	fmt.Fprintln(os.Stderr, "  /set steps <n>     Set denoising steps (current:", opts.Steps, ")")
+	fmt.Fprintln(os.Stderr, "  /set seed <n>      Set random seed (current:", opts.Seed, ", 0=random)")
+	fmt.Fprintln(os.Stderr, "  /set negative <s>  Set negative prompt")
+	fmt.Fprintln(os.Stderr, "  /show              Show current settings")
+	fmt.Fprintln(os.Stderr, "  /bye               Exit")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Or type a prompt to generate an image.")
+	fmt.Fprintln(os.Stderr)
+}
+
+// printCurrentSettings prints the current image generation settings.
+func printCurrentSettings(opts ImageGenOptions) {
+	fmt.Fprintf(os.Stderr, "Current settings:\n")
+	fmt.Fprintf(os.Stderr, "  width:    %d\n", opts.Width)
+	fmt.Fprintf(os.Stderr, "  height:   %d\n", opts.Height)
+	fmt.Fprintf(os.Stderr, "  steps:    %d\n", opts.Steps)
+	fmt.Fprintf(os.Stderr, "  seed:     %d (0=random)\n", opts.Seed)
+	if opts.NegativePrompt != "" {
+		fmt.Fprintf(os.Stderr, "  negative: %s\n", opts.NegativePrompt)
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+// handleSetCommand handles /set commands to change options.
+func handleSetCommand(args string, opts *ImageGenOptions) error {
+	parts := strings.SplitN(args, " ", 2)
+	if len(parts) < 2 {
+		return fmt.Errorf("usage: /set <option> <value>")
+	}
+
+	key := strings.ToLower(parts[0])
+	value := strings.TrimSpace(parts[1])
+
+	switch key {
+	case "width", "w":
+		v, err := strconv.Atoi(value)
+		if err != nil || v <= 0 {
+			return fmt.Errorf("width must be a positive integer")
+		}
+		opts.Width = v
+		fmt.Fprintf(os.Stderr, "Set width to %d\n", v)
+	case "height", "h":
+		v, err := strconv.Atoi(value)
+		if err != nil || v <= 0 {
+			return fmt.Errorf("height must be a positive integer")
+		}
+		opts.Height = v
+		fmt.Fprintf(os.Stderr, "Set height to %d\n", v)
+	case "steps", "s":
+		v, err := strconv.Atoi(value)
+		if err != nil || v <= 0 {
+			return fmt.Errorf("steps must be a positive integer")
+		}
+		opts.Steps = v
+		fmt.Fprintf(os.Stderr, "Set steps to %d\n", v)
+	case "seed":
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("seed must be an integer")
+		}
+		opts.Seed = v
+		fmt.Fprintf(os.Stderr, "Set seed to %d\n", v)
+	case "negative", "neg", "n":
+		opts.NegativePrompt = value
+		if value == "" {
+			fmt.Fprintln(os.Stderr, "Cleared negative prompt")
+		} else {
+			fmt.Fprintf(os.Stderr, "Set negative prompt to: %s\n", value)
+		}
+	default:
+		return fmt.Errorf("unknown option: %s (try /help)", key)
+	}
+	return nil
 }
 
 // displayImageInTerminal attempts to render an image inline in the terminal.

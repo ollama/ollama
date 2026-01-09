@@ -64,6 +64,14 @@ func Execute(args []string) error {
 
 	slog.Info("starting image runner", "model", *modelName, "port", *port)
 
+	// Check memory requirements before loading
+	requiredMemory := imagegen.EstimateVRAM(*modelName)
+	availableMemory := mlx.GetMemoryLimit()
+	if availableMemory > 0 && availableMemory < requiredMemory {
+		return fmt.Errorf("insufficient memory for image generation: need %d GB, have %d GB",
+			requiredMemory/(1024*1024*1024), availableMemory/(1024*1024*1024))
+	}
+
 	// Load model
 	model := &zimage.Model{}
 	if err := model.Load(*modelName); err != nil {
