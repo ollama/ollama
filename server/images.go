@@ -620,42 +620,18 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		layers = append(layers, manifest.Config)
 	}
 
-	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		cacheHit, err := downloadBlob(ctx, downloadOpts{
+		if err := downloadBlob(ctx, downloadOpts{
 			mp:      mp,
 			digest:  layer.Digest,
 			regOpts: regOpts,
 			fn:      fn,
-		})
-		if err != nil {
+		}); err != nil {
 			return err
 		}
-		skipVerify[layer.Digest] = cacheHit
 		delete(deleteMap, layer.Digest)
 	}
 	delete(deleteMap, manifest.Config.Digest)
-
-	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
-	for _, layer := range layers {
-		if skipVerify[layer.Digest] {
-			continue
-		}
-		if err := verifyBlob(layer.Digest); err != nil {
-			if errors.Is(err, errDigestMismatch) {
-				// something went wrong, delete the blob
-				fp, err := GetBlobsPath(layer.Digest)
-				if err != nil {
-					return err
-				}
-				if err := os.Remove(fp); err != nil {
-					// log this, but return the original error
-					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
-				}
-			}
-			return err
-		}
-	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
@@ -858,26 +834,4 @@ func parseRegistryChallenge(authStr string) registryChallenge {
 		Service: getValue(authStr, "service"),
 		Scope:   getValue(authStr, "scope"),
 	}
-}
-
-var errDigestMismatch = errors.New("digest mismatch, file must be downloaded again")
-
-func verifyBlob(digest string) error {
-	fp, err := GetBlobsPath(digest)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Open(fp)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	fileDigest, _ := GetSHA256Digest(f)
-	if digest != fileDigest {
-		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
-	}
-
-	return nil
 }
