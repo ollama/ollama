@@ -171,6 +171,9 @@ func (s *Server) ScheduleImageGenRunner(c *gin.Context, modelName string, opts a
 		Name:      modelName,
 		ShortName: modelName,
 		ModelPath: modelName, // For image gen, ModelPath is just the model name
+		Config: model.ConfigV2{
+			Capabilities: []string{"image"},
+		},
 	}
 
 	runnerCh, errCh := s.sched.GetRunner(c.Request.Context(), m, opts, keepAlive)
