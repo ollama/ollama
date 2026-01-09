@@ -1,4 +1,13 @@
-// Package imagegen provides image generation capabilities for Ollama.
+// Package imagegen provides experimental image generation capabilities for Ollama.
+//
+// This package is in x/ because the tensor model storage format is under development.
+// The goal is to integrate these capabilities into the main Ollama packages once
+// the format is stable.
+//
+// TODO (jmorganca): Integrate into main packages when stable:
+//   - CLI commands → cmd/
+//   - API endpoints → api/
+//   - Model creation → server/
 package imagegen
 
 import (

@@ -1,3 +1,8 @@
+// cli.go provides CLI commands for image generation models.
+//
+// TODO (jmorganca): Integrate these commands into cmd/cmd.go when stable.
+// Currently these are separate to keep experimental code isolated.
+
 package imagegen
 
 import (

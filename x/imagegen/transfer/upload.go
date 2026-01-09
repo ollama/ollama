@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -36,13 +37,13 @@ func upload(ctx context.Context, opts UploadOptions) error {
 
 	token := opts.Token
 	u := &uploader{
-		client:     cmp(opts.Client, defaultClient),
+		client:     cmp.Or(opts.Client, defaultClient),
 		baseURL:    opts.BaseURL,
 		srcDir:     opts.SrcDir,
-		repository: cmp(opts.Repository, "library/_"),
+		repository: cmp.Or(opts.Repository, "library/_"),
 		token:      &token,
 		getToken:   opts.GetToken,
-		userAgent:  cmp(opts.UserAgent, defaultUserAgent),
+		userAgent:  cmp.Or(opts.UserAgent, defaultUserAgent),
 		logger:     opts.Logger,
 	}
 
@@ -92,7 +93,7 @@ func upload(ctx context.Context, opts UploadOptions) error {
 		} else {
 			// Phase 2: Upload blobs that don't exist
 			u.progress = newProgressTracker(total, opts.Progress)
-			concurrency := cmp(opts.Concurrency, DefaultUploadConcurrency)
+			concurrency := cmp.Or(opts.Concurrency, DefaultUploadConcurrency)
 			sem := semaphore.NewWeighted(int64(concurrency))
 
 			g, gctx := errgroup.WithContext(ctx)

@@ -99,7 +99,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if os.IsNotExist(err) {
 		if filename == "" {
 			// No Modelfile found - check if current directory is an image gen model
-			if imagegen.IsImageGenModelDir(".") {
+			if imagegen.IsTensorModelDir(".") {
 				return imagegenclient.CreateModel(args[0], ".", p)
 			}
 			reader = strings.NewReader("FROM .\n")
@@ -1787,6 +1787,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
 	runCmd.Flags().BoolP("yolo", "y", false, "Skip all tool approval prompts (use with caution)")
+
+	// Image generation flags (width, height, steps, seed, etc.)
 	imagegen.RegisterFlags(runCmd)
 
 	stopCmd := &cobra.Command{

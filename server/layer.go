@@ -27,7 +27,6 @@ type Layer struct {
 }
 
 const (
-	MediaTypeImageConfig = "application/vnd.ollama.image.config"
 	MediaTypeImageTensor = "application/vnd.ollama.image.tensor"
 )
 

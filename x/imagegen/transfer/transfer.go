@@ -1,14 +1,19 @@
-// Package transfer provides minimal, fast blob transfer for imagegen models.
+// Package transfer provides minimal, fast blob transfer for tensor-based models.
+//
+// This package is in x/ because the tensor model storage format is under development.
+// It provides optimized transfer for models with many small blobs (tensor models)
+// rather than few large blobs (typical LLMs).
+//
+// TODO (jmorganca): Integrate into server/download.go and server/upload.go when stable.
 //
 // Design Philosophy:
 // This package is intentionally simpler than the main server's download/upload code.
-// It's optimized for many small blobs (typical of image generation models) rather than
-// few large blobs (typical of LLMs). Key simplifications:
+// Key simplifications for many-small-blob workloads:
 //
 //   - Whole-blob transfers: No part-based chunking. Each blob downloads/uploads as one unit.
 //   - No resume: If a transfer fails, it restarts from scratch (fine for small blobs).
 //   - Inline hashing: SHA256 computed during streaming, not asynchronously after parts complete.
-//   - Simple stall detection: Just checks for no data received in N seconds, no speed tracking.
+//   - Stall and speed detection: Cancels on no data (stall) or speed below 10% of median.
 //
 // For large models (multi-GB), use the server's download/upload code which has:
 //   - Part-based transfers with 64MB chunks

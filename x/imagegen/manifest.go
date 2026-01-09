@@ -136,7 +136,7 @@ func (m *ModelManifest) GetTensorLayers(component string) []ManifestLayer {
 // GetConfigLayer returns the config layer for a given path.
 func (m *ModelManifest) GetConfigLayer(configPath string) *ManifestLayer {
 	for _, layer := range m.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.config" && layer.Name == configPath {
+		if layer.MediaType == "application/vnd.ollama.image.json" && layer.Name == configPath {
 			return &layer
 		}
 	}

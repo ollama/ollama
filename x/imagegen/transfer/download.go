@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -63,20 +64,20 @@ func download(ctx context.Context, opts DownloadOptions) error {
 
 	token := opts.Token
 	d := &downloader{
-		client:       cmp(opts.Client, defaultClient),
+		client:       cmp.Or(opts.Client, defaultClient),
 		baseURL:      opts.BaseURL,
 		destDir:      opts.DestDir,
-		repository:   cmp(opts.Repository, "library/_"),
+		repository:   cmp.Or(opts.Repository, "library/_"),
 		token:        &token,
 		getToken:     opts.GetToken,
-		userAgent:    cmp(opts.UserAgent, defaultUserAgent),
-		stallTimeout: cmp(opts.StallTimeout, defaultStallTimeout),
+		userAgent:    cmp.Or(opts.UserAgent, defaultUserAgent),
+		stallTimeout: cmp.Or(opts.StallTimeout, defaultStallTimeout),
 		progress:     newProgressTracker(total, opts.Progress),
 		speeds:       &speedTracker{},
 		logger:       opts.Logger,
 	}
 
-	concurrency := cmp(opts.Concurrency, DefaultDownloadConcurrency)
+	concurrency := cmp.Or(opts.Concurrency, DefaultDownloadConcurrency)
 	sem := semaphore.NewWeighted(int64(concurrency))
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -285,14 +286,6 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 		}
 	}
 	return nil, fmt.Errorf("too many redirects")
-}
-
-func cmp[T comparable](a, b T) T {
-	var zero T
-	if a != zero {
-		return a
-	}
-	return b
 }
 
 type speedTracker struct {

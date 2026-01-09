@@ -1,14 +1,15 @@
-// Package client provides client-side model creation for image generation.
+// Package client provides client-side model creation for tensor-based models.
 //
-// This package exists to break an import cycle: server imports x/imagegen,
-// so x/imagegen cannot import server. This sub-package can import server
-// because server doesn't import it.
+// This package is in x/ because the tensor model storage format is under development.
+// It also exists to break an import cycle: server imports x/imagegen, so x/imagegen
+// cannot import server. This sub-package can import server because server doesn't
+// import it.
 //
-// TODO(imagegen): This is temporary. When image gen is promoted to production:
-// 1. Add proper API endpoints for image gen model creation
-// 2. Move tensor extraction to server-side
-// 3. Remove this package
-// 4. Follow the same client→server pattern as regular model creation
+// TODO (jmorganca): This is temporary. When tensor models are promoted to production:
+//  1. Add proper API endpoints for tensor model creation
+//  2. Move tensor extraction to server-side
+//  3. Remove this package
+//  4. Follow the same client→server pattern as regular model creation
 package client
 
 import (
@@ -26,12 +27,12 @@ import (
 // MinOllamaVersion is the minimum Ollama version required for image generation models.
 const MinOllamaVersion = "0.14.0"
 
-// CreateModel imports an image generation model from a local directory.
+// CreateModel imports a tensor-based model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
 //
-// TODO(imagegen): Replace with API-based creation when promoted to production.
+// TODO (jmorganca): Replace with API-based creation when promoted to production.
 func CreateModel(modelName, modelDir string, p *progress.Progress) error {
-	if !imagegen.IsImageGenModelDir(modelDir) {
+	if !imagegen.IsTensorModelDir(modelDir) {
 		return fmt.Errorf("%s is not an image generation model directory (model_index.json not found)", modelDir)
 	}
 
@@ -95,7 +96,7 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 		}
 
 		// Create config layer blob
-		configLayer, err := server.NewLayer(bytes.NewReader(configJSON), "application/vnd.ollama.image.config")
+		configLayer, err := server.NewLayer(bytes.NewReader(configJSON), "application/vnd.docker.container.image.v1+json")
 		if err != nil {
 			return fmt.Errorf("failed to create config layer: %w", err)
 		}

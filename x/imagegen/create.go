@@ -12,9 +12,9 @@ import (
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
 
-// IsImageGenModelDir checks if the directory contains an image generation model
+// IsTensorModelDir checks if the directory contains a tensor model
 // by looking for model_index.json, which is the standard diffusers pipeline config.
-func IsImageGenModelDir(dir string) bool {
+func IsTensorModelDir(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, "model_index.json"))
 	return err == nil
 }

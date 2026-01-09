@@ -30,7 +30,7 @@ import (
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/transfer"
+	"github.com/ollama/ollama/x/imagegen/transfer"
 )
 
 var (
