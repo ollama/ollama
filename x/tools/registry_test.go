@@ -93,18 +93,13 @@ func TestRegistry_Execute(t *testing.T) {
 func TestDefaultRegistry(t *testing.T) {
 	r := DefaultRegistry()
 
-	if r.Count() != 2 {
-		t.Errorf("expected 2 tools in default registry, got %d", r.Count())
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool in default registry, got %d", r.Count())
 	}
 
 	_, ok := r.Get("bash")
 	if !ok {
 		t.Error("expected bash tool in default registry")
-	}
-
-	_, ok = r.Get("web_search")
-	if !ok {
-		t.Error("expected web_search tool in default registry")
 	}
 }
 
@@ -133,18 +128,8 @@ func TestDefaultRegistry_DisableBash(t *testing.T) {
 
 	r := DefaultRegistry()
 
-	if r.Count() != 1 {
-		t.Errorf("expected 1 tool with bash disabled, got %d", r.Count())
-	}
-
-	_, ok := r.Get("web_search")
-	if !ok {
-		t.Error("expected web_search tool in registry")
-	}
-
-	_, ok = r.Get("bash")
-	if ok {
-		t.Error("expected bash to be disabled")
+	if r.Count() != 0 {
+		t.Errorf("expected 0 tools with bash disabled, got %d", r.Count())
 	}
 }
 

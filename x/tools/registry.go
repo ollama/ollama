@@ -94,9 +94,10 @@ func (r *Registry) Count() int {
 // - OLLAMA_AGENT_DISABLE_BASH=1 disables bash
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
-	if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
-		r.Register(&WebSearchTool{})
-	}
+	// TODO(parthsareen): re-enable web search once it's ready for release
+	// if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
+	// 	r.Register(&WebSearchTool{})
+	// }
 	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" {
 		r.Register(&BashTool{})
 	}
