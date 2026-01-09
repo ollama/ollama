@@ -53,18 +53,19 @@ type registryOptions struct {
 }
 
 type Model struct {
-	Name           string `json:"name"`
-	Config         ConfigV2
-	ShortName      string
-	ModelPath      string
-	ParentModel    string
-	AdapterPaths   []string
-	ProjectorPaths []string
-	System         string
-	License        []string
-	Digest         string
-	Options        map[string]any
-	Messages       []api.Message
+	Name            string `json:"name"`
+	Config          model.ConfigV2
+	ShortName       string
+	ModelPath       string
+	ExtraModelPaths []string
+	ParentModel     string
+	AdapterPaths    []string
+	ProjectorPaths  []string
+	System          string
+	License         []string
+	Digest          string
+	Options         map[string]any
+	Messages        []api.Message
 
 	Template *template.Template
 }
@@ -190,6 +191,13 @@ func (m *Model) String() string {
 		Args: m.ModelPath,
 	})
 
+	for _, extraModels := range m.ExtraModelPaths {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "model",
+			Args: extraModels,
+		})
+	}
+
 	for _, adapter := range m.AdapterPaths {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "adapter",
@@ -266,35 +274,6 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
-type ConfigV2 struct {
-	ModelFormat   string   `json:"model_format"`
-	ModelFamily   string   `json:"model_family"`
-	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"` // shown as Parameter Size
-	FileType      string   `json:"file_type"`  // shown as Quantization Level
-	Renderer      string   `json:"renderer,omitempty"`
-	Parser        string   `json:"parser,omitempty"`
-
-	RemoteHost  string `json:"remote_host,omitempty"`
-	RemoteModel string `json:"remote_model,omitempty"`
-
-	// used for remotes
-	Capabilities []string `json:"capabilities,omitempty"`
-	ContextLen   int      `json:"context_length,omitempty"`
-	EmbedLen     int      `json:"embedding_length,omitempty"`
-	BaseName     string   `json:"base_name,omitempty"`
-
-	// required by spec
-	Architecture string `json:"architecture"`
-	OS           string `json:"os"`
-	RootFS       RootFS `json:"rootfs"`
-}
-
-type RootFS struct {
-	Type    string   `json:"type"`
-	DiffIDs []string `json:"diff_ids"`
-}
-
 func GetManifest(mp ModelPath) (*Manifest, string, error) {
 	fp, err := mp.GetManifestPath()
 	if err != nil {
@@ -348,6 +327,8 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	readMainModelFlag := false
+
 	for _, layer := range manifest.Layers {
 		filename, err := GetBlobsPath(layer.Digest)
 		if err != nil {
@@ -356,8 +337,13 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
-			model.ModelPath = filename
-			model.ParentModel = layer.From
+			if !readMainModelFlag {
+				model.ModelPath = filename
+				model.ParentModel = layer.From
+				readMainModelFlag = true
+			} else {
+				model.ExtraModelPaths = append(model.ExtraModelPaths, filename)
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -650,7 +636,9 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	skipVerify := make(map[string]bool)
-	for _, layer := range layers {
+	isHF := isHuggingFaceRegistry(mp.Registry)
+
+	for i, layer := range layers {
 		cacheHit, err := downloadBlob(ctx, downloadOpts{
 			mp:      mp,
 			digest:  layer.Digest,
@@ -660,6 +648,23 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err != nil {
 			return err
 		}
+
+		// For HuggingFace downloads, replace the HF path with the real digest
+		if isHF && strings.HasPrefix(layer.Digest, "hf:") {
+			if realDigest, ok := hfDigestMap.Load(layer.Digest); ok {
+				layer.Digest = realDigest.(string)
+				layers[i].Digest = realDigest.(string)
+				// Update the manifest layers
+				for j := range manifest.Layers {
+					if strings.HasPrefix(manifest.Layers[j].Digest, "hf:") {
+						if rd, ok := hfDigestMap.Load(manifest.Layers[j].Digest); ok {
+							manifest.Layers[j].Digest = rd.(string)
+						}
+					}
+				}
+			}
+		}
+
 		skipVerify[layer.Digest] = cacheHit
 		delete(deleteMap, layer.Digest)
 	}
@@ -720,6 +725,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 }
 
 func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
+	// Check if this is a HuggingFace registry
+	if isHuggingFaceRegistry(mp.Registry) {
+		return pullHuggingFaceManifest(ctx, mp, regOpts)
+	}
+
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -736,6 +746,162 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	}
 
 	return &m, err
+}
+
+// isHuggingFaceRegistry checks if the registry is HuggingFace
+func isHuggingFaceRegistry(registry string) bool {
+	return registry == "hf.co" || registry == "huggingface.co"
+}
+
+// HFFileInfo represents a file in HuggingFace's file tree
+type HFFileInfo struct {
+	Type string `json:"type"`
+	OID  string `json:"oid"`
+	Size int64  `json:"size"`
+	Path string `json:"path"`
+	LFS  *struct {
+		OID  string `json:"oid"`
+		Size int64  `json:"size"`
+	} `json:"lfs,omitempty"`
+}
+
+// pullHuggingFaceManifest pulls a model manifest from HuggingFace
+func pullHuggingFaceManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
+	// For HuggingFace, the tag might be "main" or could include a subdirectory like "BF16"
+	// We'll use "main" as the revision and the tag as the subdirectory filter
+	revision := "main"
+	subdirFilter := mp.Tag
+
+	// Query HuggingFace API for file tree (always use main revision, recursive)
+	apiURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s?recursive=true", mp.GetNamespaceRepository(), revision)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating HuggingFace API request: %w", err)
+	}
+
+	if regOpts != nil && regOpts.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+regOpts.Token)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("querying HuggingFace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("model not found on HuggingFace")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HuggingFace API error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var files []HFFileInfo
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, fmt.Errorf("decoding HuggingFace API response: %w", err)
+	}
+
+	// Find GGUF files matching the tag/subdirectory
+	var ggufFiles []HFFileInfo
+	subdirLower := strings.ToLower(subdirFilter)
+	for _, file := range files {
+		if file.Type == "file" && strings.HasSuffix(file.Path, ".gguf") {
+			pathLower := strings.ToLower(file.Path)
+			// Match if:
+			// 1. Path starts with "tag/" (directory match)
+			// 2. Filename is exactly "tag.gguf" or "anything-tag.gguf" or "tag-anything.gguf"
+			//    But NOT "tag_anything.gguf" to avoid Q6_K matching Q6_K_XL
+			if strings.HasPrefix(pathLower, subdirLower+"/") ||
+				strings.Contains(pathLower, "/"+subdirLower+"/") ||
+				strings.HasSuffix(pathLower, "-"+subdirLower+".gguf") ||
+				strings.Contains(pathLower, "-"+subdirLower+"-") {
+				ggufFiles = append(ggufFiles, file)
+			}
+		}
+	}
+
+	if len(ggufFiles) == 0 {
+		return nil, fmt.Errorf("no GGUF files found for tag %s", subdirFilter)
+	}
+
+	// Check if these are split GGUF files
+	shardSets, singles := parser.GroupGGUFShards(extractPaths(ggufFiles))
+
+	var manifest Manifest
+	manifest.SchemaVersion = 2
+	manifest.MediaType = "application/vnd.docker.distribution.manifest.v2+json"
+
+	// Handle split GGUF files
+	if len(shardSets) > 0 {
+		slog.Info("detected split GGUF files", "shards", len(shardSets[0].Shards))
+
+		// Use the first (and should be only) shard set
+		for _, shardPath := range shardSets[0].Shards {
+			// Find the file info for this shard
+			var fileInfo *HFFileInfo
+			for i := range ggufFiles {
+				if strings.HasSuffix(ggufFiles[i].Path, filepath.Base(shardPath)) {
+					fileInfo = &ggufFiles[i]
+					break
+				}
+			}
+
+			if fileInfo == nil {
+				return nil, fmt.Errorf("shard file info not found: %s", shardPath)
+			}
+
+			// Create a layer for this shard
+			layer := Layer{
+				MediaType: "application/vnd.ollama.image.model",
+				Size:      fileInfo.Size,
+				Digest:    "", // Will be computed during download
+			}
+
+			// Store the HuggingFace download URL in the layer
+			// We'll use the digest field temporarily to store the download path
+			layer.Digest = fmt.Sprintf("hf:%s/%s/%s", mp.GetNamespaceRepository(), mp.Tag, fileInfo.Path)
+
+			manifest.Layers = append(manifest.Layers, layer)
+		}
+	} else if len(singles) > 0 {
+		// Single GGUF file
+		slog.Info("detected single GGUF file", "file", singles[0])
+
+		var fileInfo *HFFileInfo
+		for i := range ggufFiles {
+			if strings.HasSuffix(ggufFiles[i].Path, filepath.Base(singles[0])) {
+				fileInfo = &ggufFiles[i]
+				break
+			}
+		}
+
+		if fileInfo == nil {
+			return nil, fmt.Errorf("GGUF file info not found")
+		}
+
+		layer := Layer{
+			MediaType: "application/vnd.ollama.image.model",
+			Size:      fileInfo.Size,
+			Digest:    fmt.Sprintf("hf:%s/%s/%s", mp.GetNamespaceRepository(), mp.Tag, fileInfo.Path),
+		}
+
+		manifest.Layers = append(manifest.Layers, layer)
+	}
+
+	return &manifest, nil
+}
+
+// extractPaths extracts file paths from HFFileInfo slice
+func extractPaths(files []HFFileInfo) []string {
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	return paths
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer

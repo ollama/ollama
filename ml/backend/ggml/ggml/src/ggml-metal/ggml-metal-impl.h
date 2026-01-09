@@ -76,6 +76,8 @@
 #define FC_FLASH_ATTN_EXT_VEC_REDUCE   500
 #define FC_MUL_MV                      600
 #define FC_MUL_MM                      700
+#define FC_ROPE                        800
+#define FC_SSM_CONV                    900
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPTG 8
@@ -180,6 +182,10 @@ typedef struct {
     float scale;
     float bias;
 } ggml_metal_kargs_scale;
+
+typedef struct {
+    float val;
+} ggml_metal_kargs_fill;
 
 typedef struct {
     float min;
@@ -528,6 +534,36 @@ typedef struct {
 } ggml_metal_kargs_conv_transpose_2d;
 
 typedef struct {
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    uint64_t nb10;
+    uint64_t nb11;
+    uint64_t nb12;
+    uint64_t nb13;
+    uint64_t nb0;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+    int32_t  IW;
+    int32_t  IH;
+    int32_t  KW;
+    int32_t  KH;
+    int32_t  IC;
+    int32_t  OC;
+    int32_t  OW;
+    int32_t  OH;
+    int32_t  N;
+    int32_t  s0;
+    int32_t  s1;
+    int32_t  p0;
+    int32_t  p1;
+    int32_t  d0;
+    int32_t  d1;
+} ggml_metal_kargs_conv_2d;
+
+typedef struct {
     uint64_t  ofs0;
     uint64_t  ofs1;
     int32_t  IW;
@@ -580,6 +616,45 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
 } ggml_metal_kargs_sum_rows;
+
+typedef struct {
+    int64_t  ne00;
+    int64_t  ne01;
+    int64_t  ne02;
+    int64_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int64_t  net0;
+    int64_t  net1;
+    int64_t  net2;
+    int64_t  net3;
+    uint64_t nbt0;
+    uint64_t nbt1;
+    uint64_t nbt2;
+    uint64_t nbt3;
+    bool     outb;
+} ggml_metal_kargs_cumsum_blk;
+
+typedef struct {
+    int64_t  ne00;
+    int64_t  ne01;
+    int64_t  ne02;
+    int64_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int64_t  net0;
+    int64_t  net1;
+    int64_t  net2;
+    int64_t  net3;
+    uint64_t nbt0;
+    uint64_t nbt1;
+    uint64_t nbt2;
+    uint64_t nbt3;
+} ggml_metal_kargs_cumsum_add;
 
 typedef struct {
     int32_t  ne00;
@@ -762,9 +837,56 @@ typedef struct {
 } ggml_metal_kargs_leaky_relu;
 
 typedef struct {
-    int64_t  ncols;
-    int64_t  ncols_pad;
+    int32_t  ne00;
+    int32_t  ne01;
+    int32_t  ne02;
+    int32_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne0;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    uint64_t nb0;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+} ggml_metal_kargs_tri;
+
+typedef struct {
+    int32_t  ne00;
+    int32_t  ne01;
+    int32_t  ne02;
+    int32_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne0;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    int32_t  top_k;
 } ggml_metal_kargs_argsort;
+
+typedef struct {
+    int64_t  ne00;
+    int64_t  ne01;
+    int64_t  ne02;
+    int64_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne0;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    int32_t  top_k;
+    int32_t  len;
+} ggml_metal_kargs_argsort_merge;
 
 typedef struct {
     int64_t  ne0;

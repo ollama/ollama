@@ -241,7 +241,7 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	}
 	defer cfgFile.Close()
 
-	var cfg ConfigV2
+	var cfg model.ConfigV2
 	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}
@@ -953,4 +953,237 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			t.Fatalf("expected empty model type for small file, got %q", modelType)
 		}
 	})
+}
+
+func TestShardedGGUF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+
+	_, fullDigest := createBinFile(t, ggml.KV{}, []*ggml.Tensor{})
+	_, splitDigest1 := createBinFile(t, ggml.KV{
+		"split.no":    uint16(0),
+		"split.count": uint16(3),
+	}, []*ggml.Tensor{})
+	_, splitDigest2 := createBinFile(t, ggml.KV{
+		"split.no":    uint16(1),
+		"split.count": uint16(3),
+	}, []*ggml.Tensor{})
+	_, splitDigest3 := createBinFile(t, ggml.KV{
+		"split.no":    uint16(2),
+		"split.count": uint16(3),
+	}, []*ggml.Tensor{})
+	_, splitDigest4 := createBinFile(t, ggml.KV{
+		"split.no":    uint16(0),
+		"split.count": uint16(4),
+	}, []*ggml.Tensor{})
+	_, splitDigest5 := createBinFile(t, ggml.KV{
+		"general.architecture": "test1",
+		"split.no":             uint16(1),
+		"split.count":          uint16(3),
+	}, []*ggml.Tensor{})
+
+	var s Server
+
+	t.Run("single full gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:   "test-single-full",
+			Files:  map[string]string{"test.gguf": fullDigest},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			fmt.Println(w)
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		manifest, err := ParseNamedManifest(model.ParseName("test-single-full"))
+		if err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		for i, layer := range manifest.Layers {
+			if i != 0 {
+				t.Fatalf("expect 1 layer, actually found layer with index %d", i)
+			} else if layer.Digest != fullDigest {
+				t.Fatalf("expect digest %s, actual %s", fullDigest, layer.Digest)
+			}
+		}
+	})
+
+	t.Run("complete split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-complete-split",
+			Files: map[string]string{
+				"test-00001-of-00003.gguf": splitDigest1,
+				"test-00002-of-00003.gguf": splitDigest2,
+				"test-00003-of-00003.gguf": splitDigest3,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			fmt.Println(w)
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		correctOrder := []string{
+			splitDigest1, splitDigest2, splitDigest3,
+		}
+
+		manifest, err := ParseNamedManifest(model.ParseName("test-complete-split"))
+		if err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		for i, layer := range manifest.Layers {
+			if i >= 3 {
+				t.Fatalf("expect 3 layers, actually found layer with index %d", i)
+			} else if layer.Digest != correctOrder[i] {
+				t.Fatalf("expect digest %s, actual %s", correctOrder[i], layer.Digest)
+			}
+		}
+	})
+
+	t.Run("complete split misordered gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-complete-split-misorder",
+			Files: map[string]string{
+				"test-00003-of-00003.gguf": splitDigest3,
+				"test-00001-of-00003.gguf": splitDigest1,
+				"test-00002-of-00003.gguf": splitDigest2,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			fmt.Println(w)
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		correctOrder := []string{
+			splitDigest1, splitDigest2, splitDigest3,
+		}
+
+		manifest, err := ParseNamedManifest(model.ParseName("test-complete-split-misorder"))
+		if err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		for i, layer := range manifest.Layers {
+			if i >= 3 {
+				t.Fatalf("expect 3 layers, actually found layer with index %d", i)
+			} else if layer.Digest != correctOrder[i] {
+				t.Fatalf("expect digest %s, actual %s", correctOrder[i], layer.Digest)
+			}
+		}
+	})
+
+	t.Run("mixed full and split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-full-split-mixing",
+			Files: map[string]string{
+				"test-00002-of-00003.gguf": splitDigest2,
+				"test-00003-of-00003.gguf": splitDigest3,
+				"test1.gguf":               fullDigest,
+				"test-00001-of-00003.gguf": splitDigest1,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			fmt.Println(w)
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		correctOrder := []string{
+			fullDigest, splitDigest1, splitDigest2, splitDigest3,
+		}
+
+		manifest, err := ParseNamedManifest(model.ParseName("test-full-split-mixing"))
+		if err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		for i, layer := range manifest.Layers {
+			if i >= 4 {
+				t.Fatalf("expect 4 layers, actually found layer with index %d", i)
+			} else if layer.Digest != correctOrder[i] {
+				t.Fatalf("expect digest %s, actual %s", correctOrder[i], layer.Digest)
+			}
+		}
+	})
+
+	t.Run("mixed wrong split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-extra-split",
+			Files: map[string]string{
+				"test-00002-of-00003.gguf":  splitDigest2,
+				"test-00003-of-00003.gguf":  splitDigest3,
+				"test-00001-of-00003.gguf":  splitDigest1,
+				"test1-00001-of-00004.gguf": splitDigest4,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+
+	t.Run("mixed same count wrong split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-extra-split",
+			Files: map[string]string{
+				"test-00002-of-00003.gguf":  splitDigest2,
+				"test-00003-of-00003.gguf":  splitDigest3,
+				"test-00001-of-00003.gguf":  splitDigest1,
+				"test1-00002-of-00003.gguf": splitDigest5,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+	t.Run("missing head split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-extra-split",
+			Files: map[string]string{
+				"test-00002-of-00003.gguf": splitDigest2,
+				"test-00003-of-00003.gguf": splitDigest3,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+	t.Run("missing mid split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-extra-split",
+			Files: map[string]string{
+				"test-00001-of-00003.gguf": splitDigest1,
+				"test-00003-of-00003.gguf": splitDigest3,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+	t.Run("missing tail split gguf", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name: "test-extra-split",
+			Files: map[string]string{
+				"test-00001-of-00003.gguf": splitDigest1,
+				"test-00002-of-00003.gguf": splitDigest2,
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+
 }

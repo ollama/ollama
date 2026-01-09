@@ -69,7 +69,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, input string) ([]float32, error)
+	Embedding(ctx context.Context, input string) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -84,12 +84,13 @@ type LlamaServer interface {
 
 // llmServer is an instance of a runner hosting a single model
 type llmServer struct {
-	port      int
-	cmd       *exec.Cmd
-	done      chan error // Channel to signal when the process exits
-	status    *StatusWriter
-	options   api.Options
-	modelPath string
+	port            int
+	cmd             *exec.Cmd
+	done            chan error // Channel to signal when the process exits
+	status          *StatusWriter
+	options         api.Options
+	modelPath       string
+	extraModelPaths []string
 
 	loadRequest LoadRequest       // Parameters used to initialize the runner
 	mem         *ml.BackendMemory // Memory allocations for this model
@@ -109,7 +110,7 @@ type llmServer struct {
 type llamaServer struct {
 	llmServer
 
-	ggml *ggml.GGML
+	ggml *ggml.MetaGGML
 }
 
 type ollamaServer struct {
@@ -123,7 +124,7 @@ type ollamaServer struct {
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
+func LoadModel(model string, extraModels []string, maxArraySize int, reliefSplitConstrain bool) (*ggml.MetaGGML, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -134,12 +135,55 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, err := ggml.Decode(f, maxArraySize)
-	return ggml, err
+	ggml1, err := ggml.Decode(f, maxArraySize)
+	if err != nil {
+		return nil, err
+	}
+	if ggml1.KV().GGUFSplitInfo() != nil {
+		if ggml1.KV().GGUFSplitInfo().No != 0 {
+			return nil, errors.New("not the first split of model")
+		}
+		loadedGgml := []ggml.GGML{*ggml1}
+		visitedSplitNo := []uint16{ggml1.KV().GGUFSplitInfo().No}
+		for i := range extraModels {
+			extraModel := extraModels[i]
+			f, err := os.Open(extraModel)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+
+			ggml1, err := ggml.Decode(f, maxArraySize)
+			if err != nil {
+				return nil, err
+			}
+			if ggml1.KV().GGUFSplitInfo() == nil {
+				return nil, errors.New("non-split gguf in extra model paths while main model path is split gguf")
+			}
+			visitedSplitNo = append(visitedSplitNo, ggml1.KV().GGUFSplitInfo().No)
+			loadedGgml = append(loadedGgml, *ggml1)
+		}
+		if !reliefSplitConstrain {
+			if len(visitedSplitNo) != int(ggml1.KV().GGUFSplitInfo().Count) {
+				return nil, errors.New("mismatch split gguf count")
+			}
+			slices.Sort(visitedSplitNo)
+			for i := 0; i < len(visitedSplitNo)-1; i++ {
+				if visitedSplitNo[i] != visitedSplitNo[i+1]-1 {
+					return nil, errors.New("repeated or skipped split found")
+				}
+			}
+		}
+		metaggml := ggml.MakeMetaGGML(loadedGgml, append([]string{model}, extraModels...))
+		return &metaggml, nil
+	} else {
+		metaggml := ggml.MakeMetaGGML([]ggml.GGML{*ggml1}, []string{model})
+		return &metaggml, nil
+	}
 }
 
 // NewLlamaServer will run a server for the given GPUs
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, extraModelPaths []string, f *ggml.MetaGGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
@@ -185,7 +229,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	if textProcessor == nil {
-		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
+		llamaModel, err = llama.LoadModelFromFile(modelPath, extraModelPaths, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
 		}
@@ -218,6 +262,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	if len(projectors) > 0 && llamaModel != nil {
 		loadRequest.ProjectorPath = projectors[0]
 	}
+	// Determine if the user has forced FA on or off
+	faUserSet := false
+	if envconfig.FlashAttention(true) == envconfig.FlashAttention(false) {
+		faUserSet = true
+	}
 
 	fa := envconfig.FlashAttention(f.FlashAttention())
 
@@ -235,19 +284,51 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
-	if fa {
-		slog.Info("enabling flash attention")
-		loadRequest.FlashAttention = true
-
-		// Flash Attention also supports kv cache quantization
-		// Enable if the requested and kv cache type is supported by the model
-		if f.SupportsKVCacheType(kvct) {
-			loadRequest.KvCacheType = kvct
-		} else {
-			slog.Warn("kv cache type not supported by model", "type", kvct)
+	if textProcessor == nil {
+		flashAttention := ml.FlashAttentionAuto
+		if faUserSet {
+			if fa {
+				flashAttention = ml.FlashAttentionEnabled
+			} else {
+				flashAttention = ml.FlashAttentionDisabled
+			}
 		}
-	} else if kvct != "" && kvct != "f16" {
-		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+
+		if kvct != "" {
+			if f.KVCacheTypeIsQuantized(kvct) {
+				if flashAttention != ml.FlashAttentionEnabled {
+					slog.Warn("OLLAMA_FLASH_ATTENTION must be enabled to use a quantized OLLAMA_KV_CACHE_TYPE", "type", kvct)
+					loadRequest.KvCacheType = ""
+				} else if f.SupportsKVCacheType(kvct) {
+					loadRequest.KvCacheType = kvct
+				} else {
+					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
+				}
+			} else {
+				if f.SupportsKVCacheType(kvct) {
+					loadRequest.KvCacheType = kvct
+				} else {
+					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
+				}
+			}
+		}
+		loadRequest.FlashAttention = flashAttention
+	} else {
+		// For Ollama engine, use our SupportsFlashAttention logic
+		if fa {
+			slog.Info("enabling flash attention")
+			loadRequest.FlashAttention = ml.FlashAttentionEnabled
+
+			// Flash Attention also supports kv cache quantization
+			// Enable if the requested and kv cache type is supported by the model
+			if f.SupportsKVCacheType(kvct) {
+				loadRequest.KvCacheType = kvct
+			} else {
+				slog.Warn("kv cache type not supported by model", "type", kvct)
+			}
+		} else if kvct != "" && kvct != "f16" {
+			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+		}
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
@@ -255,24 +336,26 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	cmd, port, err := StartRunner(
 		textProcessor != nil,
 		modelPath,
+		extraModelPaths,
 		gpuLibs,
 		status,
-		ml.GetVisibleDevicesEnv(gpus),
+		ml.GetVisibleDevicesEnv(gpus, false),
 	)
 
 	s := llmServer{
-		port:           port,
-		cmd:            cmd,
-		status:         status,
-		options:        opts,
-		modelPath:      modelPath,
-		loadRequest:    loadRequest,
-		llamaModel:     llamaModel,
-		llamaModelLock: &sync.Mutex{},
-		sem:            semaphore.NewWeighted(int64(numParallel)),
-		totalLayers:    f.KV().BlockCount() + 1,
-		loadStart:      time.Now(),
-		done:           make(chan error, 1),
+		port:            port,
+		cmd:             cmd,
+		status:          status,
+		options:         opts,
+		modelPath:       modelPath,
+		extraModelPaths: extraModelPaths,
+		loadRequest:     loadRequest,
+		llamaModel:      llamaModel,
+		llamaModelLock:  &sync.Mutex{},
+		sem:             semaphore.NewWeighted(int64(numParallel)),
+		totalLayers:     f.KV().BlockCount() + 1,
+		loadStart:       time.Now(),
+		done:            make(chan error, 1),
 	}
 
 	if err != nil {
@@ -309,7 +392,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 }
 
-func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
+func StartRunner(ollamaEngine bool, modelPath string, extraModelPaths []string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
 	var exe string
 	exe, err = os.Executable()
 	if err != nil {
@@ -338,6 +421,9 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	}
 	if modelPath != "" {
 		params = append(params, "--model", modelPath)
+	}
+	for i := range extraModelPaths {
+		params = append(params, "--model", extraModelPaths[i])
 	}
 	params = append(params, "--port", strconv.Itoa(port))
 
@@ -433,6 +519,10 @@ func (s *llmServer) ModelPath() string {
 	return s.modelPath
 }
 
+func (s *llmServer) ExtraModelPaths() []string {
+	return s.extraModelPaths
+}
+
 type LoadOperation int
 
 // The order of these constants are significant because we iterate over the operations. They
@@ -465,7 +555,7 @@ type LoadRequest struct {
 	LoraPath       []string
 	Parallel       int
 	BatchSize      int
-	FlashAttention bool
+	FlashAttention ml.FlashAttentionType
 	KvSize         int
 	KvCacheType    string
 	NumThreads     int
@@ -505,14 +595,26 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 	}
 
+	// Check if embedding model and adjust batch size accordingly
+	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
+	if isEmbedding && s.loadRequest.BatchSize < s.options.NumCtx {
+		s.loadRequest.BatchSize = s.options.NumCtx
+		slog.Info("embedding model detected, setting batch size to context length", "batch_size", s.loadRequest.BatchSize)
+	}
+
 	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(s.loadRequest.BatchSize),
 		s.loadRequest.Parallel, s.loadRequest.KvCacheType, s.loadRequest.FlashAttention)
 
 	// Use the size of one layer as a buffer
-	layers := s.ggml.Tensors().GroupLayers()
+	layers := s.ggml.Tensors.GroupLayers()
 	if blk0, ok := layers["blk.0"]; ok {
+		buffer := blk0.Size() + kv[0]
 		for i := range gpus {
-			gpus[i].FreeMemory -= blk0.Size() + kv[0]
+			if gpus[i].FreeMemory > buffer {
+				gpus[i].FreeMemory -= buffer
+			} else {
+				gpus[i].FreeMemory = 0
+			}
 		}
 	} else {
 		slog.Warn("model missing blk.0 layer size")
@@ -562,7 +664,11 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 			projectorGPU = firstIntegrated
 		}
 
-		gpus[projectorGPU].FreeMemory -= projectorWeights
+		if gpus[projectorGPU].FreeMemory > projectorWeights {
+			gpus[projectorGPU].FreeMemory -= projectorWeights
+		} else {
+			gpus[projectorGPU].FreeMemory = 0
+		}
 	}
 
 	var kvTotal uint64
@@ -910,7 +1016,7 @@ func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 		}}
 	}
 	gpuLayers, layers := s.buildLayout(systemGPUs, memory, requireFull, backoff)
-	err := s.verifyLayout(systemInfo, memory, requireFull, gpuLayers, layers)
+	err := s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, layers)
 	if err != nil {
 		return nil, err
 	}
@@ -992,7 +1098,7 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 }
 
 // verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
-func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
+func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
@@ -1019,8 +1125,8 @@ nextLayer:
 	}
 
 	if requireFull {
-		if gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
-			slog.Info("model requires more memory than is currently available, evicting a model to make space", "loaded layers", gpuLayers.Sum())
+		if len(systemGPUs) > 0 && gpuLayers.Sum() < len(layers) && (s.options.NumGPU < 0 || gpuLayers.Sum() < s.options.NumGPU) {
+			slog.Info("model requires more gpu memory than is currently available, evicting a model to make space", "loaded layers", gpuLayers.Sum())
 			return ErrLoadRequiredFull
 		}
 
@@ -1047,7 +1153,7 @@ nextLayer:
 		}
 	}
 
-	if gpuLayers.Sum() == 0 {
+	if len(systemGPUs) > 0 && gpuLayers.Sum() == 0 {
 		slog.Debug("insufficient VRAM to load any model layers")
 	}
 
@@ -1678,10 +1784,11 @@ type EmbeddingRequest struct {
 }
 
 type EmbeddingResponse struct {
-	Embedding []float32 `json:"embedding"`
+	Embedding       []float32 `json:"embedding"`
+	PromptEvalCount int       `json:"prompt_eval_count"`
 }
 
-func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
+func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int, error) {
 	logutil.Trace("embedding request", "input", input)
 
 	if err := s.sem.Acquire(ctx, 1); err != nil {
@@ -1690,51 +1797,54 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 		} else {
 			slog.Error("Failed to acquire semaphore", "error", err)
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	defer s.sem.Release(1)
 
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status)
+		return nil, 0, fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	data, err := json.Marshal(EmbeddingRequest{Content: input})
 	if err != nil {
-		return nil, fmt.Errorf("error marshaling embed data: %w", err)
+		return nil, 0, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
 	if err != nil {
-		return nil, fmt.Errorf("error creating embed request: %w", err)
+		return nil, 0, fmt.Errorf("error creating embed request: %w", err)
 	}
 	r.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("do embedding request: %w", err)
+		return nil, 0, fmt.Errorf("do embedding request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading embed response: %w", err)
+		return nil, 0, fmt.Errorf("error reading embed response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
 		log.Printf("llm embedding error: %s", body)
-		return nil, fmt.Errorf("%s", body)
+		return nil, 0, api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: string(body),
+		}
 	}
 
 	var e EmbeddingResponse
 	if err := json.Unmarshal(body, &e); err != nil {
-		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
+		return nil, 0, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return e.Embedding, nil
+	return e.Embedding, e.PromptEvalCount, nil
 }
 
 func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {

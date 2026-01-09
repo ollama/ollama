@@ -39,13 +39,102 @@ var (
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
 	errFilePath                = errors.New("file path must be relative")
+	errIncompleteShardedGGUF   = errors.New("missing some GGUF splits")
+	errExtraShardedGGUF        = errors.New("extra GGUF splits found")
 )
 
+func broadcastKV(main *ggml.GGML, subs ...*ggml.GGML) {
+	// broadcast KV value towards other shards. Only for manifest purpose
+	ggmls := []ggml.GGML{*main}
+	for i := range subs {
+		ggmls = append(ggmls, *subs[i])
+	}
+	metaggml := ggml.MakeMetaGGML(ggmls, make([]string, len(ggmls)))
+	mainKV := main.KV()
+	mainKV["general.parameter_count"] = metaggml.KV().ParameterCount()
+	for i := range subs {
+		subKV := subs[i].KV()
+		for k, v := range metaggml.KV() {
+			subKV[k] = v
+		}
+	}
+}
+
+func baseLayerSortNCheckSan(baseLayers *[]*layerGGML) error {
+	slices.SortStableFunc(*baseLayers, func(a, b *layerGGML) int {
+		var aScore, bScore int
+		if a.GGML == nil {
+			// chat template and parameter can be added here. use very big number to move them at last
+			aScore = 0x7fffffff
+		} else {
+			aSplit := a.GGML.KV().GGUFSplitInfo()
+			if aSplit == nil {
+				aScore = -1
+			} else {
+				aScore = int(aSplit.No)
+			}
+		}
+		if b.GGML == nil {
+			bScore = 0x7fffffff
+		} else {
+			bSplit := b.GGML.KV().GGUFSplitInfo()
+			if bSplit == nil {
+				bScore = -1
+			} else {
+				bScore = int(bSplit.No)
+			}
+		}
+		return cmp.Compare(aScore, bScore)
+	})
+	// sanity check for layers
+	{
+		ggmlPtrs := make([]*ggml.GGML, 0, len(*baseLayers))
+		firstSplitCount := -1
+		foundSplitNos := make([]uint16, 0)
+		for i, layer := range *baseLayers {
+			if i == 0 {
+				if layer.GGML == nil {
+					// First item should be GGUF after sorting
+					return errNoFilesProvided
+				}
+			}
+			if layer.GGML != nil && layer.GGML.KV().GGUFSplitInfo() != nil {
+				if firstSplitCount == -1 {
+					if layer.GGML.KV().GGUFSplitInfo().No != 0 {
+						return errIncompleteShardedGGUF
+					}
+					firstSplitCount = int(layer.GGML.KV().GGUFSplitInfo().Count)
+					foundSplitNos = append(foundSplitNos, layer.KV().GGUFSplitInfo().No)
+				} else if firstSplitCount != int(layer.KV().GGUFSplitInfo().Count) {
+					return errExtraShardedGGUF
+				} else {
+					if foundSplitNos[len(foundSplitNos)-1] == layer.KV().GGUFSplitInfo().No {
+						return errExtraShardedGGUF
+					} else if foundSplitNos[len(foundSplitNos)-1] != layer.KV().GGUFSplitInfo().No-1 {
+						return errIncompleteShardedGGUF
+					} else {
+						foundSplitNos = append(foundSplitNos, layer.KV().GGUFSplitInfo().No)
+					}
+				}
+				// only gguf splits should be included
+				ggmlPtrs = append(ggmlPtrs, layer.GGML)
+			}
+		}
+		if firstSplitCount != -1 && len(foundSplitNos) != firstSplitCount {
+			return errIncompleteShardedGGUF
+		}
+		if len(ggmlPtrs) > 1 {
+			broadcastKV(ggmlPtrs[0], ggmlPtrs[1:]...)
+		}
+	}
+	return nil
+}
+
 func (s *Server) CreateHandler(c *gin.Context) {
-	config := &ConfigV2{
+	config := &model.ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
-		RootFS: RootFS{
+		RootFS: model.RootFS{
 			Type: "layers",
 		},
 	}
@@ -61,6 +150,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
+	config.Requires = r.Requires
 
 	for v := range r.Files {
 		if !fs.ValidPath(v) {
@@ -120,19 +210,22 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "") {
+				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
 					manifest, mErr := ParseNamedManifest(fromName)
 					if mErr == nil && manifest.Config.Digest != "" {
 						configPath, pErr := GetBlobsPath(manifest.Config.Digest)
 						if pErr == nil {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
-								var baseConfig ConfigV2
+								var baseConfig model.ConfigV2
 								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
 									if config.Renderer == "" {
 										config.Renderer = baseConfig.Renderer
 									}
 									if config.Parser == "" {
 										config.Parser = baseConfig.Parser
+									}
+									if config.Requires == "" {
+										config.Requires = baseConfig.Requires
 									}
 								}
 								cfgFile.Close()
@@ -156,6 +249,14 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		} else {
 			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
+		}
+		// Sort baseLayers here to ensure that split model will be correctly ordered
+		if !remote {
+			err := baseLayerSortNCheckSan(&baseLayers)
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
 		}
 
 		var adapterLayers []*layerGGML
@@ -459,7 +560,7 @@ func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
 	return ggml.KV{}, fmt.Errorf("no base model was found")
 }
 
-func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
+func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
 	var layers []Layer
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
@@ -789,7 +890,7 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 	return layers, nil
 }
 
-func createConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
+func createConfigLayer(layers []Layer, config model.ConfigV2) (*Layer, error) {
 	digests := make([]string, len(layers))
 	for i, layer := range layers {
 		digests[i] = layer.Digest

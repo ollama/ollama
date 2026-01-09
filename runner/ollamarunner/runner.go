@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"hash/maphash"
 	"image"
@@ -23,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/spf13/pflag"
 	"golang.org/x/image/bmp"
 	"golang.org/x/sync/semaphore"
 
@@ -146,11 +146,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if int32(len(inputs)) > s.cache.numCtx {
-		discard := int32(len(inputs)) - s.cache.numCtx
-
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
+
+		discard := int32(len(inputs)) - s.cache.numCtx
 
 		promptStart := params.numKeep + discard
 
@@ -330,6 +330,8 @@ type batchState struct {
 type Server struct {
 	// modelPath is the location of the model to be loaded
 	modelPath string
+
+	extraModelPaths []string
 
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
@@ -996,13 +998,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-
-		// TODO (jmorganca): this should be provided by the server via the
-		// request options and truncated here in the runner, instead of relying on
-		// the server's truncate logic
-		truncate: true,
+		truncate:  false,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1043,7 +1045,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: <-seq.embedding,
+		Embedding:       <-seq.embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
@@ -1168,6 +1171,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 // based on the given parameters
 func (s *Server) allocModel(
 	mpath string,
+	empath []string,
 	params ml.BackendParams,
 	loraPath []string,
 	parallel int,
@@ -1192,7 +1196,7 @@ func (s *Server) allocModel(
 	}()
 
 	var err error
-	s.model, err = model.New(mpath, params)
+	s.model, err = model.New(mpath, empath, params)
 	if err != nil {
 		return err
 	}
@@ -1202,14 +1206,20 @@ func (s *Server) allocModel(
 		return errors.New("loras are not yet implemented")
 	}
 
+	if s.model.Config().Cache == nil {
+		if parallel > 1 {
+			parallel = 1
+			slog.Warn("model does not support caching, disabling parallel processing")
+		}
+		if s.batchSize < kvSize {
+			s.batchSize = kvSize
+			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
+		}
+	}
+
 	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
 	if err != nil {
 		return err
-	}
-
-	if !s.cache.enabled && parallel > 1 {
-		parallel = 1
-		slog.Warn("model does not support caching, disabling parallel processing")
 	}
 
 	s.parallel = parallel
@@ -1296,7 +1306,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		s.batchSize = req.BatchSize
 
-		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		err := s.allocModel(s.modelPath, s.extraModelPaths, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
 		if err != nil {
 			s.closeModel()
 
@@ -1366,7 +1376,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		m, err = model.New(f.Name(), make([]string, 0), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
 			return
@@ -1383,13 +1393,14 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 }
 
 func Execute(args []string) error {
-	fs := flag.NewFlagSet("runner", flag.ExitOnError)
-	mpath := fs.String("model", "", "Path to model binary file")
+	fs := pflag.NewFlagSet("runner", pflag.ExitOnError)
+	mpath := fs.StringArray("model", []string{""}, "Path to model binary file. May repeatedly specified to provide other split of models binary.")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Runner usage\n")
+		// sadly pflag does not expose out(). Fallback to os.Stderr which should perform identically as we don't set fs.output
+		fmt.Fprintf(os.Stderr, "Runner usage\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -1402,8 +1413,9 @@ func Execute(args []string) error {
 	defer cancel()
 
 	server := &Server{
-		modelPath: *mpath,
-		status:    llm.ServerStatusLaunched,
+		modelPath:       (*mpath)[0],
+		extraModelPaths: (*mpath)[1:],
+		status:          llm.ServerStatusLaunched,
 	}
 
 	server.cond = sync.NewCond(&server.mu)

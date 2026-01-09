@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -19,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/spf13/pflag"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/runner/common"
 )
 
@@ -255,6 +256,8 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 type Server struct {
 	// modelPath is the location of the model to be loaded
 	modelPath string
+
+	extraModelPaths []string
 
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
@@ -757,13 +760,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-
-		// TODO (jmorganca): this should be provided by the server via the
-		// request options and truncated here in the runner, instead of relying on
-		// the server's truncate logic
-		truncate: true,
+		truncate:  false,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -806,7 +809,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	embedding := <-seq.embedding
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding:       embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
@@ -827,21 +831,22 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loadModel(
 	params llama.ModelParams,
 	mpath string,
+	empath []string,
 	lpath []string,
 	ppath string,
 	kvSize int,
 	kvCacheType string,
-	flashAttention bool,
+	flashAttention ml.FlashAttentionType,
 	threads int,
 	multiUserCache bool,
 ) {
 	var err error
-	s.model, err = llama.LoadModelFromFile(mpath, params)
+	s.model, err = llama.LoadModelFromFile(mpath, empath, params)
 	if err != nil {
 		panic(err)
 	}
 
-	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention, kvCacheType)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)
@@ -930,7 +935,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.status = llm.ServerStatusLoadingModel
-		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
+		go s.loadModel(params, s.modelPath, s.extraModelPaths, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
 
 	case llm.LoadOperationClose:
 		// No-op for us
@@ -948,13 +953,14 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 }
 
 func Execute(args []string) error {
-	fs := flag.NewFlagSet("runner", flag.ExitOnError)
-	mpath := fs.String("model", "", "Path to model binary file")
+	fs := pflag.NewFlagSet("runner", pflag.ExitOnError)
+	mpath := fs.StringArray("model", []string{""}, "Path to model binary file. May repeatedly specified to provide other split of models binary.")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Runner usage\n")
+		// sadly pflag does not expose out(). Fallback to os.Stderr which should perform identically as we don't set fs.output
+		fmt.Fprintf(os.Stderr, "Runner usage\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -966,8 +972,9 @@ func Execute(args []string) error {
 	llama.BackendInit()
 
 	server := &Server{
-		modelPath: *mpath,
-		status:    llm.ServerStatusLaunched,
+		modelPath:       (*mpath)[0],
+		extraModelPaths: (*mpath)[1:],
+		status:          llm.ServerStatusLaunched,
 	}
 
 	server.ready.Add(1)

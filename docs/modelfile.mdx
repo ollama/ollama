@@ -12,7 +12,7 @@ A Modelfile is the blueprint to create and share customized models using Ollama.
   - [FROM (Required)](#from-required)
     - [Build from existing model](#build-from-existing-model)
     - [Build from a Safetensors model](#build-from-a-safetensors-model)
-    - [Build from a GGUF file](#build-from-a-gguf-file)
+    - [Build from a GGUF file](#build-from-a-gguf-model)
   - [PARAMETER](#parameter)
     - [Valid Parameters and Values](#valid-parameters-and-values)
   - [TEMPLATE](#template)
@@ -41,6 +41,7 @@ INSTRUCTION arguments
 | [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.            |
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
 | [`MESSAGE`](#message)               | Specify message history.                                       |
+| [`REQUIRES`](#requires)             | Specify the minimum version of Ollama required by the model.   |
 
 ## Examples
 
@@ -129,13 +130,21 @@ Currently supported model architectures:
 - Gemma (including Gemma 1 and Gemma 2)
 - Phi3
 
-#### Build from a GGUF file
+#### Build from a GGUF model
 
 ```
 FROM ./ollama-model.gguf
 ```
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
+
+For GGUF model split into multiple files:
+
+```
+FROM <model directory>
+```
+
+The model directory should contain solely the split GGUF weights of one model.
 
 ### PARAMETER
 
@@ -149,9 +158,6 @@ PARAMETER <parameter> <parametervalue>
 
 | Parameter      | Description                                                                                                                                                                                                                                                                                                                                                                     | Value Type | Example Usage        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------- |
-| mirostat       | Enable Mirostat sampling for controlling perplexity. (default: 0, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0)                                                                                                                                                                                                                                                                 | int        | mirostat 0           |
-| mirostat_eta   | Influences how quickly the algorithm responds to feedback from the generated text. A lower learning rate will result in slower adjustments, while a higher learning rate will make the algorithm more responsive. (Default: 0.1)                                                                                                                                                | float      | mirostat_eta 0.1     |
-| mirostat_tau   | Controls the balance between coherence and diversity of the output. A lower value will result in more focused and coherent text. (Default: 5.0)                                                                                                                                                                                                                                 | float      | mirostat_tau 5.0     |
 | num_ctx        | Sets the size of the context window used to generate the next token. (Default: 2048)                                                                                                                                                                                                                                                                                            | int        | num_ctx 4096         |
 | repeat_last_n  | Sets how far back for the model to look back to prevent repetition. (Default: 64, 0 = disabled, -1 = num_ctx)                                                                                                                                                                                                                                                                   | int        | repeat_last_n 64     |
 | repeat_penalty | Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly, while a lower value (e.g., 0.9) will be more lenient. (Default: 1.1)                                                                                                                                                                                             | float      | repeat_penalty 1.1   |
@@ -250,6 +256,16 @@ MESSAGE assistant no
 MESSAGE user Is Ontario in Canada?
 MESSAGE assistant yes
 ```
+
+### REQUIRES
+
+The `REQUIRES` instruction allows you to specify the minimum version of Ollama required by the model.
+
+```
+REQUIRES <version>
+```
+
+The version should be a valid Ollama version (e.g. 0.14.0).
 
 ## Notes
 

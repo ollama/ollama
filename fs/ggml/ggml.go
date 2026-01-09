@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/ml"
 )
 
 type GGML struct {
@@ -24,6 +26,18 @@ type GGML struct {
 type model interface {
 	KV() KV
 	Tensors() Tensors
+}
+
+type MetaGGML struct {
+	Shards     []GGML
+	ShardPaths []string
+	Tensors    ForeignTensors
+	kv         KV
+}
+
+type GGUFSplitInfo struct {
+	No    uint16
+	Count uint16
 }
 
 type KV map[string]any
@@ -47,6 +61,18 @@ func (kv KV) FileType() FileType {
 	}
 
 	return FileTypeUnknown
+}
+
+func (kv KV) GGUFSplitInfo() *GGUFSplitInfo {
+	no, found := keyValue(kv, "split.no", uint16(0))
+	if !found {
+		return nil
+	}
+	count, _ := keyValue(kv, "split.count", uint16(0))
+	return &GGUFSplitInfo{
+		No:    no,
+		Count: count,
+	}
 }
 
 func (kv KV) BlockCount() uint64 {
@@ -240,12 +266,17 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"bert",
+		"deepseek2",
+		"deepseekocr",
 		"gemma3",
 		"gemma3n",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nomic-bert",
+		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
@@ -265,7 +296,7 @@ type arrayValueTypes interface {
 }
 
 func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) (T, bool) {
-	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "split.") {
 		key = kv.Architecture() + "." + key
 	}
 
@@ -281,6 +312,14 @@ type Tensors struct {
 	items  []*Tensor
 	Offset uint64
 }
+
+type ForeignTensor struct {
+	*Tensor
+	ModelPath          string
+	TensorRegionOffset uint64
+}
+
+type ForeignTensors []ForeignTensor
 
 func (s Tensors) Items(prefix ...string) []*Tensor {
 	if len(prefix) == 0 {
@@ -300,6 +339,41 @@ func (s Tensors) Items(prefix ...string) []*Tensor {
 func (ts Tensors) GroupLayers() map[string]Layer {
 	layers := make(map[string]Layer)
 	for _, t := range ts.items {
+		parts := strings.Split(t.Name, ".")
+		if index := slices.IndexFunc(parts, func(s string) bool { return s == "blk" || s == "mm" }); index != -1 {
+			if len(parts) > index+2 {
+				// blk and mm should have a number after them, join it
+				parts = append(
+					[]string{strings.Join(parts[:index+2], ".")},
+					parts[index+2:]...)
+			}
+		}
+
+		if _, ok := layers[parts[0]]; !ok {
+			layers[parts[0]] = make(Layer)
+		}
+
+		layers[parts[0]][strings.Join(parts[1:], ".")] = t
+	}
+
+	return layers
+}
+
+func (s ForeignTensors) Items(prefix ...string) []*Tensor {
+	var items []*Tensor
+	for i := range s {
+		if len(prefix) == 0 || strings.HasPrefix(s[i].Name, prefix[0]) {
+			items = append(items, s[i].Tensor)
+		}
+	}
+
+	return items
+}
+
+func (ts ForeignTensors) GroupLayers() map[string]Layer {
+	layers := make(map[string]Layer)
+	for i := range ts {
+		t := ts[i].Tensor
 		parts := strings.Split(t.Name, ".")
 		if index := slices.IndexFunc(parts, func(s string) bool { return s == "blk" || s == "mm" }); index != -1 {
 			if len(parts) > index+2 {
@@ -547,7 +621,93 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention bool) (kv []uint64, partialOffload, fullOffload uint64) {
+func BuildForeignTensors(shards []GGML, shardsPaths []string) (*ForeignTensors, error) {
+	if len(shards) != len(shardsPaths) {
+		return nil, fmt.Errorf("length of shards and shardsPaths do not match: %d vs %d", len(shards), len(shardsPaths))
+	}
+	li := make(ForeignTensors, 0)
+	for i := range shards {
+		gs := shards[i]
+		tensors := gs.Tensors()
+		for k := range tensors.items {
+			tensor := tensors.items[k]
+			li = append(li, ForeignTensor{
+				Tensor:             tensor,
+				ModelPath:          shardsPaths[i],
+				TensorRegionOffset: tensors.Offset,
+			})
+		}
+	}
+	return &li, nil
+}
+
+func MakeMetaGGML(ggmls []GGML, ggmlPaths []string) MetaGGML {
+	type wrapper struct {
+		ggml   GGML
+		path   string
+		weight int
+	}
+	var wrappers []wrapper
+	for i := range ggmls {
+		iSplitInfo := ggmls[i].KV().GGUFSplitInfo()
+		var weight int = 0
+		if iSplitInfo == nil {
+			weight = -1
+		} else {
+			weight = int((*iSplitInfo).No)
+		}
+		wrappers = append(wrappers, wrapper{
+			ggml:   ggmls[i],
+			path:   ggmlPaths[i],
+			weight: weight,
+		})
+	}
+	slices.SortStableFunc(wrappers, func(a, b wrapper) int {
+		return cmp.Compare(a.weight, b.weight)
+	})
+	metaGgml := MetaGGML{}
+	var param_counts uint64 = 0
+	for i := range wrappers {
+		param_counts += wrappers[i].ggml.KV().ParameterCount()
+		if i == 0 {
+			kv := maps.Clone(wrappers[i].ggml.KV())
+			// remove the keys contained in split gguf files. add more if needed.
+			delete(kv, "slice.no")
+			delete(kv, "slice.count")
+			delete(kv, "slice.tensors.count")
+			delete(kv, "general.parameter_count")
+			metaGgml.kv = kv
+		}
+		metaGgml.Shards = append(metaGgml.Shards, wrappers[i].ggml)
+		metaGgml.ShardPaths = append(metaGgml.ShardPaths, wrappers[i].path)
+	}
+	metaGgml.kv["general.parameter_count"] = param_counts
+	ft, _ := BuildForeignTensors(metaGgml.Shards, metaGgml.ShardPaths)
+	metaGgml.Tensors = *ft
+	return metaGgml
+}
+
+func simpleWrapGGML(ggml GGML) MetaGGML {
+	// simply wrap single GGML, without creating foreign tensors
+	return MetaGGML{
+		Shards:     []GGML{ggml},
+		ShardPaths: []string{""},
+		kv:         ggml.KV(),
+	}
+}
+
+func WrapGGML(ggml GGML) MetaGGML {
+	metaggml := simpleWrapGGML(ggml)
+	ft, _ := BuildForeignTensors(metaggml.Shards, metaggml.ShardPaths)
+	metaggml.Tensors = *ft
+	return metaggml
+}
+
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention ml.FlashAttentionType) (kv []uint64, partialOffload, fullOffload uint64) {
+	return WrapGGML(f).GraphSize(context, batch, numParallel, kvCacheType, useFlashAttention)
+}
+
+func (f MetaGGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention ml.FlashAttentionType) (kv []uint64, partialOffload, fullOffload uint64) {
 	context *= uint64(numParallel)
 
 	embedding := f.KV().EmbeddingLength()
@@ -561,7 +721,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	embeddingHeadsK := f.KV().EmbeddingHeadCountK()
 	embeddingHeadsV := f.KV().EmbeddingHeadCountV()
 
-	layers := f.Tensors().GroupLayers()
+	layers := f.Tensors.GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
 
@@ -659,7 +819,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		)
 
 		var ropeFreqsCount uint64
-		if ropeFreqs, ok := f.Tensors().GroupLayers()["rope_freqs"]; ok {
+		if ropeFreqs, ok := f.Tensors.GroupLayers()["rope_freqs"]; ok {
 			if ropeFreqsWeights, ok := ropeFreqs["weights"]; ok {
 				ropeFreqsCount = ropeFreqsWeights.Elements()
 			}
@@ -788,7 +948,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		}
 
 		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
-		if useFlashAttention {
+		if useFlashAttention == ml.FlashAttentionEnabled {
 			// rough estimate of graph size with flash attention on
 			partialOffload = (4*uint64(numParallel) + context>>10 + 110) * format.MebiByte
 		}
@@ -799,6 +959,9 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 
 // SupportsKVCacheType checks if the requested cache type is supported
 func (f GGML) SupportsKVCacheType(cacheType string) bool {
+	return simpleWrapGGML(f).SupportsKVCacheType(cacheType)
+}
+func (f MetaGGML) SupportsKVCacheType(cacheType string) bool {
 	if cacheType == "" || cacheType == "f16" {
 		return true
 	}
@@ -806,8 +969,27 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
+// KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
+func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
+}
+
+func (f MetaGGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
+}
+
 // SupportsFlashAttention checks if the model supports flash attention
 func (f GGML) SupportsFlashAttention() bool {
+	return simpleWrapGGML(f).SupportsFlashAttention()
+}
+
+func (f MetaGGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
 		return false
@@ -825,9 +1007,16 @@ func (f GGML) SupportsFlashAttention() bool {
 
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
+	return simpleWrapGGML(f).FlashAttention()
+}
+
+func (f MetaGGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"bert",
 		"gemma3",
 		"gptoss", "gpt-oss",
+		"mistral3",
+		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
@@ -845,4 +1034,16 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 	default:
 		return 2 // f16 (default)
 	}
+}
+
+func (f MetaGGML) KV() KV {
+	return f.kv
+}
+
+func (f MetaGGML) TotalTensorBytes() uint64 {
+	totalBytes := uint64(0)
+	for i := range f.Shards {
+		totalBytes += uint64(f.Shards[i].Length) - f.Shards[i].Tensors().Offset
+	}
+	return totalBytes
 }

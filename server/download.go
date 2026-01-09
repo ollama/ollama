@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -462,10 +463,18 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
+// hfDigestMap stores the mapping from HF paths to actual SHA256 digests
+var hfDigestMap sync.Map // map[string]string
+
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	if opts.digest == "" {
 		return false, fmt.Errorf(("%s: %s"), opts.mp.GetNamespaceRepository(), "digest is empty")
+	}
+
+	// Check if this is a HuggingFace download (digest starts with "hf:")
+	if strings.HasPrefix(opts.digest, "hf:") {
+		return downloadHuggingFaceBlob(ctx, opts)
 	}
 
 	fp, err := GetBlobsPath(opts.digest)
@@ -504,4 +513,135 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	}
 
 	return false, download.Wait(ctx, opts.fn)
+}
+
+// downloadHuggingFaceBlob downloads a file from HuggingFace
+func downloadHuggingFaceBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
+	// Parse the HF path: "hf:namespace/repo/tag/path/to/file.gguf"
+	hfPath := strings.TrimPrefix(opts.digest, "hf:")
+	parts := strings.SplitN(hfPath, "/", 4)
+	if len(parts) < 4 {
+		return false, fmt.Errorf("invalid HuggingFace path: %s", hfPath)
+	}
+
+	namespace := parts[0]
+	repo := parts[1]
+	_ = parts[2] // tag (not used, we always use "main")
+	filePath := parts[3]
+
+	// Construct HuggingFace download URL (always use "main" revision)
+	downloadURL := fmt.Sprintf("https://huggingface.co/%s/%s/resolve/main/%s", namespace, repo, filePath)
+
+	// Create a temporary file for download
+	tmpFile, err := os.CreateTemp("", "ollama-hf-*.tmp")
+	if err != nil {
+		return false, fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Download the file
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("creating download request: %w", err)
+	}
+
+	if opts.regOpts != nil && opts.regOpts.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+opts.regOpts.Token)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("downloading from HuggingFace: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("HuggingFace download error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	totalSize := resp.ContentLength
+
+	// Download with progress reporting
+	hash := sha256.New()
+	writer := io.MultiWriter(tmpFile, hash)
+
+	var downloaded int64
+	lastReport := int64(0)
+	reportInterval := int64(10 * 1024 * 1024) // Report every 10MB
+
+	buf := make([]byte, 4*1024*1024) // 4MB buffer for large files
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		default:
+		}
+
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := writer.Write(buf[:n]); werr != nil {
+				return false, werr
+			}
+			downloaded += int64(n)
+
+			// Report progress every 10MB or at completion
+			if downloaded-lastReport >= reportInterval || err == io.EOF {
+				opts.fn(api.ProgressResponse{
+					Status:    fmt.Sprintf("pulling %s", filepath.Base(filePath)),
+					Total:     totalSize,
+					Completed: downloaded,
+				})
+				lastReport = downloaded
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false, fmt.Errorf("reading download: %w", err)
+		}
+	}
+
+	// Final progress report
+	opts.fn(api.ProgressResponse{
+		Status:    fmt.Sprintf("pulling %s", filepath.Base(filePath)),
+		Total:     totalSize,
+		Completed: downloaded,
+	})
+
+	// Compute the final digest
+	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+
+	// Store the mapping from HF path to real digest
+	hfDigestMap.Store(opts.digest, digest)
+
+	// Move the file to the blobs directory
+	fp, err := GetBlobsPath(digest)
+	if err != nil {
+		return false, err
+	}
+
+	// Close the temp file before moving
+	tmpFile.Close()
+
+	// Move temp file to final location
+	if err := os.Rename(tmpFile.Name(), fp); err != nil {
+		// If rename fails (different filesystem), copy instead
+		if err := copyFile(tmpFile.Name(), fp); err != nil {
+			return false, fmt.Errorf("moving downloaded file: %w", err)
+		}
+	}
+
+	opts.fn(api.ProgressResponse{
+		Status:    fmt.Sprintf("pulling %s", digest[7:19]),
+		Digest:    digest,
+		Total:     totalSize,
+		Completed: totalSize,
+	})
+
+	return false, nil
 }

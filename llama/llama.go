@@ -44,6 +44,7 @@ import (
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
 	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
+	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd/models"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
@@ -120,18 +121,22 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, kvCacheType string) ContextParams {
+func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention ml.FlashAttentionType, kvCacheType string) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
-	params.n_batch = C.uint(batchSize)
+	params.n_batch = C.uint(batchSize * numSeqMax)
+	params.n_ubatch = C.uint(batchSize)
 	params.n_seq_max = C.uint(numSeqMax)
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
-	if flashAttention {
-		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
-	} else {
-		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_DISABLED
+	switch flashAttention {
+	case ml.FlashAttentionEnabled:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_ENABLED)
+	case ml.FlashAttentionDisabled:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_DISABLED)
+	case ml.FlashAttentionAuto:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_AUTO)
 	}
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
@@ -259,7 +264,7 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 	return true
 }
 
-func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
+func LoadModelFromFile(modelPath string, extraModelPaths []string, params ModelParams) (*Model, error) {
 	if params.RPCServers != "" {
 		// Adding RPC servers to devices
 		rpcServers := C.CString(params.RPCServers)
@@ -311,7 +316,17 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
-	m := Model{c: C.llama_model_load_from_file(C.CString(modelPath), cparams)}
+	var splitPaths []*C.char
+	mp := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(mp))
+	splitPaths = append(splitPaths, mp)
+	for i := range extraModelPaths {
+		mp := C.CString(extraModelPaths[i])
+		defer C.free(unsafe.Pointer(mp))
+		splitPaths = append(splitPaths, mp)
+	}
+
+	m := Model{c: C.llama_model_load_from_splits(&splitPaths[0], C.size_t(len(splitPaths)), cparams)}
 	if m.c == nil {
 		return nil, fmt.Errorf("unable to load model: %s", modelPath)
 	}
