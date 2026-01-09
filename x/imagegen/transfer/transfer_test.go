@@ -728,7 +728,7 @@ func TestDownloadParallelism(t *testing.T) {
 	blobs := make([]Blob, numBlobs)
 	blobData := make([][]byte, numBlobs)
 
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		blobs[i], blobData[i] = createTestBlob(t, serverDir, 1024+i*100)
 	}
 
@@ -801,7 +801,7 @@ func TestUploadParallelism(t *testing.T) {
 	numBlobs := 10
 	blobs := make([]Blob, numBlobs)
 
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		blobs[i], _ = createTestBlob(t, clientDir, 1024+i*100)
 	}
 
@@ -1177,7 +1177,7 @@ func TestDownloadManyBlobs(t *testing.T) {
 	blobs := make([]Blob, numBlobs)
 	blobData := make([][]byte, numBlobs)
 
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		blobs[i], blobData[i] = createTestBlob(t, serverDir, 512) // Small blobs
 	}
 
@@ -1606,7 +1606,7 @@ func TestThroughput(t *testing.T) {
 	// Create test blobs
 	serverDir := t.TempDir()
 	blobs := make([]Blob, numBlobs)
-	for i := 0; i < numBlobs; i++ {
+	for i := range numBlobs {
 		data := make([]byte, blobSize)
 		// Different seed per blob for unique digests
 		for j := range data {

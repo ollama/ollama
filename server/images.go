@@ -34,15 +34,14 @@ import (
 )
 
 var (
-	errCapabilities              = errors.New("does not support")
-	errCapabilityCompletion      = errors.New("completion")
-	errCapabilityTools           = errors.New("tools")
-	errCapabilityInsert          = errors.New("insert")
-	errCapabilityVision          = errors.New("vision")
-	errCapabilityEmbedding       = errors.New("embedding")
-	errCapabilityThinking        = errors.New("thinking")
-	errCapabilityImageGeneration = errors.New("image-generation")
-	errInsecureProtocol          = errors.New("insecure protocol http")
+	errCapabilities         = errors.New("does not support")
+	errCapabilityCompletion = errors.New("completion")
+	errCapabilityTools      = errors.New("tools")
+	errCapabilityInsert     = errors.New("insert")
+	errCapabilityVision     = errors.New("vision")
+	errCapabilityEmbedding  = errors.New("embedding")
+	errCapabilityThinking   = errors.New("thinking")
+	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
 type registryOptions struct {

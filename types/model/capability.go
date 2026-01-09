@@ -3,13 +3,13 @@ package model
 type Capability string
 
 const (
-	CapabilityCompletion       = Capability("completion")
-	CapabilityTools            = Capability("tools")
-	CapabilityInsert           = Capability("insert")
-	CapabilityVision           = Capability("vision")
-	CapabilityEmbedding        = Capability("embedding")
-	CapabilityThinking         = Capability("thinking")
-	CapabilityImageGeneration  = Capability("image-generation")
+	CapabilityCompletion      = Capability("completion")
+	CapabilityTools           = Capability("tools")
+	CapabilityInsert          = Capability("insert")
+	CapabilityVision          = Capability("vision")
+	CapabilityEmbedding       = Capability("embedding")
+	CapabilityThinking        = Capability("thinking")
+	CapabilityImageGeneration = Capability("image-generation")
 )
 
 func (c Capability) String() string {

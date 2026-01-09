@@ -96,8 +96,9 @@ func download(ctx context.Context, opts DownloadOptions) error {
 func (d *downloader) download(ctx context.Context, blob Blob) error {
 	var lastErr error
 	var slowRetries int
+	attempt := 0
 
-	for attempt := range maxRetries {
+	for attempt < maxRetries {
 		if attempt > 0 {
 			if err := backoff(ctx, attempt, time.Second<<uint(attempt-1)); err != nil {
 				return err
@@ -119,11 +120,13 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return err
 		case errors.Is(err, errStalled):
-			attempt--
+			// Don't count stall retries against limit
 		case errors.Is(err, errSlow):
-			if slowRetries++; slowRetries < 3 {
-				attempt--
+			if slowRetries++; slowRetries >= 3 {
+				attempt++ // Only count after 3 slow retries
 			}
+		default:
+			attempt++
 		}
 		lastErr = err
 	}

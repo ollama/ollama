@@ -23,7 +23,7 @@ type tensorInfo struct {
 // streaming writes to blobs without loading entire tensors into memory.
 type TensorExtractor struct {
 	file       *os.File
-	dataOffset int64                // Start of tensor data region
+	dataOffset int64 // Start of tensor data region
 	header     map[string]tensorInfo
 }
 

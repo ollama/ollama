@@ -53,32 +53,32 @@ type Blob struct {
 
 // DownloadOptions configures a parallel download operation.
 type DownloadOptions struct {
-	Blobs        []Blob                       // Blobs to download
-	BaseURL      string                       // Registry base URL
-	DestDir      string                       // Destination directory for blobs
-	Repository   string                       // Repository path for blob URLs (e.g., "library/model")
-	Concurrency  int                          // Max parallel downloads (default 64)
-	Progress     func(completed, total int64) // Progress callback (optional)
-	Client       *http.Client                 // HTTP client (optional, uses default)
-	Token        string                       // Auth token (optional)
+	Blobs        []Blob                                                             // Blobs to download
+	BaseURL      string                                                             // Registry base URL
+	DestDir      string                                                             // Destination directory for blobs
+	Repository   string                                                             // Repository path for blob URLs (e.g., "library/model")
+	Concurrency  int                                                                // Max parallel downloads (default 64)
+	Progress     func(completed, total int64)                                       // Progress callback (optional)
+	Client       *http.Client                                                       // HTTP client (optional, uses default)
+	Token        string                                                             // Auth token (optional)
 	GetToken     func(ctx context.Context, challenge AuthChallenge) (string, error) // Token refresh callback
-	Logger       *slog.Logger                 // Optional structured logger
-	UserAgent    string                       // User-Agent header (optional, has default)
-	StallTimeout time.Duration                // Timeout for stall detection (default 10s)
+	Logger       *slog.Logger                                                       // Optional structured logger
+	UserAgent    string                                                             // User-Agent header (optional, has default)
+	StallTimeout time.Duration                                                      // Timeout for stall detection (default 10s)
 }
 
 // UploadOptions configures a parallel upload operation.
 type UploadOptions struct {
-	Blobs       []Blob                       // Blobs to upload
-	BaseURL     string                       // Registry base URL
-	SrcDir      string                       // Source directory containing blobs
-	Concurrency int                          // Max parallel uploads (default 32)
-	Progress    func(completed, total int64) // Progress callback (optional)
-	Client      *http.Client                 // HTTP client (optional, uses default)
-	Token       string                       // Auth token (optional)
+	Blobs       []Blob                                                             // Blobs to upload
+	BaseURL     string                                                             // Registry base URL
+	SrcDir      string                                                             // Source directory containing blobs
+	Concurrency int                                                                // Max parallel uploads (default 32)
+	Progress    func(completed, total int64)                                       // Progress callback (optional)
+	Client      *http.Client                                                       // HTTP client (optional, uses default)
+	Token       string                                                             // Auth token (optional)
 	GetToken    func(ctx context.Context, challenge AuthChallenge) (string, error) // Token refresh callback
-	Logger      *slog.Logger                 // Optional structured logger
-	UserAgent   string                       // User-Agent header (optional, has default)
+	Logger      *slog.Logger                                                       // Optional structured logger
+	UserAgent   string                                                             // User-Agent header (optional, has default)
 
 	// Manifest fields (optional) - if set, manifest is pushed after all blobs complete
 	Manifest    []byte // Raw manifest JSON to push
@@ -216,4 +216,3 @@ func backoff(ctx context.Context, attempt int, maxBackoff time.Duration) error {
 		return nil
 	}
 }
-
