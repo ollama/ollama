@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -44,6 +45,7 @@ import (
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
+	"github.com/ollama/ollama/server/usage"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
@@ -82,6 +84,7 @@ type Server struct {
 	addr    net.Addr
 	sched   *Scheduler
 	lowVRAM bool
+	stats *usage.Stats
 }
 
 func init() {
@@ -103,6 +106,30 @@ var (
 	errRequired    = errors.New("is required")
 	errBadTemplate = errors.New("template error")
 )
+
+// usage records a request to usage stats if enabled.
+func (s *Server) usage(c *gin.Context, endpoint, model, architecture string, promptTokens, completionTokens int, usedTools bool) {
+	if s.stats == nil {
+		return
+	}
+	s.stats.Record(&usage.Request{
+		Endpoint:         endpoint,
+		Model:            model,
+		Architecture:     architecture,
+		APIType:          usage.ClassifyAPIType(c.Request.URL.Path),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		UsedTools:        usedTools,
+	})
+}
+
+// usageError records a failed request to usage stats if enabled.
+func (s *Server) usageError() {
+	if s.stats == nil {
+		return
+	}
+	s.stats.RecordError()
+}
 
 func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -374,7 +401,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
 	} else if err != nil {
-		handleScheduleError(c, req.Model, err)
+		s.handleScheduleError(c, req.Model, err)
 		return
 	}
 
@@ -561,6 +588,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				s.usage(c, "generate", m.ShortName, m.Config.ModelFamily, cr.PromptEvalCount, cr.EvalCount, false)
 
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
@@ -680,7 +708,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
+		s.handleScheduleError(c, req.Model, err)
 		return
 	}
 
@@ -790,6 +818,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
 		PromptEvalCount: int(totalTokens),
 	}
+	s.usage(c, "embed", m.ShortName, m.Config.ModelFamily, int(totalTokens), 0, false)
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -827,7 +856,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
+		s.handleScheduleError(c, req.Model, err)
 		return
 	}
 
@@ -1531,6 +1560,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
+	r.GET("/api/usage", s.UsageHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
@@ -1593,6 +1623,13 @@ func Serve(ln net.Listener) error {
 
 	s := &Server{addr: ln.Addr()}
 
+	// Initialize usage stats if enabled
+	if envconfig.Usage() {
+		s.stats = usage.New()
+		s.stats.Start()
+		slog.Info("usage stats enabled")
+	}
+
 	var rc *ollama.Registry
 	if useClient2 {
 		var err error
@@ -1632,6 +1669,9 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
+		if s.stats != nil {
+			s.stats.Stop()
+		}
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
@@ -1648,6 +1688,24 @@ func Serve(ln net.Listener) error {
 	// This will log warnings to the log in case we have problems with detected GPUs
 	gpus := discover.GPUDevices(ctx, nil)
 	discover.LogDetails(gpus)
+
+	// Set GPU info for usage reporting
+	if s.stats != nil {
+		usage.GPUInfoFunc = func() []usage.GPU {
+			var result []usage.GPU
+			for _, gpu := range gpus {
+				result = append(result, usage.GPU{
+					Name:         gpu.Name,
+					VRAMBytes:    gpu.TotalMemory,
+					ComputeMajor: gpu.ComputeMajor,
+					ComputeMinor: gpu.ComputeMinor,
+					DriverMajor:  gpu.DriverMajor,
+					DriverMinor:  gpu.DriverMinor,
+				})
+			}
+			return result
+		}
+	}
 
 	var totalVRAM uint64
 	for _, gpu := range gpus {
@@ -1852,6 +1910,63 @@ func (s *Server) PsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
+func (s *Server) UsageHandler(c *gin.Context) {
+	// Get total VRAM used by Ollama
+	s.sched.loadedMu.Lock()
+	var totalOllamaVRAM uint64
+	for _, runner := range s.sched.loaded {
+		totalOllamaVRAM += runner.vramSize
+	}
+	s.sched.loadedMu.Unlock()
+
+	var resp api.UsageResponse
+
+	// Get GPU/device info
+	gpus := discover.GPUDevices(c.Request.Context(), nil)
+
+	// On Apple Silicon, use system memory instead of Metal's recommendedMaxWorkingSetSize
+	// because unified memory means GPU and CPU share the same physical RAM pool
+	var sysTotal, sysFree uint64
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		sysInfo := discover.GetSystemInfo()
+		sysTotal = sysInfo.TotalMemory
+		sysFree = sysInfo.FreeMemory
+	}
+
+	for _, gpu := range gpus {
+		total := gpu.TotalMemory
+		free := gpu.FreeMemory
+
+		// On Apple Silicon, override with system memory values
+		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && sysTotal > 0 {
+			total = sysTotal
+			free = sysFree
+		}
+
+		used := total - free
+		ollamaUsed := min(totalOllamaVRAM, used)
+		otherUsed := used - ollamaUsed
+
+		// Use Description for Name (actual device name like "Apple M2 Max")
+		// Fall back to backend name if Description is empty
+		name := gpu.Description
+		if name == "" {
+			name = gpu.Name
+		}
+
+		resp.GPUs = append(resp.GPUs, api.GPUUsage{
+			Name:    name,
+			Backend: gpu.Library,
+			Total:   total,
+			Free:    free,
+			Used:    ollamaUsed,
+			Other:   otherUsed,
+		})
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 func toolCallId() string {
 	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 8)
@@ -2032,7 +2147,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
 	} else if err != nil {
-		handleScheduleError(c, req.Model, err)
+		s.handleScheduleError(c, req.Model, err)
 		return
 	}
 
@@ -2180,6 +2295,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.DoneReason = r.DoneReason.String()
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+					s.usage(c, "chat", m.ShortName, m.Config.ModelFamily, r.PromptEvalCount, r.EvalCount, len(req.Tools) > 0)
 				}
 
 				if builtinParser != nil {
@@ -2355,6 +2471,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			resp.Message.ToolCalls = toolCalls
 		}
 
+		s.usage(c, "chat", m.ShortName, m.Config.ModelFamily, resp.PromptEvalCount, resp.EvalCount, len(toolCalls) > 0)
 		c.JSON(http.StatusOK, resp)
 		return
 	}
@@ -2362,7 +2479,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func handleScheduleError(c *gin.Context, name string, err error) {
+func (s *Server) handleScheduleError(c *gin.Context, name string, err error) {
+	s.usageError()
 	switch {
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

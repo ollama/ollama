@@ -377,6 +377,15 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	return &lr, nil
 }
 
+// Usage returns usage statistics and system info.
+func (c *Client) Usage(ctx context.Context) (*UsageResponse, error) {
+	var ur UsageResponse
+	if err := c.do(ctx, http.MethodGet, "/api/usage", nil, &ur); err != nil {
+		return nil, err
+	}
+	return &ur, nil
+}
+
 // Copy copies a model - creating a model with another name from an existing
 // model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {

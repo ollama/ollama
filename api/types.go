@@ -792,6 +792,33 @@ type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
 }
 
+// UsageResponse is the response from [Client.Usage].
+type UsageResponse struct {
+	GPUs []GPUUsage `json:"gpus,omitempty"`
+}
+
+// GPUUsage contains GPU/device memory usage breakdown.
+type GPUUsage struct {
+	Name    string `json:"name"`    // Device name (e.g., "Apple M2 Max", "NVIDIA GeForce RTX 4090")
+	Backend string `json:"backend"` // CUDA, ROCm, Metal, etc.
+	Total   uint64 `json:"total"`
+	Free    uint64 `json:"free"`
+	Used    uint64 `json:"used"`  // Memory used by Ollama
+	Other   uint64 `json:"other"` // Memory used by other processes
+}
+
+// UsageStats contains usage statistics.
+type UsageStats struct {
+	Requests         int64            `json:"requests"`
+	TokensInput      int64            `json:"tokens_input"`
+	TokensOutput     int64            `json:"tokens_output"`
+	TotalTokens      int64            `json:"total_tokens"`
+	Models           map[string]int64 `json:"models,omitempty"`
+	Sources          map[string]int64 `json:"sources,omitempty"`
+	ToolCalls        int64            `json:"tool_calls,omitempty"`
+	StructuredOutput int64            `json:"structured_output,omitempty"`
+}
+
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
 	Name        string       `json:"name"`

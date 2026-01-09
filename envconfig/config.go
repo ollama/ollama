@@ -206,6 +206,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// Usage enables usage statistics reporting
+	Usage = Bool("OLLAMA_USAGE")
 )
 
 func String(s string) func() string {
