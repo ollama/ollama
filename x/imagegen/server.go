@@ -24,13 +24,15 @@ import (
 
 // Server wraps an image generation subprocess to implement llm.LlamaServer.
 type Server struct {
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	port      int
-	modelName string
-	vramSize  uint64
-	done      chan error
-	client    *http.Client
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	port        int
+	modelName   string
+	vramSize    uint64
+	done        chan error
+	client      *http.Client
+	lastErr     string // Last stderr line for error reporting
+	lastErrLock sync.Mutex
 }
 
 // completionRequest is sent to the subprocess
@@ -80,6 +82,15 @@ func NewServer(modelName string) (*Server, error) {
 	cmd := exec.Command(exe, "runner", "--image-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
+	s := &Server{
+		cmd:       cmd,
+		port:      port,
+		modelName: modelName,
+		vramSize:  EstimateVRAM(modelName),
+		done:      make(chan error, 1),
+		client:    &http.Client{Timeout: 10 * time.Minute},
+	}
+
 	// Forward subprocess stdout/stderr to server logs
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -92,22 +103,18 @@ func NewServer(modelName string) (*Server, error) {
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			slog.Warn("image-runner", "msg", scanner.Text())
+			line := scanner.Text()
+			slog.Warn("image-runner", "msg", line)
+			// Capture last error line for better error reporting
+			s.lastErrLock.Lock()
+			s.lastErr = line
+			s.lastErrLock.Unlock()
 		}
 	}()
 
 	slog.Info("starting image runner subprocess", "model", modelName, "port", port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start image runner: %w", err)
-	}
-
-	s := &Server{
-		cmd:       cmd,
-		port:      port,
-		modelName: modelName,
-		vramSize:  EstimateVRAM(modelName),
-		done:      make(chan error, 1),
-		client:    &http.Client{Timeout: 10 * time.Minute},
 	}
 
 	// Reap subprocess when it exits
@@ -163,8 +170,21 @@ func (s *Server) waitUntilRunning() error {
 	for {
 		select {
 		case err := <-s.done:
-			return fmt.Errorf("subprocess exited: %w", err)
+			// Include last stderr line for better error context
+			s.lastErrLock.Lock()
+			lastErr := s.lastErr
+			s.lastErrLock.Unlock()
+			if lastErr != "" {
+				return fmt.Errorf("image runner failed: %s (exit: %v)", lastErr, err)
+			}
+			return fmt.Errorf("image runner exited unexpectedly: %w", err)
 		case <-timeout:
+			s.lastErrLock.Lock()
+			lastErr := s.lastErr
+			s.lastErrLock.Unlock()
+			if lastErr != "" {
+				return fmt.Errorf("timeout waiting for image runner: %s", lastErr)
+			}
 			return errors.New("timeout waiting for image runner to start")
 		case <-ticker.C:
 			if err := s.Ping(ctx); err == nil {
