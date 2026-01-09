@@ -977,6 +977,13 @@ func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
 	return true
 }
 
+func (f MetaGGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
+}
+
 // SupportsFlashAttention checks if the model supports flash attention
 func (f GGML) SupportsFlashAttention() bool {
 	return simpleWrapGGML(f).SupportsFlashAttention()
