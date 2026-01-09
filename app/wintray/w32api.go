@@ -30,7 +30,6 @@ var (
 	pPostQuitMessage       = u32.NewProc("PostQuitMessage")
 	pRegisterClass         = u32.NewProc("RegisterClassExW")
 	pRegisterWindowMessage = u32.NewProc("RegisterWindowMessageW")
-	pRemoveMenu            = u32.NewProc("RemoveMenu")
 	pSendMessage           = u32.NewProc("SendMessageW")
 	pSetForegroundWindow   = u32.NewProc("SetForegroundWindow")
 	pSetMenuInfo           = u32.NewProc("SetMenuInfo")
@@ -52,7 +51,6 @@ const (
 	IMAGE_ICON          = 1          // Loads an icon
 	LR_DEFAULTSIZE      = 0x00000040 // Loads default-size icon for windows(SM_CXICON x SM_CYICON) if cx, cy are set to zero
 	LR_LOADFROMFILE     = 0x00000010 // Loads the stand-alone image from the file
-	MF_BYCOMMAND        = 0x00000000
 	MFS_DISABLED        = 0x00000003
 	MFT_SEPARATOR       = 0x00000800
 	MFT_STRING          = 0x00000000
