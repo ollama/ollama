@@ -515,7 +515,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	return false, download.Wait(ctx, opts.fn)
 }
 
-// downloadHuggingFaceBlob downloads a file from HuggingFace
+// downloadHuggingFaceBlob downloads a file from HuggingFace with retry logic
 func downloadHuggingFaceBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	// Parse the HF path: "hf:namespace/repo/tag/path/to/file.gguf"
 	hfPath := strings.TrimPrefix(opts.digest, "hf:")
@@ -537,72 +537,150 @@ func downloadHuggingFaceBlob(ctx context.Context, opts downloadOpts) (cacheHit b
 	if err != nil {
 		return false, fmt.Errorf("creating temp file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	tmpFileName := tmpFile.Name()
+	defer os.Remove(tmpFileName)
 	defer tmpFile.Close()
 
-	// Download the file
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
-	if err != nil {
-		return false, fmt.Errorf("creating download request: %w", err)
+	// HTTP client with timeouts appropriate for large files
+	client := &http.Client{
+		Timeout: 0, // No overall timeout, we'll handle retries ourselves
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 60 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
 	}
-
-	if opts.regOpts != nil && opts.regOpts.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+opts.regOpts.Token)
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("downloading from HuggingFace: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("HuggingFace download error (%d): %s", resp.StatusCode, string(body))
-	}
-
-	totalSize := resp.ContentLength
-
-	// Download with progress reporting
-	hash := sha256.New()
-	writer := io.MultiWriter(tmpFile, hash)
 
 	var downloaded int64
-	lastReport := int64(0)
-	reportInterval := int64(10 * 1024 * 1024) // Report every 10MB
+	hash := sha256.New()
+	var totalSize int64
 
-	buf := make([]byte, 4*1024*1024) // 4MB buffer for large files
-	for {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		default:
-		}
+	// Retry loop with exponential backoff
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			slog.Info("retrying HuggingFace download", "attempt", attempt+1, "backoff", backoff, "file", filepath.Base(filePath))
 
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := writer.Write(buf[:n]); werr != nil {
-				return false, werr
-			}
-			downloaded += int64(n)
-
-			// Report progress every 10MB or at completion
-			if downloaded-lastReport >= reportInterval || err == io.EOF {
-				opts.fn(api.ProgressResponse{
-					Status:    fmt.Sprintf("pulling %s", filepath.Base(filePath)),
-					Total:     totalSize,
-					Completed: downloaded,
-				})
-				lastReport = downloaded
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(backoff):
 			}
 		}
 
-		if err == io.EOF {
+		// Create request
+		req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+		if err != nil {
+			return false, fmt.Errorf("creating download request: %w", err)
+		}
+
+		if opts.regOpts != nil && opts.regOpts.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+opts.regOpts.Token)
+		}
+
+		// If we have partial data, request only the remaining bytes
+		if downloaded > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", downloaded))
+			slog.Info("resuming download", "file", filepath.Base(filePath), "from", downloaded)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			slog.Warn("HuggingFace download request failed", "error", err, "attempt", attempt+1)
+			continue
+		}
+
+		// Handle status codes
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			// Don't retry on client errors (4xx)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return false, fmt.Errorf("HuggingFace download error (%d): %s", resp.StatusCode, string(body))
+			}
+
+			slog.Warn("HuggingFace download failed", "status", resp.StatusCode, "attempt", attempt+1)
+			continue
+		}
+
+		// Get total size from response
+		if totalSize == 0 {
+			if resp.StatusCode == http.StatusPartialContent {
+				// Parse Content-Range header: "bytes start-end/total"
+				contentRange := resp.Header.Get("Content-Range")
+				if parts := strings.Split(contentRange, "/"); len(parts) == 2 {
+					if size, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+						totalSize = size
+					}
+				}
+			} else {
+				totalSize = resp.ContentLength
+			}
+		}
+
+		// Download with progress reporting
+		lastReport := downloaded
+		reportInterval := int64(10 * 1024 * 1024) // Report every 10MB
+
+		buf := make([]byte, 4*1024*1024) // 4MB buffer for large files
+		downloadErr := func() error {
+			defer resp.Body.Close()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				n, err := resp.Body.Read(buf)
+				if n > 0 {
+					// Write to file
+					if _, werr := tmpFile.Write(buf[:n]); werr != nil {
+						return werr
+					}
+					// Update hash
+					if _, herr := hash.Write(buf[:n]); herr != nil {
+						return herr
+					}
+					downloaded += int64(n)
+
+					// Report progress every 10MB or at completion
+					if downloaded-lastReport >= reportInterval || err == io.EOF {
+						opts.fn(api.ProgressResponse{
+							Status:    fmt.Sprintf("pulling %s", filepath.Base(filePath)),
+							Total:     totalSize,
+							Completed: downloaded,
+						})
+						lastReport = downloaded
+					}
+				}
+
+				if err == io.EOF {
+					// Download complete
+					if totalSize > 0 && downloaded < totalSize {
+						return fmt.Errorf("incomplete download: got %d bytes, expected %d", downloaded, totalSize)
+					}
+					return nil
+				}
+				if err != nil {
+					return fmt.Errorf("reading download: %w", err)
+				}
+			}
+		}()
+
+		if downloadErr == nil {
+			// Success! Break out of retry loop
 			break
 		}
-		if err != nil {
-			return false, fmt.Errorf("reading download: %w", err)
+
+		// Download failed, log and retry
+		slog.Warn("HuggingFace download interrupted", "error", downloadErr, "attempt", attempt+1, "downloaded", downloaded, "total", totalSize)
+
+		// If this was the last attempt, return the error
+		if attempt == maxRetries-1 {
+			return false, fmt.Errorf("download failed after %d attempts: %w", maxRetries, downloadErr)
 		}
 	}
 
@@ -629,9 +707,9 @@ func downloadHuggingFaceBlob(ctx context.Context, opts downloadOpts) (cacheHit b
 	tmpFile.Close()
 
 	// Move temp file to final location
-	if err := os.Rename(tmpFile.Name(), fp); err != nil {
+	if err := os.Rename(tmpFileName, fp); err != nil {
 		// If rename fails (different filesystem), copy instead
-		if err := copyFile(tmpFile.Name(), fp); err != nil {
+		if err := copyFile(tmpFileName, fp); err != nil {
 			return false, fmt.Errorf("moving downloaded file: %w", err)
 		}
 	}
