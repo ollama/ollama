@@ -33,7 +33,7 @@ type ApprovalResult struct {
 // Option labels for the selector (numbered for quick selection)
 var optionLabels = []string{
 	"1. Execute once",
-	"2. Always allow",
+	"2. Allow for this session",
 	"3. Deny",
 }
 
@@ -70,9 +70,6 @@ var autoAllowCommands = map[string]bool{
 // autoAllowPrefixes are command prefixes that are always allowed.
 // These are read-only or commonly-needed development commands.
 var autoAllowPrefixes = []string{
-	// Git read-only
-	"git status", "git log", "git diff", "git branch", "git show",
-	"git remote -v", "git tag", "git stash list",
 	// Package managers - run scripts
 	"npm run", "npm test", "npm start",
 	"bun run", "bun test",
@@ -91,6 +88,9 @@ var autoAllowPrefixes = []string{
 }
 
 // denyPatterns are dangerous command patterns that are always blocked.
+// NOTE: Some network patterns (curl POST, scp, rsync) moved to warnPatterns
+// to allow user escalation with explicit approval.
+// These patterns use word boundary matching to avoid false positives (e.g., "nc " won't match "rsync").
 var denyPatterns = []string{
 	// Destructive commands
 	"rm -rf", "rm -fr",
@@ -101,19 +101,8 @@ var denyPatterns = []string{
 	"sudo ", "su ", "doas ",
 	"chmod 777", "chmod -R 777",
 	"chown ", "chgrp ",
-	// Network exfiltration
-	"curl -d", "curl --data", "curl -X POST", "curl -X PUT",
-	"wget --post",
+	// Network tools (raw sockets - still blocked)
 	"nc ", "netcat ",
-	"scp ", "rsync ",
-	// History and credentials
-	"history",
-	".bash_history", ".zsh_history",
-	".ssh/id_rsa", ".ssh/id_dsa", ".ssh/id_ecdsa", ".ssh/id_ed25519",
-	".ssh/config",
-	".aws/credentials", ".aws/config",
-	".gnupg/",
-	"/etc/shadow", "/etc/passwd",
 	// Dangerous patterns
 	":(){ :|:& };:", // fork bomb
 	"chmod +s",      // setuid
@@ -121,17 +110,45 @@ var denyPatterns = []string{
 }
 
 // denyPathPatterns are file patterns that should never be accessed.
-// These are checked as exact filename matches or path suffixes.
+// These are checked using simple substring matching.
 var denyPathPatterns = []string{
-	".env",
-	".env.local",
-	".env.production",
+	// History files
+	"history",
+	".bash_history", ".zsh_history",
+	// SSH keys and config
+	".ssh/id_rsa", ".ssh/id_dsa", ".ssh/id_ecdsa", ".ssh/id_ed25519",
+	".ssh/config",
+	// Cloud credentials
+	".aws/credentials", ".aws/config",
+	".gnupg/",
+	// System credentials
+	"/etc/shadow", "/etc/passwd",
+	// Secrets files
 	"credentials.json",
 	"secrets.json",
 	"secrets.yaml",
 	"secrets.yml",
 	".pem",
 	".key",
+}
+
+// warnPatterns are patterns that require explicit approval with warning.
+// These are potentially risky but legitimate in some contexts.
+// Unlike denyPatterns, these show a warning but allow user approval.
+var warnPatterns = []string{
+	// Network operations (user may need for legitimate API testing)
+	"curl -d", "curl --data", "curl -X POST", "curl -X PUT",
+	"wget --post",
+	// File transfer (user may need for deployments)
+	"scp ", "rsync ",
+}
+
+// warnPathPatterns are file patterns that require explicit approval with warning.
+// Unlike denyPathPatterns, these show a warning but allow user approval.
+var warnPathPatterns = []string{
+	".env",
+	".env.local",
+	".env.production",
 }
 
 // ApprovalManager manages tool execution approvals.
@@ -176,13 +193,65 @@ func IsDenied(command string) (bool, string) {
 
 	// Check deny patterns
 	for _, pattern := range denyPatterns {
-		if strings.Contains(commandLower, strings.ToLower(pattern)) {
+		patternLower := strings.ToLower(pattern)
+		if containsWord(commandLower, patternLower) {
 			return true, pattern
 		}
 	}
 
 	// Check deny path patterns
 	for _, pattern := range denyPathPatterns {
+		if strings.Contains(commandLower, strings.ToLower(pattern)) {
+			return true, pattern
+		}
+	}
+
+	return false, ""
+}
+
+// containsWord checks if a command contains a pattern as a word/command.
+// This handles patterns like "nc " which should match "nc -l 8080" but not "rsync -avz".
+// The pattern is considered a match if:
+// - It appears at the start of the command, OR
+// - It's preceded by a space, pipe, semicolon, or other delimiter
+func containsWord(command, pattern string) bool {
+	// Simple contains check first
+	if !strings.Contains(command, pattern) {
+		return false
+	}
+
+	// Check if pattern is at the start
+	if strings.HasPrefix(command, pattern) {
+		return true
+	}
+
+	// Check if pattern is preceded by a delimiter (space, pipe, semicolon, &, etc.)
+	delimiters := []string{" ", "|", ";", "&", "(", "`", "$"}
+	for _, delim := range delimiters {
+		if strings.Contains(command, delim+pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsWarn checks if a bash command matches warning patterns.
+// These are patterns that require explicit user approval with a warning,
+// but are not completely blocked like deny patterns.
+// Returns true and the matched pattern if it should warn.
+func IsWarn(command string) (bool, string) {
+	commandLower := strings.ToLower(command)
+
+	// Check warn patterns
+	for _, pattern := range warnPatterns {
+		if strings.Contains(commandLower, strings.ToLower(pattern)) {
+			return true, pattern
+		}
+	}
+
+	// Check warn path patterns
+	for _, pattern := range warnPathPatterns {
 		if strings.Contains(commandLower, strings.ToLower(pattern)) {
 			return true, pattern
 		}
@@ -198,6 +267,7 @@ func FormatDeniedResult(command string, pattern string) string {
 
 // extractBashPrefix extracts a prefix pattern from a bash command.
 // For commands like "cat tools/tools_test.go | head -200", returns "cat:tools/"
+// For git commands like "git log x/agent/", returns "git log:x/agent/" (includes subcommand)
 // For commands without path args, returns empty string.
 // Paths with ".." traversal that escape the base directory return empty string for security.
 func extractBashPrefix(command string) string {
@@ -219,10 +289,28 @@ func extractBashPrefix(command string) string {
 		"less": true, "more": true, "file": true, "wc": true,
 		"grep": true, "find": true, "tree": true, "stat": true,
 		"sed": true,
+		"git": true, // git commands with path args (e.g., git log x/agent/)
 	}
 
 	if !safeCommands[baseCmd] {
 		return ""
+	}
+
+	// For git commands, extract the subcommand for more granular allowlisting
+	var subCmd string
+	if baseCmd == "git" && len(fields) >= 2 {
+		// Git subcommand is the second field (e.g., "log", "status", "diff")
+		// Skip options like "-v" - the first non-option argument is the subcommand
+		for _, arg := range fields[1:] {
+			if !strings.HasPrefix(arg, "-") {
+				subCmd = arg
+				break
+			}
+		}
+		// If no subcommand found (unlikely for git), use empty string
+		if subCmd == "" {
+			subCmd = "unknown"
+		}
 	}
 
 	// Find the first path-like argument (must contain / or \ or start with .)
@@ -234,6 +322,10 @@ func extractBashPrefix(command string) string {
 		}
 		// Skip numeric arguments (e.g., "head -n 100")
 		if isNumeric(arg) {
+			continue
+		}
+		// For git, skip the subcommand itself when looking for paths
+		if baseCmd == "git" && arg == subCmd {
 			continue
 		}
 		// Only process if it looks like a path (contains / or \ or starts with .)
@@ -277,6 +369,13 @@ func extractBashPrefix(command string) string {
 			dir = path.Dir(cleaned)
 		}
 
+		// Build prefix with subcommand for git, or just baseCmd for others
+		if baseCmd == "git" {
+			if dir == "." {
+				return fmt.Sprintf("git %s:./", subCmd)
+			}
+			return fmt.Sprintf("git %s:%s/", subCmd, dir)
+		}
 		if dir == "." {
 			return fmt.Sprintf("%s:./", baseCmd)
 		}
@@ -284,12 +383,19 @@ func extractBashPrefix(command string) string {
 	}
 
 	// Second pass: if no clear path found, use the first non-flag argument as a filename
+	// For git, we still allow ./ prefix even without path args (git status, git stash, etc.)
 	for _, arg := range fields[1:] {
 		if strings.HasPrefix(arg, "-") {
 			continue
 		}
 		if isNumeric(arg) {
 			continue
+		}
+		// For git, skip the subcommand when checking for path args
+		if baseCmd == "git" && arg == subCmd {
+			// Git commands without path args (git status, git stash, etc.)
+			// Still return a prefix with subcommand and current directory
+			return fmt.Sprintf("git %s:./", subCmd)
 		}
 		// Treat as filename in current dir
 		return fmt.Sprintf("%s:./", baseCmd)
@@ -494,16 +600,45 @@ func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any) 
 	// This prevents buffered input from causing double-press issues
 	flushStdin(fd)
 
-	// Check if bash command targets paths outside cwd
+	// Check if bash command should show warning
+	// Warning is shown for: commands outside cwd, or commands matching warn patterns
 	isWarning := false
+	var warningMsg string
+	var allowlistInfo string
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
-			isWarning = isCommandOutsideCwd(cmd)
+			// Check for outside cwd warning
+			if isCommandOutsideCwd(cmd) {
+				isWarning = true
+				warningMsg = "command targets paths outside project"
+			}
+			// Check for warn patterns (curl POST, scp, rsync, .env files)
+			if warned, pattern := IsWarn(cmd); warned {
+				isWarning = true
+				warningMsg = fmt.Sprintf("matches warning pattern: %s", pattern)
+			}
+			// Generate allowlist info for display
+			prefix := extractBashPrefix(cmd)
+			if prefix != "" {
+				// Parse prefix format "cmd:path/" into command and directory
+				colonIdx := strings.Index(prefix, ":")
+				if colonIdx != -1 {
+					cmdName := prefix[:colonIdx]
+					dirPath := prefix[colonIdx+1:]
+					// Include "(includes subdirs)" for directories that allow hierarchical matching
+					// ./ is special - it only allows files in current dir, not subdirs
+					if dirPath != "./" {
+						allowlistInfo = fmt.Sprintf("Allow for this session: %s in %s directory (includes subdirs)", cmdName, dirPath)
+					} else {
+						allowlistInfo = fmt.Sprintf("Allow for this session: %s in %s directory", cmdName, dirPath)
+					}
+				}
+			}
 		}
 	}
 
 	// Run interactive selector
-	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning)
+	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning, warningMsg, allowlistInfo)
 	if err != nil {
 		term.Restore(fd, oldState)
 		return ApprovalResult{Decision: ApprovalDeny}, err
@@ -567,24 +702,28 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 
 // selectorState holds the state for the interactive selector
 type selectorState struct {
-	toolDisplay string
-	selected    int
-	totalLines  int
-	termWidth   int
-	termHeight  int
-	boxWidth    int
-	innerWidth  int
-	denyReason  string // deny reason (always visible in box)
-	isWarning   bool   // true if command targets paths outside cwd (red box)
+	toolDisplay    string
+	selected       int
+	totalLines     int
+	termWidth      int
+	termHeight     int
+	boxWidth       int
+	innerWidth     int
+	denyReason     string // deny reason (always visible in box)
+	isWarning      bool   // true if command has warning
+	warningMessage string // dynamic warning message to display
+	allowlistInfo  string // show what will be allowlisted (for "Always allow" option)
 }
 
 // runSelector runs the interactive selector and returns the selected index and optional deny reason.
 // If isWarning is true, the box is rendered in red to indicate the command targets paths outside cwd.
-func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool) (int, string, error) {
+func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool, warningMessage string, allowlistInfo string) (int, string, error) {
 	state := &selectorState{
-		toolDisplay: toolDisplay,
-		selected:    0,
-		isWarning:   isWarning,
+		toolDisplay:    toolDisplay,
+		selected:       0,
+		isWarning:      isWarning,
+		warningMessage: warningMessage,
+		allowlistInfo:  allowlistInfo,
 	}
 
 	// Get terminal size
@@ -771,7 +910,11 @@ func renderSelectorBox(state *selectorState) {
 
 	// Draw warning line if needed
 	if state.isWarning {
-		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m command targets paths outside project\033[K\r\n")
+		if state.warningMessage != "" {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m %s\033[K\r\n", state.warningMessage)
+		} else {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m command targets paths outside project\033[K\r\n")
+		}
 		fmt.Fprintf(os.Stderr, "\033[K\r\n") // blank line after warning
 	}
 
@@ -787,17 +930,26 @@ func renderSelectorBox(state *selectorState) {
 	for i, label := range optionLabels {
 		if i == 2 { // Deny option with input
 			denyLabel := "3. Deny: "
+			// Show placeholder if empty, actual input if typing
 			inputDisplay := state.denyReason
+			if inputDisplay == "" {
+				inputDisplay = "\033[90m(optional reason)\033[0m"
+			}
 			if i == state.selected {
 				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			} else {
 				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			}
 		} else {
+			// Show allowlist info beside "Allow for this session" (index 1)
+			displayLabel := label
+			if i == 1 && state.allowlistInfo != "" {
+				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
+			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
 			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
 			}
 		}
 	}
@@ -830,16 +982,24 @@ func updateSelectorOptions(state *selectorState) {
 		if i == 2 { // Deny option
 			denyLabel := "3. Deny: "
 			inputDisplay := state.denyReason
+			if inputDisplay == "" {
+				inputDisplay = "\033[90m(optional reason)\033[0m"
+			}
 			if i == state.selected {
 				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			} else {
 				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			}
 		} else {
+			// Show allowlist info beside "Allow for this session" (index 1)
+			displayLabel := label
+			if i == 1 && state.allowlistInfo != "" {
+				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
+			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
 			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
 			}
 		}
 	}
@@ -868,6 +1028,9 @@ func updateReasonInput(state *selectorState) {
 	// Redraw Deny line with reason
 	denyLabel := "3. Deny: "
 	inputDisplay := state.denyReason
+	if inputDisplay == "" {
+		inputDisplay = "\033[90m(optional reason)\033[0m"
+	}
 	if state.selected == 2 {
 		fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 	} else {
@@ -901,7 +1064,7 @@ func (a *ApprovalManager) fallbackApproval(toolDisplay string) (ApprovalResult, 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, toolDisplay)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Always allow  [3] Deny")
+	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Allow for this session  [3] Deny")
 	fmt.Fprint(os.Stderr, "choice: ")
 
 	var input string
