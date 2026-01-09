@@ -364,10 +364,11 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 					}
 
 					// Check if command is auto-allowed (safe command)
-					if agent.IsAutoAllowed(cmd) {
-						fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
-						skipApproval = true
-					}
+					// TODO(parthsareen): re-enable with tighter scoped allowlist
+					// if agent.IsAutoAllowed(cmd) {
+					// 	fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
+					// 	skipApproval = true
+					// }
 				}
 			}
 
@@ -633,7 +634,6 @@ func checkModelCapabilities(ctx context.Context, modelName string) (supportsTool
 // GenerateInteractive runs an interactive agent session.
 // This is called from cmd.go when --experimental flag is set.
 // If yoloMode is true, all tool approvals are skipped.
-// If disableBash is true, the bash tool will not be registered.
 func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool, disableBash bool) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
@@ -662,11 +662,11 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			DisableBash: disableBash,
 		})
 
-		// Display welcome message about tool capabilities
 		if toolRegistry.Has("bash") {
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, "\033[90mBash tool is enabled. The model can read and modify files on your computer.\033[0m")
-			fmt.Fprintln(os.Stderr, "\033[90mTo disable: set /bash off or restart with --no-bash \033[0m")
+			fmt.Fprintln(os.Stderr, "This experimental version of Ollama has the \033[1mbash\033[0m tool enabled.")
+			fmt.Fprintln(os.Stderr, "Models can read files on your computer, or run commands (after you allow them).")
+			fmt.Fprintln(os.Stderr, "To disable: use /bash off or restart with --experimental-no-bash")
 			fmt.Fprintln(os.Stderr)
 		}
 

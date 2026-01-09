@@ -950,11 +950,11 @@ func FormatApprovalResult(toolName string, args map[string]any, result ApprovalR
 
 	switch result.Decision {
 	case ApprovalOnce:
-		label = "approved"
+		label = "Approved"
 	case ApprovalAlways:
-		label = "always allowed"
+		label = "Always allowed"
 	case ApprovalDeny:
-		label = "denied"
+		label = "Denied"
 	}
 
 	// Format based on tool type
