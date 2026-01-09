@@ -146,6 +146,16 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
 			textProcessor, err = model.NewTextProcessor(modelPath)
+		} else if len(projectors) == 1 {
+			var canMerge bool
+			canMerge, err = model.CanMergeProjector(modelPath)
+			if err == nil {
+				if !canMerge {
+					err = errors.New("split vision models aren't supported")
+				} else {
+					textProcessor, err = model.NewTextProcessor(modelPath)
+				}
+			}
 		} else {
 			err = errors.New("split vision models aren't supported")
 		}
@@ -479,10 +489,10 @@ type LoadRequest struct {
 	GPULayers      ml.GPULayersList
 	MultiUserCache bool
 
-	// Legacy fields - not used with the Ollama engine
 	ProjectorPath string
-	MainGPU       int
-	UseMmap       bool
+	// Legacy fields - not used with the Ollama engine
+	MainGPU int
+	UseMmap bool
 }
 
 type LoadResponse struct {

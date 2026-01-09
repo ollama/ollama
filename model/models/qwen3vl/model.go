@@ -2,7 +2,9 @@ package qwen3vl
 
 import (
 	"bytes"
+	"fmt"
 	"image"
+	"reflect"
 	"slices"
 
 	"github.com/ollama/ollama/fs"
@@ -168,6 +170,27 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, 1e-06)
 	return m.Output.Forward(ctx, hiddenStates), nil
+}
+
+func (m *Model) PostPopulate() {
+	if m.VisionModel.PatchMerger.FC1.Weight == nil {
+		if tensor := m.Base.Backend().Get("mm.0.weight"); tensor != nil {
+			model.SetPointer(m.Base, reflect.ValueOf(m.VisionModel.PatchMerger.FC1), []model.Tag{model.ParseTag("mm.0")})
+			model.SetPointer(m.Base, reflect.ValueOf(m.VisionModel.PatchMerger.FC2), []model.Tag{model.ParseTag("mm.2")})
+			model.SetPointer(m.Base, reflect.ValueOf(m.VisionModel.PatchMerger.Norm), []model.Tag{model.ParseTag("v.post_ln")})
+		}
+	}
+	for i, deepstacks := range m.VisionModel.DeepstackMerger {
+		if deepstacks.FC1.Weight == nil {
+			if tensor := m.Base.Backend().Get(fmt.Sprintf("v.deepstack.%d.weight", m.VisionModel.deepstackVisualIndexes[i])); tensor != nil {
+				model.SetPointer(m.Base, reflect.ValueOf(deepstacks), []model.Tag{model.ParseTag("v.deepstack.%d")})
+			}
+		}
+	}
+}
+
+func (m *Model) IsOnlineProjectorMergingSupported() bool {
+	return true
 }
 
 func New(c fs.Config) (model.Model, error) {

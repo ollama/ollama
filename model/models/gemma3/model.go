@@ -164,6 +164,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	return hiddenState, nil
 }
 
+func (m *Model) IsOnlineProjectorMergingSupported() bool {
+	return true
+}
+
 func init() {
 	model.Register("gemma3", New)
 	model.Register("gemma3_embed", newEmbedModel)
