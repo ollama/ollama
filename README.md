@@ -4,9 +4,8 @@ This is a fork of Ollama which we at NOLAI use for our Framework desktops. The O
 
 We sometimes will also add different features that we like. If you have any questions feel free to contact us. 
 
+Here is the docker image:
 https://hub.docker.com/r/julianvanderhorst/ollama-framework-desktop
-
-Here is the image we build
 
 <div align="center">
   <a href="https://ollama.com">
