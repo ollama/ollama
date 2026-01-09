@@ -574,7 +574,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err != nil {
 			return err
 		}
-		if err := pushWithFastTransfer(ctx, mp, layers, manifestJSON, regOpts, fn); err != nil {
+		if err := pushWithTransfer(ctx, mp, layers, manifestJSON, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -648,7 +648,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		if err := pullWithFastTransfer(ctx, mp, layers, manifest, regOpts, fn); err != nil {
+		if err := pullWithTransfer(ctx, mp, layers, manifest, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -737,8 +737,8 @@ func hasTensorLayers(layers []Layer) bool {
 	return false
 }
 
-// pullWithFastTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifest *Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
+func pullWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifest *Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -752,7 +752,11 @@ func pullWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, man
 		return err
 	}
 
-	baseURL := mp.BaseURL().String()
+	base := mp.BaseURL()
+	if base.Scheme != "http" && regOpts != nil && regOpts.Insecure {
+		base.Scheme = "http"
+	}
+	baseURL := base.String()
 
 	var totalSize int64
 	for _, blob := range blobs {
@@ -806,8 +810,8 @@ func pullWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, man
 	return os.WriteFile(fp, manifestJSON, 0o644)
 }
 
-// pushWithFastTransfer uses the simplified x/transfer package for uploading blobs and manifest.
-func pushWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+// pushWithTransfer uses the simplified x/transfer package for uploading blobs and manifest.
+func pushWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -822,7 +826,11 @@ func pushWithFastTransfer(ctx context.Context, mp ModelPath, layers []Layer, man
 		return err
 	}
 
-	baseURL := mp.BaseURL().String()
+	base := mp.BaseURL()
+	if base.Scheme != "http" && regOpts != nil && regOpts.Insecure {
+		base.Scheme = "http"
+	}
+	baseURL := base.String()
 
 	var totalSize int64
 	for _, blob := range blobs {
