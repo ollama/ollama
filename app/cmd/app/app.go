@@ -305,6 +305,9 @@ func main() {
 	go func() {
 		<-signals
 		slog.Info("received SIGINT or SIGTERM signal, shutting down")
+		if err := st.ClearAllDrafts(); err != nil {
+			slog.Warn("failed to clear drafts on shutdown", "error", err)
+		}
 		quit()
 	}()
 
