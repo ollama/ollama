@@ -250,8 +250,7 @@ func TestTriggerImmediateCheck(t *testing.T) {
 		return nil
 	}
 
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/update.json" {
 			checkCount.Add(1)
 			select {
