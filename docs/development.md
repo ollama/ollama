@@ -51,6 +51,13 @@ Install prerequisites:
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
+- (Options) MSI Packages
+    - [WiX v6 CLI](https://wixtoolset.org/) (`dotnet tool install -g wix`)
+
+
+```
+winget install --id=MartinStorsjo.LLVM-MinGW.UCRT -e
+```
 
 Then, configure and build the project:
 
@@ -84,6 +91,48 @@ Lastly, run Ollama:
 ```shell
 go run . serve
 ```
+
+**Full build** (all backends + MSI packages + Inno Setup installer):
+```powershell
+.\scripts\build_windows.ps1
+```
+
+**Individual build steps** can be run separately:
+```powershell
+.\scripts\build_windows.ps1 cuda13 ollama
+```
+
+#### Pester Tests
+
+```powershell
+# Unit tests (fast, no system changes)
+Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Unit
+
+# Integration tests (requires clean environment)
+Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Integration
+```
+
+## Install/Upgrade Testing (Windows)
+
+### MSI install script
+
+1. Build MSIs:
+```powershell
+.\scripts\build_windows.ps1 msi
+```
+
+2. Serve the dist folder locally (in a separate terminal):
+```powershell
+cd dist
+python -m http.server 8000
+```
+
+3. Test install pointing at the local server:
+```powershell
+$env:OLLAMA_DOWNLOAD_URL = "http://localhost:8000"
+.\scripts\install.ps1 -All -InstallDir "$env:TEMP\OllamaTest"
+```
+
 
 ## Windows (ARM)
 

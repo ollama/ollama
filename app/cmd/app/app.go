@@ -250,7 +250,11 @@ func main() {
 	osrv := server.New(st, devMode)
 	go func() {
 		slog.Info("starting ollama server")
-		done <- osrv.Run(octx)
+		err := osrv.Run(octx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("ollama server failed", "error", err)
+		}
+		done <- err
 	}()
 
 	uiServer := ui.Server{
@@ -260,7 +264,11 @@ func main() {
 			<-done
 			octx, ocancel = context.WithCancel(ctx)
 			go func() {
-				done <- osrv.Run(octx)
+				err := osrv.Run(octx)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					slog.Error("ollama server failed after restart", "error", err)
+				}
+				done <- err
 			}()
 		},
 		Store:        st,

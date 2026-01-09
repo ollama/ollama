@@ -43,10 +43,19 @@ type InferenceCompute struct {
 
 func New(s *store.Store, devMode bool) *Server {
 	p := resolvePath("ollama")
+	slog.Debug("resolved server binary", "path", p)
 	return &Server{store: s, bin: p, dev: devMode}
 }
 
 func resolvePath(name string) string {
+	// On Windows, os.Stat does not auto-append executable extensions
+	// like exec.LookPath does, so we need to check both "name" and
+	// "name.exe" when looking for binaries.
+	candidates := []string{name}
+	if runtime.GOOS == "windows" && filepath.Ext(name) == "" {
+		candidates = append(candidates, name+".exe")
+	}
+
 	// look in the app bundle first
 	if exe, _ := os.Executable(); exe != "" {
 		var dir string
@@ -55,18 +64,23 @@ func resolvePath(name string) string {
 		} else {
 			dir = filepath.Join(filepath.Dir(exe), "..", "Resources")
 		}
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			return filepath.Join(dir, name)
+		for _, c := range candidates {
+			if _, err := os.Stat(filepath.Join(dir, c)); err == nil {
+				return filepath.Join(dir, c)
+			}
 		}
 	}
 
 	// check the development dist path
-	for _, path := range []string{
-		filepath.Join("dist", runtime.GOOS, name),
-		filepath.Join("dist", runtime.GOOS+"-"+runtime.GOARCH, name),
+	for _, dir := range []string{
+		filepath.Join("dist", runtime.GOOS),
+		filepath.Join("dist", runtime.GOOS+"-"+runtime.GOARCH),
 	} {
-		if _, err := os.Stat(path); err == nil {
-			return path
+		for _, c := range candidates {
+			p := filepath.Join(dir, c)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
 		}
 	}
 
@@ -150,6 +164,7 @@ func stop(proc *os.Process) error {
 func (s *Server) Run(ctx context.Context) error {
 	l, err := openRotatingLog()
 	if err != nil {
+		slog.Error("failed to open server log", "err", err)
 		return err
 	}
 	s.log = l
@@ -169,12 +184,16 @@ func (s *Server) Run(ctx context.Context) error {
 
 		cmd, err := s.cmd(ctx)
 		if err != nil {
+			slog.Error("failed to create server command", "err", err)
 			return err
 		}
 
+		slog.Debug("starting server process", "bin", s.bin, "args", cmd.Args)
 		if err := cmd.Start(); err != nil {
+			slog.Error("failed to start server process", "bin", s.bin, "err", err)
 			return err
 		}
+		slog.Info("server process started", "pid", cmd.Process.Pid)
 
 		err = os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
 		if err != nil {

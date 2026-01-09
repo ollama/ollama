@@ -24,8 +24,9 @@ The Ollama install does not require Administrator, and installs in your home dir
 
 To install the Ollama application in a location different than your home directory, start the installer with the following flag
 
+The PowerShell install script supports `irm | iex` style installation:
 ```powershell
-OllamaSetup.exe /DIR="d:\some\location"
+$env:OLLAMA_INSTALL_DIR="d:\some\location"; irm https://ollama.com/install.ps1 | iex
 ```
 
 ### Changing Model Location
@@ -68,23 +69,20 @@ the explorer window by hitting `<Ctrl>+R` and type in:
 The Ollama Windows installer registers an Uninstaller application. Under `Add or remove programs` in Windows Settings, you can uninstall Ollama.
 
 <Note>
-  If you have [changed the OLLAMA_MODELS location](#changing-model-location), the installer will not remove your downloaded models
+  To remove your downloaded models use `$env:OLLAMA_UNINSTALL=1; irm https://ollama.com/install.ps1 | iex`
 </Note>
 
 ## Standalone CLI
 
-The easiest way to install Ollama on Windows is to use the `OllamaSetup.exe`
-installer. It installs in your account without requiring Administrator rights.
+The easiest way to install Ollama on Windows is to use the `irm https://ollama.com/install.ps1 | iex`
+It installs in your account without requiring Administrator rights.
 We update Ollama regularly to support the latest models, and this installer will
 help you keep up to date.
 
-If you'd like to install or integrate Ollama as a service, a standalone
-`ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
-and GPU library dependencies for Nvidia. If you have an AMD GPU, also download
-and extract the additional ROCm package `ollama-windows-amd64-rocm.zip` into the
-same directory. This allows for embedding Ollama in existing applications, or
-running it as a system service via `ollama serve` with tools such as
-[NSSM](https://nssm.cc/).
+If you'd like to install or integrate Ollama as a service, standalone zip
+files or MSIs are available. This allows for embedding Ollama in existing
+applications, or running it as a system service via `ollama serve` with tools
+such as [NSSM](https://nssm.cc/).
 
 <Note>
   If you are upgrading from a prior version, you should remove the old directories first.

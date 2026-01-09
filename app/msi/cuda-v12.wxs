@@ -1,0 +1,23 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package
+      Name="Ollama CUDA v12"
+      Manufacturer="Ollama, Inc."
+      Version="$(PKG_VERSION)"
+      Scope="perUser"
+      UpgradeCode="3F8A2D1E-5B6C-4E7F-A9D0-1C2B3E4F5A6D"
+      InstallerVersion="500">
+
+      <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
+      <MediaTemplate EmbedCab="yes" MaximumUncompressedMediaSize="2" CompressionLevel="high" />
+      <Icon Id="productIcon" SourceFile="..\assets\app.ico" />
+      <Property Id="ARPPRODUCTICON" Value="productIcon" />
+
+      <ComponentGroup Id="cuda_v12_Components" Directory="lib_ollama_cuda_v12_Dir">
+        <Component><File Source="lib\ollama\cuda_v12\ggml-cuda.dll"/></Component>
+      </ComponentGroup>
+
+      <Feature Id="MainFeature" Title="Ollama CUDA v12" Level="1">
+        <ComponentGroupRef Id="cuda_v12_Components" />
+      </Feature>
+    </Package>
+</Wix>

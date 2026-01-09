@@ -1,0 +1,23 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package
+      Name="Ollama Vulkan"
+      Manufacturer="Ollama, Inc."
+      Version="$(PKG_VERSION)"
+      Scope="perUser"
+      UpgradeCode="6D4A2E8F-1B3C-4F5E-A7D9-0C1B2E3F4A5D"
+      InstallerVersion="500">
+
+      <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
+      <MediaTemplate EmbedCab="yes" MaximumUncompressedMediaSize="2" CompressionLevel="high" />
+      <Icon Id="productIcon" SourceFile="..\assets\app.ico" />
+      <Property Id="ARPPRODUCTICON" Value="productIcon" />
+
+      <ComponentGroup Id="vulkan_Components" Directory="lib_ollama_vulkan_Dir">
+        <Component><File Source="lib\ollama\vulkan\ggml-vulkan.dll"/></Component>
+      </ComponentGroup>
+
+      <Feature Id="MainFeature" Title="Ollama Vulkan" Level="1">
+        <ComponentGroupRef Id="vulkan_Components" />
+      </Feature>
+    </Package>
+</Wix>

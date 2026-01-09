@@ -1,0 +1,23 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package
+      Name="Ollama ROCm"
+      Manufacturer="Ollama, Inc."
+      Version="$(PKG_VERSION)"
+      Scope="perUser"
+      UpgradeCode="4B2E8F1A-6C3D-4A5E-9F7B-0D1C2E3A4B5D"
+      InstallerVersion="500">
+
+      <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
+      <MediaTemplate EmbedCab="yes" MaximumUncompressedMediaSize="2" CompressionLevel="high" />
+      <Icon Id="productIcon" SourceFile="..\assets\app.ico" />
+      <Property Id="ARPPRODUCTICON" Value="productIcon" />
+
+      <ComponentGroup Id="rocm_Components" Directory="lib_ollama_rocm_Dir">
+        <Component><File Source="lib\ollama\rocm\ggml-hip.dll"/></Component>
+      </ComponentGroup>
+
+      <Feature Id="MainFeature" Title="Ollama ROCm" Level="1">
+        <ComponentGroupRef Id="rocm_Components" />
+      </Feature>
+    </Package>
+</Wix>
