@@ -157,7 +157,7 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 			r = f
 		}
 
-		layer, err := createLayer(r, "application/vnd.ollama.image.config", cfgPath)
+		layer, err := createLayer(r, "application/vnd.ollama.image.json", cfgPath)
 		if err != nil {
 			return fmt.Errorf("failed to create layer for %s: %w", cfgPath, err)
 		}
