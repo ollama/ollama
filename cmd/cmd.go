@@ -465,7 +465,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
 	// Check if this is a known image generation model (skip Show/Pull)
-	if imagegen.IsImageGenModel(name) {
+	if imagegen.HasTensorLayers(name) {
 		if opts.Prompt == "" && !interactive {
 			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
 		}
@@ -838,7 +838,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
 	// Check if this is an image generation model
-	if imagegen.IsImageGenModel(args[0]) {
+	if imagegen.HasTensorLayers(args[0]) {
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		return imagegen.Show(args[0], verbose, os.Stdout)
 	}

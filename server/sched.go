@@ -196,7 +196,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Check for image generation model before attempting GGML load
-					if imagegen.IsImageGenModel(pending.model.ModelPath) {
+					if slices.Contains(pending.model.Config.Capabilities, "image") {
 						if s.loadImageGen(pending) {
 							break
 						}

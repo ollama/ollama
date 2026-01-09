@@ -87,7 +87,7 @@ func EstimateVRAM(modelName string) uint64 {
 	return 21 * GB
 }
 
-// IsImageGenModel checks if the given model name is an image generation model.
-func IsImageGenModel(modelName string) bool {
+// HasTensorLayers checks if the given model has tensor layers.
+func HasTensorLayers(modelName string) bool {
 	return ResolveModelName(modelName) != ""
 }

@@ -30,7 +30,6 @@ import (
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/transfer"
 )
 
@@ -76,8 +75,8 @@ type Model struct {
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
-	// Check for image generation model first (before GGUF check)
-	if m.ModelPath != "" && imagegen.IsImageGenModel(m.ModelPath) {
+	// Check for image generation model via config capabilities
+	if slices.Contains(m.Config.Capabilities, "image") {
 		return []model.Capability{model.CapabilityImageGeneration}
 	}
 

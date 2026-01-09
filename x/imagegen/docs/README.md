@@ -74,6 +74,18 @@ curl http://localhost:11434/v1/images/generations \
   }'
 ```
 
+### Example: Save to File
+
+```bash
+curl -s http://localhost:11434/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "z-image",
+    "prompt": "a white cat",
+    "size": "1024x1024"
+  }' | jq -r '.data[0].b64_json' | base64 -d > image.png
+```
+
 ### Streaming Progress
 
 Enable streaming to receive progress updates via SSE:
