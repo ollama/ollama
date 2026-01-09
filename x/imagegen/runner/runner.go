@@ -1,3 +1,5 @@
+//go:build mlx
+
 // Package runner provides a subprocess server for image generation.
 // It listens on a port and handles HTTP requests for image generation.
 package runner

@@ -10,13 +10,21 @@ import (
 	"sort"
 )
 
+// tensorInfo holds tensor metadata from safetensors headers.
+// This avoids depending on safetensors.go which requires the mlx tag.
+type tensorInfo struct {
+	Dtype       string  `json:"dtype"`
+	Shape       []int32 `json:"shape"`
+	DataOffsets [2]int  `json:"data_offsets"`
+}
+
 // TensorExtractor extracts individual tensors from a safetensors file.
 // It provides io.Reader interfaces for each tensor's raw data, enabling
 // streaming writes to blobs without loading entire tensors into memory.
 type TensorExtractor struct {
 	file       *os.File
 	dataOffset int64                // Start of tensor data region
-	header     map[string]TensorInfo
+	header     map[string]tensorInfo
 }
 
 // TensorData holds tensor metadata and a reader for its raw bytes.
@@ -38,7 +46,7 @@ func (td *TensorData) Reader() io.Reader {
 // individual tensor blobs for native zero-copy loading.
 func (td *TensorData) SafetensorsReader() io.Reader {
 	// Build minimal safetensors header with tensor named "data"
-	header := map[string]TensorInfo{
+	header := map[string]tensorInfo{
 		"data": {
 			Dtype:       td.Dtype,
 			Shape:       td.Shape,
@@ -63,7 +71,7 @@ func (td *TensorData) SafetensorsReader() io.Reader {
 
 // SafetensorsSize returns the total size of the safetensors-wrapped tensor.
 func (td *TensorData) SafetensorsSize() int64 {
-	header := map[string]TensorInfo{
+	header := map[string]tensorInfo{
 		"data": {
 			Dtype:       td.Dtype,
 			Shape:       td.Shape,
@@ -95,7 +103,7 @@ func OpenForExtraction(path string) (*TensorExtractor, error) {
 		return nil, fmt.Errorf("failed to read header: %w", err)
 	}
 
-	var header map[string]TensorInfo
+	var header map[string]tensorInfo
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("failed to parse header: %w", err)
