@@ -1,3 +1,13 @@
+# Important
+
+This is a fork of Ollama which we at NOLAI use for our Framework desktops. The Ollama team have stated that RPC is not their main priority so, we want to keep our own active branch maintaining it. 
+
+We sometimes will also add different features that we like. If you have any questions feel free to contact us. 
+
+https://hub.docker.com/r/julianvanderhorst/ollama-framework-desktop
+
+Here is the image we build
+
 <div align="center">
   <a href="https://ollama.com">
     <img alt="ollama" width="240" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
