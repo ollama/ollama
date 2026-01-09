@@ -33,10 +33,10 @@ func createTestBlob(t *testing.T, dir string, size int) (Blob, []byte) {
 
 	// Write to file
 	path := filepath.Join(dir, digestToPath(digest))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -255,10 +255,10 @@ func TestDownloadSkipsExisting(t *testing.T) {
 	// Pre-populate client dir
 	clientDir := t.TempDir()
 	path := filepath.Join(clientDir, digestToPath(blob1.Digest))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data1, 0644); err != nil {
+	if err := os.WriteFile(path, data1, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1103,7 +1103,6 @@ func TestProgressTracking(t *testing.T) {
 			mu.Unlock()
 		},
 	})
-
 	if err != nil {
 		t.Fatalf("Download failed: %v", err)
 	}
@@ -1152,7 +1151,6 @@ func TestDownloadEmptyBlobList(t *testing.T) {
 		BaseURL: "http://unused",
 		DestDir: t.TempDir(),
 	})
-
 	if err != nil {
 		t.Errorf("Expected no error for empty blob list, got: %v", err)
 	}
@@ -1164,7 +1162,6 @@ func TestUploadEmptyBlobList(t *testing.T) {
 		BaseURL: "http://unused",
 		SrcDir:  t.TempDir(),
 	})
-
 	if err != nil {
 		t.Errorf("Expected no error for empty blob list, got: %v", err)
 	}
@@ -1276,10 +1273,10 @@ func TestProgressRollback(t *testing.T) {
 
 	clientDir := t.TempDir()
 	path := filepath.Join(clientDir, digestToPath(digest))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, content, 0644); err != nil {
+	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1340,7 +1337,6 @@ func TestProgressRollback(t *testing.T) {
 
 	t.Logf("Progress rollback test: %d progress callbacks", len(progressValues))
 }
-
 
 // TestUserAgentHeader verifies User-Agent header is set on requests
 func TestUserAgentHeader(t *testing.T) {
@@ -1553,10 +1549,10 @@ func BenchmarkUploadThroughput(b *testing.B) {
 	// Create source file once
 	srcDir := b.TempDir()
 	path := filepath.Join(srcDir, digestToPath(digest))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		b.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		b.Fatal(err)
 	}
 
@@ -1617,8 +1613,8 @@ func TestThroughput(t *testing.T) {
 		blobs[i] = Blob{Digest: digest, Size: int64(len(data))}
 
 		path := filepath.Join(serverDir, digestToPath(digest))
-		os.MkdirAll(filepath.Dir(path), 0755)
-		os.WriteFile(path, data, 0644)
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, data, 0o644)
 	}
 
 	totalBytes := int64(blobSize * numBlobs)

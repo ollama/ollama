@@ -113,7 +113,6 @@ func handleStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.Com
 			}
 		}
 	})
-
 	if err != nil {
 		c.SSEvent("error", gin.H{"error": err.Error()})
 		return
@@ -129,7 +128,6 @@ func handleNonStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.
 			imagePath = extractPath(resp.Content)
 		}
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": err.Error()}})
 		return

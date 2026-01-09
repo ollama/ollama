@@ -554,7 +554,9 @@ iGPUScan:
 
 // loadImageGen loads an image generation model.
 func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
-	server, err := imagegen.NewServer(req.model.ModelPath)
+	// Use model name for imagegen (it resolves manifests by name, not file path)
+	modelName := req.model.ShortName
+	server, err := imagegen.NewServer(modelName)
 	if err != nil {
 		req.errCh <- err
 		return true

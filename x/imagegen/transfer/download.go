@@ -167,7 +167,7 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
-	os.MkdirAll(filepath.Dir(dest), 0755)
+	os.MkdirAll(filepath.Dir(dest), 0o755)
 
 	f, err := os.Create(tmp)
 	if err != nil {
