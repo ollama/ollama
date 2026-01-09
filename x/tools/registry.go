@@ -38,6 +38,22 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
+// Unregister removes a tool from the registry by name.
+func (r *Registry) Unregister(name string) {
+	delete(r.tools, name)
+}
+
+// Has checks if a tool with the given name is registered.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.tools[name]
+	return ok
+}
+
+// RegisterBash adds the bash tool to the registry.
+func (r *Registry) RegisterBash() {
+	r.Register(&BashTool{})
+}
+
 // Get retrieves a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	tool, ok := r.tools[name]
@@ -88,17 +104,28 @@ func (r *Registry) Count() int {
 	return len(r.tools)
 }
 
+// RegistryConfig holds configuration for creating a registry.
+type RegistryConfig struct {
+	DisableBash bool
+}
+
 // DefaultRegistry creates a registry with all built-in tools.
 // Tools can be disabled via environment variables:
 // - OLLAMA_AGENT_DISABLE_WEBSEARCH=1 disables web_search
 // - OLLAMA_AGENT_DISABLE_BASH=1 disables bash
 func DefaultRegistry() *Registry {
+	return DefaultRegistryWithConfig(RegistryConfig{})
+}
+
+// DefaultRegistryWithConfig creates a registry with the given configuration.
+// Environment variables can still override the config to disable tools.
+func DefaultRegistryWithConfig(config RegistryConfig) *Registry {
 	r := NewRegistry()
 	// TODO(parthsareen): re-enable web search once it's ready for release
 	// if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
 	// 	r.Register(&WebSearchTool{})
 	// }
-	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" {
+	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" && !config.DisableBash {
 		r.Register(&BashTool{})
 	}
 	return r
