@@ -70,6 +70,18 @@ struct llama_context {
     float * get_embeddings_ith(int32_t i);
     float * get_embeddings_seq(llama_seq_id seq_id);
 
+    llama_token * get_sampled_tokens() const;
+    llama_token   get_sampled_token_ith(int32_t idx);
+
+    float * get_sampled_logits_ith(int32_t idx);
+    size_t  get_sampled_logits_count(int32_t idx);
+
+    float * get_sampled_probs_ith(int32_t idx);
+    size_t  get_sampled_probs_count(int32_t idx);
+
+    const llama_token * get_sampled_candidates_ith(int32_t idx);
+    size_t get_sampled_candidates_count(int32_t idx);
+
     void attach_threadpool(
             ggml_threadpool_t threadpool,
             ggml_threadpool_t threadpool_batch);
@@ -192,9 +204,12 @@ private:
 
     // Make sure enough space is available for outputs.
     // Returns max number of outputs for which space was reserved.
-    uint32_t output_reserve(int32_t n_outputs);
+    uint32_t output_reserve(int32_t n_outputs, const llama_batch & batch);
 
     void output_reorder();
+
+    // map the output row index `i` to batch index
+    int64_t output_resolve_row(int32_t i) const;
 
     //
     // graph
@@ -212,6 +227,8 @@ public:
     // reserve a graph with a dummy ubatch of the specified size
     ggml_cgraph * graph_reserve(
         uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx, bool split_only = false, size_t * sizes = nullptr);
+
+    bool set_sampler(llama_seq_id seq_id, llama_sampler * sampler);
 
 private:
     llm_graph_params graph_params(
@@ -251,6 +268,31 @@ private:
     // populated only when pooling_type == LLAMA_POOLING_TYPE_NONE
     size_t  embd_size = 0; // capacity (of floats) for embeddings
     float * embd      = nullptr;
+
+    // TODO: simplify
+    struct sampling_info {
+        std::map<llama_seq_id, llama_sampler *> samplers;
+
+        float       * logits      = nullptr;
+        size_t        logits_size = 0;
+
+        llama_token * sampled      = nullptr;
+        size_t        sampled_size = 0;
+
+        float       * probs        = nullptr;
+        size_t        probs_size   = 0;
+
+        llama_token * candidates   = nullptr;
+        size_t        candidates_size = 0;
+
+        std::vector<uint32_t> logits_count;
+        std::vector<uint32_t> probs_count;
+        std::vector<uint32_t> candidates_count;
+
+        std::vector<llama_token> token_ids_full_vocab;
+    };
+
+    sampling_info sampling;
 
     // sequence embeddings output (map of [n_embd] vectors)
     // populated only when pooling_type != LLAMA_POOLING_TYPE_NONE

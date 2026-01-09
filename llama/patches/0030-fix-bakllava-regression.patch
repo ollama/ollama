@@ -9,7 +9,7 @@ Rever to prior logic of assuming an empty projector type is mlp
  1 file changed, 4 insertions(+)
 
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index 4e26cda95..ab61c6ea1 100644
+index ee607568f..4155c612a 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
 @@ -969,6 +969,10 @@ struct clip_model_loader {

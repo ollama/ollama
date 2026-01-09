@@ -34,13 +34,11 @@ void ggml_cuda_op_mean(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
             // CUDA_GRAPHS_DISABLED
             ((ncols > 65536) &&
              ((ctx.cuda_graph->instance == nullptr) && (iscapturing == cudaStreamCaptureStatusNone) ||
-              ctx.cuda_graph->disable_due_to_gpu_arch || ctx.cuda_graph->disable_due_to_too_many_updates ||
-              ctx.cuda_graph->disable_due_to_failed_graph_capture)) ||
+              ctx.cuda_graph->is_enabled())) ||
         // CUDA_GRAPHS ENABLED
         ((ncols > 32768) &&
          !((ctx.cuda_graph->instance == nullptr) && (iscapturing == cudaStreamCaptureStatusNone) ||
-           ctx.cuda_graph->disable_due_to_gpu_arch || ctx.cuda_graph->disable_due_to_too_many_updates ||
-           ctx.cuda_graph->disable_due_to_failed_graph_capture))) {
+            ctx.cuda_graph->is_enabled()))) {
 #else
         (ncols > 65536)) {
 #endif // USE_CUDA_GRAPH

@@ -80,6 +80,7 @@ int32_t cpu_get_num_math();
 //
 
 enum llama_example {
+    LLAMA_EXAMPLE_DEBUG,
     LLAMA_EXAMPLE_COMMON,
     LLAMA_EXAMPLE_SPECULATIVE,
     LLAMA_EXAMPLE_COMPLETION,
@@ -216,6 +217,8 @@ struct common_params_sampling {
     std::vector<llama_logit_bias> logit_bias;     // logit biases to apply
     std::vector<llama_logit_bias> logit_bias_eog; // pre-calculated logit biases for EOG tokens
 
+    bool backend_sampling = false;
+
     bool has_logit_bias() const {
         return !logit_bias.empty();
     }
@@ -329,12 +332,14 @@ struct common_params {
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
 
-    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM, -1 is auto, <= -2 is all
-    int32_t main_gpu           = 0;                // the GPU that is used for scratch and small tensors
-    float   tensor_split[128]  = {0};              // how split tensors should be distributed across GPUs
-    bool    fit_params         = true;             // whether to fit unset model/context parameters to free device memory
-    size_t  fit_params_target  = 1024 * 1024*1024; // margin per device in bytes for fitting parameters to free memory
-    int32_t fit_params_min_ctx = 4096;             // minimum context size to set when trying to reduce memory use
+    int32_t n_gpu_layers       = -1;   // number of layers to store in VRAM, -1 is auto, <= -2 is all
+    int32_t main_gpu           = 0;    // the GPU that is used for scratch and small tensors
+    float   tensor_split[128]  = {0};  // how split tensors should be distributed across GPUs
+    bool    fit_params         = true; // whether to fit unset model/context parameters to free device memory
+    int32_t fit_params_min_ctx = 4096; // minimum context size to set when trying to reduce memory use
+
+    // margin per device in bytes for fitting parameters to free memory:
+    std::vector<size_t> fit_params_target = std::vector<size_t>(llama_max_devices(), 1024 * 1024*1024);
 
     enum llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER; // how to split the model across GPUs
 
@@ -369,6 +374,11 @@ struct common_params {
     std::string lookup_cache_static  = ""; // path of static ngram cache file for lookup decoding           // NOLINT
     std::string lookup_cache_dynamic = ""; // path of dynamic ngram cache file for lookup decoding          // NOLINT
     std::string logits_file          = ""; // file for saving *all* logits                                  // NOLINT
+
+    // llama-debug specific options
+    std::string logits_output_dir = "data"; // directory for saving logits output files                     // NOLINT
+    bool        save_logits       = false;  // whether to save logits to files                              // NOLINT
+    std::vector<std::string> tensor_filter; // filter tensor names for debug output (regex)                 // NOLINT
 
     std::vector<std::string> in_files;   // all input files
     std::vector<std::string> antiprompt; // strings upon which more user input is prompted (a.k.a. reverse prompts)
@@ -420,7 +430,8 @@ struct common_params {
     bool kv_unified        = false; // enable unified KV cache
 
     bool input_prefix_bos  = false; // prefix BOS to user inputs, preceding input_prefix
-    bool use_mmap          = true;  // use mmap for faster loads
+    bool use_mmap          = true;  // enable mmap to use filesystem cache
+    bool use_direct_io     = true;  // read from disk without buffering for faster model loading
     bool use_mlock         = false; // use mlock to keep model in memory
     bool verbose_prompt    = false; // print prompt tokens before generation
     bool display_prompt    = true;  // print prompt before generation
@@ -689,7 +700,9 @@ struct common_init_result {
 
     llama_model * model();
     llama_context * context();
+
     common_sampler * sampler(llama_seq_id seq_id);
+    void reset_samplers();
 
     std::vector<llama_adapter_lora_ptr> & lora();
 

@@ -632,14 +632,11 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
 }
 
 static bool ggml_backend_metal_device_offload_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
-    const int min_batch_size = 32;
+    ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
 
     return (op->op == GGML_OP_MUL_MAT ||
             op->op == GGML_OP_MUL_MAT_ID) &&
-            get_op_batch_size(op) >= min_batch_size;
-
-    GGML_UNUSED(dev);
-    GGML_UNUSED(op);
+            get_op_batch_size(op) >= ggml_metal_device_get_props(ctx_dev)->op_offload_min_batch_size;
 }
 
 static ggml_backend_device_i ggml_backend_metal_device_i = {

@@ -5,7 +5,7 @@
 #include "ggml.h"
 
 #ifdef GGML_CUDA_USE_CUB
-#   include <cub/block/block_scan.cuh>
+#   include <cub/cub.cuh>
 #endif // GGML_CUDA_USE_CUB
 
 template<typename T, int BLOCK_SIZE>
@@ -185,9 +185,34 @@ static __global__ void cumsum_kernel(
     }
 }
 
+#ifdef GGML_CUDA_USE_CUB
+template <typename T>
+static void cumsum_cub(ggml_cuda_pool & pool,
+                       const T *        src,
+                       T *              dst,
+                       int64_t          ne,
+                       cudaStream_t     stream) {
+    size_t tmp_size = 0;
+
+    // Query how much temp storage CUDA UnBound (CUB) needs
+    cub::DeviceScan::InclusiveSum(nullptr,   // d_temp_storage (null = just query size)
+                                  tmp_size,  // reference to size (will be set by CUB)
+                                  src,       // input pointer
+                                  dst,       // output pointer
+                                  ne,        // number of elements
+                                  stream     // CUDA stream to use
+    );
+
+    ggml_cuda_pool_alloc<uint8_t> tmp_alloc(pool, tmp_size);
+
+    // Perform the inclusive scan
+    cub::DeviceScan::InclusiveSum((void *) tmp_alloc.get(), tmp_size, src, dst, ne, stream);
+}
+#endif // GGML_CUDA_USE_CUB
+
 template<typename T>
 static void cumsum_cuda(
-        const T * src, T * dst,
+        [[maybe_unused]] ggml_backend_cuda_context & ctx, const T * src, T * dst,
         const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
         const int64_t nb00, const int64_t nb01, const int64_t nb02, const int64_t nb03,
         const int64_t  nb0,  const int64_t nb1, const int64_t  nb2, const int64_t  nb3,
@@ -201,6 +226,15 @@ static void cumsum_cuda(
 
     if (is_contiguous) {
         use_cub = true;
+        const int64_t nrows = ne01 * ne02 * ne03;
+        // TODO: Compare with DeviceSegmentedScan::InclusiveSegmentedSum for nrows > 1 once InclusiveSegmentedSum is released
+        // Heuristics were determined as part of https://github.com/ggml-org/llama.cpp/pull/17004
+        if (((nrows == 1) && (ne00 > 1024)) || (ne00 / nrows > 4096)) {
+            for (int i=0; i<nrows; i++) {
+                cumsum_cub(ctx.pool(), src + i * ne00, dst + i * ne00, ne00, stream);
+            }
+            return;
+        }
     }
 #endif // GGML_CUDA_USE_CUB
     dim3 grid_dims(ne01, ne02, ne03);
@@ -239,7 +273,7 @@ void ggml_cuda_op_cumsum(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
         case GGML_TYPE_F32:
             {
                 cumsum_cuda(
-                    (const float *)src0->data, (float *)dst->data,
+                    ctx, (const float *)src0->data, (float *)dst->data,
                     src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
                     src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
                     dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3],
