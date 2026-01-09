@@ -1526,7 +1526,7 @@ func BenchmarkDownloadThroughput(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		clientDir := b.TempDir()
 		err := Download(context.Background(), DownloadOptions{
 			Blobs:       []Blob{blob},
@@ -1579,7 +1579,7 @@ func BenchmarkUploadThroughput(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		err := Upload(context.Background(), UploadOptions{
 			Blobs:       []Blob{blob},
 			BaseURL:     server.URL,
