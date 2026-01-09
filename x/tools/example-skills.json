@@ -1,0 +1,44 @@
+{
+  "version": "1",
+  "skills": [
+    {
+      "name": "get_time",
+      "description": "Get the current date and time. Use this when the user asks about the current time or date.",
+      "parameters": [],
+      "executor": {
+        "type": "script",
+        "command": "date",
+        "timeout": 5
+      }
+    },
+    {
+      "name": "system_info",
+      "description": "Get system information including OS, hostname, and uptime.",
+      "parameters": [],
+      "executor": {
+        "type": "script",
+        "command": "sh",
+        "args": ["-c", "echo \"Hostname: $(hostname)\"; echo \"OS: $(uname -s)\"; echo \"Kernel: $(uname -r)\"; echo \"Uptime: $(uptime -p 2>/dev/null || uptime)\""],
+        "timeout": 10
+      }
+    },
+    {
+      "name": "python_eval",
+      "description": "Evaluate a Python expression. The expression is passed via stdin as JSON with an 'expression' field.",
+      "parameters": [
+        {
+          "name": "expression",
+          "type": "string",
+          "description": "The Python expression to evaluate",
+          "required": true
+        }
+      ],
+      "executor": {
+        "type": "script",
+        "command": "python3",
+        "args": ["-c", "import sys, json; data = json.load(sys.stdin); print(eval(data.get('expression', '')))"],
+        "timeout": 30
+      }
+    }
+  ]
+}

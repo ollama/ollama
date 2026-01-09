@@ -474,6 +474,15 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	var toolRegistry *tools.Registry
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
+
+		// Load custom skills from skill files
+		loadedFiles, err := tools.LoadAllSkills(toolRegistry)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[33mWarning: Error loading skills: %v\033[0m\n", err)
+		} else if len(loadedFiles) > 0 {
+			fmt.Fprintf(os.Stderr, "Loaded skills from: %s\n", strings.Join(loadedFiles, ", "))
+		}
+
 		fmt.Fprintf(os.Stderr, "Tools available: %s\n", strings.Join(toolRegistry.Names(), ", "))
 
 		// Check for OLLAMA_API_KEY for web search
@@ -517,12 +526,34 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 		case strings.HasPrefix(line, "/tools"):
 			showToolsStatus(toolRegistry, approval, supportsTools)
 			continue
+		case strings.HasPrefix(line, "/skills reload"):
+			if toolRegistry != nil {
+				loadedFiles, err := tools.LoadAllSkills(toolRegistry)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "\033[33mWarning: Error loading skills: %v\033[0m\n", err)
+				} else if len(loadedFiles) > 0 {
+					fmt.Fprintf(os.Stderr, "Reloaded skills from: %s\n", strings.Join(loadedFiles, ", "))
+					fmt.Fprintf(os.Stderr, "Tools available: %s\n", strings.Join(toolRegistry.Names(), ", "))
+				} else {
+					fmt.Fprintln(os.Stderr, "No skill files found")
+				}
+			} else {
+				fmt.Fprintln(os.Stderr, "Tools not available - model does not support tool calling")
+			}
+			continue
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			fmt.Fprintln(os.Stderr, "Available Commands:")
 			fmt.Fprintln(os.Stderr, "  /tools          Show available tools and approvals")
+			fmt.Fprintln(os.Stderr, "  /skills reload  Reload custom skills from skill files")
 			fmt.Fprintln(os.Stderr, "  /clear          Clear session context and approvals")
 			fmt.Fprintln(os.Stderr, "  /bye            Exit")
 			fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Custom Skills:")
+			fmt.Fprintln(os.Stderr, "  Skills are loaded from JSON files in these locations:")
+			fmt.Fprintln(os.Stderr, "    ./ollama-skills.json")
+			fmt.Fprintln(os.Stderr, "    ~/.ollama/skills.json")
+			fmt.Fprintln(os.Stderr, "    ~/.config/ollama/skills.json")
 			fmt.Fprintln(os.Stderr, "")
 			continue
 		case strings.HasPrefix(line, "/"):
