@@ -30,17 +30,19 @@ import (
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/ollama/ollama/x/imagegen"
 )
 
 var (
-	errCapabilities         = errors.New("does not support")
-	errCapabilityCompletion = errors.New("completion")
-	errCapabilityTools      = errors.New("tools")
-	errCapabilityInsert     = errors.New("insert")
-	errCapabilityVision     = errors.New("vision")
-	errCapabilityEmbedding  = errors.New("embedding")
-	errCapabilityThinking   = errors.New("thinking")
-	errInsecureProtocol     = errors.New("insecure protocol http")
+	errCapabilities              = errors.New("does not support")
+	errCapabilityCompletion      = errors.New("completion")
+	errCapabilityTools           = errors.New("tools")
+	errCapabilityInsert          = errors.New("insert")
+	errCapabilityVision          = errors.New("vision")
+	errCapabilityEmbedding       = errors.New("embedding")
+	errCapabilityThinking        = errors.New("thinking")
+	errCapabilityImageGeneration = errors.New("image-generation")
+	errInsecureProtocol          = errors.New("insecure protocol http")
 )
 
 type registryOptions struct {
@@ -72,6 +74,11 @@ type Model struct {
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
+
+	// Check for image generation model first (before GGUF check)
+	if m.ModelPath != "" && imagegen.IsImageGenModel(m.ModelPath) {
+		return []model.Capability{model.CapabilityImageGeneration}
+	}
 
 	// Check for completion capability
 	if m.ModelPath != "" {

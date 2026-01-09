@@ -256,6 +256,164 @@ func rewritePatternForRE2(pattern string) string {
 	return pattern
 }
 
+// LoadFromBytes loads a tokenizer from tokenizer.json bytes.
+// This is useful when loading from blob storage where the file content is already in memory.
+// Note: This won't load special token config from companion files. Use LoadFromBytesWithConfig
+// to provide tokenizer_config.json data for proper PAD/EOS token loading.
+func LoadFromBytes(data []byte) (*Tokenizer, error) {
+	return loadFromTokenizerJSON(data, "")
+}
+
+// TokenizerConfig holds optional configuration data that can be passed to LoadFromBytesWithConfig.
+type TokenizerConfig struct {
+	TokenizerConfigJSON   []byte // tokenizer_config.json content
+	GenerationConfigJSON  []byte // generation_config.json content
+	SpecialTokensMapJSON  []byte // special_tokens_map.json content
+	ConfigJSON            []byte // config.json content
+}
+
+// LoadFromBytesWithConfig loads a tokenizer from tokenizer.json bytes with additional config files.
+// This is useful when loading from blob storage where companion config files are also blobs.
+func LoadFromBytesWithConfig(data []byte, config *TokenizerConfig) (*Tokenizer, error) {
+	t, err := loadFromTokenizerJSON(data, "")
+	if err != nil {
+		return nil, err
+	}
+
+	if config == nil {
+		return t, nil
+	}
+
+	// Apply special token configs from provided data
+	loadSpecialTokenConfigFromBytes(t, config)
+
+	return t, nil
+}
+
+// loadSpecialTokenConfigFromBytes loads special token configuration from byte slices.
+func loadSpecialTokenConfigFromBytes(t *Tokenizer, config *TokenizerConfig) {
+	// Helper to parse eos_token_id which can be int or []int
+	parseTokenIDs := func(v interface{}) []int32 {
+		switch val := v.(type) {
+		case float64:
+			return []int32{int32(val)}
+		case []interface{}:
+			ids := make([]int32, 0, len(val))
+			for _, id := range val {
+				if f, ok := id.(float64); ok {
+					ids = append(ids, int32(f))
+				}
+			}
+			return ids
+		}
+		return nil
+	}
+
+	// Priority 1: generation_config.json
+	if len(config.GenerationConfigJSON) > 0 {
+		var genConfig struct {
+			EOSTokenID interface{} `json:"eos_token_id"`
+			BOSTokenID interface{} `json:"bos_token_id"`
+		}
+		if err := json.Unmarshal(config.GenerationConfigJSON, &genConfig); err == nil {
+			if ids := parseTokenIDs(genConfig.EOSTokenID); len(ids) > 0 {
+				t.vocab.EOS = ids
+			}
+			if ids := parseTokenIDs(genConfig.BOSTokenID); len(ids) > 0 {
+				t.vocab.BOS = ids[0]
+			}
+		}
+	}
+
+	// Priority 2: config.json
+	if len(config.ConfigJSON) > 0 && (len(t.vocab.EOS) == 0 || t.vocab.BOS < 0) {
+		var modelConfig struct {
+			EOSTokenID interface{} `json:"eos_token_id"`
+			BOSTokenID interface{} `json:"bos_token_id"`
+		}
+		if err := json.Unmarshal(config.ConfigJSON, &modelConfig); err == nil {
+			if len(t.vocab.EOS) == 0 {
+				if ids := parseTokenIDs(modelConfig.EOSTokenID); len(ids) > 0 {
+					t.vocab.EOS = ids
+				}
+			}
+			if t.vocab.BOS < 0 {
+				if ids := parseTokenIDs(modelConfig.BOSTokenID); len(ids) > 0 {
+					t.vocab.BOS = ids[0]
+				}
+			}
+		}
+	}
+
+	// Priority 3: tokenizer_config.json
+	if len(config.TokenizerConfigJSON) > 0 {
+		var tokConfig struct {
+			BOSToken    interface{} `json:"bos_token"`
+			EOSToken    interface{} `json:"eos_token"`
+			PADToken    interface{} `json:"pad_token"`
+			AddBOSToken *bool       `json:"add_bos_token"`
+			AddEOSToken *bool       `json:"add_eos_token"`
+		}
+		if err := json.Unmarshal(config.TokenizerConfigJSON, &tokConfig); err == nil {
+			if t.vocab.BOS < 0 {
+				if bosStr := extractTokenString(tokConfig.BOSToken); bosStr != "" {
+					if id, ok := t.specialTokens[bosStr]; ok {
+						t.vocab.BOS = id
+					}
+				}
+			}
+			if len(t.vocab.EOS) == 0 {
+				if eosStr := extractTokenString(tokConfig.EOSToken); eosStr != "" {
+					if id, ok := t.specialTokens[eosStr]; ok {
+						t.vocab.EOS = []int32{id}
+					}
+				}
+			}
+			if t.vocab.PAD < 0 {
+				if padStr := extractTokenString(tokConfig.PADToken); padStr != "" {
+					if id, ok := t.specialTokens[padStr]; ok {
+						t.vocab.PAD = id
+					}
+				}
+			}
+			if tokConfig.AddBOSToken != nil {
+				t.vocab.AddBOS = *tokConfig.AddBOSToken
+			}
+			if tokConfig.AddEOSToken != nil {
+				t.vocab.AddEOS = *tokConfig.AddEOSToken
+			}
+		}
+	}
+
+	// Priority 4: special_tokens_map.json
+	if len(config.SpecialTokensMapJSON) > 0 {
+		var tokensMap map[string]interface{}
+		if err := json.Unmarshal(config.SpecialTokensMapJSON, &tokensMap); err == nil {
+			if t.vocab.BOS < 0 {
+				if bosStr := extractTokenString(tokensMap["bos_token"]); bosStr != "" {
+					if id, ok := t.specialTokens[bosStr]; ok {
+						t.vocab.BOS = id
+					}
+				}
+			}
+			if len(t.vocab.EOS) == 0 {
+				if eosStr := extractTokenString(tokensMap["eos_token"]); eosStr != "" {
+					if id, ok := t.specialTokens[eosStr]; ok {
+						t.vocab.EOS = []int32{id}
+					}
+				}
+			}
+			if t.vocab.PAD < 0 {
+				if padStr := extractTokenString(tokensMap["pad_token"]); padStr != "" {
+					if id, ok := t.specialTokens[padStr]; ok {
+						t.vocab.PAD = id
+					}
+				}
+			}
+		}
+	}
+}
+
 // Load loads a tokenizer from a path which can be:
 // - A tokenizer.json file
 // - A directory containing tokenizer.json or vocab.json + merges.txt

@@ -11,6 +11,10 @@ package mlx
 #include "mlx/c/mlx.h"
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+
+// Forward declare cpu_stream
+static mlx_stream cpu_stream();
 
 // Cached default GPU stream for all ops
 static mlx_stream _default_stream = {0};

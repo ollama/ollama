@@ -50,6 +50,8 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/ollama/ollama/x/imagegen"
+	imagegenapi "github.com/ollama/ollama/x/imagegen/api"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -162,6 +164,26 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
+// ScheduleImageGenRunner schedules an image generation model runner.
+// This implements the imagegenapi.RunnerScheduler interface.
+func (s *Server) ScheduleImageGenRunner(c *gin.Context, modelName string, opts api.Options, keepAlive *api.Duration) (llm.LlamaServer, error) {
+	m := &Model{
+		Name:      modelName,
+		ShortName: modelName,
+		ModelPath: modelName, // For image gen, ModelPath is just the model name
+	}
+
+	runnerCh, errCh := s.sched.GetRunner(c.Request.Context(), m, opts, keepAlive)
+	var runner *runnerRef
+	select {
+	case runner = <-runnerCh:
+	case err := <-errCh:
+		return nil, err
+	}
+
+	return runner.llama, nil
+}
+
 func signinURL() (string, error) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
@@ -186,6 +208,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
+	// Check if this is a known image generation model
+	if imagegen.ResolveModelName(req.Model) != "" {
+		imagegenapi.HandleGenerateRequest(c, s, req.Model, req.Prompt, req.KeepAlive, streamResponse)
 		return
 	}
 
@@ -1546,6 +1574,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
+
+	// Experimental image generation support
+	imagegenapi.RegisterRoutes(r, s)
 
 	if rc != nil {
 		// wrap old with new

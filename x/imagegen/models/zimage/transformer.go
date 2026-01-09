@@ -4,12 +4,10 @@
 package zimage
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/nn"
@@ -335,41 +333,49 @@ type Transformer struct {
 	*TransformerConfig
 }
 
-// Load loads the Z-Image transformer from a directory
-func (m *Transformer) Load(path string) error {
-	fmt.Println("Loading Z-Image transformer...")
+// Load loads the Z-Image transformer from ollama blob storage.
+func (m *Transformer) Load(manifest *imagegen.ModelManifest) error {
+	fmt.Print("  Loading transformer... ")
 
-	// Load config
-	cfg, err := loadTransformerConfig(filepath.Join(path, "config.json"))
-	if err != nil {
+	// Load config from blob
+	var cfg TransformerConfig
+	if err := manifest.ReadConfigJSON("transformer/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	m.TransformerConfig = cfg
-
-	// Pre-allocate slices for loader
+	if len(cfg.AllPatchSize) > 0 {
+		cfg.PatchSize = cfg.AllPatchSize[0]
+	}
+	m.TransformerConfig = &cfg
 	m.NoiseRefiners = make([]*TransformerBlock, cfg.NRefinerLayers)
 	m.ContextRefiners = make([]*TransformerBlock, cfg.NRefinerLayers)
 	m.Layers = make([]*TransformerBlock, cfg.NLayers)
 
-	// Load weights
-	weights, err := safetensors.LoadModelWeights(path)
+	// Load weights from tensor blobs with BF16 conversion
+	weights, err := imagegen.LoadWeightsFromManifest(manifest, "transformer")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}
-
-	fmt.Print("  Loading weights as bf16... ")
 	if err := weights.Load(mlx.DtypeBFloat16); err != nil {
 		return fmt.Errorf("load weights: %w", err)
 	}
-	fmt.Printf("✓ (%.1f GB)\n", float64(mlx.MetalGetActiveMemory())/(1024*1024*1024))
+	defer weights.ReleaseAll()
 
-	fmt.Print("  Loading weights via struct tags... ")
+	return m.loadWeights(weights)
+}
+
+// loadWeights loads weights from any WeightSource into the model
+func (m *Transformer) loadWeights(weights safetensors.WeightSource) error {
 	if err := safetensors.LoadModule(m, weights, ""); err != nil {
 		return fmt.Errorf("load module: %w", err)
 	}
+	m.initComputedFields()
 	fmt.Println("✓")
+	return nil
+}
 
-	// Initialize computed fields
+// initComputedFields initializes computed fields after loading weights
+func (m *Transformer) initComputedFields() {
+	cfg := m.TransformerConfig
 	m.TEmbed.FreqEmbedSize = 256
 	m.FinalLayer.OutDim = m.FinalLayer.Output.Weight.Shape()[0]
 	m.CapEmbed.Norm.Eps = 1e-6
@@ -383,26 +389,6 @@ func (m *Transformer) Load(path string) error {
 	for _, block := range m.Layers {
 		initTransformerBlock(block, cfg)
 	}
-
-	weights.ReleaseAll()
-	return nil
-}
-
-// loadTransformerConfig loads transformer config from a JSON file
-func loadTransformerConfig(path string) (*TransformerConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-	var cfg TransformerConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-	// Extract PatchSize from array
-	if len(cfg.AllPatchSize) > 0 {
-		cfg.PatchSize = cfg.AllPatchSize[0]
-	}
-	return &cfg, nil
 }
 
 // initTransformerBlock sets computed fields on a transformer block

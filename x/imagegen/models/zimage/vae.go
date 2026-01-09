@@ -3,12 +3,10 @@
 package zimage
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
@@ -23,19 +21,6 @@ type VAEConfig struct {
 	NormNumGroups    int32   `json:"norm_num_groups"`
 	ScalingFactor    float32 `json:"scaling_factor"`
 	ShiftFactor      float32 `json:"shift_factor"`
-}
-
-// loadVAEConfig loads VAE config from a JSON file
-func loadVAEConfig(path string) (*VAEConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-	var cfg VAEConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-	return &cfg, nil
 }
 
 // GroupNormLayer implements group normalization
@@ -151,7 +136,7 @@ type ResnetBlock2D struct {
 }
 
 // NewResnetBlock2D creates a ResNet block
-func NewResnetBlock2D(weights *safetensors.ModelWeights, prefix string, numGroups int32) (*ResnetBlock2D, error) {
+func NewResnetBlock2D(weights safetensors.WeightSource, prefix string, numGroups int32) (*ResnetBlock2D, error) {
 	norm1Weight, err := weights.GetTensor(prefix + ".norm1.weight")
 	if err != nil {
 		return nil, err
@@ -277,7 +262,7 @@ type VAEAttentionBlock struct {
 }
 
 // NewVAEAttentionBlock creates an attention block
-func NewVAEAttentionBlock(weights *safetensors.ModelWeights, prefix string, numGroups int32) (*VAEAttentionBlock, error) {
+func NewVAEAttentionBlock(weights safetensors.WeightSource, prefix string, numGroups int32) (*VAEAttentionBlock, error) {
 	normWeight, err := weights.GetTensor(prefix + ".group_norm.weight")
 	if err != nil {
 		return nil, err
@@ -400,7 +385,7 @@ type UpDecoderBlock2D struct {
 }
 
 // NewUpDecoderBlock2D creates an up decoder block
-func NewUpDecoderBlock2D(weights *safetensors.ModelWeights, prefix string, numLayers, numGroups int32, hasUpsample bool) (*UpDecoderBlock2D, error) {
+func NewUpDecoderBlock2D(weights safetensors.WeightSource, prefix string, numLayers, numGroups int32, hasUpsample bool) (*UpDecoderBlock2D, error) {
 	resnets := make([]*ResnetBlock2D, numLayers)
 	for i := int32(0); i < numLayers; i++ {
 		resPrefix := fmt.Sprintf("%s.resnets.%d", prefix, i)
@@ -467,7 +452,7 @@ type VAEMidBlock struct {
 }
 
 // NewVAEMidBlock creates the mid block
-func NewVAEMidBlock(weights *safetensors.ModelWeights, prefix string, numGroups int32) (*VAEMidBlock, error) {
+func NewVAEMidBlock(weights safetensors.WeightSource, prefix string, numGroups int32) (*VAEMidBlock, error) {
 	resnet1, err := NewResnetBlock2D(weights, prefix+".resnets.0", numGroups)
 	if err != nil {
 		return nil, err
@@ -518,22 +503,31 @@ type VAEDecoder struct {
 	ConvOut     *Conv2D
 }
 
-// Load loads the VAE decoder from a directory
-func (m *VAEDecoder) Load(path string) error {
-	fmt.Println("Loading VAE decoder...")
-
-	// Load config
-	cfg, err := loadVAEConfig(filepath.Join(path, "config.json"))
-	if err != nil {
+// Load loads the VAE decoder from ollama blob storage.
+func (m *VAEDecoder) Load(manifest *imagegen.ModelManifest) error {
+	// Load config from blob
+	var cfg VAEConfig
+	if err := manifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	m.Config = cfg
+	m.Config = &cfg
 
-	// Load weights
-	weights, err := safetensors.LoadModelWeights(path)
+	// Load weights from tensor blobs
+	weights, err := imagegen.LoadWeightsFromManifest(manifest, "vae")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}
+	if err := weights.Load(0); err != nil {
+		return fmt.Errorf("load weights: %w", err)
+	}
+	defer weights.ReleaseAll()
+
+	return m.loadWeights(weights, &cfg)
+}
+
+// loadWeights loads VAE weights from any WeightSource
+func (m *VAEDecoder) loadWeights(weights safetensors.WeightSource, cfg *VAEConfig) error {
+	var err error
 
 	// Load conv_in
 	fmt.Print("  Loading conv_in... ")
@@ -596,7 +590,6 @@ func (m *VAEDecoder) Load(path string) error {
 	m.ConvOut = NewConv2D(convOutWeight, convOutBias, 1, 1)
 	fmt.Println("✓")
 
-	weights.ReleaseAll()
 	return nil
 }
 

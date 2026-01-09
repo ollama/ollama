@@ -118,6 +118,34 @@ func LoadModelWeights(dir string) (*ModelWeights, error) {
 	return mw, nil
 }
 
+// LoadModelWeightsFromPaths loads weights from specific safetensor file paths.
+// Used for loading from blob storage where files are not in a directory.
+func LoadModelWeightsFromPaths(paths []string) (*ModelWeights, error) {
+	mw := &ModelWeights{
+		tensorFiles: make(map[string]string),
+		tensorInfo:  make(map[string]TensorInfo),
+		nativeCache: make(map[string]*mlx.SafetensorsFile),
+	}
+
+	for _, path := range paths {
+		header, err := parseSafetensorHeader(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+		}
+
+		for name, info := range header {
+			mw.tensorFiles[name] = path
+			mw.tensorInfo[name] = info
+		}
+	}
+
+	if len(mw.tensorFiles) == 0 {
+		return nil, fmt.Errorf("no tensors found in provided paths")
+	}
+
+	return mw, nil
+}
+
 // Load loads all tensors into cache with the specified dtype.
 // If dtype is 0, tensors are loaded in their original dtype.
 // Automatically uses streaming (memory-efficient) when dtype conversion is needed,

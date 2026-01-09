@@ -46,6 +46,8 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	"github.com/ollama/ollama/x/imagegen"
+	imagegenclient "github.com/ollama/ollama/x/imagegen/client"
 )
 
 const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
@@ -96,6 +98,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
+			// No Modelfile found - check if current directory is an image gen model
+			if imagegen.IsImageGenModelDir(".") {
+				return imagegenclient.CreateModel(args[0], ".", p)
+			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
 			return errModelfileNotFound
@@ -457,6 +463,15 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
+
+	// Check if this is a known image generation model (skip Show/Pull)
+	if imagegen.IsImageGenModel(name) {
+		if opts.Prompt == "" && !interactive {
+			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
+		}
+		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+	}
+
 	info, err := func() (*api.ShowResponse, error) {
 		showReq := &api.ShowRequest{Name: name}
 		info, err := client.Show(cmd.Context(), showReq)

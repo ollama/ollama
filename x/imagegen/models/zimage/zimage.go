@@ -6,9 +6,9 @@ package zimage
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"time"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -16,6 +16,7 @@ import (
 
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
+	Ctx            context.Context // Optional context for cancellation
 	Prompt         string
 	NegativePrompt string       // Empty = no CFG
 	CFGScale       float32      // Only used if NegativePrompt is set (default: 4.0)
@@ -37,16 +38,16 @@ type ProgressFunc func(step, totalSteps int)
 
 // Model represents a Z-Image diffusion model.
 type Model struct {
-	ModelPath   string
+	ModelName   string
 	Tokenizer   *tokenizer.Tokenizer
 	TextEncoder *Qwen3TextEncoder
 	Transformer *Transformer
 	VAEDecoder  *VAEDecoder
 }
 
-// Load loads the Z-Image model from a directory.
-func (m *Model) Load(modelPath string) error {
-	fmt.Println("Loading Z-Image model...")
+// Load loads the Z-Image model from ollama blob storage.
+func (m *Model) Load(modelName string) error {
+	fmt.Printf("Loading Z-Image model from manifest: %s...\n", modelName)
 	start := time.Now()
 
 	if mlx.GPUIsAvailable() {
@@ -54,12 +55,34 @@ func (m *Model) Load(modelPath string) error {
 		mlx.EnableCompile()
 	}
 
-	m.ModelPath = modelPath
+	m.ModelName = modelName
 
-	// Load tokenizer
+	// Load manifest
+	manifest, err := imagegen.LoadManifest(modelName)
+	if err != nil {
+		return fmt.Errorf("load manifest: %w", err)
+	}
+
+	// Load tokenizer from manifest with config
 	fmt.Print("  Loading tokenizer... ")
-	tokenizerPath := filepath.Join(modelPath, "tokenizer", "tokenizer.json")
-	tok, err := tokenizer.Load(tokenizerPath)
+	tokData, err := manifest.ReadConfig("tokenizer/tokenizer.json")
+	if err != nil {
+		return fmt.Errorf("tokenizer: %w", err)
+	}
+
+	// Try to read tokenizer config files from manifest
+	tokConfig := &tokenizer.TokenizerConfig{}
+	if data, err := manifest.ReadConfig("tokenizer/tokenizer_config.json"); err == nil {
+		tokConfig.TokenizerConfigJSON = data
+	}
+	if data, err := manifest.ReadConfig("tokenizer/generation_config.json"); err == nil {
+		tokConfig.GenerationConfigJSON = data
+	}
+	if data, err := manifest.ReadConfig("tokenizer/special_tokens_map.json"); err == nil {
+		tokConfig.SpecialTokensMapJSON = data
+	}
+
+	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
 	if err != nil {
 		return fmt.Errorf("tokenizer: %w", err)
 	}
@@ -68,7 +91,7 @@ func (m *Model) Load(modelPath string) error {
 
 	// Load text encoder
 	m.TextEncoder = &Qwen3TextEncoder{}
-	if err := m.TextEncoder.Load(filepath.Join(modelPath, "text_encoder")); err != nil {
+	if err := m.TextEncoder.Load(manifest); err != nil {
 		return fmt.Errorf("text encoder: %w", err)
 	}
 	mlx.Eval(mlx.Collect(m.TextEncoder)...)
@@ -78,7 +101,7 @@ func (m *Model) Load(modelPath string) error {
 
 	// Load transformer
 	m.Transformer = &Transformer{}
-	if err := m.Transformer.Load(filepath.Join(modelPath, "transformer")); err != nil {
+	if err := m.Transformer.Load(manifest); err != nil {
 		return fmt.Errorf("transformer: %w", err)
 	}
 	mlx.Eval(mlx.Collect(m.Transformer)...)
@@ -88,7 +111,7 @@ func (m *Model) Load(modelPath string) error {
 
 	// Load VAE decoder
 	m.VAEDecoder = &VAEDecoder{}
-	if err := m.VAEDecoder.Load(filepath.Join(modelPath, "vae")); err != nil {
+	if err := m.VAEDecoder.Load(manifest); err != nil {
 		return fmt.Errorf("VAE decoder: %w", err)
 	}
 	mlx.Eval(mlx.Collect(m.VAEDecoder)...)
@@ -247,11 +270,19 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 	}
 
 	// Denoising loop
+	if cfg.Progress != nil {
+		cfg.Progress(0, cfg.Steps) // Start at 0%
+	}
 	for i := 0; i < cfg.Steps; i++ {
-		stepStart := time.Now()
-		if cfg.Progress != nil {
-			cfg.Progress(i+1, cfg.Steps)
+		// Check for cancellation
+		if cfg.Ctx != nil {
+			select {
+			case <-cfg.Ctx.Done():
+				return nil, cfg.Ctx.Err()
+			default:
+			}
 		}
+		stepStart := time.Now()
 
 		// GPU capture on step 2 if requested
 		if cfg.CapturePath != "" && i == 1 {
@@ -295,6 +326,7 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 
 		noisePred := UnpatchifyLatents(output, tcfg.PatchSize, latentH, latentW, tcfg.InChannels)
 		noisePred = mlx.Neg(noisePred)
+
 		oldLatents := latents
 		latents = scheduler.Step(noisePred, latents, i)
 
@@ -313,6 +345,10 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 		peakMem := float64(mlx.MetalGetPeakMemory()) / (1024 * 1024 * 1024)
 		fmt.Printf("  Step %d/%d: t=%.4f (%.2fs) [%.1f GB active, %.1f GB peak]\n",
 			i+1, cfg.Steps, tCurr, time.Since(stepStart).Seconds(), activeMem, peakMem)
+
+		if cfg.Progress != nil {
+			cfg.Progress(i+1, cfg.Steps) // Report completed step
+		}
 	}
 
 	// Free denoising temporaries before VAE decode

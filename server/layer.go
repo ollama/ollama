@@ -8,13 +8,29 @@ import (
 	"os"
 )
 
+// TensorMeta holds optional tensor metadata for image generation models.
+// These fields are experimental and only used by image gen models.
+type TensorMeta struct {
+	Name  string  `json:"name,omitempty"`  // e.g., "model.embed_tokens.weight"
+	Dtype string  `json:"dtype,omitempty"` // e.g., "BF16", "F32"
+	Shape []int32 `json:"shape,omitempty"` // e.g., [128256, 4096]
+}
+
 type Layer struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
 	status    string
+
+	// Optional tensor metadata (experimental, for image gen models)
+	TensorMeta
 }
+
+const (
+	MediaTypeImageConfig = "application/vnd.ollama.image.config"
+	MediaTypeImageTensor = "application/vnd.ollama.image.tensor"
+)
 
 func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 	blobs, err := GetBlobsPath("")
