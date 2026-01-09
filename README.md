@@ -290,6 +290,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Onyx](https://github.com/onyx-dot-app/onyx)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
