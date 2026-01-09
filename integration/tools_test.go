@@ -23,7 +23,8 @@ func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
 func TestAPIToolCalling(t *testing.T) {
 	initialTimeout := 60 * time.Second
 	streamTimeout := 60 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -49,6 +50,11 @@ func TestAPIToolCalling(t *testing.T) {
 
 	for _, model := range libraryToolsModels {
 		t.Run(model, func(t *testing.T) {
+			if time.Now().Sub(started) > softTimeout {
+				t.Skip("skipping remaining tests to avoid excessive runtime")
+				return
+			}
+
 			if v, ok := minVRAM[model]; ok {
 				skipUnderMinVRAM(t, v)
 			}
@@ -89,6 +95,7 @@ func TestAPIToolCalling(t *testing.T) {
 				Options: map[string]any{
 					"temperature": 0,
 				},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}
 
 			stallTimer := time.NewTimer(initialTimeout)
