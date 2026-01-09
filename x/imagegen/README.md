@@ -1,56 +1,9 @@
-# MLX engine
+# imagegen
 
-This is a small inference engine written in Go using [MLX](https://github.com/ml-explore/mlx), Apple's array framework for machine learning
+This is a package that uses MLX to run image generation models, ahead of being integrated into Ollama's primary runner.
+in `CMakeLists.txt` and rebuild.
 
-## Goals
-
-1. Implement multimodal runners: in a dedicated runner but eventually to be integrated into Ollama's primary runner.
-2. Optimizing for image generation memory usage and output speed
-3. (secondary): implement fast text model inference for gpt-oss, Llama.
-
-## Prerequisites
-
-**macOS:**
-
-- macOS 14.0+ (Sonoma or later)
-- Apple Silicon (M1/M2/M3)
-- Xcode Command Line Tools
-
-**Linux (building from source):**
-
-- NVIDIA GPU (compute capability 7.0+)
-- CUDA 12.0+ toolkit
-- cuDNN
-
-**Linux (prebuilt binaries):**
-
-- NVIDIA GPU (compute capability 7.0+)
-- NVIDIA driver 525+ (CUDA runtime libs are bundled)
-
-**Both:**
-
-- CMake 3.25+
-- Go 1.21+
-
-## Quick Start
-
-### Build MLX
-
-```bash
-cmake -B build
-cmake --build build --parallel
-cmake --install build
-```
-
-This fetches MLX and mlx-c, builds them, and installs to `dist/`:
-
-- `dist/lib/libmlxc.so` (or `.dylib`) - MLX C bindings
-- `dist/lib/libmlx.a` - MLX static library
-- `dist/include/` - Headers (mlx-c, CCCL for CUDA JIT)
-
-To update MLX version, change `MLX_GIT_TAG` in `CMakeLists.txt` and rebuild.
-
-### 2. Download a Model
+### 1. Download a Model
 
 Download Llama 3.1 8B (or any compatible model) in safetensors format:
 
@@ -62,7 +15,7 @@ hf download meta-llama/Llama-3.1-8B --local-dir ./weights/Llama-3.1-8B
 hf download openai/gpt-oss-20b --local-dir ./weights/gpt-oss-20b
 ```
 
-### 3. Run Inference
+### 2. Run Inference
 
 ```bash
 # Build
@@ -80,16 +33,6 @@ go build ./cmd/engine
   -input-image input.png -prompt "Make it winter" -negative-prompt " " -cfg-scale 4.0 \
   -steps 8 -seed 42 -output edited.png
 ```
-
-## Adding a Model
-
-Use Claude Code with this repo. See `models/CLAUDE.md` for the full guide covering:
-
-- Porting Python models to Go (forward pass, weight loading)
-- Component testing with Python reference data
-- Performance optimization
-
-Reference implementations: `llama` (LLM), `qwen_image` (image generation), `qwen_image_edit` (image editing)
 
 ## Memory Management
 
@@ -116,36 +59,3 @@ Key points:
 - `mlx.Eval(outputs...)` frees non-kept arrays, evaluates outputs (outputs auto-kept)
 - `mlx.Keep(arrays...)` marks arrays to survive multiple Eval cycles (for weights, caches)
 - Call `.Free()` when done with an array
-
-## Testing
-
-### Running Tests
-
-```bash
-# Run all tests (tests skip if dependencies missing)
-go test ./...
-
-# Run specific model tests
-go test ./models/qwen_image/...
-```
-
-### Model Weights
-
-Tests require model weights in `./weights/<model-name>/`:
-
-```
-weights/
-├── Qwen-Image-2512/      # Qwen image generation
-│   ├── text_encoder/
-│   ├── transformer/
-│   ├── vae/
-│   └── tokenizer/
-├── Llama-3.1-8B/         # LLM
-└── ...
-```
-
-Download models using `huggingface-cli`:
-
-```bash
-hf download ./weights/Qwen-Image-2512 --local-dir ./weights/Qwen-Image-2512
-```
