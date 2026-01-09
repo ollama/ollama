@@ -743,11 +743,6 @@ type Layer struct {
 	Digest    blob.Digest `json:"digest"`
 	MediaType string      `json:"mediaType"`
 	Size      int64       `json:"size"`
-
-	// Optional tensor metadata
-	Name  string  `json:"name,omitempty"`
-	Dtype string  `json:"dtype,omitempty"`
-	Shape []int32 `json:"shape,omitempty"`
 }
 
 // ResolveLocal resolves a name to a Manifest in the local cache.
