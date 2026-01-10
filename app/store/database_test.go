@@ -270,6 +270,119 @@ func TestChatDeletionWithCascade(t *testing.T) {
 			t.Errorf("expected 0 orphaned messages after cleanup, got %d", orphanedCountAfter)
 		}
 	})
+
+	t.Run("cleanup runs only once", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+
+		// Create a v12 database to simulate an upgrade scenario
+		conn, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
+		if err != nil {
+			t.Fatalf("failed to open database: %v", err)
+		}
+
+		// Create v12 schema (without orphan_cleanup_done column)
+		_, err = conn.Exec(`
+			CREATE TABLE IF NOT EXISTS settings (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				device_id TEXT NOT NULL DEFAULT '',
+				has_completed_first_run BOOLEAN NOT NULL DEFAULT 0,
+				expose BOOLEAN NOT NULL DEFAULT 0,
+				survey BOOLEAN NOT NULL DEFAULT TRUE,
+				browser BOOLEAN NOT NULL DEFAULT 0,
+				models TEXT NOT NULL DEFAULT '',
+				agent BOOLEAN NOT NULL DEFAULT 0,
+				tools BOOLEAN NOT NULL DEFAULT 0,
+				working_dir TEXT NOT NULL DEFAULT '',
+				context_length INTEGER NOT NULL DEFAULT 4096,
+				window_width INTEGER NOT NULL DEFAULT 0,
+				window_height INTEGER NOT NULL DEFAULT 0,
+				config_migrated BOOLEAN NOT NULL DEFAULT 0,
+				airplane_mode BOOLEAN NOT NULL DEFAULT 0,
+				turbo_enabled BOOLEAN NOT NULL DEFAULT 0,
+				websearch_enabled BOOLEAN NOT NULL DEFAULT 0,
+				selected_model TEXT NOT NULL DEFAULT '',
+				sidebar_open BOOLEAN NOT NULL DEFAULT 0,
+				think_enabled BOOLEAN NOT NULL DEFAULT 0,
+				think_level TEXT NOT NULL DEFAULT '',
+				remote TEXT NOT NULL DEFAULT '',
+				schema_version INTEGER NOT NULL DEFAULT 12
+			);
+			INSERT OR IGNORE INTO settings (id) VALUES (1);
+			
+			CREATE TABLE IF NOT EXISTS chats (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				browser_state TEXT
+			);
+			
+			CREATE TABLE IF NOT EXISTS messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				chat_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT NOT NULL DEFAULT '',
+				thinking TEXT NOT NULL DEFAULT '',
+				stream BOOLEAN NOT NULL DEFAULT 0,
+				model_name TEXT,
+				model_cloud BOOLEAN,
+				model_ollama_host BOOLEAN,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				thinking_time_start TIMESTAMP,
+				thinking_time_end TIMESTAMP,
+				tool_result TEXT,
+				FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+			);
+		`)
+		if err != nil {
+			conn.Close()
+			t.Fatalf("failed to create v12 schema: %v", err)
+		}
+		conn.Close()
+
+		// Now open with newDatabase which should migrate to v13
+		db, err := newDatabase(dbPath)
+		if err != nil {
+			t.Fatalf("failed to open database: %v", err)
+		}
+		defer db.Close()
+
+		// Verify schema was upgraded to v13
+		version, err := db.getSchemaVersion()
+		if err != nil {
+			t.Fatalf("failed to get schema version: %v", err)
+		}
+		if version != 13 {
+			t.Errorf("expected schema version 13, got %d", version)
+		}
+
+		// Verify cleanup flag is now set to true (cleanup ran during init)
+		cleanupDone, err := db.isOrphanCleanupDone()
+		if err != nil {
+			t.Fatalf("failed to check cleanup status: %v", err)
+		}
+		if !cleanupDone {
+			t.Error("expected cleanup flag to be true after initialization")
+		}
+
+		// Close and reopen database
+		db.Close()
+		db, err = newDatabase(dbPath)
+		if err != nil {
+			t.Fatalf("failed to reopen database: %v", err)
+		}
+		defer db.Close()
+
+		// Verify cleanup flag is still true
+		cleanupDone, err = db.isOrphanCleanupDone()
+		if err != nil {
+			t.Fatalf("failed to check cleanup status after reopen: %v", err)
+		}
+		if !cleanupDone {
+			t.Error("expected cleanup flag to remain true after reopen")
+		}
+	})
 }
 
 func countRows(t *testing.T, db *database, table string) int {
