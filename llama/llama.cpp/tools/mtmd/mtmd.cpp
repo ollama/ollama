@@ -293,7 +293,7 @@ struct mtmd_context {
             // https://github.com/huggingface/transformers/blob/1cd110c6cb6a6237614130c470e9a902dbc1a4bd/docs/source/en/model_doc/pixtral.md
             img_end = "[IMG_END]";
 
-        } else if (proj == PROJECTOR_TYPE_QWEN2VL || proj == PROJECTOR_TYPE_QWEN25VL || proj == PROJECTOR_TYPE_QWEN3VL) {
+        } else if (proj == PROJECTOR_TYPE_QWEN2VL || proj == PROJECTOR_TYPE_QWEN25VL || proj == PROJECTOR_TYPE_QWEN3VL || proj == PROJECTOR_TYPE_YOUTUVL) {
             // <|vision_start|> ... (image embeddings) ... <|vision_end|>
             img_beg = "<|vision_start|>";
             img_end = "<|vision_end|>";
@@ -339,7 +339,12 @@ struct mtmd_context {
             case PROJECTOR_TYPE_QWEN25O:
             case PROJECTOR_TYPE_ULTRAVOX:
             case PROJECTOR_TYPE_VOXTRAL:
+            case PROJECTOR_TYPE_GLMA:
+            case PROJECTOR_TYPE_MUSIC_FLAMINGO:
                 audio_preproc = std::make_unique<mtmd_audio_preprocessor_whisper>(ctx_a);
+                break;
+            case PROJECTOR_TYPE_LFM2A:
+                audio_preproc = std::make_unique<mtmd_audio_preprocessor_conformer>(ctx_a);
                 break;
             default:
                 GGML_ABORT("unsupported audio projector type");
@@ -358,6 +363,9 @@ struct mtmd_context {
             // [BEGIN_AUDIO] ... (embeddings) ...
             aud_beg = "[BEGIN_AUDIO]";
 
+        } else if (proj == PROJECTOR_TYPE_MUSIC_FLAMINGO) {
+            // <sound> ... (embeddings) ...
+            aud_beg = "<sound>";
         }
     }
 

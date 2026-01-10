@@ -146,6 +146,9 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_VOCAB_SIZE,                        vocab.n_tokens());
     add_kv(LLM_KV_CONTEXT_LENGTH,                    hparams.n_ctx_train);
     add_kv(LLM_KV_EMBEDDING_LENGTH,                  hparams.n_embd);
+    if (hparams.n_embd_out > 0) {
+        add_kv(LLM_KV_EMBEDDING_LENGTH_OUT,          hparams.n_embd_out);
+    }
     add_kv(LLM_KV_BLOCK_COUNT,                       hparams.n_layer);
     add_kv(LLM_KV_LEADING_DENSE_BLOCK_COUNT,         hparams.n_layer_dense_lead);
     add_kv(LLM_KV_FEED_FORWARD_LENGTH,               hparams.n_ff_arr, true);

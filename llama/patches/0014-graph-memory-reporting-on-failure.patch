@@ -23,7 +23,7 @@ index 78aa059dd..7fa8403b3 100644
  // Utils
  // Create a buffer and allocate all the tensors in a ggml_context
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 4ed5f3577..a7ebe5dcd 100644
+index a9d177864..393c329be 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -319,6 +319,7 @@ extern "C" {
@@ -121,7 +121,7 @@ index 41419b617..73b39bfea 100644
  
  static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buffers) {
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 9f37ca70c..1459d16dd 100644
+index a8a61b1e2..259e10257 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -1859,6 +1859,13 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe

@@ -377,3 +377,118 @@ FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
     return FLOAT_TYPE(float(cache_b_ds.x) * float(d_scale) * float(q_sum));
 }
 #endif
+
+#if defined(DATA_A_IQ1_S)
+void repack8(uint ib, uint iqs, out i32vec4 out0, out i32vec4 out1) {
+    const uint ib32 = iqs / 32;
+
+    const uint qh = data_a[ib].qh[ib32];
+
+    const uint qs16_0 = data_a_packed16[ib].qs[(4 * ib32 + 0) / 2];
+    const uint qs16_1 = data_a_packed16[ib].qs[(4 * ib32 + 2) / 2];
+
+    const uint qs0 = qs16_0 & 0xFF;
+    const uint qs1 = qs16_0 >> 8;
+    const uint qs2 = qs16_1 & 0xFF;
+    const uint qs3 = qs16_1 >> 8;
+
+    const uint hi0 = bitfieldExtract(qh, 3 * int(0), 3);
+    const uint hi1 = bitfieldExtract(qh, 3 * int(1), 3);
+    const uint hi2 = bitfieldExtract(qh, 3 * int(2), 3);
+    const uint hi3 = bitfieldExtract(qh, 3 * int(3), 3);
+
+    const int32_t grid0 = int32_t(iq1s_grid_gpu[qs0 | (hi0 << 8)]);
+    const int32_t grid1 = int32_t(iq1s_grid_gpu[qs1 | (hi1 << 8)]);
+    const int32_t grid2 = int32_t(iq1s_grid_gpu[qs2 | (hi2 << 8)]);
+    const int32_t grid3 = int32_t(iq1s_grid_gpu[qs3 | (hi3 << 8)]);
+
+    out0 = i32vec4((grid0 >> 0) & 0x0F0F0F0F,
+                   (grid0 >> 4) & 0x0F0F0F0F,
+                   (grid1 >> 0) & 0x0F0F0F0F,
+                   (grid1 >> 4) & 0x0F0F0F0F);
+    out1 = i32vec4((grid2 >> 0) & 0x0F0F0F0F,
+                   (grid2 >> 4) & 0x0F0F0F0F,
+                   (grid3 >> 0) & 0x0F0F0F0F,
+                   (grid3 >> 4) & 0x0F0F0F0F);
+}
+
+vec2 get_dm(uint ib, uint iqs) {
+    const uint ib32 = iqs / 32;
+
+    const uint qh = data_a[ib].qh[ib32];
+    const float delta = ((qh & 0x8000) != 0) ? -IQ1S_DELTA : IQ1S_DELTA;
+
+    const float d = float(data_a[ib].d);
+    const float dl = d * float(2 * bitfieldExtract(qh, 12, 3) + 1);
+
+    // the -1 cancels out the bias in iq1s_grid_gpu
+    return FLOAT_TYPE_VEC2(dl, dl * (delta - 1));
+}
+
+FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+    int32_t q_sum = 0;
+
+    const uint ib_k = ib_a / 8;
+    const uint iqs_k = (ib_a % 8) * 32 + iqs * 32;
+
+    i32vec4 qs_a0;
+    i32vec4 qs_a1;
+    repack8(ib_k, iqs_k, qs_a0, qs_a1);
+
+    const vec2 dm = get_dm(ib_k, iqs_k);
+
+    q_sum += dotPacked4x8EXT(qs_a0.x, cache_b_qs[0]);
+    q_sum += dotPacked4x8EXT(qs_a0.y, cache_b_qs[1]);
+    q_sum += dotPacked4x8EXT(qs_a0.z, cache_b_qs[2]);
+    q_sum += dotPacked4x8EXT(qs_a0.w, cache_b_qs[3]);
+    q_sum += dotPacked4x8EXT(qs_a1.x, cache_b_qs[4]);
+    q_sum += dotPacked4x8EXT(qs_a1.y, cache_b_qs[5]);
+    q_sum += dotPacked4x8EXT(qs_a1.z, cache_b_qs[6]);
+    q_sum += dotPacked4x8EXT(qs_a1.w, cache_b_qs[7]);
+
+    return FLOAT_TYPE(float(cache_b_ds.x) * float(dm.x) * float(q_sum) + float(dm.y) * float(cache_b_ds.y));
+}
+#endif
+
+#if defined(DATA_A_IQ1_M)
+FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+    const uint ib_k = ib_a / 8;
+    const uint iqs_k = (ib_a % 8) * 32 + iqs * 32;
+
+    const uint ib32 = iqs_k / 32;
+    const uint ib64 = ib32 / 2;
+
+    const uint16_t[4] scales = data_a[ib_k].scales;
+    const u16vec4 s = u16vec4(scales[0], scales[1], scales[2], scales[3]) >> 12;
+    const float d = float(unpackHalf2x16(s.x | (s.y << 4) | (s.z << 8) | (s.w << 12)).x);
+
+    const uint qs32 = data_a_packed32[ib_k].qs[ib32];
+    const uint qh16 = data_a_packed16[ib_k].qh[ib32];
+
+    float sum = 0;
+    const uint sc = data_a[ib_k].scales[ib64];
+    [[unroll]] for (int l = 0; l < 4; ++l) {
+        const uint ib16 = 2 * ib32 + l / 2;
+        const float dl = d * (2 * bitfieldExtract(sc, 3 * int(ib16 & 3), 3) + 1);
+        const uint qh = qh16 >> (4 * l);
+        const uint qs = (qs32 >> (8 * l)) & 0xFF;
+        const float delta = ((qh & 8) != 0) ? -IQ1M_DELTA : IQ1M_DELTA;
+
+        const int32_t grid = int32_t(iq1s_grid_gpu[qs | ((qh & 7) << 8)]);
+
+        int32_t q_sum = 0;
+        q_sum += dotPacked4x8EXT((grid >> 0) & 0x0F0F0F0F, cache_b_qs[2 * l + 0]);
+        q_sum += dotPacked4x8EXT((grid >> 4) & 0x0F0F0F0F, cache_b_qs[2 * l + 1]);
+
+        int32_t y_sum = 0;
+        y_sum += dotPacked4x8EXT(int(0x01010101), cache_b_qs[2 * l + 0]);
+        y_sum += dotPacked4x8EXT(int(0x01010101), cache_b_qs[2 * l + 1]);
+
+        // the -1 cancels out the bias in iq1s_grid_gpu
+        sum += dl * (q_sum + y_sum * (delta - 1));
+    }
+    sum *= float(cache_b_ds.x);
+
+    return sum;
+}
+#endif
