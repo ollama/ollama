@@ -8,22 +8,13 @@ import (
 	"os"
 )
 
-// TensorMeta holds optional tensor metadata.
-type TensorMeta struct {
-	Name  string  `json:"name,omitempty"`  // e.g., "model.embed_tokens.weight"
-	Dtype string  `json:"dtype,omitempty"` // e.g., "BF16", "F32"
-	Shape []int32 `json:"shape,omitempty"` // e.g., [128256, 4096]
-}
-
 type Layer struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
+	Name      string `json:"name,omitempty"` // tensor name, e.g., "text_encoder/model.embed_tokens.weight"
 	status    string
-
-	// Optional tensor metadata
-	TensorMeta
 }
 
 const (

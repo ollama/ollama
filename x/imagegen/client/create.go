@@ -64,16 +64,12 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 			return imagegen.LayerInfo{}, err
 		}
 		layer.Name = name
-		layer.Dtype = dtype
-		layer.Shape = shape
 
 		return imagegen.LayerInfo{
 			Digest:    layer.Digest,
 			Size:      layer.Size,
 			MediaType: layer.MediaType,
 			Name:      name,
-			Dtype:     dtype,
-			Shape:     shape,
 		}, nil
 	}
 
@@ -108,11 +104,7 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 				MediaType: l.MediaType,
 				Digest:    l.Digest,
 				Size:      l.Size,
-				TensorMeta: server.TensorMeta{
-					Name:  l.Name,
-					Dtype: l.Dtype,
-					Shape: l.Shape,
-				},
+				Name:      l.Name,
 			}
 		}
 

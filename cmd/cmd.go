@@ -839,8 +839,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 func ShowHandler(cmd *cobra.Command, args []string) error {
 	// Check if this is an image generation model
 	if imagegen.HasTensorLayers(args[0]) {
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		return imagegen.Show(args[0], verbose, os.Stdout)
+		return imagegen.Show(args[0], os.Stdout)
 	}
 
 	client, err := api.ClientFromEnvironment()

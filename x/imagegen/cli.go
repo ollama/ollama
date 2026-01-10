@@ -45,42 +45,16 @@ func DefaultOptions() ImageGenOptions {
 }
 
 // Show displays information about an image generation model.
-func Show(modelName string, verbose bool, w io.Writer) error {
+func Show(modelName string, w io.Writer) error {
 	manifest, err := LoadManifest(modelName)
 	if err != nil {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Count tensors and total size per component
-	type tensorInfo struct {
-		name  string
-		dtype string
-		shape []int32
-		size  int64
-	}
-	type componentInfo struct {
-		tensors []tensorInfo
-		size    int64
-	}
-	components := make(map[string]*componentInfo)
+	// Count total size
 	var totalSize int64
-
 	for _, layer := range manifest.Manifest.Layers {
 		if layer.MediaType == "application/vnd.ollama.image.tensor" {
-			if idx := strings.Index(layer.Name, "/"); idx > 0 {
-				comp := layer.Name[:idx]
-				tensorName := layer.Name[idx+1:]
-				if components[comp] == nil {
-					components[comp] = &componentInfo{}
-				}
-				components[comp].tensors = append(components[comp].tensors, tensorInfo{
-					name:  tensorName,
-					dtype: layer.Dtype,
-					shape: layer.Shape,
-					size:  layer.Size,
-				})
-				components[comp].size += layer.Size
-			}
 			totalSize += layer.Size
 		}
 	}
@@ -96,53 +70,6 @@ func Show(modelName string, verbose bool, w io.Writer) error {
 		}
 	}
 
-	// Read component configs as raw maps for flexible display
-	componentConfigs := make(map[string]map[string]any)
-	for _, comp := range []string{"transformer", "text_encoder", "vae", "scheduler"} {
-		configPath := comp + "/config.json"
-		if comp == "scheduler" {
-			configPath = "scheduler/scheduler_config.json"
-		}
-		if data, err := manifest.ReadConfig(configPath); err == nil {
-			var cfg map[string]any
-			if json.Unmarshal(data, &cfg) == nil {
-				componentConfigs[comp] = cfg
-			}
-		}
-	}
-
-	// Extract key values for summary display
-	var transformerDim, transformerLayers, transformerHeads int
-	var latentChannels int
-	if cfg, ok := componentConfigs["transformer"]; ok {
-		if v, ok := cfg["dim"].(float64); ok {
-			transformerDim = int(v)
-		}
-		if v, ok := cfg["n_layers"].(float64); ok {
-			transformerLayers = int(v)
-		}
-		if v, ok := cfg["n_heads"].(float64); ok {
-			transformerHeads = int(v)
-		}
-		if v, ok := cfg["in_channels"].(float64); ok {
-			latentChannels = int(v)
-		}
-	}
-
-	// Get requires version from config
-	var requires string
-	configLayer := manifest.Manifest.Config
-	if configLayer.Digest != "" {
-		if data, err := os.ReadFile(manifest.BlobPath(configLayer.Digest)); err == nil {
-			var cfg struct {
-				Requires string `json:"requires,omitempty"`
-			}
-			if json.Unmarshal(data, &cfg) == nil {
-				requires = cfg.Requires
-			}
-		}
-	}
-
 	// Estimate parameter count from total size (assuming BF16 = 2 bytes per param)
 	paramCount := totalSize / 2
 	paramStr := formatParamCount(paramCount)
@@ -153,90 +80,13 @@ func Show(modelName string, verbose bool, w io.Writer) error {
 		fmt.Fprintf(w, "    %-20s %s\n", "architecture", architecture)
 	}
 	fmt.Fprintf(w, "    %-20s %s\n", "parameters", paramStr)
-	if transformerDim > 0 {
-		fmt.Fprintf(w, "    %-20s %d\n", "hidden size", transformerDim)
-	}
-	if transformerLayers > 0 {
-		fmt.Fprintf(w, "    %-20s %d\n", "layers", transformerLayers)
-	}
-	if transformerHeads > 0 {
-		fmt.Fprintf(w, "    %-20s %d\n", "attention heads", transformerHeads)
-	}
 	fmt.Fprintf(w, "    %-20s %s\n", "quantization", "BF16")
-	if requires != "" {
-		fmt.Fprintf(w, "    %-20s %s\n", "requires", requires)
-	}
 	fmt.Fprintln(w)
 
 	// Print Capabilities
 	fmt.Fprintln(w, "  Capabilities")
 	fmt.Fprintf(w, "    %s\n", "image")
 	fmt.Fprintln(w)
-
-	// Print Parameters (generation defaults)
-	fmt.Fprintln(w, "  Parameters")
-	fmt.Fprintf(w, "    %-20s %d\n", "default steps", 9)
-	fmt.Fprintf(w, "    %-20s %dx%d\n", "default size", 1024, 1024)
-	if cfg, ok := componentConfigs["scheduler"]; ok {
-		if v, ok := cfg["num_train_timesteps"].(float64); ok && v > 0 {
-			fmt.Fprintf(w, "    %-20s %d\n", "train timesteps", int(v))
-		}
-	}
-	if cfg, ok := componentConfigs["transformer"]; ok {
-		if ps, ok := cfg["patch_size"].([]any); ok && len(ps) > 0 {
-			if v, ok := ps[0].(float64); ok {
-				fmt.Fprintf(w, "    %-20s %d\n", "patch size", int(v))
-			}
-		}
-	}
-	if latentChannels > 0 {
-		fmt.Fprintf(w, "    %-20s %d\n", "latent channels", latentChannels)
-	}
-	fmt.Fprintln(w)
-
-	// Print Components (with config and tensors in verbose mode)
-	fmt.Fprintln(w, "  Components")
-	for _, name := range []string{"text_encoder", "transformer", "vae", "scheduler"} {
-		info := components[name]
-		cfg := componentConfigs[name]
-
-		// Skip if no info and no config
-		if info == nil && cfg == nil {
-			continue
-		}
-
-		if verbose {
-			// Header with tensor summary
-			if info != nil {
-				fmt.Fprintf(w, "    %s (%d tensors, %s)\n", name, len(info.tensors), formatBytes(info.size))
-			} else {
-				fmt.Fprintf(w, "    %s\n", name)
-			}
-
-			// Config values
-			if cfg != nil {
-				fmt.Fprintln(w, "      config:")
-				printConfigMap(w, cfg, "        ")
-			}
-
-			// Tensors
-			if info != nil && len(info.tensors) > 0 {
-				fmt.Fprintln(w, "      tensors:")
-				for _, t := range info.tensors {
-					shapeStr := formatShape(t.shape)
-					fmt.Fprintf(w, "        %-56s %-6s %s\n", t.name, t.dtype, shapeStr)
-				}
-			}
-			fmt.Fprintln(w)
-		} else {
-			if info != nil {
-				fmt.Fprintf(w, "    %-20s %d tensors, %s\n", name, len(info.tensors), formatBytes(info.size))
-			}
-		}
-	}
-	if !verbose {
-		fmt.Fprintln(w)
-	}
 
 	return nil
 }
@@ -250,74 +100,6 @@ func formatParamCount(count int64) string {
 		return fmt.Sprintf("%.1fM", float64(count)/1_000_000)
 	}
 	return fmt.Sprintf("%d", count)
-}
-
-// formatShape formats a tensor shape as a string.
-func formatShape(shape []int32) string {
-	if len(shape) == 0 {
-		return "[]"
-	}
-	parts := make([]string, len(shape))
-	for i, v := range shape {
-		parts[i] = strconv.Itoa(int(v))
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-// formatBytes formats bytes as human-readable string.
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
-}
-
-// printConfigMap prints a config map with proper formatting.
-func printConfigMap(w io.Writer, cfg map[string]any, indent string) {
-	// Sort keys for consistent output, skip internal diffusers keys
-	keys := make([]string, 0, len(cfg))
-	for k := range cfg {
-		if strings.HasPrefix(k, "_diffusers") {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	// Simple alphabetical sort
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			if keys[i] > keys[j] {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
-		}
-	}
-
-	for _, k := range keys {
-		v := cfg[k]
-		switch val := v.(type) {
-		case float64:
-			// Check if it's an integer value
-			if val == float64(int64(val)) {
-				fmt.Fprintf(w, "%s%-24s %d\n", indent, k, int64(val))
-			} else {
-				fmt.Fprintf(w, "%s%-24s %g\n", indent, k, val)
-			}
-		case bool:
-			fmt.Fprintf(w, "%s%-24s %v\n", indent, k, val)
-		case string:
-			fmt.Fprintf(w, "%s%-24s %s\n", indent, k, val)
-		case []any:
-			// Format arrays compactly
-			fmt.Fprintf(w, "%s%-24s %v\n", indent, k, val)
-		default:
-			fmt.Fprintf(w, "%s%-24s %v\n", indent, k, v)
-		}
-	}
 }
 
 // RegisterFlags adds image generation flags to the given command.

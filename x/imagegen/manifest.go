@@ -12,12 +12,10 @@ import (
 
 // ManifestLayer represents a layer in the manifest.
 type ManifestLayer struct {
-	MediaType string  `json:"mediaType"`
-	Digest    string  `json:"digest"`
-	Size      int64   `json:"size"`
-	Name      string  `json:"name,omitempty"`  // Path-style name: "component/tensor" or "path/to/config.json"
-	Dtype     string  `json:"dtype,omitempty"` // Tensor dtype (e.g., "BF16", "F32")
-	Shape     []int32 `json:"shape,omitempty"` // Tensor shape
+	MediaType string `json:"mediaType"`
+	Digest    string `json:"digest"`
+	Size      int64  `json:"size"`
+	Name      string `json:"name,omitempty"` // Path-style name: "component/tensor" or "path/to/config.json"
 }
 
 // Manifest represents the manifest JSON structure.

@@ -24,9 +24,7 @@ type LayerInfo struct {
 	Digest    string
 	Size      int64
 	MediaType string
-	Name      string  // Path-style name: "component/tensor" or "path/to/config.json"
-	Dtype     string  // Tensor dtype (for tensor layers)
-	Shape     []int32 // Tensor shape (for tensor layers)
+	Name      string // Path-style name: "component/tensor" or "path/to/config.json"
 }
 
 // LayerCreator is called to create a blob layer.
