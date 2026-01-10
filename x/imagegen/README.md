@@ -123,6 +123,7 @@ data: {"created": 1704067200, "data": [{"b64_json": "..."}]}
 ## Requirements
 
 - macOS with Apple Silicon (M1/M2/M3/M4)
+- CUDA: tested on CUDA 12 Blackwell, more testing coming soon
 - Sufficient VRAM (see model table above)
 - Ollama built with MLX support
 
