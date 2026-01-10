@@ -764,6 +764,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifes
 	progress := func(completed, total int64) {
 		fn(api.ProgressResponse{
 			Status:    "pulling model",
+			Digest:    "sha256:model",
 			Total:     total,
 			Completed: completed,
 		})
@@ -838,6 +839,7 @@ func pushWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifes
 	progress := func(completed, total int64) {
 		fn(api.ProgressResponse{
 			Status:    "pushing model",
+			Digest:    "sha256:model",
 			Total:     total,
 			Completed: completed,
 		})
