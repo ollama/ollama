@@ -55,7 +55,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("unable to start ollama app %w", err)
+		return fmt.Errorf("unable to start Ollama app %w", err)
 	}
 
 	if cmd.Process != nil {
