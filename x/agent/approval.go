@@ -33,7 +33,7 @@ type ApprovalResult struct {
 // Option labels for the selector (numbered for quick selection)
 var optionLabels = []string{
 	"1. Execute once",
-	"2. Always allow",
+	"2. Allow for this session",
 	"3. Deny",
 }
 
@@ -494,16 +494,32 @@ func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any) 
 	// This prevents buffered input from causing double-press issues
 	flushStdin(fd)
 
-	// Check if bash command targets paths outside cwd
 	isWarning := false
+	var warningMsg string
+	var allowlistInfo string
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
-			isWarning = isCommandOutsideCwd(cmd)
+			if isCommandOutsideCwd(cmd) {
+				isWarning = true
+				warningMsg = "command targets paths outside project"
+			}
+			if prefix := extractBashPrefix(cmd); prefix != "" {
+				colonIdx := strings.Index(prefix, ":")
+				if colonIdx != -1 {
+					cmdName := prefix[:colonIdx]
+					dirPath := prefix[colonIdx+1:]
+					if dirPath != "./" {
+						allowlistInfo = fmt.Sprintf("%s in %s directory (includes subdirs)", cmdName, dirPath)
+					} else {
+						allowlistInfo = fmt.Sprintf("%s in %s directory", cmdName, dirPath)
+					}
+				}
+			}
 		}
 	}
 
 	// Run interactive selector
-	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning)
+	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning, warningMsg, allowlistInfo)
 	if err != nil {
 		term.Restore(fd, oldState)
 		return ApprovalResult{Decision: ApprovalDeny}, err
@@ -567,24 +583,28 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 
 // selectorState holds the state for the interactive selector
 type selectorState struct {
-	toolDisplay string
-	selected    int
-	totalLines  int
-	termWidth   int
-	termHeight  int
-	boxWidth    int
-	innerWidth  int
-	denyReason  string // deny reason (always visible in box)
-	isWarning   bool   // true if command targets paths outside cwd (red box)
+	toolDisplay    string
+	selected       int
+	totalLines     int
+	termWidth      int
+	termHeight     int
+	boxWidth       int
+	innerWidth     int
+	denyReason     string // deny reason (always visible in box)
+	isWarning      bool   // true if command has warning
+	warningMessage string // dynamic warning message to display
+	allowlistInfo  string // show what will be allowlisted (for "Allow for this session" option)
 }
 
 // runSelector runs the interactive selector and returns the selected index and optional deny reason.
 // If isWarning is true, the box is rendered in red to indicate the command targets paths outside cwd.
-func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool) (int, string, error) {
+func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool, warningMessage string, allowlistInfo string) (int, string, error) {
 	state := &selectorState{
-		toolDisplay: toolDisplay,
-		selected:    0,
-		isWarning:   isWarning,
+		toolDisplay:    toolDisplay,
+		selected:       0,
+		isWarning:      isWarning,
+		warningMessage: warningMessage,
+		allowlistInfo:  allowlistInfo,
 	}
 
 	// Get terminal size
@@ -771,7 +791,11 @@ func renderSelectorBox(state *selectorState) {
 
 	// Draw warning line if needed
 	if state.isWarning {
-		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m command targets paths outside project\033[K\r\n")
+		if state.warningMessage != "" {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m %s\033[K\r\n", state.warningMessage)
+		} else {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m command targets paths outside project\033[K\r\n")
+		}
 		fmt.Fprintf(os.Stderr, "\033[K\r\n") // blank line after warning
 	}
 
@@ -783,21 +807,27 @@ func renderSelectorBox(state *selectorState) {
 	// Blank line separator
 	fmt.Fprintf(os.Stderr, "\033[K\r\n")
 
-	// Draw options
 	for i, label := range optionLabels {
-		if i == 2 { // Deny option with input
+		if i == 2 {
 			denyLabel := "3. Deny: "
 			inputDisplay := state.denyReason
+			if inputDisplay == "" {
+				inputDisplay = "\033[90m(optional reason)\033[0m"
+			}
 			if i == state.selected {
 				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			} else {
 				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			}
 		} else {
+			displayLabel := label
+			if i == 1 && state.allowlistInfo != "" {
+				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
+			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
 			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
 			}
 		}
 	}
@@ -825,21 +855,27 @@ func updateSelectorOptions(state *selectorState) {
 	linesToMove := len(hintLines) - 1 + 1 + len(optionLabels)
 	fmt.Fprintf(os.Stderr, "\033[%dA\r", linesToMove)
 
-	// Redraw options
 	for i, label := range optionLabels {
-		if i == 2 { // Deny option
+		if i == 2 {
 			denyLabel := "3. Deny: "
 			inputDisplay := state.denyReason
+			if inputDisplay == "" {
+				inputDisplay = "\033[90m(optional reason)\033[0m"
+			}
 			if i == state.selected {
 				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			} else {
 				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			}
 		} else {
+			displayLabel := label
+			if i == 1 && state.allowlistInfo != "" {
+				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
+			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
 			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", label)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
 			}
 		}
 	}
@@ -868,6 +904,9 @@ func updateReasonInput(state *selectorState) {
 	// Redraw Deny line with reason
 	denyLabel := "3. Deny: "
 	inputDisplay := state.denyReason
+	if inputDisplay == "" {
+		inputDisplay = "\033[90m(optional reason)\033[0m"
+	}
 	if state.selected == 2 {
 		fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 	} else {
@@ -901,7 +940,7 @@ func (a *ApprovalManager) fallbackApproval(toolDisplay string) (ApprovalResult, 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, toolDisplay)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Always allow  [3] Deny")
+	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Allow for this session  [3] Deny")
 	fmt.Fprint(os.Stderr, "choice: ")
 
 	var input string
