@@ -71,8 +71,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, []string, *ggml.MetaGGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ []string, _ *ggml.MetaGGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -182,7 +182,7 @@ func TestGenerateChat(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -898,7 +898,7 @@ func TestGenerate(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -1382,7 +1382,7 @@ func TestGenerateLogprobs(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					req.successCh <- &runnerRef{llama: mock}
 					return false
 				},
@@ -1562,7 +1562,7 @@ func TestChatLogprobs(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					req.successCh <- &runnerRef{llama: mock}
 					return false
 				},
@@ -1672,7 +1672,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					time.Sleep(time.Millisecond)
 					req.successCh <- &runnerRef{llama: mock}
 					return false
