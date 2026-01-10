@@ -521,7 +521,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	// Check for experimental flag
 	isExperimental, _ := cmd.Flags().GetBool("experimental")
 	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
-	noBash, _ := cmd.Flags().GetBool("experimental-no-bash")
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -551,7 +550,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 		// Use experimental agent loop with tools
 		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, noBash)
+			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -1767,7 +1766,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
 	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
-	runCmd.Flags().Bool("experimental-no-bash", false, "Disable bash tool for this session")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",

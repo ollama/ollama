@@ -634,7 +634,7 @@ func checkModelCapabilities(ctx context.Context, modelName string) (supportsTool
 // GenerateInteractive runs an interactive agent session.
 // This is called from cmd.go when --experimental flag is set.
 // If yoloMode is true, all tool approvals are skipped.
-func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool, disableBash bool) error {
+func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
@@ -658,15 +658,12 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	// Create tool registry only if model supports tools
 	var toolRegistry *tools.Registry
 	if supportsTools {
-		toolRegistry = tools.DefaultRegistryWithConfig(tools.RegistryConfig{
-			DisableBash: disableBash,
-		})
+		toolRegistry = tools.DefaultRegistry()
 
 		if toolRegistry.Has("bash") {
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, "This experimental version of Ollama has the \033[1mbash\033[0m tool enabled.")
 			fmt.Fprintln(os.Stderr, "Models can read files on your computer, or run commands (after you allow them).")
-			fmt.Fprintln(os.Stderr, "To disable: use /bash off or restart with --experimental-no-bash")
 			fmt.Fprintln(os.Stderr)
 		}
 
@@ -708,31 +705,9 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 		case strings.HasPrefix(line, "/tools"):
 			showToolsStatus(toolRegistry, approval, supportsTools)
 			continue
-		case strings.HasPrefix(line, "/bash off"):
-			if toolRegistry == nil {
-				fmt.Println("Tools not available - model does not support tool calling")
-			} else if !toolRegistry.Has("bash") {
-				fmt.Println("Bash tool is already disabled")
-			} else {
-				toolRegistry.Unregister("bash")
-				fmt.Println("Bash tool disabled for this session")
-			}
-			continue
-		case strings.HasPrefix(line, "/bash on"):
-			if toolRegistry == nil {
-				fmt.Println("Tools not available - model does not support tool calling")
-			} else if toolRegistry.Has("bash") {
-				fmt.Println("Bash tool is already enabled")
-			} else {
-				toolRegistry.RegisterBash()
-				fmt.Println("Bash tool enabled. The model can now read and modify files on your computer.")
-			}
-			continue
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			fmt.Fprintln(os.Stderr, "Available Commands:")
 			fmt.Fprintln(os.Stderr, "  /tools          Show available tools and approvals")
-			fmt.Fprintln(os.Stderr, "  /bash on        Enable bash tool")
-			fmt.Fprintln(os.Stderr, "  /bash off       Disable bash tool")
 			fmt.Fprintln(os.Stderr, "  /clear          Clear session context and approvals")
 			fmt.Fprintln(os.Stderr, "  /bye            Exit")
 			fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")

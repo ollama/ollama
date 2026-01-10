@@ -104,28 +104,17 @@ func (r *Registry) Count() int {
 	return len(r.tools)
 }
 
-// RegistryConfig holds configuration for creating a registry.
-type RegistryConfig struct {
-	DisableBash bool
-}
-
 // DefaultRegistry creates a registry with all built-in tools.
 // Tools can be disabled via environment variables:
 // - OLLAMA_AGENT_DISABLE_WEBSEARCH=1 disables web_search
 // - OLLAMA_AGENT_DISABLE_BASH=1 disables bash
 func DefaultRegistry() *Registry {
-	return DefaultRegistryWithConfig(RegistryConfig{})
-}
-
-// DefaultRegistryWithConfig creates a registry with the given configuration.
-// Environment variables can still override the config to disable tools.
-func DefaultRegistryWithConfig(config RegistryConfig) *Registry {
 	r := NewRegistry()
 	// TODO(parthsareen): re-enable web search once it's ready for release
 	// if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
 	// 	r.Register(&WebSearchTool{})
 	// }
-	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" && !config.DisableBash {
+	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" {
 		r.Register(&BashTool{})
 	}
 	return r

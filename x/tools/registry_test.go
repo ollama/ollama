@@ -221,19 +221,3 @@ func TestRegistry_RegisterBash(t *testing.T) {
 		t.Error("expected bash tool to be registered")
 	}
 }
-
-func TestDefaultRegistryWithConfig_DisableBash(t *testing.T) {
-	r := DefaultRegistryWithConfig(RegistryConfig{DisableBash: true})
-
-	if r.Has("bash") {
-		t.Error("expected bash to be disabled via config")
-	}
-}
-
-func TestDefaultRegistryWithConfig_EnableBash(t *testing.T) {
-	r := DefaultRegistryWithConfig(RegistryConfig{DisableBash: false})
-
-	if !r.Has("bash") {
-		t.Error("expected bash to be enabled by default")
-	}
-}
