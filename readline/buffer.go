@@ -56,7 +56,7 @@ func (b *Buffer) MoveLeft() {
 			rLength := runewidth.RuneWidth(r)
 
 			if b.DisplayPos%b.LineWidth == 0 {
-				fmt.Print(CursorUp + CursorBOL + CursorRightN(b.Width))
+				fmt.Print(CursorUp + CursorBOL + CursorRightN(b.Width-1))
 				if rLength == 2 {
 					fmt.Print(CursorLeft)
 				}
@@ -340,7 +340,7 @@ func (b *Buffer) Remove() {
 			if b.DisplayPos%b.LineWidth == 0 {
 				// if the user backspaces over the word boundary, do this magic to clear the line
 				// and move to the end of the previous line
-				fmt.Print(CursorBOL + ClearToEOL + CursorUp + CursorBOL + CursorRightN(b.Width))
+				fmt.Print(CursorBOL + ClearToEOL + CursorUp + CursorBOL + CursorRightN(b.Width-1))
 
 				if b.DisplaySize()%b.LineWidth < (b.DisplaySize()-rLength)%b.LineWidth {
 					b.LineHasSpace.Remove(b.DisplayPos/b.LineWidth - 1)
@@ -357,7 +357,7 @@ func (b *Buffer) Remove() {
 					fmt.Print(" " + CursorLeft)
 				}
 			} else if (b.DisplayPos-rLength)%b.LineWidth == 0 && hasSpace {
-				fmt.Print(CursorBOL + ClearToEOL + CursorUp + CursorBOL + CursorRightN(b.Width))
+				fmt.Print(CursorBOL + ClearToEOL + CursorUp + CursorBOL + CursorRightN(b.Width-1))
 
 				if b.Pos == b.Buf.Size() {
 					b.LineHasSpace.Remove(b.DisplayPos/b.LineWidth - 1)
