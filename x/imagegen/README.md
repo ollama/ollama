@@ -132,6 +132,7 @@ data: {"created": 1704067200, "data": [{"b64_json": "..."}]}
 - macOS only (uses MLX backend)
 - Single image per request
 - Fixed step count (30 steps)
+- Modelfiles not yet supported (use `ollama create` from model directory)
 
 ---
 
