@@ -47,7 +47,7 @@ type deepseek2Model struct {
 	Architecture string
 }
 
-func (p *deepseek2Model) KV(t *Tokenizer) ggml.KV {
+func (p *deepseek2Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "deepseek2"
 	kv["general.type"] = "model"

@@ -8,20 +8,17 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/ml/nn/rope"
-	"github.com/ollama/ollama/model/input"
 )
 
 type TextOptions struct {
 	hiddenSize, numHeads, numKVHeads int
 	ropeDim, originalContextLength   int
 	eps, ropeBase, ropeScale         float32
+	mropeSections                    []int
 }
 
 func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
-	return nn.RoPE(ctx, states, positions, o.ropeDim, o.ropeBase, 1./o.ropeScale,
-		rope.WithOriginalContextLength(o.originalContextLength),
-		rope.WithTypeNeoX(),
-	)
+	return nn.RoPE(ctx, states, positions, o.ropeDim, o.ropeBase, 1./o.ropeScale, rope.WithMRoPE(o.mropeSections))
 }
 
 type TextModel struct {
@@ -31,6 +28,7 @@ type TextModel struct {
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
 	*TextOptions
+	positionCache []int32
 }
 
 func NewTextModel(c fs.Config) *TextModel {
@@ -45,6 +43,14 @@ func NewTextModel(c fs.Config) *TextModel {
 			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:              c.Float("rope.freq_base"),
 			ropeScale:             c.Float("rope.scaling.factor", 1),
+			mropeSections: func() []int {
+				sections := c.Ints("rope.mrope_section")
+				s := make([]int, len(sections))
+				for i, section := range sections {
+					s[i] = int(section)
+				}
+				return s
+			}(),
 		},
 	}
 
@@ -84,6 +90,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 // Shift applies rotary position embeddings to the key tensor for causal attention caching
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	m.positionCache = nil
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
@@ -129,29 +136,4 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 	hiddenState = l.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
 	return hiddenState.Add(ctx, residual)
-}
-
-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {
-	// Initial token embedding
-	hiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
-
-	for _, mi := range batch.Multimodal {
-		img := mi.Multimodal[0].Tensor
-		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
-	}
-
-	// Process through transformer layers
-	for i, layer := range m.Layers {
-		cache.SetLayer(i)
-
-		var lastLayerOutputs ml.Tensor
-		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
-		}
-
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, lastLayerOutputs, cache, m.TextOptions)
-	}
-
-	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
-	return m.Output.Forward(ctx, hiddenStates), nil
 }

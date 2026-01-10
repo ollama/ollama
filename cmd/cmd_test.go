@@ -291,6 +291,31 @@ Weigh anchor!
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
+
+	t.Run("min version", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Requires: "0.14.0",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := `  Model
+    architecture    test      
+    parameters      7B        
+    quantization    FP16      
+    requires        0.14.0    
+
+`
+		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestDeleteHandler(t *testing.T) {

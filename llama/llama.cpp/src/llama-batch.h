@@ -56,13 +56,15 @@ struct llama_ubatch {
         std::vector<float>          embd;
         std::vector<llama_pos>      pos;
         std::vector<int32_t>        n_seq_id;
-        std::vector<llama_seq_id *> seq_id;
+        std::vector<llama_seq_id *> seq_id;      // these point into the seq_id_data below
         std::vector<llama_seq_id>   seq_id_unq;
         std::vector<int32_t>        seq_idx;
         std::vector<int8_t>         output;
+
+        std::vector<llama_seq_id> seq_id_data;
     };
 
-    // the llama_ubatch pointers above point to this data if set. otherwise - points to non-owning data
+    // the llama_ubatch pointers above point to this data if set. otherwise - point to external non-owning data
     std::shared_ptr<data_t> data;
 };
 

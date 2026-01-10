@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestMain(m *testing.M) {
@@ -804,3 +806,61 @@ func (s *mockLlm) GetPort() int                                       { return -
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
+
+// TestImageGenCapabilityDetection verifies that models with "image" capability
+// are correctly identified and routed differently from language models.
+func TestImageGenCapabilityDetection(t *testing.T) {
+	// Model with image capability should be detected
+	imageModel := &Model{
+		Config: model.ConfigV2{
+			Capabilities: []string{"image"},
+		},
+	}
+	require.True(t, slices.Contains(imageModel.Config.Capabilities, "image"))
+
+	// Model without image capability should not be detected
+	langModel := &Model{
+		Config: model.ConfigV2{
+			Capabilities: []string{"completion"},
+		},
+	}
+	require.False(t, slices.Contains(langModel.Config.Capabilities, "image"))
+
+	// Empty capabilities should not match
+	emptyModel := &Model{}
+	require.False(t, slices.Contains(emptyModel.Config.Capabilities, "image"))
+}
+
+// TestImageGenRunnerCanBeEvicted verifies that an image generation model
+// loaded in the scheduler can be evicted by a language model request.
+func TestImageGenRunnerCanBeEvicted(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Simulate an image gen runner already loaded
+	imageGenRunner := &runnerRef{
+		model:           &Model{Name: "z-image", ModelPath: "/fake/image/model"},
+		modelPath:       "/fake/image/model",
+		llama:           &mockLlm{vramSize: 21 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{}},
+		sessionDuration: 5 * time.Millisecond,
+		refCount:        0, // idle
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/image/model"] = imageGenRunner
+	s.loadedMu.Unlock()
+
+	// Verify the image gen runner is loaded
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 1)
+	s.loadedMu.Unlock()
+
+	// findRunnerToUnload should find the idle image gen runner
+	runner := s.findRunnerToUnload()
+	require.NotNil(t, runner)
+	require.Equal(t, "/fake/image/model", runner.modelPath)
+}

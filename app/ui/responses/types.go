@@ -101,15 +101,14 @@ type HealthResponse struct {
 }
 
 type User struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Email         string `json:"email"`
-	AvatarURL     string `json:"avatarURL"`
-	Plan          string `json:"plan"`
-	Bio           string `json:"bio"`
-	FirstName     string `json:"firstName"`
-	LastName      string `json:"lastName"`
-	OverThreshold bool   `json:"overThreshold"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	Bio       string `json:"bio,omitempty"`
+	AvatarURL string `json:"avatarurl,omitempty"`
+	FirstName string `json:"firstname,omitempty"`
+	LastName  string `json:"lastname,omitempty"`
+	Plan      string `json:"plan,omitempty"`
 }
 
 type Attachment struct {

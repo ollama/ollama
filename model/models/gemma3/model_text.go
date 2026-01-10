@@ -2,7 +2,6 @@ package gemma3
 
 import (
 	"math"
-	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -13,25 +12,26 @@ import (
 )
 
 type TextConfig struct {
-	hiddenSize, numHeads, numKVHeads int
-	attnKeyLen, attnValLen           int
-	eps, ropeScale                   float32
-	ropeLocalBase                    float32
-	largeModelScaling                bool
-	slidingWindowPattern             []bool
-	ropeBase                         float32
-	ropeType                         string
-	ropeOriginalContext              int
-	ropeExtrapolation                float32
-	ropeBetaFast                     float32
-	ropeBetaSlow                     float32
-	finalLogitSoftcap                float32
+	hiddenSize, contextLength, numHeads, numKVHeads int
+	attnKeyLen, attnValLen                          int
+	eps, ropeScale                                  float32
+	ropeLocalBase                                   float32
+	largeModelScaling                               bool
+	slidingWindow                                   uint32
+	slidingWindowPattern                            []bool
+	ropeBase                                        float32
+	ropeType                                        string
+	ropeOriginalContext                             int
+	ropeExtrapolation                               float32
+	ropeBetaFast                                    float32
+	ropeBetaSlow                                    float32
+	finalLogitSoftcap                               float32
 }
 
-func (o TextConfig) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor, base float32) ml.Tensor {
+func (o TextConfig) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor, base, scale float32) ml.Tensor {
 	ropeOpts := []func(*rope.Options){rope.WithTypeNeoX()}
 	if o.ropeType == "yarn" {
-		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
+		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(scale))))
 		ropeOpts = append(ropeOpts,
 			rope.WithOriginalContextLength(o.ropeOriginalContext),
 			rope.WithExtrapolationFactor(o.ropeExtrapolation),
@@ -41,7 +41,7 @@ func (o TextConfig) applyRotaryPositionEmbeddings(ctx ml.Context, states, positi
 		)
 	}
 
-	return nn.RoPE(ctx, states, positions, o.attnKeyLen, base, 1./o.ropeScale, ropeOpts...)
+	return nn.RoPE(ctx, states, positions, o.attnKeyLen, base, 1./scale, ropeOpts...)
 }
 
 type TextModel struct {
@@ -55,6 +55,9 @@ type TextModel struct {
 
 const (
 	gemmaGlobalCacheCount = 6
+	gemma1BLayerCount     = 26
+	gemma4BLayerCount     = 34
+	gemma12BLayerCount    = 48
 	gemma27BLayerCount    = 62
 )
 
@@ -70,6 +73,7 @@ func newTextModel(c fs.Config) *TextModel {
 		Layers: make([]TextLayer, numBlocks),
 		TextConfig: &TextConfig{
 			hiddenSize:           int(c.Uint("embedding_length")),
+			contextLength:        int(c.Uint("context_length")),
 			numHeads:             int(c.Uint("attention.head_count")),
 			numKVHeads:           int(c.Uint("attention.head_count_kv")),
 			attnKeyLen:           int(c.Uint("attention.key_length", 256)),
@@ -77,6 +81,7 @@ func newTextModel(c fs.Config) *TextModel {
 			eps:                  c.Float("attention.layer_norm_rms_epsilon", 1e-06),
 			ropeLocalBase:        c.Float("rope.local.freq_base", 10000.0),
 			ropeBase:             c.Float("rope.freq_base", 1000000.0),
+			slidingWindow:        c.Uint("attention.sliding_window"),
 			slidingWindowPattern: c.Bools("attention.sliding_window_pattern"),
 			ropeType:             c.String("rope.scaling.type"),
 			ropeOriginalContext:  int(c.Uint("rope.scaling.original_context_length")),
@@ -88,14 +93,20 @@ func newTextModel(c fs.Config) *TextModel {
 		},
 	}
 
-	// Google's Gemma 3 release with sliding window attention does
-	// not use final logit softcapping, and so force it to 0.0
-	// TODO (jmorganca): this should ideally be set to 0.0 in the
-	// model configuration instead of here, as future versions of
-	// models may include both sliding window attention and final
-	// logit softcapping.
-	if slices.Contains(m.TextConfig.slidingWindowPattern, true) {
-		m.TextConfig.finalLogitSoftcap = 0.0
+	// Apply corrections for older versions of the Gemma 3 models
+	// by looking at whether they use sliding window attention and
+	// based on their layer counts.
+	if m.TextConfig.slidingWindow < uint32(m.TextConfig.contextLength) {
+		switch numBlocks {
+		case gemma1BLayerCount:
+			// The 1B model has final logit softcapping set to 30.0
+			// but it should be 0.0
+			m.TextConfig.finalLogitSoftcap = 0.0
+		case gemma4BLayerCount, gemma12BLayerCount, gemma27BLayerCount:
+			// The 4B, 12B, and 27B models have rope scale unset
+			// but it shuold be set to 8.0
+			m.TextConfig.ropeScale = 8.0
+		}
 	}
 
 	if numBlocks == gemma27BLayerCount {
@@ -114,31 +125,31 @@ type TextSelfAttention struct {
 	Output    *nn.Linear  `gguf:"attn_output"`
 }
 
-func (opts *TextConfig) ropeBaseForLayer(layer int) float32 {
+func (opts *TextConfig) ropeValuesForLayer(layer int) (base float32, scale float32) {
 	if opts.slidingWindowPattern != nil && opts.slidingWindowPattern[layer] {
-		return opts.ropeLocalBase
+		return opts.ropeLocalBase, 1.0
 	}
 
 	// Standard Gemma3: only every n-th layer is global,
 	// where n = gemmaGlobalCacheCount, otherwise use
 	// the local rope base
 	if (layer+1)%gemmaGlobalCacheCount > 0 {
-		return opts.ropeLocalBase
+		return opts.ropeLocalBase, 1.0
 	}
 
 	// default to global rope base
-	return opts.ropeBase
+	return opts.ropeBase, opts.ropeScale
 }
 
 func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextConfig) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 
-	ropeBase := opts.ropeBaseForLayer(layer)
+	ropeBase, ropeScale := opts.ropeValuesForLayer(layer)
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
 	q = sa.QueryNorm.Forward(ctx, q, opts.eps)
-	q = opts.applyRotaryPositionEmbeddings(ctx, q, positionIDs, ropeBase)
+	q = opts.applyRotaryPositionEmbeddings(ctx, q, positionIDs, ropeBase, ropeScale)
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -149,7 +160,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
 	k = sa.KeyNorm.Forward(ctx, k, opts.eps)
-	k = opts.applyRotaryPositionEmbeddings(ctx, k, positionIDs, ropeBase)
+	k = opts.applyRotaryPositionEmbeddings(ctx, k, positionIDs, ropeBase, ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
@@ -162,7 +173,8 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return m.applyRotaryPositionEmbeddings(ctx, key, shift, m.TextConfig.ropeBaseForLayer(layer)), nil
+	ropeBase, ropeScale := m.TextConfig.ropeValuesForLayer(layer)
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift, ropeBase, ropeScale), nil
 }
 
 type TextMLP struct {

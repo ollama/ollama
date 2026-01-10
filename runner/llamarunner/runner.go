@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/runner/common"
 )
 
@@ -832,7 +833,7 @@ func (s *Server) loadModel(
 	ppath string,
 	kvSize int,
 	kvCacheType string,
-	flashAttention bool,
+	flashAttention ml.FlashAttentionType,
 	threads int,
 	multiUserCache bool,
 ) {
@@ -842,7 +843,7 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention, kvCacheType)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)

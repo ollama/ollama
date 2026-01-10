@@ -45,7 +45,7 @@ func (m *qwen3VLModel) parseMore(fsys fs.FS) error {
 	return json.Unmarshal(bts, &m.VisionModel)
 }
 
-func (m *qwen3VLModel) KV(t *Tokenizer) ggml.KV {
+func (m *qwen3VLModel) KV(t *Tokenizer) KV {
 	kv := m.qwen3Model.KV(t)
 
 	arch := "qwen3vl"

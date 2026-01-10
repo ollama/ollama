@@ -89,7 +89,7 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	n := model.ParseName("test")
 
 	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(&ConfigV2{}); err != nil {
+	if err := json.NewEncoder(&b).Encode(&model.ConfigV2{}); err != nil {
 		t.Fatal(err)
 	}
 

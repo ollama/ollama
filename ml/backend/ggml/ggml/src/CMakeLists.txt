@@ -127,10 +127,6 @@ if (NOT MSVC)
     endif()
 endif()
 
-if (MINGW)
-    add_compile_definitions(_WIN32_WINNT=${GGML_WIN_VER})
-endif()
-
 #
 # POSIX conformance
 #
@@ -445,6 +441,7 @@ ggml_add_backend(WebGPU)
 ggml_add_backend(zDNN)
 ggml_add_backend(OpenCL)
 ggml_add_backend(Hexagon)
+ggml_add_backend(ZenDNN)
 
 foreach (target ggml-base ggml)
     target_include_directories(${target} PUBLIC    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include> $<INSTALL_INTERFACE:include>)

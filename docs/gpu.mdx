@@ -33,7 +33,7 @@ Check your compute compatibility to see if your card is supported:
 | 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810`                                                                                               |
 |                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`                     |
 
-For building locally to support older GPUs, see [developer.md](./development.md#linux-cuda-nvidia)
+For building locally to support older GPUs, see [developer](./development#linux-cuda-nvidia)
 
 ### GPU Selection
 
@@ -54,7 +54,7 @@ sudo modprobe nvidia_uvm`
 
 Ollama supports the following AMD GPUs via the ROCm library:
 
-> [!NOTE]
+> **NOTE:**
 > Additional AMD GPU support is provided by the Vulkan Library - see below.
 
 
@@ -132,9 +132,9 @@ Ollama supports GPU acceleration on Apple devices via the Metal API.
 
 ## Vulkan GPU Support
 
-> [!NOTE]
+> **NOTE:**
 > Vulkan is currently an Experimental feature.  To enable, you must set OLLAMA_VULKAN=1 for the Ollama server as
-described in the [FAQ](faq.md#how-do-i-configure-ollama-server)
+described in the [FAQ](faq#how-do-i-configure-ollama-server)
 
 Additional GPU support on Windows and Linux is provided via
 [Vulkan](https://www.vulkan.org/). On Windows most GPU vendors drivers come
@@ -161,6 +161,6 @@ sudo setcap cap_perfmon+ep /usr/local/bin/ollama
 
 To select specific Vulkan GPU(s), you can set the environment variable
 `GGML_VK_VISIBLE_DEVICES` to one or more numeric IDs on the Ollama server as
-described in the [FAQ](faq.md#how-do-i-configure-ollama-server). If you
+described in the [FAQ](faq#how-do-i-configure-ollama-server). If you
 encounter any problems with Vulkan based GPUs, you can disable all Vulkan GPUs
 by setting `GGML_VK_VISIBLE_DEVICES=-1` 

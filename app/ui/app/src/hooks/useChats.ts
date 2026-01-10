@@ -7,6 +7,7 @@ import { createQueryBatcher } from "./useQueryBatcher";
 import { useRefetchModels } from "./useModels";
 import { useStreamingContext } from "@/contexts/StreamingContext";
 import { useSettings } from "./useSettings";
+import { getModelCapabilities } from "@/api";
 
 export const useChats = () => {
   return useQuery({
@@ -606,6 +607,24 @@ export const useSendMessage = (chatId: string) => {
               queryClient.setQueryData(["staleModels"], newStaleMap);
 
               queryClient.invalidateQueries({ queryKey: ["models"] });
+
+              // Fetch fresh capabilities for the downloaded model
+              getModelCapabilities(selectedModel.model)
+                .then((capabilities) => {
+                  queryClient.setQueryData(
+                    ["modelCapabilities", selectedModel.model],
+                    capabilities,
+                  );
+                })
+                .catch((error) => {
+                  console.error(
+                    "Failed to fetch capabilities after download:",
+                    error,
+                  );
+                  queryClient.invalidateQueries({
+                    queryKey: ["modelCapabilities", selectedModel.model],
+                  });
+                });
             }
             break;
           }

@@ -1,0 +1,69 @@
+---
+title: Claude Code
+---
+
+## Install
+
+Install [Claude Code](https://code.claude.com/docs/en/overview):
+
+<CodeGroup>
+
+```shell macOS / Linux
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+```powershell Windows
+irm https://claude.ai/install.ps1 | iex
+```
+
+</CodeGroup>
+
+## Usage with Ollama
+
+Claude Code connects to Ollama using the Anthropic-compatible API.
+
+1. Set the environment variables:
+
+```shell
+export ANTHROPIC_BASE_URL=http://localhost:11434
+export ANTHROPIC_API_KEY=ollama
+```
+
+2. Run Claude Code with an Ollama model:
+
+```shell
+claude --model qwen3-coder
+```
+
+Or run with environment variables inline:
+
+```shell
+ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
+```
+
+## Connecting to ollama.com
+
+1. Create an [API key](https://ollama.com/settings/keys) on ollama.com
+2. Set the environment variables:
+
+```shell
+export ANTHROPIC_BASE_URL=https://ollama.com
+export ANTHROPIC_API_KEY=<your-api-key>
+```
+
+3. Run Claude Code with a cloud model:
+
+```shell
+claude --model glm-4.7:cloud
+```
+
+## Recommended Models
+
+### Cloud models
+- `glm-4.7:cloud` - High-performance cloud model
+- `minimax-m2.1:cloud` - Fast cloud model
+- `qwen3-coder:480b` - Large coding model
+
+### Local models
+- `qwen3-coder` - Excellent for coding tasks
+- `gpt-oss:20b` - Strong general-purpose model

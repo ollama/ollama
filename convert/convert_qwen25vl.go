@@ -29,7 +29,7 @@ type qwen25VLModel struct {
 
 var _ ModelConverter = (*qwen25VLModel)(nil)
 
-func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
+func (q *qwen25VLModel) KV(t *Tokenizer) KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen25vl"
 

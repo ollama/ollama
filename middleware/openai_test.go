@@ -19,6 +19,40 @@ import (
 	"github.com/ollama/ollama/openai"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
+// propsComparer provides cmp options for comparing ToolPropertiesMap by value
+var propsComparer = cmp.Comparer(func(a, b *api.ToolPropertiesMap) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
 const (
 	prefix = `data:image/jpeg;base64,`
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
@@ -221,10 +255,10 @@ func TestChatMiddleware(t *testing.T) {
 								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
+									Arguments: testArgs(map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
-									},
+									}),
 								},
 							},
 						},
@@ -261,10 +295,10 @@ func TestChatMiddleware(t *testing.T) {
 								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
+									Arguments: testArgs(map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
-									},
+									}),
 								},
 							},
 						},
@@ -300,10 +334,10 @@ func TestChatMiddleware(t *testing.T) {
 								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
+									Arguments: testArgs(map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
-									},
+									}),
 								},
 							},
 						},
@@ -340,10 +374,10 @@ func TestChatMiddleware(t *testing.T) {
 								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
+									Arguments: testArgs(map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
-									},
+									}),
 								},
 							},
 						},
@@ -380,10 +414,10 @@ func TestChatMiddleware(t *testing.T) {
 								ID: "id_abc",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
+									Arguments: testArgs(map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
-									},
+									}),
 								},
 							},
 						},
@@ -426,10 +460,10 @@ func TestChatMiddleware(t *testing.T) {
 								ID: "id",
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]any{
+									Arguments: testArgs(map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
-									},
+									}),
 								},
 							},
 						},
@@ -494,7 +528,7 @@ func TestChatMiddleware(t *testing.T) {
 							Parameters: api.ToolFunctionParameters{
 								Type:     "object",
 								Required: []string{"location"},
-								Properties: map[string]api.ToolProperty{
+								Properties: testPropsMap(map[string]api.ToolProperty{
 									"location": {
 										Type:        api.PropertyType{"string"},
 										Description: "The city and state",
@@ -503,7 +537,7 @@ func TestChatMiddleware(t *testing.T) {
 										Type: api.PropertyType{"string"},
 										Enum: []any{"celsius", "fahrenheit"},
 									},
-								},
+								}),
 							},
 						},
 					},
@@ -558,7 +592,7 @@ func TestChatMiddleware(t *testing.T) {
 				}
 				return
 			}
-			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+			if diff := cmp.Diff(&tc.req, capturedRequest, argsComparer, propsComparer); diff != "" {
 				t.Fatalf("requests did not match: %+v", diff)
 			}
 			if diff := cmp.Diff(tc.err, errResp); diff != "" {

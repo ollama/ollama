@@ -32,21 +32,11 @@ layout(push_constant) uniform parameter {
     uint32_t Cin;
     uint32_t N;
 
-    // Tensor spatial sizes: kernel, input, output
-    uint32_t KW;
-    uint32_t KH;
+    // Tensor spatial sizes: input, output
     uint32_t W;
     uint32_t H;
     uint32_t OW;
     uint32_t OH;
-
-    // Parameters: stride, padding, dilation - 0=y, 1=x
-    uint32_t s0;
-    uint32_t s1;
-    uint32_t p0;
-    uint32_t p1;
-    uint32_t d0;
-    uint32_t d1;
 
     // Strides in elements
     uint32_t nb01;
@@ -77,13 +67,14 @@ layout(constant_id = 3) const uint BS_NPQ          = 128;
 layout(constant_id = 4) const uint TS_K            = 8;
 layout(constant_id = 5) const uint use_collectives = 1;
 layout(constant_id = 6) const uint SHMEM_PAD       = 4;
-
+// Stride, padding, dilation
 layout(constant_id = 7)  const uint s0             = 1;
 layout(constant_id = 8)  const uint s1             = 1;
 layout(constant_id = 9)  const uint p0             = 0;
 layout(constant_id = 10) const uint p1             = 0;
 layout(constant_id = 11) const uint d0             = 1;
 layout(constant_id = 12) const uint d1             = 1;
+// Kernel spatial sizes
 layout(constant_id = 13) const uint KW             = 1;
 layout(constant_id = 14) const uint KH             = 1;
 
@@ -138,7 +129,7 @@ P,Q=OH,OW
 */
 
 uint32_t B_idx_K   = gl_WorkGroupID.x;
-uint32_t B_idx_NPQ = gl_WorkGroupID.y;
+uint32_t B_idx_NPQ = gl_WorkGroupID.y + gl_WorkGroupID.z * 512;
 
 uint32_t T_y = tid / NT_NPQ;
 uint32_t T_x = tid % NT_NPQ;
@@ -178,6 +169,10 @@ ACC_TYPE perElemOpStore(const in uint32_t r, const in uint32_t c, const in ACC_T
 #endif
 
 void main() {
+    if (B_idx_NPQ * BS_NPQ >= NPQ) {
+        return;
+    }
+
 #ifdef COOPMAT2
     coopmat<ACC_TYPE, gl_ScopeWorkgroup, BS_K, BS_NPQ, gl_MatrixUseAccumulator> matC;
     matC = coopmat<ACC_TYPE, gl_ScopeWorkgroup, BS_K, BS_NPQ, gl_MatrixUseAccumulator>(0.0);

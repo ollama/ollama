@@ -11,6 +11,15 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
 func TestAPIToolCalling(t *testing.T) {
 	initialTimeout := 60 * time.Second
 	streamTimeout := 60 * time.Second
@@ -57,12 +66,12 @@ func TestAPIToolCalling(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "The city and state, e.g. San Francisco, CA",
 								},
-							},
+							}),
 						},
 					},
 				},

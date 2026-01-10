@@ -77,6 +77,7 @@
 #define FC_MUL_MV                      600
 #define FC_MUL_MM                      700
 #define FC_ROPE                        800
+#define FC_SSM_CONV                    900
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPTG 8
@@ -181,6 +182,10 @@ typedef struct {
     float scale;
     float bias;
 } ggml_metal_kargs_scale;
+
+typedef struct {
+    float val;
+} ggml_metal_kargs_fill;
 
 typedef struct {
     float min;
@@ -830,6 +835,25 @@ typedef struct {
 typedef struct {
     float    slope;
 } ggml_metal_kargs_leaky_relu;
+
+typedef struct {
+    int32_t  ne00;
+    int32_t  ne01;
+    int32_t  ne02;
+    int32_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne0;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    uint64_t nb0;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+} ggml_metal_kargs_tri;
 
 typedef struct {
     int32_t  ne00;

@@ -41,7 +41,7 @@
       "inherits": [ "CUDA" ],
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
-        "CMAKE_CUDA_FLAGS": "-t 2",
+        "CMAKE_CUDA_FLAGS": "-t 4",
         "OLLAMA_RUNNER_DIR": "cuda_v13"
       }
     },
@@ -82,6 +82,28 @@
       "inherits": [ "Default" ],
       "cacheVariables": {
         "OLLAMA_RUNNER_DIR": "vulkan"
+      }
+    },
+    {
+      "name": "MLX",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "MLX_ENGINE": "ON",
+        "OLLAMA_RUNNER_DIR": "mlx"
+      }
+    },
+    {
+      "name": "MLX CUDA 12",
+      "inherits": [ "MLX", "CUDA 12" ],
+      "cacheVariables": {
+        "OLLAMA_RUNNER_DIR": "mlx_cuda_v12"
+      }
+    },
+    {
+      "name": "MLX CUDA 13",
+      "inherits": [ "MLX", "CUDA 13" ],
+      "cacheVariables": {
+        "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
       }
     }
   ],
@@ -140,6 +162,21 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
+    },
+    {
+      "name": "MLX",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX"
+    },
+    {
+      "name": "MLX CUDA 12",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX CUDA 12"
+    },
+    {
+      "name": "MLX CUDA 13",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX CUDA 13"
     }
   ]
 }

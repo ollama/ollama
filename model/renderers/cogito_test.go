@@ -94,12 +94,12 @@ You are a helpful assistant.
 						Description: "Get current weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -139,9 +139,9 @@ You have the following functions available:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -162,9 +162,9 @@ You have the following functions available:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -186,17 +186,17 @@ You have the following functions available:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "London",
-								},
+								}),
 							},
 						},
 					},
@@ -226,12 +226,12 @@ You have the following functions available:
 						Description: "Get current weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -378,9 +378,9 @@ You are a pirate chatbot who always responds in pirate speak!
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -401,14 +401,14 @@ You are a pirate chatbot who always responds in pirate speak!
 						{
 							Function: api.ToolCallFunction{
 								Name: "process_data",
-								Arguments: api.ToolCallFunctionArguments{
-									"items": []any{"item1", "item2", "item3"},
-									"config": map[string]any{
+								Arguments: testArgsOrdered([]orderedArg{
+									{"config", map[string]any{
 										"enabled":   true,
 										"threshold": 0.95,
 										"tags":      []string{"important", "urgent"},
-									},
-								},
+									}},
+									{"items", []any{"item1", "item2", "item3"}},
+								}),
 							},
 						},
 					},

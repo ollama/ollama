@@ -128,10 +128,10 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 		// 						{
 		// 							Function: api.ToolCallFunction{
 		// 								Name: "get-current-weather",
-		// 								Arguments: map[string]any{
+		// 								Arguments: testArgs(map[string]any{
 		// 									"location": "New York",
 		// 									"unit":     "fahrenheit",
-		// 								},
+		// 								}),
 		// 							},
 		// 						},
 		// 					},
@@ -148,7 +148,7 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 		// 						Parameters: api.ToolFunctionParameters{
 		// 							Type:     "object",
 		// 							Required: []string{"location"},
-		// 							Properties: map[string]api.ToolProperty{
+		// 							Properties: testPropsMap(map[string]api.ToolProperty{
 		// 								"location": {
 		// 									Type:        api.PropertyType{"string"},
 		// 									Description: "The city and state, e.g. San Francisco, CA",
@@ -158,7 +158,7 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 		// 									Enum:        []any{"celsius", "fahrenheit"},
 		// 									Description: "The temperature unit",
 		// 								},
-		// 							},
+		// 							}),
 		// 						},
 		// 					},
 		// 				},
@@ -216,19 +216,19 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 		// 						{
 		// 							Function: api.ToolCallFunction{
 		// 								Name: "add",
-		// 								Arguments: map[string]any{
+		// 								Arguments: testArgs(map[string]any{
 		// 									"a": 2,
 		// 									"b": 3,
-		// 								},
+		// 								}),
 		// 							},
 		// 						},
 		// 						{
 		// 							Function: api.ToolCallFunction{
 		// 								Name: "multiply",
-		// 								Arguments: map[string]any{
+		// 								Arguments: testArgs(map[string]any{
 		// 									"x": 4,
 		// 									"y": 5,
-		// 								},
+		// 								}),
 		// 							},
 		// 						},
 		// 					},
@@ -257,10 +257,10 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 		// 						Parameters: api.ToolFunctionParameters{
 		// 							Type:     "object",
 		// 							Required: []string{"a", "b"},
-		// 							Properties: map[string]api.ToolProperty{
+		// 							Properties: testPropsMap(map[string]api.ToolProperty{
 		// 								"a": {Type: api.PropertyType{"integer"}, Description: "First number"},
 		// 								"b": {Type: api.PropertyType{"integer"}, Description: "Second number"},
-		// 							},
+		// 							}),
 		// 						},
 		// 					},
 		// 				},
@@ -272,10 +272,10 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 		// 						Parameters: api.ToolFunctionParameters{
 		// 							Type:     "object",
 		// 							Required: []string{"x", "y"},
-		// 							Properties: map[string]api.ToolProperty{
+		// 							Properties: testPropsMap(map[string]api.ToolProperty{
 		// 								"x": {Type: api.PropertyType{"integer"}, Description: "First factor"},
 		// 								"y": {Type: api.PropertyType{"integer"}, Description: "Second factor"},
-		// 							},
+		// 							}),
 		// 						},
 		// 					},
 		// 				},

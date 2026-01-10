@@ -10,6 +10,20 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
 const (
 	prefix = `data:image/jpeg;base64,`
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
@@ -159,9 +173,9 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 			Function: api.ToolCallFunction{
 				Index: 2,
 				Name:  "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle",
-				},
+				}),
 			},
 		},
 		{
@@ -169,9 +183,9 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 			Function: api.ToolCallFunction{
 				Index: 7,
 				Name:  "get_time",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"timezone": "UTC",
-				},
+				}),
 			},
 		},
 	}
@@ -215,7 +229,7 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(original, toolCalls); diff != "" {
+	if diff := cmp.Diff(original, toolCalls, argsComparer); diff != "" {
 		t.Errorf("input tool calls mutated (-want +got):\n%s", diff)
 	}
 }

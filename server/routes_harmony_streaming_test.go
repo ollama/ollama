@@ -29,12 +29,12 @@ func getTestTools() []api.Tool {
 				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"location"},
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The city and state, e.g. San Francisco, CA",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -46,12 +46,12 @@ func getTestTools() []api.Tool {
 				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"expression"},
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"expression": {
 							Type:        api.PropertyType{"string"},
 							Description: "The mathematical expression to calculate",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -185,9 +185,9 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "San Francisco",
-								},
+								}),
 							},
 						},
 					},
@@ -211,9 +211,9 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name: "calculate",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"expression": "2+2",
-								},
+								}),
 							},
 						},
 					},

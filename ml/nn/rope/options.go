@@ -77,6 +77,13 @@ func WithMRoPE(sections []int) func(*Options) {
 	}
 }
 
+func WithVision(sections []int) func(*Options) {
+	return func(opts *Options) {
+		opts.Type |= 1<<3 | 1<<4
+		opts.MRoPE.Sections = sections
+	}
+}
+
 func WithInterleaveMRoPE(sections []int) func(*Options) {
 	return func(opts *Options) {
 		opts.Type |= 1<<3 | 1<<5

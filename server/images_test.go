@@ -48,6 +48,15 @@ func TestModelCapabilities(t *testing.T) {
 		expectedCaps []model.Capability
 	}{
 		{
+			name: "model with image generation capability via config",
+			model: Model{
+				Config: model.ConfigV2{
+					Capabilities: []string{"image"},
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityImageGeneration},
+		},
+		{
 			name: "model with completion capability",
 			model: Model{
 				ModelPath: completionModelPath,

@@ -188,6 +188,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	if len(projectors) > 0 && llamaModel != nil {
 		loadRequest.ProjectorPath = projectors[0]
 	}
+	// Determine if the user has forced FA on or off
+	faUserSet := false
+	if envconfig.FlashAttention(true) == envconfig.FlashAttention(false) {
+		faUserSet = true
+	}
 
 	fa := envconfig.FlashAttention(f.FlashAttention())
 
@@ -205,19 +210,51 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
-	if fa {
-		slog.Info("enabling flash attention")
-		loadRequest.FlashAttention = true
-
-		// Flash Attention also supports kv cache quantization
-		// Enable if the requested and kv cache type is supported by the model
-		if f.SupportsKVCacheType(kvct) {
-			loadRequest.KvCacheType = kvct
-		} else {
-			slog.Warn("kv cache type not supported by model", "type", kvct)
+	if textProcessor == nil {
+		flashAttention := ml.FlashAttentionAuto
+		if faUserSet {
+			if fa {
+				flashAttention = ml.FlashAttentionEnabled
+			} else {
+				flashAttention = ml.FlashAttentionDisabled
+			}
 		}
-	} else if kvct != "" && kvct != "f16" {
-		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+
+		if kvct != "" {
+			if f.KVCacheTypeIsQuantized(kvct) {
+				if flashAttention != ml.FlashAttentionEnabled {
+					slog.Warn("OLLAMA_FLASH_ATTENTION must be enabled to use a quantized OLLAMA_KV_CACHE_TYPE", "type", kvct)
+					loadRequest.KvCacheType = ""
+				} else if f.SupportsKVCacheType(kvct) {
+					loadRequest.KvCacheType = kvct
+				} else {
+					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
+				}
+			} else {
+				if f.SupportsKVCacheType(kvct) {
+					loadRequest.KvCacheType = kvct
+				} else {
+					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
+				}
+			}
+		}
+		loadRequest.FlashAttention = flashAttention
+	} else {
+		// For Ollama engine, use our SupportsFlashAttention logic
+		if fa {
+			slog.Info("enabling flash attention")
+			loadRequest.FlashAttention = ml.FlashAttentionEnabled
+
+			// Flash Attention also supports kv cache quantization
+			// Enable if the requested and kv cache type is supported by the model
+			if f.SupportsKVCacheType(kvct) {
+				loadRequest.KvCacheType = kvct
+			} else {
+				slog.Warn("kv cache type not supported by model", "type", kvct)
+			}
+		} else if kvct != "" && kvct != "f16" {
+			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+		}
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
@@ -435,7 +472,7 @@ type LoadRequest struct {
 	LoraPath       []string
 	Parallel       int
 	BatchSize      int
-	FlashAttention bool
+	FlashAttention ml.FlashAttentionType
 	KvSize         int
 	KvCacheType    string
 	NumThreads     int
@@ -474,14 +511,26 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 	}
 
+	// Check if embedding model and adjust batch size accordingly
+	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
+	if isEmbedding && s.loadRequest.BatchSize < s.options.NumCtx {
+		s.loadRequest.BatchSize = s.options.NumCtx
+		slog.Info("embedding model detected, setting batch size to context length", "batch_size", s.loadRequest.BatchSize)
+	}
+
 	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(s.loadRequest.BatchSize),
 		s.loadRequest.Parallel, s.loadRequest.KvCacheType, s.loadRequest.FlashAttention)
 
 	// Use the size of one layer as a buffer
 	layers := s.ggml.Tensors().GroupLayers()
 	if blk0, ok := layers["blk.0"]; ok {
+		buffer := blk0.Size() + kv[0]
 		for i := range gpus {
-			gpus[i].FreeMemory -= blk0.Size() + kv[0]
+			if gpus[i].FreeMemory > buffer {
+				gpus[i].FreeMemory -= buffer
+			} else {
+				gpus[i].FreeMemory = 0
+			}
 		}
 	} else {
 		slog.Warn("model missing blk.0 layer size")
@@ -531,7 +580,11 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 			projectorGPU = firstIntegrated
 		}
 
-		gpus[projectorGPU].FreeMemory -= projectorWeights
+		if gpus[projectorGPU].FreeMemory > projectorWeights {
+			gpus[projectorGPU].FreeMemory -= projectorWeights
+		} else {
+			gpus[projectorGPU].FreeMemory = 0
+		}
 	}
 
 	var kvTotal uint64
