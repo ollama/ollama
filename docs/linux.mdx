@@ -1,5 +1,5 @@
 ---
-title: Linux
+title: "Linux"
 ---
 
 ## Install
@@ -13,15 +13,14 @@ curl -fsSL https://ollama.com/install.sh | sh
 ## Manual install
 
 <Note>
-  If you are upgrading from a prior version, you should remove the old libraries
-  with `sudo rm -rf /usr/lib/ollama` first.
+  If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
 </Note>
 
 Download and extract the package:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
-    | sudo tar x -C /usr
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz \
+    | sudo tar zx -C /usr
 ```
 
 Start Ollama:
@@ -41,8 +40,8 @@ ollama -v
 If you have an AMD GPU, also download and extract the additional ROCm package:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tar.zst \
-    | sudo tar x -C /usr
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tgz \
+    | sudo tar zx -C /usr
 ```
 
 ### ARM64 install
@@ -50,8 +49,8 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tar.zst \
 Download and extract the ARM64-specific package:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-arm64.tar.zst \
-    | sudo tar x -C /usr
+curl -fsSL https://ollama.com/download/ollama-linux-arm64.tgz \
+    | sudo tar zx -C /usr
 ```
 
 ### Adding Ollama as a startup service (recommended)
@@ -113,11 +112,7 @@ sudo systemctl status ollama
 ```
 
 <Note>
-  While AMD has contributed the `amdgpu` driver upstream to the official linux
-  kernel source, the version is older and may not support all ROCm features. We
-  recommend you install the latest driver from
-  https://www.amd.com/en/support/linux-drivers for best support of your Radeon
-  GPU.
+  While AMD has contributed the `amdgpu` driver upstream to the official linux kernel source, the version is older and may not support all ROCm features. We recommend you install the latest driver from https://www.amd.com/en/support/linux-drivers for best support of your Radeon GPU.
 </Note>
 
 ## Customizing
@@ -146,8 +141,8 @@ curl -fsSL https://ollama.com/install.sh | sh
 Or by re-downloading Ollama:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
-    | sudo tar x -C /usr
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz \
+    | sudo tar zx -C /usr
 ```
 
 ## Installing specific versions
