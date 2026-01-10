@@ -16,7 +16,6 @@ import (
 
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
-	Ctx            context.Context // Optional context for cancellation
 	Prompt         string
 	NegativePrompt string       // Empty = no CFG
 	CFGScale       float32      // Only used if NegativePrompt is set (default: 4.0)
@@ -127,7 +126,7 @@ func (m *Model) Load(modelName string) error {
 
 // Generate creates an image from a prompt.
 func (m *Model) Generate(prompt string, width, height int32, steps int, seed int64) (*mlx.Array, error) {
-	return m.GenerateFromConfig(&GenerateConfig{
+	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt: prompt,
 		Width:  width,
 		Height: height,
@@ -138,7 +137,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 
 // GenerateWithProgress creates an image with progress callback.
 func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress ProgressFunc) (*mlx.Array, error) {
-	return m.GenerateFromConfig(&GenerateConfig{
+	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
 		Height:   height,
@@ -150,7 +149,7 @@ func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps i
 
 // GenerateWithCFG creates an image with classifier-free guidance.
 func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress ProgressFunc) (*mlx.Array, error) {
-	return m.GenerateFromConfig(&GenerateConfig{
+	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:         prompt,
 		NegativePrompt: negativePrompt,
 		CFGScale:       cfgScale,
@@ -163,9 +162,9 @@ func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int
 }
 
 // GenerateFromConfig generates an image using the unified config struct.
-func (m *Model) GenerateFromConfig(cfg *GenerateConfig) (*mlx.Array, error) {
+func (m *Model) GenerateFromConfig(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, error) {
 	start := time.Now()
-	result, err := m.generate(cfg)
+	result, err := m.generate(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +182,7 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 }
 
 // generate is the internal denoising pipeline.
-func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
+func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, error) {
 	// Apply defaults
 	if cfg.Width <= 0 {
 		cfg.Width = 1024
@@ -275,10 +274,10 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 	}
 	for i := 0; i < cfg.Steps; i++ {
 		// Check for cancellation
-		if cfg.Ctx != nil {
+		if ctx != nil {
 			select {
-			case <-cfg.Ctx.Done():
-				return nil, cfg.Ctx.Err()
+			case <-ctx.Done():
+				return nil, ctx.Err()
 			default:
 			}
 		}

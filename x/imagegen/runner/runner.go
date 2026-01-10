@@ -161,8 +161,7 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Generate image
 	ctx := r.Context()
-	img, err := s.model.GenerateFromConfig(&zimage.GenerateConfig{
-		Ctx:    ctx,
+	img, err := s.model.GenerateFromConfig(ctx, &zimage.GenerateConfig{
 		Prompt: req.Prompt,
 		Width:  req.Width,
 		Height: req.Height,

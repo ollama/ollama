@@ -98,7 +98,7 @@ func main() {
 			log.Fatal(loadErr)
 		}
 		var img *mlx.Array
-		img, err = m.GenerateFromConfig(&zimage.GenerateConfig{
+		img, err = m.GenerateFromConfig(context.Background(), &zimage.GenerateConfig{
 			Prompt:      *prompt,
 			Width:       int32(*width),
 			Height:      int32(*height),
