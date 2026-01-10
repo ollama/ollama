@@ -438,6 +438,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
+- [Northflank](https://northflank.com/stacks/deploy-ollama)
 
 ### Tutorial
 
