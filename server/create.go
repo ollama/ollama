@@ -619,6 +619,11 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 	var layers []*layerGGML
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
+	// verify digest not empty
+	if digest == "" {
+		return nil, fmt.Errorf("invalid digest: empty")
+	}
+
 	blobPath, err := GetBlobsPath(digest)
 	if err != nil {
 		return nil, err
@@ -626,6 +631,10 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	blob, err := os.Open(blobPath)
 	if err != nil {
+		// remove path in err
+		if pathErr, ok := err.(*os.PathError); ok {
+			return nil, fmt.Errorf("%s: %w", pathErr.Op, pathErr.Err)
+		}
 		return nil, err
 	}
 	defer blob.Close()
