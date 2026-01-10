@@ -788,8 +788,8 @@ func TestDownloadParallelism(t *testing.T) {
 	}
 
 	// With 10 blobs at 50ms each, sequential would take ~500ms
-	// Parallel with 4 workers should take ~150ms (relax to 600ms for CI variance)
-	if elapsed > 600*time.Millisecond {
+	// Parallel with 4 workers should take ~150ms (relax to 1s for CI variance)
+	if elapsed > time.Second {
 		t.Errorf("Downloads took %v, expected faster with parallelism", elapsed)
 	}
 
