@@ -38,6 +38,22 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
+// Unregister removes a tool from the registry by name.
+func (r *Registry) Unregister(name string) {
+	delete(r.tools, name)
+}
+
+// Has checks if a tool with the given name is registered.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.tools[name]
+	return ok
+}
+
+// RegisterBash adds the bash tool to the registry.
+func (r *Registry) RegisterBash() {
+	r.Register(&BashTool{})
+}
+
 // Get retrieves a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	tool, ok := r.tools[name]

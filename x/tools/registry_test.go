@@ -177,3 +177,47 @@ func TestWebSearchTool_Schema(t *testing.T) {
 		t.Error("expected 'query' property in schema")
 	}
 }
+
+func TestRegistry_Unregister(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&BashTool{})
+
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool, got %d", r.Count())
+	}
+
+	r.Unregister("bash")
+
+	if r.Count() != 0 {
+		t.Errorf("expected 0 tools after unregister, got %d", r.Count())
+	}
+
+	_, ok := r.Get("bash")
+	if ok {
+		t.Error("expected bash tool to be removed")
+	}
+}
+
+func TestRegistry_Has(t *testing.T) {
+	r := NewRegistry()
+
+	if r.Has("bash") {
+		t.Error("expected Has to return false for unregistered tool")
+	}
+
+	r.Register(&BashTool{})
+
+	if !r.Has("bash") {
+		t.Error("expected Has to return true for registered tool")
+	}
+}
+
+func TestRegistry_RegisterBash(t *testing.T) {
+	r := NewRegistry()
+
+	r.RegisterBash()
+
+	if !r.Has("bash") {
+		t.Error("expected bash tool to be registered")
+	}
+}

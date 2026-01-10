@@ -364,10 +364,11 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 					}
 
 					// Check if command is auto-allowed (safe command)
-					if agent.IsAutoAllowed(cmd) {
-						fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
-						skipApproval = true
-					}
+					// TODO(parthsareen): re-enable with tighter scoped allowlist
+					// if agent.IsAutoAllowed(cmd) {
+					// 	fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
+					// 	skipApproval = true
+					// }
 				}
 			}
 
@@ -658,14 +659,17 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	var toolRegistry *tools.Registry
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
-		if toolRegistry.Count() > 0 {
-			fmt.Fprintf(os.Stderr, "\033[90mtools available: %s\033[0m\n", strings.Join(toolRegistry.Names(), ", "))
+
+		if toolRegistry.Has("bash") {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "This experimental version of Ollama has the \033[1mbash\033[0m tool enabled.")
+			fmt.Fprintln(os.Stderr, "Models can read files on your computer, or run commands (after you allow them).")
+			fmt.Fprintln(os.Stderr)
 		}
+
 		if yoloMode {
 			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m yolo mode - all tool approvals will be skipped\n")
 		}
-	} else {
-		fmt.Fprintf(os.Stderr, "\033[1mnote:\033[0m model does not support tools - running in chat-only mode\n")
 	}
 
 	// Create approval manager for session
