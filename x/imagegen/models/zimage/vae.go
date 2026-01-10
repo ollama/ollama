@@ -42,49 +42,183 @@ func NewGroupNorm(weight, bias *mlx.Array, numGroups int32) *GroupNormLayer {
 }
 
 // Forward applies group normalization
+// Input and output are in NHWC format [B, H, W, C]
 func (gn *GroupNormLayer) Forward(x *mlx.Array) *mlx.Array {
-	// x: [B, C, H, W]
+	// x: [B, H, W, C] (NHWC format)
 	shape := x.Shape()
 	B := shape[0]
-	C := shape[1]
-	H := shape[2]
-	W := shape[3]
+	H := shape[1]
+	W := shape[2]
+	C := shape[3]
 
-	// Reshape to [B, groups, C/groups, H, W]
+	// For large spatial sizes, use tiled computation to avoid CUDA grid limits
+	// CUDA grid.y max is 65535, so H*W/16 must be <= 65535, meaning H*W <= ~1M
+	// To be safe, tile when H*W > 512*512 = 262144
+	if H*W > 512*512 {
+		return gn.forwardTiled(x, B, H, W, C)
+	}
+
+	return gn.forwardSmall(x, B, H, W, C)
+}
+
+// forwardSmall is the standard GroupNorm for tensors that fit within CUDA grid limits
+func (gn *GroupNormLayer) forwardSmall(x *mlx.Array, B, H, W, C int32) *mlx.Array {
+	// Reshape to [B, H, W, groups, C/groups]
 	groupSize := C / gn.NumGroups
-	x = mlx.Reshape(x, B, gn.NumGroups, groupSize, H, W)
+	x = mlx.Reshape(x, B, H, W, gn.NumGroups, groupSize)
 
-	// Compute mean and variance per group
-	mean := mlx.Mean(x, 2, true)
-	mean = mlx.Mean(mean, 3, true)
+	// Compute mean and variance per group (over H, W, and C/groups dimensions)
+	mean := mlx.Mean(x, 1, true)
+	mean = mlx.Mean(mean, 2, true)
 	mean = mlx.Mean(mean, 4, true)
 
 	xCentered := mlx.Sub(x, mean)
-	variance := mlx.Mean(mlx.Square(xCentered), 2, true)
-	variance = mlx.Mean(variance, 3, true)
+
+	// Variance over same axes
+	sq := mlx.Square(xCentered)
+	variance := mlx.Mean(sq, 1, true)
+	variance = mlx.Mean(variance, 2, true)
 	variance = mlx.Mean(variance, 4, true)
 
 	// Normalize
 	xNorm := mlx.Div(xCentered, mlx.Sqrt(mlx.AddScalar(variance, gn.Eps)))
 
-	// Reshape back to [B, C, H, W]
-	xNorm = mlx.Reshape(xNorm, B, C, H, W)
+	// Reshape back to [B, H, W, C]
+	xNorm = mlx.Reshape(xNorm, B, H, W, C)
 
 	// Scale and shift (weight and bias are [C])
 	if gn.Weight != nil {
-		weight := mlx.Reshape(gn.Weight, 1, C, 1, 1)
+		weight := mlx.Reshape(gn.Weight, 1, 1, 1, C)
 		xNorm = mlx.Mul(xNorm, weight)
 	}
 	if gn.Bias != nil {
-		bias := mlx.Reshape(gn.Bias, 1, C, 1, 1)
+		bias := mlx.Reshape(gn.Bias, 1, 1, 1, C)
 		xNorm = mlx.Add(xNorm, bias)
 	}
 
 	return xNorm
 }
 
+// forwardTiled handles large tensors by processing in H-tiles to avoid CUDA grid limits
+func (gn *GroupNormLayer) forwardTiled(x *mlx.Array, B, H, W, C int32) *mlx.Array {
+	groupSize := C / gn.NumGroups
+
+	// Keep the input - we need it for slicing tiles later
+	mlx.Keep(x)
+
+	// Compute per-group mean and variance using flattened spatial dimensions
+	// Build the entire compute graph first, then eval once
+	// Reshape to [B, H*W, groups, groupSize]
+	xFlat := mlx.Reshape(x, B, H*W, gn.NumGroups, groupSize)
+
+	// Mean over spatial (axis 1) and groupSize (axis 3) dimensions
+	// Result shape: [B, 1, groups, 1]
+	mean1 := mlx.Mean(xFlat, 1, true)
+	mean := mlx.Mean(mean1, 3, true)
+
+	// Variance using E[X^2] - E[X]^2
+	xSq := mlx.Square(xFlat)
+	meanSq1 := mlx.Mean(xSq, 1, true)
+	meanSq := mlx.Mean(meanSq1, 3, true)
+	meanSquared := mlx.Square(mean)
+	variance := mlx.Sub(meanSq, meanSquared)
+
+	// invStd = 1/sqrt(var + eps)
+	varPlusEps := mlx.AddScalar(variance, gn.Eps)
+	stdDev := mlx.Sqrt(varPlusEps)
+	one := mlx.Full(1.0, 1)
+	invStd := mlx.Div(one, stdDev)
+
+	// Eval mean and invStd together - these are what we need for the tile loop
+	mlx.Keep(mean, invStd)
+	mlx.Eval(mean, invStd)
+
+	// Tile along H dimension
+	tileH := int32(512 * 512 / W)
+	if tileH < 1 {
+		tileH = 1
+	}
+	if tileH > H {
+		tileH = H
+	}
+
+	// Prepare weight and bias reshaped for 4D broadcast [1, 1, groups, groupSize]
+	var weightGN, biasGN *mlx.Array
+	if gn.Weight != nil {
+		weightGN = mlx.Reshape(gn.Weight, 1, 1, gn.NumGroups, groupSize)
+		mlx.Keep(weightGN)
+		mlx.Eval(weightGN)
+	}
+	if gn.Bias != nil {
+		biasGN = mlx.Reshape(gn.Bias, 1, 1, gn.NumGroups, groupSize)
+		mlx.Keep(biasGN)
+		mlx.Eval(biasGN)
+	}
+
+	var tiles []*mlx.Array
+	for hStart := int32(0); hStart < H; hStart += tileH {
+		hEnd := hStart + tileH
+		if hEnd > H {
+			hEnd = H
+		}
+		tileHeight := hEnd - hStart
+		spatialSize := tileHeight * W
+
+		// Build the compute graph for this tile (no intermediate Evals)
+		// Extract tile and flatten spatial dims: [B, tileH*W, groups, groupSize]
+		tile := mlx.Slice(x, []int32{0, hStart, 0, 0}, []int32{B, hEnd, W, C})
+		tileFlat := mlx.Reshape(tile, B, spatialSize, gn.NumGroups, groupSize)
+
+		// Normalize: (x - mean) * invStd
+		tileCentered := mlx.Sub(tileFlat, mean)
+		tileNorm := mlx.Mul(tileCentered, invStd)
+
+		// Apply scale and shift in 4D space
+		if weightGN != nil {
+			tileNorm = mlx.Mul(tileNorm, weightGN)
+		}
+		if biasGN != nil {
+			tileNorm = mlx.Add(tileNorm, biasGN)
+		}
+
+		// Reshape back to [B, tileH, W, C]
+		tileOut := mlx.Reshape(tileNorm, B, tileHeight, W, C)
+
+		// Now eval and keep this tile
+		mlx.Keep(tileOut)
+		mlx.Eval(tileOut)
+
+		tiles = append(tiles, tileOut)
+	}
+
+	// Concatenate tiles along H axis
+	var result *mlx.Array
+	if len(tiles) == 1 {
+		result = tiles[0]
+	} else {
+		result = mlx.Concatenate(tiles, 1)
+		mlx.Eval(result)
+		// Free the individual tiles now that they're concatenated
+		for _, t := range tiles {
+			t.Free()
+		}
+	}
+
+	// Clean up kept arrays
+	mean.Free()
+	invStd.Free()
+	if weightGN != nil {
+		weightGN.Free()
+	}
+	if biasGN != nil {
+		biasGN.Free()
+	}
+
+	return result
+}
+
 // Conv2D represents a 2D convolution layer
-// MLX uses NHWC format, but we store weights in OHWI format for MLX conv
+// Works natively in NHWC format (MLX's native format)
 type Conv2D struct {
 	Weight  *mlx.Array // [out_channels, kH, kW, in_channels] (OHWI for MLX)
 	Bias    *mlx.Array // [out_channels]
@@ -108,21 +242,17 @@ func NewConv2D(weight, bias *mlx.Array, stride, padding int32) *Conv2D {
 }
 
 // Forward applies convolution
-// Input x is in NCHW format, we convert to NHWC for MLX, then back to NCHW
+// Input and output are in NHWC format [N, H, W, C]
 func (conv *Conv2D) Forward(x *mlx.Array) *mlx.Array {
-	// x: [N, C, H, W] -> [N, H, W, C]
-	xNHWC := mlx.Transpose(x, 0, 2, 3, 1)
-
-	// Conv in NHWC format
-	outNHWC := mlx.Conv2d(xNHWC, conv.Weight, conv.Stride, conv.Padding)
-
-	// Convert back to NCHW: [N, H, W, C] -> [N, C, H, W]
-	out := mlx.Transpose(outNHWC, 0, 3, 1, 2)
+	// Conv in NHWC format (MLX native)
+	out := mlx.Conv2d(x, conv.Weight, conv.Stride, conv.Padding)
 
 	if conv.Bias != nil {
-		bias := mlx.Reshape(conv.Bias, 1, conv.Bias.Dim(0), 1, 1)
+		// Bias is [C], reshape to [1, 1, 1, C] for NHWC broadcast
+		bias := mlx.Reshape(conv.Bias, 1, 1, 1, conv.Bias.Dim(0))
 		out = mlx.Add(out, bias)
 	}
+
 	return out
 }
 
@@ -201,13 +331,13 @@ func (rb *ResnetBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 	// Stage 1: norm1
 	{
-			h = rb.Norm1.Forward(x)
+		h = rb.Norm1.Forward(x)
 		mlx.Eval(h)
 	}
 
 	// Stage 2: silu + conv1
 	{
-			prev := h
+		prev := h
 		h = mlx.SiLU(h)
 		h = rb.Conv1.Forward(h)
 		prev.Free()
@@ -216,7 +346,7 @@ func (rb *ResnetBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 	// Stage 3: norm2
 	{
-			prev := h
+		prev := h
 		h = rb.Norm2.Forward(h)
 		prev.Free()
 		mlx.Eval(h)
@@ -224,7 +354,7 @@ func (rb *ResnetBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 	// Stage 4: silu + conv2
 	{
-			prev := h
+		prev := h
 		h = mlx.SiLU(h)
 		h = rb.Conv2.Forward(h)
 		prev.Free()
@@ -233,7 +363,7 @@ func (rb *ResnetBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 	// Residual connection
 	{
-			prev := h
+		prev := h
 		if rb.ConvShortcut != nil {
 			shortcut := rb.ConvShortcut.Forward(x)
 			h = mlx.Add(h, shortcut)
@@ -323,20 +453,20 @@ func NewVAEAttentionBlock(weights safetensors.WeightSource, prefix string, numGr
 }
 
 // Forward applies attention with staged evaluation
+// Input and output are in NHWC format [B, H, W, C]
 func (ab *VAEAttentionBlock) Forward(x *mlx.Array) *mlx.Array {
 	residual := x
 	shape := x.Shape()
 	B := shape[0]
-	C := shape[1]
-	H := shape[2]
-	W := shape[3]
+	H := shape[1]
+	W := shape[2]
+	C := shape[3]
 
 	var h *mlx.Array
 
-	// Stage 1: GroupNorm + reshape
+	// Stage 1: GroupNorm + reshape to [B, H*W, C]
 	{
-			h = ab.GroupNorm.Forward(x)
-		h = mlx.Transpose(h, 0, 2, 3, 1)
+		h = ab.GroupNorm.Forward(x)
 		h = mlx.Reshape(h, B, H*W, C)
 		mlx.Eval(h)
 	}
@@ -345,7 +475,7 @@ func (ab *VAEAttentionBlock) Forward(x *mlx.Array) *mlx.Array {
 
 	// Stage 2: Q, K, V projections + attention
 	{
-			q := mlx.Linear(h, ab.ToQWeight)
+		q := mlx.Linear(h, ab.ToQWeight)
 		q = mlx.Add(q, ab.ToQBias)
 		k := mlx.Linear(h, ab.ToKWeight)
 		k = mlx.Add(k, ab.ToKBias)
@@ -365,11 +495,10 @@ func (ab *VAEAttentionBlock) Forward(x *mlx.Array) *mlx.Array {
 
 	// Stage 3: Output projection + reshape + residual
 	{
-			prev := out
+		prev := out
 		out = mlx.Linear(out, ab.ToOutWeight)
 		out = mlx.Add(out, ab.ToOutBias)
 		out = mlx.Reshape(out, B, H, W, C)
-		out = mlx.Transpose(out, 0, 3, 1, 2)
 		out = mlx.Add(out, residual)
 		prev.Free()
 		mlx.Eval(out)
@@ -594,15 +723,16 @@ func (m *VAEDecoder) loadWeights(weights safetensors.WeightSource, cfg *VAEConfi
 }
 
 // Decode decodes latents to images.
-// Uses staged pools to free intermediate arrays and reduce peak memory.
+// Input latents are in NCHW format, output is in NCHW format.
+// Internally uses NHWC format (MLX native) for all operations.
 func (vae *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
-	var h *mlx.Array
-	{
-		z := mlx.DivScalar(latents, vae.Config.ScalingFactor)
-		z = mlx.AddScalar(z, vae.Config.ShiftFactor)
-		h = vae.ConvIn.Forward(z)
-		mlx.Eval(h)
-	}
+	// Scale latents
+	z := mlx.DivScalar(latents, vae.Config.ScalingFactor)
+	z = mlx.AddScalar(z, vae.Config.ShiftFactor)
+	// Convert NCHW -> NHWC for internal processing
+	z = mlx.Transpose(z, 0, 2, 3, 1)
+	h := vae.ConvIn.Forward(z)
+	mlx.Eval(h)
 
 	h = vae.MidBlock.Forward(h)
 
@@ -610,36 +740,51 @@ func (vae *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
 		h = upBlock.Forward(h)
 	}
 
-	{
-			prev := h
-		h = vae.ConvNormOut.Forward(h)
-		h = mlx.SiLU(h)
-		h = vae.ConvOut.Forward(h)
-		// VAE outputs [-1, 1], convert to [0, 1]
-		h = mlx.AddScalar(mlx.MulScalar(h, 0.5), 0.5)
-		h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
-		prev.Free()
-		mlx.Eval(h)
-	}
+	prev := h
+	h = vae.ConvNormOut.Forward(h)
+	mlx.Eval(h) // Eval after GroupNorm to avoid grid dimension issues
+	h = mlx.SiLU(h)
+	h = vae.ConvOut.Forward(h)
+	mlx.Eval(h)
+
+	// VAE outputs [-1, 1], convert to [0, 1]
+	h = mlx.MulScalar(h, 0.5)
+	h = mlx.AddScalar(h, 0.5)
+	h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
+
+	// Convert NHWC -> NCHW for output
+	h = mlx.Transpose(h, 0, 3, 1, 2)
+	prev.Free()
+	mlx.Eval(h)
 
 	return h
 }
 
-// Upsample2x performs 2x nearest neighbor upsampling using broadcast.
-// x: [B, C, H, W] -> [B, C, H*2, W*2]
+// Upsample2x performs 2x nearest neighbor upsampling using Take.
+// Input and output are in NHWC format: [B, H, W, C] -> [B, H*2, W*2, C]
+// Uses Take with repeated indices to produce contiguous output.
 func Upsample2x(x *mlx.Array) *mlx.Array {
 	shape := x.Shape()
-	B := shape[0]
-	C := shape[1]
-	H := shape[2]
-	W := shape[3]
+	H := shape[1]
+	W := shape[2]
 
-	// [B, C, H, W] -> [B, C, H, 1, W, 1]
-	x = mlx.Reshape(x, B, C, H, 1, W, 1)
-	// Broadcast to [B, C, H, 2, W, 2]
-	x = mlx.BroadcastTo(x, []int32{B, C, H, 2, W, 2})
-	// Reshape to [B, C, H*2, W*2]
-	x = mlx.Reshape(x, B, C, H*2, W*2)
+	// Create indices [0, 0, 1, 1, 2, 2, ...] for nearest neighbor
+	// For H dimension
+	hIdx := mlx.ArangeInt(0, H, 1, mlx.DtypeInt32)
+	hIdx = mlx.Reshape(hIdx, H, 1)
+	hIdx = mlx.BroadcastTo(hIdx, []int32{H, 2})
+	hIdx = mlx.Reshape(hIdx, H*2)
+
+	// For W dimension
+	wIdx := mlx.ArangeInt(0, W, 1, mlx.DtypeInt32)
+	wIdx = mlx.Reshape(wIdx, W, 1)
+	wIdx = mlx.BroadcastTo(wIdx, []int32{W, 2})
+	wIdx = mlx.Reshape(wIdx, W*2)
+
+	// Take along H axis (axis 1 in NHWC)
+	x = mlx.Take(x, hIdx, 1)
+	// Take along W axis (axis 2 in NHWC)
+	x = mlx.Take(x, wIdx, 2)
 
 	return x
 }
