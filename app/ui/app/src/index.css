@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-@import "katex/dist/katex.min.css";
 
 @theme {
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
