@@ -128,14 +128,9 @@ func (s *FlowMatchEulerScheduler) AddNoise(cleanSample, noise *mlx.Array, timest
 	return mlx.Add(scaledClean, scaledNoise)
 }
 
-// InitNoise creates initial noise for sampling
+// InitNoise creates initial noise for sampling (BFloat16 for GPU efficiency)
 func (s *FlowMatchEulerScheduler) InitNoise(shape []int32, seed int64) *mlx.Array {
-	return RandomNormal(shape, seed)
-}
-
-// RandomNormal creates a random normal tensor using MLX
-func RandomNormal(shape []int32, seed int64) *mlx.Array {
-	return mlx.RandomNormal(shape, uint64(seed))
+	return mlx.RandomNormalWithDtype(shape, uint64(seed), mlx.DtypeBFloat16)
 }
 
 // GetLatentShape returns the latent shape for a given image size

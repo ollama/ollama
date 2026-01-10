@@ -10,6 +10,14 @@ import (
 	"github.com/ollama/ollama/x/imagegen/mlx"
 )
 
+// WeightSource is an interface for loading weights.
+// Both ModelWeights (directory-based) and ManifestWeights (blob-based) implement this.
+type WeightSource interface {
+	GetTensor(name string) (*mlx.Array, error)
+	ListTensors() []string
+	HasTensor(name string) bool
+}
+
 // LoadModule loads weights into a struct using reflection and struct tags.
 //
 // Struct tags use the format: `weight:"path[,optional]"`
@@ -31,7 +39,7 @@ import (
 //	}
 //
 //	err := LoadModule(&attn, weights, "model.layers.0")
-func LoadModule(dst any, weights *ModelWeights, prefix string) error {
+func LoadModule(dst any, weights WeightSource, prefix string) error {
 	v := reflect.ValueOf(dst)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
 		return fmt.Errorf("LoadModule: dst must be a non-nil pointer")
@@ -51,7 +59,7 @@ func LoadModule(dst any, weights *ModelWeights, prefix string) error {
 }
 
 // loadStruct recursively loads weights into a struct value.
-func loadStruct(v reflect.Value, weights *ModelWeights, prefix string, errs *[]string, parentOptional bool) {
+func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]string, parentOptional bool) {
 	t := v.Type()
 
 	for i := 0; i < t.NumField(); i++ {
@@ -136,7 +144,7 @@ func loadStruct(v reflect.Value, weights *ModelWeights, prefix string, errs *[]s
 }
 
 // hasWeightsWithPrefix checks if any weights exist with the given prefix.
-func hasWeightsWithPrefix(weights *ModelWeights, prefix string) bool {
+func hasWeightsWithPrefix(weights WeightSource, prefix string) bool {
 	for _, name := range weights.ListTensors() {
 		if strings.HasPrefix(name, prefix+".") || name == prefix {
 			return true
@@ -146,7 +154,7 @@ func hasWeightsWithPrefix(weights *ModelWeights, prefix string) bool {
 }
 
 // loadSlice loads weights into each element of a slice of struct pointers.
-func loadSlice(v reflect.Value, weights *ModelWeights, prefix string, errs *[]string) {
+func loadSlice(v reflect.Value, weights WeightSource, prefix string, errs *[]string) {
 	elemStructType := v.Type().Elem().Elem()
 
 	for i := 0; i < v.Len(); i++ {

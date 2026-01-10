@@ -161,10 +161,6 @@ ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
 ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
-# TODO wire up the actual MLX engine here instead of building the main binary...
-RUN mkdir -p dist/bin
-RUN go build -tags mlx -trimpath -buildmode=pie -o dist/bin/imagegen ./x/imagegen/cmd/engine
-
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama

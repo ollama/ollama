@@ -11,6 +11,10 @@ package mlx
 #include "mlx/c/mlx.h"
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+
+// Forward declare cpu_stream
+static mlx_stream cpu_stream();
 
 // Cached default GPU stream for all ops
 static mlx_stream _default_stream = {0};
@@ -1026,10 +1030,11 @@ func View(a *Array, dtype int) *Array {
 	return newArray(res)
 }
 
-// Contiguous returns a contiguous copy of the array
+// Contiguous returns a contiguous copy of the array (row-major)
 func Contiguous(a *Array) *Array {
 	res := C.mlx_array_new()
-	C.mlx_contiguous(&res, a.c, true, C.default_stream())
+	// Use allow_col=false to force row-major contiguous layout
+	C.mlx_contiguous(&res, a.c, false, C.default_stream())
 	return newArray(res)
 }
 
@@ -1762,11 +1767,16 @@ func RandomCategorical(logits *Array, axis int, numSamples int) *Array {
 	return RandomCategoricalWithKey(logits, key2, axis, numSamples)
 }
 
-// RandomNormal creates a random normal (Gaussian) tensor
+// RandomNormal creates a random normal (Gaussian) tensor in float32
 func RandomNormal(shape []int32, seed uint64) *Array {
+	return RandomNormalWithDtype(shape, seed, DtypeFloat32)
+}
+
+// RandomNormalWithDtype creates a random normal (Gaussian) tensor with specified dtype
+func RandomNormalWithDtype(shape []int32, seed uint64, dtype Dtype) *Array {
 	key := RandomKey(seed)
 	res := C.mlx_array_new()
-	C.mlx_random_normal(&res, int32ToCInt(shape), C.size_t(len(shape)), C.MLX_FLOAT32, 0.0, 1.0, key.c, C.default_stream())
+	C.mlx_random_normal(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dtype), 0.0, 1.0, key.c, C.default_stream())
 	return newArray(res)
 }
 
