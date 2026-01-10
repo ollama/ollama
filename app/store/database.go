@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -85,6 +85,7 @@ func (db *database) init() error {
 		think_enabled BOOLEAN NOT NULL DEFAULT 0,
 		think_level TEXT NOT NULL DEFAULT '',
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
+		orphan_cleanup_done BOOLEAN NOT NULL DEFAULT 0,
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
 
@@ -159,9 +160,20 @@ func (db *database) init() error {
 	}
 
 	// Clean up orphaned records created before foreign key constraints were properly enforced
-	// TODO: Can eventually be removed - cleans up data from foreign key bug (ollama/ollama#11785, ollama/app#476)
-	if err := db.cleanupOrphanedData(); err != nil {
-		return fmt.Errorf("cleanup orphaned data: %w", err)
+	// This runs only once per database to clean up legacy data from foreign key bug (ollama/ollama#11785, ollama/app#476)
+	// Can be removed in future versions once enough time has passed for all users to have run this cleanup
+	cleanupDone, err := db.isOrphanCleanupDone()
+	if err != nil {
+		return fmt.Errorf("check orphan cleanup status: %w", err)
+	}
+
+	if !cleanupDone {
+		if err := db.cleanupOrphanedData(); err != nil {
+			return fmt.Errorf("cleanup orphaned data: %w", err)
+		}
+		if err := db.setOrphanCleanupDone(true); err != nil {
+			return fmt.Errorf("set orphan cleanup done: %w", err)
+		}
 	}
 
 	return nil
@@ -244,6 +256,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v11 to v12: %w", err)
 			}
 			version = 12
+		case 12:
+			// add orphan_cleanup_done column to settings table
+			if err := db.migrateV12ToV13(); err != nil {
+				return fmt.Errorf("migrate v12 to v13: %w", err)
+			}
+			version = 13
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -445,6 +463,21 @@ func (db *database) migrateV11ToV12() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 12`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV12ToV13 adds the orphan_cleanup_done column to the settings table
+func (db *database) migrateV12ToV13() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN orphan_cleanup_done BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add orphan_cleanup_done column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 13`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
@@ -1217,6 +1250,23 @@ func (db *database) clearUser() error {
 	_, err := db.conn.Exec("DELETE FROM users")
 	if err != nil {
 		return fmt.Errorf("clear user: %w", err)
+	}
+	return nil
+}
+
+func (db *database) isOrphanCleanupDone() (bool, error) {
+	var done bool
+	err := db.conn.QueryRow("SELECT orphan_cleanup_done FROM settings").Scan(&done)
+	if err != nil {
+		return false, fmt.Errorf("get orphan cleanup done: %w", err)
+	}
+	return done, nil
+}
+
+func (db *database) setOrphanCleanupDone(done bool) error {
+	_, err := db.conn.Exec("UPDATE settings SET orphan_cleanup_done = ?", done)
+	if err != nil {
+		return fmt.Errorf("set orphan cleanup done: %w", err)
 	}
 	return nil
 }
