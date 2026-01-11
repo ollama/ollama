@@ -3956,10 +3956,9 @@ static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, 
 
     try {
         bool use_cuda_graph = false;
-        bool cuda_graph_update_required = false;
-        bool graph_evaluated_or_captured = false;
+        bool cuda_graph_update_required = false;        
 
-        ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, graph_evaluated_or_captured, use_cuda_graph, cuda_graph_update_required);
+        ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, use_cuda_graph, cuda_graph_update_required);
     } catch (const std::exception &e) {
         result = GGML_STATUS_FAILED;
     }
