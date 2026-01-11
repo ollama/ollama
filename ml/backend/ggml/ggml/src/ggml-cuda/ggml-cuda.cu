@@ -3869,7 +3869,7 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
     }
 }
 
-static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, int batch_size) {
+static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
 
 #ifdef USE_CUDA_GRAPH
 

@@ -9,10 +9,10 @@ Subject: [PATCH] ggml: Add batch size hint
  ggml/src/ggml-backend.cpp            | 19 +++++++----
  ggml/src/ggml-blas/ggml-blas.cpp     |  3 +-
  ggml/src/ggml-cpu/ggml-cpu.cpp       |  4 ++-
- ggml/src/ggml-cuda/ggml-cuda.cu      | 51 +++++++++++++++++-----------
+ ggml/src/ggml-cuda/ggml-cuda.cu      | 49 +++++++++++++++++-----------
  ggml/src/ggml-metal/ggml-metal.cpp   |  4 ++-
  ggml/src/ggml-vulkan/ggml-vulkan.cpp |  3 +-
- 8 files changed, 60 insertions(+), 33 deletions(-)
+ 8 files changed, 59 insertions(+), 32 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 609209459..9a4adf697 100644
@@ -173,7 +173,7 @@ index f4713a421..92ba577a5 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 42a05ac8e..36535a68a 100644
+index 42a05ac8e..0e2909554 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -2903,7 +2903,8 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
@@ -237,15 +237,6 @@ index 42a05ac8e..36535a68a 100644
          }
  
          if (!use_cuda_graph) {
-@@ -3770,7 +3781,7 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
-     }
- }
- 
--static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
-+static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, int batch_size) {
- 
- #ifdef USE_CUDA_GRAPH
- 
 @@ -3791,7 +3802,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
  #endif // USE_CUDA_GRAPH
  }
