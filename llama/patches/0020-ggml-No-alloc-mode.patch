@@ -323,7 +323,7 @@ index 9516d8ec8..e37e6d8fb 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 0e2909554..1a13f2018 100644
+index 0e2909554..bf30ae0dd 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -365,6 +365,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
@@ -626,7 +626,7 @@ index 0e2909554..1a13f2018 100644
 +        bool cuda_graph_update_required = false;
 +        bool graph_evaluated_or_captured = false;
 +
-+        evaluate_and_capture_cuda_graph(cuda_ctx, cgraph, graph_evaluated_or_captured, use_cuda_graph, cuda_graph_update_required);
++        ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, graph_evaluated_or_captured, use_cuda_graph, cuda_graph_update_required);
 +    } catch (const std::exception &e) {
 +        result = GGML_STATUS_FAILED;
 +    }
