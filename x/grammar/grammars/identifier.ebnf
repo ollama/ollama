@@ -1,0 +1,3 @@
+ident = letter { letter | digit | "_" } .
+letter = "a" … "z" | "A" … "Z" | "_" .
+digit = "0" … "9" .

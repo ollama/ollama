@@ -1,0 +1,45 @@
+root ::= ws "{" ws id-field "," ws kind-field "," ws items-field "," ws alt-field "," ws flags-field "," ws meta-field "," ws priority-field ws "}" ws
+
+id-field ::= "\"id\"" ws ":" ws uuid
+kind-field ::= "\"kind\"" ws ":" ws kind
+items-field ::= "\"items\"" ws ":" ws items
+alt-field ::= "\"alt\"" ws ":" ws alt
+flags-field ::= "\"flags\"" ws ":" ws flags
+meta-field ::= "\"meta\"" ws ":" ws meta
+priority-field ::= "\"priority\"" ws ":" ws int
+
+kind ::= "\"order\"" | "\"invoice\"" | "\"shipment\""
+status ::= "\"new\"" | "\"backorder\"" | "\"shipped\""
+flag ::= "\"fragile\"" | "\"gift\"" | "\"priority\"" | "\"insured\""
+source ::= "\"api\"" | "\"batch\"" | "\"import\""
+
+items ::= "[" ws item ( "," ws item )? ( "," ws item )? ws "]"
+flags ::= "[" ws "]" | "[" ws flag ( "," ws flag )? ( "," ws flag )? ( "," ws flag )? ws "]"
+
+item ::= "{" ws item-sku "," ws item-qty "," ws item-status "," ws item-notes ws "}"
+item-sku ::= "\"sku\"" ws ":" ws string
+item-qty ::= "\"qty\"" ws ":" ws int
+item-status ::= "\"status\"" ws ":" ws status
+item-notes ::= "\"notes\"" ws ":" ws string
+
+meta ::= "{" ws meta-created "," ws meta-source "," ws meta-ip ws "}"
+meta-created ::= "\"created\"" ws ":" ws date-time
+meta-source ::= "\"source\"" ws ":" ws source
+meta-ip ::= "\"ip\"" ws ":" ws ipv4
+
+alt ::= string | int | "null"
+
+uuid ::= "\"" hex hex hex hex hex hex hex hex "-" hex hex hex hex "-" hex hex hex hex "-" hex hex hex hex "-" hex hex hex hex hex hex hex hex hex hex hex hex "\""
+date-time ::= "\"" digit digit digit digit "-" digit digit "-" digit digit "T" digit digit ":" digit digit ":" digit digit ( "Z" | ( "+" | "-" ) digit digit ":" digit digit ) "\""
+ipv4 ::= "\"" digit+ "." digit+ "." digit+ "." digit+ "\""
+
+string ::= "\"" characters "\""
+characters ::= character*
+character ::= [^"\\] | "\\" escape
+escape ::= ["\\bfnrt]
+
+int ::= "-"? digit+
+digit ::= [0-9]
+hex ::= [0-9a-fA-F]
+
+ws ::= [ \t\n\r]*

@@ -1,0 +1,15 @@
+root = "{" ws name_field "," ws age_field "," ws email_field ws "}" .
+
+name_field = "\"name\"" ws ":" ws string .
+age_field = "\"age\"" ws ":" ws number .
+email_field = "\"email\"" ws ":" ws string .
+
+string = "\"" { character } "\"" .
+character = " " | "!" | "#" … "~" .
+
+number = [ "-" ] integer .
+integer = "0" | onenine { digit } .
+digit = "0" … "9" .
+onenine = "1" … "9" .
+
+ws = { " " | "\t" | "\n" | "\r" } .

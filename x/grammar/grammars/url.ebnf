@@ -1,0 +1,11 @@
+url = scheme "://" host [ ":" port ] [ path ] [ query ] .
+scheme = "http" | "https" .
+host = word { "." word } .
+port = digit { digit } .
+path = "/" { pathseg } .
+pathseg = word [ "/" ] .
+query = "?" param { "&" param } .
+param = word "=" word .
+word = alphanum { alphanum | "-" | "_" } .
+alphanum = "a" … "z" | "A" … "Z" | "0" … "9" .
+digit = "0" … "9" .

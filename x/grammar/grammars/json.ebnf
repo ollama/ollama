@@ -1,0 +1,16 @@
+value = object | array | string | number | "true" | "false" | "null" .
+object = "{" [ members ] "}" .
+members = pair { "," pair } .
+pair = string ":" value .
+array = "[" [ elements ] "]" .
+elements = value { "," value } .
+string = "\"" { char } "\"" .
+char = unescaped | escaped .
+unescaped = " " | "!" | "#" … "[" | "]" … "~" .
+escaped = "\\" ( "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" ) .
+number = [ "-" ] integer [ fraction ] [ exponent ] .
+integer = "0" | onenine { digit } .
+fraction = "." digit { digit } .
+exponent = ( "e" | "E" ) [ "+" | "-" ] digit { digit } .
+onenine = "1" … "9" .
+digit = "0" … "9" .

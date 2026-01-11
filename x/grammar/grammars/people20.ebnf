@@ -1,0 +1,19 @@
+root = "[" ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person "," ws person { "," ws person } ws "]" .
+
+person = "{" ws name_field "," ws age_field "," ws email_field ws "}" .
+
+name_field = "\"" "n" "a" "m" "e" "\"" ws ":" ws string .
+age_field = "\"" "a" "g" "e" "\"" ws ":" ws number .
+email_field = "\"" "e" "m" "a" "i" "l" "\"" ws ":" ws string .
+
+string = "\"" { character } "\"" .
+character = unescaped | escaped .
+unescaped = " " | "!" | "#" … "[" | "]" … "~" .
+escaped = "\\" ( "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" ) .
+
+number = [ "-" ] integer .
+integer = "0" | onenine { digit } .
+digit = "0" … "9" .
+onenine = "1" … "9" .
+
+ws = { " " | "\t" | "\n" | "\r" } .

@@ -1,0 +1,3 @@
+response = affirmative | negative .
+affirmative = "yes" | "Yes" | "YES" | "y" | "Y" | "true" | "True" .
+negative = "no" | "No" | "NO" | "n" | "N" | "false" | "False" .

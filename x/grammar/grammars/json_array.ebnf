@@ -1,0 +1,27 @@
+root = array .
+
+value = object | array | string | number | "true" | "false" | "null" .
+
+object = "{" ws "}" | "{" members "}" .
+members = member { "," member } .
+member = ws string ws ":" element .
+
+array = "[" ws "]" | "[" elements "]" .
+elements = element { "," element } .
+element = ws value ws .
+
+string = "\"" { character } "\"" .
+character = unescaped | escaped .
+unescaped = " " | "!" | "#" … "[" | "]" … "~" .
+escaped = "\\" ( "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | unicode ) .
+unicode = "u" hex hex hex hex .
+hex = "0" … "9" | "A" … "F" | "a" … "f" .
+
+number = [ "-" ] integer [ fraction ] [ exponent ] .
+integer = "0" | onenine { digit } .
+fraction = "." digit { digit } .
+exponent = ( "e" | "E" ) [ "+" | "-" ] digit { digit } .
+digit = "0" … "9" .
+onenine = "1" … "9" .
+
+ws = { " " | "\t" | "\n" | "\r" } .

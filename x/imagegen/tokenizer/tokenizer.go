@@ -1082,6 +1082,12 @@ func (t *Tokenizer) GetSpecialToken(name string) (int32, bool) {
 	return id, ok
 }
 
+// Vocab returns the vocabulary as a slice of token strings indexed by token ID.
+// This is useful for constrained decoding where we need to map tokens to grammar symbols.
+func (t *Tokenizer) Vocab() []string {
+	return t.vocab.Values
+}
+
 // LoadVocabMerges loads a tokenizer from vocab.json + merges.txt format (GPT-style)
 func LoadVocabMerges(dir string) (*Tokenizer, error) {
 	vocabPath := dir + "/vocab.json"

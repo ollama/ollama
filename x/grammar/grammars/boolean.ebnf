@@ -1,0 +1,7 @@
+expr = term { " OR " term } .
+term = factor { " AND " factor } .
+factor = "NOT " factor | atom | "(" expr ")" .
+atom = "true" | "false" | ident .
+ident = letter { letter | digit } .
+letter = "a" … "z" | "A" … "Z" .
+digit = "0" … "9" .

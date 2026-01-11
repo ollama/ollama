@@ -44,6 +44,9 @@ func main() {
 	topP := flag.Float64("top-p", 0.9, "Top-p sampling")
 	topK := flag.Int("top-k", 40, "Top-k sampling")
 	imagePath := flag.String("image", "", "Image path for multimodal models")
+	jsonMode := flag.Bool("json", false, "Enable JSON grammar constraint (output will be valid JSON)")
+	grammarFile := flag.String("grammar", "", "Path to EBNF grammar file for constrained decoding")
+	grammarStart := flag.String("grammar-start", "root", "Start rule name for grammar (default: root)")
 
 	// Image generation params
 	width := flag.Int("width", 1024, "Image width")
@@ -186,6 +189,20 @@ func main() {
 			}
 		}
 
+		// Get vocab for constrained decoding if needed
+		var vocab []string
+		var grammarEBNF string
+		if *jsonMode || *grammarFile != "" {
+			vocab = m.Tokenizer().Vocab()
+		}
+		if *grammarFile != "" {
+			data, err := os.ReadFile(*grammarFile)
+			if err != nil {
+				log.Fatalf("failed to read grammar file: %v", err)
+			}
+			grammarEBNF = string(data)
+		}
+
 		err = generate(context.Background(), m, input{
 			Prompt:       *prompt,
 			Image:        image,
@@ -194,6 +211,10 @@ func main() {
 			TopP:         float32(*topP),
 			TopK:         *topK,
 			WiredLimitGB: *wiredLimitGB,
+			JSONMode:     *jsonMode,
+			GrammarEBNF:  grammarEBNF,
+			GrammarStart: *grammarStart,
+			Vocab:        vocab,
 		}, func(out output) {
 			if out.Text != "" {
 				fmt.Print(out.Text)

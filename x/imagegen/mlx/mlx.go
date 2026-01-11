@@ -1729,6 +1729,14 @@ func init() {
 	// Lock main goroutine to OS thread for CUDA context stability.
 	// CUDA contexts are bound to threads; Go can migrate goroutines between threads.
 	runtime.LockOSThread()
+	// Avoid Metal device init crashes on systems without Metal.
+	if runtime.GOOS == "darwin" {
+		if MetalIsAvailable() {
+			SetDefaultDeviceGPU()
+		} else {
+			SetDefaultDeviceCPU()
+		}
+	}
 	RandomState[0] = RandomKey(uint64(time.Now().UnixMilli()))
 	Keep(RandomState[0]) // Global state should persist
 }

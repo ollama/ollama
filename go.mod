@@ -15,8 +15,8 @@ require (
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.9.0
 	github.com/x448/float16 v0.8.4
-	golang.org/x/sync v0.17.0
-	golang.org/x/sys v0.37.0
+	golang.org/x/sync v0.19.0
+	golang.org/x/sys v0.39.0
 )
 
 require (
@@ -30,8 +30,8 @@ require (
 	github.com/tkrajina/typescriptify-golang-structs v0.2.0
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	golang.org/x/image v0.22.0
-	golang.org/x/mod v0.30.0
-	golang.org/x/tools v0.38.0
+	golang.org/x/mod v0.31.0
+	golang.org/x/tools v0.40.0
 	gonum.org/v1/gonum v0.15.0
 )
 
@@ -81,11 +81,11 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	golang.org/x/arch v0.8.0 // indirect
-	golang.org/x/crypto v0.43.0
-	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
-	golang.org/x/net v0.46.0 // indirect
-	golang.org/x/term v0.36.0
-	golang.org/x/text v0.30.0
+	golang.org/x/crypto v0.46.0
+	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/term v0.38.0
+	golang.org/x/text v0.32.0
 	google.golang.org/protobuf v1.34.1
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

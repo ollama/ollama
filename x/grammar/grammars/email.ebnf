@@ -1,0 +1,5 @@
+email = localpart "@" domain .
+localpart = word { "." word } .
+domain = word { "." word } .
+word = alphanum { alphanum | "-" | "_" } .
+alphanum = "a" … "z" | "A" … "Z" | "0" … "9" .

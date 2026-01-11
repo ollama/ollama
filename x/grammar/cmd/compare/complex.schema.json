@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "kind": { "enum": ["order", "invoice", "shipment"] },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "qty": { "type": "integer" },
+          "status": { "enum": ["new", "backorder", "shipped"] },
+          "notes": { "type": "string" }
+        },
+        "required": ["sku", "qty", "status", "notes"]
+      }
+    },
+    "alt": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "null" },
+        { "type": "integer" }
+      ]
+    },
+    "flags": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 4,
+      "items": { "enum": ["fragile", "gift", "priority", "insured"] }
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "created": { "type": "string", "format": "date-time" },
+        "source": { "enum": ["api", "batch", "import"] },
+        "ip": { "type": "string", "format": "ipv4" }
+      },
+      "required": ["created", "source", "ip"]
+    },
+    "priority": { "type": "integer" }
+  },
+  "required": ["id", "kind", "items", "alt", "flags", "meta", "priority"]
+}

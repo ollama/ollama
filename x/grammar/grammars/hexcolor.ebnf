@@ -1,0 +1,4 @@
+color = "#" ( hex6 | hex3 ) .
+hex6 = hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit .
+hex3 = hexdigit hexdigit hexdigit .
+hexdigit = "0" … "9" | "a" … "f" | "A" … "F" .

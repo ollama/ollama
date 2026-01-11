@@ -311,8 +311,8 @@ type Model struct {
 }
 
 func (m *Model) Tokenizer() *tokenizer.Tokenizer { return m.tok }
-func (m *Model) NumLayers() int                     { return len(m.Layers) }
-func (m *Model) VocabSize() int32                   { return m.Config.VocabSize }
+func (m *Model) NumLayers() int                  { return len(m.Layers) }
+func (m *Model) VocabSize() int32                { return m.Config.VocabSize }
 
 func (m *Model) NewCache(int32) []cache.Cache {
 	caches := make([]cache.Cache, len(m.Layers))
