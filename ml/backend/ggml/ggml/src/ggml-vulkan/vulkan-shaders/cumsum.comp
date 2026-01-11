@@ -14,6 +14,7 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 
 layout (constant_id = 0) const uint BLOCK_SIZE = 128;
 layout (constant_id = 1) const uint SUBGROUP_SIZE = 32;
+layout (constant_id = 2) const uint ELEM_PER_THREAD = 4;
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
@@ -38,32 +39,45 @@ void main() {
         last_sum = 0;
     }
 
-    uint col = tid;
-    uint num_iter = CEIL_DIV(p.n_cols, BLOCK_SIZE);
+    uint col = tid * ELEM_PER_THREAD;
+    uint num_iter = CEIL_DIV(p.n_cols, BLOCK_SIZE * ELEM_PER_THREAD);
     for (int i = 0; i < num_iter; ++i) {
-        FLOAT_TYPE v = 0;
-        if (col < p.n_cols) {
-            v = FLOAT_TYPE(data_a[src_idx + col]);
+        FLOAT_TYPE v[ELEM_PER_THREAD];
+        FLOAT_TYPE thread_sum = 0;
+        [[unroll]] for (uint j = 0; j < ELEM_PER_THREAD; ++j) {
+            if (col + j < p.n_cols) {
+                thread_sum += FLOAT_TYPE(data_a[src_idx + col + j]);
+            }
+            v[j] = thread_sum;
         }
-        v = subgroupInclusiveAdd(v);
 
+        thread_sum = subgroupExclusiveAdd(thread_sum);
+        [[unroll]] for (uint j = 0; j < ELEM_PER_THREAD; ++j) {
+            v[j] += thread_sum;
+        }
         // Store the largest partial sum for each subgroup, then add the partials for all
         // lower subgroups and the final partial sum from the previous iteration.
         if (gl_SubgroupInvocationID == SUBGROUP_SIZE - 1) {
-            partial[subgroup_id] = v;
+            partial[subgroup_id] = v[ELEM_PER_THREAD - 1];
         }
         barrier();
-        for (int j = 0; j < subgroup_id; ++j) {
-            v += partial[j];
+        for (int s = 0; s < subgroup_id; ++s) {
+            [[unroll]] for (uint j = 0; j < ELEM_PER_THREAD; ++j) {
+                v[j] += partial[s];
+            }
         }
-        v += last_sum;
+        [[unroll]] for (uint j = 0; j < ELEM_PER_THREAD; ++j) {
+            v[j] += last_sum;
+        }
         barrier();
         if (tid == BLOCK_SIZE - 1) {
-            last_sum = v;
+            last_sum = v[ELEM_PER_THREAD - 1];
         }
-        if (col < p.n_cols) {
-            data_d[dst_idx + col] = D_TYPE(v);
+        [[unroll]] for (uint j = 0; j < ELEM_PER_THREAD; ++j) {
+            if (col + j < p.n_cols) {
+                data_d[dst_idx + col + j] = D_TYPE(v[j]);
+            }
         }
-        col += BLOCK_SIZE;
+        col += BLOCK_SIZE * ELEM_PER_THREAD;
     }
 }

@@ -370,6 +370,44 @@ static void print_rule(
 }
 
 //
+// Regex utilities
+//
+
+size_t llama_grammar_trigger_pattern::find(const std::string & input) const {
+    auto find_start_pos = [](const std::smatch & match) {
+        // get from the first matched capturing group to the end of the string
+        size_t start = std::string::npos;
+        for (auto i = 1u; i < match.size(); i++) {
+            if (match.length(i) > 0) {
+                start = match.position(i);
+                break;
+            }
+        }
+        if (start == std::string::npos) {
+            start = match.position(0);
+        }
+        return start;
+    };
+
+    if (!pattern.empty() && pattern.front() == '^' && pattern.back() == '$') {
+        // match against the entire input
+        std::smatch match;
+        if (std::regex_match(input, match, regex)) {
+            return find_start_pos(match);
+        }
+    }
+
+    // search anywhere
+    std::smatch match;
+    if (std::regex_search(input, match, regex)) {
+        return find_start_pos(match);
+    }
+
+    return std::string::npos;
+}
+
+
+//
 // implementation
 //
 
@@ -1321,21 +1359,10 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
             grammar.trigger_buffer_positions.push_back(std::make_pair(token, position));
             grammar.trigger_buffer += piece;
 
-            std::smatch match;
             for (const auto & trigger_pattern : grammar.trigger_patterns) {
-                if (std::regex_match(grammar.trigger_buffer, match, trigger_pattern.regex)) {
+                auto start = trigger_pattern.find(grammar.trigger_buffer);
+                if (start != std::string::npos) {
                     grammar.awaiting_trigger = false;
-                    // get from the first matched capturing group to the end of the string
-                    size_t start = std::string::npos;
-                    for (auto i = 1u; i < match.size(); i++) {
-                        if (match.length(i) > 0) {
-                            start = match.position(i);
-                            break;
-                        }
-                    }
-                    if (start == std::string::npos) {
-                        start = match.position(0);
-                    }
 
                     // replay tokens that overlap with [start, end)
                     for (const auto & [tok, tok_pos] : grammar.trigger_buffer_positions) {

@@ -28,22 +28,8 @@ static __global__ void reduce_rows_f32(const float * __restrict__ x, float * __r
     }
 
     // sum up partial sums
-    sum = warp_reduce_sum(sum);
-    if (blockDim.x > WARP_SIZE) {
-        assert((blockDim.x <= 1024) && (blockDim.x % WARP_SIZE) == 0);
-        __shared__ float s_sum[32];
-        const int        warp_id = threadIdx.x / WARP_SIZE;
-        const int        lane_id = threadIdx.x % WARP_SIZE;
-        if (lane_id == 0) {
-            s_sum[warp_id] = sum;
-        }
-        __syncthreads();
-        sum = 0.0f;
-        if (lane_id < (static_cast<int>(blockDim.x) / WARP_SIZE)) {
-            sum = s_sum[lane_id];
-        }
-        sum = warp_reduce_sum(sum);
-    }
+    __shared__ float shared_vals[32];
+    sum = block_reduce<block_reduce_method::SUM>(sum, shared_vals);
 
     if (col != 0) {
         return;
