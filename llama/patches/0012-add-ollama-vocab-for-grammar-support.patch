@@ -183,7 +183,7 @@ index b5a0e588e..57847583a 100644
                        const char * grammar_root,
                                bool lazy,
 diff --git a/src/llama-sampling.cpp b/src/llama-sampling.cpp
-index 48291a3a7..b8a374282 100644
+index 11f0394c4..bbc5dc591 100644
 --- a/src/llama-sampling.cpp
 +++ b/src/llama-sampling.cpp
 @@ -2511,7 +2511,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {

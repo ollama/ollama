@@ -28,7 +28,7 @@ index 9751bd82a..6be168bfc 100644
      GGML_API ggml_backend_buffer_type_t    ggml_backend_dev_host_buffer_type(ggml_backend_dev_t device);
      GGML_API ggml_backend_buffer_t         ggml_backend_dev_buffer_from_host_ptr(ggml_backend_dev_t device, void * ptr, size_t size, size_t max_tensor_size);
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index 7bdf9d81f..21b35ac5c 100644
+index 93eb8e511..c815c2eed 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -195,6 +195,10 @@ extern "C" {
@@ -122,10 +122,10 @@ index 016b04e5a..164d367d0 100644
  #define cudaError_t hipError_t
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 33f51a238..a84caf12b 100644
+index f1096d960..da72d8e77 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -981,10 +981,12 @@ static struct llama_model * llama_model_load_from_file_impl(
+@@ -993,10 +993,12 @@ static struct llama_model * llama_model_load_from_file_impl(
      for (auto * dev : model->devices) {
          ggml_backend_dev_props props;
          ggml_backend_dev_get_props(dev, &props);

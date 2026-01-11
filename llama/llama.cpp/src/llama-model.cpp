@@ -2467,6 +2467,11 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         pimpl->gpu_buft_list.emplace(dev, std::move(buft_list));
     }
 
+    ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    if (cpu_dev == nullptr) {
+        throw std::runtime_error(format("%s: no CPU backend found", __func__));
+    }
+
     // calculate the split points
     bool all_zero = tensor_split == nullptr || std::all_of(tensor_split, tensor_split + n_devices(), [](float x) { return x == 0.0f; });
     std::vector<float> splits(n_devices());
@@ -2477,6 +2482,13 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             size_t total;
             size_t free;
             ggml_backend_dev_memory(dev, &free, &total);
+
+            // devices can return 0 bytes for free and total memory if they do not
+            // have any to report. in this case, we will use the host memory as a fallback
+            // fixes: https://github.com/ggml-org/llama.cpp/issues/18577
+            if (free == 0 && total == 0) {
+                ggml_backend_dev_memory(cpu_dev, &free, &total);
+            }
             splits[i] = free;
         }
     } else {
@@ -2493,10 +2505,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         splits[i] /= split_sum;
     }
 
-    ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-    if (cpu_dev == nullptr) {
-        throw std::runtime_error(format("%s: no CPU backend found", __func__));
-    }
     const int i_gpu_start = std::max(int(hparams.n_layer) + 1 - n_gpu_layers, 0);
     const int act_gpu_layers = devices.empty() ? 0 : std::min(n_gpu_layers, int(n_layer) + 1);
     auto get_layer_buft_list = [&](int il) -> llama_model::impl::layer_dev {
@@ -6798,7 +6806,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         } else {
                             // Linear attention (gated delta net) specific tensors
                             // Create tensors with calculated dimensions
-                            layer.ssm_in         = create_tensor(tn(LLM_TENSOR_SSM_IN,         "weight", i), { n_embd, qkvz_dim }, 0);
+                            // note: ssm_in is used by legacy GGUF
+                            layer.ssm_in         = create_tensor(tn(LLM_TENSOR_SSM_IN,         "weight", i), { n_embd, qkvz_dim }, TENSOR_NOT_REQUIRED);
+                            layer.wqkv           = create_tensor(tn(LLM_TENSOR_ATTN_QKV,       "weight", i), { n_embd, key_dim * 2 + value_dim }, TENSOR_NOT_REQUIRED);
+                            layer.wqkv_gate      = create_tensor(tn(LLM_TENSOR_ATTN_GATE,      "weight", i), { n_embd, value_dim }, TENSOR_NOT_REQUIRED);
                             layer.ssm_conv1d     = create_tensor(tn(LLM_TENSOR_SSM_CONV1D,     "weight", i), { hparams.ssm_d_conv, conv_dim }, 0);
                             layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   i), { hparams.ssm_dt_rank }, 0);
                             layer.ssm_a          = create_tensor(tn(LLM_TENSOR_SSM_A_NOSCAN,             i), { hparams.ssm_dt_rank }, 0);

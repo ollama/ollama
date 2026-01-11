@@ -28,7 +28,7 @@ index 9a4adf697..9751bd82a 100644
  
      // Provide a hint on the batch size to optimize processing (uses heuristics if unset)
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index 0f5b03cef..7bdf9d81f 100644
+index a833756f9..93eb8e511 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -26,12 +26,17 @@ extern "C" {

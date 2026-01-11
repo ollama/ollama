@@ -106,7 +106,8 @@ int clip_is_minicpmv(const struct clip_ctx * ctx);
 bool clip_is_glm(const struct clip_ctx * ctx);
 bool clip_is_mrope(const struct clip_ctx * ctx);
 bool clip_is_llava(const struct clip_ctx * ctx);
-bool clip_is_gemma3(const struct clip_ctx * ctx);
+// note for contributor: this clip_is_(model) pattern is deprecated
+//                       do NOT add new functions like this
 
 bool clip_encode_float_image (struct clip_ctx * ctx, int n_threads, float * img, int h, int w, float * vec);
 

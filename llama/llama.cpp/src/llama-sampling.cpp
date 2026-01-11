@@ -2142,7 +2142,7 @@ struct llama_sampler_xtc {
     const uint32_t seed;
     uint32_t       seed_cur;
 
-    std::mt19937    rng;
+    std::mt19937   rng;
 };
 
 static const char * llama_sampler_xtc_name(const struct llama_sampler * /*smpl*/) {

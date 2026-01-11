@@ -111,8 +111,20 @@ static std::vector<llama_device_memory_data> llama_get_device_memory_data(
         }
     }
     for (size_t i = 0; i < ret.size(); i++) {
-        size_t free, total;
+        size_t free;
+        size_t total;
         ggml_backend_dev_memory(model->devices[i], &free, &total);
+
+        // devices can return 0 bytes for free and total memory if they do not
+        // have any to report. in this case, we will use the host memory as a fallback
+        // fixes: https://github.com/ggml-org/llama.cpp/issues/18577
+        if (free == 0 && total == 0) {
+            ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+            if (cpu_dev == nullptr) {
+                throw std::runtime_error(format("%s: no CPU backend found", __func__));
+            }
+            ggml_backend_dev_memory(cpu_dev, &free, &total);
+        }
         ret[i].free  = free;
         ret[i].total = total;
     }

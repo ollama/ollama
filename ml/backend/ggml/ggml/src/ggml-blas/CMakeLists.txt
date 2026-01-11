@@ -32,14 +32,12 @@ if (BLAS_FOUND)
                 pkg_check_modules(DepBLAS openblas)
             endif()
         elseif (${GGML_BLAS_VENDOR} MATCHES "FLAME")
-            add_compile_definitions(GGML_BLAS_USE_BLIS)
             pkg_check_modules(DepBLAS blis)
         elseif (${GGML_BLAS_VENDOR} MATCHES "ATLAS")
             pkg_check_modules(DepBLAS blas-atlas)
         elseif (${GGML_BLAS_VENDOR} MATCHES "FlexiBLAS")
             pkg_check_modules(DepBLAS flexiblas_api)
         elseif (${GGML_BLAS_VENDOR} MATCHES "Intel")
-            add_compile_definitions(GGML_BLAS_USE_MKL)
             # all Intel* libraries share the same include path
             pkg_check_modules(DepBLAS mkl-sdl)
         elseif (${GGML_BLAS_VENDOR} MATCHES "NVHPC")
@@ -74,8 +72,24 @@ if (BLAS_FOUND)
 
     target_compile_options(ggml-blas PRIVATE ${BLAS_LINKER_FLAGS})
 
-    if ("${BLAS_INCLUDE_DIRS}" MATCHES "mkl" AND (${GGML_BLAS_VENDOR} MATCHES "Generic" OR ${GGML_BLAS_VENDOR} MATCHES "Intel"))
+    if ("${GGML_BLAS_VENDOR}" STREQUAL "")
+        message(WARNING "GGML_BLAS_VENDOR is not set; some methods may not link properly.")
+    endif()
+
+    if ("${GGML_BLAS_VENDOR}" MATCHES "Intel" OR ("${BLAS_INCLUDE_DIRS}" MATCHES "mkl" AND "${GGML_BLAS_VENDOR}" MATCHES "Generic"))
         add_compile_definitions(GGML_BLAS_USE_MKL)
+    endif()
+
+    if ("${GGML_BLAS_VENDOR}" MATCHES "OpenBLAS")
+        add_compile_definitions(GGML_BLAS_USE_OPENBLAS)
+    endif()
+
+    if ("${GGML_BLAS_VENDOR}" MATCHES "FLAME" OR "${GGML_BLAS_VENDOR}" MATCHES "AOCL" OR "${GGML_BLAS_VENDOR}" MATCHES "AOCL_mt")
+        add_compile_definitions(GGML_BLAS_USE_BLIS)
+    endif()
+
+    if ("${GGML_BLAS_VENDOR}" MATCHES "NVPL")
+        add_compile_definitions(GGML_BLAS_USE_NVPL)
     endif()
 
     target_link_libraries     (ggml-blas PRIVATE ${BLAS_LIBRARIES})

@@ -234,6 +234,11 @@
 
 #if UINTPTR_MAX == 0xFFFFFFFF
     #define GGML_MEM_ALIGN 4
+#elif defined(__EMSCRIPTEN__)
+// emscripten uses max_align_t == 8, so we need GGML_MEM_ALIGN == 8 for 64-bit wasm.
+// (for 32-bit wasm, the first conditional is true and GGML_MEM_ALIGN stays 4.)
+// ref: https://github.com/ggml-org/llama.cpp/pull/18628
+    #define GGML_MEM_ALIGN 8
 #else
     #define GGML_MEM_ALIGN 16
 #endif

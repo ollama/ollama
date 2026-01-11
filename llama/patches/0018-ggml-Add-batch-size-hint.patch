@@ -38,7 +38,7 @@ index 609209459..9a4adf697 100644
      GGML_API void                 ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes);
      GGML_API bool                 ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph); // returns success
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index 6792ba986..0f5b03cef 100644
+index 59190b7c4..a833756f9 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
 @@ -106,8 +106,8 @@ extern "C" {
@@ -130,10 +130,10 @@ index 259e10257..1b91123d9 100644
      GGML_ASSERT(sched);
      // reset state for the next run
 diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
-index 5b888cdd8..88d088952 100644
+index 84956cbb9..39920ec19 100644
 --- a/ggml/src/ggml-blas/ggml-blas.cpp
 +++ b/ggml/src/ggml-blas/ggml-blas.cpp
-@@ -224,7 +224,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
+@@ -220,7 +220,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
      delete backend;
  }
  
@@ -142,7 +142,7 @@ index 5b888cdd8..88d088952 100644
      ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
  
      for (int i = 0; i < cgraph->n_nodes; i++) {
-@@ -254,6 +254,7 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend,
+@@ -250,6 +250,7 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  
      GGML_UNUSED(backend);
@@ -274,10 +274,10 @@ index 516d74064..a2b1592eb 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 885864111..1ad5b6485 100644
+index 806eac640..12ec1f4c7 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13540,7 +13540,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13545,7 +13545,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -286,7 +286,7 @@ index 885864111..1ad5b6485 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -13827,6 +13827,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -13832,6 +13832,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);
