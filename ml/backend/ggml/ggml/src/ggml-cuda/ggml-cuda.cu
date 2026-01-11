@@ -4346,13 +4346,13 @@ struct ggml_backend_cuda_device_context {
     std::string name;
     std::string description;
     std::string pci_bus_id;
-	std::string id;    
+    std::string id;
+    int op_offload_min_batch_size;
     int major;
     int minor;
     int driver_major;
     int driver_minor;
     int integrated;
-    int op_offload_min_batch_size;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {

@@ -38,7 +38,7 @@ index 9549d0495..eacabb191 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 935d21506..8da35447c 100644
+index f289332b8..d9ca952eb 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -74,6 +74,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
@@ -49,15 +49,15 @@ index 935d21506..8da35447c 100644
  
  typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
      VkStructureType                       sType;
-@@ -14218,6 +14219,7 @@ struct ggml_backend_vk_device_context {
-     std::string pci_id;
+@@ -14219,6 +14220,7 @@ struct ggml_backend_vk_device_context {
+ 	int op_offload_min_batch_size;
      std::string id;
      std::string uuid;
 +    std::string luid;
      int major;
      int minor;
      int driver_major;
-@@ -14236,6 +14238,20 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+@@ -14237,6 +14239,20 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
      
      vk::PhysicalDeviceProperties2 props2;
      vkdev.getProperties2(&props2);
@@ -78,7 +78,7 @@ index 935d21506..8da35447c 100644
  
      if (!is_integrated_gpu)
      {
-@@ -14267,7 +14283,6 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
+@@ -14268,7 +14284,6 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
      }
      // else fallback to memory budget if supported
  
@@ -86,7 +86,7 @@ index 935d21506..8da35447c 100644
      if (membudget_supported) {
          memprops.pNext = &budgetprops;
      }
-@@ -15102,7 +15117,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -15093,7 +15108,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                      /* .reg     = */ reg,
                      /* .context = */ ctx,
                  });
@@ -94,7 +94,7 @@ index 935d21506..8da35447c 100644
                  // Gather additional information about the device
                  int dev_idx = vk_instance.device_indices[i];
                  vk::PhysicalDeviceProperties props1;
-@@ -15125,6 +15139,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -15116,6 +15130,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                      }
                  }
                  ctx->uuid = oss.str();
