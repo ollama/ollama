@@ -590,6 +590,7 @@ std::pair<ggml_tensor *, ggml_tensor *> llm_build_qwen3next::build_qkvz(
         ggml_tensor * z = ggml_view_4d(ctx0, mixed_qkvz_reshaped, split_sizes_qkvz[3], num_k_heads, n_seq_tokens, n_seqs,
                                     mixed_qkvz_reshaped->nb[1], mixed_qkvz_reshaped->nb[2], mixed_qkvz_reshaped->nb[3],
                                     (split_sizes_qkvz[0] + split_sizes_qkvz[1] + split_sizes_qkvz[2]) * ggml_element_size(mixed_qkvz_reshaped));
+        z = ggml_cont(ctx0, z);
         cb(z, "z", il);
 
         // After creating query, key, and value_reshaped, reshape each to flatten the head dimensions
