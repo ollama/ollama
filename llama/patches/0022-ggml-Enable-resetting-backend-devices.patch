@@ -62,7 +62,7 @@ index 4cf0ec913..4e83f6431 100644
      GGML_ASSERT(device);
      return device->iface.get_buffer_type(device);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 1a13f2018..4c455ea8f 100644
+index bf30ae0dd..9c6bcec87 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -115,6 +115,11 @@ int ggml_cuda_get_device() {
