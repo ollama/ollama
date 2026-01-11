@@ -58,7 +58,7 @@ index 5a1403c4b..f0f734a6c 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 9280b2731..72882185c 100644
+index 9c6bcec87..ef2742094 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -259,6 +259,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
