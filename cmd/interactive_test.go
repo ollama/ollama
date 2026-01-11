@@ -62,6 +62,13 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[11], "c:")
 	assert.Contains(t, res[12], "thirteen.WEBP")
 	assert.Contains(t, res[12], "d:")
+	assert.Contains(t, res[12], "d:")
+
+	// Issue #10333 - escaped tilde and other characters
+	input = `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Contains(t, res[0], "CleanShot\\ 2025-04-17\\ at\\ 21.26.40@2x.png")
 }
 
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
@@ -83,4 +90,19 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, cleaned, "before  after")
+}
+
+func TestNormalizeFilePath(t *testing.T) {
+	// Issue #10333 - escaped tilde and others
+	input := `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	expected := `/Users/ollama/Library/Mobile Documents/com~apple~CloudDocs/screenshots/CleanShot 2025-04-17 at 21.26.40@2x.png`
+	normalized := normalizeFilePath(input)
+	assert.Equal(t, expected, normalized)
+
+	// Extra check: escaped @?
+	// If the user's shell escapes @, we should handle it.
+	input = `foo\@bar.png`
+	expected = `foo@bar.png`
+	normalized = normalizeFilePath(input)
+	assert.Equal(t, expected, normalized)
 }
