@@ -11,7 +11,7 @@ set -euo pipefail
 FFMPEG_VERSION="7.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
-INSTALL_PREFIX="${SCRIPT_DIR}/install"
+INSTALL_PREFIX="${INSTALL_PREFIX:-${SCRIPT_DIR}/install}"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Detect platform and architecture
