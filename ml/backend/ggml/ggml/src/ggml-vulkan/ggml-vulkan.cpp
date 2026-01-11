@@ -14215,6 +14215,7 @@ struct ggml_backend_vk_device_context {
     std::string name;
     std::string description;
     bool is_integrated_gpu;
+	std::string pci_bus_id;
     // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
     std::string pci_id;
 	int op_offload_min_batch_size;
@@ -14422,10 +14423,10 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = {
-        /* .async                 = */ true,
+        /* .async                 = */ false,
         /* .host_buffer           = */ true,
         /* .buffer_from_host_ptr  = */ false,
-        /* .events                = */ true,
+        /* .events                = */ false,
     };
 
     props->compute_major = ctx->major;
@@ -15100,6 +15101,7 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                 ctx->name = GGML_VK_NAME + std::to_string(i);
                 ctx->description = desc;
                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
+				ctx->pci_bus_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
                 ctx->op_offload_min_batch_size = min_batch_size;
                 ctx->id = ggml_backend_vk_get_device_id(i);
