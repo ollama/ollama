@@ -12,8 +12,8 @@ must be recreated with no-alloc set to false before loading data.
  ggml/src/ggml-backend-impl.h    |  16 +++
  ggml/src/ggml-backend.cpp       |  75 ++++++++++-
  ggml/src/ggml-cuda/common.cuh   |  62 ++++++++-
- ggml/src/ggml-cuda/ggml-cuda.cu | 225 ++++++++++++++++++++++++++------
- 5 files changed, 333 insertions(+), 46 deletions(-)
+ ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
+ 5 files changed, 332 insertions(+), 46 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 9a4adf697..9751bd82a 100644
@@ -323,7 +323,7 @@ index 9516d8ec8..e37e6d8fb 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 0e2909554..bf30ae0dd 100644
+index 0e2909554..4ffc5e39a 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -365,6 +365,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
@@ -588,7 +588,7 @@ index 0e2909554..bf30ae0dd 100644
      ggml_cuda_set_device(cuda_ctx->device);
  
      bool use_cuda_graph             = false;
-@@ -3836,6 +3905,77 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -3836,6 +3905,76 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  }
  
@@ -623,10 +623,9 @@ index 0e2909554..bf30ae0dd 100644
 +
 +    try {
 +        bool use_cuda_graph = false;
-+        bool cuda_graph_update_required = false;
-+        bool graph_evaluated_or_captured = false;
++        bool cuda_graph_update_required = false;        
 +
-+        ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, graph_evaluated_or_captured, use_cuda_graph, cuda_graph_update_required);
++        ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, use_cuda_graph, cuda_graph_update_required);
 +    } catch (const std::exception &e) {
 +        result = GGML_STATUS_FAILED;
 +    }
@@ -666,7 +665,7 @@ index 0e2909554..bf30ae0dd 100644
  static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
-@@ -4113,6 +4253,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+@@ -4113,6 +4252,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
      /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,
