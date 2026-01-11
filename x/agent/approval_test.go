@@ -151,6 +151,27 @@ func TestExtractBashPrefix(t *testing.T) {
 			command:  "head -n 100",
 			expected: "",
 		},
+		// Path traversal security tests
+		{
+			name:     "path traversal - parent escape",
+			command:  "cat tools/../../etc/passwd",
+			expected: "", // Should NOT create a prefix - path escapes
+		},
+		{
+			name:     "path traversal - deep escape",
+			command:  "cat tools/a/b/../../../etc/passwd",
+			expected: "", // Normalizes to "../etc/passwd" - escapes
+		},
+		{
+			name:     "path traversal - absolute path",
+			command:  "cat /etc/passwd",
+			expected: "", // Absolute paths should not create prefix
+		},
+		{
+			name:     "path with safe dotdot - normalized",
+			command:  "cat tools/subdir/../file.go",
+			expected: "cat:tools/", // Normalizes to tools/file.go - safe, creates prefix
+		},
 	}
 
 	for _, tt := range tests {
@@ -161,6 +182,34 @@ func TestExtractBashPrefix(t *testing.T) {
 					tt.command, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestApprovalManager_PathTraversalBlocked(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Allow "cat tools/file.go" - creates prefix "cat:tools/"
+	am.AddToAllowlist("bash", map[string]any{"command": "cat tools/file.go"})
+
+	// Path traversal attack: should NOT be allowed
+	if am.IsAllowed("bash", map[string]any{"command": "cat tools/../../etc/passwd"}) {
+		t.Error("SECURITY: path traversal attack should NOT be allowed")
+	}
+
+	// Another traversal variant
+	if am.IsAllowed("bash", map[string]any{"command": "cat tools/../../../etc/shadow"}) {
+		t.Error("SECURITY: deep path traversal should NOT be allowed")
+	}
+
+	// Valid subdirectory access should still work
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/file.go"}) {
+		t.Error("expected cat tools/subdir/file.go to be allowed")
+	}
+
+	// Safe ".." that normalizes to within allowed directory should work
+	// tools/subdir/../other.go normalizes to tools/other.go which is under tools/
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/../other.go"}) {
+		t.Error("expected cat tools/subdir/../other.go to be allowed (normalizes to tools/other.go)")
 	}
 }
 
@@ -183,6 +232,119 @@ func TestApprovalManager_PrefixAllowlist(t *testing.T) {
 	// Should not allow different command in same directory
 	if am.IsAllowed("bash", map[string]any{"command": "rm tools/file.go"}) {
 		t.Error("expected rm tools/file.go to NOT be allowed (rm is not a safe command)")
+	}
+}
+
+func TestApprovalManager_HierarchicalPrefixAllowlist(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Allow "cat tools/file.go" - this creates prefix "cat:tools/"
+	am.AddToAllowlist("bash", map[string]any{"command": "cat tools/file.go"})
+
+	// Should allow subdirectories (hierarchical matching)
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/subdir/file.go"}) {
+		t.Error("expected cat tools/subdir/file.go to be allowed via hierarchical prefix")
+	}
+
+	// Should allow deeply nested subdirectories
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/a/b/c/deep.go"}) {
+		t.Error("expected cat tools/a/b/c/deep.go to be allowed via hierarchical prefix")
+	}
+
+	// Should still allow same directory
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools/another.go"}) {
+		t.Error("expected cat tools/another.go to be allowed")
+	}
+
+	// Should NOT allow different base directory
+	if am.IsAllowed("bash", map[string]any{"command": "cat src/main.go"}) {
+		t.Error("expected cat src/main.go to NOT be allowed")
+	}
+
+	// Should NOT allow different command even in subdirectory
+	if am.IsAllowed("bash", map[string]any{"command": "ls tools/subdir/"}) {
+		t.Error("expected ls tools/subdir/ to NOT be allowed (different command)")
+	}
+
+	// Should NOT allow similar but different directory name
+	if am.IsAllowed("bash", map[string]any{"command": "cat toolsbin/file.go"}) {
+		t.Error("expected cat toolsbin/file.go to NOT be allowed (different directory)")
+	}
+}
+
+func TestApprovalManager_HierarchicalPrefixAllowlist_CrossPlatform(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Allow with forward slashes (Unix-style)
+	am.AddToAllowlist("bash", map[string]any{"command": "cat tools/file.go"})
+
+	// Should work with backslashes too (Windows-style) - normalized internally
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools\\subdir\\file.go"}) {
+		t.Error("expected cat tools\\subdir\\file.go to be allowed via hierarchical prefix (Windows path)")
+	}
+
+	// Mixed slashes should also work
+	if !am.IsAllowed("bash", map[string]any{"command": "cat tools\\a/b\\c/deep.go"}) {
+		t.Error("expected mixed slash path to be allowed via hierarchical prefix")
+	}
+}
+
+func TestMatchesHierarchicalPrefix(t *testing.T) {
+	am := NewApprovalManager()
+
+	// Add prefix for "cat:tools/"
+	am.prefixes["cat:tools/"] = true
+
+	tests := []struct {
+		name     string
+		prefix   string
+		expected bool
+	}{
+		{
+			name:     "exact match",
+			prefix:   "cat:tools/",
+			expected: true, // exact match also passes HasPrefix - caller handles exact match first
+		},
+		{
+			name:     "subdirectory",
+			prefix:   "cat:tools/subdir/",
+			expected: true,
+		},
+		{
+			name:     "deeply nested",
+			prefix:   "cat:tools/a/b/c/",
+			expected: true,
+		},
+		{
+			name:     "different base directory",
+			prefix:   "cat:src/",
+			expected: false,
+		},
+		{
+			name:     "different command same path",
+			prefix:   "ls:tools/",
+			expected: false,
+		},
+		{
+			name:     "similar directory name",
+			prefix:   "cat:toolsbin/",
+			expected: false,
+		},
+		{
+			name:     "invalid prefix format",
+			prefix:   "cattools",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := am.matchesHierarchicalPrefix(tt.prefix)
+			if result != tt.expected {
+				t.Errorf("matchesHierarchicalPrefix(%q) = %v, expected %v",
+					tt.prefix, result, tt.expected)
+			}
+		})
 	}
 }
 

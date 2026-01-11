@@ -93,18 +93,54 @@ func TestRegistry_Execute(t *testing.T) {
 func TestDefaultRegistry(t *testing.T) {
 	r := DefaultRegistry()
 
-	if r.Count() != 2 {
-		t.Errorf("expected 2 tools in default registry, got %d", r.Count())
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool in default registry, got %d", r.Count())
 	}
 
 	_, ok := r.Get("bash")
 	if !ok {
 		t.Error("expected bash tool in default registry")
 	}
+}
+
+func TestDefaultRegistry_DisableWebsearch(t *testing.T) {
+	t.Setenv("OLLAMA_AGENT_DISABLE_WEBSEARCH", "1")
+
+	r := DefaultRegistry()
+
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool with websearch disabled, got %d", r.Count())
+	}
+
+	_, ok := r.Get("bash")
+	if !ok {
+		t.Error("expected bash tool in registry")
+	}
 
 	_, ok = r.Get("web_search")
-	if !ok {
-		t.Error("expected web_search tool in default registry")
+	if ok {
+		t.Error("expected web_search to be disabled")
+	}
+}
+
+func TestDefaultRegistry_DisableBash(t *testing.T) {
+	t.Setenv("OLLAMA_AGENT_DISABLE_BASH", "1")
+
+	r := DefaultRegistry()
+
+	if r.Count() != 0 {
+		t.Errorf("expected 0 tools with bash disabled, got %d", r.Count())
+	}
+}
+
+func TestDefaultRegistry_DisableBoth(t *testing.T) {
+	t.Setenv("OLLAMA_AGENT_DISABLE_WEBSEARCH", "1")
+	t.Setenv("OLLAMA_AGENT_DISABLE_BASH", "1")
+
+	r := DefaultRegistry()
+
+	if r.Count() != 0 {
+		t.Errorf("expected 0 tools with both disabled, got %d", r.Count())
 	}
 }
 
@@ -139,5 +175,49 @@ func TestWebSearchTool_Schema(t *testing.T) {
 
 	if _, ok := schema.Parameters.Properties.Get("query"); !ok {
 		t.Error("expected 'query' property in schema")
+	}
+}
+
+func TestRegistry_Unregister(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&BashTool{})
+
+	if r.Count() != 1 {
+		t.Errorf("expected 1 tool, got %d", r.Count())
+	}
+
+	r.Unregister("bash")
+
+	if r.Count() != 0 {
+		t.Errorf("expected 0 tools after unregister, got %d", r.Count())
+	}
+
+	_, ok := r.Get("bash")
+	if ok {
+		t.Error("expected bash tool to be removed")
+	}
+}
+
+func TestRegistry_Has(t *testing.T) {
+	r := NewRegistry()
+
+	if r.Has("bash") {
+		t.Error("expected Has to return false for unregistered tool")
+	}
+
+	r.Register(&BashTool{})
+
+	if !r.Has("bash") {
+		t.Error("expected Has to return true for registered tool")
+	}
+}
+
+func TestRegistry_RegisterBash(t *testing.T) {
+	r := NewRegistry()
+
+	r.RegisterBash()
+
+	if !r.Has("bash") {
+		t.Error("expected bash tool to be registered")
 	}
 }

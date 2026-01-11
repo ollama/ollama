@@ -70,6 +70,7 @@ jobs:
           name: bundles-darwin
           path: |
             dist/*.tgz
+            dist/*.tar.zst
             dist/*.zip
             dist/*.dmg
 
@@ -394,13 +395,13 @@ jobs:
           done
       - run: |
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz);
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
           done
       - uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
-            *.tgz
+            *.tar.zst
 
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
   docker-build-push:
@@ -533,7 +534,7 @@ jobs:
       - name: Upload release artifacts
         run: |
           pids=()
-          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.exe dist/*.dmg ; do
+          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg ; do
             echo "Uploading $payload"
             gh release upload ${GITHUB_REF_NAME} $payload --clobber &
             pids[$!]=$!

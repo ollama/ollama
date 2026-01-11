@@ -15,6 +15,7 @@
 * [Modelfile Reference](https://docs.ollama.com/modelfile)
 * [OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility)
 * [Video Support](./video-support.md)
+* [Anthropic Compatibility](./api/anthropic-compatibility.mdx)
 
 ### Resources
 

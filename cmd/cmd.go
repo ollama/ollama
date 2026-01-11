@@ -46,6 +46,8 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	"github.com/ollama/ollama/x/imagegen"
+	imagegenclient "github.com/ollama/ollama/x/imagegen/client"
 )
 
 const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
@@ -96,6 +98,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
+			// No Modelfile found - check if current directory is an image gen model
+			if imagegen.IsTensorModelDir(".") {
+				return imagegenclient.CreateModel(args[0], ".", p)
+			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
 			return errModelfileNotFound
@@ -457,6 +463,15 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
+
+	// Check if this is a known image generation model (skip Show/Pull)
+	if imagegen.HasTensorLayers(name) {
+		if opts.Prompt == "" && !interactive {
+			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
+		}
+		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+	}
+
 	info, err := func() (*api.ShowResponse, error) {
 		showReq := &api.ShowRequest{Name: name}
 		info, err := client.Show(cmd.Context(), showReq)
@@ -520,6 +535,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	// Check for experimental flag
 	isExperimental, _ := cmd.Flags().GetBool("experimental")
+	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -547,9 +563,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Use experimental agent loop with
+		// Use experimental agent loop with tools
 		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive)
+			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -821,6 +837,11 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
+	// Check if this is an image generation model
+	if imagegen.HasTensorLayers(args[0]) {
+		return imagegen.Show(args[0], os.Stdout)
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -1764,6 +1785,10 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
+	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
+
+	// Image generation flags (width, height, steps, seed, etc.)
+	imagegen.RegisterFlags(runCmd)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
