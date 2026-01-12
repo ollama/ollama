@@ -150,6 +150,7 @@ export default function Settings() {
         Tools: false,
         ContextLength: 4096,
         AirplaneMode: false,
+        ThinkEnabled: false,
       });
       updateSettingsMutation.mutate(defaultSettings);
     }
@@ -464,6 +465,36 @@ export default function Settings() {
                       checked={settings.AirplaneMode}
                       onChange={(checked) =>
                         handleChange("AirplaneMode", checked)
+                      }
+                    />
+                  </div>
+                </div>
+              </Field>
+
+              {/* Default Thinking Mode */}
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <svg
+                      className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100"
+                      viewBox="0 0 11 19"
+                      fill="currentColor"
+                    >
+                      <path d="M0 4.8125C0 7.8125 1.79688 8.55469 2.29688 13.7656C2.32812 14.0469 2.48438 14.2266 2.78125 14.2266H7.67188C7.97656 14.2266 8.13281 14.0469 8.16406 13.7656C8.66406 8.55469 10.4531 7.8125 10.4531 4.8125C10.4531 2.11719 8.14844 0 5.22656 0C2.30469 0 0 2.11719 0 4.8125ZM1.17969 4.8125C1.17969 2.70312 3.03125 1.17969 5.22656 1.17969C7.42188 1.17969 9.27344 2.70312 9.27344 4.8125C9.27344 7.05469 7.78906 7.58594 7.08594 13.0469H3.375C2.66406 7.58594 1.17969 7.05469 1.17969 4.8125ZM2.75781 15.9141H7.70312C7.96094 15.9141 8.15625 15.7109 8.15625 15.4531C8.15625 15.2031 7.96094 15 7.70312 15H2.75781C2.5 15 2.29688 15.2031 2.29688 15.4531C2.29688 15.7109 2.5 15.9141 2.75781 15.9141ZM5.22656 18.1797C6.4375 18.1797 7.44531 17.5859 7.52344 16.6875H2.9375C2.99219 17.5859 4.00781 18.1797 5.22656 18.1797Z" />
+                    </svg>
+                    <div>
+                      <Label>Enable thinking by default</Label>
+                      <Description>
+                        When enabled, reasoning models will use thinking mode by
+                        default. You can still toggle thinking per chat.
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Switch
+                      checked={settings.ThinkEnabled}
+                      onChange={(checked) =>
+                        handleChange("ThinkEnabled", checked)
                       }
                     />
                   </div>

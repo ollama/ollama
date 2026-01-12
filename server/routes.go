@@ -56,6 +56,27 @@ import (
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
+// getDefaultThinkValue returns the default think value from OLLAMA_DEFAULT_THINK environment variable
+// Returns nil if not set or invalid
+func getDefaultThinkValue() *api.ThinkValue {
+	defaultThink := envconfig.DefaultThink()
+	if defaultThink == "" {
+		return nil
+	}
+
+	switch strings.ToLower(defaultThink) {
+	case "true", "1", "yes":
+		return &api.ThinkValue{Value: true}
+	case "false", "0", "no":
+		return &api.ThinkValue{Value: false}
+	case "high", "medium", "low":
+		return &api.ThinkValue{Value: strings.ToLower(defaultThink)}
+	default:
+		slog.Warn("invalid OLLAMA_DEFAULT_THINK value, ignoring", "value", defaultThink)
+		return nil
+	}
+}
+
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		// heuristic to check whether the template expects to be parsed via harmony:
@@ -391,7 +412,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			// Use OLLAMA_DEFAULT_THINK if set, otherwise default to true
+			if defaultThink := getDefaultThinkValue(); defaultThink != nil {
+				req.Think = defaultThink
+			} else {
+				req.Think = &api.ThinkValue{Value: true}
+			}
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
@@ -2055,7 +2081,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			// Use OLLAMA_DEFAULT_THINK if set, otherwise default to true
+			if defaultThink := getDefaultThinkValue(); defaultThink != nil {
+				req.Think = defaultThink
+			} else {
+				req.Think = &api.ThinkValue{Value: true}
+			}
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {

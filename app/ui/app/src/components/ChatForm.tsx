@@ -166,7 +166,9 @@ function ChatForm({
   const modelSupportsThinkingLevels =
     selectedModel?.model.toLowerCase().startsWith("gpt-oss") || false;
   const supportsThinkToggling =
-    selectedModel?.model.toLowerCase().startsWith("deepseek-v3.1") || false;
+    selectedModel?.model.toLowerCase().startsWith("deepseek-v3.1") ||
+    selectedModel?.model.toLowerCase().startsWith("qwen3") ||
+    false;
 
   useEffect(() => {
     if (supportsThinkToggling && thinkEnabled && webSearchEnabled) {
