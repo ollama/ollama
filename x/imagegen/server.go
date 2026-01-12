@@ -70,7 +70,7 @@ func NewServer(modelName string) (*Server, error) {
 		port = rand.Intn(65535-49152) + 49152
 	}
 
-	// Get the ollama executable path
+	// Get the ollama-mlx executable path (in same directory as current executable)
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
@@ -78,9 +78,10 @@ func NewServer(modelName string) (*Server, error) {
 	if eval, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = eval
 	}
+	mlxExe := filepath.Join(filepath.Dir(exe), "ollama-mlx")
 
-	// Spawn subprocess: ollama runner --image-engine --model <path> --port <port>
-	cmd := exec.Command(exe, "runner", "--image-engine", "--model", modelName, "--port", strconv.Itoa(port))
+	// Spawn subprocess: ollama-mlx runner --image-engine --model <path> --port <port>
+	cmd := exec.Command(mlxExe, "runner", "--image-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
 	s := &Server{
@@ -113,7 +114,7 @@ func NewServer(modelName string) (*Server, error) {
 		}
 	}()
 
-	slog.Info("starting image runner subprocess", "model", modelName, "port", port)
+	slog.Info("starting ollama-mlx image runner subprocess", "exe", mlxExe, "model", modelName, "port", port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start image runner: %w", err)
 	}

@@ -161,6 +161,9 @@ ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
 ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
+RUN mkdir -p dist/bin
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -tags mlx -trimpath -buildmode=pie -o dist/bin/ollama-mlx .
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
@@ -182,6 +185,7 @@ COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
 COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
+COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/bin/ /bin/
 
 FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
