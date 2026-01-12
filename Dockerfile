@@ -135,7 +135,8 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 # Build minimal LGPL FFmpeg libraries for embedded video support
 FROM base AS ffmpeg-build
-RUN yum install -y wget tar xz nasm yasm gcc gcc-c++ make perl pkgconfig autoconf automake libtool
+RUN yum install -y wget tar xz gcc gcc-c++ make perl pkgconfig autoconf automake libtool \
+    && if [ "$(uname -m)" = "x86_64" ]; then yum install -y nasm yasm; fi
 WORKDIR /tmp/ffmpeg-build
 ENV INSTALL_PREFIX=/usr/local/ffmpeg-minimal
 COPY third_party/ffmpeg/build.sh .
