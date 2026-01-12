@@ -707,6 +707,10 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			continue
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			fmt.Fprintln(os.Stderr, "Available Commands:")
+			fmt.Fprintln(os.Stderr, "  /set            Set session variables")
+			fmt.Fprintln(os.Stderr, "  /show           Show model information")
+			fmt.Fprintln(os.Stderr, "  /load           Load a different model")
+			fmt.Fprintln(os.Stderr, "  /save           Save session as a model")
 			fmt.Fprintln(os.Stderr, "  /tools          Show available tools and approvals")
 			fmt.Fprintln(os.Stderr, "  /clear          Clear session context and approvals")
 			fmt.Fprintln(os.Stderr, "  /bye            Exit")
@@ -715,6 +719,157 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			fmt.Fprintln(os.Stderr, "Keyboard Shortcuts:")
 			fmt.Fprintln(os.Stderr, "  Ctrl+O          Expand last tool output")
 			fmt.Fprintln(os.Stderr, "")
+			continue
+		case strings.HasPrefix(line, "/set"):
+			args := strings.Fields(line)
+			if len(args) > 1 {
+				switch args[1] {
+				case "wordwrap":
+					wordWrap = true
+					fmt.Println("Set 'wordwrap' mode.")
+				case "nowordwrap":
+					wordWrap = false
+					fmt.Println("Set 'nowordwrap' mode.")
+				case "verbose":
+					if err := cmd.Flags().Set("verbose", "true"); err != nil {
+						return err
+					}
+					fmt.Println("Set 'verbose' mode.")
+				case "quiet":
+					if err := cmd.Flags().Set("verbose", "false"); err != nil {
+						return err
+					}
+					fmt.Println("Set 'quiet' mode.")
+				case "think":
+					thinkValue := api.ThinkValue{Value: true}
+					if len(args) > 2 {
+						thinkValue.Value = args[2]
+						fmt.Printf("Set 'think' mode to '%s'.\n", args[2])
+					} else {
+						fmt.Println("Set 'think' mode.")
+					}
+					think = &thinkValue
+				case "nothink":
+					think = &api.ThinkValue{Value: false}
+					fmt.Println("Set 'nothink' mode.")
+				case "parameter":
+					if len(args) < 4 {
+						fmt.Println("Usage: /set parameter <name> <value>")
+						continue
+					}
+					params := args[3:]
+					fp, err := api.FormatParams(map[string][]string{args[2]: params})
+					if err != nil {
+						fmt.Printf("Couldn't set parameter: %q\n", err)
+						continue
+					}
+					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
+					options[args[2]] = fp[args[2]]
+				default:
+					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
+				}
+			} else {
+				fmt.Println("Usage: /set <parameter|wordwrap|nowordwrap|think|nothink|verbose|quiet> [value]")
+			}
+			continue
+		case strings.HasPrefix(line, "/show"):
+			args := strings.Fields(line)
+			if len(args) > 1 {
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					fmt.Println("error: couldn't connect to ollama server")
+					continue
+				}
+				req := &api.ShowRequest{
+					Name:    modelName,
+					Options: options,
+				}
+				resp, err := client.Show(cmd.Context(), req)
+				if err != nil {
+					fmt.Println("error: couldn't get model")
+					continue
+				}
+
+				switch args[1] {
+				case "info":
+					fmt.Printf("Model: %s\n", modelName)
+				case "license":
+					if resp.License == "" {
+						fmt.Println("No license was specified for this model.")
+					} else {
+						fmt.Println(resp.License)
+					}
+				case "modelfile":
+					fmt.Println(resp.Modelfile)
+				case "parameters":
+					fmt.Println("Model defined parameters:")
+					if resp.Parameters == "" {
+						fmt.Println("  No additional parameters were specified.")
+					} else {
+						for _, l := range strings.Split(resp.Parameters, "\n") {
+							fmt.Printf("  %s\n", l)
+						}
+					}
+					if len(options) > 0 {
+						fmt.Println("\nUser defined parameters:")
+						for k, v := range options {
+							fmt.Printf("  %-30s %v\n", k, v)
+						}
+					}
+				case "system":
+					if resp.System != "" {
+						fmt.Println(resp.System)
+					} else {
+						fmt.Println("No system message was specified for this model.")
+					}
+				case "template":
+					if resp.Template != "" {
+						fmt.Println(resp.Template)
+					} else {
+						fmt.Println("No prompt template was specified for this model.")
+					}
+				default:
+					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
+				}
+			} else {
+				fmt.Println("Usage: /show <info|license|modelfile|parameters|system|template>")
+			}
+			continue
+		case strings.HasPrefix(line, "/load"):
+			args := strings.Fields(line)
+			if len(args) != 2 {
+				fmt.Println("Usage: /load <modelname>")
+				continue
+			}
+			modelName = args[1]
+			messages = []api.Message{}
+			approval.Reset()
+			fmt.Printf("Loading model '%s'\n", modelName)
+			continue
+		case strings.HasPrefix(line, "/save"):
+			args := strings.Fields(line)
+			if len(args) != 2 {
+				fmt.Println("Usage: /save <modelname>")
+				continue
+			}
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				continue
+			}
+			req := &api.CreateRequest{
+				Model:      args[1],
+				From:       modelName,
+				Parameters: options,
+				Messages:   messages,
+			}
+			fn := func(resp api.ProgressResponse) error { return nil }
+			err = client.Create(cmd.Context(), req, fn)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
 		case strings.HasPrefix(line, "/"):
 			fmt.Printf("Unknown command '%s'. Type /? for help\n", strings.Fields(line)[0])
