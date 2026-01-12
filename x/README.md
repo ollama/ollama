@@ -9,7 +9,7 @@ Support is currently limited to MacOS and Linux with CUDA GPUs.  We're looking t
 ```
 cmake --preset MLX
 cmake --build --preset MLX --parallel
-cmake --install --component MLX
+cmake --install build --component MLX
 go build -tags mlx .
 ```
 

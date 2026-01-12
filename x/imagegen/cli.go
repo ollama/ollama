@@ -104,7 +104,6 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 	return info, nil
 }
 
-
 // RegisterFlags adds image generation flags to the given command.
 // Flags are hidden since they only apply to image generation models.
 func RegisterFlags(cmd *cobra.Command) {
@@ -233,7 +232,7 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		timestamp := time.Now().Format("20060102-150405")
 		filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
 
-		if err := os.WriteFile(filename, imageData, 0644); err != nil {
+		if err := os.WriteFile(filename, imageData, 0o644); err != nil {
 			return fmt.Errorf("failed to save image: %w", err)
 		}
 
@@ -375,7 +374,7 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 			timestamp := time.Now().Format("20060102-150405")
 			filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
 
-			if err := os.WriteFile(filename, imageData, 0644); err != nil {
+			if err := os.WriteFile(filename, imageData, 0o644); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving image: %v\n", err)
 				continue
 			}
