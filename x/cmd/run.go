@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,14 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/agent"
 	"github.com/ollama/ollama/x/tools"
+)
+
+// MultilineState tracks the state of multiline input
+type MultilineState int
+
+const (
+	MultilineNone MultilineState = iota
+	MultilineSystem
 )
 
 // Tool output capping constants
@@ -130,6 +139,7 @@ type RunOptions struct {
 	KeepAlive    *api.Duration
 	Think        *api.ThinkValue
 	HideThinking bool
+	Verbose      bool
 
 	// Agent fields (managed externally for session persistence)
 	Tools    *tools.Registry
@@ -178,6 +188,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 	var thinkTagClosed bool = false
 	var pendingToolCalls []api.ToolCall
 	var consecutiveErrors int // Track consecutive 500 errors for retry limit
+	var latest api.ChatResponse
 
 	role := "assistant"
 	messages := opts.Messages
@@ -187,6 +198,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			p.StopAndClear()
 		}
 
+		latest = response
 		role = response.Message.Role
 		if response.Message.Thinking != "" && !opts.HideThinking {
 			if !thinkTagOpened {
@@ -483,6 +495,10 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 		fmt.Println()
 	}
 
+	if opts.Verbose {
+		latest.Summary()
+	}
+
 	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, nil
 }
 
@@ -677,6 +693,9 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 
 	var messages []api.Message
 	var sb strings.Builder
+	var format string
+	var system string
+	var multiline MultilineState = MultilineNone
 
 	for {
 		line, err := scanner.Readline()
@@ -688,13 +707,39 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			if line == "" {
 				fmt.Println("\nUse Ctrl + d or /bye to exit.")
 			}
+			scanner.Prompt.UseAlt = false
 			sb.Reset()
+			multiline = MultilineNone
 			continue
 		case err != nil:
 			return err
 		}
 
 		switch {
+		case multiline != MultilineNone:
+			// check if there's a multiline terminating string
+			before, ok := strings.CutSuffix(line, `"""`)
+			sb.WriteString(before)
+			if !ok {
+				fmt.Fprintln(&sb)
+				continue
+			}
+
+			switch multiline {
+			case MultilineSystem:
+				system = sb.String()
+				newMessage := api.Message{Role: "system", Content: system}
+				if len(messages) > 0 && messages[len(messages)-1].Role == "system" {
+					messages[len(messages)-1] = newMessage
+				} else {
+					messages = append(messages, newMessage)
+				}
+				fmt.Println("Set system message.")
+				sb.Reset()
+			}
+
+			multiline = MultilineNone
+			scanner.Prompt.UseAlt = false
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/clear"):
@@ -724,6 +769,10 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			args := strings.Fields(line)
 			if len(args) > 1 {
 				switch args[1] {
+				case "history":
+					scanner.HistoryEnable()
+				case "nohistory":
+					scanner.HistoryDisable()
 				case "wordwrap":
 					wordWrap = true
 					fmt.Println("Set 'wordwrap' mode.")
@@ -742,16 +791,48 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 					fmt.Println("Set 'quiet' mode.")
 				case "think":
 					thinkValue := api.ThinkValue{Value: true}
+					var maybeLevel string
 					if len(args) > 2 {
-						thinkValue.Value = args[2]
-						fmt.Printf("Set 'think' mode to '%s'.\n", args[2])
+						maybeLevel = args[2]
+					}
+					if maybeLevel != "" {
+						thinkValue.Value = maybeLevel
+					}
+					think = &thinkValue
+					// Check if model supports thinking
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName}); err == nil {
+							if !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+								fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", modelName)
+							}
+						}
+					}
+					if maybeLevel != "" {
+						fmt.Printf("Set 'think' mode to '%s'.\n", maybeLevel)
 					} else {
 						fmt.Println("Set 'think' mode.")
 					}
-					think = &thinkValue
 				case "nothink":
 					think = &api.ThinkValue{Value: false}
+					// Check if model supports thinking
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName}); err == nil {
+							if !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+								fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", modelName)
+							}
+						}
+					}
 					fmt.Println("Set 'nothink' mode.")
+				case "format":
+					if len(args) < 3 || args[2] != "json" {
+						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
+					} else {
+						format = args[2]
+						fmt.Printf("Set format to '%s' mode.\n", args[2])
+					}
+				case "noformat":
+					format = ""
+					fmt.Println("Disabled format.")
 				case "parameter":
 					if len(args) < 4 {
 						fmt.Println("Usage: /set parameter <name> <value>")
@@ -765,11 +846,49 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 					}
 					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
 					options[args[2]] = fp[args[2]]
+				case "system":
+					if len(args) < 3 {
+						fmt.Println("Usage: /set system <message> or /set system \"\"\"<multi-line message>\"\"\"")
+						continue
+					}
+
+					multiline = MultilineSystem
+
+					line := strings.Join(args[2:], " ")
+					line, ok := strings.CutPrefix(line, `"""`)
+					if !ok {
+						multiline = MultilineNone
+					} else {
+						// only cut suffix if the line is multiline
+						line, ok = strings.CutSuffix(line, `"""`)
+						if ok {
+							multiline = MultilineNone
+						}
+					}
+
+					sb.WriteString(line)
+					if multiline != MultilineNone {
+						scanner.Prompt.UseAlt = true
+						continue
+					}
+
+					system = sb.String()
+					newMessage := api.Message{Role: "system", Content: sb.String()}
+					// Check if the slice is not empty and the last message is from 'system'
+					if len(messages) > 0 && messages[len(messages)-1].Role == "system" {
+						// Replace the last message
+						messages[len(messages)-1] = newMessage
+					} else {
+						messages = append(messages, newMessage)
+					}
+					fmt.Println("Set system message.")
+					sb.Reset()
+					continue
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
 			} else {
-				fmt.Println("Usage: /set <parameter|wordwrap|nowordwrap|think|nothink|verbose|quiet> [value]")
+				fmt.Println("Usage: /set <parameter|system|history|format|wordwrap|think|verbose> [value]")
 			}
 			continue
 		case strings.HasPrefix(line, "/show"):
@@ -792,7 +911,25 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 
 				switch args[1] {
 				case "info":
-					fmt.Printf("Model: %s\n", modelName)
+					fmt.Fprintf(os.Stderr, "  Model\n")
+					fmt.Fprintf(os.Stderr, "    %-16s %s\n", "Name", modelName)
+					if resp.Details.Family != "" {
+						fmt.Fprintf(os.Stderr, "    %-16s %s\n", "Family", resp.Details.Family)
+					}
+					if resp.Details.ParameterSize != "" {
+						fmt.Fprintf(os.Stderr, "    %-16s %s\n", "Parameter Size", resp.Details.ParameterSize)
+					}
+					if resp.Details.QuantizationLevel != "" {
+						fmt.Fprintf(os.Stderr, "    %-16s %s\n", "Quantization", resp.Details.QuantizationLevel)
+					}
+					if len(resp.Capabilities) > 0 {
+						caps := make([]string, len(resp.Capabilities))
+						for i, c := range resp.Capabilities {
+							caps[i] = string(c)
+						}
+						fmt.Fprintf(os.Stderr, "    %-16s %s\n", "Capabilities", strings.Join(caps, ", "))
+					}
+					fmt.Fprintln(os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
@@ -817,9 +954,12 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 						}
 					}
 				case "system":
-					if resp.System != "" {
-						fmt.Println(resp.System)
-					} else {
+					switch {
+					case system != "":
+						fmt.Println(system + "\n")
+					case resp.System != "":
+						fmt.Println(resp.System + "\n")
+					default:
 						fmt.Println("No system message was specified for this model.")
 					}
 				case "template":
@@ -841,10 +981,61 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 				fmt.Println("Usage: /load <modelname>")
 				continue
 			}
-			modelName = args[1]
+			newModelName := args[1]
+			fmt.Printf("Loading model '%s'\n", newModelName)
+
+			// Create progress spinner
+			p := progress.NewProgress(os.Stderr)
+			spinner := progress.NewSpinner("")
+			p.Add("", spinner)
+
+			// Get client
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				p.StopAndClear()
+				fmt.Println("error: couldn't connect to ollama server")
+				continue
+			}
+
+			// Check if model exists and get its info
+			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: newModelName})
+			if err != nil {
+				p.StopAndClear()
+				if strings.Contains(err.Error(), "not found") {
+					fmt.Printf("Couldn't find model '%s'\n", newModelName)
+				} else {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			}
+
+			// For cloud models, no need to preload
+			if info.RemoteHost == "" {
+				// Preload the model by sending an empty generate request
+				req := &api.GenerateRequest{
+					Model: newModelName,
+					Think: think,
+				}
+				err = client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
+					return nil
+				})
+				if err != nil {
+					p.StopAndClear()
+					if strings.Contains(err.Error(), "not found") {
+						fmt.Printf("Couldn't find model '%s'\n", newModelName)
+					} else if strings.Contains(err.Error(), "does not support thinking") {
+						fmt.Printf("error: %v\n", err)
+					} else {
+						fmt.Printf("error loading model: %v\n", err)
+					}
+					continue
+				}
+			}
+
+			p.StopAndClear()
+			modelName = newModelName
 			messages = []api.Message{}
 			approval.Reset()
-			fmt.Printf("Loading model '%s'\n", modelName)
 			continue
 		case strings.HasPrefix(line, "/save"):
 			args := strings.Fields(line)
@@ -878,14 +1069,16 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			sb.WriteString(line)
 		}
 
-		if sb.Len() > 0 {
+		if sb.Len() > 0 && multiline == MultilineNone {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 			messages = append(messages, newMessage)
 
+			verbose, _ := cmd.Flags().GetBool("verbose")
 			opts := RunOptions{
 				Model:        modelName,
 				Messages:     messages,
 				WordWrap:     wordWrap,
+				Format:       format,
 				Options:      options,
 				Think:        think,
 				HideThinking: hideThinking,
@@ -893,6 +1086,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 				Tools:        toolRegistry,
 				Approval:     approval,
 				YoloMode:     yoloMode,
+				Verbose:      verbose,
 			}
 
 			assistant, err := Chat(cmd.Context(), opts)
