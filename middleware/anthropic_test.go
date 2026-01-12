@@ -583,14 +583,14 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 	}
 }
 
-func TestAnthropicMessagesMiddleware_SetsAnthropicAPIFlag(t *testing.T) {
+func TestAnthropicMessagesMiddleware_SetsRelaxThinkingFlag(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	var flagSet bool
 	router := gin.New()
 	router.Use(AnthropicMessagesMiddleware())
 	router.POST("/v1/messages", func(c *gin.Context) {
-		_, flagSet = c.Get("anthropic_api")
+		_, flagSet = c.Get("relax_thinking")
 		c.Status(http.StatusOK)
 	})
 
@@ -602,6 +602,6 @@ func TestAnthropicMessagesMiddleware_SetsAnthropicAPIFlag(t *testing.T) {
 	router.ServeHTTP(resp, req)
 
 	if !flagSet {
-		t.Error("expected anthropic_api flag to be set in context")
+		t.Error("expected relax_thinking flag to be set in context")
 	}
 }

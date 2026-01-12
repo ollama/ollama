@@ -2060,8 +2060,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	} else {
 		if req.Think != nil && req.Think.Bool() {
 			// Set think to nil when being used with Anthropic API to connect to tools like claude code
-			if _, ok := c.Get("anthropic_api"); ok {
-				slog.Warn("model does not support thinking", "model", req.Model)
+			if _, ok := c.Get("relax_thinking"); ok {
+				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
 				req.Think = nil
 			} else {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})

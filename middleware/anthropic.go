@@ -118,7 +118,8 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		c.Set("anthropic_api", true)
+		// Set think to nil when being used with Anthropic API to connect to tools like claude code
+		c.Set("relax_thinking", true)
 
 		var b bytes.Buffer
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
