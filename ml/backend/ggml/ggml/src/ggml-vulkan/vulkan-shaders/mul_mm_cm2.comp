@@ -250,10 +250,10 @@ void main() {
 #endif
 
 #ifdef MUL_MAT_ID
-    uint pos_a = (expert_idx * p.batch_stride_a) / QUANT_K;
+    uint pos_a = expert_idx * (p.batch_stride_a / QUANT_K);
     uint pos_b = 0;
 #else
-    uint pos_a = (batch_idx_a * p.batch_stride_a) / QUANT_K;
+    uint pos_a = batch_idx_a * (p.batch_stride_a / QUANT_K);
     uint pos_b = batch_idx * p.batch_stride_b;
     uint pos_d = batch_idx * p.batch_stride_d + ik * p.batch_stride_d * gl_NumWorkGroups.z;
 #endif

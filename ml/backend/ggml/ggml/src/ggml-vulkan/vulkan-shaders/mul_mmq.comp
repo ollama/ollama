@@ -189,13 +189,13 @@ void main() {
     const uint end_k = min(p.K, (ik + 1) * p.k_split);
 #endif
 
-    uint pos_a_ib = (
+    uint pos_a_ib =
 #ifdef MUL_MAT_ID
-        expert_idx * p.batch_stride_a +
+        expert_idx * (p.batch_stride_a / BK) +
 #else
-        batch_idx_a * p.batch_stride_a +
+        batch_idx_a * (p.batch_stride_a / BK) +
 #endif
-        ir * BM * p.stride_a + start_k) / BK;
+        (ir * BM * p.stride_a + start_k) / BK;
 #ifdef MUL_MAT_ID
     uint pos_b_ib = 0;
 #else
