@@ -138,8 +138,6 @@ bool llama_batch_allocr::init(
         }
 
         if (warn) {
-            LLAMA_LOG_WARN("%s: embeddings required but some input tokens were not marked as outputs -> overriding\n", __func__);
-
             output.resize(batch.n_tokens, true);
             batch.logits = output.data();
         }

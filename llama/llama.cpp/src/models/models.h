@@ -94,6 +94,10 @@ struct llm_build_bert : public llm_graph_context {
     llm_build_bert(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_modernbert : public llm_graph_context {
+    llm_build_modernbert(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_bitnet : public llm_graph_context {
     llm_build_bitnet(const llama_model & model, const llm_graph_params & params);
 };

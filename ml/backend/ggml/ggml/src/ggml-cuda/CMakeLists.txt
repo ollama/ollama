@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)  # for CMAKE_CUDA_ARCHITECTURES
-
+set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda")
 find_package(CUDAToolkit)
 
 if (CUDAToolkit_FOUND)

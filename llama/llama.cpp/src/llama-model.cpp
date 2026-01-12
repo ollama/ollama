@@ -37,6 +37,7 @@ const char * llm_type_name(llm_type type) {
         case LLM_TYPE_109M:          return "109M";
         case LLM_TYPE_137M:          return "137M";
         case LLM_TYPE_140M:          return "140M";
+        case LLM_TYPE_149M:          return "149M";
         case LLM_TYPE_160M:          return "160M";
         case LLM_TYPE_190M:          return "190M";
         case LLM_TYPE_220M:          return "220M";
@@ -924,6 +925,42 @@ void llama_model::load_hparams(llama_model_loader & ml) {
 
                 if (hparams.n_layer == 28) {
                     type = LLM_TYPE_250M;
+                }
+            } break;
+        case LLM_ARCH_MODERNBERT:
+            {
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS,    hparams.f_norm_eps);
+                ml.get_key(LLM_KV_ATTENTION_CAUSAL,           hparams.causal_attn);
+                ml.get_key(LLM_KV_POOLING_TYPE,               hparams.pooling_type);
+
+                // ModernBERT-specific parameters
+                ml.get_key(LLM_KV_ATTENTION_GLOBAL_ATTN_EVERY_N_LAYERS, hparams.global_attn_every_n_layers, (uint32_t)0);
+                ml.get_key(LLM_KV_ATTENTION_LOCAL_ATTN_WINDOW, hparams.local_attn_window, (uint32_t)0);
+                ml.get_key(LLM_KV_ROPE_FREQ_BASE_LOCAL,  hparams.rope_freq_base_local,  10000.0f);
+                ml.get_key(LLM_KV_ROPE_FREQ_BASE_GLOBAL, hparams.rope_freq_base_global, 80000.0f);
+                ml.get_key(LLM_KV_POOLING_NORMALIZE_EMBEDDINGS, hparams.normalize_embeddings, false);
+
+                // Copy RoPE frequencies to the fields used by get_rope_freq_base
+                hparams.rope_freq_base_train = hparams.rope_freq_base_global;      // For global (non-SWA) layers
+                hparams.rope_freq_base_train_swa = hparams.rope_freq_base_local;   // For local (SWA) layers
+
+                // Set up sliding window attention for local layers
+                if (hparams.global_attn_every_n_layers > 0 && hparams.local_attn_window > 0) {
+                    hparams.n_swa = hparams.local_attn_window;
+                    hparams.set_swa_pattern(hparams.global_attn_every_n_layers, true);  // dense_first = true
+
+                    // Only enable SWA if there are actually layers that use it
+                    if (hparams.is_swa_any()) {
+                        hparams.swa_type = LLAMA_SWA_TYPE_SYMMETRIC;  // bidirectional SWA for encoder
+                    } else {
+                        hparams.swa_type = LLAMA_SWA_TYPE_NONE;
+                    }
+                } else {
+                    hparams.swa_type = LLAMA_SWA_TYPE_NONE;
+                }
+
+                if (hparams.n_layer == 22 && hparams.n_embd == 768) {
+                    type = LLM_TYPE_149M; // granite-embedding-english-r2
                 }
             } break;
         case LLM_ARCH_BLOOM:
@@ -3111,6 +3148,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             case LLM_ARCH_NOMIC_BERT:
             case LLM_ARCH_NOMIC_BERT_MOE:
             case LLM_ARCH_JINA_BERT_V3:
+            case LLM_ARCH_MODERNBERT:
                 {
                     tok_embd     = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,  "weight"), {n_embd, n_vocab}, 0);
                     type_embd    = create_tensor(tn(LLM_TENSOR_TOKEN_TYPES, "weight"), {n_embd, n_token_types}, TENSOR_NOT_REQUIRED);
@@ -3126,7 +3164,13 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     }
 
                     tok_norm   = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "weight"), {n_embd}, 0);
-                    tok_norm_b = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "bias"),   {n_embd}, 0);
+                    tok_norm_b = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "bias"),   {n_embd}, TENSOR_NOT_REQUIRED);
+
+                    // ModernBERT has output_norm tensor (not used at runtime but present in model file)
+                    if (arch == LLM_ARCH_MODERNBERT) {
+                        output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, TENSOR_NOT_REQUIRED);
+                        output_norm_b = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd}, TENSOR_NOT_REQUIRED);
+                    }
 
                     for (int i = 0; i < n_layer; ++i) {
                         auto & layer = layers[i];
@@ -3148,8 +3192,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT,      "weight", i), {n_embd, n_embd}, 0);
                         layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT,      "bias", i),   {n_embd}, TENSOR_NOT_REQUIRED);
 
-                        layer.attn_out_norm   = create_tensor(tn(LLM_TENSOR_ATTN_OUT_NORM, "weight", i), {n_embd}, 0);
-                        layer.attn_out_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_OUT_NORM, "bias", i),   {n_embd}, 0);
+                        // ModernBERT: attn_out_norm only exists for local layers, not global layers
+                        layer.attn_out_norm   = create_tensor(tn(LLM_TENSOR_ATTN_OUT_NORM, "weight", i), {n_embd}, TENSOR_NOT_REQUIRED);
+                        layer.attn_out_norm_b = create_tensor(tn(LLM_TENSOR_ATTN_OUT_NORM, "bias", i),   {n_embd}, TENSOR_NOT_REQUIRED);
 
                         if (hparams.moe_every_n_layers > 0 && i % hparams.moe_every_n_layers == 1) {
                             layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff,   n_expert}, 0);
@@ -3161,13 +3206,21 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                             layer.ffn_down   = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd}, 0);
                             layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i),   {n_embd}, TENSOR_NOT_REQUIRED);
 
-                            if (arch == LLM_ARCH_NOMIC_BERT) {
+                            if (arch == LLM_ARCH_NOMIC_BERT || arch == LLM_ARCH_MODERNBERT) {
+                                // ModernBERT and NOMIC_BERT use gated FFN (GeGLU/SwiGLU)
                                 layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0);
                             }
                         }
 
-                        layer.layer_out_norm   = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "weight", i), {n_embd}, 0);
-                        layer.layer_out_norm_b = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "bias", i),   {n_embd}, 0);
+                        // ModernBERT has layer_out_norm tensors but doesn't use them at runtime
+                        // For other BERT models, layer_out_norm is required
+                        if (arch == LLM_ARCH_MODERNBERT) {
+                            layer.layer_out_norm   = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "weight", i), {n_embd}, TENSOR_NOT_REQUIRED);
+                            layer.layer_out_norm_b = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "bias", i),   {n_embd}, TENSOR_NOT_REQUIRED);
+                        } else {
+                            layer.layer_out_norm   = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "weight", i), {n_embd}, 0);
+                            layer.layer_out_norm_b = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "bias", i),   {n_embd}, TENSOR_NOT_REQUIRED);
+                        }
                     }
                 } break;
             case LLM_ARCH_NEO_BERT:
@@ -7129,6 +7182,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
         case LLM_ARCH_NOMIC_BERT:
         case LLM_ARCH_NOMIC_BERT_MOE:
         case LLM_ARCH_NEO_BERT:
+        case LLM_ARCH_MODERNBERT:
         case LLM_ARCH_WAVTOKENIZER_DEC:
         case LLM_ARCH_GEMMA_EMBEDDING:
         case LLM_ARCH_DREAM:
@@ -7288,6 +7342,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
         case LLM_ARCH_NOMIC_BERT_MOE:
             {
                 llm = std::make_unique<llm_build_bert>(*this, params);
+            } break;
+        case LLM_ARCH_MODERNBERT:
+            {
+                llm = std::make_unique<llm_build_modernbert>(*this, params);
             } break;
         case LLM_ARCH_NEO_BERT:
             {
@@ -7864,6 +7922,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_JINA_BERT_V3:
         case LLM_ARCH_NOMIC_BERT:
         case LLM_ARCH_NOMIC_BERT_MOE:
+        case LLM_ARCH_MODERNBERT:
         case LLM_ARCH_STABLELM:
         case LLM_ARCH_BITNET:
         case LLM_ARCH_QWEN:

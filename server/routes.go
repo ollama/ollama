@@ -37,6 +37,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/middleware"
@@ -151,6 +152,17 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		"qwen3vl", "qwen3vlmoe",
 	}, model.Config.ModelFamily) {
 		opts.NumCtx = max(opts.NumCtx, 8192)
+	}
+
+	// ModernBERT embedding models need full context for proper truncation handling
+	if model.Config.ModelFamily == "modernbert" {
+		if f, err := gguf.Open(model.ModelPath); err == nil {
+			defer f.Close()
+			// KeyValue() auto-prepends architecture, so just use "context_length"
+			if ctxLen := f.KeyValue("context_length").Uint(); ctxLen > 0 {
+				opts.NumCtx = max(opts.NumCtx, int(ctxLen))
+			}
+		}
 	}
 
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)

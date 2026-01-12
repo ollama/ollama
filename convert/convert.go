@@ -267,6 +267,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		return nil, nil, errors.New("unknown architecture")
 	}
 
+	// slog.Debug("architecture detected", "arch", p.Architectures[0])
+
 	var conv ModelConverter
 	switch p.Architectures[0] {
 	case "LlamaForCausalLM":
@@ -301,6 +303,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &olmoModel{}
 	case "BertModel":
 		conv = &bertModel{}
+	case "ModernBertModel", "ModernBertForMaskedLM":
+		conv = &modernBertModel{}
 	case "NomicBertModel", "NomicBertMoEModel":
 		conv = &nomicbertModel{}
 	case "CohereForCausalLM":

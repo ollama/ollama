@@ -168,6 +168,18 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		opts.NumCtx = int(trainCtx)
 	}
 
+	// For ModernBERT models, set context to full training context and batch size
+	// must be >= input tokens because encoder models process all tokens together.
+	if f.KV().Architecture() == "modernbert" {
+		// Use full training context for embedding models to avoid "input exceeds context" errors
+		if trainCtx > 0 && opts.NumCtx < int(trainCtx) {
+			opts.NumCtx = int(trainCtx)
+			slog.Debug("modernbert model detected, setting context to training context", "num_ctx", opts.NumCtx)
+		}
+		opts.NumBatch = opts.NumCtx
+		slog.Debug("modernbert model detected, setting batch size to context size", "num_batch", opts.NumBatch)
+	}
+
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
@@ -532,13 +544,22 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 				gpus[i].FreeMemory = 0
 			}
 		}
+	} else if blk0, ok := layers["layers.0"]; ok {
+		// BERT-style models use "layers.N" instead of "blk.N"
+		for i := range gpus {
+			gpus[i].FreeMemory -= blk0.Size() + kv[0]
+		}
 	} else {
-		slog.Warn("model missing blk.0 layer size")
+		slog.Warn("model missing blk.0 or layers.0 layer size")
 	}
 
 	// Assign all the layers to the CPU for now, they will get reassigned later
 	for i := range s.ggml.KV().BlockCount() {
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+			s.mem.CPU.Weights[i] = blk.Size()
+			s.mem.CPU.Cache[i] += kv[i]
+		} else if blk, ok := layers[fmt.Sprintf("layers.%d", i)]; ok {
+			// BERT-style models use "layers.N" instead of "blk.N"
 			s.mem.CPU.Weights[i] = blk.Size()
 			s.mem.CPU.Cache[i] += kv[i]
 		}
@@ -548,10 +569,16 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	var outputWeights uint64
 	if layer, ok := layers["output_norm"]; ok {
 		outputWeights += layer.Size()
+	} else if layer, ok := layers["final_norm"]; ok {
+		// BERT-style models use "final_norm" instead of "output_norm"
+		outputWeights += layer.Size()
 	}
 	if layer, ok := layers["output"]; ok {
 		outputWeights += layer.Size()
 	} else if layer, ok := layers["token_embd"]; ok {
+		outputWeights += layer.Size()
+	} else if layer, ok := layers["embeddings"]; ok {
+		// BERT-style models may use "embeddings" layer
 		outputWeights += layer.Size()
 	}
 	s.mem.CPU.Weights[s.totalLayers-1] = outputWeights

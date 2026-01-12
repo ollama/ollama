@@ -470,7 +470,7 @@ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
             }
         }
 
-        for (int i = n_tokens; i < n_tokens; ++i) {
+        for (uint32_t i = n_tokens; i < (uint32_t)n_tokens; ++i) {
             for (int j = 0; j < n_enc; ++j) {
                 data[h*(n_enc*n_tokens) + i*n_enc + j] = -INFINITY;
             }

@@ -130,6 +130,12 @@ struct llama_hparams {
     // by default, all layers are dense
     std::array<bool, LLAMA_MAX_LAYERS> swa_layers;
 
+    // for ModernBERT - alternating global/local attention
+    uint32_t global_attn_every_n_layers = 0; // pattern for global attention (e.g., 3 = every 3rd layer)
+    uint32_t local_attn_window = 0;          // sliding window size for local attention layers
+    float    rope_freq_base_local = 10000.0f; // RoPE theta for local attention layers
+    float    rope_freq_base_global = 10000.0f; // RoPE theta for global attention layers
+
     // for State Space Models
     uint32_t ssm_d_conv  = 0;
     uint32_t ssm_d_inner = 0;
@@ -159,6 +165,7 @@ struct llama_hparams {
     bool use_alibi     = false;
     bool attn_soft_cap = false;
     bool use_kq_norm   = false;
+    bool normalize_embeddings = false;  // whether to apply L2 normalization to final embeddings
 
     // for Classifiers
     uint32_t n_cls_out = 1;

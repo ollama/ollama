@@ -2,7 +2,7 @@
 #include "../llama-impl.h"
 #include <stdexcept>
 
-llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llm_build_modernbert::llm_build_modernbert(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v;
     const int64_t n_embd_gqa  = hparams.n_embd_v_gqa();
 
@@ -73,22 +73,31 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
     for (int il = 0; il < n_layer; ++il) {
         ggml_tensor * cur = inpL;
 
+        // PRE-NORM: Apply attn_norm BEFORE attention computation
+        // ModernBERT layer 0 has no attn_norm (acts as identity), layers 1-21 have it
+        ggml_tensor * attn_residual_base = cur;  // Save unnormalized input for residual add
+        if (model.arch == LLM_ARCH_MODERNBERT) {
+            if (il == 0) {
+                // Layer 0: No attn_norm tensor (identity/no-op in HuggingFace)
+            } else {
+                // Layers 1-21: Apply normalization BEFORE attention
+                cur = build_norm(cur, model.layers[il].attn_out_norm, model.layers[il].attn_out_norm_b, LLM_NORM, il);
+                cb(cur, "attn_norm", il);
+            }
+        }
+
         {
             ggml_tensor * Qcur;
             ggml_tensor * Kcur;
             ggml_tensor * Vcur;
 
             // self-attention
-            // Check for ModernBERT that critical tensors exist
             if (model.arch == LLM_ARCH_MODERNBERT) {
                 if (!model.layers[il].wqkv && (!model.layers[il].wq || !model.layers[il].wk || !model.layers[il].wv)) {
                     throw std::runtime_error("ModernBERT layer " + std::to_string(il) + " missing attention weight tensors");
                 }
                 if (!model.layers[il].wo) {
                     throw std::runtime_error("ModernBERT layer " + std::to_string(il) + " missing attention output tensor (wo)");
-                }
-                if (!model.layers[il].attn_out_norm) {
-                    throw std::runtime_error("ModernBERT layer " + std::to_string(il) + " missing attention output norm tensor");
                 }
             }
 
@@ -159,25 +168,25 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
             inpL = ggml_get_rows(ctx0, inpL, inp_out_ids);
         }
 
-        // Protect residual add operands and result for ModernBERT
+        // PRE-NORM: Add attention output to UNNORMALIZED input
         if (model.arch == LLM_ARCH_MODERNBERT) {
             ggml_set_output(cur);
-            ggml_set_output(inpL);
-        }
-        cur = ggml_add(ctx0, cur, inpL);
-        if (model.arch == LLM_ARCH_MODERNBERT) {
+            ggml_set_output(attn_residual_base);
+            cur = ggml_add(ctx0, cur, attn_residual_base);
             ggml_set_output(cur);
+        } else {
+            cur = ggml_add(ctx0, cur, inpL);
         }
 
-        // For ModernBERT, save the value BEFORE normalization for FFN residual add
+        // PRE-NORM: Save the value BEFORE mlp_norm for FFN residual add
         ggml_tensor * ffn_residual_base = cur;
 
-        // attention layer norm
-        // ModernBERT layer 0 has NO attn_out_norm tensor, all other layers have it
-        if (model.arch == LLM_ARCH_MODERNBERT && il == 0) {
-            // Layer 0: Skip attn_out_norm (tensor doesn't exist)
-        } else {
-            cur = build_norm(cur, model.layers[il].attn_out_norm, model.layers[il].attn_out_norm_b, LLM_NORM, il);
+        // PRE-NORM: Apply mlp_norm BEFORE FFN computation (for ModernBERT)
+        if (model.arch == LLM_ARCH_MODERNBERT) {
+            if (model.layers[il].layer_out_norm) {
+                cur = build_norm(cur, model.layers[il].layer_out_norm, model.layers[il].layer_out_norm_b, LLM_NORM, il);
+                cb(cur, "mlp_norm", il);
+            }
         }
 
         if (model.layers[il].attn_norm_2 != nullptr) {
@@ -235,7 +244,7 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
             ggml_set_output(ffn_residual_base);
         }
 
-        // For ModernBERT, add FFN output to the UNNORMALIZED value (ffn_residual_base)
+        // Add FFN output to residual base
         if (model.arch == LLM_ARCH_MODERNBERT) {
             cur = ggml_add(ctx0, cur, ffn_residual_base);
         } else {
@@ -246,7 +255,7 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
             ggml_set_output(cur);
         }
 
-        // output layer norm (not for ModernBERT which has no layer_out_norm)
+        // output layer norm (not for ModernBERT which uses PRE-NORM)
         if (model.arch != LLM_ARCH_MODERNBERT) {
             cur = build_norm(cur, model.layers[il].layer_out_norm, model.layers[il].layer_out_norm_b, LLM_NORM, il);
         }
@@ -262,8 +271,8 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
 
     cur = inpL;
 
-    // ModernBERT does NOT have output_norm, only apply for other BERT models
-    if (model.arch != LLM_ARCH_MODERNBERT && model.output_norm) {
+    // ModernBERT applies final_norm (output_norm) after all encoder layers
+    if (model.output_norm) {
         cur = build_norm(cur, model.output_norm, model.output_norm_b, LLM_NORM, -1);
         cb(cur, "result_norm", -1);
     }
