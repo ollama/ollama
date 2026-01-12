@@ -123,6 +123,21 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Check if FROM points to an imagegen model directory
+	for _, mfCmd := range modelfile.Commands {
+		if mfCmd.Name == "model" {
+			// Resolve the path relative to the Modelfile directory
+			fromPath := mfCmd.Args
+			if !filepath.IsAbs(fromPath) {
+				fromPath = filepath.Join(filepath.Dir(filename), fromPath)
+			}
+			if imagegen.IsTensorModelDir(fromPath) {
+				return imagegenclient.CreateModelFromModelfile(args[0], fromPath, modelfile.Commands, p)
+			}
+			break
+		}
+	}
+
 	status := "gathering model components"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
