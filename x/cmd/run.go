@@ -650,7 +650,8 @@ func checkModelCapabilities(ctx context.Context, modelName string) (supportsTool
 // GenerateInteractive runs an interactive agent session.
 // This is called from cmd.go when --experimental flag is set.
 // If yoloMode is true, all tool approvals are skipped.
-func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool) error {
+// If enableWebsearch is true, the web search tool is registered.
+func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool, enableWebsearch bool) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
@@ -676,10 +677,21 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
 
+		// Register web search and web fetch tools if enabled via flag
+		if enableWebsearch {
+			toolRegistry.RegisterWebSearch()
+			toolRegistry.RegisterWebFetch()
+		}
+
 		if toolRegistry.Has("bash") {
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, "This experimental version of Ollama has the \033[1mbash\033[0m tool enabled.")
 			fmt.Fprintln(os.Stderr, "Models can read files on your computer, or run commands (after you allow them).")
+			fmt.Fprintln(os.Stderr)
+		}
+
+		if toolRegistry.Has("web_search") || toolRegistry.Has("web_fetch") {
+			fmt.Fprintln(os.Stderr, "The \033[1mWeb Search\033[0m and \033[1mWeb Fetch\033[0m tools are enabled. Models can search and fetch web content via ollama.com.")
 			fmt.Fprintln(os.Stderr)
 		}
 
