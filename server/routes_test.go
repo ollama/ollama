@@ -978,3 +978,182 @@ func TestWaitForStream(t *testing.T) {
 		})
 	}
 }
+
+
+func TestModelsSizeHandler(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	createTestModel := func(t *testing.T, name string) {
+		t.Helper()
+
+		_, digest := createTestFile(t, "ollama-model")
+
+		fn := func(resp api.ProgressResponse) {
+			t.Logf("Status: %s", resp.Status)
+		}
+
+		r := api.CreateRequest{
+			Name:  name,
+			Files: map[string]string{"test.gguf": digest},
+			Parameters: map[string]any{
+				"seed":  42,
+				"top_p": 0.9,
+				"stop":  []string{"foo", "bar"},
+			},
+		}
+
+		modelName := model.ParseName(name)
+
+		baseLayers, err := ggufLayers(digest, fn)
+		if err != nil {
+			t.Fatalf("failed to create model: %v", err)
+		}
+
+		config := &ConfigV2{
+			OS:           "linux",
+			Architecture: "amd64",
+			RootFS: RootFS{
+				Type: "layers",
+			},
+		}
+
+		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	testCases := []struct {
+		Name     string
+		Setup    func(t *testing.T)
+		Expected func(t *testing.T, resp *http.Response)
+	}{
+		{
+			Name:  "Models Size Handler (no models)",
+			Setup: func(t *testing.T) {},
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("expected status 200, got %d", resp.StatusCode)
+				}
+
+				contentType := resp.Header.Get("Content-Type")
+				if contentType != "application/json; charset=utf-8" {
+					t.Errorf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+
+				var result map[string]interface{}
+				err = json.Unmarshal(body, &result)
+				if err != nil {
+					t.Fatalf("failed to unmarshal response body: %v", err)
+				}
+
+				totalSizeBytes := result["total_size_bytes"]
+				modelsCount := result["models_count"]
+
+				if totalSizeBytes == nil {
+					t.Errorf("expected total_size_bytes in response")
+				}
+
+				if modelsCount == nil {
+					t.Errorf("expected models_count in response")
+				}
+
+				if int(modelsCount.(float64)) != 0 {
+					t.Errorf("expected 0 models, got %v", modelsCount)
+				}
+
+				if int64(totalSizeBytes.(float64)) != 0 {
+					t.Errorf("expected 0 bytes, got %v", totalSizeBytes)
+				}
+			},
+		},
+		{
+			Name: "Models Size Handler (with models)",
+			Setup: func(t *testing.T) {
+				createTestModel(t, "test-model-1")
+				createTestModel(t, "test-model-2")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("expected status 200, got %d", resp.StatusCode)
+				}
+
+				contentType := resp.Header.Get("Content-Type")
+				if contentType != "application/json; charset=utf-8" {
+					t.Errorf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+
+				var result map[string]interface{}
+				err = json.Unmarshal(body, &result)
+				if err != nil {
+					t.Fatalf("failed to unmarshal response body: %v", err)
+				}
+
+				totalSizeBytes := result["total_size_bytes"]
+				modelsCount := result["models_count"]
+
+				if totalSizeBytes == nil {
+					t.Errorf("expected total_size_bytes in response")
+				}
+
+				if modelsCount == nil {
+					t.Errorf("expected models_count in response")
+				}
+
+				if int(modelsCount.(float64)) != 2 {
+					t.Errorf("expected 2 models, got %v", modelsCount)
+				}
+
+				if int64(totalSizeBytes.(float64)) <= 0 {
+					t.Errorf("expected positive total_size_bytes, got %v", totalSizeBytes)
+				}
+			},
+		},
+	}
+
+	rc := &ollama.Registry{
+		HTTPClient: panicOnRoundTrip,
+	}
+
+	s := &Server{}
+	router, err := s.GenerateRoutes(rc)
+	if err != nil {
+		t.Fatalf("failed to generate routes: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(router)
+	t.Cleanup(httpSrv.Close)
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			if tc.Setup != nil {
+				tc.Setup(t)
+			}
+
+			u := httpSrv.URL + "/api/models/size"
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, u, nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+
+			resp, err := httpSrv.Client().Do(req)
+			if err != nil {
+				t.Fatalf("failed to do request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if tc.Expected != nil {
+				tc.Expected(t, resp)
+			}
+		})
+	}
+}

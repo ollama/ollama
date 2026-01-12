@@ -320,3 +320,110 @@ func TestClientDo(t *testing.T) {
 		})
 	}
 }
+
+func TestClientModelsSizeHandler(t *testing.T) {
+	testCases := []struct {
+		name     string
+		response any
+		wantErr  string
+		validate func(t *testing.T, resp *ModelsSizeResponse)
+	}{
+		{
+			name: "successful response with models",
+			response: ModelsSizeResponse{
+				TotalSizeBytes: 5368709120,
+				ModelsCount:    3,
+			},
+			validate: func(t *testing.T, resp *ModelsSizeResponse) {
+				if resp.TotalSizeBytes != 5368709120 {
+					t.Errorf("expected TotalSizeBytes 5368709120, got %d", resp.TotalSizeBytes)
+				}
+				if resp.ModelsCount != 3 {
+					t.Errorf("expected ModelsCount 3, got %d", resp.ModelsCount)
+				}
+			},
+		},
+		{
+			name: "successful response with no models",
+			response: ModelsSizeResponse{
+				TotalSizeBytes: 0,
+				ModelsCount:    0,
+			},
+			validate: func(t *testing.T, resp *ModelsSizeResponse) {
+				if resp.TotalSizeBytes != 0 {
+					t.Errorf("expected TotalSizeBytes 0, got %d", resp.TotalSizeBytes)
+				}
+				if resp.ModelsCount != 0 {
+					t.Errorf("expected ModelsCount 0, got %d", resp.ModelsCount)
+				}
+			},
+		},
+		{
+			name: "server error response",
+			response: testError{
+				message:    "internal server error",
+				statusCode: http.StatusInternalServerError,
+			},
+			wantErr: "internal server error",
+		},
+		{
+			name: "bad request response",
+			response: testError{
+				message:    "bad request",
+				statusCode: http.StatusBadRequest,
+			},
+			wantErr: "bad request",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("expected GET method, got %s", r.Method)
+				}
+				if r.URL.Path != "/api/models/size" {
+					t.Errorf("expected /api/models/size path, got %s", r.URL.Path)
+				}
+
+				if errResp, ok := tc.response.(testError); ok {
+					w.WriteHeader(errResp.statusCode)
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error": errResp.message,
+					})
+					if err != nil {
+						t.Fatal("failed to encode error response:", err)
+					}
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(tc.response); err != nil {
+					t.Fatalf("failed to encode response: %v", err)
+				}
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			resp, err := client.ModelsSize(t.Context())
+
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("got nil, want error %q", tc.wantErr)
+				}
+				if err.Error() != tc.wantErr {
+					t.Errorf("error message mismatch: got %q, want %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("got error %q, want nil", err)
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, resp)
+			}
+		})
+	}
+}

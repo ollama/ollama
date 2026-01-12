@@ -368,6 +368,20 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
+type ModelsSizeResponse struct {
+	TotalSizeBytes int64 `json:"total_size_bytes"`
+	ModelsCount    int   `json:"models_count"`
+}
+
+func (c *Client) ModelsSize(ctx context.Context) (*ModelsSizeResponse, error) {
+	var resp ModelsSizeResponse
+	if err := c.do(ctx, http.MethodGet, "/api/models/size", nil, &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
 // ListRunning lists running models.
 func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	var lr ProcessResponse
