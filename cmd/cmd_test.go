@@ -1578,10 +1578,10 @@ func TestShowInfoImageGen(t *testing.T) {
 
 func TestPushProgressMessage(t *testing.T) {
 	tests := []struct {
-		name     string
-		status   string
-		digest   string
-		wantMsg  string
+		name    string
+		status  string
+		digest  string
+		wantMsg string
 	}{
 		{
 			name:    "uses status when provided",
