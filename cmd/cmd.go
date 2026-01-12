@@ -100,7 +100,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		if filename == "" {
 			// No Modelfile found - check if current directory is an image gen model
 			if imagegen.IsTensorModelDir(".") {
-				return imagegenclient.CreateModel(args[0], ".", p)
+				quantize, _ := cmd.Flags().GetString("quantize")
+				return imagegenclient.CreateModel(args[0], ".", quantize, p)
 			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
@@ -464,14 +465,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 
-	// Check if this is a known image generation model (skip Show/Pull)
-	if imagegen.HasTensorLayers(name) {
-		if opts.Prompt == "" && !interactive {
-			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
-		}
-		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
-	}
-
 	info, err := func() (*api.ShowResponse, error) {
 		showReq := &api.ShowRequest{Name: name}
 		info, err := client.Show(cmd.Context(), showReq)
@@ -531,6 +524,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
+	}
+
+	// Check if this is an image generation model
+	if slices.Contains(info.Capabilities, model.CapabilityImageGeneration) {
+		if opts.Prompt == "" && !interactive {
+			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
+		}
+		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
 	}
 
 	// Check for experimental flag
@@ -671,7 +672,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pushing %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				msg := resp.Status
+				if msg == "" {
+					msg = fmt.Sprintf("pushing %s...", resp.Digest[7:19])
+				}
+				bar = progress.NewBar(msg, resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -837,11 +842,6 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
-	// Check if this is an image generation model
-	if imagegen.HasTensorLayers(args[0]) {
-		return imagegen.Show(args[0], os.Stdout)
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err

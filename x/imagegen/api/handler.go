@@ -1,10 +1,8 @@
 package api
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -101,10 +99,10 @@ func handleStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.Com
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 
-	var imagePath string
+	var imageBase64 string
 	err := runner.Completion(c.Request.Context(), req, func(resp llm.CompletionResponse) {
 		if resp.Done {
-			imagePath = extractPath(resp.Content)
+			imageBase64 = extractBase64(resp.Content)
 		} else {
 			progress := parseProgress(resp.Content)
 			if progress.Total > 0 {
@@ -118,14 +116,14 @@ func handleStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.Com
 		return
 	}
 
-	c.SSEvent("done", buildResponse(imagePath, format))
+	c.SSEvent("done", buildResponse(imageBase64, format))
 }
 
 func handleNonStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.CompletionRequest, format string) {
-	var imagePath string
+	var imageBase64 string
 	err := runner.Completion(c.Request.Context(), req, func(resp llm.CompletionResponse) {
 		if resp.Done {
-			imagePath = extractPath(resp.Content)
+			imageBase64 = extractBase64(resp.Content)
 		}
 	})
 	if err != nil {
@@ -133,7 +131,7 @@ func handleNonStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.
 		return
 	}
 
-	c.JSON(http.StatusOK, buildResponse(imagePath, format))
+	c.JSON(http.StatusOK, buildResponse(imageBase64, format))
 }
 
 func parseSize(size string) (int32, int32) {
@@ -152,9 +150,9 @@ func parseSize(size string) (int32, int32) {
 	return int32(w), int32(h)
 }
 
-func extractPath(content string) string {
-	if idx := strings.Index(content, "Image saved to: "); idx >= 0 {
-		return strings.TrimSpace(content[idx+16:])
+func extractBase64(content string) string {
+	if strings.HasPrefix(content, "IMAGE_BASE64:") {
+		return content[13:]
 	}
 	return ""
 }
@@ -165,23 +163,21 @@ func parseProgress(content string) ImageProgressEvent {
 	return ImageProgressEvent{Step: step, Total: total}
 }
 
-func buildResponse(imagePath, format string) ImageGenerationResponse {
+func buildResponse(imageBase64, format string) ImageGenerationResponse {
 	resp := ImageGenerationResponse{
 		Created: time.Now().Unix(),
 		Data:    make([]ImageData, 1),
 	}
 
-	if imagePath == "" {
+	if imageBase64 == "" {
 		return resp
 	}
 
 	if format == "url" {
-		resp.Data[0].URL = "file://" + imagePath
+		// URL format not supported when using base64 transfer
+		resp.Data[0].B64JSON = imageBase64
 	} else {
-		data, err := os.ReadFile(imagePath)
-		if err == nil {
-			resp.Data[0].B64JSON = base64.StdEncoding.EncodeToString(data)
-		}
+		resp.Data[0].B64JSON = imageBase64
 	}
 
 	return resp

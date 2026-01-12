@@ -1547,6 +1547,79 @@ func TestRunOptions_Copy_ThinkValueVariants(t *testing.T) {
 	}
 }
 
+func TestShowInfoImageGen(t *testing.T) {
+	var b bytes.Buffer
+	err := showInfo(&api.ShowResponse{
+		Details: api.ModelDetails{
+			Family:            "ZImagePipeline",
+			ParameterSize:     "10.3B",
+			QuantizationLevel: "FP8",
+		},
+		Capabilities: []model.Capability{model.CapabilityImageGeneration},
+		Requires:     "0.14.0",
+	}, false, &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := "  Model\n" +
+		"    architecture    ZImagePipeline    \n" +
+		"    parameters      10.3B             \n" +
+		"    quantization    FP8               \n" +
+		"    requires        0.14.0            \n" +
+		"\n" +
+		"  Capabilities\n" +
+		"    image    \n" +
+		"\n"
+	if diff := cmp.Diff(expect, b.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestPushProgressMessage(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		digest  string
+		wantMsg string
+	}{
+		{
+			name:    "uses status when provided",
+			status:  "uploading model",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "uploading model",
+		},
+		{
+			name:    "falls back to digest when status empty",
+			status:  "",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "pushing abc123456789...",
+		},
+		{
+			name:    "handles short digest gracefully",
+			status:  "",
+			digest:  "sha256:abc",
+			wantMsg: "pushing sha256:abc...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := tt.status
+			if msg == "" {
+				if len(tt.digest) >= 19 {
+					msg = fmt.Sprintf("pushing %s...", tt.digest[7:19])
+				} else {
+					msg = fmt.Sprintf("pushing %s...", tt.digest)
+				}
+			}
+			if msg != tt.wantMsg {
+				t.Errorf("got %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
 func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Test that modifications to original don't affect copy
 	originalThink := &api.ThinkValue{Value: "original"}

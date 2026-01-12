@@ -67,6 +67,9 @@ func main() {
 	flag.Var(&inputImages, "input-image", "Input image for image editing (can be specified multiple times)")
 	negativePrompt := flag.String("negative-prompt", "", "Negative prompt for CFG (empty = no CFG, matching Python)")
 	cfgScale := flag.Float64("cfg-scale", 4.0, "CFG scale for image editing")
+	teaCache := flag.Bool("teacache", false, "Enable TeaCache for faster inference")
+	teaCacheThreshold := flag.Float64("teacache-threshold", 0.1, "TeaCache threshold (lower = more aggressive caching)")
+	fusedQKV := flag.Bool("fused-qkv", false, "Enable fused QKV projection for faster attention")
 
 	flag.Parse()
 
@@ -99,13 +102,17 @@ func main() {
 		}
 		var img *mlx.Array
 		img, err = m.GenerateFromConfig(context.Background(), &zimage.GenerateConfig{
-			Prompt:      *prompt,
-			Width:       int32(*width),
-			Height:      int32(*height),
-			Steps:       *steps,
-			Seed:        *seed,
-			CapturePath: *gpuCapture,
-			LayerCache:  *layerCache,
+			Prompt:            *prompt,
+			NegativePrompt:    *negativePrompt,
+			CFGScale:          float32(*cfgScale),
+			Width:             int32(*width),
+			Height:            int32(*height),
+			Steps:             *steps,
+			Seed:              *seed,
+			CapturePath:       *gpuCapture,
+			TeaCache:          *teaCache,
+			TeaCacheThreshold: float32(*teaCacheThreshold),
+			FusedQKV:          *fusedQKV,
 		})
 		if err == nil {
 			err = saveImageArray(img, *out)
