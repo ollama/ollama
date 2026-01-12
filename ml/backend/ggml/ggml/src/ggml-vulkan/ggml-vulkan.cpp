@@ -239,7 +239,9 @@ static ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
     /* .is_host          = */ NULL,
 };
 
+#ifdef GGML_VULKAN_MEMORY_DEBUG
 class vk_memory_logger;
+#endif
 class vk_perf_logger;
 static void ggml_vk_destroy_buffer(vk_buffer& buf);
 static void ggml_vk_synchronize(ggml_backend_vk_context * ctx);
@@ -825,7 +827,9 @@ struct vk_device_struct {
     bool allow_sysmem_fallback;
     bool disable_graph_optimize;
 
+#ifdef GGML_VULKAN_MEMORY_DEBUG
     std::unique_ptr<vk_memory_logger> memory_logger;
+#endif
 
     ~vk_device_struct() {
         VK_LOG_DEBUG("destroy device " << name);
@@ -1561,9 +1565,8 @@ static void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_contex
 static void ggml_vk_load_shaders(vk_device& device);
 static void ggml_pipeline_allocate_descriptor_sets(ggml_backend_vk_context * ctx);
 
-static bool vk_memory_logger_enabled = false;
-
-#define VK_LOG_MEMORY(msg) if (vk_memory_logger_enabled) { std::cerr << "ggml_vulkan memory: " << msg << std::endl; }
+#if defined(GGML_VULKAN_MEMORY_DEBUG) || defined(GGML_VULKAN_DEBUG)
+#define VK_LOG_MEMORY(msg) std::cerr << "ggml_vulkan memory: " << msg << std::endl
 
 static std::string format_size(size_t size) {
     const size_t kib = 1024;
@@ -1596,10 +1599,10 @@ private:
     std::map<vk::Buffer, size_t> allocations; // Track allocations
     size_t total_device;
     size_t total_host;
-    static std::mutex log_mutex;
 };
-
-std::mutex vk_memory_logger::log_mutex;
+#else
+#define VK_LOG_MEMORY(msg) ((void) 0)
+#endif // GGML_VULKAN_MEMORY_DEBUG
 
 static bool vk_perf_logger_enabled = false;
 static bool vk_perf_logger_concurrent = false;
@@ -1906,10 +1909,10 @@ struct ggml_backend_vk_buffer_context {
     }
 };
 
+#ifdef GGML_VULKAN_MEMORY_DEBUG
+static std::mutex log_mutex;
+
 void vk_memory_logger::log_allocation(vk_buffer_ref buf_ref, size_t size) {
-    if (!vk_memory_logger_enabled) {
-        return;
-    }
     std::lock_guard<std::mutex> guard(log_mutex);
     vk_buffer buf = buf_ref.lock();
     const bool device = bool(buf->memory_property_flags & vk::MemoryPropertyFlagBits::eDeviceLocal);
@@ -1921,7 +1924,7 @@ void vk_memory_logger::log_allocation(vk_buffer_ref buf_ref, size_t size) {
 }
 
 void vk_memory_logger::log_deallocation(vk_buffer_ref buf_ref) {
-    if (buf_ref.expired() || buf_ref.lock()->size == 0 || !vk_memory_logger_enabled) {
+    if (buf_ref.expired() || buf_ref.lock()->size == 0) {
         return;
     }
 
@@ -1939,6 +1942,7 @@ void vk_memory_logger::log_deallocation(vk_buffer_ref buf_ref) {
         VK_LOG_MEMORY("ERROR " << buf->device->name << ": Attempted to deallocate unknown " << type << " memory at " << buf->buffer);
     }
 }
+#endif // GGML_VULKAN_MEMORY_DEBUG
 
 struct vk_instance_t {
     vk::Instance instance;
@@ -2591,7 +2595,9 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
         buf->bda_addr = device->device.getBufferAddress(addressInfo);
     }
 
+#ifdef GGML_VULKAN_MEMORY_DEBUG
     device->memory_logger->log_allocation(buf, size);
+#endif
 
     return buf;
 }
@@ -2648,9 +2654,11 @@ static void ggml_vk_destroy_buffer(vk_buffer& buf) {
         return;
     }
 
+#ifdef GGML_VULKAN_MEMORY_DEBUG
     if (buf->device != nullptr) {
         buf->device->memory_logger->log_deallocation(buf);
     }
+#endif
 
     buf.reset();
 }
@@ -4471,7 +4479,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
         vk_device device = std::make_shared<vk_device_struct>();
         vk_instance.devices[idx] = device;
 
+#ifdef GGML_VULKAN_MEMORY_DEBUG
         device->memory_logger = std::unique_ptr<vk_memory_logger>(new vk_memory_logger());
+#endif
 
         size_t dev_num = vk_instance.device_indices[idx];
 
@@ -5468,7 +5478,6 @@ static void ggml_vk_instance_init() {
     vk_perf_logger_enabled = getenv("GGML_VK_PERF_LOGGER") != nullptr;
     vk_perf_logger_concurrent = getenv("GGML_VK_PERF_LOGGER_CONCURRENT") != nullptr;
     vk_enable_sync_logger = getenv("GGML_VK_SYNC_LOGGER") != nullptr;
-    vk_memory_logger_enabled = getenv("GGML_VK_MEMORY_LOGGER") != nullptr;
     const char* GGML_VK_PERF_LOGGER_FREQUENCY = getenv("GGML_VK_PERF_LOGGER_FREQUENCY");
 
     if (GGML_VK_PERF_LOGGER_FREQUENCY != nullptr) {
