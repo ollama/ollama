@@ -234,3 +234,17 @@ ollama create z-image
 3. Copy config files (*.json) as config layers
 4. Write manifest
 ```
+
+## FP8 Quantization
+
+Z-Image supports FP8 quantization to reduce memory usage by ~50% while maintaining image quality.
+
+### Usage
+
+```bash
+cd ./weights/Z-Image-Turbo
+ollama create z-image-fp8 --quantize fp8
+```
+
+This quantizes weights during import. The resulting model will be ~15GB instead of ~31GB.
+

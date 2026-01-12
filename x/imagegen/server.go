@@ -46,7 +46,8 @@ type completionRequest struct {
 
 // completionResponse is received from the subprocess
 type completionResponse struct {
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
+	Image   string `json:"image,omitempty"`
 	Done    bool   `json:"done"`
 }
 
@@ -250,15 +251,23 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		return fmt.Errorf("completion request failed: %d", resp.StatusCode)
 	}
 
-	// Stream responses
+	// Stream responses - use large buffer for base64 image data
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024) // 16MB max
 	for scanner.Scan() {
 		var cresp completionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &cresp); err != nil {
 			continue
 		}
+
+		content := cresp.Content
+		// If this is the final response with an image, encode it in the content
+		if cresp.Done && cresp.Image != "" {
+			content = "IMAGE_BASE64:" + cresp.Image
+		}
+
 		fn(llm.CompletionResponse{
-			Content: cresp.Content,
+			Content: content,
 			Done:    cresp.Done,
 		})
 		if cresp.Done {

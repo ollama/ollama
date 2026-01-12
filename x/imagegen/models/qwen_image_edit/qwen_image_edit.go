@@ -241,6 +241,14 @@ func (m *Model) edit(inputImagePaths []string, cfg *GenerateConfig) (*mlx.Array,
 		mlx.Eval(posEmb, negEmb)
 	}
 
+	// Pre-compute batched embeddings for CFG (single forward pass optimization)
+	var batchedEmb *mlx.Array
+	if useCFG {
+		batchedEmb = mlx.Concatenate([]*mlx.Array{posEmb, negEmb}, 0)
+		mlx.Keep(batchedEmb)
+		mlx.Eval(batchedEmb)
+	}
+
 	// Encode all input images to latents and concatenate
 	fmt.Println("Encoding images to latents...")
 	allImageLatentsPacked := make([]*mlx.Array, len(vaeImages))
@@ -291,11 +299,18 @@ func (m *Model) edit(inputImagePaths []string, cfg *GenerateConfig) (*mlx.Array,
 
 		var output *mlx.Array
 		if useCFG {
-			posOutput := m.Transformer.Forward(latentInput, posEmb, timestep, ropeCache.ImgFreqs, ropeCache.TxtFreqs)
-			negOutput := m.Transformer.Forward(latentInput, negEmb, timestep, ropeCache.ImgFreqs, ropeCache.TxtFreqs)
+			// CFG Batching: single forward pass with batch=2
+			// Tile inputs: [1, L, D] -> [2, L, D]
+			batchedLatentInput := mlx.Tile(latentInput, []int32{2, 1, 1})
+			batchedTimestep := mlx.Tile(timestep, []int32{2})
 
-			posOutput = mlx.Slice(posOutput, []int32{0, 0, 0}, []int32{1, imgSeqLen, posOutput.Shape()[2]})
-			negOutput = mlx.Slice(negOutput, []int32{0, 0, 0}, []int32{1, imgSeqLen, negOutput.Shape()[2]})
+			// Single batched forward pass
+			batchedOutput := m.Transformer.Forward(batchedLatentInput, batchedEmb, batchedTimestep, ropeCache.ImgFreqs, ropeCache.TxtFreqs)
+
+			// Split output: [2, L, D] -> pos [1, L, D], neg [1, L, D]
+			D := batchedOutput.Shape()[2]
+			posOutput := mlx.Slice(batchedOutput, []int32{0, 0, 0}, []int32{1, imgSeqLen, D})
+			negOutput := mlx.Slice(batchedOutput, []int32{1, 0, 0}, []int32{2, imgSeqLen, D})
 
 			output = applyCFGWithNormRescale(posOutput, negOutput, cfg.CFGScale)
 		} else {
@@ -316,6 +331,9 @@ func (m *Model) edit(inputImagePaths []string, cfg *GenerateConfig) (*mlx.Array,
 	posEmb.Free()
 	if negEmb != nil {
 		negEmb.Free()
+	}
+	if batchedEmb != nil {
+		batchedEmb.Free()
 	}
 	ropeCache.ImgFreqs.Free()
 	ropeCache.TxtFreqs.Free()

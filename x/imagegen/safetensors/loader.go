@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/imagegen/nn"
 )
 
 // WeightSource is an interface for loading weights.
@@ -102,6 +103,22 @@ func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]st
 			}
 		}
 
+		// Handle nn.LinearLayer interface fields specially
+		if field.Type == reflect.TypeOf((*nn.LinearLayer)(nil)).Elem() {
+			if !hasTag {
+				continue // no tag = skip
+			}
+			layer, err := LoadLinearLayer(weights, fullPath)
+			if err != nil {
+				if !optional {
+					*errs = append(*errs, fullPath+": "+err.Error())
+				}
+				continue
+			}
+			fieldVal.Set(reflect.ValueOf(layer))
+			continue
+		}
+
 		// Handle by kind
 		switch fieldVal.Kind() {
 		case reflect.Ptr:
@@ -175,4 +192,65 @@ func joinPath(prefix, suffix string) string {
 		return prefix
 	}
 	return prefix + "." + suffix
+}
+
+// LoadLinearLayer loads a linear layer from weights, automatically detecting if it's quantized.
+// If {path}.weight_scale exists, dequantizes the weights.
+func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) {
+	// Check if this is a quantized layer by looking for scale tensor
+	scalePath := path + ".weight_scale"
+	if weights.HasTensor(scalePath) {
+		weight, err := weights.GetTensor(path + ".weight")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load quantized weight %s: %w", path, err)
+		}
+
+		scales, err := weights.GetTensor(scalePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load scales %s: %w", scalePath, err)
+		}
+
+		// Bias is optional
+		var bias *mlx.Array
+		biasPath := path + ".bias"
+		if weights.HasTensor(biasPath) {
+			bias, _ = weights.GetTensor(biasPath)
+		}
+
+		var qbiases *mlx.Array
+		qbiasPath := path + ".weight_qbias"
+		if weights.HasTensor(qbiasPath) {
+			qbiases, _ = weights.GetTensor(qbiasPath)
+		}
+
+		if mlx.MetalIsAvailable() {
+			return &nn.QuantizedLinear{
+				Weight:    weight,
+				Scales:    scales,
+				QBiases:   qbiases,
+				Bias:      bias,
+				GroupSize: 32,
+				Bits:      8,
+				Mode:      "affine",
+			}, nil
+		}
+
+		dequantized := mlx.Dequantize(weight, scales, qbiases, 32, 8, "affine")
+		return nn.NewLinear(dequantized, bias), nil
+	}
+
+	// Load as regular Linear
+	weight, err := weights.GetTensor(path + ".weight")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load weight %s: %w", path, err)
+	}
+
+	// Bias is optional
+	var bias *mlx.Array
+	biasPath := path + ".bias"
+	if weights.HasTensor(biasPath) {
+		bias, _ = weights.GetTensor(biasPath)
+	}
+
+	return nn.NewLinear(weight, bias), nil
 }
