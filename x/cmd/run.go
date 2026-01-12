@@ -677,9 +677,10 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
 
-		// Register web search tool if enabled via flag
+		// Register web search and web fetch tools if enabled via flag
 		if enableWebsearch {
 			toolRegistry.RegisterWebSearch()
+			toolRegistry.RegisterWebFetch()
 		}
 
 		if toolRegistry.Has("bash") {
@@ -689,8 +690,8 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			fmt.Fprintln(os.Stderr)
 		}
 
-		if toolRegistry.Has("web_search") {
-			fmt.Fprintln(os.Stderr, "The \033[1mweb_search\033[0m tool is enabled. Models can search the web via ollama.com.")
+		if toolRegistry.Has("web_search") || toolRegistry.Has("web_fetch") {
+			fmt.Fprintln(os.Stderr, "The \033[1mWeb Search\033[0m and \033[1mWeb Fetch\033[0m tools are enabled. Models can search and fetch web content via ollama.com.")
 			fmt.Fprintln(os.Stderr)
 		}
 
