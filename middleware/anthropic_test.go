@@ -582,3 +582,26 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicMessagesMiddleware_SetsAnthropicAPIFlag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var flagSet bool
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		_, flagSet = c.Get("anthropic_api")
+		c.Status(http.StatusOK)
+	})
+
+	body := `{"model": "test-model", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if !flagSet {
+		t.Error("expected anthropic_api flag to be set in context")
+	}
+}

@@ -118,6 +118,8 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		c.Set("anthropic_api", true)
+
 		var b bytes.Buffer
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, anthropic.NewError(http.StatusInternalServerError, err.Error()))
