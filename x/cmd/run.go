@@ -23,6 +23,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/agent"
 	"github.com/ollama/ollama/x/tools"
+	"github.com/ollama/ollama/x/tools/mcp"
 )
 
 // MultilineState tracks the state of multiline input
@@ -674,6 +675,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 
 	// Create tool registry only if model supports tools
 	var toolRegistry *tools.Registry
+	var mcpManager *mcp.Manager
 	if supportsTools {
 		toolRegistry = tools.DefaultRegistry()
 
@@ -681,6 +683,21 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 		if enableWebsearch {
 			toolRegistry.RegisterWebSearch()
 			toolRegistry.RegisterWebFetch()
+		}
+
+		// Initialize MCP tools from config file (~/.ollama/mcp-servers.json)
+		mcpManager = mcp.NewManager()
+		if err := mcp.RegisterFromConfig(toolRegistry, mcpManager); err != nil {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m failed to load MCP config: %v\n", err)
+		}
+
+		// Group MCP tools by server for display
+		mcpServers := make(map[string]int)
+		for _, name := range toolRegistry.Names() {
+			if idx := strings.Index(name, ":"); idx > 0 {
+				serverName := name[:idx]
+				mcpServers[serverName]++
+			}
 		}
 
 		if toolRegistry.Has("bash") {
@@ -695,6 +712,13 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			fmt.Fprintln(os.Stderr)
 		}
 
+		for serverName, toolCount := range mcpServers {
+			fmt.Fprintf(os.Stderr, "\033[1m%s\033[0m (%d tools) loaded from MCP config.\n", serverName, toolCount)
+		}
+		if len(mcpServers) > 0 {
+			fmt.Fprintln(os.Stderr)
+		}
+
 		if yoloMode {
 			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m yolo mode - all tool approvals will be skipped\n")
 		}
@@ -702,6 +726,11 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 
 	// Create approval manager for session
 	approval := agent.NewApprovalManager()
+
+	// Ensure MCP servers are cleaned up on exit
+	if mcpManager != nil {
+		defer mcpManager.Close()
+	}
 
 	var messages []api.Message
 	var sb strings.Builder
