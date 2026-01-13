@@ -1,5 +1,7 @@
 > [!IMPORTANT]
 > This is a fork of Ollama with experimental ROCm support for AMD APUs / iGPUs (UMA/GTT memory) and stability tweaks. See `docs/rocm-apu.md` for setup details.
+>
+> ROCm 7.1+ build note: HIP clang conflicts are patched and MMF is disabled for HIP to avoid ROCm 7.1.1 assembler issues (see commit history).
 
 ## What’s Different in This Fork
 
@@ -7,6 +9,7 @@
 - GTT-aware VRAM reporting for HIP to avoid 512 MB false limits on APUs.
 - Safe defaults for mixed CPU/GPU offload via `OLLAMA_NUM_GPU`.
 - Setup guide and runtime notes in `docs/rocm-apu.md`.
+- ROCm 7.1+ HIP build compatibility fixes (clang macro conflicts; MMF disabled on HIP).
 
 <div align="center">
   <a href="https://ollama.com">
