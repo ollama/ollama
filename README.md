@@ -368,6 +368,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama4j Web UI](https://github.com/ollama4j/ollama4j-web-ui) - Java-based Web UI for Ollama built with Vaadin, Spring Boot, and Ollama4j
 - [PyOllaMx](https://github.com/kspviswa/pyOllaMx) - macOS application capable of chatting with both Ollama and Apple MLX models.
 - [Cline](https://github.com/cline/cline) - Formerly known as Claude Dev is a VS Code extension for multi-file/whole-repo coding
+- [Void](https://github.com/voideditor/void) (Open source AI code editor and Cursor alternative)
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy-focused LLM chat interface with optional encryption)
 - [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
@@ -555,7 +556,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Parakeet](https://github.com/parakeet-nest/parakeet) is a GoLang library, made to simplify the development of small generative AI applications with Ollama.
 - [Haverscript](https://github.com/andygill/haverscript) with [examples](https://github.com/andygill/haverscript/tree/main/examples)
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
-- [Swollama for Swift](https://github.com/marcusziade/Swollama) with [DocC](https://marcusziade.github.io/Swollama/documentation/swollama/)
+- [Swollama for Swift](https://github.com/guitaripod/Swollama) with [DocC](https://guitaripod.github.io/Swollama/documentation/swollama)
 - [GoLamify](https://github.com/prasad89/golamify)
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in a unified API)

@@ -30,7 +30,7 @@ func (p *Prompt) placeholder() string {
 }
 
 type Terminal struct {
-	outchan chan rune
+	reader  *bufio.Reader
 	rawmode bool
 	termios any
 }
@@ -264,36 +264,21 @@ func NewTerminal() (*Terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	t := &Terminal{
-		outchan: make(chan rune),
-		rawmode: true,
-		termios: termios,
+	if err := UnsetRawMode(fd, termios); err != nil {
+		return nil, err
 	}
 
-	go t.ioloop()
+	t := &Terminal{
+		reader: bufio.NewReader(os.Stdin),
+	}
 
 	return t, nil
 }
 
-func (t *Terminal) ioloop() {
-	buf := bufio.NewReader(os.Stdin)
-
-	for {
-		r, _, err := buf.ReadRune()
-		if err != nil {
-			close(t.outchan)
-			break
-		}
-		t.outchan <- r
-	}
-}
-
 func (t *Terminal) Read() (rune, error) {
-	r, ok := <-t.outchan
-	if !ok {
-		return 0, io.EOF
+	r, _, err := t.reader.ReadRune()
+	if err != nil {
+		return 0, err
 	}
-
 	return r, nil
 }

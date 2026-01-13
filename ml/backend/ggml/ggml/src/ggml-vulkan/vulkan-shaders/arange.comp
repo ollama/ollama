@@ -1,0 +1,20 @@
+#version 450
+
+#include "generic_head.glsl"
+#include "types.glsl"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+
+    if (i >= p.KX) {
+        return;
+    }
+
+    // p.param1 = start, p.param2 = step
+    float value = p.param1 + p.param2 * float(i);
+    data_d[i] = D_TYPE(value);
+}

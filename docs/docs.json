@@ -32,7 +32,9 @@
     "codeblocks": "system"
   },
   "contextual": {
-    "options": ["copy"]
+    "options": [
+      "copy"
+    ]
   },
   "navbar": {
     "links": [
@@ -52,7 +54,9 @@
       "display": "simple"
     },
     "examples": {
-      "languages": ["curl"]
+      "languages": [
+        "curl"
+      ]
     }
   },
   "redirects": [
@@ -98,6 +102,7 @@
             "group": "Integrations",
             "pages": [
               "/integrations/onyx",
+              "/integrations/claude-code",
               "/integrations/vscode",
               "/integrations/jetbrains",
               "/integrations/codex",
@@ -140,7 +145,8 @@
               "/api/streaming",
               "/api/usage",
               "/api/errors",
-              "/api/openai-compatibility"
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
             ]
           },
           {

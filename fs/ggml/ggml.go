@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/ml"
 )
 
 type GGML struct {
@@ -238,14 +241,31 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	return val.values
 }
 
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"bert",
+		"deepseek2",
+		"deepseekocr",
 		"gemma3",
 		"gemma3n",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nomic-bert",
+		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
@@ -547,7 +567,7 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention bool) (kv []uint64, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention ml.FlashAttentionType) (kv []uint64, partialOffload, fullOffload uint64) {
 	context *= uint64(numParallel)
 
 	embedding := f.KV().EmbeddingLength()
@@ -788,7 +808,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		}
 
 		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
-		if useFlashAttention {
+		if useFlashAttention == ml.FlashAttentionEnabled {
 			// rough estimate of graph size with flash attention on
 			partialOffload = (4*uint64(numParallel) + context>>10 + 110) * format.MebiByte
 		}
@@ -804,6 +824,14 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	}
 
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
+}
+
+// KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
+func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
@@ -826,8 +854,11 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"bert",
 		"gemma3",
 		"gptoss", "gpt-oss",
+		"mistral3",
+		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))

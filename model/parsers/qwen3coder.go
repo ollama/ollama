@@ -43,7 +43,7 @@ func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
 }
 
-func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	return tools // Qwen doesn't modify tools
 }
@@ -270,12 +270,12 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		}
 	}
 
-	toolCall.Function.Arguments = make(api.ToolCallFunctionArguments)
+	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
 	for _, parameter := range functionCall.Parameters {
 		// Look up the parameter type if we found the tool
 		var paramType api.PropertyType
 		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
-			if prop, ok := matchedTool.Function.Parameters.Properties[parameter.Name]; ok {
+			if prop, ok := matchedTool.Function.Parameters.Properties.Get(parameter.Name); ok {
 				// Handle anyOf by collecting all types from the union
 				if len(prop.AnyOf) > 0 {
 					for _, anyOfProp := range prop.AnyOf {
@@ -287,7 +287,7 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 			}
 		}
 
-		toolCall.Function.Arguments[parameter.Name] = parseValue(parameter.Value, paramType)
+		toolCall.Function.Arguments.Set(parameter.Name, parseValue(parameter.Value, paramType))
 	}
 
 	return toolCall, nil
@@ -432,7 +432,7 @@ func transformToXML(raw string) string {
 		groups := qwenTagRegex.FindStringSubmatch(match)
 		tag := groups[1]
 		var escapedValue strings.Builder
-		xml.EscapeText(&escapedValue, []byte(groups[2]))
+		_ = xml.EscapeText(&escapedValue, []byte(groups[2])) // error is always nil for strings.Builder
 		return fmt.Sprintf(`<%s name="%s">`, tag, escapedValue.String())
 	})
 

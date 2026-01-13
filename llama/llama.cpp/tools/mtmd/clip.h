@@ -1,10 +1,13 @@
 #pragma once
 
 #include "ggml.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
 // !!! Internal header, to be used by mtmd only !!!
+
+#define MTMD_INTERNAL_HEADER
 
 struct clip_ctx;
 
@@ -22,9 +25,18 @@ enum clip_modality {
     CLIP_MODALITY_AUDIO,
 };
 
+enum clip_flash_attn_type {
+    CLIP_FLASH_ATTN_TYPE_AUTO     = -1,
+    CLIP_FLASH_ATTN_TYPE_DISABLED = 0,
+    CLIP_FLASH_ATTN_TYPE_ENABLED  = 1,
+};
+
 struct clip_context_params {
     bool use_gpu;
-    enum ggml_log_level verbosity;
+    enum clip_flash_attn_type flash_attn_type;
+    int image_min_tokens;
+    int image_max_tokens;
+    bool warmup;
 };
 
 struct clip_init_result {
@@ -92,7 +104,7 @@ bool clip_image_batch_encode(struct clip_ctx * ctx, int n_threads, const struct 
 
 int clip_is_minicpmv(const struct clip_ctx * ctx);
 bool clip_is_glm(const struct clip_ctx * ctx);
-bool clip_is_qwen2vl(const struct clip_ctx * ctx);
+bool clip_is_mrope(const struct clip_ctx * ctx);
 bool clip_is_llava(const struct clip_ctx * ctx);
 bool clip_is_gemma3(const struct clip_ctx * ctx);
 

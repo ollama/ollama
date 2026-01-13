@@ -2,17 +2,19 @@
 
 #pragma once
 
+#include "ggml-opt.h"
+#include "llama-cpp.h"
+
 #include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <map>
-#include <sstream>
-#include <cmath>
 
-#include "ggml-opt.h"
-#include "llama-cpp.h"
+#if defined(_WIN32) && !defined(_WIN32_WINNT)
+#define _WIN32_WINNT 0x0A00
+#endif
 
 #ifdef _WIN32
 #define DIRECTORY_SEPARATOR '\\'
@@ -28,7 +30,14 @@
     fprintf(stderr, "%s: built with %s for %s\n", __func__, LLAMA_COMPILER, LLAMA_BUILD_TARGET);    \
 } while(0)
 
-#define DEFAULT_MODEL_PATH "models/7B/ggml-model-f16.gguf"
+struct common_time_meas {
+    common_time_meas(int64_t & t_acc, bool disable = false);
+    ~common_time_meas();
+
+    const int64_t t_start_us;
+
+    int64_t & t_acc;
+};
 
 struct common_adapter_lora_info {
     std::string path;
@@ -73,7 +82,8 @@ int32_t cpu_get_num_math();
 enum llama_example {
     LLAMA_EXAMPLE_COMMON,
     LLAMA_EXAMPLE_SPECULATIVE,
-    LLAMA_EXAMPLE_MAIN,
+    LLAMA_EXAMPLE_COMPLETION,
+    LLAMA_EXAMPLE_CLI,
     LLAMA_EXAMPLE_EMBEDDING,
     LLAMA_EXAMPLE_PERPLEXITY,
     LLAMA_EXAMPLE_RETRIEVAL,
@@ -89,6 +99,7 @@ enum llama_example {
     LLAMA_EXAMPLE_TTS,
     LLAMA_EXAMPLE_DIFFUSION,
     LLAMA_EXAMPLE_FINETUNE,
+    LLAMA_EXAMPLE_FIT_PARAMS,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -133,6 +144,22 @@ struct common_grammar_trigger {
     llama_token token = LLAMA_TOKEN_NULL;
 };
 
+enum common_params_sampling_config : uint64_t {
+    COMMON_PARAMS_SAMPLING_CONFIG_SAMPLERS        = 1 << 0,
+    COMMON_PARAMS_SAMPLING_CONFIG_TOP_K           = 1 << 1,
+    COMMON_PARAMS_SAMPLING_CONFIG_TOP_P           = 1 << 2,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIN_P           = 1 << 3,
+    COMMON_PARAMS_SAMPLING_CONFIG_XTC_PROBABILITY = 1 << 4,
+    COMMON_PARAMS_SAMPLING_CONFIG_XTC_THRESHOLD   = 1 << 5,
+    COMMON_PARAMS_SAMPLING_CONFIG_TEMP            = 1 << 6,
+    COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_LAST_N  = 1 << 7,
+    COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_REPEAT  = 1 << 8,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT        = 1 << 9,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_TAU    = 1 << 10,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_ETA    = 1 << 11,
+};
+
+
 // sampling parameters
 struct common_params_sampling {
     uint32_t seed = LLAMA_DEFAULT_SEED; // the seed used to initialize llama_sampler
@@ -165,8 +192,9 @@ struct common_params_sampling {
     bool    no_perf            = false; // disable performance metrics
     bool    timing_per_token   = false;
 
-    std::vector<std::string> dry_sequence_breakers = {"\n", ":", "\"", "*"};     // default sequence breakers for DRY
+    uint64_t user_sampling_config = 0; // bitfield to track user-specified samplers
 
+    std::vector<std::string> dry_sequence_breakers = {"\n", ":", "\"", "*"};     // default sequence breakers for DRY
 
     std::vector<enum common_sampler_type> samplers = {
         COMMON_SAMPLER_TYPE_PENALTIES,
@@ -188,6 +216,10 @@ struct common_params_sampling {
     std::vector<llama_logit_bias> logit_bias;     // logit biases to apply
     std::vector<llama_logit_bias> logit_bias_eog; // pre-calculated logit biases for EOG tokens
 
+    bool has_logit_bias() const {
+        return !logit_bias.empty();
+    }
+
     // print the parameters into a string
     std::string print() const;
 };
@@ -198,6 +230,7 @@ struct common_params_model {
     std::string hf_repo     = ""; // HF repo                                                // NOLINT
     std::string hf_file     = ""; // HF file                                                // NOLINT
     std::string docker_repo = ""; // Docker repo                                            // NOLINT
+    std::string name        = ""; // in format <user>/<model>[:<tag>] (tag is optional)     // NOLINT
 };
 
 struct common_params_speculative {
@@ -274,8 +307,8 @@ struct lr_opt {
 struct ggml_opt_optimizer_params common_opt_lr_pars(void * userdata);
 
 struct common_params {
-    int32_t n_predict             =    -1; // new tokens to predict
-    int32_t n_ctx                 =  4096; // context size
+    int32_t n_predict             =    -1; // max. number of new tokens to predict, -1 == no limit
+    int32_t n_ctx                 =     0; // context size, 0 == context the model was trained with
     int32_t n_batch               =  2048; // logical batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_ubatch              =   512; // physical batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_keep                =     0; // number of tokens to keep from initial prompt
@@ -296,9 +329,12 @@ struct common_params {
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
 
-    int32_t n_gpu_layers      = -1;  // number of layers to store in VRAM (-1 - use default)
-    int32_t main_gpu          = 0;   // the GPU that is used for scratch and small tensors
-    float   tensor_split[128] = {0}; // how split tensors should be distributed across GPUs
+    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM (-1 - use default)
+    int32_t main_gpu           = 0;                // the GPU that is used for scratch and small tensors
+    float   tensor_split[128]  = {0};              // how split tensors should be distributed across GPUs
+    bool    fit_params         = true;             // whether to fit unset model/context parameters to free device memory
+    size_t  fit_params_target  = 1024 * 1024*1024; // margin per device in bytes for fitting parameters to free memory
+    int32_t fit_params_min_ctx = 4096;             // minimum context size to set when trying to reduce memory use
 
     enum llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER; // how to split the model across GPUs
 
@@ -344,7 +380,7 @@ struct common_params {
 
     std::vector<common_control_vector_load_info> control_vectors; // control vector with user defined scale
 
-    int32_t verbosity                  = 0;
+    int32_t verbosity                  = 3;  // LOG_LEVEL_INFO
     int32_t control_vector_layer_start = -1; // layer range for control vector
     int32_t control_vector_layer_end   = -1; // layer range for control vector
     bool    offline                    = false;
@@ -378,6 +414,7 @@ struct common_params {
     bool simple_io         = false; // improves compatibility with subprocesses and limited consoles
     bool cont_batching     = true;  // insert new sequences for decoding on-the-fly
     bool no_perf           = false; // disable performance metrics
+    bool show_timings      = true;  // show timing information on CLI
     bool ctx_shift         = false; // context shift on infinite text generation
     bool swa_full          = false; // use full-size SWA cache (https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
     bool kv_unified        = false; // enable unified KV cache
@@ -406,6 +443,8 @@ struct common_params {
     bool mmproj_use_gpu = true;     // use GPU for multimodal model
     bool no_mmproj = false;         // explicitly disable multimodal model
     std::vector<std::string> image; // path to image file(s)
+    int image_min_tokens = -1;
+    int image_max_tokens = -1;
 
     // finetune
     struct lr_opt lr;
@@ -432,7 +471,7 @@ struct common_params {
     std::string public_path   = "";                                                                         // NOLINT
     std::string api_prefix    = "";                                                                         // NOLINT
     std::string chat_template = "";                                                                         // NOLINT
-    bool use_jinja = false;                                                                                 // NOLINT
+    bool use_jinja = true;                                                                                  // NOLINT
     bool enable_chat_template = true;
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
     int reasoning_budget = -1;
@@ -451,14 +490,22 @@ struct common_params {
     bool endpoint_props   = false; // only control POST requests, not GET
     bool endpoint_metrics = false;
 
+    // router server configs
+    std::string models_dir    = ""; // directory containing models for the router server
+    std::string models_preset = ""; // directory containing model presets for the router server
+    int models_max = 4;             // maximum number of models to load simultaneously
+    bool models_autoload = true;    // automatically load models when requested via the router server
+
     bool log_json = false;
 
     std::string slot_save_path;
+    std::string media_path; // path to directory for loading media files
 
     float slot_prompt_similarity = 0.1f;
 
     // batched-bench params
-    bool is_pp_shared = false;
+    bool is_pp_shared   = false;
+    bool is_tg_separate = false;
 
     std::vector<int32_t> n_pp;
     std::vector<int32_t> n_tg;
@@ -505,6 +552,10 @@ struct common_params {
     // return false from callback to abort model loading or true to continue
     llama_progress_callback load_progress_callback = NULL;
     void *                  load_progress_callback_user_data = NULL;
+
+    bool has_speculative() const {
+        return !speculative.model.path.empty() || !speculative.model.hf_repo.empty();
+    }
 };
 
 // call once at the start of a program if it uses libcommon
@@ -599,25 +650,55 @@ std::string string_from(const struct llama_context * ctx, const struct llama_bat
 // Filesystem utils
 //
 
-bool fs_validate_filename(const std::string & filename);
+bool fs_validate_filename(const std::string & filename, bool allow_subdirs = false);
 bool fs_create_directory_with_parents(const std::string & path);
+bool fs_is_directory(const std::string & path);
 
 std::string fs_get_cache_directory();
 std::string fs_get_cache_file(const std::string & filename);
+
+struct common_file_info {
+    std::string path;
+    std::string name;
+    size_t      size = 0; // in bytes
+    bool        is_dir = false;
+};
+std::vector<common_file_info> fs_list(const std::string & path, bool include_directories);
+
+//
+// TTY utils
+//
+
+// Auto-detect if colors can be enabled based on terminal and environment
+bool tty_can_use_colors();
 
 //
 // Model utils
 //
 
-// note: defines object's lifetime
-struct common_init_result {
-    llama_model_ptr   model;
-    llama_context_ptr context;
+struct common_sampler;
 
-    std::vector<llama_adapter_lora_ptr> lora;
+// note: defines the model, context, samplers, ets. lifetimes
+struct common_init_result {
+    common_init_result(common_params & params);
+    ~common_init_result();
+
+    llama_model * model();
+    llama_context * context();
+    common_sampler * sampler(llama_seq_id seq_id);
+
+    std::vector<llama_adapter_lora_ptr> & lora();
+
+    void free_context();
+
+private:
+    struct impl;
+    std::unique_ptr<impl> pimpl;
 };
 
-struct common_init_result     common_init_from_params(common_params & params);
+using common_init_result_ptr = std::unique_ptr<common_init_result>;
+
+common_init_result_ptr common_init_from_params(common_params & params);
 
 struct llama_model_params     common_model_params_to_llama  (      common_params & params);
 struct llama_context_params   common_context_params_to_llama(const common_params & params);

@@ -4,13 +4,6 @@
 
 #include "types.glsl"
 
-#if defined(A_TYPE_PACKED16)
-layout (binding = 0) readonly buffer A_PACKED16 {A_TYPE_PACKED16 data_a_packed16[];};
-#endif
-#if defined(A_TYPE_PACKED32)
-layout (binding = 0) readonly buffer A_PACKED32 {A_TYPE_PACKED32 data_a_packed32[];};
-#endif
-
 #if defined(DATA_A_F32)
 vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     return vec2(data_a[a_offset + ib], data_a[a_offset + ib + 1]);
