@@ -64,7 +64,6 @@ _build_darwin() {
         else
             BUILD_DIR=build
             cmake --preset MLX \
-                -DCMAKE_OSX_ARCHITECTURES=arm64 \
                 -DOLLAMA_RUNNER_DIR=./ \
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
