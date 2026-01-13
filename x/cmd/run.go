@@ -656,7 +656,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
 		Placeholder:    "Send a message (/? for help)",
-		AltPlaceholder: `Use """ to end multi-line input`,
+		AltPlaceholder: "Press Enter to send",
 	})
 	if err != nil {
 		return err
