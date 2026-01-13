@@ -94,7 +94,7 @@ _sign_darwin() {
         # create a temporary zip for notarization
         TEMP=$(mktemp -u).zip
         ditto -c -k --keepParent dist/darwin/ollama "$TEMP"
-        xcrun notarytool submit "$TEMP" --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
+        xcrun notarytool submit "$TEMP" --wait --timeout 20m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
         rm -f "$TEMP"
     fi
 
@@ -184,7 +184,7 @@ _build_macapp() {
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then
-        $(xcrun -f notarytool) submit dist/Ollama-darwin.zip --wait --timeout 10m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+        $(xcrun -f notarytool) submit dist/Ollama-darwin.zip --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
         rm -f dist/Ollama-darwin.zip
         $(xcrun -f stapler) staple dist/Ollama.app
         ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
@@ -208,7 +208,7 @@ _build_macapp() {
         rm -f dist/rw*.dmg
 
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.dmg
-        $(xcrun -f notarytool) submit dist/Ollama.dmg --wait --timeout 10m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+        $(xcrun -f notarytool) submit dist/Ollama.dmg --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
         $(xcrun -f stapler) staple dist/Ollama.dmg
     else
         echo "WARNING: Code signing disabled, this bundle will not work for upgrade testing"
