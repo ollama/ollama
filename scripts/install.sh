@@ -66,6 +66,36 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+# Function to download and extract with fallback from zst to tgz
+download_and_extract() {
+    local url_base="$1"
+    local dest_dir="$2"
+    local filename="$3"
+
+    # Check if .tar.zst is available
+    if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
+        # zst file exists - check if we have zstd tool
+        if ! available zstd; then
+            error "This version requires zstd for extraction. Please install zstd and try again:
+  - Debian/Ubuntu: sudo apt-get install zstd
+  - RHEL/CentOS/Fedora: sudo dnf install zstd
+  - Arch: sudo pacman -S zstd"
+        fi
+
+        status "Downloading ${filename}.tar.zst"
+        curl --fail --show-error --location --progress-bar \
+            "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
+            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+        return 0
+    fi
+
+    # Fall back to .tgz for older versions
+    status "Downloading ${filename}.tgz"
+    curl --fail --show-error --location --progress-bar \
+        "${url_base}/${filename}.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "${dest_dir}"
+}
+
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
@@ -79,16 +109,22 @@ status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
 
-# Check for local bundle file before downloading
+# 修复冲突：保留本地包检测逻辑，同时复用download_and_extract函数
 LOCAL_BUNDLE="ollama-linux-${ARCH}.tgz"
-if [ -f "$LOCAL_BUNDLE" ]; then
+LOCAL_BUNDLE_ZST="ollama-linux-${ARCH}.tar.zst"
+if [ -f "$LOCAL_BUNDLE_ZST" ]; then
+    status "Found local file: $LOCAL_BUNDLE_ZST, installing from local"
+    # 检查zstd工具
+    if ! available zstd; then
+        error "Local zst bundle requires zstd for extraction. Please install zstd first."
+    fi
+    zstd -d < "$LOCAL_BUNDLE_ZST" | $SUDO tar -xf - -C "$OLLAMA_INSTALL_DIR"
+elif [ -f "$LOCAL_BUNDLE" ]; then
     status "Found local file: $LOCAL_BUNDLE, installing from local"
     $SUDO tar -xzf "$LOCAL_BUNDLE" -C "$OLLAMA_INSTALL_DIR"
 else
-    status "Downloading Linux ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
-        "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    # 没有本地包时，调用封装好的下载解压函数
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
 fi
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
@@ -99,15 +135,9 @@ fi
 # Check for NVIDIA JetPack systems with additional downloads
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
     else
         warning "Unsupported JetPack version detected.  GPU may not be supported"
     fi
@@ -230,10 +260,7 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    status "Downloading Linux ROCm ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
-        "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
 
     install_success
     status "AMD GPU ready."
@@ -380,4 +407,3 @@ fi
 
 status "NVIDIA GPU ready."
 install_success
-

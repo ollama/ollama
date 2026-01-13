@@ -33,8 +33,28 @@ type ApprovalResult struct {
 // Option labels for the selector (numbered for quick selection)
 var optionLabels = []string{
 	"1. Execute once",
-	"2. Always allow",
+	"2. Allow for this session",
 	"3. Deny",
+}
+
+// toolDisplayNames maps internal tool names to human-readable display names.
+var toolDisplayNames = map[string]string{
+	"bash":       "Bash",
+	"web_search": "Web Search",
+	"web_fetch":  "Web Fetch",
+}
+
+// ToolDisplayName returns the human-readable display name for a tool.
+func ToolDisplayName(toolName string) string {
+	if displayName, ok := toolDisplayNames[toolName]; ok {
+		return displayName
+	}
+	// Default: capitalize first letter and replace underscores with spaces
+	name := strings.ReplaceAll(toolName, "_", " ")
+	if len(name) > 0 {
+		return strings.ToUpper(name[:1]) + name[1:]
+	}
+	return toolName
 }
 
 // autoAllowCommands are commands that are always allowed without prompting.
@@ -475,16 +495,32 @@ func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any) 
 	// This prevents buffered input from causing double-press issues
 	flushStdin(fd)
 
-	// Check if bash command targets paths outside cwd
 	isWarning := false
+	var warningMsg string
+	var allowlistInfo string
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
-			isWarning = isCommandOutsideCwd(cmd)
+			if isCommandOutsideCwd(cmd) {
+				isWarning = true
+				warningMsg = "command targets paths outside project"
+			}
+			if prefix := extractBashPrefix(cmd); prefix != "" {
+				colonIdx := strings.Index(prefix, ":")
+				if colonIdx != -1 {
+					cmdName := prefix[:colonIdx]
+					dirPath := prefix[colonIdx+1:]
+					if dirPath != "./" {
+						allowlistInfo = fmt.Sprintf("%s in %s directory (includes subdirs)", cmdName, dirPath)
+					} else {
+						allowlistInfo = fmt.Sprintf("%s in %s directory", cmdName, dirPath)
+					}
+				}
+			}
 		}
 	}
 
 	// Run interactive selector
-	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning)
+	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning, warningMsg, allowlistInfo)
 	if err != nil {
 		term.Restore(fd, oldState)
 		return ApprovalResult{Decision: ApprovalDeny}, err
@@ -509,11 +545,12 @@ func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any) 
 // formatToolDisplay creates the display string for a tool call.
 func formatToolDisplay(toolName string, args map[string]any) string {
 	var sb strings.Builder
+	displayName := ToolDisplayName(toolName)
 
 	// For bash, show command directly
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Tool: %s\n", toolName))
+			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
 			sb.WriteString(fmt.Sprintf("Command: %s", cmd))
 			return sb.String()
 		}
@@ -522,15 +559,25 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 	// For web search, show query and internet notice
 	if toolName == "web_search" {
 		if query, ok := args["query"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Tool: %s\n", toolName))
+			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
 			sb.WriteString(fmt.Sprintf("Query: %s\n", query))
 			sb.WriteString("Uses internet via ollama.com")
 			return sb.String()
 		}
 	}
 
+	// For web fetch, show URL and internet notice
+	if toolName == "web_fetch" {
+		if url, ok := args["url"].(string); ok {
+			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
+			sb.WriteString(fmt.Sprintf("URL: %s\n", url))
+			sb.WriteString("Uses internet via ollama.com")
+			return sb.String()
+		}
+	}
+
 	// Generic display
-	sb.WriteString(fmt.Sprintf("Tool: %s", toolName))
+	sb.WriteString(fmt.Sprintf("Tool: %s", displayName))
 	if len(args) > 0 {
 		sb.WriteString("\nArguments: ")
 		first := true
@@ -547,24 +594,28 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 
 // selectorState holds the state for the interactive selector
 type selectorState struct {
-	toolDisplay string
-	selected    int
-	totalLines  int
-	termWidth   int
-	termHeight  int
-	boxWidth    int
-	innerWidth  int
-	denyReason  string // deny reason (always visible in box)
-	isWarning   bool   // true if command targets paths outside cwd (red box)
+	toolDisplay    string
+	selected       int
+	totalLines     int
+	termWidth      int
+	termHeight     int
+	boxWidth       int
+	innerWidth     int
+	denyReason     string // deny reason (always visible in box)
+	isWarning      bool   // true if command has warning
+	warningMessage string // dynamic warning message to display
+	allowlistInfo  string // show what will be allowlisted (for "Allow for this session" option)
 }
 
 // runSelector runs the interactive selector and returns the selected index and optional deny reason.
 // If isWarning is true, the box is rendered in red to indicate the command targets paths outside cwd.
-func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool) (int, string, error) {
+func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool, warningMessage string, allowlistInfo string) (int, string, error) {
 	state := &selectorState{
-		toolDisplay: toolDisplay,
-		selected:    0,
-		isWarning:   isWarning,
+		toolDisplay:    toolDisplay,
+		selected:       0,
+		isWarning:      isWarning,
+		warningMessage: warningMessage,
+		allowlistInfo:  allowlistInfo,
 	}
 
 	// Get terminal size
@@ -724,7 +775,7 @@ func wrapText(text string, maxWidth int) []string {
 
 // getHintLines returns the hint text wrapped to terminal width
 func getHintLines(state *selectorState) []string {
-	hint := "↑/↓ navigate, Enter confirm, 1-3 quick, Ctrl+C cancel"
+	hint := "up/down select, enter confirm, 1-3 quick select, ctrl+c cancel"
 	if state.termWidth >= len(hint)+1 {
 		return []string{hint}
 	}
@@ -734,86 +785,70 @@ func getHintLines(state *selectorState) []string {
 
 // calculateTotalLines calculates how many lines the selector will use
 func calculateTotalLines(state *selectorState) int {
-	toolLines := wrapText(state.toolDisplay, state.innerWidth)
+	toolLines := strings.Split(state.toolDisplay, "\n")
 	hintLines := getHintLines(state)
-	// top border + (warning line if applicable) + tool lines + separator + options + bottom border + hint lines
+	// warning line (if applicable) + tool lines + blank line + options + blank line + hint lines
 	warningLines := 0
 	if state.isWarning {
-		warningLines = 1
+		warningLines = 2 // warning line + blank line after
 	}
-	return 1 + warningLines + len(toolLines) + 1 + len(optionLabels) + 1 + len(hintLines)
+	return warningLines + len(toolLines) + 1 + len(optionLabels) + 1 + len(hintLines)
 }
 
-// renderSelectorBox renders the complete selector box
+// renderSelectorBox renders the selector (minimal, no box)
 func renderSelectorBox(state *selectorState) {
-	toolLines := wrapText(state.toolDisplay, state.innerWidth)
+	toolLines := strings.Split(state.toolDisplay, "\n")
 	hintLines := getHintLines(state)
 
-	// Use red for warning (outside cwd), cyan for normal
-	boxColor := "\033[36m" // cyan
+	// Draw warning line if needed
 	if state.isWarning {
-		boxColor = "\033[91m" // bright red
-	}
-
-	// Draw box top
-	fmt.Fprintf(os.Stderr, "%s┌%s┐\033[0m\033[K\r\n", boxColor, strings.Repeat("─", state.boxWidth-2))
-
-	// Draw warning line if needed (inside the box)
-	if state.isWarning {
-		warning := "!! OUTSIDE PROJECT !!"
-		padding := (state.innerWidth - len(warning)) / 2
-		if padding < 0 {
-			padding = 0
+		if state.warningMessage != "" {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m %s\033[K\r\n", state.warningMessage)
+		} else {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m command targets paths outside project\033[K\r\n")
 		}
-		fmt.Fprintf(os.Stderr, "%s│\033[0m %s%s%s %s│\033[0m\033[K\r\n", boxColor,
-			strings.Repeat(" ", padding), warning, strings.Repeat(" ", state.innerWidth-len(warning)-padding), boxColor)
+		fmt.Fprintf(os.Stderr, "\033[K\r\n") // blank line after warning
 	}
 
-	// Draw tool info
+	// Draw tool info (plain white)
 	for _, line := range toolLines {
-		fmt.Fprintf(os.Stderr, "%s│\033[0m %-*s %s│\033[0m\033[K\r\n", boxColor, state.innerWidth, line, boxColor)
+		fmt.Fprintf(os.Stderr, "%s\033[K\r\n", line)
 	}
 
-	// Draw separator
-	fmt.Fprintf(os.Stderr, "%s├%s┤\033[0m\033[K\r\n", boxColor, strings.Repeat("─", state.boxWidth-2))
+	// Blank line separator
+	fmt.Fprintf(os.Stderr, "\033[K\r\n")
 
-	// Draw options with numbers (Deny option includes reason input)
 	for i, label := range optionLabels {
-		if i == 2 { // Deny option - show with reason input beside it
+		if i == 2 {
 			denyLabel := "3. Deny: "
-			availableWidth := state.innerWidth - 2 - len(denyLabel)
-			if availableWidth < 5 {
-				availableWidth = 5
-			}
 			inputDisplay := state.denyReason
-			if len(inputDisplay) > availableWidth {
-				inputDisplay = inputDisplay[len(inputDisplay)-availableWidth:]
+			if inputDisplay == "" {
+				inputDisplay = "\033[90m(optional reason)\033[0m"
 			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m \033[1;32m> %s\033[0m%-*s %s│\033[0m\033[K\r\n", boxColor, denyLabel, availableWidth, inputDisplay, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m   \033[90m%s\033[0m%-*s %s│\033[0m\033[K\r\n", boxColor, denyLabel, availableWidth, inputDisplay, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			}
 		} else {
 			displayLabel := label
-			if len(displayLabel) > state.innerWidth-2 {
-				displayLabel = displayLabel[:state.innerWidth-5] + "..."
+			if i == 1 && state.allowlistInfo != "" {
+				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
 			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m \033[1;32m> %-*s\033[0m %s│\033[0m\033[K\r\n", boxColor, state.innerWidth-2, displayLabel, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m   %-*s %s│\033[0m\033[K\r\n", boxColor, state.innerWidth-2, displayLabel, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
 			}
 		}
 	}
 
-	// Draw box bottom
-	fmt.Fprintf(os.Stderr, "%s└%s┘\033[0m\033[K\r\n", boxColor, strings.Repeat("─", state.boxWidth-2))
+	// Blank line before hint
+	fmt.Fprintf(os.Stderr, "\033[K\r\n")
 
-	// Draw hint (may be multiple lines)
+	// Draw hint (dark grey)
 	for i, line := range hintLines {
 		if i == len(hintLines)-1 {
-			// Last line - no newline
 			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K", line)
 		} else {
 			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K\r\n", line)
@@ -825,50 +860,39 @@ func renderSelectorBox(state *selectorState) {
 func updateSelectorOptions(state *selectorState) {
 	hintLines := getHintLines(state)
 
-	// Use red for warning (outside cwd), cyan for normal
-	boxColor := "\033[36m" // cyan
-	if state.isWarning {
-		boxColor = "\033[91m" // bright red
-	}
-
 	// Move up to the first option line
 	// Cursor is at end of last hint line, need to go up:
-	// (hint lines - 1) + 1 (bottom border) + numOptions
+	// (hint lines - 1) + 1 (blank line) + numOptions
 	linesToMove := len(hintLines) - 1 + 1 + len(optionLabels)
 	fmt.Fprintf(os.Stderr, "\033[%dA\r", linesToMove)
 
-	// Redraw options (Deny option includes reason input)
 	for i, label := range optionLabels {
-		if i == 2 { // Deny option
+		if i == 2 {
 			denyLabel := "3. Deny: "
-			availableWidth := state.innerWidth - 2 - len(denyLabel)
-			if availableWidth < 5 {
-				availableWidth = 5
-			}
 			inputDisplay := state.denyReason
-			if len(inputDisplay) > availableWidth {
-				inputDisplay = inputDisplay[len(inputDisplay)-availableWidth:]
+			if inputDisplay == "" {
+				inputDisplay = "\033[90m(optional reason)\033[0m"
 			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m \033[1;32m> %s\033[0m%-*s %s│\033[0m\033[K\r\n", boxColor, denyLabel, availableWidth, inputDisplay, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m   \033[90m%s\033[0m%-*s %s│\033[0m\033[K\r\n", boxColor, denyLabel, availableWidth, inputDisplay, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 			}
 		} else {
 			displayLabel := label
-			if len(displayLabel) > state.innerWidth-2 {
-				displayLabel = displayLabel[:state.innerWidth-5] + "..."
+			if i == 1 && state.allowlistInfo != "" {
+				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
 			}
 			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m \033[1;32m> %-*s\033[0m %s│\033[0m\033[K\r\n", boxColor, state.innerWidth-2, displayLabel, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s│\033[0m   %-*s %s│\033[0m\033[K\r\n", boxColor, state.innerWidth-2, displayLabel, boxColor)
+				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
 			}
 		}
 	}
 
-	// Redraw bottom and hint
-	fmt.Fprintf(os.Stderr, "%s└%s┘\033[0m\033[K\r\n", boxColor, strings.Repeat("─", state.boxWidth-2))
+	// Blank line + hint
+	fmt.Fprintf(os.Stderr, "\033[K\r\n")
 	for i, line := range hintLines {
 		if i == len(hintLines)-1 {
 			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K", line)
@@ -882,36 +906,26 @@ func updateSelectorOptions(state *selectorState) {
 func updateReasonInput(state *selectorState) {
 	hintLines := getHintLines(state)
 
-	// Use red for warning (outside cwd), cyan for normal
-	boxColor := "\033[36m" // cyan
-	if state.isWarning {
-		boxColor = "\033[91m" // bright red
-	}
-
 	// Move up to the Deny line (3rd option, index 2)
 	// Cursor is at end of last hint line, need to go up:
-	// (hint lines - 1) + 1 (bottom border) + 1 (Deny is last option)
+	// (hint lines - 1) + 1 (blank line) + 1 (Deny is last option)
 	linesToMove := len(hintLines) - 1 + 1 + 1
 	fmt.Fprintf(os.Stderr, "\033[%dA\r", linesToMove)
 
 	// Redraw Deny line with reason
 	denyLabel := "3. Deny: "
-	availableWidth := state.innerWidth - 2 - len(denyLabel)
-	if availableWidth < 5 {
-		availableWidth = 5
-	}
 	inputDisplay := state.denyReason
-	if len(inputDisplay) > availableWidth {
-		inputDisplay = inputDisplay[len(inputDisplay)-availableWidth:]
+	if inputDisplay == "" {
+		inputDisplay = "\033[90m(optional reason)\033[0m"
 	}
 	if state.selected == 2 {
-		fmt.Fprintf(os.Stderr, "%s│\033[0m \033[1;32m> %s\033[0m%-*s %s│\033[0m\033[K\r\n", boxColor, denyLabel, availableWidth, inputDisplay, boxColor)
+		fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s│\033[0m   \033[90m%s\033[0m%-*s %s│\033[0m\033[K\r\n", boxColor, denyLabel, availableWidth, inputDisplay, boxColor)
+		fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
 	}
 
-	// Redraw bottom and hint
-	fmt.Fprintf(os.Stderr, "%s└%s┘\033[0m\033[K\r\n", boxColor, strings.Repeat("─", state.boxWidth-2))
+	// Blank line + hint
+	fmt.Fprintf(os.Stderr, "\033[K\r\n")
 	for i, line := range hintLines {
 		if i == len(hintLines)-1 {
 			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K", line)
@@ -935,11 +949,10 @@ func clearSelectorBox(state *selectorState) {
 // fallbackApproval handles approval when terminal control isn't available.
 func (a *ApprovalManager) fallbackApproval(toolDisplay string) (ApprovalResult, error) {
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Fprintln(os.Stderr, toolDisplay)
-	fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Always allow  [3] Deny")
-	fmt.Fprint(os.Stderr, "Choice: ")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Allow for this session  [3] Deny")
+	fmt.Fprint(os.Stderr, "choice: ")
 
 	var input string
 	fmt.Scanln(&input)
@@ -982,19 +995,16 @@ func (a *ApprovalManager) AllowedTools() []string {
 
 // FormatApprovalResult returns a formatted string showing the approval result.
 func FormatApprovalResult(toolName string, args map[string]any, result ApprovalResult) string {
-	var status string
-	var icon string
+	var label string
+	displayName := ToolDisplayName(toolName)
 
 	switch result.Decision {
 	case ApprovalOnce:
-		status = "Approved"
-		icon = "\033[32m✓\033[0m"
+		label = "Approved"
 	case ApprovalAlways:
-		status = "Always allowed"
-		icon = "\033[32m✓\033[0m"
+		label = "Always allowed"
 	case ApprovalDeny:
-		status = "Denied"
-		icon = "\033[31m✗\033[0m"
+		label = "Denied"
 	}
 
 	// Format based on tool type
@@ -1004,7 +1014,7 @@ func FormatApprovalResult(toolName string, args map[string]any, result ApprovalR
 			if len(cmd) > 40 {
 				cmd = cmd[:37] + "..."
 			}
-			return fmt.Sprintf("▶ bash: %s [%s] %s", cmd, status, icon)
+			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, cmd)
 		}
 	}
 
@@ -1014,11 +1024,21 @@ func FormatApprovalResult(toolName string, args map[string]any, result ApprovalR
 			if len(query) > 40 {
 				query = query[:37] + "..."
 			}
-			return fmt.Sprintf("▶ web_search: %s [%s] %s", query, status, icon)
+			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, query)
 		}
 	}
 
-	return fmt.Sprintf("▶ %s [%s] %s", toolName, status, icon)
+	if toolName == "web_fetch" {
+		if url, ok := args["url"].(string); ok {
+			// Truncate long URLs
+			if len(url) > 50 {
+				url = url[:47] + "..."
+			}
+			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, url)
+		}
+	}
+
+	return fmt.Sprintf("\033[1m%s:\033[0m %s", label, displayName)
 }
 
 // FormatDenyResult returns the tool result message when a tool is denied.
@@ -1049,15 +1069,14 @@ func PromptYesNo(question string) (bool, error) {
 	renderYesNo := func() {
 		// Move to start of line and clear
 		fmt.Fprintf(os.Stderr, "\r\033[K")
-		fmt.Fprintf(os.Stderr, "\033[36m%s\033[0m ", question)
+		fmt.Fprintf(os.Stderr, "%s  ", question)
 		for i, opt := range options {
 			if i == selected {
-				fmt.Fprintf(os.Stderr, "\033[1;32m[%s]\033[0m ", opt)
+				fmt.Fprintf(os.Stderr, "\033[1m%s\033[0m  ", opt)
 			} else {
-				fmt.Fprintf(os.Stderr, "\033[90m %s \033[0m ", opt)
+				fmt.Fprintf(os.Stderr, "\033[37m%s\033[0m  ", opt)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "\033[90m(←/→ or y/n, Enter to confirm)\033[0m")
 	}
 
 	renderYesNo()

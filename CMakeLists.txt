@@ -2,6 +2,22 @@ cmake_minimum_required(VERSION 3.21)
 
 project(Ollama C CXX)
 
+# Handle cross-compilation on macOS: when CMAKE_OSX_ARCHITECTURES is set to a
+# single architecture different from the host, override CMAKE_SYSTEM_PROCESSOR
+# to match. This is necessary because CMAKE_SYSTEM_PROCESSOR defaults to the
+# host architecture, but downstream projects (like MLX) use it to detect the
+# target architecture.
+if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
+    # Single architecture specified
+    if(CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" AND NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        message(STATUS "Cross-compiling for x86_64: overriding CMAKE_SYSTEM_PROCESSOR from ${CMAKE_SYSTEM_PROCESSOR} to x86_64")
+        set(CMAKE_SYSTEM_PROCESSOR "x86_64")
+    elseif(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" AND NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+        message(STATUS "Cross-compiling for arm64: overriding CMAKE_SYSTEM_PROCESSOR from ${CMAKE_SYSTEM_PROCESSOR} to arm64")
+        set(CMAKE_SYSTEM_PROCESSOR "arm64")
+    endif()
+endif()
+
 include(CheckLanguage)
 include(GNUInstallDirs)
 
@@ -12,7 +28,7 @@ set(BUILD_SHARED_LIBS ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON) # Recent versions of MLX Requires gnu++17 extensions to compile properly
 
 set(GGML_BUILD ON)
 set(GGML_SHARED ON)
@@ -147,14 +163,48 @@ if(CMAKE_HIP_COMPILER)
     endif()
 endif()
 
-find_package(Vulkan)
-if(Vulkan_FOUND)
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
-    install(TARGETS ggml-vulkan
+if(NOT APPLE)
+    find_package(Vulkan)
+    if(Vulkan_FOUND)
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
+        install(TARGETS ggml-vulkan
+            RUNTIME_DEPENDENCIES
+                PRE_INCLUDE_REGEXES vulkan
+                PRE_EXCLUDE_REGEXES ".*"
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+        )
+    endif()
+endif()
+
+option(MLX_ENGINE "Enable MLX backend" OFF)
+
+if(MLX_ENGINE)
+    message(STATUS "Setting up MLX (this takes a while...)")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/x/ml/backend/mlx)
+
+    # Find CUDA toolkit if MLX is built with CUDA support
+    find_package(CUDAToolkit)
+
+    install(TARGETS mlx mlxc
         RUNTIME_DEPENDENCIES
-            PRE_INCLUDE_REGEXES vulkan
+            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
+            PRE_INCLUDE_REGEXES cublas cublasLt cudart nvrtc cudnn nccl
             PRE_EXCLUDE_REGEXES ".*"
-        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
-        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+        FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     )
+
+    # Manually install cudart and cublas since they might not be picked up as direct dependencies
+    if(CUDAToolkit_FOUND)
+        file(GLOB CUDART_LIBS
+            "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*")
+        if(CUDART_LIBS)
+            install(FILES ${CUDART_LIBS}
+                DESTINATION ${OLLAMA_INSTALL_DIR}
+                COMPONENT MLX)
+        endif()
+    endif()
 endif()
