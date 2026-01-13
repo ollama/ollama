@@ -190,7 +190,7 @@ if(MLX_ENGINE)
     install(TARGETS mlx mlxc
         RUNTIME_DEPENDENCIES
             DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
-            PRE_INCLUDE_REGEXES cublas cublasLt cudart nvrtc cudnn nccl
+            PRE_INCLUDE_REGEXES cublas cublasLt cudart nvrtc nvrtc-builtins cudnn nccl openblas gfortran
             PRE_EXCLUDE_REGEXES ".*"
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
