@@ -28,12 +28,12 @@ type Qwen3Config struct {
 
 // Qwen3Attention implements Qwen3 attention with QK norms
 type Qwen3Attention struct {
-	QProj *nn.Linear  `weight:"q_proj"`
-	KProj *nn.Linear  `weight:"k_proj"`
-	VProj *nn.Linear  `weight:"v_proj"`
-	OProj *nn.Linear  `weight:"o_proj"`
-	QNorm *nn.RMSNorm `weight:"q_norm"`
-	KNorm *nn.RMSNorm `weight:"k_norm"`
+	QProj nn.LinearLayer `weight:"q_proj"`
+	KProj nn.LinearLayer `weight:"k_proj"`
+	VProj nn.LinearLayer `weight:"v_proj"`
+	OProj nn.LinearLayer `weight:"o_proj"`
+	QNorm *nn.RMSNorm    `weight:"q_norm"`
+	KNorm *nn.RMSNorm    `weight:"k_norm"`
 	// Computed fields
 	NHeads    int32
 	NKVHeads  int32
@@ -136,9 +136,9 @@ func repeatKV(x *mlx.Array, repeats int32) *mlx.Array {
 
 // Qwen3MLP implements Qwen3 SwiGLU MLP
 type Qwen3MLP struct {
-	GateProj *nn.Linear `weight:"gate_proj"`
-	UpProj   *nn.Linear `weight:"up_proj"`
-	DownProj *nn.Linear `weight:"down_proj"`
+	GateProj nn.LinearLayer `weight:"gate_proj"`
+	UpProj   nn.LinearLayer `weight:"up_proj"`
+	DownProj nn.LinearLayer `weight:"down_proj"`
 }
 
 // Forward applies the MLP

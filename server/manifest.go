@@ -47,13 +47,37 @@ func (m *Manifest) Remove() error {
 }
 
 func (m *Manifest) RemoveLayers() error {
-	for _, layer := range append(m.Layers, m.Config) {
-		if layer.Digest != "" {
-			if err := layer.Remove(); errors.Is(err, os.ErrNotExist) {
-				slog.Debug("layer does not exist", "digest", layer.Digest)
-			} else if err != nil {
-				return err
+	ms, err := Manifests(true)
+	if err != nil {
+		return err
+	}
+
+	// Build set of digests still in use by other manifests
+	inUse := make(map[string]struct{})
+	for _, other := range ms {
+		for _, layer := range append(other.Layers, other.Config) {
+			if layer.Digest != "" {
+				inUse[layer.Digest] = struct{}{}
 			}
+		}
+	}
+
+	// Remove layers not used by any other manifest
+	for _, layer := range append(m.Layers, m.Config) {
+		if layer.Digest == "" {
+			continue
+		}
+		if _, used := inUse[layer.Digest]; used {
+			continue
+		}
+		blob, err := GetBlobsPath(layer.Digest)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(blob); errors.Is(err, os.ErrNotExist) {
+			slog.Debug("layer does not exist", "digest", layer.Digest)
+		} else if err != nil {
+			return err
 		}
 	}
 

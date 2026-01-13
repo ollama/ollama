@@ -607,6 +607,11 @@ func (a *Array) Valid() bool {
 	return a != nil && a.c.ctx != nil
 }
 
+// Kept returns true if the array is marked to survive Eval() cleanup.
+func (a *Array) Kept() bool {
+	return a != nil && a.kept
+}
+
 func int32ToCInt(s []int32) *C.int {
 	if len(s) == 0 {
 		return nil
@@ -1480,6 +1485,44 @@ func (a *Array) ItemInt32() int32 {
 	return int32(val)
 }
 
+// Bytes copies the raw bytes out of the array without type conversion.
+// Works with common dtypes (float32, int32, uint32, uint8).
+// For non-contiguous arrays, call Contiguous() first.
+// Note: Triggers cleanup of non-kept arrays.
+func (a *Array) Bytes() []byte {
+	cleanup()
+	nbytes := a.Nbytes()
+	if nbytes == 0 {
+		return nil
+	}
+
+	// Get raw pointer based on dtype
+	var ptr unsafe.Pointer
+	switch a.Dtype() {
+	case DtypeFloat32:
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(a.c))
+	case DtypeInt32:
+		ptr = unsafe.Pointer(C.mlx_array_data_int32(a.c))
+	case DtypeUint32:
+		ptr = unsafe.Pointer(C.mlx_array_data_uint32(a.c))
+	case DtypeUint8:
+		ptr = unsafe.Pointer(C.mlx_array_data_uint8(a.c))
+	default:
+		// For other types (bf16, f16, etc), convert to float32
+		arr := AsType(a, DtypeFloat32)
+		arr.Eval()
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(arr.c))
+		nbytes = arr.Nbytes()
+	}
+
+	if ptr == nil {
+		return nil
+	}
+	data := make([]byte, nbytes)
+	copy(data, unsafe.Slice((*byte)(ptr), nbytes))
+	return data
+}
+
 // ============ Utility ============
 
 // String returns a string representation
@@ -1656,6 +1699,34 @@ func (s *SafetensorsFile) Count() int {
 func (s *SafetensorsFile) Free() {
 	C.mlx_map_string_to_array_free(s.arrays)
 	C.mlx_map_string_to_string_free(s.metadata)
+}
+
+// SaveSafetensors saves arrays to a safetensors file using MLX's native implementation.
+// This correctly handles all dtypes including uint32 for quantized weights.
+func SaveSafetensors(path string, arrays map[string]*Array) error {
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+
+	// Create the map
+	cArrays := C.mlx_map_string_to_array_new()
+	defer C.mlx_map_string_to_array_free(cArrays)
+
+	// Add each array to the map
+	for name, arr := range arrays {
+		cName := C.CString(name)
+		C.mlx_map_string_to_array_insert(cArrays, cName, arr.c)
+		C.free(unsafe.Pointer(cName))
+	}
+
+	// Create empty metadata (optional)
+	cMeta := C.mlx_map_string_to_string_new()
+	defer C.mlx_map_string_to_string_free(cMeta)
+
+	// Save
+	if C.mlx_save_safetensors(cPath, cArrays, cMeta) != 0 {
+		return fmt.Errorf("failed to save safetensors: %s", path)
+	}
+	return nil
 }
 
 // ============ NPY Loading ============
@@ -1986,7 +2057,8 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 // Returns (quantized_weights, scales, biases).
 // groupSize: number of elements quantized together (default 64)
 // bits: bits per element, 2, 4, or 8 (default 4)
-// mode: "affine" (default) or "mxfp4"
+// mode: "affine" (default), "mxfp4", or "mxfp8"
+// Note: mxfp8 mode returns nil biases (only weights and scales)
 func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
@@ -1995,14 +2067,21 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	res := C.mlx_vector_array_new()
 	C.mlx_quantize(&res, w.c, optGroupSize, optBits, cMode, C.default_stream())
 
-	// Result is a vector of 3 arrays: [weights, scales, biases]
+	// Result is a vector of arrays: [weights, scales, biases?]
+	// mxfp8 mode returns only 2 elements (no biases)
+	vecSize := int(C.mlx_vector_array_size(res))
 	var w0, w1, w2 C.mlx_array
 	C.mlx_vector_array_get(&w0, res, 0)
 	C.mlx_vector_array_get(&w1, res, 1)
-	C.mlx_vector_array_get(&w2, res, 2)
+	if vecSize >= 3 {
+		C.mlx_vector_array_get(&w2, res, 2)
+	}
 	C.mlx_vector_array_free(res)
 
-	return newArray(w0), newArray(w1), newArray(w2)
+	if vecSize >= 3 {
+		return newArray(w0), newArray(w1), newArray(w2)
+	}
+	return newArray(w0), newArray(w1), nil
 }
 
 // Dequantize reconstructs weights from quantized form.

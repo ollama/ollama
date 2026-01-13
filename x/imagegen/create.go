@@ -40,10 +40,12 @@ type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo)
 
 // CreateModel imports an image generation model from a directory.
 // Stores each tensor as a separate blob for fine-grained deduplication.
+// If quantize is "fp8", linear weights in transformer/text_encoder are quantized to mxfp8 format.
 // Layer creation and manifest writing are done via callbacks to avoid import cycles.
-func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTensorLayer TensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
+func CreateModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
 	var layers []LayerInfo
 	var configLayer LayerInfo
+	var totalParams int64 // Count parameters from original tensor shapes
 
 	// Components to process - extract individual tensors from each
 	components := []string{"text_encoder", "transformer", "vae"}
@@ -74,7 +76,11 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 			}
 
 			tensorNames := extractor.ListTensors()
-			fn(fmt.Sprintf("importing %s/%s (%d tensors)", component, entry.Name(), len(tensorNames)))
+			quantizeMsg := ""
+			if quantize == "fp8" && component != "vae" {
+				quantizeMsg = ", quantizing to fp8"
+			}
+			fn(fmt.Sprintf("importing %s/%s (%d tensors%s)", component, entry.Name(), len(tensorNames), quantizeMsg))
 
 			for _, tensorName := range tensorNames {
 				td, err := extractor.GetTensor(tensorName)
@@ -83,16 +89,30 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 					return fmt.Errorf("failed to get tensor %s: %w", tensorName, err)
 				}
 
+				// Count parameters from original tensor shape
+				if len(td.Shape) > 0 {
+					numElements := int64(1)
+					for _, dim := range td.Shape {
+						numElements *= int64(dim)
+					}
+					totalParams += numElements
+				}
+
 				// Store as minimal safetensors format (88 bytes header overhead)
 				// This enables native mmap loading via mlx_load_safetensors
 				// Use path-style name: "component/tensor_name"
 				fullName := component + "/" + tensorName
-				layer, err := createTensorLayer(td.SafetensorsReader(), fullName, td.Dtype, td.Shape)
+
+				// Determine if this tensor should be quantized
+				doQuantize := quantize == "fp8" && ShouldQuantize(tensorName, component)
+
+				// createTensorLayer returns multiple layers if quantizing (weight + scales)
+				newLayers, err := createTensorLayer(td.SafetensorsReader(), fullName, td.Dtype, td.Shape, doQuantize)
 				if err != nil {
 					extractor.Close()
 					return fmt.Errorf("failed to create layer for %s: %w", fullName, err)
 				}
-				layers = append(layers, layer)
+				layers = append(layers, newLayers...)
 			}
 
 			extractor.Close()
@@ -122,7 +142,7 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 
 		var r io.Reader
 
-		// For model_index.json, normalize to Ollama format
+		// For model_index.json, normalize to Ollama format and add metadata
 		if cfgPath == "model_index.json" {
 			data, err := os.ReadFile(fullPath)
 			if err != nil {
@@ -140,6 +160,16 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 				delete(cfg, "_class_name")
 			}
 			delete(cfg, "_diffusers_version")
+
+			// Add parameter count (counted from tensor shapes during import)
+			cfg["parameter_count"] = totalParams
+
+			// Add quantization info
+			if quantize == "fp8" {
+				cfg["quantization"] = "FP8"
+			} else {
+				cfg["quantization"] = "BF16"
+			}
 
 			data, err = json.MarshalIndent(cfg, "", "    ")
 			if err != nil {

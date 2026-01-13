@@ -60,9 +60,12 @@ func ArrayToImage(arr *mlx.Array) (*image.RGBA, error) {
 	}
 
 	// Transform to [H, W, C] for image conversion
-	img := mlx.Squeeze(arr, 0)
-	img = mlx.Transpose(img, 1, 2, 0)
-	img = mlx.Contiguous(img)
+	// Free intermediate arrays to avoid memory leak
+	squeezed := mlx.Squeeze(arr, 0)
+	transposed := mlx.Transpose(squeezed, 1, 2, 0)
+	squeezed.Free()
+	img := mlx.Contiguous(transposed)
+	transposed.Free()
 	mlx.Eval(img)
 
 	imgShape := img.Shape()

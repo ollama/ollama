@@ -41,6 +41,7 @@ var optionLabels = []string{
 var toolDisplayNames = map[string]string{
 	"bash":       "Bash",
 	"web_search": "Web Search",
+	"web_fetch":  "Web Fetch",
 }
 
 // ToolDisplayName returns the human-readable display name for a tool.
@@ -565,6 +566,16 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 		}
 	}
 
+	// For web fetch, show URL and internet notice
+	if toolName == "web_fetch" {
+		if url, ok := args["url"].(string); ok {
+			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
+			sb.WriteString(fmt.Sprintf("URL: %s\n", url))
+			sb.WriteString("Uses internet via ollama.com")
+			return sb.String()
+		}
+	}
+
 	// Generic display
 	sb.WriteString(fmt.Sprintf("Tool: %s", displayName))
 	if len(args) > 0 {
@@ -1014,6 +1025,16 @@ func FormatApprovalResult(toolName string, args map[string]any, result ApprovalR
 				query = query[:37] + "..."
 			}
 			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, query)
+		}
+	}
+
+	if toolName == "web_fetch" {
+		if url, ok := args["url"].(string); ok {
+			// Truncate long URLs
+			if len(url) > 50 {
+				url = url[:47] + "..."
+			}
+			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, url)
 		}
 	}
 

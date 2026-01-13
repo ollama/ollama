@@ -29,9 +29,10 @@ const MinOllamaVersion = "0.14.0"
 
 // CreateModel imports a tensor-based model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
+// If quantize is "fp8", weights will be quantized to mxfp8 format during import.
 //
 // TODO (jmorganca): Replace with API-based creation when promoted to production.
-func CreateModel(modelName, modelDir string, p *progress.Progress) error {
+func CreateModel(modelName, modelDir, quantize string, p *progress.Progress) error {
 	if !imagegen.IsTensorModelDir(modelDir) {
 		return fmt.Errorf("%s is not an image generation model directory (model_index.json not found)", modelDir)
 	}
@@ -58,18 +59,77 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 
 	// Create tensor layer callback for individual tensors
 	// name is path-style: "component/tensor_name"
-	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32) (imagegen.LayerInfo, error) {
+	// When quantize is true, returns multiple layers (weight + scales)
+	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, doQuantize bool) ([]imagegen.LayerInfo, error) {
+		if doQuantize {
+			// Check if quantization is supported
+			if !QuantizeSupported() {
+				return nil, fmt.Errorf("quantization requires MLX support")
+			}
+
+			// Quantize the tensor (affine mode returns weight, scales, qbiases)
+			qweightData, scalesData, qbiasData, _, _, _, err := quantizeTensor(r, name, dtype, shape)
+			if err != nil {
+				return nil, fmt.Errorf("failed to quantize %s: %w", name, err)
+			}
+
+			// Create layer for quantized weight
+			weightLayer, err := server.NewLayer(bytes.NewReader(qweightData), server.MediaTypeImageTensor)
+			if err != nil {
+				return nil, err
+			}
+
+			// Create layer for scales (use _scale suffix convention)
+			scalesLayer, err := server.NewLayer(bytes.NewReader(scalesData), server.MediaTypeImageTensor)
+			if err != nil {
+				return nil, err
+			}
+
+			layers := []imagegen.LayerInfo{
+				{
+					Digest:    weightLayer.Digest,
+					Size:      weightLayer.Size,
+					MediaType: weightLayer.MediaType,
+					Name:      name, // Keep original name for weight
+				},
+				{
+					Digest:    scalesLayer.Digest,
+					Size:      scalesLayer.Size,
+					MediaType: scalesLayer.MediaType,
+					Name:      name + "_scale", // Add _scale suffix
+				},
+			}
+
+			// Add qbiases layer if present (affine mode)
+			if qbiasData != nil {
+				qbiasLayer, err := server.NewLayer(bytes.NewReader(qbiasData), server.MediaTypeImageTensor)
+				if err != nil {
+					return nil, err
+				}
+				layers = append(layers, imagegen.LayerInfo{
+					Digest:    qbiasLayer.Digest,
+					Size:      qbiasLayer.Size,
+					MediaType: qbiasLayer.MediaType,
+					Name:      name + "_qbias", // Add _qbias suffix
+				})
+			}
+
+			return layers, nil
+		}
+
+		// Non-quantized path: just create a single layer
 		layer, err := server.NewLayer(r, server.MediaTypeImageTensor)
 		if err != nil {
-			return imagegen.LayerInfo{}, err
+			return nil, err
 		}
-		layer.Name = name
 
-		return imagegen.LayerInfo{
-			Digest:    layer.Digest,
-			Size:      layer.Size,
-			MediaType: layer.MediaType,
-			Name:      name,
+		return []imagegen.LayerInfo{
+			{
+				Digest:    layer.Digest,
+				Size:      layer.Size,
+				MediaType: layer.MediaType,
+				Name:      name,
+			},
 		}, nil
 	}
 
@@ -119,7 +179,7 @@ func CreateModel(modelName, modelDir string, p *progress.Progress) error {
 		p.Add("imagegen", spinner)
 	}
 
-	err := imagegen.CreateModel(modelName, modelDir, createLayer, createTensorLayer, writeManifest, progressFn)
+	err := imagegen.CreateModel(modelName, modelDir, quantize, createLayer, createTensorLayer, writeManifest, progressFn)
 	spinner.Stop()
 	if err != nil {
 		return err

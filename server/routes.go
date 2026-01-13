@@ -1124,6 +1124,15 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		QuantizationLevel: m.Config.FileType,
 	}
 
+	// For image generation models, populate details from imagegen package
+	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
+			modelDetails.Family = info.Architecture
+			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
+			modelDetails.QuantizationLevel = info.Quantization
+		}
+	}
+
 	if req.System != "" {
 		m.System = req.System
 	}
@@ -1203,6 +1212,10 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// skip loading tensor information if this is a remote model
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		return resp, nil
+	}
+
+	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
 		return resp, nil
 	}
 
@@ -2059,8 +2072,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
-			return
+			// Set think to nil when being used with Anthropic API to connect to tools like claude code
+			if _, ok := c.Get("relax_thinking"); ok {
+				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
+				req.Think = nil
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+				return
+			}
 		}
 	}
 

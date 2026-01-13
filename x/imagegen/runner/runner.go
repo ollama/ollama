@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -34,7 +33,8 @@ type Request struct {
 
 // Response is streamed back for each progress update
 type Response struct {
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
+	Image   string `json:"image,omitempty"` // Base64-encoded PNG
 	Done    bool   `json:"done"`
 }
 
@@ -191,10 +191,10 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save image
-	outPath := filepath.Join(os.TempDir(), fmt.Sprintf("ollama-image-%d.png", time.Now().UnixNano()))
-	if err := imagegen.SaveImage(img, outPath); err != nil {
-		resp := Response{Content: fmt.Sprintf("error saving: %v", err), Done: true}
+	// Encode image as base64 PNG
+	imageData, err := imagegen.EncodeImageBase64(img)
+	if err != nil {
+		resp := Response{Content: fmt.Sprintf("error encoding: %v", err), Done: true}
 		data, _ := json.Marshal(resp)
 		w.Write(data)
 		w.Write([]byte("\n"))
@@ -204,11 +204,12 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	// Free the generated image array and clean up MLX state
 	img.Free()
 	mlx.ClearCache()
+	mlx.MetalResetPeakMemory()
 
-	// Send final response
+	// Send final response with image data
 	resp := Response{
-		Content: fmt.Sprintf("\n\nImage saved to: %s\n", outPath),
-		Done:    true,
+		Image: imageData,
+		Done:  true,
 	}
 	data, _ := json.Marshal(resp)
 	w.Write(data)
