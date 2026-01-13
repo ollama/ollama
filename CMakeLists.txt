@@ -48,9 +48,10 @@ if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
     set(GGML_CPU_ALL_VARIANTS ON)
 endif()
 
-if (CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+if(APPLE)
     set(CMAKE_BUILD_RPATH "@loader_path")
     set(CMAKE_INSTALL_RPATH "@loader_path")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 endif()
 
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
@@ -195,6 +196,14 @@ if(MLX_ENGINE)
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     )
+
+    # Install the Metal library for macOS arm64 (must be colocated with the binary)
+    # Metal backend is only built for arm64, not x86_64
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+        install(FILES ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/backend/metal/kernels/mlx.metallib
+            DESTINATION ${OLLAMA_INSTALL_DIR}
+            COMPONENT MLX)
+    endif()
 
     # Manually install cudart and cublas since they might not be picked up as direct dependencies
     if(CUDAToolkit_FOUND)
