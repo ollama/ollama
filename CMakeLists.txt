@@ -199,7 +199,7 @@ if(MLX_ENGINE)
 
     # Install the Metal library for macOS arm64 (must be colocated with the binary)
     # Metal backend is only built for arm64, not x86_64
-    if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
         install(FILES ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/backend/metal/kernels/mlx.metallib
             DESTINATION ${OLLAMA_INSTALL_DIR}
             COMPONENT MLX)
