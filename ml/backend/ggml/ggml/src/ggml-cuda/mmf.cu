@@ -2,6 +2,16 @@
 #include "mmf.cuh"
 #include "mmid.cuh"
 
+#if defined(GGML_USE_HIP)
+bool ggml_cuda_should_use_mmf(enum ggml_type, int, int, const int64_t *, const size_t *, const int, bool) {
+    return false;
+}
+
+void ggml_cuda_mul_mat_f(ggml_backend_cuda_context &, const ggml_tensor *, const ggml_tensor *, const ggml_tensor *, ggml_tensor *) {
+    GGML_ABORT("ggml_cuda_mul_mat_f is disabled for HIP");
+}
+#else
+
 
 void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
     GGML_ASSERT(        src1->type == GGML_TYPE_F32);
@@ -169,3 +179,4 @@ bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const 
             return false;
     }
 }
+#endif

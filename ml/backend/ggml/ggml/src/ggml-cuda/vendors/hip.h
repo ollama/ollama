@@ -73,6 +73,7 @@ __host__ __device__ inline typename std::common_type<A, B>::type ggml_hip_int_mi
     return aa < bb ? aa : bb;
 }
 
+#if !defined(__clang__)
 __host__ __device__ inline float max(float a, float b) {
     return ggml_hip_max_f32(a, b);
 }
@@ -80,6 +81,7 @@ __host__ __device__ inline float max(float a, float b) {
 __host__ __device__ inline double max(double a, double b) {
     return ggml_hip_max_f64(a, b);
 }
+#endif
 
 template <typename A, typename B,
           typename std::enable_if<std::is_integral<A>::value && std::is_integral<B>::value, int>::type = 0>
@@ -87,6 +89,7 @@ __host__ __device__ inline typename std::common_type<A, B>::type max(A a, B b) {
     return ggml_hip_int_max(a, b);
 }
 
+#if !defined(__clang__)
 __host__ __device__ inline float min(float a, float b) {
     return ggml_hip_min_f32(a, b);
 }
@@ -94,6 +97,7 @@ __host__ __device__ inline float min(float a, float b) {
 __host__ __device__ inline double min(double a, double b) {
     return ggml_hip_min_f64(a, b);
 }
+#endif
 
 template <typename A, typename B,
           typename std::enable_if<std::is_integral<A>::value && std::is_integral<B>::value, int>::type = 0>
@@ -278,8 +282,6 @@ static __host__ __device__ inline double ggml_hip_round_scalar(double x) {
     return round(x);
 #endif
 }
-#undef round
-#define round(x) ggml_hip_round_scalar((x))
 
 static __host__ __device__ inline float ggml_hip_sqrtf(float x) {
 #if defined(__HIP_DEVICE_COMPILE__)
