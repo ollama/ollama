@@ -123,11 +123,6 @@ func RegisterFlags(cmd *cobra.Command) {
 // Returns true if it handled the request, false if the caller should continue with normal flow.
 // Supports flags: --width, --height, --steps, --seed, --negative
 func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, keepAlive *api.Duration) error {
-	// Verify it's a valid image gen model
-	if ResolveModelName(name) == "" {
-		return fmt.Errorf("unknown image generation model: %s", name)
-	}
-
 	// Get options from flags (with env var defaults)
 	opts := DefaultOptions()
 	if cmd != nil && cmd.Flags() != nil {
@@ -511,10 +506,7 @@ func displayImageInTerminal(imagePath string) bool {
 		// Send in chunks for large images
 		const chunkSize = 4096
 		for i := 0; i < len(encoded); i += chunkSize {
-			end := i + chunkSize
-			if end > len(encoded) {
-				end = len(encoded)
-			}
+			end := min(i+chunkSize, len(encoded))
 			chunk := encoded[i:end]
 
 			if i == 0 {
