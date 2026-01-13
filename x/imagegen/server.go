@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,6 +85,36 @@ func NewServer(modelName string) (*Server, error) {
 	// Spawn subprocess: ollama-mlx runner --image-engine --model <path> --port <port>
 	cmd := exec.Command(mlxExe, "runner", "--image-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
+
+	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
+	if runtime.GOOS == "linux" {
+		// Build library paths: start with LibOllamaPath, then add any mlx_* subdirectories
+		libraryPaths := []string{ml.LibOllamaPath}
+		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
+			libraryPaths = append(libraryPaths, mlxDirs...)
+		}
+
+		// Append existing LD_LIBRARY_PATH if set
+		if existingPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
+		}
+
+		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+		// Update or add LD_LIBRARY_PATH in cmd.Env
+		found := false
+		for i := range cmd.Env {
+			if strings.HasPrefix(cmd.Env[i], "LD_LIBRARY_PATH=") {
+				cmd.Env[i] = "LD_LIBRARY_PATH=" + pathEnvVal
+				found = true
+				break
+			}
+		}
+		if !found {
+			cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+pathEnvVal)
+		}
+		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
+	}
 
 	s := &Server{
 		cmd:       cmd,
