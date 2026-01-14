@@ -179,7 +179,7 @@ _build_macapp() {
     fi
 
     rm -f dist/Ollama-darwin.zip
-    ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
+    ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
     (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama ollama-mlx *.so *.dylib *.metallib 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
@@ -187,7 +187,7 @@ _build_macapp() {
         $(xcrun -f notarytool) submit dist/Ollama-darwin.zip --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
         rm -f dist/Ollama-darwin.zip
         $(xcrun -f stapler) staple dist/Ollama.app
-        ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
+        ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
 
         rm -f dist/Ollama.dmg
 
