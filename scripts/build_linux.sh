@@ -48,53 +48,12 @@ if echo $PLATFORM | grep "amd64" > /dev/null; then
         .
 fi
 
-# Deduplicate CUDA libraries across mlx_* and cuda_* directories
-deduplicate_cuda_libs() {
-    local base_dir="$1"
-    echo "Deduplicating CUDA libraries in ${base_dir}..."
-
-    # Find all mlx_cuda_* directories
-    for mlx_dir in "${base_dir}"/lib/ollama/mlx_cuda_*; do
-        [ -d "${mlx_dir}" ] || continue
-
-        # Extract CUDA version (e.g., v12, v13)
-        cuda_version=$(basename "${mlx_dir}" | sed 's/mlx_cuda_//')
-        cuda_dir="${base_dir}/lib/ollama/cuda_${cuda_version}"
-
-        # Skip if corresponding cuda_* directory doesn't exist
-        [ -d "${cuda_dir}" ] || continue
-
-        echo "  Checking ${mlx_dir} against ${cuda_dir}..."
-
-        # Find all .so* files in mlx directory
-        find "${mlx_dir}" -type f -name "*.so*" | while read mlx_file; do
-            filename=$(basename "${mlx_file}")
-            cuda_file="${cuda_dir}/${filename}"
-
-            # Skip if file doesn't exist in cuda directory
-            [ -f "${cuda_file}" ] || continue
-
-            # Compare checksums
-            mlx_sum=$(sha256sum "${mlx_file}" | awk '{print $1}')
-            cuda_sum=$(sha256sum "${cuda_file}" | awk '{print $1}')
-
-            if [ "${mlx_sum}" = "${cuda_sum}" ]; then
-                echo "    Deduplicating ${filename}"
-                # Calculate relative path from mlx_dir to cuda_dir
-                rel_path="../cuda_${cuda_version}/${filename}"
-                rm -f "${mlx_file}"
-                ln -s "${rel_path}" "${mlx_file}"
-            fi
-        done
-    done
-}
-
 # Run deduplication for each platform output directory
 if echo $PLATFORM | grep "," > /dev/null ; then
-    deduplicate_cuda_libs "./dist/linux_amd64"
-    deduplicate_cuda_libs "./dist/linux_arm64"
+    $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_amd64"
+    $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_arm64"
 elif echo $PLATFORM | grep "amd64\|arm64" > /dev/null ; then
-    deduplicate_cuda_libs "./dist"
+    $(dirname $0)/deduplicate_cuda_libs.sh "./dist"
 fi
 
 # buildx behavior changes for single vs. multiplatform

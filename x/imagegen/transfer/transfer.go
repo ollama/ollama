@@ -110,8 +110,6 @@ var defaultClient = &http.Client{
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 	},
-	Timeout: 5 * time.Minute,
-	// Don't follow redirects automatically - we handle them manually
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	},

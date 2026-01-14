@@ -54,6 +54,16 @@ func (r *Registry) RegisterBash() {
 	r.Register(&BashTool{})
 }
 
+// RegisterWebSearch adds the web search tool to the registry.
+func (r *Registry) RegisterWebSearch() {
+	r.Register(&WebSearchTool{})
+}
+
+// RegisterWebFetch adds the web fetch tool to the registry.
+func (r *Registry) RegisterWebFetch() {
+	r.Register(&WebFetchTool{})
+}
+
 // Get retrieves a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	tool, ok := r.tools[name]

@@ -45,24 +45,33 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		return nil
 	}
 
-	// Filter existing
-	var blobs []Blob
+	// Calculate total from all blobs (for accurate progress reporting on resume)
 	var total int64
+	for _, b := range opts.Blobs {
+		total += b.Size
+	}
+
+	// Filter out already-downloaded blobs and track completed bytes
+	var blobs []Blob
+	var alreadyCompleted int64
 	for _, b := range opts.Blobs {
 		if fi, _ := os.Stat(filepath.Join(opts.DestDir, digestToPath(b.Digest))); fi != nil && fi.Size() == b.Size {
 			if opts.Logger != nil {
 				opts.Logger.Debug("blob already exists", "digest", b.Digest, "size", b.Size)
 			}
+			alreadyCompleted += b.Size
 			continue
 		}
 		blobs = append(blobs, b)
-		total += b.Size
 	}
 	if len(blobs) == 0 {
 		return nil
 	}
 
 	token := opts.Token
+	progress := newProgressTracker(total, opts.Progress)
+	progress.add(alreadyCompleted) // Report already-downloaded bytes upfront
+
 	d := &downloader{
 		client:       cmp.Or(opts.Client, defaultClient),
 		baseURL:      opts.BaseURL,
@@ -72,7 +81,7 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		getToken:     opts.GetToken,
 		userAgent:    cmp.Or(opts.UserAgent, defaultUserAgent),
 		stallTimeout: cmp.Or(opts.StallTimeout, defaultStallTimeout),
-		progress:     newProgressTracker(total, opts.Progress),
+		progress:     progress,
 		speeds:       &speedTracker{},
 		logger:       opts.Logger,
 	}

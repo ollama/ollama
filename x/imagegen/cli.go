@@ -44,62 +44,64 @@ func DefaultOptions() ImageGenOptions {
 	}
 }
 
-// Show displays information about an image generation model.
-func Show(modelName string, w io.Writer) error {
-	manifest, err := LoadManifest(modelName)
-	if err != nil {
-		return fmt.Errorf("failed to load manifest: %w", err)
-	}
-
-	// Count total size
-	var totalSize int64
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.tensor" {
-			totalSize += layer.Size
-		}
-	}
-
-	// Read model_index.json for architecture
-	var architecture string
-	if data, err := manifest.ReadConfig("model_index.json"); err == nil {
-		var index struct {
-			Architecture string `json:"architecture"`
-		}
-		if json.Unmarshal(data, &index) == nil {
-			architecture = index.Architecture
-		}
-	}
-
-	// Estimate parameter count from total size (assuming BF16 = 2 bytes per param)
-	paramCount := totalSize / 2
-	paramStr := formatParamCount(paramCount)
-
-	// Print Model info
-	fmt.Fprintln(w, "  Model")
-	if architecture != "" {
-		fmt.Fprintf(w, "    %-20s %s\n", "architecture", architecture)
-	}
-	fmt.Fprintf(w, "    %-20s %s\n", "parameters", paramStr)
-	fmt.Fprintf(w, "    %-20s %s\n", "quantization", "BF16")
-	fmt.Fprintln(w)
-
-	// Print Capabilities
-	fmt.Fprintln(w, "  Capabilities")
-	fmt.Fprintf(w, "    %s\n", "image")
-	fmt.Fprintln(w)
-
-	return nil
+// ModelInfo contains metadata about an image generation model.
+type ModelInfo struct {
+	Architecture   string
+	ParameterCount int64
+	Quantization   string
 }
 
-// formatParamCount formats parameter count as human-readable string.
-func formatParamCount(count int64) string {
-	if count >= 1_000_000_000 {
-		return fmt.Sprintf("%.1fB", float64(count)/1_000_000_000)
+// GetModelInfo returns metadata about an image generation model.
+func GetModelInfo(modelName string) (*ModelInfo, error) {
+	manifest, err := LoadManifest(modelName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
-	if count >= 1_000_000 {
-		return fmt.Sprintf("%.1fM", float64(count)/1_000_000)
+
+	info := &ModelInfo{}
+
+	// Read model_index.json for architecture, parameter count, and quantization
+	if data, err := manifest.ReadConfig("model_index.json"); err == nil {
+		var index struct {
+			Architecture   string `json:"architecture"`
+			ParameterCount int64  `json:"parameter_count"`
+			Quantization   string `json:"quantization"`
+		}
+		if json.Unmarshal(data, &index) == nil {
+			info.Architecture = index.Architecture
+			info.ParameterCount = index.ParameterCount
+			info.Quantization = index.Quantization
+		}
 	}
-	return fmt.Sprintf("%d", count)
+
+	// Fallback: detect quantization from tensor names if not in config
+	if info.Quantization == "" {
+		for _, layer := range manifest.Manifest.Layers {
+			if strings.HasSuffix(layer.Name, ".weight_scale") {
+				info.Quantization = "FP8"
+				break
+			}
+		}
+		if info.Quantization == "" {
+			info.Quantization = "BF16"
+		}
+	}
+
+	// Fallback: estimate parameter count if not in config
+	if info.ParameterCount == 0 {
+		var totalSize int64
+		for _, layer := range manifest.Manifest.Layers {
+			if layer.MediaType == "application/vnd.ollama.image.tensor" {
+				if !strings.HasSuffix(layer.Name, "_scale") && !strings.HasSuffix(layer.Name, "_qbias") {
+					totalSize += layer.Size
+				}
+			}
+		}
+		// Assume BF16 (2 bytes/param) as rough estimate
+		info.ParameterCount = totalSize / 2
+	}
+
+	return info, nil
 }
 
 // RegisterFlags adds image generation flags to the given command.
@@ -121,11 +123,6 @@ func RegisterFlags(cmd *cobra.Command) {
 // Returns true if it handled the request, false if the caller should continue with normal flow.
 // Supports flags: --width, --height, --steps, --seed, --negative
 func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, keepAlive *api.Duration) error {
-	// Verify it's a valid image gen model
-	if ResolveModelName(name) == "" {
-		return fmt.Errorf("unknown image generation model: %s", name)
-	}
-
 	// Get options from flags (with env var defaults)
 	opts := DefaultOptions()
 	if cmd != nil && cmd.Flags() != nil {
@@ -183,8 +180,7 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 	p.Add("", spinner)
 
 	var stepBar *progress.StepBar
-	var imagePath string
-
+	var imageBase64 string
 	err = client.Generate(cmd.Context(), req, func(resp api.GenerateResponse) error {
 		content := resp.Response
 
@@ -203,11 +199,9 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 			return nil
 		}
 
-		// Handle final response with image path
-		if resp.Done && strings.Contains(content, "Image saved to:") {
-			if idx := strings.Index(content, "Image saved to: "); idx >= 0 {
-				imagePath = strings.TrimSpace(content[idx+16:])
-			}
+		// Handle final response with base64 image data
+		if resp.Done && strings.HasPrefix(content, "IMAGE_BASE64:") {
+			imageBase64 = content[13:]
 		}
 
 		return nil
@@ -218,9 +212,27 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		return err
 	}
 
-	if imagePath != "" {
-		displayImageInTerminal(imagePath)
-		fmt.Printf("Image saved to: %s\n", imagePath)
+	if imageBase64 != "" {
+		// Decode base64 and save to CWD
+		imageData, err := base64.StdEncoding.DecodeString(imageBase64)
+		if err != nil {
+			return fmt.Errorf("failed to decode image: %w", err)
+		}
+
+		// Create filename from prompt
+		safeName := sanitizeFilename(prompt)
+		if len(safeName) > 50 {
+			safeName = safeName[:50]
+		}
+		timestamp := time.Now().Format("20060102-150405")
+		filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
+
+		if err := os.WriteFile(filename, imageData, 0o644); err != nil {
+			return fmt.Errorf("failed to save image: %w", err)
+		}
+
+		displayImageInTerminal(filename)
+		fmt.Printf("Image saved to: %s\n", filename)
 	}
 
 	return nil
@@ -306,7 +318,7 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 		p.Add("", spinner)
 
 		var stepBar *progress.StepBar
-		var imagePath string
+		var imageBase64 string
 
 		err = client.Generate(cmd.Context(), req, func(resp api.GenerateResponse) error {
 			content := resp.Response
@@ -326,11 +338,9 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 				return nil
 			}
 
-			// Handle final response with image path
-			if resp.Done && strings.Contains(content, "Image saved to:") {
-				if idx := strings.Index(content, "Image saved to: "); idx >= 0 {
-					imagePath = strings.TrimSpace(content[idx+16:])
-				}
+			// Handle final response with base64 image data
+			if resp.Done && strings.HasPrefix(content, "IMAGE_BASE64:") {
+				imageBase64 = content[13:]
 			}
 
 			return nil
@@ -342,25 +352,30 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 			continue
 		}
 
-		// Copy image to current directory with descriptive name
-		if imagePath != "" {
+		// Save image to current directory with descriptive name
+		if imageBase64 != "" {
+			// Decode base64 image data
+			imageData, err := base64.StdEncoding.DecodeString(imageBase64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error decoding image: %v\n", err)
+				continue
+			}
+
 			// Create filename from prompt (sanitized)
 			safeName := sanitizeFilename(line)
 			if len(safeName) > 50 {
 				safeName = safeName[:50]
 			}
 			timestamp := time.Now().Format("20060102-150405")
-			newName := fmt.Sprintf("%s-%s.png", safeName, timestamp)
+			filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
 
-			// Copy file to CWD
-			if err := copyFile(imagePath, newName); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving to current directory: %v\n", err)
-				displayImageInTerminal(imagePath)
-				fmt.Printf("Image saved to: %s\n", imagePath)
-			} else {
-				displayImageInTerminal(newName)
-				fmt.Printf("Image saved to: %s\n", newName)
+			if err := os.WriteFile(filename, imageData, 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving image: %v\n", err)
+				continue
 			}
+
+			displayImageInTerminal(filename)
+			fmt.Printf("Image saved to: %s\n", filename)
 		}
 
 		fmt.Println()
@@ -379,24 +394,6 @@ func sanitizeFilename(s string) string {
 		}
 	}
 	return result.String()
-}
-
-// copyFile copies a file from src to dst.
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	_, err = io.Copy(destFile, sourceFile)
-	return err
 }
 
 // printInteractiveHelp prints help for interactive mode commands.
@@ -509,10 +506,7 @@ func displayImageInTerminal(imagePath string) bool {
 		// Send in chunks for large images
 		const chunkSize = 4096
 		for i := 0; i < len(encoded); i += chunkSize {
-			end := i + chunkSize
-			if end > len(encoded) {
-				end = len(encoded)
-			}
+			end := min(i+chunkSize, len(encoded))
 			chunk := encoded[i:end]
 
 			if i == 0 {
