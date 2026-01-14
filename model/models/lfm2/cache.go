@@ -294,4 +294,3 @@ func (c *HybridCache) IsSupportedForBatch() bool {
 func (c *HybridCache) Seqs() []int {
 	return slices.Clone(c.curSeqs)
 }
-
