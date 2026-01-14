@@ -1945,6 +1945,8 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		ConnectCmd(),
+		LaunchCmd(),
 	)
 
 	return rootCmd
