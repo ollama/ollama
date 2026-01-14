@@ -96,8 +96,6 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 
 	// Derive equal-length sequence layout for shortconv.
 	// LFM2 shortconv assumes tokens form a [seq_tokens, seqs] grid.
-	//
-	// Current implementation requires that each sequence contributes the same number of tokens.
 	seqCounts := make(map[int]int)
 	c.curSeqs = c.curSeqs[:0]
 	for _, s := range batch.Sequences {
@@ -116,8 +114,6 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 	want := nTokens / nSeqs
 	for _, s := range c.curSeqs {
 		if seqCounts[s] != want {
-			// Not equal; shortconv can't be applied safely with the current vectorized kernel.
-			// The caller can still use attention-only models.
 			return kvcache.ErrNotSupported
 		}
 	}
@@ -172,10 +168,8 @@ func (c *HybridCache) EnsureWritable(ctx ml.Context) {
 			continue
 		}
 
-		// allocate a new slot and copy conv state lazily (per layer) into it
 		newSlot, err := c.allocSlot()
 		if err != nil {
-			// can't allocate; keep sharing and risk incorrect state, but avoid panic
 			continue
 		}
 		c.refCount[slot]--
@@ -183,13 +177,10 @@ func (c *HybridCache) EnsureWritable(ctx ml.Context) {
 		c.slotForSeq[seq] = newSlot
 
 		// Copy existing conv state for all initialized layers
-		for layer, buf := range c.convStates {
+		for _, buf := range c.convStates {
 			// buf: [dConv*hiddenSize, maxSlots]
 			src := buf.Rows(ctx, ctx.Input().FromInts([]int32{int32(slot)}, 1))
 			ctx.Forward(buf.SetRows(ctx, src, ctx.Input().FromInts([]int32{int32(newSlot)}, 1)))
-
-			// ensure the map points to same buffer (no-op), but keeps layer var used
-			_ = layer
 		}
 	}
 

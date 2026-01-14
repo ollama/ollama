@@ -16,11 +16,9 @@ import (
 
 type Options struct {
 	hiddenSize int
-	headDim, ropeDim                 int
+	headDim, ropeDim int
 
-	eps,
-	ropeBase,
-	ropeScale float32
+	eps, ropeBase, ropeScale float32
 
 	ropeType              string
 	originalContextLength int
@@ -72,8 +70,8 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	// MoE layers are not implemented yet in the Go runtime.
 	if c.Uint("expert_count") > 0 {
+		// TODO: support mixtures of experts
 		return nil, model.ErrUnsupportedModel
 	}
 
@@ -116,22 +114,20 @@ func New(c fs.Config) (model.Model, error) {
 				"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
 			}
 		case "default":
-			// no-op: use default byte-level BPE pretokenizer
+			// no-op use the default bpe pretokenizer
 		default:
-			// llama-style BPE pretokenizer
+			// use a llama-style pretokenizer
 			pretokenizers = []string{
 				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
 			}
 		}
 		processor = model.NewBytePairEncoding(&vocabulary, pretokenizers...)
 	case "llama":
-		// LFM2 should not ship with a sentencepiece tokenizer; keep this explicit so failures are clear.
 		return nil, fmt.Errorf("unsupported tokenizer: llama")
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}
 
-	// detect incompatible library variants
 	if strings.HasPrefix(c.String("general.name"), "Qwen2-beta") {
 		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
 	}
@@ -151,7 +147,6 @@ func New(c fs.Config) (model.Model, error) {
 		},
 	}
 
-	// Determine per-layer types based on per-layer kv head count (0 => recurrent shortconv).
 	type headCounts interface {
 		HeadCount() []uint64
 		HeadCountKV() []uint64
@@ -170,7 +165,6 @@ func New(c fs.Config) (model.Model, error) {
 		m.numHeadsByLayer[i] = int(headCount[i])
 		m.numKVHeadsByLayer[i] = int(headCountKV[i])
 
-		// Pre-initialize the operator (interface) so populateFields loads the correct weights.
 		if m.numKVHeadsByLayer[i] == 0 {
 			m.Layers[i].Operator = &ShortConv{}
 		} else {
@@ -197,11 +191,6 @@ type Attention struct {
 	Output    *nn.Linear  `gguf:"attn_output,alt:attn_out"`
 }
 
-// Forward matches LFM2Attention (HF):
-// - q_proj/k_proj/v_proj
-// - per-head RMSNorm on q and k
-// - RoPE on q and k
-// - scaled dot-product attention with KV cache
 func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, layer int, opts *Options) ml.Tensor {
 	batchSize := hiddenStates.Dim(1)
 	headDim := opts.headDimValue()
@@ -234,8 +223,6 @@ type MLP struct {
 }
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-	// Match llama.cpp build_ffn(..., LLM_FFN_SILU, LLM_FFN_PAR):
-	// silu(gate(x)) * up(x)
 	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
@@ -253,8 +240,6 @@ func (l *Layer) Forward(ctx ml.Context, layer int, hiddenState, positions, outpu
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.Operator.Forward(ctx, hiddenState, positions, cache, layer, opts)
 
-	// In the final layer (outputs != nil), optimize by pruning to just the token positions
-	// we need logits for.
 	if outputs != nil {
 		hiddenState = hiddenState.Rows(ctx, outputs)
 		residual = residual.Rows(ctx, outputs)
