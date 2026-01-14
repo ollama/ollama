@@ -40,9 +40,9 @@ func TestCogitoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Paris",
-						},
+						}),
 					},
 				},
 			},
@@ -52,9 +52,9 @@ func TestCogitoParser(t *testing.T) {
 					Function: api.ToolFunction{
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -71,9 +71,9 @@ func TestCogitoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Paris",
-						},
+						}),
 					},
 				},
 			},
@@ -83,9 +83,9 @@ func TestCogitoParser(t *testing.T) {
 					Function: api.ToolFunction{
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -103,17 +103,17 @@ func TestCogitoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Paris",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Name: "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "London",
-						},
+						}),
 					},
 				},
 			},
@@ -123,9 +123,9 @@ func TestCogitoParser(t *testing.T) {
 					Function: api.ToolFunction{
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -140,11 +140,11 @@ func TestCogitoParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "process_data",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"items":  []any{"item1", "item2"},
 							"config": map[string]any{"enabled": true, "threshold": 0.95},
 							"count":  42.0,
-						},
+						}),
 					},
 				},
 			},
@@ -238,7 +238,7 @@ This is line 3</think>Final response here.`,
 				t.Errorf("thinking mismatch (-want +got):\n%s", diff)
 			}
 
-			if diff := cmp.Diff(tt.expectedToolCalls, toolCalls); diff != "" {
+			if diff := cmp.Diff(tt.expectedToolCalls, toolCalls, argsComparer); diff != "" {
 				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -277,9 +277,9 @@ func TestCogitoParser_Streaming(t *testing.T) {
 		{
 			Function: api.ToolCallFunction{
 				Name: "test_tool",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"arg": "value",
-				},
+				}),
 			},
 		},
 	}
@@ -292,7 +292,7 @@ func TestCogitoParser_Streaming(t *testing.T) {
 		t.Errorf("expected thinking %q, got %q", expectedThinking, finalThinking.String())
 	}
 
-	if diff := cmp.Diff(expectedToolCalls, finalToolCalls); diff != "" {
+	if diff := cmp.Diff(expectedToolCalls, finalToolCalls, argsComparer); diff != "" {
 		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -367,7 +367,7 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 				t.Errorf("expected thinking %q, got %q", tt.expectedThinking, finalThinking.String())
 			}
 
-			if diff := cmp.Diff(tt.expectedToolCalls, finalToolCalls); diff != "" {
+			if diff := cmp.Diff(tt.expectedToolCalls, finalToolCalls, argsComparer); diff != "" {
 				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -412,9 +412,9 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_weather",
-					Arguments: api.ToolCallFunctionArguments{
+					Arguments: testArgs(map[string]any{
 						"location": "Paris",
-					},
+					}),
 				},
 			},
 			expectError: false,
@@ -427,11 +427,11 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "process_data",
-					Arguments: api.ToolCallFunctionArguments{
+					Arguments: testArgs(map[string]any{
 						"items":  []any{"item1", "item2"},
 						"config": map[string]any{"enabled": true},
 						"count":  42.0,
-					},
+					}),
 				},
 			},
 			expectError: false,
@@ -444,7 +444,7 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      "no_args_tool",
-					Arguments: api.ToolCallFunctionArguments{},
+					Arguments: api.NewToolCallFunctionArguments(),
 				},
 			},
 			expectError: false,
@@ -493,9 +493,9 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_weather",
-					Arguments: api.ToolCallFunctionArguments{
+					Arguments: testArgs(map[string]any{
 						"location": "Paris",
-					},
+					}),
 				},
 			},
 			expectError: false,
@@ -511,10 +511,10 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_weather",
-					Arguments: api.ToolCallFunctionArguments{
+					Arguments: testArgs(map[string]any{
 						"location": "Paris",
 						"units":    "metric",
-					},
+					}),
 				},
 			},
 			expectError: false,
@@ -527,13 +527,13 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "complex_tool",
-					Arguments: api.ToolCallFunctionArguments{
+					Arguments: testArgs(map[string]any{
 						"nested": map[string]any{
 							"deep": map[string]any{
 								"value": 123.0,
 							},
 						},
-					},
+					}),
 				},
 			},
 			expectError: false,
@@ -557,7 +557,7 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if diff := cmp.Diff(tt.expected, result); diff != "" {
+			if diff := cmp.Diff(tt.expected, result, argsComparer); diff != "" {
 				t.Errorf("tool call mismatch (-want +got):\n%s", diff)
 			}
 		})

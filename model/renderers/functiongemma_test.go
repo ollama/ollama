@@ -51,9 +51,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -75,9 +75,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -107,9 +107,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -126,7 +126,7 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 					},
@@ -141,9 +141,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -161,7 +161,7 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 					},
@@ -176,9 +176,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -195,7 +195,7 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "add",
-								Arguments: api.ToolCallFunctionArguments{"a": float64(1), "b": float64(2)},
+								Arguments: testArgs(map[string]any{"a": float64(1), "b": float64(2)}),
 							},
 						},
 					},
@@ -210,10 +210,10 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Add numbers",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"a": {Type: api.PropertyType{"number"}},
 								"b": {Type: api.PropertyType{"number"}},
-							},
+							}),
 						},
 					},
 				},
@@ -239,10 +239,10 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"city"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city":    {Type: api.PropertyType{"string"}, Description: "City Name"},
 								"country": {Type: api.PropertyType{"string"}, Description: "Country Name"},
-							},
+							}),
 						},
 					},
 				},
@@ -263,9 +263,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -276,9 +276,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get current time",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"timezone": {Type: api.PropertyType{"string"}, Description: "Timezone"},
-							},
+							}),
 						},
 					},
 				},
@@ -296,13 +296,13 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_time",
-								Arguments: api.ToolCallFunctionArguments{"timezone": "UTC"},
+								Arguments: testArgs(map[string]any{"timezone": "UTC"}),
 							},
 						},
 					},
@@ -318,9 +318,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -331,9 +331,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get current time",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"timezone": {Type: api.PropertyType{"string"}, Description: "Timezone"},
-							},
+							}),
 						},
 					},
 				},
@@ -351,7 +351,7 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 					},
@@ -367,9 +367,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Get weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "City"},
-							},
+							}),
 						},
 					},
 				},
@@ -391,7 +391,7 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "",
 						Parameters: api.ToolFunctionParameters{
 							Type:       "object",
-							Properties: map[string]api.ToolProperty{},
+							Properties: testPropsMap(map[string]api.ToolProperty{}),
 						},
 					},
 				},
@@ -430,7 +430,7 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "set_flag",
-								Arguments: api.ToolCallFunctionArguments{"enabled": true},
+								Arguments: testArgs(map[string]any{"enabled": true}),
 							},
 						},
 					},
@@ -445,9 +445,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Set a flag",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"enabled": {Type: api.PropertyType{"boolean"}, Description: "Flag value"},
-							},
+							}),
 						},
 					},
 				},
@@ -468,11 +468,11 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"a", "b", "c"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"a": {Type: api.PropertyType{"string"}, Description: "A"},
 								"b": {Type: api.PropertyType{"string"}, Description: "B"},
 								"c": {Type: api.PropertyType{"string"}, Description: "C"},
-							},
+							}),
 						},
 					},
 				},
@@ -492,9 +492,9 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 						Description: "Test",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"items": {Type: api.PropertyType{"array"}, Description: "List of items"},
-							},
+							}),
 						},
 					},
 				},

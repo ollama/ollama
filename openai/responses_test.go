@@ -925,7 +925,7 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 					ID: "call_abc",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},
@@ -1800,7 +1800,7 @@ func TestResponsesStreamConverter_FunctionCallStatus(t *testing.T) {
 					ID: "call_abc",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},

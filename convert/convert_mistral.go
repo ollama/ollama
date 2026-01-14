@@ -60,7 +60,7 @@ type mistral3Model struct {
 	ProjectorHiddenAct      string `json:"projector_hidden_act"`
 }
 
-func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
+func (p *mistral3Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "mistral3"
 	kv["mistral3.vocab_size"] = p.TextModel.VocabSize

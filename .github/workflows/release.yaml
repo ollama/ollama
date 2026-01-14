@@ -68,6 +68,7 @@ jobs:
           name: bundles-darwin
           path: |
             dist/*.tgz
+            dist/*.tar.zst
             dist/*.zip
             dist/*.dmg
 
@@ -371,13 +372,17 @@ jobs:
           outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
           cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           cache-to: type=inline
+      - name: Deduplicate CUDA libraries
+        run: |
+          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
       - run: |
           for COMPONENT in bin/* lib/ollama/*; do
             case "$COMPONENT" in
-              bin/ollama)                echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
@@ -392,13 +397,13 @@ jobs:
           done
       - run: |
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz);
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
           done
       - uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
-            *.tgz
+            *.tar.zst
 
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
   docker-build-push:
@@ -531,7 +536,7 @@ jobs:
       - name: Upload release artifacts
         run: |
           pids=()
-          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.exe dist/*.dmg ; do
+          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg ; do
             echo "Uploading $payload"
             gh release upload ${GITHUB_REF_NAME} $payload --clobber &
             pids[$!]=$!

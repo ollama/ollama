@@ -82,9 +82,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -104,9 +104,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -125,9 +125,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -147,17 +147,17 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "London",
-								},
+								}),
 							},
 						},
 					},
@@ -214,9 +214,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -235,9 +235,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "process",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"data": "test",
-								},
+								}),
 							},
 						},
 					},
@@ -281,9 +281,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -305,9 +305,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -355,9 +355,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -379,9 +379,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -436,17 +436,17 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Tokyo",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "New York",
-								},
+								}),
 							},
 						},
 					},
@@ -489,12 +489,12 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -535,12 +535,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -578,9 +578,9 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -594,12 +594,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -638,9 +638,9 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -656,12 +656,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -701,9 +701,9 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Tokyo",
-								},
+								}),
 							},
 						},
 					},
@@ -724,12 +724,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -770,12 +770,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -787,12 +787,12 @@ Where:
 						Description: "Perform mathematical calculations",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"expression": {
 									Type:        api.PropertyType{"string"},
 									Description: "Mathematical expression to evaluate",
 								},
-							},
+							}),
 							Required: []string{"expression"},
 						},
 					},
@@ -834,17 +834,17 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "calculate",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"expression": "25 * 4",
-								},
+								}),
 							},
 						},
 					},
@@ -860,12 +860,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -877,12 +877,12 @@ Where:
 						Description: "Perform mathematical calculations",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"expression": {
 									Type:        api.PropertyType{"string"},
 									Description: "Mathematical expression to evaluate",
 								},
-							},
+							}),
 							Required: []string{"expression"},
 						},
 					},
@@ -927,12 +927,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},

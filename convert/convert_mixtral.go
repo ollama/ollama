@@ -12,7 +12,7 @@ type mixtralModel struct {
 	NumExpertsPerToken uint32 `json:"num_experts_per_tok"`
 }
 
-func (p *mixtralModel) KV(t *Tokenizer) ggml.KV {
+func (p *mixtralModel) KV(t *Tokenizer) KV {
 	kv := p.llamaModel.KV(t)
 
 	if p.NumLocalExperts > 0 {

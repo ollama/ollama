@@ -20,10 +20,10 @@ fix vulkan PCI ID and ID handling
  ggml/src/ggml-cuda/vendors/hip.h     |   3 +
  ggml/src/ggml-impl.h                 |   8 +
  ggml/src/ggml-metal/ggml-metal.cpp   |   2 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 169 ++++++++-
- ggml/src/mem_hip.cpp                 | 529 +++++++++++++++++++++++++++
- ggml/src/mem_nvml.cpp                | 209 +++++++++++
- 9 files changed, 976 insertions(+), 17 deletions(-)
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 169 +++++++-
+ ggml/src/mem_hip.cpp                 | 558 +++++++++++++++++++++++++++
+ ggml/src/mem_nvml.cpp                | 209 ++++++++++
+ 9 files changed, 1005 insertions(+), 17 deletions(-)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
@@ -58,7 +58,7 @@ index d55aed348..99ae293cc 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 6852d2e20..48cdb1dcf 100644
+index 6852d2e20..334a30135 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -267,6 +267,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -109,7 +109,7 @@ index 6852d2e20..48cdb1dcf 100644
 +
 +#if defined(GGML_USE_HIP)
 +    if (ggml_hip_mgmt_init() == 0) {
-+        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total);
++        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total, ctx->integrated != 0);
 +        if (status == 0) {
 +            GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
 +            ggml_hip_mgmt_release();
@@ -204,7 +204,7 @@ index 4e162258d..d89e35a8e 100644
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index fe57d4c58..1c07e767a 100644
+index fe57d4c58..dba8f4695 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
 @@ -677,6 +677,14 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
@@ -216,7 +216,7 @@ index fe57d4c58..1c07e767a 100644
 +GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
 +GGML_API void ggml_nvml_release();
 +GGML_API int ggml_hip_mgmt_init();
-+GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total);
++GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu);
 +GGML_API void ggml_hip_mgmt_release();
 +
  #ifdef __cplusplus
@@ -243,7 +243,7 @@ index ba95b4acc..f6f8f7a10 100644
          /* .async                 = */ true,
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 5349bce24..d43d46d1d 100644
+index 5349bce24..0103fd03a 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -236,6 +236,7 @@ class vk_memory_logger;
@@ -334,7 +334,7 @@ index 5349bce24..d43d46d1d 100644
 +        switch (props2.properties.vendorID) {
 +        case VK_VENDOR_ID_AMD:
 +            if (ggml_hip_mgmt_init() == 0) {
-+                int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total);
++                int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total, ctx->is_integrated_gpu);
 +                if (status == 0) {
 +                    GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
 +                    ggml_hip_mgmt_release();
@@ -505,10 +505,10 @@ index 5349bce24..d43d46d1d 100644
          }
 diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
 new file mode 100644
-index 000000000..c1949b899
+index 000000000..23c765806
 --- /dev/null
 +++ b/ggml/src/mem_hip.cpp
-@@ -0,0 +1,529 @@
+@@ -0,0 +1,558 @@
 +#include "ggml.h"
 +#include "ggml-impl.h"
 +
@@ -842,7 +842,7 @@ index 000000000..c1949b899
 +    if (gpus != NULL) gpus->pVtbl->Release(gpus); \
 +    if (gpu != NULL) gpu->pVtbl->Release(gpu)
 +
-+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
++int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
 +    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
 +    if (adlx.handle == NULL) {
 +        GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
@@ -966,12 +966,15 @@ index 000000000..c1949b899
 +    return 0;
 +}
 +void ggml_hip_mgmt_release() {}
-+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total) {
++int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
 +    GGML_LOG_INFO("%s searching for device %s\n", __func__, id);
 +    const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
 +    const std::string drmTotalMemoryFile = "mem_info_vram_total";
 +    const std::string drmUsedMemoryFile = "mem_info_vram_used";
++    const std::string drmGTTTotalMemoryFile = "mem_info_gtt_total";
++    const std::string drmGTTUsedMemoryFile = "mem_info_gtt_used";
 +    const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
++
 +
 +    glob_t glob_result;
 +    glob(drmDeviceGlob.c_str(), GLOB_NOSORT, NULL, &glob_result);
@@ -1006,7 +1009,6 @@ index 000000000..c1949b899
 +
 +                    uint64_t memory;
 +                    totalFileStream >> memory;
-+                    *total = memory;
 +
 +                    std::string usedFile = dir + "/" + drmUsedMemoryFile;
 +                    std::ifstream usedFileStream(usedFile.c_str());
@@ -1019,6 +1021,33 @@ index 000000000..c1949b899
 +
 +                    uint64_t memoryUsed;
 +                    usedFileStream >> memoryUsed;
++
++                    if (is_integrated_gpu) {
++                        std::string totalFile = dir + "/" + drmGTTTotalMemoryFile;
++                        std::ifstream totalFileStream(totalFile.c_str());
++                        if (!totalFileStream.is_open()) {
++                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
++                            file.close();
++                            globfree(&glob_result);
++                            return 1;
++                        }
++                        uint64_t gtt;
++                        totalFileStream >> gtt;
++                        std::string usedFile = dir + "/" + drmGTTUsedMemoryFile;
++                        std::ifstream usedFileStream(usedFile.c_str());
++                        if (!usedFileStream.is_open()) {
++                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
++                            file.close();
++                            globfree(&glob_result);
++                            return 1;
++                        }
++                        uint64_t gttUsed;
++                        usedFileStream >> gttUsed;
++                        memory += gtt;
++                        memoryUsed += gttUsed;
++                    }
++
++                    *total = memory;
 +                    *free = memory - memoryUsed;
 +
 +                    file.close();

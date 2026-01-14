@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	ofs "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
@@ -61,6 +62,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
+	config.Requires = r.Requires
 
 	for v := range r.Files {
 		if !fs.ValidPath(v) {
@@ -120,7 +122,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "") {
+				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
 					manifest, mErr := ParseNamedManifest(fromName)
 					if mErr == nil && manifest.Config.Digest != "" {
 						configPath, pErr := GetBlobsPath(manifest.Config.Digest)
@@ -133,6 +135,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									}
 									if config.Parser == "" {
 										config.Parser = baseConfig.Parser
+									}
+									if config.Requires == "" {
+										config.Requires = baseConfig.Requires
 									}
 								}
 								cfgFile.Close()
@@ -450,7 +455,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	return layers, nil
 }
 
-func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
+func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 	for _, l := range baseLayers {
 		if l.GGML != nil {
 			return l.KV(), nil
