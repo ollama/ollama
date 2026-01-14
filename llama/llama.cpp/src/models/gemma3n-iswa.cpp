@@ -258,12 +258,12 @@ ggml_tensor * llm_build_gemma3n_iswa::get_per_layer_inputs() {
         res->add_input(std::move(inp));
     } else {
         // Vision embedding path: use padding token (ID=0) embedding
+        // TODO: verify if this is the correct behavior in transformers implementation
         const int64_t embd_size = model.tok_embd_per_layer->ne[0];  // n_embd_altup * n_layer
 
-        // Extract and dequantize padding token embedding (column 0)
-        ggml_tensor * padding_q = ggml_view_1d(ctx0, model.tok_embd_per_layer, embd_size, 0);
-        ggml_tensor * padding_f32 = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, embd_size);
-        inp_per_layer = ggml_cpy(ctx0, padding_q, padding_f32);
+        // Extract and dequantize padding token embedding (row 0)
+        ggml_tensor * padding = ggml_view_1d(ctx0, model.tok_embd_per_layer, embd_size, 0);
+        inp_per_layer = ggml_cast(ctx0, padding, GGML_TYPE_F32);
 
         // Reshape to [n_embd_altup, n_layer, 1]
         inp_per_layer = ggml_reshape_3d(ctx0, inp_per_layer, n_embd_altup, n_layer, 1);

@@ -53,10 +53,10 @@ index b165d8bdc..f91d4faba 100644
  }
  
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 0049d59bf..fefa6b478 100644
+index b84f410d4..9ed9d8824 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -1788,9 +1788,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -1795,9 +1795,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
              const int precompiled_charsmap_keyidx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP).c_str());
              if (precompiled_charsmap_keyidx != -1) {
                  const gguf_type pc_type = gguf_get_arr_type(ctx, precompiled_charsmap_keyidx);
