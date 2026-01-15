@@ -33,9 +33,11 @@ type Server struct {
 	vramSize    uint64
 	done        chan error
 	client      *http.Client
-	lastErr     string // Last stderr line for error reporting
-	lastErrLock sync.Mutex
+	stderrLines []string // Recent stderr lines for error reporting (max 10)
+	stderrLock  sync.Mutex
 }
+
+const maxStderrLines = 10
 
 // completionRequest is sent to the subprocess
 type completionRequest struct {
@@ -139,10 +141,13 @@ func NewServer(modelName string) (*Server, error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			slog.Warn("image-runner", "msg", line)
-			// Capture last error line for better error reporting
-			s.lastErrLock.Lock()
-			s.lastErr = line
-			s.lastErrLock.Unlock()
+			// Capture recent stderr lines for error reporting
+			s.stderrLock.Lock()
+			s.stderrLines = append(s.stderrLines, line)
+			if len(s.stderrLines) > maxStderrLines {
+				s.stderrLines = s.stderrLines[1:]
+			}
+			s.stderrLock.Unlock()
 		}
 	}()
 
@@ -206,20 +211,16 @@ func (s *Server) waitUntilRunning() error {
 	for {
 		select {
 		case err := <-s.done:
-			// Include last stderr line for better error context
-			s.lastErrLock.Lock()
-			lastErr := s.lastErr
-			s.lastErrLock.Unlock()
-			if lastErr != "" {
-				return fmt.Errorf("image runner failed: %s (exit: %v)", lastErr, err)
+			// Include recent stderr lines for better error context
+			stderrContext := s.getStderrContext()
+			if stderrContext != "" {
+				return fmt.Errorf("image runner failed: %s (exit: %v)", stderrContext, err)
 			}
 			return fmt.Errorf("image runner exited unexpectedly: %w", err)
 		case <-timeout:
-			s.lastErrLock.Lock()
-			lastErr := s.lastErr
-			s.lastErrLock.Unlock()
-			if lastErr != "" {
-				return fmt.Errorf("timeout waiting for image runner: %s", lastErr)
+			stderrContext := s.getStderrContext()
+			if stderrContext != "" {
+				return fmt.Errorf("timeout waiting for image runner: %s", stderrContext)
 			}
 			return errors.New("timeout waiting for image runner to start")
 		case <-ticker.C:
@@ -229,6 +230,16 @@ func (s *Server) waitUntilRunning() error {
 			}
 		}
 	}
+}
+
+// getStderrContext returns recent stderr lines joined as a single string.
+func (s *Server) getStderrContext() string {
+	s.stderrLock.Lock()
+	defer s.stderrLock.Unlock()
+	if len(s.stderrLines) == 0 {
+		return ""
+	}
+	return strings.Join(s.stderrLines, "; ")
 }
 
 // WaitUntilRunning is a no-op for image generation models.
