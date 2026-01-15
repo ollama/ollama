@@ -630,6 +630,10 @@ func nameFromToolCallID(messages []Message, toolCallID string) string {
 
 // decodeImageURL decodes a base64 data URI into raw image bytes.
 func decodeImageURL(url string) (api.ImageData, error) {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return nil, errors.New("image URLs are not currently supported, please use base64 encoded data instead")
+	}
+
 	types := []string{"jpeg", "jpg", "png", "webp"}
 
 	// Support blank mime type to match /api/chat's behavior of taking just unadorned base64
