@@ -112,7 +112,8 @@
               "/integrations/roo-code",
               "/integrations/n8n",
               "/integrations/xcode",
-              "/integrations/onyx"
+              "/integrations/onyx",
+              "/integrations/marimo"
             ]
           },
           {
