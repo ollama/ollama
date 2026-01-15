@@ -171,7 +171,9 @@ func (s *Server) ModelPath() string {
 	return s.modelName
 }
 
-// Load is called by the scheduler after the server is created.
+// Load is a no-op for image generation models.
+// Unlike LLM models, imagegen models are loaded by the subprocess at startup
+// rather than through this interface method.
 func (s *Server) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	return nil, nil
 }
@@ -229,7 +231,9 @@ func (s *Server) waitUntilRunning() error {
 	}
 }
 
-// WaitUntilRunning implements the LlamaServer interface (no-op since NewServer waits).
+// WaitUntilRunning is a no-op for image generation models.
+// NewServer already blocks until the subprocess is ready, so this method
+// returns immediately. Required by the llm.LlamaServer interface.
 func (s *Server) WaitUntilRunning(ctx context.Context) error {
 	return nil
 }
@@ -346,17 +350,20 @@ func (s *Server) VRAMByGPU(id ml.DeviceID) uint64 {
 	return s.vramSize
 }
 
-// Embedding is not supported for image generation models.
+// Embedding returns an error as image generation models don't produce embeddings.
+// Required by the llm.LlamaServer interface.
 func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, error) {
 	return nil, 0, errors.New("embedding not supported for image generation models")
 }
 
-// Tokenize is not supported for image generation models.
+// Tokenize returns an error as image generation uses internal tokenization.
+// Required by the llm.LlamaServer interface.
 func (s *Server) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return nil, errors.New("tokenize not supported for image generation models")
 }
 
-// Detokenize is not supported for image generation models.
+// Detokenize returns an error as image generation uses internal tokenization.
+// Required by the llm.LlamaServer interface.
 func (s *Server) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return "", errors.New("detokenize not supported for image generation models")
 }
@@ -376,7 +383,8 @@ func (s *Server) GetPort() int {
 	return s.port
 }
 
-// GetDeviceInfos returns nil since we don't track GPU info.
+// GetDeviceInfos returns nil as GPU tracking is handled by the subprocess.
+// Required by the llm.LlamaServer interface.
 func (s *Server) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	return nil
 }
