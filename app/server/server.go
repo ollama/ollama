@@ -224,9 +224,7 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		if _, err := os.Stat(settings.Models); err == nil {
 			env["OLLAMA_MODELS"] = settings.Models
 		} else {
-			slog.Warn("models path not accessible, clearing models setting", "path", settings.Models, "err", err)
-			settings.Models = ""
-			s.store.SetSettings(settings)
+			slog.Warn("models path not accessible, using default", "path", settings.Models, "err", err)
 		}
 	}
 	if settings.ContextLength > 0 {

@@ -179,8 +179,9 @@ struct llm_build_gemma2_iswa : public llm_graph_context {
     llm_build_gemma2_iswa(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_gemma3_iswa : public llm_graph_context {
-    llm_build_gemma3_iswa(const llama_model & model, const llm_graph_params & params);
+template <bool iswa>
+struct llm_build_gemma3 : public llm_graph_context {
+    llm_build_gemma3(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_gemma3n_iswa : public llm_graph_context {
@@ -322,6 +323,10 @@ struct llm_build_minimax_m2 : public llm_graph_context {
     llm_build_minimax_m2(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_mistral3 : public llm_graph_context {
+    llm_build_mistral3(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_mpt : public llm_graph_context {
     llm_build_mpt(const llama_model & model, const llm_graph_params & params);
 };
@@ -436,21 +441,11 @@ private:
                 ggml_tensor * cur,
                 ggml_tensor * causal_mask,
                 ggml_tensor * identity,
+                ggml_tensor * diag_mask,
                         int   il);
 
     ggml_tensor * build_layer_ffn(
                 ggml_tensor * cur,
-                        int   il);
-
-    ggml_tensor * build_delta_net_recurrent(
-                ggml_tensor * q,
-                ggml_tensor * k,
-                ggml_tensor * v,
-                ggml_tensor * g,
-                ggml_tensor * beta,
-                ggml_tensor * state,
-                ggml_tensor * causal_mask,
-                ggml_tensor * identity,
                         int   il);
 
     ggml_tensor * build_delta_net_chunking(
@@ -462,7 +457,17 @@ private:
                 ggml_tensor * state,
                 ggml_tensor * causal_mask,
                 ggml_tensor * identity,
+                ggml_tensor * diag_mask,
                         int   il);
+
+    ggml_tensor * build_delta_net_autoregressive(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * g,
+                ggml_tensor * beta,
+                ggml_tensor * state,
+                int           il);
 
     ggml_tensor * build_norm_gated(
                 ggml_tensor * input,

@@ -290,6 +290,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Onyx](https://github.com/onyx-dot-app/onyx)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
@@ -555,7 +556,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Parakeet](https://github.com/parakeet-nest/parakeet) is a GoLang library, made to simplify the development of small generative AI applications with Ollama.
 - [Haverscript](https://github.com/andygill/haverscript) with [examples](https://github.com/andygill/haverscript/tree/main/examples)
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
-- [Swollama for Swift](https://github.com/marcusziade/Swollama) with [DocC](https://marcusziade.github.io/Swollama/documentation/swollama/)
+- [Swollama for Swift](https://github.com/guitaripod/Swollama) with [DocC](https://guitaripod.github.io/Swollama/documentation/swollama)
 - [GoLamify](https://github.com/prasad89/golamify)
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in a unified API)

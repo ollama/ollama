@@ -32,7 +32,7 @@ type qwen3Model struct {
 }
 
 // KV implements ModelConverter.
-func (q *qwen3Model) KV(t *Tokenizer) ggml.KV {
+func (q *qwen3Model) KV(t *Tokenizer) KV {
 	arch := "qwen3"
 	if q.NumExperts > 0 {
 		arch += "moe"

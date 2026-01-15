@@ -151,7 +151,9 @@ bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const 
             return false;
         }
     } else {
-        if (src1_ncols > 16) {
+        if (GGML_CUDA_CC_IS_RDNA3_0(cc) && src1_ncols > 8) {
+            return false;
+        } else if (src1_ncols > 16) {
             return false;
         }
     }

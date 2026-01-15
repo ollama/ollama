@@ -22,6 +22,11 @@
  *          Issues related to API usage may receive lower priority support.
  *
  * For the usage, see an example in mtmd-cli.cpp
+ *
+ * For contributors:
+ * - Make sure the C API is aligned with the libllama C API (as in llama.h)
+ * - Do not include model name (e.g., qwen, gemma) in the API, use generic terms instead
+ * - Keep the API minimal, do not expose internal details unless necessary
  */
 
 #ifdef LLAMA_SHARED
@@ -85,6 +90,7 @@ struct mtmd_context_params {
     const char * image_marker; // deprecated, use media_marker instead
     const char * media_marker;
     enum llama_flash_attn_type flash_attn_type;
+    bool warmup; // whether to run a warmup encode pass after initialization
 
     // limit number of image tokens, only for vision models with dynamic resolution
     int image_min_tokens; // minimum number of tokens for image input (default: read from metadata)

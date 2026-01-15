@@ -9,7 +9,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -52,7 +51,7 @@ func (m *Transformer) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, err
 }
 
 func (m *Transformer) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.headDim(), m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 type Options struct {
@@ -70,14 +69,14 @@ type Options struct {
 	ropeScale float32
 }
 
-func (o Options) RoPEOptions() []func(*rope.Options) {
-	return []func(*rope.Options){
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, o.headDim(), o.ropeBase, 1./o.ropeScale,
 		rope.WithTypeNeoX(),
 		rope.WithOriginalContextLength(o.originalContextLength),
 		rope.WithExtrapolationFactor(1.),
-		// NOTE: ggml sets this implicitly so there's no need to set it here
-		// rope.WithAttentionFactor(0.1*float32(math.Log(float64(o.ropeScale))) + 1.0),
-	}
+	// NOTE: ggml sets this implicitly so there's no need to set it here
+	// rope.WithAttentionFactor(0.1*float32(math.Log(float64(o.ropeScale))) + 1.0),
+	)
 }
 
 func (o Options) headDim() int {
@@ -135,8 +134,8 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 		value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
 	}
 
-	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
+	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
 	attention := nn.AttentionWithSinks(ctx, query, key, value, attn.Sinks, 1/math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)

@@ -129,35 +129,34 @@ func (o Options) headDim() int {
 }
 
 func New(c fs.Config) (model.Model, error) {
+	vocab := &model.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS: []int32{
+			int32(cmp.Or(
+				c.Uint("tokenizer.ggml.cls_token_id"),
+				c.Uint("tokenizer.ggml.bos_token_id"),
+			)),
+		},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", true),
+		EOS: []int32{
+			int32(cmp.Or(
+				c.Uint("tokenizer.ggml.separator_token_id"),
+				//nolint:misspell
+				// NOTE: "seperator_token_id" is a typo in model metadata but we need to
+				// support it for compatibility.
+				c.Uint("tokenizer.ggml.seperator_token_id"),
+				c.Uint("tokenizer.ggml.eos_token_id"),
+			)),
+		},
+	}
+
 	var processor model.TextProcessor
 	switch c.String("tokenizer.ggml.model", "bert") {
 	case "bert":
-		processor = model.NewWordPiece(
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS: []int32{
-					int32(cmp.Or(
-						c.Uint("tokenizer.ggml.cls_token_id"),
-						c.Uint("tokenizer.ggml.bos_token_id"),
-					)),
-				},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", true),
-				EOS: []int32{
-					int32(cmp.Or(
-						c.Uint("tokenizer.ggml.separator_token_id"),
-						//nolint:misspell
-						// NOTE: "seperator_token_id" is a typo in model metadata but we need to
-						// support it for compatibility.
-						c.Uint("tokenizer.ggml.seperator_token_id"),
-						c.Uint("tokenizer.ggml.eos_token_id"),
-					)),
-				},
-			},
-			true,
-		)
+		processor = model.NewWordPiece(vocab, true)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}

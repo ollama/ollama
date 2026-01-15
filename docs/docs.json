@@ -32,7 +32,9 @@
     "codeblocks": "system"
   },
   "contextual": {
-    "options": ["copy"]
+    "options": [
+      "copy"
+    ]
   },
   "navbar": {
     "links": [
@@ -52,7 +54,9 @@
       "display": "simple"
     },
     "examples": {
-      "languages": ["curl"]
+      "languages": [
+        "curl"
+      ]
     }
   },
   "redirects": [
@@ -97,6 +101,7 @@
           {
             "group": "Integrations",
             "pages": [
+              "/integrations/claude-code",
               "/integrations/vscode",
               "/integrations/jetbrains",
               "/integrations/codex",
@@ -106,7 +111,8 @@
               "/integrations/zed",
               "/integrations/roo-code",
               "/integrations/n8n",
-              "/integrations/xcode"
+              "/integrations/xcode",
+              "/integrations/onyx"
             ]
           },
           {
@@ -139,7 +145,8 @@
               "/api/streaming",
               "/api/usage",
               "/api/errors",
-              "/api/openai-compatibility"
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
             ]
           },
           {

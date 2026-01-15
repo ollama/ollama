@@ -263,11 +263,6 @@ func createLoginShortcut() error {
 	return nil
 }
 
-// Send a request to the main app thread to load a UI page
-func sendUIRequestMessage(path string) {
-	wintray.SendUIRequestMessage(path)
-}
-
 func LaunchNewApp() {
 }
 

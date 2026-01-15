@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"iter"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 
+	ofs "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -18,8 +21,13 @@ type ModelParameters struct {
 	Architectures []string `json:"architectures"`
 	VocabSize     uint32   `json:"vocab_size"`
 
+	// TODO is this needed?
+	ModelType string `json:"model_type"`
+
 	TextModel struct {
-		VocabSize uint32 `json:"vocab_size"`
+		VocabSize  uint32 `json:"vocab_size"`
+		HiddenSize uint32 `json:"hidden_size"`
+		ModelType  string `json:"model_type"`
 	} `json:"text_config"`
 }
 
@@ -33,8 +41,94 @@ type AdapterParameters struct {
 	} `json:"lora_parameters"`
 }
 
-func (ModelParameters) KV(t *Tokenizer) ggml.KV {
-	kv := ggml.KV{
+type KV map[string]any
+
+func (kv KV) Architecture() string {
+	return kv.String("general.architecture", "unknown")
+}
+
+type valueTypes interface {
+	uint8 | int8 | uint16 | int16 |
+		uint32 | int32 | uint64 | int64 |
+		string | float32 | float64 | bool
+}
+
+type arrayValueTypes interface {
+	[]uint8 | []int8 | []uint16 | []int16 |
+		[]uint32 | []int32 | []uint64 | []int64 |
+		[]string | []float32 | []float64 | []bool
+}
+
+func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) (T, bool) {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+		key = kv.Architecture() + "." + key
+	}
+
+	if val, ok := kv[key].(T); ok {
+		return val, true
+	}
+	return defaultValue[0], false
+}
+
+func (kv KV) String(key string, defaultValue ...string) string {
+	val, _ := keyValue(kv, key, append(defaultValue, "")...)
+	return val
+}
+
+func (kv KV) Uint(key string, defaultValue ...uint32) uint32 {
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
+}
+
+func (kv KV) Float(key string, defaultValue ...float32) float32 {
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
+}
+
+func (kv KV) Bool(key string, defaultValue ...bool) bool {
+	val, _ := keyValue(kv, key, append(defaultValue, false)...)
+	return val
+}
+
+func (kv KV) Strings(key string, defaultValue ...[]string) []string {
+	val, _ := keyValue(kv, key, append(defaultValue, []string{""})...)
+	return val
+}
+
+func (kv KV) Ints(key string, defaultValue ...[]int32) []int32 {
+	val, _ := keyValue(kv, key, append(defaultValue, []int32{0})...)
+	return val
+}
+
+func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
+	val, _ := keyValue(kv, key, append(defaultValue, []uint32{0})...)
+	return val
+}
+
+func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
+	val, _ := keyValue(kv, key, append(defaultValue, []float32{0})...)
+	return val
+}
+
+func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
+	val, _ := keyValue(kv, key, append(defaultValue, []bool{false})...)
+	return val
+}
+
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
+func (ModelParameters) KV(t *Tokenizer) KV {
+	kv := KV{
 		"general.file_type":            uint32(1),
 		"general.quantization_version": uint32(2),
 		"tokenizer.ggml.pre":           t.Pre,
@@ -63,7 +157,7 @@ func (ModelParameters) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p AdapterParameters) KV() ggml.KV {
+func (p AdapterParameters) KV() KV {
 	var alpha float32
 	if p.LoraParameters.Alpha == 0 {
 		alpha = float32(p.Alpha)
@@ -71,7 +165,7 @@ func (p AdapterParameters) KV() ggml.KV {
 		alpha = p.LoraParameters.Alpha
 	}
 
-	kv := ggml.KV{
+	kv := KV{
 		"adapter.lora.alpha": alpha,
 		"adapter.type":       "lora",
 		"general.file_type":  uint32(1),
@@ -88,9 +182,14 @@ func (ModelParameters) specialTokenTypes() []string {
 	}
 }
 
-type ModelConverter interface {
+type ModelKV interface {
 	// KV maps parameters to LLM key-values
-	KV(*Tokenizer) ggml.KV
+	KV(*Tokenizer) KV
+}
+
+type ModelConverter interface {
+	ModelKV
+
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
 	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
@@ -107,7 +206,7 @@ type moreParser interface {
 
 type AdapterConverter interface {
 	// KV maps parameters to LLM key-values
-	KV(ggml.KV) ggml.KV
+	KV(ofs.Config) KV
 	// Tensors maps input tensors to LLM tensors. Adapter specific modifications can be done here.
 	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
@@ -115,7 +214,7 @@ type AdapterConverter interface {
 	Replacements() []string
 }
 
-func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
+func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ofs.Config) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -126,8 +225,8 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 		return err
 	}
 
-	arch, ok := baseKV["general.architecture"]
-	if !ok {
+	arch := baseKV.Architecture()
+	if arch == "" {
 		return errors.New("architecture not set for the base model")
 	}
 
@@ -153,23 +252,19 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
 }
 
-// Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
-// and files it finds in the input path.
-// Supported input model formats include safetensors.
-// Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, f *os.File) error {
+func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	var p ModelParameters
 	if err := json.Unmarshal(bts, &p); err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	if len(p.Architectures) < 1 {
-		return errors.New("unknown architecture")
+		return nil, nil, errors.New("unknown architecture")
 	}
 
 	var conv ModelConverter
@@ -182,6 +277,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &llama4Model{}
 	case "Mistral3ForConditionalGeneration":
 		conv = &mistral3Model{}
+	case "Ministral3ForCausalLM":
+		conv = &mistral3CausalModel{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
 	case "GemmaForCausalLM":
@@ -200,31 +297,37 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &qwen25VLModel{}
 	case "Qwen3VLForConditionalGeneration", "Qwen3VLMoeForConditionalGeneration":
 		conv = &qwen3VLModel{}
+	case "Olmo3ForCausalLM":
+		conv = &olmoModel{}
 	case "BertModel":
 		conv = &bertModel{}
+	case "NomicBertModel", "NomicBertMoEModel":
+		conv = &nomicbertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
 	case "GptOssForCausalLM":
 		conv = &gptossModel{}
 	case "DeepseekOCRForCausalLM":
 		conv = &deepseekocr{}
+	case "DeepseekV3ForCausalLM":
+		conv = &deepseek2Model{}
 	default:
-		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
+		return nil, nil, fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	if t, ok := conv.(moreParser); ok {
 		if err := t.parseMore(fsys); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
 
 	t, err := parseTokenizer(fsys, conv.specialTokenTypes())
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	vocabSize := int(cmp.Or(p.VocabSize, p.TextModel.VocabSize))
@@ -246,6 +349,19 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 	default:
 		slog.Debug("vocabulary", "size", len(t.Vocabulary.Tokens))
 	}
+	return conv, t, nil
+}
+
+// Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
+// and files it finds in the input path.
+// Supported input model formats include safetensors.
+// Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
+func ConvertModel(fsys fs.FS, f *os.File) error {
+	kv, t, err := LoadModelMetadata(fsys)
+	if err != nil {
+		return err
+	}
+	conv := kv.(ModelConverter)
 
 	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
 	if err != nil {
@@ -255,7 +371,7 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 	return writeFile(f, conv.KV(t), conv.Tensors(ts))
 }
 
-func writeFile(f *os.File, kv ggml.KV, ts []*ggml.Tensor) error {
+func writeFile(f *os.File, kv KV, ts []*ggml.Tensor) error {
 	for i := range ts {
 		ts[i].Shape = slices.Clone(ts[i].Shape)
 		slices.Reverse(ts[i].Shape)
