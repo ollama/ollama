@@ -38,7 +38,7 @@ type HybridCache struct {
 	curSlots      []int
 	curSlotsInput ml.Tensor
 	curSeqTokens  int
-	
+
 	// optimization: track if EnsureWritable has been called for this forward pass
 	writableEnsured bool
 }
@@ -145,7 +145,7 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 		slots[i] = int32(v)
 	}
 	c.curSlotsInput = ctx.Input().FromInts(slots, len(slots))
-	
+
 	// Reset writable flag for new forward pass
 	c.writableEnsured = false
 

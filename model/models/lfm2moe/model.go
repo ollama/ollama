@@ -30,8 +30,8 @@ type Options struct {
 	numExperts, numExpertsUsed int
 	numDenseLayers             int
 	routedScalingFactor        float32
-	normTopKProb              bool
-	useExpertBias             bool
+	normTopKProb               bool
+	useExpertBias              bool
 }
 
 func (o Options) headDimValue() int {
