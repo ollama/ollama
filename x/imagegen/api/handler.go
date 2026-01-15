@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -214,8 +215,7 @@ func HandleGenerateRequest(c *gin.Context, scheduler RunnerScheduler, modelName,
 			}
 		})
 		if err != nil {
-			// Log error but don't block - channel is already being consumed
-			_ = err
+			slog.Error("image generation failed", "model", modelName, "error", err)
 		}
 	}()
 
