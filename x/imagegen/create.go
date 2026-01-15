@@ -48,7 +48,7 @@ func CreateModel(modelName, modelDir, quantize string, createLayer LayerCreator,
 	var totalParams int64 // Count parameters from original tensor shapes
 
 	// Components to process - extract individual tensors from each
-	components := []string{"text_encoder", "transformer", "vae"}
+	components := []string{"text_encoder", "transformer", "vae", "vision_language_encoder"}
 
 	for _, component := range components {
 		componentDir := filepath.Join(modelDir, component)
@@ -126,10 +126,13 @@ func CreateModel(modelName, modelDir, quantize string, createLayer LayerCreator,
 		"text_encoder/generation_config.json",
 		"transformer/config.json",
 		"vae/config.json",
+		"vision_language_encoder/config.json",
 		"scheduler/scheduler_config.json",
 		"tokenizer/tokenizer.json",
 		"tokenizer/tokenizer_config.json",
 		"tokenizer/vocab.json",
+		"processor/tokenizer.json",        // GLM-Image main tokenizer
+		"processor/tokenizer_config.json", // GLM-Image tokenizer config
 	}
 
 	for _, cfgPath := range configFiles {

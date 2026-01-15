@@ -27,6 +27,7 @@ var modelVRAMEstimates = map[string]uint64{
 	"ZImagePipeline":    21 * GB, // ~21GB for Z-Image (text encoder + transformer + VAE)
 	"FluxPipeline":      21 * GB, // ~21GB for Flux (same architecture)
 	"QwenImagePipeline": 80 * GB, // TODO: verify actual requirements, using conservative estimate for now
+	"GlmImagePipeline":  80 * GB, // ~34GB weights + ~46GB working memory for 9B+7B hybrid model
 }
 
 // CheckPlatformSupport validates that image generation is supported on the current platform.

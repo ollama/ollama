@@ -19,8 +19,14 @@ import (
 
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/imagegen/models/glm_image"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
 )
+
+// ImageModel is the interface for image generation models
+type ImageModel interface {
+	GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64) (*mlx.Array, error)
+}
 
 // Request is the image generation request format
 type Request struct {
@@ -41,8 +47,9 @@ type Response struct {
 // Server holds the model and handles requests
 type Server struct {
 	mu        sync.Mutex
-	model     *zimage.Model
+	model     ImageModel
 	modelName string
+	modelType string // "zimage" or "glm_image"
 }
 
 // Execute is the entry point for the image runner subprocess
@@ -72,15 +79,35 @@ func Execute(args []string) error {
 			requiredMemory/(1024*1024*1024), availableMemory/(1024*1024*1024))
 	}
 
-	// Load model
-	model := &zimage.Model{}
-	if err := model.Load(*modelName); err != nil {
-		return fmt.Errorf("failed to load model: %w", err)
+	// Detect model type and load appropriate model
+	modelType, err := detectModelType(*modelName)
+	if err != nil {
+		return fmt.Errorf("failed to detect model type: %w", err)
+	}
+
+	var model ImageModel
+	switch modelType {
+	case "GlmImagePipeline":
+		slog.Info("loading GLM-Image model")
+		m := &glm_image.Model{}
+		if err := m.Load(*modelName); err != nil {
+			return fmt.Errorf("failed to load GLM-Image model: %w", err)
+		}
+		model = m
+	default:
+		// Default to zimage for ZImagePipeline, FluxPipeline, and unknown types
+		slog.Info("loading Z-Image model")
+		m := &zimage.Model{}
+		if err := m.Load(*modelName); err != nil {
+			return fmt.Errorf("failed to load Z-Image model: %w", err)
+		}
+		model = m
 	}
 
 	server := &Server{
 		model:     model,
 		modelName: *modelName,
+		modelType: modelType,
 	}
 
 	// Set up HTTP handlers
@@ -144,7 +171,13 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		req.Height = 1024
 	}
 	if req.Steps <= 0 {
-		req.Steps = 9
+		// Default steps depend on model type
+		switch s.modelType {
+		case "GlmImagePipeline":
+			req.Steps = 50 // GLM-Image default
+		default:
+			req.Steps = 9 // Z-Image turbo default
+		}
 	}
 	if req.Seed <= 0 {
 		req.Seed = time.Now().UnixNano()
@@ -159,25 +192,9 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate image
+	// Generate image using interface method
 	ctx := r.Context()
-	img, err := s.model.GenerateFromConfig(ctx, &zimage.GenerateConfig{
-		Prompt: req.Prompt,
-		Width:  req.Width,
-		Height: req.Height,
-		Steps:  req.Steps,
-		Seed:   req.Seed,
-		Progress: func(step, total int) {
-			resp := Response{
-				Content: fmt.Sprintf("\rGenerating: step %d/%d", step, total),
-				Done:    false,
-			}
-			data, _ := json.Marshal(resp)
-			w.Write(data)
-			w.Write([]byte("\n"))
-			flusher.Flush()
-		},
-	})
+	img, err := s.model.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed)
 
 	if err != nil {
 		// Don't send error for cancellation
@@ -215,4 +232,36 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 	w.Write([]byte("\n"))
 	flusher.Flush()
+}
+
+// detectModelType reads the model manifest and returns the pipeline class name
+func detectModelType(modelName string) (string, error) {
+	manifest, err := imagegen.LoadManifest(modelName)
+	if err != nil {
+		return "", err
+	}
+
+	data, err := manifest.ReadConfig("model_index.json")
+	if err != nil {
+		return "ZImagePipeline", nil // Default to Z-Image
+	}
+
+	// Try both _class_name (diffusers format) and architecture (ollama format)
+	var index struct {
+		ClassName    string `json:"_class_name"`
+		Architecture string `json:"architecture"`
+	}
+	if err := json.Unmarshal(data, &index); err != nil {
+		return "ZImagePipeline", nil
+	}
+
+	// Prefer _class_name, fall back to architecture
+	className := index.ClassName
+	if className == "" {
+		className = index.Architecture
+	}
+	if className == "" {
+		return "ZImagePipeline", nil
+	}
+	return className, nil
 }

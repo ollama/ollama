@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"strings"
 
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
+	"github.com/ollama/ollama/x/imagegen/models/glm_image"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
 	"github.com/ollama/ollama/x/imagegen/models/llama"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
@@ -61,6 +63,7 @@ func main() {
 
 	// Legacy mode flags
 	zimageFlag := flag.Bool("zimage", false, "Z-Image generation")
+	glmImageFlag := flag.Bool("glm-image", false, "GLM-Image generation")
 	qwenImage := flag.Bool("qwen-image", false, "Qwen-Image text-to-image generation")
 	qwenImageEdit := flag.Bool("qwen-image-edit", false, "Qwen-Image-Edit image editing")
 	var inputImages stringSlice
@@ -113,6 +116,33 @@ func main() {
 			TeaCache:          *teaCache,
 			TeaCacheThreshold: float32(*teaCacheThreshold),
 			FusedQKV:          *fusedQKV,
+		})
+		if err == nil {
+			err = saveImageArray(img, *out)
+		}
+	case *glmImageFlag:
+		m := &glm_image.Model{}
+		// Use LoadFromPath if model path looks like a directory, otherwise use Load (ollama manifest)
+		var loadErr error
+		if strings.HasPrefix(*modelPath, ".") || strings.HasPrefix(*modelPath, "/") {
+			loadErr = m.LoadFromPath(*modelPath)
+		} else {
+			loadErr = m.Load(*modelPath)
+		}
+		if loadErr != nil {
+			log.Fatal(loadErr)
+		}
+		var img *mlx.Array
+		img, err = m.GenerateFromConfig(context.Background(), &glm_image.GenerateConfig{
+			Prompt:          *prompt,
+			Width:           int32(*width),
+			Height:          int32(*height),
+			Steps:           *steps,
+			Seed:            *seed,
+			Temperature:     float32(*temperature),
+			TopP:            float32(*topP),
+			GuidanceScale:   float32(*cfgScale),
+			MaxVisualTokens: int32(*maxTokens),
 		})
 		if err == nil {
 			err = saveImageArray(img, *out)
