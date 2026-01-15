@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -441,6 +442,7 @@ type ResponsesWriter struct {
 	stream     bool
 	responseID string
 	itemID     string
+	request    openai.ResponsesRequest
 }
 
 func (w *ResponsesWriter) writeEvent(eventType string, data any) error {
@@ -478,7 +480,9 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 
 	// Non-streaming response
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	response := openai.ToResponse(w.model, w.responseID, w.itemID, chatResponse)
+	response := openai.ToResponse(w.model, w.responseID, w.itemID, chatResponse, w.request)
+	completedAt := time.Now().Unix()
+	response.CompletedAt = &completedAt
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
 }
 
@@ -523,11 +527,12 @@ func ResponsesMiddleware() gin.HandlerFunc {
 
 		w := &ResponsesWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			converter:  openai.NewResponsesStreamConverter(responseID, itemID, req.Model),
+			converter:  openai.NewResponsesStreamConverter(responseID, itemID, req.Model, req),
 			model:      req.Model,
 			stream:     streamRequested,
 			responseID: responseID,
 			itemID:     itemID,
+			request:    req,
 		}
 
 		// Set headers based on streaming mode
