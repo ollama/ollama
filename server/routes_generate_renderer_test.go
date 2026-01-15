@@ -44,7 +44,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
@@ -228,7 +228,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ *ggml.MetaGGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
