@@ -111,7 +111,8 @@
               "/integrations/zed",
               "/integrations/roo-code",
               "/integrations/n8n",
-              "/integrations/xcode"
+              "/integrations/xcode",
+              "/integrations/onyx"
             ]
           },
           {
