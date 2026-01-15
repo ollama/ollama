@@ -103,7 +103,32 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
 				return
 			}
-			if r.RemoteHost != "" {
+			remoteProvider := strings.ToLower(strings.TrimSpace(r.RemoteProvider))
+			switch remoteProvider {
+			case "":
+				// use legacy behavior
+			case "ollama", "openai":
+				// supported
+			default:
+				ch <- gin.H{"error": "unsupported remote provider", "status": http.StatusBadRequest}
+				return
+			}
+
+			if remoteProvider == "openai" {
+				if r.RemoteHost != "" {
+					ch <- gin.H{"error": "remote_host is not supported for openai providers", "status": http.StatusBadRequest}
+					return
+				}
+				if r.RemoteChannel == "" {
+					ch <- gin.H{"error": "remote_channel is required for openai providers", "status": http.StatusBadRequest}
+					return
+				}
+
+				config.RemoteProvider = "openai"
+				config.RemoteChannel = r.RemoteChannel
+				config.RemoteModel = r.From
+				remote = true
+			} else if r.RemoteHost != "" {
 				ru, err := remoteURL(r.RemoteHost)
 				if err != nil {
 					ch <- gin.H{"error": "bad remote", "status": http.StatusBadRequest}
@@ -112,7 +137,11 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 				config.RemoteModel = r.From
 				config.RemoteHost = ru
+				config.RemoteProvider = "ollama"
 				remote = true
+			} else if remoteProvider == "ollama" {
+				ch <- gin.H{"error": "remote_host is required for ollama providers", "status": http.StatusBadRequest}
+				return
 			} else {
 				ctx, cancel := context.WithCancel(c.Request.Context())
 				defer cancel()
@@ -198,6 +227,12 @@ func (s *Server) CreateHandler(c *gin.Context) {
 						caps[i] = str
 					}
 					config.Capabilities = append(config.Capabilities, caps...)
+				case []string:
+					config.Capabilities = append(config.Capabilities, tcaps...)
+				case string:
+					if strings.TrimSpace(tcaps) != "" {
+						config.Capabilities = append(config.Capabilities, tcaps)
+					}
 				}
 			}
 

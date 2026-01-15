@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -268,6 +269,11 @@ type ResponsesTool struct {
 	Description string         `json:"description,omitempty"`
 	Strict      bool           `json:"strict,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	Function    *struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description,omitempty"`
+		Parameters  map[string]any `json:"parameters,omitempty"`
+	} `json:"function,omitempty"`
 }
 
 type ResponsesRequest struct {
@@ -308,6 +314,8 @@ type ResponsesRequest struct {
 	Truncation *string `json:"truncation"`
 
 	Tools []ResponsesTool `json:"tools,omitempty"`
+	// optional, tool selection policy (e.g. "auto", "required", or {"type":"function","name":"..."})
+	ToolChoice any `json:"tool_choice,omitempty"`
 
 	// TODO(drifkin): tool_choice is not supported. We could support "none" by not
 	// passing tools, but the other controls like `"required"` cannot be generally
@@ -430,10 +438,25 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	if r.MaxOutputTokens != nil {
 		options["num_predict"] = *r.MaxOutputTokens
 	}
+	if r.ToolChoice != nil {
+		options["tool_choice"] = r.ToolChoice
+	}
 
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
 	for _, t := range r.Tools {
+		toolType := strings.ToLower(strings.TrimSpace(t.Type))
+		// Only function tools are supported in chat/completions.
+		if toolType != "" && toolType != "function" {
+			continue
+		}
+		name := strings.TrimSpace(t.Name)
+		if name == "" && t.Function != nil {
+			name = strings.TrimSpace(t.Function.Name)
+		}
+		if name == "" {
+			continue
+		}
 		tool, err := convertTool(t)
 		if err != nil {
 			return nil, err
@@ -462,11 +485,26 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
+	name := strings.TrimSpace(t.Name)
+	desc := t.Description
+	paramsIn := t.Parameters
+	if t.Function != nil {
+		if name == "" {
+			name = strings.TrimSpace(t.Function.Name)
+		}
+		if desc == "" {
+			desc = t.Function.Description
+		}
+		if paramsIn == nil {
+			paramsIn = t.Function.Parameters
+		}
+	}
+
 	// Convert parameters from map[string]any to api.ToolFunctionParameters
 	var params api.ToolFunctionParameters
-	if t.Parameters != nil {
+	if paramsIn != nil {
 		// Marshal and unmarshal to convert
-		b, err := json.Marshal(t.Parameters)
+		b, err := json.Marshal(paramsIn)
 		if err != nil {
 			return api.Tool{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
 		}
@@ -478,8 +516,8 @@ func convertTool(t ResponsesTool) (api.Tool, error) {
 	return api.Tool{
 		Type: t.Type,
 		Function: api.ToolFunction{
-			Name:        t.Name,
-			Description: t.Description,
+			Name:        name,
+			Description: desc,
 			Parameters:  params,
 		},
 	}, nil

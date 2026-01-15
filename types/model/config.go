@@ -11,14 +11,16 @@ type ConfigV2 struct {
 	Parser        string   `json:"parser,omitempty"`
 	Requires      string   `json:"requires,omitempty"`
 
-	RemoteHost  string `json:"remote_host,omitempty"`
-	RemoteModel string `json:"remote_model,omitempty"`
+	RemoteHost     string `json:"remote_host,omitempty"`
+	RemoteModel    string `json:"remote_model,omitempty"`
+	RemoteProvider string `json:"remote_provider,omitempty"`
+	RemoteChannel  string `json:"remote_channel,omitempty"`
 
 	// used for remotes
-	Capabilities []string `json:"capabilities,omitempty"`
-	ContextLen   int      `json:"context_length,omitempty"`
-	EmbedLen     int      `json:"embedding_length,omitempty"`
-	BaseName     string   `json:"base_name,omitempty"`
+	Capabilities              []string `json:"capabilities,omitempty"`
+	ContextLen                int      `json:"context_length,omitempty"`
+	EmbedLen                  int      `json:"embedding_length,omitempty"`
+	BaseName                  string   `json:"base_name,omitempty"`
 
 	// required by spec
 	Architecture string `json:"architecture"`

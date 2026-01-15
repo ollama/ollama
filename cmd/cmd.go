@@ -219,6 +219,287 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func RemoteListHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	providers, err := client.ListRemoteProviders(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	if len(providers) == 0 {
+		fmt.Fprintln(os.Stdout, "no remote providers configured")
+		return nil
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "Type", "Base URL", "Default Model", "API Key"})
+	for _, p := range providers {
+		key := p.APIKeyMasked
+		if key == "" && p.HasAPIKey {
+			key = "****"
+		}
+		table.Append([]string{p.ID, p.Type, p.BaseURL, p.DefaultModel, key})
+	}
+	table.Render()
+	return nil
+}
+
+func RemoteShowHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("remote provider id is required")
+	}
+	id := args[0]
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	providers, err := client.ListRemoteProviders(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	for _, p := range providers {
+		if p.ID != id {
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "id: %s\n", p.ID)
+		fmt.Fprintf(os.Stdout, "type: %s\n", p.Type)
+		fmt.Fprintf(os.Stdout, "base_url: %s\n", p.BaseURL)
+		if p.DefaultModel != "" {
+			fmt.Fprintf(os.Stdout, "default_model: %s\n", p.DefaultModel)
+		}
+		if p.APIKeyMasked != "" {
+			fmt.Fprintf(os.Stdout, "api_key: %s\n", p.APIKeyMasked)
+		} else if p.HasAPIKey {
+			fmt.Fprintln(os.Stdout, "api_key: ****")
+		}
+		if len(p.Headers) > 0 {
+			fmt.Fprintln(os.Stdout, "headers:")
+			keys := make([]string, 0, len(p.Headers))
+			for k := range p.Headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fmt.Fprintf(os.Stdout, "  %s=%s\n", k, p.Headers[k])
+			}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("remote provider %q not found", id)
+}
+
+func RemoteAddHandler(cmd *cobra.Command, args []string) error {
+	id, _ := cmd.Flags().GetString("id")
+	if id == "" && len(args) > 0 {
+		id = args[0]
+	}
+	providerType, _ := cmd.Flags().GetString("type")
+	baseURL, _ := cmd.Flags().GetString("base-url")
+	apiKey, _ := cmd.Flags().GetString("api-key")
+	defaultModel, _ := cmd.Flags().GetString("default-model")
+	headersList, _ := cmd.Flags().GetStringArray("header")
+
+	headers := map[string]string{}
+	for _, h := range headersList {
+		parts := strings.SplitN(h, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid header %q, expected key=value", h)
+		}
+		headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+
+	req := &api.RemoteProviderRequest{
+		ID:           id,
+		Type:         providerType,
+		BaseURL:      baseURL,
+		APIKey:       apiKey,
+		DefaultModel: defaultModel,
+		Headers:      headers,
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.UpsertRemoteProvider(cmd.Context(), req)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stdout, "saved remote provider %q (type=%s base_url=%s)\n", resp.ID, resp.Type, resp.BaseURL)
+	return nil
+}
+
+func RemoteRemoveHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("remote provider id is required")
+	}
+	id := args[0]
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	if err := client.DeleteRemoteProvider(cmd.Context(), id); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stdout, "removed remote provider %q\n", id)
+	return nil
+}
+
+func RemoteModelListHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	lr, err := client.List(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	var models []api.ListModelResponse
+	for _, m := range lr.Models {
+		if m.RemoteProvider != "" || m.RemoteChannel != "" || m.RemoteHost != "" {
+			models = append(models, m)
+		}
+	}
+
+	if len(models) == 0 {
+		fmt.Fprintln(os.Stdout, "no remote models configured")
+		return nil
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Name", "Remote Provider", "Remote Channel", "Remote Model", "Remote Host", "Modified"})
+	for _, m := range models {
+		table.Append([]string{
+			m.Model,
+			m.RemoteProvider,
+			m.RemoteChannel,
+			m.RemoteModel,
+			m.RemoteHost,
+			m.ModifiedAt.Format(time.RFC3339),
+		})
+	}
+	table.Render()
+	return nil
+}
+
+func RemoteModelShowHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("model name is required")
+	}
+	name := args[0]
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
+	if err != nil {
+		return err
+	}
+
+	if resp.RemoteProvider == "" && resp.RemoteChannel == "" && resp.RemoteHost == "" {
+		return fmt.Errorf("model %q is not a remote model", name)
+	}
+
+	fmt.Fprintf(os.Stdout, "model: %s\n", name)
+	if resp.RemoteProvider != "" {
+		fmt.Fprintf(os.Stdout, "remote_provider: %s\n", resp.RemoteProvider)
+	}
+	if resp.RemoteChannel != "" {
+		fmt.Fprintf(os.Stdout, "remote_channel: %s\n", resp.RemoteChannel)
+	}
+	if resp.RemoteModel != "" {
+		fmt.Fprintf(os.Stdout, "remote_model: %s\n", resp.RemoteModel)
+	}
+	if resp.RemoteHost != "" {
+		fmt.Fprintf(os.Stdout, "remote_host: %s\n", resp.RemoteHost)
+	}
+	return nil
+}
+
+func RemoteModelAddHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("model name is required")
+	}
+	name := args[0]
+
+	channel, _ := cmd.Flags().GetString("channel")
+	if channel == "" {
+		return errors.New("remote channel is required")
+	}
+	from, _ := cmd.Flags().GetString("from")
+	if from == "" {
+		return errors.New("upstream model name is required")
+	}
+	provider, _ := cmd.Flags().GetString("provider")
+	if provider == "" {
+		provider = "openai"
+	}
+
+	req := &api.CreateRequest{
+		Model:          name,
+		From:           from,
+		RemoteProvider: provider,
+		RemoteChannel:  channel,
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Status != "" {
+			fmt.Fprintln(os.Stdout, resp.Status)
+		}
+		return nil
+	}
+
+	if err := client.Create(cmd.Context(), req, fn); err != nil {
+		if strings.Contains(err.Error(), "path or Modelfile are required") {
+			return fmt.Errorf("the ollama server must be updated to use `ollama remote model add` with this client")
+		}
+		return err
+	}
+
+	return nil
+}
+
+func RemoteModelRemoveHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("model name is required")
+	}
+	name := args[0]
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	if err := client.Delete(cmd.Context(), &api.DeleteRequest{Model: name}); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stdout, "removed remote model %q\n", name)
+	return nil
+}
+
 func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -1858,6 +2139,115 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
+
+	remoteCmd := &cobra.Command{
+		Use:   "remote",
+		Short: "Manage remote providers",
+		Long:  "Manage OpenAI-compatible remote provider channels and remote models.",
+		Example: `  ollama remote list
+  ollama remote add aliyun-dashscope --type openai --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 --api-key sk-...
+  ollama remote rm aliyun-dashscope
+  ollama remote show aliyun-dashscope
+  ollama remote model add glm-4.6-remote --channel aliyun-dashscope --from glm-4.6`,
+	}
+	remoteListCmd := &cobra.Command{
+		Use:     "list",
+		Short:   "List remote providers",
+		Example: "  ollama remote list",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteListHandler,
+	}
+	remoteAddCmd := &cobra.Command{
+		Use:     "add [ID]",
+		Short:   "Create or update a remote provider",
+		Example: "  ollama remote add aliyun-dashscope --type openai --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 --api-key sk-...",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteAddHandler,
+	}
+	remoteUpdateCmd := &cobra.Command{
+		Use:     "update [ID]",
+		Short:   "Update a remote provider",
+		Example: "  ollama remote update aliyun-dashscope --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 --api-key sk-...",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteAddHandler,
+	}
+	remoteRemoveCmd := &cobra.Command{
+		Use:     "rm ID",
+		Short:   "Remove a remote provider",
+		Example: "  ollama remote rm aliyun-dashscope",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteRemoveHandler,
+	}
+	remoteShowCmd := &cobra.Command{
+		Use:     "show ID",
+		Short:   "Show a remote provider",
+		Example: "  ollama remote show aliyun-dashscope",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteShowHandler,
+	}
+
+	remoteAddCmd.Flags().String("id", "", "Remote provider id (or pass as argument)")
+	remoteAddCmd.Flags().String("type", "openai", "Remote provider type (e.g. openai)")
+	remoteAddCmd.Flags().String("base-url", "", "Remote provider base URL")
+	remoteAddCmd.Flags().String("api-key", "", "Remote provider API key")
+	remoteAddCmd.Flags().String("default-model", "", "Default model for this provider")
+	remoteAddCmd.Flags().StringArray("header", nil, "Additional header (key=value); can be repeated")
+	remoteUpdateCmd.Flags().String("id", "", "Remote provider id (or pass as argument)")
+	remoteUpdateCmd.Flags().String("type", "openai", "Remote provider type (e.g. openai)")
+	remoteUpdateCmd.Flags().String("base-url", "", "Remote provider base URL")
+	remoteUpdateCmd.Flags().String("api-key", "", "Remote provider API key")
+	remoteUpdateCmd.Flags().String("default-model", "", "Default model for this provider")
+	remoteUpdateCmd.Flags().StringArray("header", nil, "Additional header (key=value); can be repeated")
+
+	remoteModelCmd := &cobra.Command{
+		Use:   "model",
+		Short: "Manage remote models",
+		Long:  "Create and manage remote models that proxy to OpenAI-compatible providers.",
+	}
+	remoteModelListCmd := &cobra.Command{
+		Use:     "list",
+		Short:   "List remote models",
+		Example: "  ollama remote model list",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteModelListHandler,
+	}
+	remoteModelShowCmd := &cobra.Command{
+		Use:     "show MODEL",
+		Short:   "Show a remote model",
+		Example: "  ollama remote model show glm-4.6-remote",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteModelShowHandler,
+	}
+	remoteModelAddCmd := &cobra.Command{
+		Use:     "add MODEL",
+		Short:   "Create a remote model",
+		Example: "  ollama remote model add glm-4.6-remote --channel aliyun-dashscope --from glm-4.6",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteModelAddHandler,
+	}
+	remoteModelUpdateCmd := &cobra.Command{
+		Use:     "update MODEL",
+		Short:   "Update a remote model",
+		Example: "  ollama remote model update glm-4.6-remote --channel aliyun-dashscope --from glm-4.6",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteModelAddHandler,
+	}
+	remoteModelRemoveCmd := &cobra.Command{
+		Use:     "rm MODEL",
+		Short:   "Remove a remote model",
+		Example: "  ollama remote model rm glm-4.6-remote",
+		PreRunE: checkServerHeartbeat,
+		RunE:    RemoteModelRemoveHandler,
+	}
+	remoteModelAddCmd.Flags().String("channel", "", "Remote provider channel id")
+	remoteModelAddCmd.Flags().String("from", "", "Upstream model name")
+	remoteModelAddCmd.Flags().String("provider", "openai", "Remote provider type (e.g. openai)")
+	remoteModelUpdateCmd.Flags().String("channel", "", "Remote provider channel id")
+	remoteModelUpdateCmd.Flags().String("from", "", "Upstream model name")
+	remoteModelUpdateCmd.Flags().String("provider", "openai", "Remote provider type (e.g. openai)")
+
+	remoteModelCmd.AddCommand(remoteModelListCmd, remoteModelShowCmd, remoteModelAddCmd, remoteModelUpdateCmd, remoteModelRemoveCmd)
+	remoteCmd.AddCommand(remoteListCmd, remoteAddCmd, remoteUpdateCmd, remoteRemoveCmd, remoteShowCmd, remoteModelCmd)
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
@@ -1942,6 +2332,7 @@ func NewCLI() *cobra.Command {
 		signoutCmd,
 		listCmd,
 		psCmd,
+		remoteCmd,
 		copyCmd,
 		deleteCmd,
 		runnerCmd,

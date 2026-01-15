@@ -148,6 +148,58 @@ func Remotes() []string {
 	return r
 }
 
+// ConfigDir returns the path to the Ollama config directory. ConfigDir can be
+// configured via the OLLAMA_CONFIG environment variable. Default is $HOME/.ollama
+func ConfigDir() string {
+	if s := Var("OLLAMA_CONFIG"); s != "" {
+		return s
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return filepath.Join(home, ".ollama")
+}
+
+// RemoteProvidersPath returns the path to the remote providers config file.
+// It can be configured via OLLAMA_REMOTE_PROVIDERS. Default is
+// $HOME/.ollama/config/remote_providers.json
+func RemoteProvidersPath() string {
+	if s := Var("OLLAMA_REMOTE_PROVIDERS"); s != "" {
+		return s
+	}
+
+	return filepath.Join(ConfigDir(), "config", "remote_providers.json")
+}
+
+// OpenAIRemotes returns a list of allowed hosts for OpenAI-compatible remotes.
+// If unset, no explicit allowlist is enforced.
+func OpenAIRemotes() []string {
+	raw := strings.TrimSpace(Var("OLLAMA_OPENAI_REMOTES"))
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
+// ResponsesStreamTextMode controls how /v1/responses streams text when proxied
+// through OpenAI-compatible remotes. Valid values: strict, prefix, always.
+// Defaults to strict.
+func ResponsesStreamTextMode() string {
+	mode := strings.ToLower(strings.TrimSpace(Var("OLLAMA_RESPONSES_STREAM_TEXT")))
+	switch mode {
+	case "", "strict":
+		return "strict"
+	case "prefix", "always":
+		return mode
+	default:
+		slog.Warn("invalid environment variable, using default", "key", "OLLAMA_RESPONSES_STREAM_TEXT", "value", mode, "default", "strict")
+		return "strict"
+	}
+}
+
 func BoolWithDefault(k string) func(defaultValue bool) bool {
 	return func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
@@ -202,6 +254,9 @@ var (
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
+	// ResponsesStreamTextPrefixChars sets the prefix character budget for streaming
+	// text in /v1/responses (only used when OLLAMA_RESPONSES_STREAM_TEXT=prefix).
+	ResponsesStreamTextPrefixChars = Uint("OLLAMA_RESPONSES_STREAM_TEXT_PREFIX_CHARS", 0)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
@@ -277,6 +332,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_CONFIG":            {"OLLAMA_CONFIG", ConfigDir(), "Base directory for Ollama configuration (default: $HOME/.ollama)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
@@ -288,6 +344,10 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
+		"OLLAMA_OPENAI_REMOTES":    {"OLLAMA_OPENAI_REMOTES", OpenAIRemotes(), "Allowed hosts for OpenAI-compatible remotes"},
+		"OLLAMA_RESPONSES_STREAM_TEXT": {"OLLAMA_RESPONSES_STREAM_TEXT", ResponsesStreamTextMode(), "Text streaming mode for /v1/responses when using OpenAI-compatible remotes (strict|prefix|always)"},
+		"OLLAMA_RESPONSES_STREAM_TEXT_PREFIX_CHARS": {"OLLAMA_RESPONSES_STREAM_TEXT_PREFIX_CHARS", ResponsesStreamTextPrefixChars(), "Prefix character budget when OLLAMA_RESPONSES_STREAM_TEXT=prefix"},
+		"OLLAMA_REMOTE_PROVIDERS":  {"OLLAMA_REMOTE_PROVIDERS", RemoteProvidersPath(), "Path to OpenAI-compatible remote providers config"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},

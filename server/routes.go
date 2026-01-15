@@ -42,6 +42,8 @@ import (
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/remoteproviders"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -251,6 +253,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
+	remoteProvider := strings.ToLower(strings.TrimSpace(m.Config.RemoteProvider))
+	if remoteProvider == "" && m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		remoteProvider = "ollama"
+	}
+
+	if remoteProvider == "openai" && m.Config.RemoteChannel != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "openai remote models do not support generate"})
 		return
 	}
 
@@ -1158,25 +1170,35 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Requires:     m.Config.Requires,
 	}
 
-	if m.Config.RemoteHost != "" {
+	if m.Config.RemoteHost != "" || m.Config.RemoteModel != "" || m.Config.RemoteProvider != "" || m.Config.RemoteChannel != "" {
 		resp.RemoteHost = m.Config.RemoteHost
 		resp.RemoteModel = m.Config.RemoteModel
+		resp.RemoteProvider = m.Config.RemoteProvider
+		resp.RemoteChannel = m.Config.RemoteChannel
 
-		if m.Config.ModelFamily != "" {
+		arch := strings.TrimSpace(m.Config.ModelFamily)
+		if arch == "" {
+			arch = strings.TrimSpace(m.Config.BaseName)
+		}
+		if arch == "" {
+			arch = strings.TrimSpace(m.Config.RemoteModel)
+		}
+		if arch != "" {
 			resp.ModelInfo = make(map[string]any)
-			resp.ModelInfo["general.architecture"] = m.Config.ModelFamily
+			resp.ModelInfo["general.architecture"] = arch
 
 			if m.Config.BaseName != "" {
 				resp.ModelInfo["general.basename"] = m.Config.BaseName
 			}
 
 			if m.Config.ContextLen > 0 {
-				resp.ModelInfo[fmt.Sprintf("%s.context_length", m.Config.ModelFamily)] = m.Config.ContextLen
+				resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)] = m.Config.ContextLen
 			}
 
 			if m.Config.EmbedLen > 0 {
-				resp.ModelInfo[fmt.Sprintf("%s.embedding_length", m.Config.ModelFamily)] = m.Config.EmbedLen
+				resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)] = m.Config.EmbedLen
 			}
+
 		}
 	}
 
@@ -1211,7 +1233,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp.Modelfile = sb.String()
 
 	// skip loading tensor information if this is a remote model
-	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+	if m.Config.RemoteProvider != "" || m.Config.RemoteHost != "" {
 		return resp, nil
 	}
 
@@ -1269,6 +1291,11 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
+	if c.Query("client_version") != "" {
+		s.listCodexModels(c)
+		return
+	}
+
 	ms, err := Manifests(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1295,13 +1322,15 @@ func (s *Server) ListHandler(c *gin.Context) {
 
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
-			Model:       n.DisplayShortest(),
-			Name:        n.DisplayShortest(),
-			RemoteModel: cf.RemoteModel,
-			RemoteHost:  cf.RemoteHost,
-			Size:        m.Size(),
-			Digest:      m.digest,
-			ModifiedAt:  m.fi.ModTime(),
+			Model:          n.DisplayShortest(),
+			Name:           n.DisplayShortest(),
+			RemoteModel:    cf.RemoteModel,
+			RemoteHost:     cf.RemoteHost,
+			RemoteProvider: cf.RemoteProvider,
+			RemoteChannel:  cf.RemoteChannel,
+			Size:           m.Size(),
+			Digest:         m.digest,
+			ModifiedAt:     m.fi.ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1318,6 +1347,106 @@ func (s *Server) ListHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
+}
+
+type codexReasoningPreset struct {
+	Effort      string `json:"effort"`
+	Description string `json:"description"`
+}
+
+type codexTruncationPolicy struct {
+	Mode  string `json:"mode"`
+	Limit int64  `json:"limit"`
+}
+
+type codexModelInfo struct {
+	Slug                       string                 `json:"slug"`
+	DisplayName                string                 `json:"display_name"`
+	DefaultReasoningLevel      string                 `json:"default_reasoning_level"`
+	SupportedReasoningLevels   []codexReasoningPreset `json:"supported_reasoning_levels"`
+	ShellType                  string                 `json:"shell_type"`
+	Visibility                 string                 `json:"visibility"`
+	SupportedInAPI             bool                   `json:"supported_in_api"`
+	Priority                   int                    `json:"priority"`
+	SupportsReasoningSummaries bool                   `json:"supports_reasoning_summaries"`
+	SupportVerbosity           bool                   `json:"support_verbosity"`
+	TruncationPolicy           codexTruncationPolicy  `json:"truncation_policy"`
+}
+
+type codexModelsResponse struct {
+	Models []codexModelInfo `json:"models"`
+	Etag   string           `json:"etag,omitempty"`
+}
+
+func (s *Server) listCodexModels(c *gin.Context) {
+	ms, err := Manifests(true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	defaults := model.DefaultName()
+	models := make([]codexModelInfo, 0, len(ms))
+	for n, m := range ms {
+		var cf model.ConfigV2
+
+		if m.Config.Digest != "" {
+			f, err := m.Config.Open()
+			if err != nil {
+				slog.Warn("bad manifest filepath", "name", n, "error", err)
+				continue
+			}
+			defer f.Close()
+
+			if err := json.NewDecoder(f).Decode(&cf); err != nil {
+				slog.Warn("bad manifest config", "name", n, "error", err)
+				continue
+			}
+		}
+
+		name := n.DisplayShortest()
+		if strings.EqualFold(n.Tag, defaults.Tag) {
+			var sb strings.Builder
+			if !strings.EqualFold(n.Host, defaults.Host) {
+				sb.WriteString(n.Host)
+				sb.WriteByte('/')
+				sb.WriteString(n.Namespace)
+				sb.WriteByte('/')
+			} else if !strings.EqualFold(n.Namespace, defaults.Namespace) {
+				sb.WriteString(n.Namespace)
+				sb.WriteByte('/')
+			}
+			sb.WriteString(n.Model)
+			name = sb.String()
+		}
+		shellType := "default"
+		if strings.EqualFold(cf.RemoteProvider, "openai") {
+			shellType = "shell_command"
+		}
+
+		models = append(models, codexModelInfo{
+			Slug:                       name,
+			DisplayName:                name,
+			DefaultReasoningLevel:      "none",
+			SupportedReasoningLevels:   []codexReasoningPreset{},
+			ShellType:                  shellType,
+			Visibility:                 "list",
+			SupportedInAPI:             true,
+			Priority:                   1,
+			SupportsReasoningSummaries: false,
+			SupportVerbosity:           false,
+			TruncationPolicy: codexTruncationPolicy{
+				Mode:  "bytes",
+				Limit: 10000,
+			},
+		})
+	}
+
+	slices.SortStableFunc(models, func(i, j codexModelInfo) int {
+		return cmp.Compare(strings.ToLower(i.Slug), strings.ToLower(j.Slug))
+	})
+
+	c.JSON(http.StatusOK, codexModelsResponse{Models: models})
 }
 
 func (s *Server) CopyHandler(c *gin.Context) {
@@ -1560,6 +1689,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
+	r.GET("/api/remote-providers", s.ListRemoteProvidersHandler)
+	r.POST("/api/remote-providers", s.UpsertRemoteProviderHandler)
+	r.DELETE("/api/remote-providers/:id", s.DeleteRemoteProviderHandler)
 
 	r.POST("/api/me", s.WhoamiHandler)
 
@@ -1969,6 +2101,328 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Done:       true,
 			DoneReason: "unload",
 		})
+		return
+	}
+
+	remoteProvider := strings.ToLower(strings.TrimSpace(m.Config.RemoteProvider))
+	if remoteProvider == "" && m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		remoteProvider = "ollama"
+	}
+
+	if remoteProvider == "openai" && m.Config.RemoteChannel != "" {
+		origModel := req.Model
+
+		channel, err := remoteproviders.GetChannel(envconfig.RemoteProvidersPath(), m.Config.RemoteChannel)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if strings.ToLower(channel.Type) != "openai" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "remote channel type must be openai"})
+			return
+		}
+
+		remoteURL, err := url.Parse(channel.BaseURL)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if allowed := envconfig.OpenAIRemotes(); len(allowed) > 0 && !slices.Contains(allowed, remoteURL.Hostname()) {
+			slog.Info("remote model", "remotes", allowed, "remoteURL", channel.BaseURL, "hostname", remoteURL.Hostname())
+			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+			return
+		}
+
+		remoteModel := m.Config.RemoteModel
+		if remoteModel == "" {
+			remoteModel = channel.DefaultModel
+		}
+		if remoteModel == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "remote model is required"})
+			return
+		}
+
+		req.Model = remoteModel
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+
+		var msgs []api.Message
+		if len(req.Messages) > 0 {
+			msgs = append(m.Messages, req.Messages...)
+			if req.Messages[0].Role != "system" && m.System != "" {
+				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+			}
+		}
+
+		msgs = filterThinkTags(msgs, m)
+		req.Messages = msgs
+
+		for k, v := range m.Options {
+			if _, ok := req.Options[k]; !ok {
+				req.Options[k] = v
+			}
+		}
+		stream := req.Stream == nil || *req.Stream
+		contentType := "application/x-ndjson"
+		if !stream {
+			contentType = "application/json; charset=utf-8"
+		}
+		c.Header("Content-Type", contentType)
+
+		openaiReq, err := openai.ToChatCompletionRequest(req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		openaiReq.Stream = stream
+		responsesMode := c.GetBool("ollama.responses")
+		if stream && responsesMode {
+			openaiReq.StreamOptions = &openai.StreamOptions{IncludeUsage: true}
+		}
+
+		client := openai.NewRemoteClient(remoteURL, channel.APIKey, channel.Headers)
+		if !stream {
+			resp, err := client.CreateChatCompletion(c, openaiReq)
+			if err != nil {
+				var apiError api.StatusError
+				if errors.As(err, &apiError) {
+					c.JSON(apiError.StatusCode, apiError)
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			chatResp, err := openai.ChatCompletionToChatResponse(resp)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			chatResp.Model = origModel
+			chatResp.RemoteModel = remoteModel
+			chatResp.RemoteHost = channel.BaseURL
+
+			c.JSON(http.StatusOK, chatResp)
+			return
+		}
+
+		acc := openai.NewToolCallAccumulator()
+		var finishReason string
+		var usage *openai.Usage
+		var lastCreated time.Time
+		streamTextMode := envconfig.ResponsesStreamTextMode()
+		streamTextPrefixChars := int(envconfig.ResponsesStreamTextPrefixChars())
+		if streamTextMode == "prefix" && streamTextPrefixChars <= 0 {
+			streamTextMode = "strict"
+		}
+		sawToolCalls := false
+		var bufferedText strings.Builder
+		var bufferedThinking strings.Builder
+		streamedTextRunes := 0
+		streamedThinkingRunes := 0
+
+		splitPrefixRunes := func(input string, max int) (string, string, int) {
+			if max <= 0 || input == "" {
+				return "", input, 0
+			}
+			runes := []rune(input)
+			if len(runes) <= max {
+				return input, "", len(runes)
+			}
+			return string(runes[:max]), string(runes[max:]), max
+		}
+
+		limitDelta := func(delta string, max int, streamed *int, buffer *strings.Builder) string {
+			if delta == "" {
+				return ""
+			}
+			remaining := max - *streamed
+			if remaining <= 0 {
+				buffer.WriteString(delta)
+				return ""
+			}
+			prefix, rest, taken := splitPrefixRunes(delta, remaining)
+			*streamed += taken
+			if rest != "" {
+				buffer.WriteString(rest)
+			}
+			return prefix
+		}
+
+		err = client.StreamChatCompletion(c, openaiReq, func(chunk openai.ChatCompletionChunk) error {
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			if chunk.Created > 0 {
+				lastCreated = time.Unix(chunk.Created, 0).UTC()
+			}
+			if len(chunk.Choices) == 0 {
+				return nil
+			}
+			choice := chunk.Choices[0]
+			delta := choice.Delta
+			if choice.Message != nil && delta.Content == nil && delta.Reasoning == "" && len(delta.ToolCalls) == 0 {
+				delta = *choice.Message
+			}
+
+			if choice.FinishReason != nil {
+				finishReason = *choice.FinishReason
+			}
+
+			if len(delta.ToolCalls) > 0 {
+				sawToolCalls = true
+				acc.Apply(delta.ToolCalls)
+			}
+			if choice.FinishReason != nil && *choice.FinishReason == "tool_calls" {
+				sawToolCalls = true
+			}
+
+			textDelta := openai.ExtractTextContent(delta.Content)
+			thinkingDelta := delta.Reasoning
+			if responsesMode {
+				if sawToolCalls {
+					bufferedText.Reset()
+					bufferedThinking.Reset()
+					textDelta = ""
+					thinkingDelta = ""
+				} else {
+					switch streamTextMode {
+					case "always":
+						// pass through
+					case "prefix":
+						textDelta = limitDelta(textDelta, streamTextPrefixChars, &streamedTextRunes, &bufferedText)
+						thinkingDelta = limitDelta(thinkingDelta, streamTextPrefixChars, &streamedThinkingRunes, &bufferedThinking)
+					default: // strict
+						textDelta = limitDelta(textDelta, 0, &streamedTextRunes, &bufferedText)
+						thinkingDelta = limitDelta(thinkingDelta, 0, &streamedThinkingRunes, &bufferedThinking)
+					}
+				}
+			}
+
+			if textDelta == "" && thinkingDelta == "" && choice.Logprobs == nil {
+				return nil
+			}
+
+			resp := api.ChatResponse{
+				Model:       origModel,
+				RemoteModel: remoteModel,
+				RemoteHost:  channel.BaseURL,
+				CreatedAt:   lastCreated,
+				Message: api.Message{
+					Role:     "assistant",
+					Content:  textDelta,
+					Thinking: thinkingDelta,
+				},
+				Done: false,
+			}
+
+			if choice.Logprobs != nil {
+				resp.Logprobs = choice.Logprobs.Content
+			}
+
+			data, err := json.Marshal(resp)
+			if err != nil {
+				return err
+			}
+			if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+				return err
+			}
+			c.Writer.Flush()
+			return nil
+		})
+		if err != nil {
+			var apiError api.StatusError
+			if errors.As(err, &apiError) {
+				c.JSON(apiError.StatusCode, apiError)
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		toolCalls, err := acc.Build()
+		if err != nil {
+			slog.Warn("invalid tool call arguments", "error", err)
+			toolCalls = nil
+		}
+
+		createdAt := lastCreated
+		if createdAt.IsZero() {
+			createdAt = time.Now().UTC()
+		}
+
+		if responsesMode && !sawToolCalls && streamTextMode == "prefix" {
+			flushText := bufferedText.String()
+			flushThinking := bufferedThinking.String()
+			if flushText != "" || flushThinking != "" {
+				resp := api.ChatResponse{
+					Model:       origModel,
+					RemoteModel: remoteModel,
+					RemoteHost:  channel.BaseURL,
+					CreatedAt:   createdAt,
+					Message: api.Message{
+						Role:     "assistant",
+						Content:  flushText,
+						Thinking: flushThinking,
+					},
+					Done: false,
+				}
+				data, err := json.Marshal(resp)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.Writer.Flush()
+			}
+			bufferedText.Reset()
+			bufferedThinking.Reset()
+		}
+
+		bufferedTextStr := ""
+		bufferedThinkingStr := ""
+		if responsesMode && !sawToolCalls {
+			if streamTextMode == "strict" {
+				bufferedTextStr = bufferedText.String()
+				bufferedThinkingStr = bufferedThinking.String()
+			}
+		}
+
+		finalResp := api.ChatResponse{
+			Model:       origModel,
+			RemoteModel: remoteModel,
+			RemoteHost:  channel.BaseURL,
+			CreatedAt:   createdAt,
+			Message: api.Message{
+				Role:      "assistant",
+				Content:   bufferedTextStr,
+				Thinking:  bufferedThinkingStr,
+				ToolCalls: toolCalls,
+			},
+			Done:       true,
+			DoneReason: finishReason,
+		}
+		if usage != nil && usage.TotalTokens > 0 {
+			finalResp.Metrics.PromptEvalCount = usage.PromptTokens
+			finalResp.Metrics.EvalCount = usage.CompletionTokens
+		}
+
+		data, err := json.Marshal(finalResp)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Writer.Flush()
 		return
 	}
 
