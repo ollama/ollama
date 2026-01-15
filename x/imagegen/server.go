@@ -251,15 +251,13 @@ func (s *Server) WaitUntilRunning(ctx context.Context) error {
 
 // Completion generates an image from the prompt via the subprocess.
 func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	// Build request with defaults (steps left to model)
+	// Build request - let the model apply its own defaults for unspecified values
 	creq := completionRequest{
 		Prompt: req.Prompt,
-		Width:  DefaultWidth,
-		Height: DefaultHeight,
 		Seed:   time.Now().UnixNano(),
 	}
 
-	// Parse size string (OpenAI format: "WxH")
+	// Parse size string (OpenAI format: "WxH") - only set if provided
 	if req.Size != "" {
 		if w, h := parseSize(req.Size); w > 0 && h > 0 {
 			creq.Width = w
