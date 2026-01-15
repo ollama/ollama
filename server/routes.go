@@ -216,7 +216,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// Check if this is a known image generation model
 	if imagegen.ResolveModelName(req.Model) != "" {
-		imagegenapi.HandleGenerateRequest(c, s, req.Model, req.Prompt, req.KeepAlive, streamResponse)
+		imagegenapi.HandleGenerateRequest(c, s, &req, streamResponse)
 		return
 	}
 

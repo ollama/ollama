@@ -136,15 +136,12 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Apply defaults
+	// Apply defaults (steps left to model)
 	if req.Width <= 0 {
 		req.Width = imagegen.DefaultWidth
 	}
 	if req.Height <= 0 {
 		req.Height = imagegen.DefaultHeight
-	}
-	if req.Steps <= 0 {
-		req.Steps = imagegen.DefaultSteps
 	}
 	if req.Seed <= 0 {
 		req.Seed = time.Now().UnixNano()

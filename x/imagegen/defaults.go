@@ -4,5 +4,4 @@ package imagegen
 const (
 	DefaultWidth  = 1024
 	DefaultHeight = 1024
-	DefaultSteps  = 9
 )

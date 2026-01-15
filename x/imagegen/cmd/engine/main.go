@@ -49,7 +49,7 @@ func main() {
 	// Image generation params
 	width := flag.Int("width", imagegen.DefaultWidth, "Image width")
 	height := flag.Int("height", imagegen.DefaultHeight, "Image height")
-	steps := flag.Int("steps", imagegen.DefaultSteps, "Denoising steps")
+	steps := flag.Int("steps", 0, "Denoising steps (0 = model default)")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
 

@@ -194,7 +194,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		cfg.Height = imagegen.DefaultHeight
 	}
 	if cfg.Steps <= 0 {
-		cfg.Steps = imagegen.DefaultSteps
+		cfg.Steps = 9 // Z-Image turbo default
 	}
 	if cfg.CFGScale <= 0 {
 		cfg.CFGScale = 4.0

@@ -251,27 +251,19 @@ func (s *Server) WaitUntilRunning(ctx context.Context) error {
 
 // Completion generates an image from the prompt via the subprocess.
 func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	// Build request
+	// Build request with defaults (steps left to model)
 	creq := completionRequest{
 		Prompt: req.Prompt,
 		Width:  DefaultWidth,
 		Height: DefaultHeight,
-		Steps:  DefaultSteps,
 		Seed:   time.Now().UnixNano(),
 	}
 
-	if req.Options != nil {
-		if req.Options.NumCtx > 0 && req.Options.NumCtx <= 4096 {
-			creq.Width = int32(req.Options.NumCtx)
-		}
-		if req.Options.NumGPU > 0 && req.Options.NumGPU <= 4096 {
-			creq.Height = int32(req.Options.NumGPU)
-		}
-		if req.Options.NumPredict > 0 && req.Options.NumPredict <= 100 {
-			creq.Steps = req.Options.NumPredict
-		}
-		if req.Options.Seed > 0 {
-			creq.Seed = int64(req.Options.Seed)
+	// Parse size string (OpenAI format: "WxH")
+	if req.Size != "" {
+		if w, h := parseSize(req.Size); w > 0 && h > 0 {
+			creq.Width = w
+			creq.Height = h
 		}
 	}
 
@@ -412,3 +404,14 @@ func (s *Server) HasExited() bool {
 
 // Ensure Server implements llm.LlamaServer
 var _ llm.LlamaServer = (*Server)(nil)
+
+// parseSize parses an OpenAI-style size string "WxH" into width and height.
+func parseSize(size string) (int32, int32) {
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	w, _ := strconv.Atoi(parts[0])
+	h, _ := strconv.Atoi(parts[1])
+	return int32(w), int32(h)
+}

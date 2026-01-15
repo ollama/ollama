@@ -39,7 +39,7 @@ func DefaultOptions() ImageGenOptions {
 	return ImageGenOptions{
 		Width:  DefaultWidth,
 		Height: DefaultHeight,
-		Steps:  DefaultSteps,
+		Steps:  0, // 0 means model default
 		Seed:   0, // 0 means random
 	}
 }
@@ -109,7 +109,7 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("width", DefaultWidth, "Image width")
 	cmd.Flags().Int("height", DefaultHeight, "Image height")
-	cmd.Flags().Int("steps", DefaultSteps, "Denoising steps")
+	cmd.Flags().Int("steps", 0, "Denoising steps (0 = model default)")
 	cmd.Flags().Int("seed", 0, "Random seed (0 for random)")
 	cmd.Flags().String("negative", "", "Negative prompt")
 	cmd.Flags().MarkHidden("width")
@@ -158,17 +158,10 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		return err
 	}
 
-	// Build request with image gen options encoded in Options fields
-	// NumCtx=width, NumGPU=height, NumPredict=steps, Seed=seed
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
-		Options: map[string]any{
-			"num_ctx":     opts.Width,
-			"num_gpu":     opts.Height,
-			"num_predict": opts.Steps,
-			"seed":        opts.Seed,
-		},
+		Size:   fmt.Sprintf("%dx%d", opts.Width, opts.Height),
 	}
 	if keepAlive != nil {
 		req.KeepAlive = keepAlive

@@ -127,6 +127,10 @@ type GenerateRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// Size specifies the image dimensions for image generation models.
+	// Format: "WxH" (e.g., "1024x1024"). OpenAI-compatible.
+	Size string `json:"size,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].

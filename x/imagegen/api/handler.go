@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -63,16 +62,8 @@ func ImageGenerationHandler(c *gin.Context, scheduler RunnerScheduler) {
 		return
 	}
 
-	// Parse size
-	width, height := parseSize(req.Size)
-
-	// Build options - we repurpose NumCtx/NumGPU for width/height
-	opts := api.Options{}
-	opts.NumCtx = int(width)
-	opts.NumGPU = int(height)
-
 	// Schedule runner
-	runner, err := scheduler.ScheduleImageGenRunner(c, req.Model, opts, nil)
+	runner, err := scheduler.ScheduleImageGenRunner(c, req.Model, api.Options{}, nil)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
@@ -82,10 +73,10 @@ func ImageGenerationHandler(c *gin.Context, scheduler RunnerScheduler) {
 		return
 	}
 
-	// Build completion request
+	// Build completion request with size (OpenAI format)
 	completionReq := llm.CompletionRequest{
-		Prompt:  req.Prompt,
-		Options: &opts,
+		Prompt: req.Prompt,
+		Size:   req.Size,
 	}
 
 	if req.Stream {
@@ -135,22 +126,6 @@ func handleNonStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.
 	c.JSON(http.StatusOK, buildResponse(imageBase64, format))
 }
 
-func parseSize(size string) (int32, int32) {
-	parts := strings.Split(size, "x")
-	if len(parts) != 2 {
-		return imagegen.DefaultWidth, imagegen.DefaultHeight
-	}
-	w, _ := strconv.Atoi(parts[0])
-	h, _ := strconv.Atoi(parts[1])
-	if w == 0 {
-		w = imagegen.DefaultWidth
-	}
-	if h == 0 {
-		h = imagegen.DefaultHeight
-	}
-	return int32(w), int32(h)
-}
-
 func extractBase64(content string) string {
 	if strings.HasPrefix(content, "IMAGE_BASE64:") {
 		return content[13:]
@@ -186,20 +161,18 @@ func buildResponse(imageBase64, format string) ImageGenerationResponse {
 
 // HandleGenerateRequest handles Ollama /api/generate requests for image gen models.
 // This allows routes.go to delegate image generation with minimal code.
-func HandleGenerateRequest(c *gin.Context, scheduler RunnerScheduler, modelName, prompt string, keepAlive *api.Duration, streamFn func(c *gin.Context, ch chan any)) {
-	opts := api.Options{}
-
+func HandleGenerateRequest(c *gin.Context, scheduler RunnerScheduler, req *api.GenerateRequest, streamFn func(c *gin.Context, ch chan any)) {
 	// Schedule runner
-	runner, err := scheduler.ScheduleImageGenRunner(c, modelName, opts, keepAlive)
+	runner, err := scheduler.ScheduleImageGenRunner(c, req.Model, api.Options{}, req.KeepAlive)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Build completion request
+	// Build completion request with size (OpenAI format)
 	completionReq := llm.CompletionRequest{
-		Prompt:  prompt,
-		Options: &opts,
+		Prompt: req.Prompt,
+		Size:   req.Size,
 	}
 
 	// Stream responses via channel
@@ -208,14 +181,14 @@ func HandleGenerateRequest(c *gin.Context, scheduler RunnerScheduler, modelName,
 		defer close(ch)
 		err := runner.Completion(c.Request.Context(), completionReq, func(resp llm.CompletionResponse) {
 			ch <- GenerateResponse{
-				Model:     modelName,
+				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
 				Response:  resp.Content,
 				Done:      resp.Done,
 			}
 		})
 		if err != nil {
-			slog.Error("image generation failed", "model", modelName, "error", err)
+			slog.Error("image generation failed", "model", req.Model, "error", err)
 		}
 	}()
 

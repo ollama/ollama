@@ -1464,6 +1464,10 @@ type CompletionRequest struct {
 
 	// TopLogprobs specifies the number of most likely alternative tokens to return (0-20)
 	TopLogprobs int
+
+	// Size specifies image dimensions for image generation models.
+	// Format: "WxH" (e.g., "1024x1024"). OpenAI-compatible.
+	Size string
 }
 
 // DoneReason represents the reason why a completion response is done
