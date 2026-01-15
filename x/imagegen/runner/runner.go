@@ -62,6 +62,12 @@ func Execute(args []string) error {
 		return fmt.Errorf("--port is required")
 	}
 
+	err := mlx.InitMLX()
+	if err != nil {
+		slog.Error("unable to initialize MLX", "error", err)
+		return err
+	}
+	slog.Info("MLX library initialized")
 	slog.Info("starting image runner", "model", *modelName, "port", *port)
 
 	// Check memory requirements before loading

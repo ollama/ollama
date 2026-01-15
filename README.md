@@ -270,10 +270,10 @@ cmake --build --preset MLX --parallel
 cmake --install build --component MLX
 ```
 
-Next, build the `ollama-mlx` binary, which is a separate build of the Ollama runtime with MLX support enabled (needs to be in the same directory as `ollama`):
+When building with the `-tags mlx` flag, the main `ollama` binary includes MLX support for experimental features like image generation:
 
 ```shell
-go build -tags mlx -o ollama-mlx .
+go build -tags mlx .
 ```
 
 Finally, start the server:

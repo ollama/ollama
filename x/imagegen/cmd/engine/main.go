@@ -79,6 +79,11 @@ func main() {
 		return
 	}
 
+	// Check if MLX initialized successfully
+	if !mlx.IsMLXAvailable() {
+		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
+	}
+
 	// CPU profiling
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile)

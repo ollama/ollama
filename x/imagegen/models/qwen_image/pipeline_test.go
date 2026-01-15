@@ -3,11 +3,32 @@
 package qwen_image
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/ollama/ollama/x/imagegen/mlx"
 )
+
+// TestMain initializes MLX before running tests.
+// If MLX libraries are not available, tests are skipped.
+func TestMain(m *testing.M) {
+	// Change to repo root so ./build/lib/ollama/ path works
+	_, thisFile, _, _ := runtime.Caller(0)
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..")
+	if err := os.Chdir(repoRoot); err != nil {
+		fmt.Printf("Failed to change to repo root: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := mlx.InitMLX(); err != nil {
+		fmt.Printf("Skipping qwen_image tests: %v\n", err)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 // TestPipelineOutput runs the full pipeline (integration test).
 // Skips if model weights not found. Requires ~50GB VRAM.

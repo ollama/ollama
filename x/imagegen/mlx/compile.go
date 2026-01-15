@@ -3,7 +3,7 @@
 package mlx
 
 /*
-#include "mlx/c/mlx.h"
+#include "mlx_wrappers.h"
 #include <stdlib.h>
 
 // Forward declaration for Go callback
@@ -68,15 +68,15 @@ func CompileShapeless(fn ClosureFunc, shapeless bool) *CompiledFunc {
 	handle := cgo.NewHandle(fn)
 
 	// Create the closure from the Go callback
-	closure := C.mlx_closure_new_func_payload(
+	closure := C.w_mlx_closure_new_func_payload(
 		(*[0]byte)(C.goClosureCallback),
 		unsafe.Pointer(handle),
 		(*[0]byte)(C.goClosureDestructor),
 	)
 
 	// Compile the closure
-	compiled := C.mlx_closure_new()
-	C.mlx_compile(&compiled, closure, C.bool(shapeless))
+	compiled := C.w_mlx_closure_new()
+	C.w_mlx_compile(&compiled, closure, C.bool(shapeless))
 
 	return &CompiledFunc{
 		closure:  closure,
@@ -87,25 +87,25 @@ func CompileShapeless(fn ClosureFunc, shapeless bool) *CompiledFunc {
 // Call invokes the compiled function with the given inputs.
 func (cf *CompiledFunc) Call(inputs ...*Array) []*Array {
 	// Pack inputs into vector
-	inputVec := C.mlx_vector_array_new()
+	inputVec := C.w_mlx_vector_array_new()
 	for _, arr := range inputs {
-		C.mlx_vector_array_append_value(inputVec, arr.c)
+		C.w_mlx_vector_array_append_value(inputVec, arr.c)
 	}
 
 	// Apply compiled closure
-	outputVec := C.mlx_vector_array_new()
-	C.mlx_closure_apply(&outputVec, cf.compiled, inputVec)
-	C.mlx_vector_array_free(inputVec)
+	outputVec := C.w_mlx_vector_array_new()
+	C.w_mlx_closure_apply(&outputVec, cf.compiled, inputVec)
+	C.w_mlx_vector_array_free(inputVec)
 
 	// Unpack outputs
-	numOutputs := int(C.mlx_vector_array_size(outputVec))
+	numOutputs := int(C.w_mlx_vector_array_size(outputVec))
 	outputs := make([]*Array, numOutputs)
 	for i := 0; i < numOutputs; i++ {
 		var arr C.mlx_array
-		C.mlx_vector_array_get(&arr, outputVec, C.size_t(i))
+		C.w_mlx_vector_array_get(&arr, outputVec, C.size_t(i))
 		outputs[i] = newArray(arr)
 	}
-	C.mlx_vector_array_free(outputVec)
+	C.w_mlx_vector_array_free(outputVec)
 
 	return outputs
 }
@@ -119,8 +119,8 @@ func (cf *CompiledFunc) CallEval(inputs ...*Array) []*Array {
 
 // Free releases the compiled function resources.
 func (cf *CompiledFunc) Free() {
-	C.mlx_closure_free(cf.compiled)
-	C.mlx_closure_free(cf.closure)
+	C.w_mlx_closure_free(cf.compiled)
+	C.w_mlx_closure_free(cf.closure)
 }
 
 // borrowArray wraps a C array WITHOUT setting up GC cleanup.
@@ -146,11 +146,11 @@ func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payloa
 	fn := handle.Value().(ClosureFunc)
 
 	// Convert input vector to Go slice - use borrowArray since MLX owns these
-	numInputs := int(C.mlx_vector_array_size(input))
+	numInputs := int(C.w_mlx_vector_array_size(input))
 	inputs := make([]*Array, numInputs)
 	for i := 0; i < numInputs; i++ {
 		var arr C.mlx_array
-		C.mlx_vector_array_get(&arr, input, C.size_t(i))
+		C.w_mlx_vector_array_get(&arr, input, C.size_t(i))
 		inputs[i] = borrowArray(arr) // Don't set up cleanup - MLX owns these
 	}
 
@@ -158,9 +158,9 @@ func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payloa
 	outputs := fn(inputs)
 
 	// Build output vector
-	*res = C.mlx_vector_array_new()
+	*res = C.w_mlx_vector_array_new()
 	for _, arr := range outputs {
-		C.mlx_vector_array_append_value(*res, arr.c)
+		C.w_mlx_vector_array_append_value(*res, arr.c)
 	}
 
 	return 0

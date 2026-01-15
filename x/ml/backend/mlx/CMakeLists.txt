@@ -1,5 +1,9 @@
 include(FetchContent)
 
+# Read MLX version from top-level file (shared with Dockerfile)
+file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_C_GIT_TAG)
+string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
+
 set(MLX_C_BUILD_EXAMPLES OFF)
 
 set(MLX_BUILD_GGUF OFF)
@@ -50,7 +54,7 @@ endif()
 FetchContent_Declare(
   mlx-c
   GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG v0.4.1)
+  GIT_TAG ${MLX_C_GIT_TAG})
 FetchContent_MakeAvailable(mlx-c)
 
 set_target_output_directory(mlx)
