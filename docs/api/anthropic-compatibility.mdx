@@ -21,6 +21,7 @@ ollama pull glm-4.7:cloud
 To use Ollama with tools that expect the Anthropic API (like Claude Code), set these environment variables:
 
 ```shell
+export ANTHROPIC_AUTH_TOKEN=ollama  # required but ignored
 export ANTHROPIC_BASE_URL=http://localhost:11434
 export ANTHROPIC_API_KEY=ollama  # required but ignored
 ```
@@ -247,12 +248,13 @@ curl -X POST http://localhost:11434/v1/messages \
 [Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend:
 
 ```shell
-ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
+ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
 ```
 
 Or set the environment variables in your shell profile:
 
 ```shell
+export ANTHROPIC_AUTH_TOKEN=ollama
 export ANTHROPIC_BASE_URL=http://localhost:11434
 export ANTHROPIC_API_KEY=ollama
 ```
