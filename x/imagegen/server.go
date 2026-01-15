@@ -239,9 +239,9 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	// Build request
 	creq := completionRequest{
 		Prompt: req.Prompt,
-		Width:  1024,
-		Height: 1024,
-		Steps:  9,
+		Width:  DefaultWidth,
+		Height: DefaultHeight,
+		Steps:  DefaultSteps,
 		Seed:   time.Now().UnixNano(),
 	}
 

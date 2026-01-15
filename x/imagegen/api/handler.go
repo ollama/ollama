@@ -51,7 +51,7 @@ func ImageGenerationHandler(c *gin.Context, scheduler RunnerScheduler) {
 		req.N = 1
 	}
 	if req.Size == "" {
-		req.Size = "1024x1024"
+		req.Size = fmt.Sprintf("%dx%d", imagegen.DefaultWidth, imagegen.DefaultHeight)
 	}
 	if req.ResponseFormat == "" {
 		req.ResponseFormat = "b64_json"
@@ -138,15 +138,15 @@ func handleNonStreamingResponse(c *gin.Context, runner llm.LlamaServer, req llm.
 func parseSize(size string) (int32, int32) {
 	parts := strings.Split(size, "x")
 	if len(parts) != 2 {
-		return 1024, 1024
+		return imagegen.DefaultWidth, imagegen.DefaultHeight
 	}
 	w, _ := strconv.Atoi(parts[0])
 	h, _ := strconv.Atoi(parts[1])
 	if w == 0 {
-		w = 1024
+		w = imagegen.DefaultWidth
 	}
 	if h == 0 {
-		h = 1024
+		h = imagegen.DefaultHeight
 	}
 	return int32(w), int32(h)
 }

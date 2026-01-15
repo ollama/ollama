@@ -37,9 +37,9 @@ type ImageGenOptions struct {
 // DefaultOptions returns the default image generation options.
 func DefaultOptions() ImageGenOptions {
 	return ImageGenOptions{
-		Width:  1024,
-		Height: 1024,
-		Steps:  9,
+		Width:  DefaultWidth,
+		Height: DefaultHeight,
+		Steps:  DefaultSteps,
 		Seed:   0, // 0 means random
 	}
 }
@@ -107,9 +107,9 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 // RegisterFlags adds image generation flags to the given command.
 // Flags are hidden since they only apply to image generation models.
 func RegisterFlags(cmd *cobra.Command) {
-	cmd.Flags().Int("width", 1024, "Image width")
-	cmd.Flags().Int("height", 1024, "Image height")
-	cmd.Flags().Int("steps", 9, "Denoising steps")
+	cmd.Flags().Int("width", DefaultWidth, "Image width")
+	cmd.Flags().Int("height", DefaultHeight, "Image height")
+	cmd.Flags().Int("steps", DefaultSteps, "Denoising steps")
 	cmd.Flags().Int("seed", 0, "Random seed (0 for random)")
 	cmd.Flags().String("negative", "", "Negative prompt")
 	cmd.Flags().MarkHidden("width")

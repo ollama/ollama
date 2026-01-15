@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
@@ -46,9 +47,9 @@ func main() {
 	imagePath := flag.String("image", "", "Image path for multimodal models")
 
 	// Image generation params
-	width := flag.Int("width", 1024, "Image width")
-	height := flag.Int("height", 1024, "Image height")
-	steps := flag.Int("steps", 9, "Denoising steps")
+	width := flag.Int("width", imagegen.DefaultWidth, "Image width")
+	height := flag.Int("height", imagegen.DefaultHeight, "Image height")
+	steps := flag.Int("steps", imagegen.DefaultSteps, "Denoising steps")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
 
@@ -149,10 +150,10 @@ func main() {
 		// unless explicitly overridden from defaults
 		editWidth := int32(0)
 		editHeight := int32(0)
-		if *width != 1024 {
+		if *width != imagegen.DefaultWidth {
 			editWidth = int32(*width)
 		}
-		if *height != 1024 {
+		if *height != imagegen.DefaultHeight {
 			editHeight = int32(*height)
 		}
 

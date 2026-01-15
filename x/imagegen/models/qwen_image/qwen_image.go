@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -166,10 +167,10 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 	// Apply defaults
 	if cfg.Width <= 0 {
-		cfg.Width = 1024
+		cfg.Width = imagegen.DefaultWidth
 	}
 	if cfg.Height <= 0 {
-		cfg.Height = 1024
+		cfg.Height = imagegen.DefaultHeight
 	}
 	if cfg.Steps <= 0 {
 		cfg.Steps = 30

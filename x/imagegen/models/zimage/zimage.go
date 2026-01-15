@@ -188,13 +188,13 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, error) {
 	// Apply defaults
 	if cfg.Width <= 0 {
-		cfg.Width = 1024
+		cfg.Width = imagegen.DefaultWidth
 	}
 	if cfg.Height <= 0 {
-		cfg.Height = 1024
+		cfg.Height = imagegen.DefaultHeight
 	}
 	if cfg.Steps <= 0 {
-		cfg.Steps = 9 // Turbo default
+		cfg.Steps = imagegen.DefaultSteps
 	}
 	if cfg.CFGScale <= 0 {
 		cfg.CFGScale = 4.0
