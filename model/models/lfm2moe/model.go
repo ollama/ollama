@@ -75,6 +75,133 @@ type Model struct {
 	Options
 }
 
+func New(c fs.Config) (model.Model, error) {
+	expertCount := c.Uint("expert_count")
+	if expertCount == 0 {
+		return nil, model.ErrUnsupportedModel
+	}
+
+	// Tokenizer
+	vocabulary := model.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		Merges: c.Strings("tokenizer.ggml.merges"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+		EOS: append(
+			[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+			c.Ints("tokenizer.ggml.eos_token_ids")...,
+		),
+	}
+
+	var processor model.TextProcessor
+	switch c.String("tokenizer.ggml.model") {
+	case "gpt2":
+		// LFM2 uses a llama3-style BPE pretokenizer.
+		var pretokenizers []string
+		switch c.String("tokenizer.ggml.pre") {
+		case "lfm2", "llama3", "llama-v3", "llama-bpe":
+			pretokenizers = []string{
+				"(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		case "qwen2":
+			pretokenizers = []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		case "refact":
+			pretokenizers = []string{
+				`\p{N}`,
+				`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`,
+			}
+		case "tekken":
+			pretokenizers = []string{
+				"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		case "default":
+			// no-op use the default bpe pretokenizer
+		default:
+			// use a llama-style pretokenizer
+			pretokenizers = []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		}
+		processor = model.NewBytePairEncoding(&vocabulary, pretokenizers...)
+	case "llama":
+		return nil, fmt.Errorf("unsupported tokenizer: llama")
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
+	if strings.HasPrefix(c.String("general.name"), "Qwen2-beta") {
+		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
+	}
+
+	numDenseLayers := int(c.Uint("leading_dense_block_count", 0))
+	numExpertsPerTok := int(c.Uint("expert_used_count", 1))
+	routedScalingFactor := c.Float("expert.routed_scaling_factor", 1.0)
+	normTopKProb := c.Bool("expert.norm_topk_prob", false)
+	useExpertBias := c.Bool("expert.use_expert_bias", false)
+
+	m := Model{
+		TextProcessor: processor,
+		Layers:        make([]Layer, c.Uint("block_count")),
+		Options: Options{
+			hiddenSize:            int(c.Uint("embedding_length")),
+			headDim:               int(c.Uint("attention.key_length")),
+			ropeDim:               int(c.Uint("rope.dimension_count")),
+			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
+			ropeType:              c.String("rope.scaling.type"),
+			ropeBase:              c.Float("rope.freq_base"),
+			ropeScale:             c.Float("rope.scaling.factor", 1),
+			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
+			numExperts:            int(expertCount),
+			numExpertsUsed:        numExpertsPerTok,
+			numDenseLayers:        numDenseLayers,
+			routedScalingFactor:   routedScalingFactor,
+			normTopKProb:          normTopKProb,
+			useExpertBias:         useExpertBias,
+		},
+	}
+
+	type headCounts interface {
+		HeadCount() []uint64
+		HeadCountKV() []uint64
+	}
+	hc, ok := c.(headCounts)
+	if !ok {
+		return nil, model.ErrUnsupportedModel
+	}
+
+	headCount := hc.HeadCount()
+	headCountKV := hc.HeadCountKV()
+
+	m.numHeadsByLayer = make([]int, len(m.Layers))
+	m.numKVHeadsByLayer = make([]int, len(m.Layers))
+	for i := range m.Layers {
+		m.numHeadsByLayer[i] = int(headCount[i])
+		m.numKVHeadsByLayer[i] = int(headCountKV[i])
+
+		if m.numKVHeadsByLayer[i] == 0 {
+			m.Layers[i].Operator = &ShortConv{}
+		} else {
+			m.Layers[i].Operator = &Attention{}
+		}
+
+		if i < numDenseLayers {
+			m.Layers[i].MLP = &MLP{}
+		} else {
+			m.Layers[i].MoE = &SparseMoeBlock{}
+		}
+	}
+
+	lCache := int(c.Uint("shortconv.l_cache"))
+	dConv := max(0, lCache-1)
+	m.Cache = NewHybridCache(m.Shift, m.hiddenSize, dConv)
+	return &m, nil
+}
+
 type Operator interface {
 	Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, layer int, opts *Options) ml.Tensor
 }
@@ -248,133 +375,6 @@ func (l *Layer) Forward(ctx ml.Context, layer int, hiddenState, positions, outpu
 		hiddenState = l.MoE.Forward(ctx, hiddenState, opts)
 	}
 	return hiddenState.Add(ctx, residual)
-}
-
-func New(c fs.Config) (model.Model, error) {
-	expertCount := c.Uint("expert_count")
-	if expertCount == 0 {
-		return nil, model.ErrUnsupportedModel
-	}
-
-	// Tokenizer
-	vocabulary := model.Vocabulary{
-		Values: c.Strings("tokenizer.ggml.tokens"),
-		Scores: c.Floats("tokenizer.ggml.scores"),
-		Types:  c.Ints("tokenizer.ggml.token_type"),
-		Merges: c.Strings("tokenizer.ggml.merges"),
-		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-		EOS: append(
-			[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
-			c.Ints("tokenizer.ggml.eos_token_ids")...,
-		),
-	}
-
-	var processor model.TextProcessor
-	switch c.String("tokenizer.ggml.model") {
-	case "gpt2":
-		// LFM2 uses a llama3-style BPE pretokenizer.
-		var pretokenizers []string
-		switch c.String("tokenizer.ggml.pre") {
-		case "lfm2", "llama3", "llama-v3", "llama-bpe":
-			pretokenizers = []string{
-				"(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-			}
-		case "qwen2":
-			pretokenizers = []string{
-				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-			}
-		case "refact":
-			pretokenizers = []string{
-				`\p{N}`,
-				`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`,
-			}
-		case "tekken":
-			pretokenizers = []string{
-				"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-			}
-		case "default":
-			// no-op use the default bpe pretokenizer
-		default:
-			// use a llama-style pretokenizer
-			pretokenizers = []string{
-				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-			}
-		}
-		processor = model.NewBytePairEncoding(&vocabulary, pretokenizers...)
-	case "llama":
-		return nil, fmt.Errorf("unsupported tokenizer: llama")
-	default:
-		return nil, model.ErrUnsupportedTokenizer
-	}
-
-	if strings.HasPrefix(c.String("general.name"), "Qwen2-beta") {
-		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
-	}
-
-	numDenseLayers := int(c.Uint("leading_dense_block_count", 0))
-	numExpertsPerTok := int(c.Uint("expert_used_count", 1))
-	routedScalingFactor := c.Float("expert.routed_scaling_factor", 1.0)
-	normTopKProb := c.Bool("expert.norm_topk_prob", false)
-	useExpertBias := c.Bool("expert.use_expert_bias", false)
-
-	m := Model{
-		TextProcessor: processor,
-		Layers:        make([]Layer, c.Uint("block_count")),
-		Options: Options{
-			hiddenSize:            int(c.Uint("embedding_length")),
-			headDim:               int(c.Uint("attention.key_length")),
-			ropeDim:               int(c.Uint("rope.dimension_count")),
-			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
-			ropeType:              c.String("rope.scaling.type"),
-			ropeBase:              c.Float("rope.freq_base"),
-			ropeScale:             c.Float("rope.scaling.factor", 1),
-			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
-			numExperts:            int(expertCount),
-			numExpertsUsed:        numExpertsPerTok,
-			numDenseLayers:        numDenseLayers,
-			routedScalingFactor:   routedScalingFactor,
-			normTopKProb:          normTopKProb,
-			useExpertBias:         useExpertBias,
-		},
-	}
-
-	type headCounts interface {
-		HeadCount() []uint64
-		HeadCountKV() []uint64
-	}
-	hc, ok := c.(headCounts)
-	if !ok {
-		return nil, model.ErrUnsupportedModel
-	}
-
-	headCount := hc.HeadCount()
-	headCountKV := hc.HeadCountKV()
-
-	m.numHeadsByLayer = make([]int, len(m.Layers))
-	m.numKVHeadsByLayer = make([]int, len(m.Layers))
-	for i := range m.Layers {
-		m.numHeadsByLayer[i] = int(headCount[i])
-		m.numKVHeadsByLayer[i] = int(headCountKV[i])
-
-		if m.numKVHeadsByLayer[i] == 0 {
-			m.Layers[i].Operator = &ShortConv{}
-		} else {
-			m.Layers[i].Operator = &Attention{}
-		}
-
-		if i < numDenseLayers {
-			m.Layers[i].MLP = &MLP{}
-		} else {
-			m.Layers[i].MoE = &SparseMoeBlock{}
-		}
-	}
-
-	lCache := int(c.Uint("shortconv.l_cache"))
-	dConv := max(0, lCache-1)
-	m.Cache = NewHybridCache(m.Shift, m.hiddenSize, dConv)
-	return &m, nil
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
