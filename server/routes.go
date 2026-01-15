@@ -51,6 +51,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen"
+	xserver "github.com/ollama/ollama/x/server"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -1103,6 +1104,22 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 	}
 
+	// For safetensors LLM models (experimental), populate details from config.json
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
+				modelDetails.Family = arch
+			}
+			if paramCount, ok := info["general.parameter_count"].(int64); ok && paramCount > 0 {
+				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
+			}
+		}
+		// Get torch_dtype directly from config.json for quantization level
+		if dtype, err := xserver.GetSafetensorsDtype(name.String()); err == nil && dtype != "" {
+			modelDetails.QuantizationLevel = dtype
+		}
+	}
+
 	if req.System != "" {
 		m.System = req.System
 	}
@@ -1186,6 +1203,26 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+		// Populate tensor info if verbose
+		if req.Verbose {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+				resp.Tensors = tensors
+			}
+		}
+		return resp, nil
+	}
+
+	// For safetensors LLM models (experimental), populate ModelInfo from config.json
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+			resp.ModelInfo = info
+		}
+		// Populate tensor info if verbose
+		if req.Verbose {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+				resp.Tensors = tensors
+			}
+		}
 		return resp, nil
 	}
 
