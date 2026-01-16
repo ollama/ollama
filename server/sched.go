@@ -195,7 +195,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
 					}
 
-					// Check for mlx image generation model before attempting GGML load
+					// Check for image generation model before attempting GGML load
 					if slices.Contains(pending.model.Config.Capabilities, "image") {
 						if s.loadImageGen(pending) {
 							break
@@ -574,6 +574,7 @@ func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
 		Options:         &req.opts,
 		loading:         false,
 		sessionDuration: sessionDuration,
+		refCount:        1,
 	}
 
 	s.loadedMu.Lock()
@@ -686,9 +687,6 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		return true
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	// Don't reload runner if num_gpu=-1 was provided
 	optsExisting := runner.Options.Runner
 	optsNew := req.opts.Runner
@@ -697,6 +695,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		optsNew.NumGPU = -1
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?

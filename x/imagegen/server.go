@@ -32,17 +32,16 @@ import (
 // and evolve llm/ to support MLX and multimodal models. For now, keeping the code
 // separate allows for independent iteration on image generation support.
 type Server struct {
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	port       int
-	modelName  string
-	vramSize   uint64
-	done       chan error
-	client     *http.Client
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	port        int
+	modelName   string
+	vramSize    uint64
+	done        chan error
+	client      *http.Client
 	lastErr     string // Last stderr line for error reporting
 	lastErrLock sync.Mutex
 }
-
 
 // NewServer spawns a new image generation subprocess and waits until it's ready.
 func NewServer(modelName string) (*Server, error) {
@@ -357,7 +356,7 @@ func (s *Server) Pid() int {
 	return -1
 }
 
-func (s *Server) GetPort() int                                    { return s.port }
+func (s *Server) GetPort() int                                       { return s.port }
 func (s *Server) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 
 func (s *Server) HasExited() bool {
@@ -371,4 +370,3 @@ func (s *Server) HasExited() bool {
 
 // Ensure Server implements llm.LlamaServer
 var _ llm.LlamaServer = (*Server)(nil)
-
