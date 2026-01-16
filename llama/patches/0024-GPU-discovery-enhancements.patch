@@ -1,19 +1,29 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: inforithmics <thomas.stocker@gmail.com>
-Date: Fri, 16 Jan 2026 22:21:17 +0100
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 26 Aug 2025 12:48:29 -0700
 Subject: [PATCH] GPU discovery enhancements
 
+Expose more information about the devices through backend props, and leverage
+management libraries for more accurate VRAM usage reporting if available.
+
+vulkan: get GPU ID (ollama v0.11.5)
+
+Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
+
+Vulkan PCI and Memory
+
+fix vulkan PCI ID and ID handling
 ---
  ggml/include/ggml-backend.h          |   6 +
  ggml/src/CMakeLists.txt              |   2 +
- ggml/src/ggml-cuda/ggml-cuda.cu      |  69 +++-
+ ggml/src/ggml-cuda/ggml-cuda.cu      |  67 +++-
  ggml/src/ggml-cuda/vendors/hip.h     |   3 +
  ggml/src/ggml-impl.h                 |   8 +
  ggml/src/ggml-metal/ggml-metal.cpp   |   2 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 153 +++++++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 177 ++++++++-
  ggml/src/mem_hip.cpp                 | 558 +++++++++++++++++++++++++++
  ggml/src/mem_nvml.cpp                | 209 ++++++++++
- 9 files changed, 1000 insertions(+), 10 deletions(-)
+ 9 files changed, 1011 insertions(+), 21 deletions(-)
  create mode 100644 ggml/src/mem_hip.cpp
  create mode 100644 ggml/src/mem_nvml.cpp
 
@@ -48,7 +58,7 @@ index 5a1403c4b..f0f734a6c 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d0379f602..7e6bc12c8 100644
+index d0379f602..47af696e5 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -259,6 +259,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -80,27 +90,12 @@ index d0379f602..7e6bc12c8 100644
          GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
                          id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
                          ggml_cuda_parse_uuid(prop, id).c_str());
-@@ -3879,7 +3894,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
- static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
-     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
- 	cuda_ctx->pool_set_alloc(true);
--	
-+
-     ggml_cuda_set_device(cuda_ctx->device);
- 
-     bool use_cuda_graph             = false;
-@@ -3942,7 +3957,7 @@ static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend,
- 
-     try {
-         bool use_cuda_graph = false;
--        bool cuda_graph_update_required = false;        
-+        bool cuda_graph_update_required = false;
- 
-         ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, use_cuda_graph, cuda_graph_update_required);
-     } catch (const std::exception &e) {
-@@ -4333,6 +4348,11 @@ struct ggml_backend_cuda_device_context {
+@@ -4331,8 +4346,13 @@ struct ggml_backend_cuda_device_context {
+     std::string name;
+     std::string description;
      std::string pci_bus_id;
- 	std::string id;
+-	std::string id;
++    std::string id;
      int op_offload_min_batch_size;
 +    int major;
 +    int minor;
@@ -251,7 +246,7 @@ index a2b1592eb..8f7a4d37e 100644
          /* .async                 = */ true,
          /* .host_buffer           = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 8c25bd180..3dd9bf35a 100644
+index 8c25bd180..2d46cb2e4 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -242,6 +242,7 @@ class vk_memory_logger;
@@ -292,7 +287,7 @@ index 8c25bd180..3dd9bf35a 100644
  // backend interface
  
  #define UNUSED GGML_UNUSED
-@@ -14266,15 +14290,55 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+@@ -14266,15 +14290,74 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
      ggml_vk_get_device_description(dev_idx, description, description_size);
  }
  
@@ -304,11 +299,30 @@ index 8c25bd180..3dd9bf35a 100644
 +    return ggml_vk_get_device_id(dev_idx);
 +}
 +
++//////////////////////////
++
++struct ggml_backend_vk_device_context {
++    size_t device;
++    std::string name;
++    std::string description;
++    bool is_integrated_gpu;
++	std::string pci_bus_id;
++    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
++    std::string pci_id;
++	int op_offload_min_batch_size;
++    std::string id;
++    std::string uuid;
++    int major;
++    int minor;
++    int driver_major;
++    int driver_minor;
++};
+ 
+-    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
 +void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
 +    GGML_ASSERT(ctx->device < (int) vk_instance.device_indices.size());
 +    GGML_ASSERT(ctx->device < (int) vk_instance.device_supports_membudget.size());
- 
--    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
++
 +    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[ctx->device]];
      vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
      vk::PhysicalDeviceMemoryProperties2 memprops = {};
@@ -352,7 +366,7 @@ index 8c25bd180..3dd9bf35a 100644
  
      if (membudget_supported) {
          memprops.pNext = &budgetprops;
-@@ -14326,8 +14390,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+@@ -14326,8 +14409,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
          }
      }
  
@@ -367,7 +381,7 @@ index 8c25bd180..3dd9bf35a 100644
      }
  
      vk::PhysicalDeviceProperties2 props = {};
-@@ -14344,6 +14413,9 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+@@ -14344,20 +14432,24 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
  
      char pci_bus_id[16] = {};
      snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
@@ -377,20 +391,17 @@ index 8c25bd180..3dd9bf35a 100644
  
      return std::string(pci_bus_id);
  }
-@@ -14357,8 +14429,28 @@ struct ggml_backend_vk_device_context {
-     bool is_integrated_gpu;
-     std::string pci_bus_id;
-     int op_offload_min_batch_size;
-+    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
-+    std::string pci_id;
-+    std::string id;
-+    std::string uuid;
-+    int major;
-+    int minor;
-+    int driver_major;
-+    int driver_minor;
- };
  
+-//////////////////////////
+-
+-struct ggml_backend_vk_device_context {
+-    size_t device;
+-    std::string name;
+-    std::string description;
+-    bool is_integrated_gpu;
+-    std::string pci_bus_id;
+-    int op_offload_min_batch_size;
+-};
 +static bool ggml_backend_vk_parse_pci_bus_id(const std::string & id, int *domain, int *bus, int *device) {
 +    if (id.empty()) return false;
 +    unsigned int d = 0, b = 0, dev = 0, func = 0;
@@ -402,10 +413,9 @@ index 8c25bd180..3dd9bf35a 100644
 +    if (device) *device = (int) dev;
 +    return true;
 +}
-+
+ 
  static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
-     return ctx->name.c_str();
 @@ -14369,9 +14461,14 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
      return ctx->description.c_str();
  }
@@ -422,7 +432,7 @@ index 8c25bd180..3dd9bf35a 100644
  }
  
  static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
-@@ -14395,8 +14492,9 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+@@ -14395,15 +14492,23 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
  
      props->name        = ggml_backend_vk_device_get_name(dev);
      props->description = ggml_backend_vk_device_get_description(dev);
@@ -432,10 +442,12 @@ index 8c25bd180..3dd9bf35a 100644
 +    props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
      ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
      props->caps = {
-         /* .async                 = */ true,
-@@ -14404,6 +14502,13 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+-        /* .async                 = */ true,
++        /* .async                 = */ false,
+         /* .host_buffer           = */ true,
          /* .buffer_from_host_ptr  = */ false,
-         /* .events                = */ true,
+-        /* .events                = */ true,
++        /* .events                = */ false,
      };
 +
 +    props->compute_major = ctx->major;
