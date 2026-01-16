@@ -94,11 +94,16 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
+	// Validate model name early to fail fast
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
 	// Check for --experimental flag for safetensors model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	if experimental {
-		modelName := args[0]
-
 		// Get Modelfile content - either from -f flag or default to "FROM ."
 		var reader io.Reader
 		filename, err := getModelfileName(cmd)
@@ -166,7 +171,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			if create.IsTensorModelDir(".") {
 				quantize, _ := cmd.Flags().GetString("quantize")
 				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-					ModelName: args[0],
+					ModelName: modelName,
 					ModelDir:  ".",
 					Quantize:  quantize,
 				}, p)
@@ -202,7 +207,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop()
 
-	req.Model = args[0]
+	req.Model = modelName
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
