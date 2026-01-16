@@ -949,6 +949,41 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
+	// Get per-GPU overhead configuration
+	overheadMap := envconfig.GpuOverheadMap()
+
+	// Build a mapping from GPU order (0, 1, ...) to GPU ID
+	// This maps the user-specified indices to the actual GPU IDs
+	gpuOrderToID := make(map[string]string)
+	for i, gpu := range gpus {
+		gpuOrderToID[fmt.Sprintf("%d", i)] = gpu.DeviceID.ID
+	}
+
+	// Function to get overhead for a specific GPU
+	getOverheadForGPU := func(deviceID ml.DeviceID) uint64 {
+		// If overheadMap is empty, use global overhead
+		if len(overheadMap) == 0 {
+			return envconfig.GpuOverhead()
+		}
+
+		// Try to find the GPU in our mapping and get its overhead
+		for order, id := range gpuOrderToID {
+			if id == deviceID.ID {
+				if overhead, ok := overheadMap[order]; ok {
+					return overhead
+				}
+			}
+		}
+
+		// If not found in the mapping, try direct match (in case user used UUID)
+		if overhead, ok := overheadMap[deviceID.ID]; ok {
+			return overhead
+		}
+
+		// Default to 0 if not found
+		return 0
+	}
+
 	gpuLayers := ml.GPULayersList{}
 	for _, gl := range ml.ByLibrary(gpus) {
 		// If a GPU already has a graph allocated on it, then we should continue to use it.
@@ -964,7 +999,8 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 						lastUsedGPU = i
 					}
 
-					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory() + envconfig.GpuOverhead() + memory.GPUs[j].Graph
+					deviceOverhead := getOverheadForGPU(gl[i].DeviceID)
+					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory() + deviceOverhead + memory.GPUs[j].Graph
 					if gl[i].FreeMemory > reserved {
 						gl[i].FreeMemory -= reserved
 					} else {
@@ -974,7 +1010,7 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 					slog.Debug("available gpu", "id", gl[i].ID, "library", gl[i].Library,
 						"available layer vram", format.HumanBytes2(gl[i].FreeMemory),
 						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(gl[i].MinimumMemory()),
-						"overhead", format.HumanBytes2(envconfig.GpuOverhead()),
+						"overhead", format.HumanBytes2(deviceOverhead),
 						"graph", format.HumanBytes2(memory.GPUs[j].Graph))
 
 					found = true
