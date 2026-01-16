@@ -87,8 +87,8 @@ type VisionModelOptions struct {
 }
 
 type VisionModel struct {
-	PatchEmbedding *nn.Conv2D           `gguf:"patch_conv"`
-	EncoderNorm    *nn.RMSNorm          `gguf:"encoder_norm"`
+	PatchEmbedding *nn.Conv2D           `gguf:"patch_conv,alt:patch_embd"`
+	EncoderNorm    *nn.RMSNorm          `gguf:"encoder_norm,alt:pre_ln"`
 	Layers         []VisionEncoderLayer `gguf:"blk"`
 
 	*VisionModelOptions

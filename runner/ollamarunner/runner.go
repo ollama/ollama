@@ -1171,6 +1171,7 @@ func (s *Server) allocModel(
 	mpath string,
 	params ml.BackendParams,
 	loraPath []string,
+	projectorPath string,
 	parallel int,
 	kvCacheType string,
 	kvSize int,
@@ -1302,7 +1303,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		s.batchSize = req.BatchSize
 
-		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		err := s.allocModel(s.modelPath, params, req.LoraPath, req.ProjectorPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
 		if err != nil {
 			s.closeModel()
 

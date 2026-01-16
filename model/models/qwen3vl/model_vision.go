@@ -94,8 +94,8 @@ func (o VisionOptions) headDim() int {
 
 type VisionPatchMerger struct {
 	Norm *nn.LayerNorm `gguf:"norm"`
-	FC1  *nn.Linear    `gguf:"linear_fc1"`
-	FC2  *nn.Linear    `gguf:"linear_fc2"`
+	FC1  *nn.Linear    `gguf:"linear_fc1,alt:fc.fc1"`
+	FC2  *nn.Linear    `gguf:"linear_fc2,alt:fc.fc2"`
 }
 
 func (m *VisionPatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, postshuffleNorm bool, opts VisionOptions) ml.Tensor {
@@ -241,6 +241,13 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 // newVisionModel creates a new instance of the Qwen vision model
 func newVisionModel(c fs.Config) *VisionModel {
 	deepstackVisualIndexes := c.Ints("vision.deepstack_visual_indexes")
+	if deepstackVisualIndexes == nil && c.Bools("vision.is_deepstack_layers") != nil {
+		for i, flag := range c.Bools("vision.is_deepstack_layers") {
+			if flag {
+				deepstackVisualIndexes = append(deepstackVisualIndexes, int32(i))
+			}
+		}
+	}
 	model := &VisionModel{
 		Layers:          make([]VisionEncoderLayer, c.Uint("vision.block_count", 32)),
 		DeepstackMerger: make([]*VisionPatchMerger, len(deepstackVisualIndexes)),

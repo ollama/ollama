@@ -38,7 +38,7 @@ func TestParseTags(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
-			got := parseTag(tt.value)
+			got := ParseTag(tt.value)
 			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported((Tag{}))); diff != "" {
 				t.Errorf("ParseTags() returned unexpected values (-want +got):\n%s", diff)
 			}
@@ -81,7 +81,7 @@ func TestPopulateFields(t *testing.T) {
 
 	var m fakeModel
 	v := reflect.ValueOf(&m)
-	v.Elem().Set(populateFields(Base{b: &fakeBackend{
+	v.Elem().Set(PopulateFields(Base{b: &fakeBackend{
 		names: []string{
 			"input.weight",
 			"blk.0.attn_q.weight",
@@ -130,7 +130,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 
 	var m fakeModel
 	v := reflect.ValueOf(&m)
-	v.Elem().Set(populateFields(Base{b: &fakeBackend{
+	v.Elem().Set(PopulateFields(Base{b: &fakeBackend{
 		names: []string{
 			"input.weight",
 			"nested.b.weight",
@@ -166,7 +166,7 @@ func TestPopulateFieldsPrefixSuffixName(t *testing.T) {
 		Blocks: make([]fakeBlock, 2),
 	}
 	v := reflect.ValueOf(&m)
-	v.Elem().Set(populateFields(Base{b: &fakeBackend{
+	v.Elem().Set(PopulateFields(Base{b: &fakeBackend{
 		names: []string{
 			"blk.0.a.weight",
 			"blk.0.b_weight",
