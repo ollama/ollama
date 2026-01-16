@@ -46,8 +46,9 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	"github.com/ollama/ollama/x/create"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
-	imagegenclient "github.com/ollama/ollama/x/imagegen/client"
 )
 
 const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
@@ -93,15 +94,87 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
+	// Validate model name early to fail fast
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Check for --experimental flag for safetensors model creation
+	experimental, _ := cmd.Flags().GetBool("experimental")
+	if experimental {
+		// Get Modelfile content - either from -f flag or default to "FROM ."
+		var reader io.Reader
+		filename, err := getModelfileName(cmd)
+		if os.IsNotExist(err) || filename == "" {
+			// No Modelfile specified or found - use default
+			reader = strings.NewReader("FROM .\n")
+		} else if err != nil {
+			return err
+		} else {
+			f, err := os.Open(filename)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			reader = f
+		}
+
+		// Parse the Modelfile
+		modelfile, err := parser.ParseFile(reader)
+		if err != nil {
+			return fmt.Errorf("failed to parse Modelfile: %w", err)
+		}
+
+		// Extract FROM path and configuration
+		var modelDir string
+		mfConfig := &xcreateclient.ModelfileConfig{}
+
+		for _, cmd := range modelfile.Commands {
+			switch cmd.Name {
+			case "model":
+				modelDir = cmd.Args
+			case "template":
+				mfConfig.Template = cmd.Args
+			case "system":
+				mfConfig.System = cmd.Args
+			case "license":
+				mfConfig.License = cmd.Args
+			}
+		}
+
+		if modelDir == "" {
+			modelDir = "."
+		}
+
+		// Resolve relative paths based on Modelfile location
+		if !filepath.IsAbs(modelDir) && filename != "" {
+			modelDir = filepath.Join(filepath.Dir(filename), modelDir)
+		}
+
+		quantize, _ := cmd.Flags().GetString("quantize")
+		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+			ModelName: modelName,
+			ModelDir:  modelDir,
+			Quantize:  quantize,
+			Modelfile: mfConfig,
+		}, p)
+	}
+
 	var reader io.Reader
 
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
 			// No Modelfile found - check if current directory is an image gen model
-			if imagegen.IsTensorModelDir(".") {
+			if create.IsTensorModelDir(".") {
 				quantize, _ := cmd.Flags().GetString("quantize")
-				return imagegenclient.CreateModel(args[0], ".", quantize, p)
+				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+					ModelName: modelName,
+					ModelDir:  ".",
+					Quantize:  quantize,
+				}, p)
 			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
@@ -134,7 +207,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop()
 
-	req.Model = args[0]
+	req.Model = modelName
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
@@ -1742,15 +1815,22 @@ func NewCLI() *cobra.Command {
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 
 	createCmd := &cobra.Command{
-		Use:     "create MODEL",
-		Short:   "Create a model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    CreateHandler,
+		Use:   "create MODEL",
+		Short: "Create a model",
+		Args:  cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// Skip server check for experimental mode (writes directly to disk)
+			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: CreateHandler,
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
