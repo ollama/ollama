@@ -165,42 +165,42 @@ func TestBuildModelInfo(t *testing.T) {
 
 func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 	tests := []struct {
-		name         string
+		name          string
 		architectures []string
-		modelType    string
-		wantArch     string
+		modelType     string
+		wantArch      string
 	}{
 		{
-			name:         "LlamaForCausalLM",
+			name:          "LlamaForCausalLM",
 			architectures: []string{"LlamaForCausalLM"},
-			wantArch:     "llama",
+			wantArch:      "llama",
 		},
 		{
-			name:         "Gemma3ForCausalLM",
+			name:          "Gemma3ForCausalLM",
 			architectures: []string{"Gemma3ForCausalLM"},
-			wantArch:     "gemma3",
+			wantArch:      "gemma3",
 		},
 		{
-			name:         "Gemma3ForConditionalGeneration",
+			name:          "Gemma3ForConditionalGeneration",
 			architectures: []string{"Gemma3ForConditionalGeneration"},
-			wantArch:     "gemma3",
+			wantArch:      "gemma3",
 		},
 		{
-			name:         "Qwen2ForCausalLM",
+			name:          "Qwen2ForCausalLM",
 			architectures: []string{"Qwen2ForCausalLM"},
-			wantArch:     "qwen2",
+			wantArch:      "qwen2",
 		},
 		{
-			name:         "model_type takes precedence",
+			name:          "model_type takes precedence",
 			architectures: []string{"LlamaForCausalLM"},
-			modelType:    "custom",
-			wantArch:     "custom",
+			modelType:     "custom",
+			wantArch:      "custom",
 		},
 		{
-			name:         "empty architectures with model_type",
+			name:          "empty architectures with model_type",
 			architectures: nil,
-			modelType:    "mymodel",
-			wantArch:     "mymodel",
+			modelType:     "mymodel",
+			wantArch:      "mymodel",
 		},
 	}
 
@@ -452,11 +452,7 @@ func TestParseSafetensorsHeader_Errors(t *testing.T) {
 
 func TestGetTensorInfoFromManifest(t *testing.T) {
 	// Create a temp directory for blobs
-	tempDir, err := os.MkdirTemp("", "ollama-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Create test tensor blobs
 	tensors := []struct {
@@ -560,11 +556,7 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 
 func TestReadSafetensorsHeader(t *testing.T) {
 	// Create a temp file with a valid safetensors header
-	tempDir, err := os.MkdirTemp("", "ollama-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	header := map[string]any{
 		"test_tensor": map[string]any{

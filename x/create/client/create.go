@@ -227,14 +227,14 @@ func newManifestWriter(opts CreateOptions, capabilities []string) create.Manifes
 		}
 
 		// Convert LayerInfo to server.Layer
-		serverLayers := make([]server.Layer, len(layers))
-		for i, l := range layers {
-			serverLayers[i] = server.Layer{
+		serverLayers := make([]server.Layer, 0, len(layers))
+		for _, l := range layers {
+			serverLayers = append(serverLayers, server.Layer{
 				MediaType: l.MediaType,
 				Digest:    l.Digest,
 				Size:      l.Size,
 				Name:      l.Name,
-			}
+			})
 		}
 
 		// Add Modelfile layers if present

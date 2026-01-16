@@ -20,7 +20,7 @@ func TestIsTensorModelDir(t *testing.T) {
 		{
 			name: "valid diffusers model with model_index.json",
 			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name": "FluxPipeline"}`), 0644)
+				return os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name": "FluxPipeline"}`), 0o644)
 			},
 			expected: true,
 		},
@@ -34,7 +34,7 @@ func TestIsTensorModelDir(t *testing.T) {
 		{
 			name: "directory with other files but no model_index.json",
 			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0644)
+				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644)
 			},
 			expected: false,
 		},
@@ -64,24 +64,24 @@ func TestIsSafetensorsModelDir(t *testing.T) {
 		{
 			name: "valid safetensors model with config.json and .safetensors file",
 			setup: func(dir string) error {
-				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"model_type": "gemma3"}`), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"model_type": "gemma3"}`), 0o644); err != nil {
 					return err
 				}
-				return os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("dummy"), 0644)
+				return os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("dummy"), 0o644)
 			},
 			expected: true,
 		},
 		{
 			name: "config.json only, no safetensors files",
 			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0644)
+				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644)
 			},
 			expected: false,
 		},
 		{
 			name: "safetensors file only, no config.json",
 			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("dummy"), 0644)
+				return os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("dummy"), 0o644)
 			},
 			expected: false,
 		},
@@ -95,13 +95,13 @@ func TestIsSafetensorsModelDir(t *testing.T) {
 		{
 			name: "multiple safetensors files with config.json",
 			setup: func(dir string) error {
-				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644); err != nil {
 					return err
 				}
-				if err := os.WriteFile(filepath.Join(dir, "model-00001-of-00002.safetensors"), []byte("dummy"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "model-00001-of-00002.safetensors"), []byte("dummy"), 0o644); err != nil {
 					return err
 				}
-				return os.WriteFile(filepath.Join(dir, "model-00002-of-00002.safetensors"), []byte("dummy"), 0644)
+				return os.WriteFile(filepath.Join(dir, "model-00002-of-00002.safetensors"), []byte("dummy"), 0o644)
 			},
 			expected: true,
 		},
@@ -178,7 +178,7 @@ func TestCreateSafetensorsModel(t *testing.T) {
 
 	// Create config.json
 	configJSON := `{"model_type": "test", "architectures": ["TestModel"]}`
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0o644); err != nil {
 		t.Fatalf("failed to write config.json: %v", err)
 	}
 
@@ -332,13 +332,13 @@ func TestCreateSafetensorsModel_SkipsIndexJson(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create config.json
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatalf("failed to write config.json: %v", err)
 	}
 
 	// Create model.safetensors.index.json (should be skipped)
 	indexJSON := `{"metadata": {"total_size": 100}, "weight_map": {}}`
-	if err := os.WriteFile(filepath.Join(dir, "model.safetensors.index.json"), []byte(indexJSON), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors.index.json"), []byte(indexJSON), 0o644); err != nil {
 		t.Fatalf("failed to write index.json: %v", err)
 	}
 
@@ -581,7 +581,7 @@ func TestCreateSafetensorsModel_WithQuantize(t *testing.T) {
 
 	// Create config.json
 	configJSON := `{"model_type": "test", "architectures": ["TestModel"]}`
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0o644); err != nil {
 		t.Fatalf("failed to write config.json: %v", err)
 	}
 
@@ -625,20 +625,20 @@ func createMinimalImageGenModel(t *testing.T, dir string) {
 
 	// Create model_index.json
 	modelIndex := `{"_class_name": "FluxPipeline", "_diffusers_version": "0.30.0"}`
-	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(modelIndex), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(modelIndex), 0o644); err != nil {
 		t.Fatalf("failed to write model_index.json: %v", err)
 	}
 
 	// Create transformer directory with a safetensors file
 	transformerDir := filepath.Join(dir, "transformer")
-	if err := os.MkdirAll(transformerDir, 0755); err != nil {
+	if err := os.MkdirAll(transformerDir, 0o755); err != nil {
 		t.Fatalf("failed to create transformer dir: %v", err)
 	}
 	createMinimalSafetensors(t, filepath.Join(transformerDir, "model.safetensors"))
 
 	// Create transformer config
 	transformerConfig := `{"hidden_size": 3072}`
-	if err := os.WriteFile(filepath.Join(transformerDir, "config.json"), []byte(transformerConfig), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(transformerDir, "config.json"), []byte(transformerConfig), 0o644); err != nil {
 		t.Fatalf("failed to write transformer config: %v", err)
 	}
 }
@@ -694,7 +694,7 @@ func TestCreateImageGenModel_NoModelIndex(t *testing.T) {
 
 	// Create only transformer without model_index.json
 	transformerDir := filepath.Join(dir, "transformer")
-	if err := os.MkdirAll(transformerDir, 0755); err != nil {
+	if err := os.MkdirAll(transformerDir, 0o755); err != nil {
 		t.Fatalf("failed to create transformer dir: %v", err)
 	}
 	createMinimalSafetensors(t, filepath.Join(transformerDir, "model.safetensors"))
