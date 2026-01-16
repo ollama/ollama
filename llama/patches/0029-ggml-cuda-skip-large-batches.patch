@@ -10,7 +10,7 @@ fallback to cpu
  1 file changed, 3 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 47af696e5..48f58b3d1 100644
+index 7e6bc12c8..20826b1f9 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -4649,6 +4649,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g

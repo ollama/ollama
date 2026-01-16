@@ -14297,26 +14297,6 @@ std::string ggml_backend_vk_get_device_id(int device) {
     return ggml_vk_get_device_id(dev_idx);
 }
 
-//////////////////////////
-
-struct ggml_backend_vk_device_context {
-    size_t device;
-    std::string name;
-    std::string description;
-    bool is_integrated_gpu;
-	std::string pci_bus_id;
-    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
-    std::string pci_id;
-	int op_offload_min_batch_size;
-    std::string id;
-    std::string uuid;
-    std::string luid;
-    int major;
-    int minor;
-    int driver_major;
-    int driver_minor;
-};
-
 void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
     GGML_ASSERT(ctx->device < (int) vk_instance.device_indices.size());
     GGML_ASSERT(ctx->device < (int) vk_instance.device_supports_membudget.size());
@@ -14454,6 +14434,26 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
     return std::string(pci_bus_id);
 }
 
+//////////////////////////
+
+struct ggml_backend_vk_device_context {
+    size_t device;
+    std::string name;
+    std::string description;
+    bool is_integrated_gpu;
+    std::string pci_bus_id;
+    int op_offload_min_batch_size;
+    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
+    std::string pci_id;
+    std::string id;
+    std::string uuid;
+    std::string luid;	
+    int major;
+    int minor;
+    int driver_major;
+    int driver_minor;
+};
+
 static bool ggml_backend_vk_parse_pci_bus_id(const std::string & id, int *domain, int *bus, int *device) {
     if (id.empty()) return false;
     unsigned int d = 0, b = 0, dev = 0, func = 0;
@@ -14512,10 +14512,10 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = {
-        /* .async                 = */ false,
+        /* .async                 = */ true,
         /* .host_buffer           = */ true,
         /* .buffer_from_host_ptr  = */ false,
-        /* .events                = */ false,
+        /* .events                = */ true,
     };
 
     props->compute_major = ctx->major;
