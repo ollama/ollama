@@ -689,12 +689,6 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Image generation models don't use runner options like NumCtx/NumGPU,
-	// so only check if the server is still responding
-	if slices.Contains(req.model.Config.Capabilities, "image") {
-		return runner.llama.Ping(ctx) != nil
-	}
-
 	// Don't reload runner if num_gpu=-1 was provided
 	optsExisting := runner.Options.Runner
 	optsNew := req.opts.Runner

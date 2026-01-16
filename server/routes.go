@@ -1914,13 +1914,13 @@ func (s *Server) handleImageGeneration(c *gin.Context) {
 		}
 	}
 
-	var image string
+	var image []byte
 	err = runner.llama.Completion(c.Request.Context(), llm.CompletionRequest{
 		Prompt: req.Prompt,
 		Width:  width,
 		Height: height,
 	}, func(resp llm.CompletionResponse) {
-		if resp.Image != "" {
+		if len(resp.Image) > 0 {
 			image = resp.Image
 		}
 	})
@@ -1931,7 +1931,7 @@ func (s *Server) handleImageGeneration(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"created": time.Now().Unix(),
-		"data":    []gin.H{{"b64_json": image}},
+		"data":    []gin.H{{"b64_json": base64.StdEncoding.EncodeToString(image)}},
 	})
 }
 

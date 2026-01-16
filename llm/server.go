@@ -1519,7 +1519,7 @@ type CompletionResponse struct {
 	Logprobs []Logprob `json:"logprobs,omitempty"`
 
 	// Image generation fields
-	Image string `json:"image,omitempty"` // Base64-encoded image
+	Image []byte `json:"image,omitempty"` // Generated image
 	Step  int    `json:"step,omitempty"`  // Current generation step
 	Total int    `json:"total,omitempty"` // Total generation steps
 }

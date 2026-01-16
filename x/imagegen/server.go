@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,18 +32,17 @@ import (
 // and evolve llm/ to support MLX and multimodal models. For now, keeping the code
 // separate allows for independent iteration on image generation support.
 type Server struct {
-	mu          sync.Mutex
-	cmd         *exec.Cmd
-	port        int
-	modelName   string
-	vramSize    uint64
-	done        chan error
-	client      *http.Client
-	stderrLines []string // Recent stderr lines for error reporting (max 10)
-	stderrLock  sync.Mutex
+	mu         sync.Mutex
+	cmd        *exec.Cmd
+	port       int
+	modelName  string
+	vramSize   uint64
+	done       chan error
+	client     *http.Client
+	lastErr     string // Last stderr line for error reporting
+	lastErrLock sync.Mutex
 }
 
-const maxStderrLines = 10
 
 // NewServer spawns a new image generation subprocess and waits until it's ready.
 func NewServer(modelName string) (*Server, error) {
@@ -130,13 +130,9 @@ func NewServer(modelName string) (*Server, error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			slog.Warn("image-runner", "msg", line)
-			// Capture recent stderr lines for error reporting
-			s.stderrLock.Lock()
-			s.stderrLines = append(s.stderrLines, line)
-			if len(s.stderrLines) > maxStderrLines {
-				s.stderrLines = s.stderrLines[1:]
-			}
-			s.stderrLock.Unlock()
+			s.lastErrLock.Lock()
+			s.lastErr = line
+			s.lastErrLock.Unlock()
 		}
 	}()
 
@@ -198,15 +194,15 @@ func (s *Server) waitUntilRunning() error {
 		select {
 		case err := <-s.done:
 			// Include recent stderr lines for better error context
-			stderrContext := s.getStderrContext()
-			if stderrContext != "" {
-				return fmt.Errorf("image runner failed: %s (exit: %v)", stderrContext, err)
+			errMsg := s.getLastErr()
+			if errMsg != "" {
+				return fmt.Errorf("image runner failed: %s (exit: %v)", errMsg, err)
 			}
 			return fmt.Errorf("image runner exited unexpectedly: %w", err)
 		case <-timeout:
-			stderrContext := s.getStderrContext()
-			if stderrContext != "" {
-				return fmt.Errorf("timeout waiting for image runner: %s", stderrContext)
+			errMsg := s.getLastErr()
+			if errMsg != "" {
+				return fmt.Errorf("timeout waiting for image runner: %s", errMsg)
 			}
 			return errors.New("timeout waiting for image runner to start")
 		case <-ticker.C:
@@ -218,20 +214,16 @@ func (s *Server) waitUntilRunning() error {
 	}
 }
 
-// getStderrContext returns recent stderr lines joined as a single string.
-func (s *Server) getStderrContext() string {
-	s.stderrLock.Lock()
-	defer s.stderrLock.Unlock()
-	if len(s.stderrLines) == 0 {
-		return ""
-	}
-	return strings.Join(s.stderrLines, "; ")
+// getLastErr returns the last stderr line.
+func (s *Server) getLastErr() string {
+	s.lastErrLock.Lock()
+	defer s.lastErrLock.Unlock()
+	return s.lastErr
 }
 
 func (s *Server) WaitUntilRunning(ctx context.Context) error { return nil }
 
 func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	// Set default seed if not provided
 	seed := req.Seed
 	if seed == 0 {
 		seed = time.Now().UnixNano()
@@ -275,10 +267,31 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024) // 16MB max
 	for scanner.Scan() {
-		var cresp llm.CompletionResponse
-		if err := json.Unmarshal(scanner.Bytes(), &cresp); err != nil {
+		// Parse subprocess response (has singular "image" field)
+		var raw struct {
+			Image   string `json:"image,omitempty"`
+			Content string `json:"content,omitempty"`
+			Done    bool   `json:"done"`
+			Step    int    `json:"step,omitempty"`
+			Total   int    `json:"total,omitempty"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			continue
 		}
+
+		// Convert to llm.CompletionResponse
+		cresp := llm.CompletionResponse{
+			Content: raw.Content,
+			Done:    raw.Done,
+			Step:    raw.Step,
+			Total:   raw.Total,
+		}
+		if raw.Image != "" {
+			if data, err := base64.StdEncoding.DecodeString(raw.Image); err == nil {
+				cresp.Image = data
+			}
+		}
+
 		fn(cresp)
 		if cresp.Done {
 			return nil
