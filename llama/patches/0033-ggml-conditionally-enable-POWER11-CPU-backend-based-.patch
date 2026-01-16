@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shalini Salomi Bodapati <Shalini.Salomi.Bodapati@ibm.com>
+Date: Mon, 22 Dec 2025 01:58:58 -0600
+Subject: [PATCH] ggml: conditionally enable POWER11 CPU backend based on
+ compiler support
+
+Guard POWER11 backend creation behind a compiler flag check for
+-mcpu=power11. This avoids build failures on current GCC/Clang
+toolchains while preserving forward compatibility once POWER11
+support becomes available.
+
+Signed-off-by: Shalini Salomi Bodapati <Shalini.Salomi.Bodapati@ibm.com>
+---
+ ggml/src/CMakeLists.txt | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 9a134b7af..ce2208201 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -403,7 +403,14 @@ if (GGML_CPU_ALL_VARIANTS)
+             ggml_add_cpu_backend_variant(power8_2       POWER8  VSX)
+             ggml_add_cpu_backend_variant(power9         POWER9  VSX)
+             ggml_add_cpu_backend_variant(power10        POWER10 VSX)
+-            ggml_add_cpu_backend_variant(power11        POWER11 VSX)
++            # POWER11 backend: only if compiler supports -mcpu=power11
++            check_cxx_compiler_flag("-mcpu=power11" GGML_CXX_SUPPORTS_POWER11)
++            if (GGML_CXX_SUPPORTS_POWER11)
++                message(STATUS "Compiler supports -mcpu=power11, enabling POWER11 backend")
++                ggml_add_cpu_backend_variant(power11 POWER11 VSX)
++            else()
++                message(STATUS "Skipping POWER11 backend: compiler does not support -mcpu=power11")
++            endif()
+         else()
+             message(FATAL_ERROR "Unsupported PowerPC target OS: ${CMAKE_SYSTEM_NAME}")
+         endif()
