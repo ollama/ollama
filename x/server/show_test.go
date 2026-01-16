@@ -501,7 +501,7 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 		// Write blob file
 		blobName := "sha256-" + tensor.digest[7:]
 		blobPath := filepath.Join(tempDir, blobName)
-		if err := os.WriteFile(blobPath, buf.Bytes(), 0644); err != nil {
+		if err := os.WriteFile(blobPath, buf.Bytes(), 0o644); err != nil {
 			t.Fatalf("failed to write blob: %v", err)
 		}
 
@@ -572,7 +572,7 @@ func TestReadSafetensorsHeader(t *testing.T) {
 	buf.Write(headerJSON)
 
 	filePath := filepath.Join(tempDir, "test.safetensors")
-	if err := os.WriteFile(filePath, buf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(filePath, buf.Bytes(), 0o644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
