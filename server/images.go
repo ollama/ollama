@@ -775,7 +775,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifes
 			Realm:   challenge.Realm,
 			Service: challenge.Service,
 			Scope:   challenge.Scope,
-		})
+		}, base.Host)
 	}
 
 	if err := transfer.Download(ctx, transfer.DownloadOptions{
@@ -850,7 +850,7 @@ func pushWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifes
 			Realm:   challenge.Realm,
 			Service: challenge.Service,
 			Scope:   challenge.Scope,
-		})
+		}, base.Host)
 	}
 
 	return transfer.Upload(ctx, transfer.UploadOptions{
@@ -916,7 +916,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
-			token, err := getAuthorizationToken(ctx, challenge)
+			token, err := getAuthorizationToken(ctx, challenge, requestURL.Host)
 			if err != nil {
 				return nil, err
 			}
