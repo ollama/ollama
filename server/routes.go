@@ -1557,6 +1557,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
+	// Experimental OpenAI-compatible image generation endpoint
 	r.POST("/v1/images/generations", s.handleImageGeneration)
 
 	// Inference (Anthropic compatibility)
