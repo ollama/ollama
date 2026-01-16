@@ -65,10 +65,6 @@ func (s *utf8Streamer) Flush() string {
 	return result
 }
 
-func init() {
-	// Don't initialize stream here - wait until MLX is confirmed available
-}
-
 // withStream runs fn with the generation stream as default
 func withStream(fn func()) {
 	// Lazy initialization of generationStream

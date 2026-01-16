@@ -9,7 +9,7 @@ package mlx
 #cgo windows LDFLAGS: -lstdc++
 
 // Use generated wrappers instead of direct MLX headers
-#include "mlx_wrappers.h"
+#include "mlx.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -23,7 +23,7 @@ static mlx_stream _cpu_stream = {0};
 
 static inline mlx_stream default_stream() {
     if (_default_stream.ctx == NULL) {
-        _default_stream = w_mlx_default_gpu_stream_new();
+        _default_stream = mlx_default_gpu_stream_new();
     }
     return _default_stream;
 }
@@ -35,7 +35,7 @@ static inline void set_default_stream(mlx_stream s) {
 // CPU stream for file loading (Load primitive only runs on CPU)
 static inline mlx_stream cpu_stream() {
     if (_cpu_stream.ctx == NULL) {
-        _cpu_stream = w_mlx_default_cpu_stream_new();
+        _cpu_stream = mlx_default_cpu_stream_new();
     }
     return _cpu_stream;
 }
@@ -263,7 +263,7 @@ func cleanup() int {
 			arrays[n] = a
 			n++
 		} else if a.c.ctx != nil && !a.freed {
-			C.w_mlx_array_free(a.c)
+			C.mlx_array_free(a.c)
 			a.c.ctx = nil
 			arrayPool.Put(a)
 			freed++
@@ -356,9 +356,9 @@ func Eval(outputs ...*Array) []*Array {
 			}
 		}
 		if len(evalHandles) > 0 {
-			vec := C.w_mlx_vector_array_new_data(&evalHandles[0], C.size_t(len(evalHandles)))
-			C.w_mlx_eval(vec)
-			C.w_mlx_vector_array_free(vec)
+			vec := C.mlx_vector_array_new_data(&evalHandles[0], C.size_t(len(evalHandles)))
+			C.mlx_eval(vec)
+			C.mlx_vector_array_free(vec)
 		}
 	}
 	return outputs
@@ -386,16 +386,16 @@ func AsyncEval(outputs ...*Array) {
 			}
 		}
 		if len(evalHandles) > 0 {
-			vec := C.w_mlx_vector_array_new_data(&evalHandles[0], C.size_t(len(evalHandles)))
-			C.w_mlx_async_eval(vec)
-			C.w_mlx_vector_array_free(vec)
+			vec := C.mlx_vector_array_new_data(&evalHandles[0], C.size_t(len(evalHandles)))
+			C.mlx_async_eval(vec)
+			C.mlx_vector_array_free(vec)
 		}
 	}
 }
 
 // Sync waits for all async operations to complete (no cleanup).
 func Sync() {
-	C.w_mlx_synchronize(C.default_stream())
+	C.mlx_synchronize(C.default_stream())
 }
 
 // Free marks this array for cleanup on the next Eval().
@@ -436,7 +436,7 @@ func int32ToCInt(s []int32) *C.int {
 
 // NewArray creates a new MLX array from float32 data
 func NewArray(data []float32, shape []int32) *Array {
-	handle := C.w_mlx_array_new_data(
+	handle := C.mlx_array_new_data(
 		unsafe.Pointer(&data[0]),
 		int32ToCInt(shape),
 		C.int(len(shape)),
@@ -447,7 +447,7 @@ func NewArray(data []float32, shape []int32) *Array {
 
 // NewArrayInt32 creates a new MLX array from int32 data
 func NewArrayInt32(data []int32, shape []int32) *Array {
-	handle := C.w_mlx_array_new_data(
+	handle := C.mlx_array_new_data(
 		unsafe.Pointer(&data[0]),
 		int32ToCInt(shape),
 		C.int(len(shape)),
@@ -463,55 +463,55 @@ func NewArrayFloat32(data []float32, shape []int32) *Array {
 
 // Zeros creates an array of zeros with optional dtype (default float32)
 func Zeros(shape []int32, dtype ...Dtype) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	dt := DtypeFloat32
 	if len(dtype) > 0 {
 		dt = dtype[0]
 	}
-	C.w_mlx_zeros(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dt), C.default_stream())
+	C.mlx_zeros(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dt), C.default_stream())
 	return newArray(res)
 }
 
 // ZerosLike creates a zeros array with the same dtype as a.
 // If shape is provided, uses that shape; otherwise uses a's shape.
 func ZerosLike(a *Array, shape ...int32) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	if len(shape) == 0 {
-		C.w_mlx_zeros_like(&res, a.c, C.default_stream())
+		C.mlx_zeros_like(&res, a.c, C.default_stream())
 	} else {
 		dtype := a.Dtype()
-		C.w_mlx_zeros(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dtype), C.default_stream())
+		C.mlx_zeros(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dtype), C.default_stream())
 	}
 	return newArray(res)
 }
 
 // Ones creates an array of ones
 func Ones(shape ...int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_ones(&res, int32ToCInt(shape), C.size_t(len(shape)), C.MLX_FLOAT32, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_ones(&res, int32ToCInt(shape), C.size_t(len(shape)), C.MLX_FLOAT32, C.default_stream())
 	return newArray(res)
 }
 
 // Full creates an array filled with a value
 func Full(value float32, shape ...int32) *Array {
-	vals := C.w_mlx_array_new_float(C.float(value))
-	res := C.w_mlx_array_new()
-	C.w_mlx_full(&res, int32ToCInt(shape), C.size_t(len(shape)), vals, C.MLX_FLOAT32, C.default_stream())
-	C.w_mlx_array_free(vals)
+	vals := C.mlx_array_new_float(C.float(value))
+	res := C.mlx_array_new()
+	C.mlx_full(&res, int32ToCInt(shape), C.size_t(len(shape)), vals, C.MLX_FLOAT32, C.default_stream())
+	C.mlx_array_free(vals)
 	return newArray(res)
 }
 
 // Arange creates a range of values
 func Arange(start, stop, step float32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_arange(&res, C.double(start), C.double(stop), C.double(step), C.MLX_FLOAT32, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_arange(&res, C.double(start), C.double(stop), C.double(step), C.MLX_FLOAT32, C.default_stream())
 	return newArray(res)
 }
 
 // Linspace creates evenly spaced values
 func Linspace(start, stop float32, steps int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_linspace(&res, C.double(start), C.double(stop), C.int(steps), C.MLX_FLOAT32, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_linspace(&res, C.double(start), C.double(stop), C.int(steps), C.MLX_FLOAT32, C.default_stream())
 	return newArray(res)
 }
 
@@ -519,8 +519,8 @@ func Linspace(start, stop float32, steps int32) *Array {
 
 // Add adds two arrays element-wise
 func Add(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_add(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_add(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
@@ -531,37 +531,37 @@ func AddRaw(a, b *Array) *Array {
 
 // Sub subtracts two arrays element-wise
 func Sub(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_subtract(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_subtract(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // Mul multiplies two arrays element-wise
 func Mul(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_multiply(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_multiply(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // Div divides two arrays element-wise
 func Div(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_divide(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_divide(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // Matmul performs matrix multiplication
 func Matmul(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_matmul(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_matmul(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // AddMM computes: result = beta*c + alpha*(a @ b)
 // This fuses bias addition with matmul into a single op.
 func AddMM(c, a, b *Array, alpha, beta float32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_addmm(&res, c.c, a.c, b.c, C.float(alpha), C.float(beta), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_addmm(&res, c.c, a.c, b.c, C.float(alpha), C.float(beta), C.default_stream())
 	return newArray(res)
 }
 
@@ -572,152 +572,152 @@ func Linear(a, weight *Array) *Array {
 
 // Sqrt computes element-wise square root
 func Sqrt(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_sqrt(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_sqrt(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // RSqrt computes element-wise reciprocal square root
 func RSqrt(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_rsqrt(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_rsqrt(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Erf computes element-wise error function
 func Erf(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_erf(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_erf(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Exp computes element-wise exponential
 func Exp(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_exp(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_exp(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Log computes element-wise natural logarithm
 func Log(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_log(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_log(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Sin computes element-wise sine
 func Sin(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_sin(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_sin(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Cos computes element-wise cosine
 func Cos(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_cos(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_cos(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Neg negates the array
 func Neg(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_negative(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_negative(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Abs computes element-wise absolute value
 func Abs(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_abs(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_abs(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Square computes element-wise square
 func Square(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_square(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_square(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // Pow raises a to the power of b element-wise
 func Pow(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_power(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_power(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // Max computes element-wise maximum
 func Max(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_maximum(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_maximum(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // Min computes element-wise minimum
 func Min(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_minimum(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_minimum(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // scalarWithDtype creates a scalar array matching the dtype of a (critical for graph fusion!)
 func scalarWithDtype(s float32, a *Array) C.mlx_array {
 	// Create float32 scalar, then cast to match input dtype
-	f32 := C.w_mlx_array_new_float(C.float(s))
+	f32 := C.mlx_array_new_float(C.float(s))
 	dtype := a.Dtype()
 	if dtype == DtypeFloat32 {
 		return f32 // No cast needed
 	}
 	// Cast to match input dtype
-	casted := C.w_mlx_array_new()
-	C.w_mlx_astype(&casted, f32, C.mlx_dtype(dtype), C.default_stream())
-	C.w_mlx_array_free(f32)
+	casted := C.mlx_array_new()
+	C.mlx_astype(&casted, f32, C.mlx_dtype(dtype), C.default_stream())
+	C.mlx_array_free(f32)
 	return casted
 }
 
 // AddScalar adds a scalar to an array (matches dtype for graph fusion)
 func AddScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
-	res := C.w_mlx_array_new()
-	C.w_mlx_add(&res, a.c, scalar, C.default_stream())
-	C.w_mlx_array_free(scalar)
+	res := C.mlx_array_new()
+	C.mlx_add(&res, a.c, scalar, C.default_stream())
+	C.mlx_array_free(scalar)
 	return newArray(res)
 }
 
 // MulScalar multiplies an array by a scalar (matches dtype for graph fusion)
 func MulScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
-	res := C.w_mlx_array_new()
-	C.w_mlx_multiply(&res, a.c, scalar, C.default_stream())
-	C.w_mlx_array_free(scalar)
+	res := C.mlx_array_new()
+	C.mlx_multiply(&res, a.c, scalar, C.default_stream())
+	C.mlx_array_free(scalar)
 	return newArray(res)
 }
 
 // DivScalar divides an array by a scalar (matches dtype for graph fusion)
 func DivScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
-	res := C.w_mlx_array_new()
-	C.w_mlx_divide(&res, a.c, scalar, C.default_stream())
-	C.w_mlx_array_free(scalar)
+	res := C.mlx_array_new()
+	C.mlx_divide(&res, a.c, scalar, C.default_stream())
+	C.mlx_array_free(scalar)
 	return newArray(res)
 }
 
 // DivScalarInt divides an int array by an int scalar (regular division, may return float)
 func DivScalarInt(a *Array, s int32) *Array {
-	scalar := C.w_mlx_array_new_int(C.int(s))
-	res := C.w_mlx_array_new()
-	C.w_mlx_divide(&res, a.c, scalar, C.default_stream())
-	C.w_mlx_array_free(scalar)
+	scalar := C.mlx_array_new_int(C.int(s))
+	res := C.mlx_array_new()
+	C.mlx_divide(&res, a.c, scalar, C.default_stream())
+	C.mlx_array_free(scalar)
 	return newArray(res)
 }
 
 // FloorDivideScalar performs integer floor division (a // s), preserving int dtype
 func FloorDivideScalar(a *Array, s int32) *Array {
-	scalar := C.w_mlx_array_new_int(C.int(s))
-	res := C.w_mlx_array_new()
-	C.w_mlx_floor_divide(&res, a.c, scalar, C.default_stream())
-	C.w_mlx_array_free(scalar)
+	scalar := C.mlx_array_new_int(C.int(s))
+	res := C.mlx_array_new()
+	C.mlx_floor_divide(&res, a.c, scalar, C.default_stream())
+	C.mlx_array_free(scalar)
 	return newArray(res)
 }
 
@@ -725,43 +725,43 @@ func FloorDivideScalar(a *Array, s int32) *Array {
 
 // Sum reduces along an axis
 func Sum(a *Array, axis int, keepdims bool) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_sum_axis(&res, a.c, C.int(axis), C._Bool(keepdims), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_sum_axis(&res, a.c, C.int(axis), C._Bool(keepdims), C.default_stream())
 	return newArray(res)
 }
 
 // SumAll reduces the entire array to a scalar
 func SumAll(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_sum(&res, a.c, false, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_sum(&res, a.c, false, C.default_stream())
 	return newArray(res)
 }
 
 // Mean reduces along an axis
 func Mean(a *Array, axis int, keepdims bool) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_mean_axis(&res, a.c, C.int(axis), C._Bool(keepdims), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_mean_axis(&res, a.c, C.int(axis), C._Bool(keepdims), C.default_stream())
 	return newArray(res)
 }
 
 // MeanAll reduces the entire array to a scalar
 func MeanAll(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_mean(&res, a.c, false, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_mean(&res, a.c, false, C.default_stream())
 	return newArray(res)
 }
 
 // Var computes variance along an axis
 func Var(a *Array, axis int, keepdims bool) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_var_axis(&res, a.c, C.int(axis), C._Bool(keepdims), 0, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_var_axis(&res, a.c, C.int(axis), C._Bool(keepdims), 0, C.default_stream())
 	return newArray(res)
 }
 
 // Argmax returns indices of maximum values along an axis
 func Argmax(a *Array, axis int, keepdims bool) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_argmax_axis(&res, a.c, C.int(axis), C._Bool(keepdims), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_argmax_axis(&res, a.c, C.int(axis), C._Bool(keepdims), C.default_stream())
 	return newArray(res)
 }
 
@@ -770,22 +770,22 @@ func Argmax(a *Array, axis int, keepdims bool) *Array {
 func ArgmaxAll(a *Array) int32 {
 	cleanup()
 	// Flatten, then argmax with keepdims=false
-	flat := C.w_mlx_array_new()
-	C.w_mlx_flatten(&flat, a.c, 0, -1, C.default_stream())
-	res := C.w_mlx_array_new()
-	C.w_mlx_argmax(&res, flat, false, C.default_stream())
-	C.w_mlx_array_eval(res)
+	flat := C.mlx_array_new()
+	C.mlx_flatten(&flat, a.c, 0, -1, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_argmax(&res, flat, false, C.default_stream())
+	C.mlx_array_eval(res)
 	var val C.int32_t
-	C.w_mlx_array_item_int32(&val, res)
-	C.w_mlx_array_free(flat)
-	C.w_mlx_array_free(res)
+	C.mlx_array_item_int32(&val, res)
+	C.mlx_array_free(flat)
+	C.mlx_array_free(res)
 	return int32(val)
 }
 
 // Reshape reshapes the array
 func Reshape(a *Array, shape ...int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_reshape(&res, a.c, int32ToCInt(shape), C.size_t(len(shape)), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_reshape(&res, a.c, int32ToCInt(shape), C.size_t(len(shape)), C.default_stream())
 	return newArray(res)
 }
 
@@ -795,8 +795,8 @@ func Transpose(a *Array, axes ...int) *Array {
 	for i, ax := range axes {
 		cAxes[i] = C.int(ax)
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_transpose_axes(&res, a.c, &cAxes[0], C.size_t(len(axes)), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_transpose_axes(&res, a.c, &cAxes[0], C.size_t(len(axes)), C.default_stream())
 	return newArray(res)
 }
 
@@ -810,57 +810,57 @@ func AsStrided(a *Array, shape []int32, strides []int64, offset int64) *Array {
 	for i, s := range strides {
 		cStrides[i] = C.int64_t(s)
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_as_strided(&res, a.c, &cShape[0], C.size_t(len(shape)), &cStrides[0], C.size_t(len(strides)), C.size_t(offset), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_as_strided(&res, a.c, &cShape[0], C.size_t(len(shape)), &cStrides[0], C.size_t(len(strides)), C.size_t(offset), C.default_stream())
 	return newArray(res)
 }
 
 // ExpandDims adds a dimension at the specified axis
 func ExpandDims(a *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_expand_dims(&res, a.c, C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_expand_dims(&res, a.c, C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // Squeeze removes a dimension at the specified axis
 func Squeeze(a *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_squeeze_axis(&res, a.c, C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_squeeze_axis(&res, a.c, C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // Flatten flattens the array to 1D
 func Flatten(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_flatten(&res, a.c, 0, -1, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_flatten(&res, a.c, 0, -1, C.default_stream())
 	return newArray(res)
 }
 
 // FlattenRange flattens consecutive axes from start_axis to end_axis (intermediates)
 func FlattenRange(a *Array, startAxis, endAxis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_flatten(&res, a.c, C.int(startAxis), C.int(endAxis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_flatten(&res, a.c, C.int(startAxis), C.int(endAxis), C.default_stream())
 	return newArray(res)
 }
 
 // View reinterprets the array with a new dtype (no data copy)
 func View(a *Array, dtype int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_view(&res, a.c, C.mlx_dtype(dtype), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_view(&res, a.c, C.mlx_dtype(dtype), C.default_stream())
 	return newArray(res)
 }
 
 // Contiguous returns a contiguous copy of the array (row-major)
 func Contiguous(a *Array) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	// Use allow_col=false to force row-major contiguous layout
-	C.w_mlx_contiguous(&res, a.c, false, C.default_stream())
+	C.mlx_contiguous(&res, a.c, false, C.default_stream())
 	return newArray(res)
 }
 
 // Clip clips values to [min, max]. Pass nil for no bound on that side.
 func Clip(a *Array, aMin, aMax *Array) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	var minH, maxH C.mlx_array
 	if aMin != nil {
 		minH = aMin.c
@@ -868,7 +868,7 @@ func Clip(a *Array, aMin, aMax *Array) *Array {
 	if aMax != nil {
 		maxH = aMax.c
 	}
-	C.w_mlx_clip(&res, a.c, minH, maxH, C.default_stream())
+	C.mlx_clip(&res, a.c, minH, maxH, C.default_stream())
 	return newArray(res)
 }
 
@@ -882,35 +882,35 @@ func ClipScalar(a *Array, minVal, maxVal float32, hasMin, hasMax bool) *Array {
 	if hasMax {
 		maxArr = scalarWithDtype(maxVal, a)
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_clip(&res, a.c, minArr, maxArr, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_clip(&res, a.c, minArr, maxArr, C.default_stream())
 	if hasMin {
-		C.w_mlx_array_free(minArr)
+		C.mlx_array_free(minArr)
 	}
 	if hasMax {
-		C.w_mlx_array_free(maxArr)
+		C.mlx_array_free(maxArr)
 	}
 	return newArray(res)
 }
 
 // GreaterEqual returns element-wise a >= b
 func GreaterEqual(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_greater_equal(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_greater_equal(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // LessArray returns element-wise a < b
 func LessArray(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_less(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_less(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // LogicalAnd returns element-wise a && b
 func LogicalAnd(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_logical_and(&res, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_logical_and(&res, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
@@ -918,58 +918,58 @@ func LogicalAnd(a, b *Array) *Array {
 // Uses rtol (relative tolerance) and atol (absolute tolerance):
 // |a - b| <= atol + rtol * |b|
 func AllClose(a, b *Array, rtol, atol float64) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_allclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(false), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_allclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(false), C.default_stream())
 	return newArray(res)
 }
 
 // AllCloseEqualNaN is like AllClose but treats NaN as equal to NaN.
 func AllCloseEqualNaN(a, b *Array, rtol, atol float64) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_allclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(true), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_allclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(true), C.default_stream())
 	return newArray(res)
 }
 
 // ArrayEqual returns true if arrays have same shape and all elements are equal.
 func ArrayEqual(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_array_equal(&res, a.c, b.c, C.bool(false), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_array_equal(&res, a.c, b.c, C.bool(false), C.default_stream())
 	return newArray(res)
 }
 
 // ArrayEqualNaN is like ArrayEqual but treats NaN as equal to NaN.
 func ArrayEqualNaN(a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_array_equal(&res, a.c, b.c, C.bool(true), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_array_equal(&res, a.c, b.c, C.bool(true), C.default_stream())
 	return newArray(res)
 }
 
 // IsClose returns element-wise bool array indicating if values are within tolerance.
 // |a - b| <= atol + rtol * |b|
 func IsClose(a, b *Array, rtol, atol float64) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_isclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(false), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_isclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(false), C.default_stream())
 	return newArray(res)
 }
 
 // IsCloseEqualNaN is like IsClose but treats NaN as equal to NaN.
 func IsCloseEqualNaN(a, b *Array, rtol, atol float64) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_isclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(true), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_isclose(&res, a.c, b.c, C.double(rtol), C.double(atol), C.bool(true), C.default_stream())
 	return newArray(res)
 }
 
 // ReduceMax reduces array to max value over all dimensions.
 func ReduceMax(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_max(&res, a.c, C.bool(false), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_max(&res, a.c, C.bool(false), C.default_stream())
 	return newArray(res)
 }
 
 // ArangeInt creates an array with values from start to stop with step and specified dtype
 func ArangeInt(start, stop, step int32, dtype Dtype) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_arange(&res, C.double(start), C.double(stop), C.double(step), C.mlx_dtype(dtype), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_arange(&res, C.double(start), C.double(stop), C.double(step), C.mlx_dtype(dtype), C.default_stream())
 	return newArray(res)
 }
 
@@ -979,10 +979,10 @@ func Concatenate(arrays []*Array, axis int) *Array {
 	for i, arr := range arrays {
 		handles[i] = arr.c
 	}
-	vec := C.w_mlx_vector_array_new_data(&handles[0], C.size_t(len(handles)))
-	res := C.w_mlx_array_new()
-	C.w_mlx_concatenate_axis(&res, vec, C.int(axis), C.default_stream())
-	C.w_mlx_vector_array_free(vec)
+	vec := C.mlx_vector_array_new_data(&handles[0], C.size_t(len(handles)))
+	res := C.mlx_array_new()
+	C.mlx_concatenate_axis(&res, vec, C.int(axis), C.default_stream())
+	C.mlx_vector_array_free(vec)
 	return newArray(res)
 }
 
@@ -1002,8 +1002,8 @@ func Slice(a *Array, start, stop []int32) *Array {
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_slice(&res, a.c, &cStart[0], C.size_t(n), &cStop[0], C.size_t(n), &cStrides[0], C.size_t(n), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_slice(&res, a.c, &cStart[0], C.size_t(n), &cStop[0], C.size_t(n), &cStrides[0], C.size_t(n), C.default_stream())
 	return newArray(res)
 }
 
@@ -1017,22 +1017,22 @@ func SliceStride(a *Array, start, stop, strides []int32) *Array {
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = C.int(strides[i])
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_slice(&res, a.c, &cStart[0], C.size_t(len(start)), &cStop[0], C.size_t(len(stop)), &cStrides[0], C.size_t(len(strides)), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_slice(&res, a.c, &cStart[0], C.size_t(len(start)), &cStop[0], C.size_t(len(stop)), &cStrides[0], C.size_t(len(strides)), C.default_stream())
 	return newArray(res)
 }
 
 // Tile repeats the array along each dimension
 func Tile(a *Array, reps []int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_tile(&res, a.c, int32ToCInt(reps), C.size_t(len(reps)), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_tile(&res, a.c, int32ToCInt(reps), C.size_t(len(reps)), C.default_stream())
 	return newArray(res)
 }
 
 // BroadcastTo broadcasts an array to a given shape
 func BroadcastTo(a *Array, shape []int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_broadcast_to(&res, a.c, int32ToCInt(shape), C.size_t(len(shape)), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_broadcast_to(&res, a.c, int32ToCInt(shape), C.size_t(len(shape)), C.default_stream())
 	return newArray(res)
 }
 
@@ -1040,90 +1040,90 @@ func BroadcastTo(a *Array, shape []int32) *Array {
 
 // Softmax computes softmax along an axis
 func Softmax(a *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_softmax_axis(&res, a.c, C.int(axis), false, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_softmax_axis(&res, a.c, C.int(axis), false, C.default_stream())
 	return newArray(res)
 }
 
 // Take gathers elements along an axis using indices
 func Take(a *Array, indices *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_take_axis(&res, a.c, indices.c, C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_take_axis(&res, a.c, indices.c, C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // Argsort returns indices that would sort the array along an axis
 func Argsort(a *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_argsort_axis(&res, a.c, C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_argsort_axis(&res, a.c, C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // Sigmoid computes element-wise sigmoid
 func Sigmoid(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_sigmoid(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_sigmoid(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // ReLU computes element-wise ReLU: max(0, x)
 func ReLU(a *Array) *Array {
 	// ReLU = maximum(x, 0) - mlx-c doesn't have mlx_relu, but we can use maximum
-	zero := C.w_mlx_array_new_float(0.0)
-	res := C.w_mlx_array_new()
-	C.w_mlx_maximum(&res, a.c, zero, C.default_stream())
-	C.w_mlx_array_free(zero)
+	zero := C.mlx_array_new_float(0.0)
+	res := C.mlx_array_new()
+	C.mlx_maximum(&res, a.c, zero, C.default_stream())
+	C.mlx_array_free(zero)
 	return newArray(res)
 }
 
 // SiLU computes element-wise SiLU (Swish): x * sigmoid(x)
 func SiLU(a *Array) *Array {
 	// SiLU = x * sigmoid(x)
-	sig := C.w_mlx_array_new()
-	C.w_mlx_sigmoid(&sig, a.c, C.default_stream())
-	res := C.w_mlx_array_new()
-	C.w_mlx_multiply(&res, a.c, sig, C.default_stream())
-	C.w_mlx_array_free(sig)
+	sig := C.mlx_array_new()
+	C.mlx_sigmoid(&sig, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_multiply(&res, a.c, sig, C.default_stream())
+	C.mlx_array_free(sig)
 	return newArray(res)
 }
 
 // GELU computes element-wise GELU (Gaussian Error Linear Unit)
 // GELU(x) = x * 0.5 * (1 + erf(x / sqrt(2)))
 func GELU(a *Array) *Array {
-	sqrt2 := C.w_mlx_array_new_float(1.4142135623730951)
-	scaled := C.w_mlx_array_new()
-	C.w_mlx_divide(&scaled, a.c, sqrt2, C.default_stream())
-	erfd := C.w_mlx_array_new()
-	C.w_mlx_erf(&erfd, scaled, C.default_stream())
-	one := C.w_mlx_array_new_float(1.0)
-	erfdPlusOne := C.w_mlx_array_new()
-	C.w_mlx_add(&erfdPlusOne, erfd, one, C.default_stream())
-	half := C.w_mlx_array_new_float(0.5)
-	halfErfdPlusOne := C.w_mlx_array_new()
-	C.w_mlx_multiply(&halfErfdPlusOne, half, erfdPlusOne, C.default_stream())
-	res := C.w_mlx_array_new()
-	C.w_mlx_multiply(&res, a.c, halfErfdPlusOne, C.default_stream())
-	C.w_mlx_array_free(sqrt2)
-	C.w_mlx_array_free(scaled)
-	C.w_mlx_array_free(erfd)
-	C.w_mlx_array_free(one)
-	C.w_mlx_array_free(erfdPlusOne)
-	C.w_mlx_array_free(half)
-	C.w_mlx_array_free(halfErfdPlusOne)
+	sqrt2 := C.mlx_array_new_float(1.4142135623730951)
+	scaled := C.mlx_array_new()
+	C.mlx_divide(&scaled, a.c, sqrt2, C.default_stream())
+	erfd := C.mlx_array_new()
+	C.mlx_erf(&erfd, scaled, C.default_stream())
+	one := C.mlx_array_new_float(1.0)
+	erfdPlusOne := C.mlx_array_new()
+	C.mlx_add(&erfdPlusOne, erfd, one, C.default_stream())
+	half := C.mlx_array_new_float(0.5)
+	halfErfdPlusOne := C.mlx_array_new()
+	C.mlx_multiply(&halfErfdPlusOne, half, erfdPlusOne, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_multiply(&res, a.c, halfErfdPlusOne, C.default_stream())
+	C.mlx_array_free(sqrt2)
+	C.mlx_array_free(scaled)
+	C.mlx_array_free(erfd)
+	C.mlx_array_free(one)
+	C.mlx_array_free(erfdPlusOne)
+	C.mlx_array_free(half)
+	C.mlx_array_free(halfErfdPlusOne)
 	return newArray(res)
 }
 
 // Tanh computes element-wise tanh
 func Tanh(a *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_tanh(&res, a.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_tanh(&res, a.c, C.default_stream())
 	return newArray(res)
 }
 
 // RMSNorm computes RMS normalization using mlx.fast
 func RMSNorm(x, weight *Array, eps float32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_fast_rms_norm(&res, x.c, weight.c, C.float(eps), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_fast_rms_norm(&res, x.c, weight.c, C.float(eps), C.default_stream())
 	return newArray(res)
 }
 
@@ -1139,18 +1139,18 @@ func RMSNormNoWeight(x *Array, eps float32) *Array {
 
 // RoPE applies rotary position embeddings using mlx.fast
 func RoPE(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	optBase := C.mlx_optional_float{value: C.float(base), has_value: true}
-	C.w_mlx_fast_rope(&res, x.c, C.int(dims), C._Bool(traditional), optBase, C.float(scale), C.int(offset), C.mlx_array{}, C.default_stream())
+	C.mlx_fast_rope(&res, x.c, C.int(dims), C._Bool(traditional), optBase, C.float(scale), C.int(offset), C.mlx_array{}, C.default_stream())
 	return newArray(res)
 }
 
 // RoPEWithFreqs applies rotary position embeddings with custom frequencies (for YaRN)
 // freqs is required - use RoPE() if you don't have custom frequencies
 func RoPEWithFreqs(x, freqs *Array, dims int, traditional bool, scale float32, offset int) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	optBase := C.mlx_optional_float{has_value: false} // No base when using freqs
-	C.w_mlx_fast_rope(&res, x.c, C.int(dims), C._Bool(traditional), optBase, C.float(scale), C.int(offset), freqs.c, C.default_stream())
+	C.mlx_fast_rope(&res, x.c, C.int(dims), C._Bool(traditional), optBase, C.float(scale), C.int(offset), freqs.c, C.default_stream())
 	return newArray(res)
 }
 
@@ -1172,25 +1172,25 @@ func Gather(a, indices *Array) *Array {
 
 // Ndim returns the number of dimensions
 func (a *Array) Ndim() int {
-	return int(C.w_mlx_array_ndim(a.c))
+	return int(C.mlx_array_ndim(a.c))
 }
 
 // Size returns the total number of elements
 func (a *Array) Size() int {
-	return int(C.w_mlx_array_size(a.c))
+	return int(C.mlx_array_size(a.c))
 }
 
 // IsContiguous returns whether the array's data is contiguous in memory.
 // Non-contiguous arrays (e.g., from SliceStride) must call Contiguous() before Data().
 func (a *Array) IsContiguous() bool {
 	var res C.bool
-	C.w__mlx_array_is_contiguous(&res, a.c)
+	C._mlx_array_is_contiguous(&res, a.c)
 	return bool(res)
 }
 
 // Dim returns the size of a dimension
 func (a *Array) Dim(axis int) int32 {
-	return int32(C.w_mlx_array_dim(a.c, C.int(axis)))
+	return int32(C.mlx_array_dim(a.c, C.int(axis)))
 }
 
 // Shape returns the shape as a slice
@@ -1210,7 +1210,7 @@ func (a *Array) IsValid() bool {
 
 // Dtype returns the data type
 func (a *Array) Dtype() Dtype {
-	return Dtype(C.w_mlx_array_dtype(a.c))
+	return Dtype(C.mlx_array_dtype(a.c))
 }
 
 // Nbytes returns the total size in bytes
@@ -1254,7 +1254,7 @@ func (a *Array) Data() []float32 {
 		// Cast array will be cleaned up on next Eval
 	}
 
-	ptr := C.w_mlx_array_data_float32(arr.c)
+	ptr := C.mlx_array_data_float32(arr.c)
 	if ptr == nil {
 		return nil
 	}
@@ -1282,7 +1282,7 @@ func (a *Array) DataInt32() []int32 {
 	if size == 0 {
 		return nil
 	}
-	ptr := C.w_mlx_array_data_int32(a.c)
+	ptr := C.mlx_array_data_int32(a.c)
 	if ptr == nil {
 		return nil
 	}
@@ -1296,7 +1296,7 @@ func (a *Array) DataInt32() []int32 {
 func (a *Array) ItemInt32() int32 {
 	cleanup()
 	var val C.int32_t
-	C.w_mlx_array_item_int32(&val, a.c)
+	C.mlx_array_item_int32(&val, a.c)
 	return int32(val)
 }
 
@@ -1315,18 +1315,18 @@ func (a *Array) Bytes() []byte {
 	var ptr unsafe.Pointer
 	switch a.Dtype() {
 	case DtypeFloat32:
-		ptr = unsafe.Pointer(C.w_mlx_array_data_float32(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(a.c))
 	case DtypeInt32:
-		ptr = unsafe.Pointer(C.w_mlx_array_data_int32(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_int32(a.c))
 	case DtypeUint32:
-		ptr = unsafe.Pointer(C.w_mlx_array_data_uint32(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_uint32(a.c))
 	case DtypeUint8:
-		ptr = unsafe.Pointer(C.w_mlx_array_data_uint8(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_uint8(a.c))
 	default:
 		// For other types (bf16, f16, etc), convert to float32
 		arr := AsType(a, DtypeFloat32)
 		arr.Eval()
-		ptr = unsafe.Pointer(C.w_mlx_array_data_float32(arr.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(arr.c))
 		nbytes = arr.Nbytes()
 	}
 
@@ -1360,7 +1360,7 @@ func NewArrayFromBytes(data []byte, shape []int32, dtype Dtype) *Array {
 	for i, s := range shape {
 		intShape[i] = C.int(s)
 	}
-	handle := C.w_mlx_array_new_data(cData, &intShape[0], C.int(len(shape)), C.mlx_dtype(dtype))
+	handle := C.mlx_array_new_data(cData, &intShape[0], C.int(len(shape)), C.mlx_dtype(dtype))
 	return newArray(handle)
 }
 
@@ -1368,22 +1368,22 @@ func NewArrayFromBytes(data []byte, shape []int32, dtype Dtype) *Array {
 
 // SetDefaultDeviceGPU sets the default device to GPU (Metal)
 func SetDefaultDeviceGPU() {
-	dev := C.w_mlx_device_new_type(C.MLX_GPU, 0)
-	C.w_mlx_set_default_device(dev)
-	C.w_mlx_device_free(dev)
+	dev := C.mlx_device_new_type(C.MLX_GPU, 0)
+	C.mlx_set_default_device(dev)
+	C.mlx_device_free(dev)
 }
 
 // SetDefaultDeviceCPU sets the default device to CPU
 func SetDefaultDeviceCPU() {
-	dev := C.w_mlx_device_new_type(C.MLX_CPU, 0)
-	C.w_mlx_set_default_device(dev)
-	C.w_mlx_device_free(dev)
+	dev := C.mlx_device_new_type(C.MLX_CPU, 0)
+	C.mlx_set_default_device(dev)
+	C.mlx_device_free(dev)
 }
 
 // MetalIsAvailable returns true if Metal GPU is available
 func MetalIsAvailable() bool {
 	var available C._Bool
-	C.w_mlx_metal_is_available(&available)
+	C.mlx_metal_is_available(&available)
 	return bool(available)
 }
 
@@ -1393,12 +1393,12 @@ func MetalIsAvailable() bool {
 func MetalStartCapture(path string) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
-	C.w_mlx_metal_start_capture(cPath)
+	C.mlx_metal_start_capture(cPath)
 }
 
 // MetalStopCapture stops the current GPU trace capture.
 func MetalStopCapture() {
-	C.w_mlx_metal_stop_capture()
+	C.mlx_metal_stop_capture()
 }
 
 // GPUIsAvailable returns true if any GPU (Metal or CUDA) is available
@@ -1415,29 +1415,29 @@ func GPUIsAvailable() bool {
 // GetDefaultDeviceType returns the current default device (0=CPU, 1=GPU)
 func GetDefaultDeviceType() int {
 	var dev C.mlx_device
-	C.w_mlx_get_default_device(&dev)
+	C.mlx_get_default_device(&dev)
 	var devType C.mlx_device_type
-	C.w_mlx_device_get_type(&devType, dev)
-	C.w_mlx_device_free(dev)
+	C.mlx_device_get_type(&devType, dev)
+	C.mlx_device_free(dev)
 	return int(devType)
 }
 
 // Synchronize waits for all GPU operations to complete
 func Synchronize() {
-	C.w_mlx_synchronize(C.default_stream())
+	C.mlx_synchronize(C.default_stream())
 }
 
 // ScaledDotProductAttention computes optimized attention using GPU kernel
 // Q, K, V should be [batch, heads, seq, head_dim]
 func ScaledDotProductAttention(q, k, v *Array, scale float32, causalMask bool) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	maskMode := "" // empty string for no mask
 	if causalMask {
 		maskMode = "causal"
 	}
 	cMaskMode := C.CString(maskMode)
 	defer C.free(unsafe.Pointer(cMaskMode))
-	C.w_mlx_fast_scaled_dot_product_attention(&res, q.c, k.c, v.c, C.float(scale), cMaskMode, C.mlx_array{}, C.mlx_array{}, C.default_stream())
+	C.mlx_fast_scaled_dot_product_attention(&res, q.c, k.c, v.c, C.float(scale), cMaskMode, C.mlx_array{}, C.mlx_array{}, C.default_stream())
 	return newArray(res)
 }
 
@@ -1446,7 +1446,7 @@ func ScaledDotProductAttention(q, k, v *Array, scale float32, causalMask bool) *
 // mask: optional attention mask array (nil for none)
 // sinks: attention sinks array (nil for none)
 func ScaledDotProductAttentionWithSinks(q, k, v *Array, scale float32, maskMode string, mask, sinks *Array) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	cMaskMode := C.CString(maskMode)
 	defer C.free(unsafe.Pointer(cMaskMode))
 	var maskH, sinksH C.mlx_array
@@ -1456,7 +1456,7 @@ func ScaledDotProductAttentionWithSinks(q, k, v *Array, scale float32, maskMode 
 	if sinks != nil {
 		sinksH = sinks.c
 	}
-	C.w_mlx_fast_scaled_dot_product_attention(&res, q.c, k.c, v.c, C.float(scale), cMaskMode, maskH, sinksH, C.default_stream())
+	C.mlx_fast_scaled_dot_product_attention(&res, q.c, k.c, v.c, C.float(scale), cMaskMode, maskH, sinksH, C.default_stream())
 	return newArray(res)
 }
 
@@ -1476,7 +1476,7 @@ func LoadSafetensorsNative(path string) (*SafetensorsFile, error) {
 
 	var arrays C.mlx_map_string_to_array
 	var metadata C.mlx_map_string_to_string
-	if C.w_mlx_load_safetensors(&arrays, &metadata, cPath, C.cpu_stream()) != 0 {
+	if C.mlx_load_safetensors(&arrays, &metadata, cPath, C.cpu_stream()) != 0 {
 		return nil, fmt.Errorf("failed to load safetensors: %s", path)
 	}
 	return &SafetensorsFile{arrays: arrays, metadata: metadata}, nil
@@ -1488,7 +1488,7 @@ func (s *SafetensorsFile) Get(name string) *Array {
 	defer C.free(unsafe.Pointer(cName))
 
 	var arr C.mlx_array
-	if C.w_mlx_map_string_to_array_get(&arr, s.arrays, cName) != 0 {
+	if C.mlx_map_string_to_array_get(&arr, s.arrays, cName) != 0 {
 		return nil
 	}
 	if arr.ctx == nil {
@@ -1501,7 +1501,7 @@ func (s *SafetensorsFile) Get(name string) *Array {
 func (s *SafetensorsFile) Set(name string, arr *Array) {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
-	C.w_mlx_map_string_to_array_insert(s.arrays, cName, arr.c)
+	C.mlx_map_string_to_array_insert(s.arrays, cName, arr.c)
 }
 
 // Count returns the number of tensors (not directly available, would need iterator)
@@ -1512,8 +1512,8 @@ func (s *SafetensorsFile) Count() int {
 
 // Free releases the safetensors file
 func (s *SafetensorsFile) Free() {
-	C.w_mlx_map_string_to_array_free(s.arrays)
-	C.w_mlx_map_string_to_string_free(s.metadata)
+	C.mlx_map_string_to_array_free(s.arrays)
+	C.mlx_map_string_to_string_free(s.metadata)
 }
 
 // SaveSafetensors saves arrays to a safetensors file using MLX's native implementation.
@@ -1523,22 +1523,22 @@ func SaveSafetensors(path string, arrays map[string]*Array) error {
 	defer C.free(unsafe.Pointer(cPath))
 
 	// Create the map
-	cArrays := C.w_mlx_map_string_to_array_new()
-	defer C.w_mlx_map_string_to_array_free(cArrays)
+	cArrays := C.mlx_map_string_to_array_new()
+	defer C.mlx_map_string_to_array_free(cArrays)
 
 	// Add each array to the map
 	for name, arr := range arrays {
 		cName := C.CString(name)
-		C.w_mlx_map_string_to_array_insert(cArrays, cName, arr.c)
+		C.mlx_map_string_to_array_insert(cArrays, cName, arr.c)
 		C.free(unsafe.Pointer(cName))
 	}
 
 	// Create empty metadata (optional)
-	cMeta := C.w_mlx_map_string_to_string_new()
-	defer C.w_mlx_map_string_to_string_free(cMeta)
+	cMeta := C.mlx_map_string_to_string_new()
+	defer C.mlx_map_string_to_string_free(cMeta)
 
 	// Save
-	if C.w_mlx_save_safetensors(cPath, cArrays, cMeta) != 0 {
+	if C.mlx_save_safetensors(cPath, cArrays, cMeta) != 0 {
 		return fmt.Errorf("failed to save safetensors: %s", path)
 	}
 	return nil
@@ -1553,7 +1553,7 @@ func LoadNpy(path string) (*Array, error) {
 	defer C.free(unsafe.Pointer(cPath))
 
 	var arr C.mlx_array
-	if C.w_mlx_load(&arr, cPath, C.cpu_stream()) != 0 {
+	if C.mlx_load(&arr, cPath, C.cpu_stream()) != 0 {
 		return nil, fmt.Errorf("failed to load npy: %s", path)
 	}
 	if arr.ctx == nil {
@@ -1575,8 +1575,8 @@ func SliceUpdate(a, update *Array, start, stop []int32) *Array {
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_slice_update(&res, a.c, update.c, &cStart[0], C.size_t(n), &cStop[0], C.size_t(n), &cStrides[0], C.size_t(n), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_slice_update(&res, a.c, update.c, &cStart[0], C.size_t(n), &cStop[0], C.size_t(n), &cStrides[0], C.size_t(n), C.default_stream())
 	return newArray(res)
 }
 
@@ -1672,21 +1672,21 @@ func init() {
 // RandomKey creates a PRNG key from a seed
 func RandomKey(seed uint64) *Array {
 	var res C.mlx_array
-	C.w_mlx_random_key(&res, C.uint64_t(seed))
+	C.mlx_random_key(&res, C.uint64_t(seed))
 	return newArray(res)
 }
 
 // RandomSplit splits a PRNG key into two new keys
 func RandomSplit(key *Array) (*Array, *Array) {
 	var key1, key2 C.mlx_array
-	C.w_mlx_random_split(&key1, &key2, key.c, C.default_stream())
+	C.mlx_random_split(&key1, &key2, key.c, C.default_stream())
 	return newArray(key1), newArray(key2)
 }
 
 // RandomCategoricalWithKey samples from categorical distribution using provided key.
 func RandomCategoricalWithKey(logits, key *Array, axis int, numSamples int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_random_categorical_num_samples(&res, logits.c, C.int(axis), C.int(numSamples), key.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_random_categorical_num_samples(&res, logits.c, C.int(axis), C.int(numSamples), key.c, C.default_stream())
 	return newArray(res)
 }
 
@@ -1711,20 +1711,20 @@ func RandomNormal(shape []int32, seed uint64) *Array {
 // RandomNormalWithDtype creates a random normal (Gaussian) tensor with specified dtype
 func RandomNormalWithDtype(shape []int32, seed uint64, dtype Dtype) *Array {
 	key := RandomKey(seed)
-	res := C.w_mlx_array_new()
-	C.w_mlx_random_normal(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dtype), 0.0, 1.0, key.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_random_normal(&res, int32ToCInt(shape), C.size_t(len(shape)), C.mlx_dtype(dtype), 0.0, 1.0, key.c, C.default_stream())
 	return newArray(res)
 }
 
 // RandomUniform generates uniform random values in [0, 1) with the given shape
 func RandomUniform(shape []int32, seed uint64) *Array {
 	key := RandomKey(seed)
-	low := C.w_mlx_array_new_float(0.0)
-	high := C.w_mlx_array_new_float(1.0)
-	res := C.w_mlx_array_new()
-	C.w_mlx_random_uniform(&res, low, high, int32ToCInt(shape), C.size_t(len(shape)), C.MLX_FLOAT32, key.c, C.default_stream())
-	C.w_mlx_array_free(low)
-	C.w_mlx_array_free(high)
+	low := C.mlx_array_new_float(0.0)
+	high := C.mlx_array_new_float(1.0)
+	res := C.mlx_array_new()
+	C.mlx_random_uniform(&res, low, high, int32ToCInt(shape), C.size_t(len(shape)), C.MLX_FLOAT32, key.c, C.default_stream())
+	C.mlx_array_free(low)
+	C.mlx_array_free(high)
 	return newArray(res)
 }
 
@@ -1732,8 +1732,8 @@ func RandomUniform(shape []int32, seed uint64) *Array {
 // input: [N, H, W, C], weight: [O, kH, kW, C]  (MLX uses NHWC layout)
 // Returns: [N, H', W', O]
 func Conv2d(input, weight *Array, stride, padding int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_conv2d(&res, input.c, weight.c, C.int(stride), C.int(stride), C.int(padding), C.int(padding), 1, 1, 1, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_conv2d(&res, input.c, weight.c, C.int(stride), C.int(stride), C.int(padding), C.int(padding), 1, 1, 1, C.default_stream())
 	return newArray(res)
 }
 
@@ -1741,8 +1741,8 @@ func Conv2d(input, weight *Array, stride, padding int32) *Array {
 // input: [N, D, H, W, C], weight: [O, kD, kH, kW, C]  (MLX uses NDHWC layout)
 // Returns: [N, D', H', W', O]
 func Conv3d(input, weight *Array, strideD, strideH, strideW, padD, padH, padW int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_conv3d(&res, input.c, weight.c, C.int(strideD), C.int(strideH), C.int(strideW), C.int(padD), C.int(padH), C.int(padW), 1, 1, 1, 1, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_conv3d(&res, input.c, weight.c, C.int(strideD), C.int(strideH), C.int(strideW), C.int(padD), C.int(padH), C.int(padW), 1, 1, 1, 1, C.default_stream())
 	return newArray(res)
 }
 
@@ -1750,18 +1750,18 @@ func Conv3d(input, weight *Array, strideD, strideH, strideW, padD, padH, padW in
 
 // EnableCompile enables global compilation/graph fusion
 func EnableCompile() {
-	C.w_mlx_enable_compile()
+	C.mlx_enable_compile()
 }
 
 // DisableCompile disables global compilation
 func DisableCompile() {
-	C.w_mlx_disable_compile()
+	C.mlx_disable_compile()
 }
 
 // SetCompileMode sets the compile mode
 // 0=disabled, 1=no_simplify, 2=no_fuse, 3=enabled
 func SetCompileMode(mode int) {
-	C.w_mlx_set_compile_mode(C.mlx_compile_mode(mode))
+	C.mlx_set_compile_mode(C.mlx_compile_mode(mode))
 }
 
 // ============ Stream Control ============
@@ -1774,23 +1774,23 @@ type Stream struct {
 // NewStream creates a new execution stream on the default device
 func NewStream() *Stream {
 	var dev C.mlx_device
-	C.w_mlx_get_default_device(&dev)
-	stream := C.w_mlx_stream_new_device(dev)
-	C.w_mlx_device_free(dev)
+	C.mlx_get_default_device(&dev)
+	stream := C.mlx_stream_new_device(dev)
+	C.mlx_device_free(dev)
 	return &Stream{c: stream}
 }
 
 // Free releases the stream
 func (s *Stream) Free() {
 	if s.c.ctx != nil {
-		C.w_mlx_stream_free(s.c)
+		C.mlx_stream_free(s.c)
 		s.c.ctx = nil
 	}
 }
 
 // SetDefaultStream sets the default stream for operations
 func SetDefaultStream(s *Stream) {
-	C.w_mlx_set_default_stream(s.c)
+	C.mlx_set_default_stream(s.c)
 	C.set_default_stream(s.c) // Also update our cached stream
 }
 
@@ -1798,15 +1798,15 @@ func SetDefaultStream(s *Stream) {
 func GetDefaultStream() *Stream {
 	var stream C.mlx_stream
 	var dev C.mlx_device
-	C.w_mlx_get_default_device(&dev)
-	C.w_mlx_get_default_stream(&stream, dev)
-	C.w_mlx_device_free(dev)
+	C.mlx_get_default_device(&dev)
+	C.mlx_get_default_stream(&stream, dev)
+	C.mlx_device_free(dev)
 	return &Stream{c: stream}
 }
 
 // SynchronizeStream waits for all operations on the stream to complete
 func SynchronizeStream(s *Stream) {
-	C.w_mlx_synchronize(s.c)
+	C.mlx_synchronize(s.c)
 }
 
 // ============ Metal Memory Control ============
@@ -1814,40 +1814,40 @@ func SynchronizeStream(s *Stream) {
 // MetalGetCacheMemory returns the current cache memory usage in bytes
 func MetalGetCacheMemory() uint64 {
 	var size C.size_t
-	C.w_mlx_get_cache_memory(&size)
+	C.mlx_get_cache_memory(&size)
 	return uint64(size)
 }
 
 // MetalGetPeakMemory returns the peak memory usage in bytes
 func MetalGetPeakMemory() uint64 {
 	var size C.size_t
-	C.w_mlx_get_peak_memory(&size)
+	C.mlx_get_peak_memory(&size)
 	return uint64(size)
 }
 
 // MetalResetPeakMemory resets the peak memory counter
 func MetalResetPeakMemory() {
-	C.w_mlx_reset_peak_memory()
+	C.mlx_reset_peak_memory()
 }
 
 // MetalSetWiredLimit sets the wired memory limit and returns the previous limit
 // This keeps tensors pinned in GPU memory for faster access
 func MetalSetWiredLimit(limit uint64) uint64 {
 	var prev C.size_t
-	C.w_mlx_set_wired_limit(&prev, C.size_t(limit))
+	C.mlx_set_wired_limit(&prev, C.size_t(limit))
 	return uint64(prev)
 }
 
 // MetalGetActiveMemory returns the current active memory usage in bytes
 func MetalGetActiveMemory() uint64 {
 	var size C.size_t
-	C.w_mlx_get_active_memory(&size)
+	C.mlx_get_active_memory(&size)
 	return uint64(size)
 }
 
 // ClearCache clears the MLX memory cache
 func ClearCache() {
-	C.w_mlx_clear_cache()
+	C.mlx_clear_cache()
 }
 
 // SetCacheLimit sets the free cache limit in bytes
@@ -1855,7 +1855,7 @@ func ClearCache() {
 // Returns the previous cache limit
 func SetCacheLimit(limit uint64) uint64 {
 	var prev C.size_t
-	C.w_mlx_set_cache_limit(&prev, C.size_t(limit))
+	C.mlx_set_cache_limit(&prev, C.size_t(limit))
 	return uint64(prev)
 }
 
@@ -1865,14 +1865,14 @@ func SetCacheLimit(limit uint64) uint64 {
 // Returns the previous memory limit
 func SetMemoryLimit(limit uint64) uint64 {
 	var prev C.size_t
-	C.w_mlx_set_memory_limit(&prev, C.size_t(limit))
+	C.mlx_set_memory_limit(&prev, C.size_t(limit))
 	return uint64(prev)
 }
 
 // GetMemoryLimit returns the current memory limit in bytes
 func GetMemoryLimit() uint64 {
 	var size C.size_t
-	C.w_mlx_get_memory_limit(&size)
+	C.mlx_get_memory_limit(&size)
 	return uint64(size)
 }
 
@@ -1889,8 +1889,8 @@ func GatherMM(a, b *Array, lhsIndices, rhsIndices *Array, sortedIndices bool) *A
 	if rhsIndices != nil {
 		rhs = rhsIndices.c
 	}
-	res := C.w_mlx_array_new()
-	C.w_mlx_gather_mm(&res, a.c, b.c, lhs, rhs, C._Bool(sortedIndices), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_gather_mm(&res, a.c, b.c, lhs, rhs, C._Bool(sortedIndices), C.default_stream())
 	return newArray(res)
 }
 
@@ -1911,8 +1911,8 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
-	res := C.w_mlx_array_new()
-	C.w_mlx_gather_qmm(&res, x.c, w.c, scales.c, b, lhs, rhs, C._Bool(transpose), optGroupSize, optBits, cMode, C._Bool(sortedIndices), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_gather_qmm(&res, x.c, w.c, scales.c, b, lhs, rhs, C._Bool(transpose), optGroupSize, optBits, cMode, C._Bool(sortedIndices), C.default_stream())
 	return newArray(res)
 }
 
@@ -1929,19 +1929,19 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
-	res := C.w_mlx_vector_array_new()
-	C.w_mlx_quantize(&res, w.c, optGroupSize, optBits, cMode, C.default_stream())
+	res := C.mlx_vector_array_new()
+	C.mlx_quantize(&res, w.c, optGroupSize, optBits, cMode, C.default_stream())
 
 	// Result is a vector of arrays: [weights, scales, biases?]
 	// mxfp8 mode returns only 2 elements (no biases)
-	vecSize := int(C.w_mlx_vector_array_size(res))
+	vecSize := int(C.mlx_vector_array_size(res))
 	var w0, w1, w2 C.mlx_array
-	C.w_mlx_vector_array_get(&w0, res, 0)
-	C.w_mlx_vector_array_get(&w1, res, 1)
+	C.mlx_vector_array_get(&w0, res, 0)
+	C.mlx_vector_array_get(&w1, res, 1)
 	if vecSize >= 3 {
-		C.w_mlx_vector_array_get(&w2, res, 2)
+		C.mlx_vector_array_get(&w2, res, 2)
 	}
-	C.w_mlx_vector_array_free(res)
+	C.mlx_vector_array_free(res)
 
 	if vecSize >= 3 {
 		return newArray(w0), newArray(w1), newArray(w2)
@@ -1965,8 +1965,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 		b = biases.c
 	}
 
-	res := C.w_mlx_array_new()
-	C.w_mlx_dequantize(&res, w.c, scales.c, b, optGroupSize, optBits, cMode, optDtype, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_dequantize(&res, w.c, scales.c, b, optGroupSize, optBits, cMode, optDtype, C.default_stream())
 	return newArray(res)
 }
 
@@ -1987,8 +1987,8 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 		b = biases.c
 	}
 
-	res := C.w_mlx_array_new()
-	C.w_mlx_quantized_matmul(&res, x.c, w.c, scales.c, b, C._Bool(transpose), optGroupSize, optBits, cMode, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_quantized_matmul(&res, x.c, w.c, scales.c, b, C._Bool(transpose), optGroupSize, optBits, cMode, C.default_stream())
 	return newArray(res)
 }
 
@@ -1996,52 +1996,52 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 
 // TopK returns the k largest elements along an axis
 func TopK(a *Array, k int, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_topk_axis(&res, a.c, C.int(k), C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_topk_axis(&res, a.c, C.int(k), C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // Argpartition returns indices for partial sort (k-th smallest first)
 func Argpartition(a *Array, kth int, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_argpartition_axis(&res, a.c, C.int(kth), C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_argpartition_axis(&res, a.c, C.int(kth), C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // TakeAlongAxis takes elements from array using indices along axis
 func TakeAlongAxis(a, indices *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_take_along_axis(&res, a.c, indices.c, C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_take_along_axis(&res, a.c, indices.c, C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // PutAlongAxis puts values into array at indices along axis
 func PutAlongAxis(a, indices, values *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_put_along_axis(&res, a.c, indices.c, values.c, C.int(axis), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_put_along_axis(&res, a.c, indices.c, values.c, C.int(axis), C.default_stream())
 	return newArray(res)
 }
 
 // Cumsum computes cumulative sum along an axis
 func Cumsum(a *Array, axis int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_cumsum(&res, a.c, C.int(axis), false, false, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_cumsum(&res, a.c, C.int(axis), false, false, C.default_stream())
 	return newArray(res)
 }
 
 // Where selects elements: condition ? a : b
 func Where(condition, a, b *Array) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_where(&res, condition.c, a.c, b.c, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_where(&res, condition.c, a.c, b.c, C.default_stream())
 	return newArray(res)
 }
 
 // LessScalar returns element-wise a < scalar
 func LessScalar(a *Array, s float32) *Array {
-	scalar := C.w_mlx_array_new_float(C.float(s))
-	res := C.w_mlx_array_new()
-	C.w_mlx_less(&res, a.c, scalar, C.default_stream())
-	C.w_mlx_array_free(scalar)
+	scalar := C.mlx_array_new_float(C.float(s))
+	res := C.mlx_array_new()
+	C.mlx_less(&res, a.c, scalar, C.default_stream())
+	C.mlx_array_free(scalar)
 	return newArray(res)
 }
 
@@ -2051,17 +2051,17 @@ func FullDtype(value float32, dtype Dtype, shape ...int32) *Array {
 	for i, s := range shape {
 		intShape[i] = C.int(s)
 	}
-	vals := C.w_mlx_array_new_float(C.float(value))
-	res := C.w_mlx_array_new()
-	C.w_mlx_full(&res, &intShape[0], C.size_t(len(shape)), vals, C.mlx_dtype(dtype), C.default_stream())
-	C.w_mlx_array_free(vals)
+	vals := C.mlx_array_new_float(C.float(value))
+	res := C.mlx_array_new()
+	C.mlx_full(&res, &intShape[0], C.size_t(len(shape)), vals, C.mlx_dtype(dtype), C.default_stream())
+	C.mlx_array_free(vals)
 	return newArray(res)
 }
 
 // AsType casts an array to a different dtype
 func AsType(a *Array, dtype Dtype) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_astype(&res, a.c, C.mlx_dtype(dtype), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_astype(&res, a.c, C.mlx_dtype(dtype), C.default_stream())
 	return newArray(res)
 }
 
@@ -2074,7 +2074,7 @@ func ToBFloat16(a *Array) *Array {
 
 // NewScalarArray creates a true 0-dimensional scalar array from a float32 value
 func NewScalarArray(value float32) *Array {
-	return newArray(C.w_mlx_array_new_float(C.float(value)))
+	return newArray(C.mlx_array_new_float(C.float(value)))
 }
 
 // Global random seed counter for RandN
@@ -2098,8 +2098,8 @@ func Pad(a *Array, paddings []int32) *Array {
 		lowPad[i] = C.int(paddings[i*2])
 		highPad[i] = C.int(paddings[i*2+1])
 	}
-	zero := C.w_mlx_array_new_float(0.0)
-	res := C.w_mlx_array_new()
+	zero := C.mlx_array_new_float(0.0)
+	res := C.mlx_array_new()
 	// mlx_pad takes axes, low, high arrays
 	axes := make([]C.int, numAxes)
 	for i := 0; i < numAxes; i++ {
@@ -2107,8 +2107,8 @@ func Pad(a *Array, paddings []int32) *Array {
 	}
 	cMode := C.CString("constant")
 	defer C.free(unsafe.Pointer(cMode))
-	C.w_mlx_pad(&res, a.c, &axes[0], C.size_t(numAxes), &lowPad[0], C.size_t(numAxes), &highPad[0], C.size_t(numAxes), zero, cMode, C.default_stream())
-	C.w_mlx_array_free(zero)
+	C.mlx_pad(&res, a.c, &axes[0], C.size_t(numAxes), &lowPad[0], C.size_t(numAxes), &highPad[0], C.size_t(numAxes), zero, cMode, C.default_stream())
+	C.mlx_array_free(zero)
 	return newArray(res)
 }
 
@@ -2116,13 +2116,13 @@ func Pad(a *Array, paddings []int32) *Array {
 // x: [B, L, Cin], weight: [Cout, K, Cin] (MLX uses NLC layout)
 // bias: optional (nil for no bias)
 func Conv1d(x, weight *Array, bias *Array, stride int32) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_conv1d(&res, x.c, weight.c, C.int(stride), C.int(0), C.int(1), 1, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_conv1d(&res, x.c, weight.c, C.int(stride), C.int(0), C.int(1), 1, C.default_stream())
 	// Apply bias if provided
 	if bias != nil {
-		biased := C.w_mlx_array_new()
-		C.w_mlx_add(&biased, res, bias.c, C.default_stream())
-		C.w_mlx_array_free(res)
+		biased := C.mlx_array_new()
+		C.mlx_add(&biased, res, bias.c, C.default_stream())
+		C.mlx_array_free(res)
 		return newArray(biased)
 	}
 	return newArray(res)
@@ -2132,14 +2132,14 @@ func Conv1d(x, weight *Array, bias *Array, stride int32) *Array {
 // x: [B, L, Cin], weight: [Cout, K, Cin] (MLX uses NLC layout)
 // bias: optional (nil for no bias)
 func ConvTranspose1d(x, weight *Array, bias *Array, stride int32) *Array {
-	res := C.w_mlx_array_new()
+	res := C.mlx_array_new()
 	// stride, padding, dilation, output_padding, groups
-	C.w_mlx_conv_transpose1d(&res, x.c, weight.c, C.int(stride), 0, 1, 0, 1, C.default_stream())
+	C.mlx_conv_transpose1d(&res, x.c, weight.c, C.int(stride), 0, 1, 0, 1, C.default_stream())
 	// Apply bias if provided
 	if bias != nil {
-		biased := C.w_mlx_array_new()
-		C.w_mlx_add(&biased, res, bias.c, C.default_stream())
-		C.w_mlx_array_free(res)
+		biased := C.mlx_array_new()
+		C.mlx_add(&biased, res, bias.c, C.default_stream())
+		C.mlx_array_free(res)
 		return newArray(biased)
 	}
 	return newArray(res)
@@ -2152,13 +2152,13 @@ func DepthwiseConv1d(x, weight *Array, bias *Array) *Array {
 	// Get number of input channels for groups
 	shape := x.Shape()
 	groups := int(shape[len(shape)-1])
-	res := C.w_mlx_array_new()
-	C.w_mlx_conv1d(&res, x.c, weight.c, 1, 0, 1, C.int(groups), C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_conv1d(&res, x.c, weight.c, 1, 0, 1, C.int(groups), C.default_stream())
 	// Apply bias if provided
 	if bias != nil {
-		biased := C.w_mlx_array_new()
-		C.w_mlx_add(&biased, res, bias.c, C.default_stream())
-		C.w_mlx_array_free(res)
+		biased := C.mlx_array_new()
+		C.mlx_add(&biased, res, bias.c, C.default_stream())
+		C.mlx_array_free(res)
 		return newArray(biased)
 	}
 	return newArray(res)
@@ -2186,7 +2186,7 @@ func SliceAxis(a *Array, axis int, start, stop int32) *Array {
 
 // Tri creates a lower triangular matrix
 func Tri(n, m int32, k int) *Array {
-	res := C.w_mlx_array_new()
-	C.w_mlx_tri(&res, C.int(n), C.int(m), C.int(k), C.MLX_FLOAT32, C.default_stream())
+	res := C.mlx_array_new()
+	C.mlx_tri(&res, C.int(n), C.int(m), C.int(k), C.MLX_FLOAT32, C.default_stream())
 	return newArray(res)
 }
