@@ -25,6 +25,11 @@ import (
 )
 
 // Server wraps an image generation subprocess to implement llm.LlamaServer.
+//
+// This implementation is compatible with Ollama's scheduler and can be loaded/unloaded
+// like any other model. The plan is to eventually bring this into the llm/ package
+// and evolve llm/ to support MLX and multimodal models. For now, keeping the code
+// separate allows for independent iteration on image generation support.
 type Server struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
@@ -38,22 +43,6 @@ type Server struct {
 }
 
 const maxStderrLines = 10
-
-// completionRequest is sent to the subprocess
-type completionRequest struct {
-	Prompt string `json:"prompt"`
-	Width  int32  `json:"width,omitempty"`
-	Height int32  `json:"height,omitempty"`
-	Steps  int    `json:"steps,omitempty"`
-	Seed   int64  `json:"seed,omitempty"`
-}
-
-// completionResponse is received from the subprocess
-type completionResponse struct {
-	Content string `json:"content,omitempty"`
-	Image   string `json:"image,omitempty"`
-	Done    bool   `json:"done"`
-}
 
 // NewServer spawns a new image generation subprocess and waits until it's ready.
 func NewServer(modelName string) (*Server, error) {
@@ -176,9 +165,6 @@ func (s *Server) ModelPath() string {
 	return s.modelName
 }
 
-// Load is a no-op for image generation models.
-// Unlike LLM models, imagegen models are loaded by the subprocess at startup
-// rather than through this interface method.
 func (s *Server) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	return nil, nil
 }
@@ -242,36 +228,33 @@ func (s *Server) getStderrContext() string {
 	return strings.Join(s.stderrLines, "; ")
 }
 
-// WaitUntilRunning is a no-op for image generation models.
-// NewServer already blocks until the subprocess is ready, so this method
-// returns immediately. Required by the llm.LlamaServer interface.
-func (s *Server) WaitUntilRunning(ctx context.Context) error {
-	return nil
-}
+func (s *Server) WaitUntilRunning(ctx context.Context) error { return nil }
 
-// Completion generates an image from the prompt via the subprocess.
 func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	// Build request - let the model apply its own defaults for unspecified values
-	creq := completionRequest{
+	// Set default seed if not provided
+	seed := req.Seed
+	if seed == 0 {
+		seed = time.Now().UnixNano()
+	}
+
+	// Build request for subprocess
+	creq := struct {
+		Prompt string `json:"prompt"`
+		Width  int32  `json:"width,omitempty"`
+		Height int32  `json:"height,omitempty"`
+		Seed   int64  `json:"seed,omitempty"`
+	}{
 		Prompt: req.Prompt,
-		Seed:   time.Now().UnixNano(),
+		Width:  req.Width,
+		Height: req.Height,
+		Seed:   seed,
 	}
 
-	// Parse size string (OpenAI format: "WxH") - only set if provided
-	if req.Size != "" {
-		if w, h := parseSize(req.Size); w > 0 && h > 0 {
-			creq.Width = w
-			creq.Height = h
-		}
-	}
-
-	// Encode request body
 	body, err := json.Marshal(creq)
 	if err != nil {
 		return err
 	}
 
-	// Send request to subprocess
 	url := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -286,30 +269,19 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("completion request failed: %d", resp.StatusCode)
+		return fmt.Errorf("request failed: %d", resp.StatusCode)
 	}
 
-	// Stream responses - use large buffer for base64 image data
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024) // 16MB max
 	for scanner.Scan() {
-		var cresp completionResponse
+		var cresp llm.CompletionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &cresp); err != nil {
 			continue
 		}
-
-		content := cresp.Content
-		// If this is the final response with an image, encode it in the content
-		if cresp.Done && cresp.Image != "" {
-			content = "IMAGE_BASE64:" + cresp.Image
-		}
-
-		fn(llm.CompletionResponse{
-			Content: content,
-			Done:    cresp.Done,
-		})
+		fn(cresp)
 		if cresp.Done {
-			break
+			return nil
 		}
 	}
 
@@ -351,25 +323,18 @@ func (s *Server) VRAMByGPU(id ml.DeviceID) uint64 {
 	return s.vramSize
 }
 
-// Embedding returns an error as image generation models don't produce embeddings.
-// Required by the llm.LlamaServer interface.
 func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return nil, 0, errors.New("embedding not supported for image generation models")
+	return nil, 0, errors.New("not supported")
 }
 
-// Tokenize returns an error as image generation uses internal tokenization.
-// Required by the llm.LlamaServer interface.
 func (s *Server) Tokenize(ctx context.Context, content string) ([]int, error) {
-	return nil, errors.New("tokenize not supported for image generation models")
+	return nil, errors.New("not supported")
 }
 
-// Detokenize returns an error as image generation uses internal tokenization.
-// Required by the llm.LlamaServer interface.
 func (s *Server) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	return "", errors.New("detokenize not supported for image generation models")
+	return "", errors.New("not supported")
 }
 
-// Pid returns the subprocess PID.
 func (s *Server) Pid() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -379,18 +344,9 @@ func (s *Server) Pid() int {
 	return -1
 }
 
-// GetPort returns the subprocess port.
-func (s *Server) GetPort() int {
-	return s.port
-}
+func (s *Server) GetPort() int                                    { return s.port }
+func (s *Server) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 
-// GetDeviceInfos returns nil as GPU tracking is handled by the subprocess.
-// Required by the llm.LlamaServer interface.
-func (s *Server) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
-	return nil
-}
-
-// HasExited returns true if the subprocess has exited.
 func (s *Server) HasExited() bool {
 	select {
 	case <-s.done:
@@ -403,13 +359,3 @@ func (s *Server) HasExited() bool {
 // Ensure Server implements llm.LlamaServer
 var _ llm.LlamaServer = (*Server)(nil)
 
-// parseSize parses an OpenAI-style size string "WxH" into width and height.
-func parseSize(size string) (int32, int32) {
-	parts := strings.Split(size, "x")
-	if len(parts) != 2 {
-		return 0, 0
-	}
-	w, _ := strconv.Atoi(parts[0])
-	h, _ := strconv.Atoi(parts[1])
-	return int32(w), int32(h)
-}

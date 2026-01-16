@@ -1465,9 +1465,10 @@ type CompletionRequest struct {
 	// TopLogprobs specifies the number of most likely alternative tokens to return (0-20)
 	TopLogprobs int
 
-	// Size specifies image dimensions for image generation models.
-	// Format: "WxH" (e.g., "1024x1024"). OpenAI-compatible.
-	Size string
+	// Image generation fields
+	Width  int32 `json:"width,omitempty"`
+	Height int32 `json:"height,omitempty"`
+	Seed   int64 `json:"seed,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1516,6 +1517,11 @@ type CompletionResponse struct {
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
+
+	// Image generation fields
+	Image string `json:"image,omitempty"` // Base64-encoded image
+	Step  int    `json:"step,omitempty"`  // Current generation step
+	Total int    `json:"total,omitempty"` // Total generation steps
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {

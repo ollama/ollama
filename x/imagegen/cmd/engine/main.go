@@ -47,8 +47,8 @@ func main() {
 	imagePath := flag.String("image", "", "Image path for multimodal models")
 
 	// Image generation params
-	width := flag.Int("width", imagegen.DefaultWidth, "Image width")
-	height := flag.Int("height", imagegen.DefaultHeight, "Image height")
+	width := flag.Int("width", 1024, "Image width")
+	height := flag.Int("height", 1024, "Image height")
 	steps := flag.Int("steps", 0, "Denoising steps (0 = model default)")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
@@ -150,10 +150,10 @@ func main() {
 		// unless explicitly overridden from defaults
 		editWidth := int32(0)
 		editHeight := int32(0)
-		if *width != imagegen.DefaultWidth {
+		if *width != 1024 {
 			editWidth = int32(*width)
 		}
-		if *height != imagegen.DefaultHeight {
+		if *height != 1024 {
 			editHeight = int32(*height)
 		}
 

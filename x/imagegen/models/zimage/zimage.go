@@ -188,10 +188,10 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, error) {
 	// Apply defaults
 	if cfg.Width <= 0 {
-		cfg.Width = imagegen.DefaultWidth
+		cfg.Width = 1024
 	}
 	if cfg.Height <= 0 {
-		cfg.Height = imagegen.DefaultHeight
+		cfg.Height = 1024
 	}
 	if cfg.Steps <= 0 {
 		cfg.Steps = 9 // Z-Image turbo default
