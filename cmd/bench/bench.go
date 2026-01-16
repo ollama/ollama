@@ -143,7 +143,7 @@ func BenchmarkChat(fOpt flagOptions) error {
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Couldn't create ollama client: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ERROR: Couldn't create Ollama client: %v\n", err)
 		return err
 	}
 
