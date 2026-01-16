@@ -4,6 +4,7 @@ package deepseek2
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -39,6 +40,10 @@ type Options struct {
 	ropeBase,
 	ropeScale float32
 	kqScale float64
+
+	attentionTemperatureScale      float32
+	attentionTemperatureLength     int
+	attentionTemperatureFloorScale int
 }
 
 func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, t, p ml.Tensor) ml.Tensor {
@@ -66,7 +71,7 @@ type Attention struct {
 	Output *nn.Linear `gguf:"attn_out,alt:attn_output"`
 }
 
-func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions, attentionScales ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	seqLength := hiddenStates.Dim(1)
 
 	var query ml.Tensor
@@ -104,6 +109,11 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		kRot = kRot.Repeat(ctx, 1, queryChunks[0].Dim(1))
 		query = qRot.Concat(ctx, queryChunks[0], 0)
 		key := kRot.Concat(ctx, kvChunks[0], 0)
+
+		if attentionScales != nil {
+			query = query.Mul(ctx, attentionScales)
+		}
+
 		attention = nn.Attention(ctx, query, key, kvChunks[1], opts.kqScale, cache)
 	} else { // v3.1
 		qPass := queryChunks[0].Permute(ctx, 0, 2, 1, 3)
@@ -114,6 +124,10 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		kPass = kPass.Reshape(ctx, opts.kvLoraRank, 1, seqLength)
 		key := kRot.Concat(ctx, kPass, 0)
 		value := kPass
+
+		if attentionScales != nil {
+			query = query.Mul(ctx, attentionScales)
+		}
 
 		attention = nn.AttentionWithVMLA(ctx, query, key, value, nil, attn.VB.Weight, opts.kqScale, cache)
 	}
@@ -201,10 +215,10 @@ type Layer struct {
 	MLP     MLP
 }
 
-func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, attentionScales, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenStates
 	hiddenStates = t.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
-	hiddenStates = t.Attention.Forward(ctx, hiddenStates, positions, cache, opts)
+	hiddenStates = t.Attention.Forward(ctx, hiddenStates, positions, attentionScales, cache, opts)
 
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
@@ -234,7 +248,11 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	layers := make([]Layer, c.Uint("block_count"))
+	// layers := make([]Layer, c.Uint("block_count"))
+	// fmt.Printf("[MODEL DEBUG] Creating model with %d layers\n", c.Uint("block_count"))
+
+	layers := make([]Layer, 4)
+	fmt.Printf("[MODEL DEBUG] Creating model with %d layers\n", 4)
 
 	firstDenseLayerIndex := int(c.Uint("leading_dense_block_count"))
 	for i := range layers {
@@ -261,6 +279,10 @@ func New(c fs.Config) (model.Model, error) {
 			`[一-龥぀-ゟ゠-ヿ]+`,
 			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
 		}
+	case "tekken":
+		pre = []string{
+			"[^\\r\\n\\p{L}\\p{N}]?((?=[\\p{L}])([^a-z]))*((?=[\\p{L}])([^A-Z]))+|[^\\r\\n\\p{L}\\p{N}]?((?=[\\p{L}])([^a-z]))+((?=[\\p{L}])([^A-Z]))*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+		}
 	case "deepseek-llm":
 		// TODO: these models haven't been vetted so skip for now
 		// pre = []string{
@@ -276,13 +298,20 @@ func New(c fs.Config) (model.Model, error) {
 		return nil, model.ErrUnsupportedTokenizer
 	}
 
+	// DEBUG: Check tokenizer vocabulary loading
+	tokens := c.Strings("tokenizer.ggml.tokens")
+	tokenTypes := c.Ints("tokenizer.ggml.token_type")
+	merges := c.Strings("tokenizer.ggml.merges")
+
+	// Debug output removed for performance
+
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				Values: tokens,
+				Types:  tokenTypes,
+				Merges: merges,
+				AddBOS: false, // c.Bool("tokenizer.ggml.add_bos_token", true),
 				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
 				EOS: append(
@@ -316,6 +345,11 @@ func New(c fs.Config) (model.Model, error) {
 			routedScalingFactor:   c.Float("expert_weights_scale"),
 			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
 
+			// TODO: double check these values
+			attentionTemperatureScale:      c.Float("attention.temperature_scale", 1.0),
+			attentionTemperatureLength:     int(c.Uint("attention.temperature_length")),
+			attentionTemperatureFloorScale: int(c.Uint("attention.temperature_floor_scale", 8192)),
+
 			kqScale: kqScale,
 		},
 	}
@@ -331,7 +365,27 @@ func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
+	// DEBUG: Check TokenEmbedding initialization
+	if m.TokenEmbedding == nil {
+		panic("DEBUG: m.TokenEmbedding is nil - 'token_embd' tensor not found in GGUF")
+	}
+
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+
+	// Temperature tuning - used by mistral-large
+	var attentionScales ml.Tensor
+	if m.attentionTemperatureScale != 0.0 {
+		nTokens := len(batch.Positions)
+		scales := make([]float32, nTokens)
+
+		for i, pos := range batch.Positions {
+			posFloat := float64(pos)
+			scaleValue := math.Log(math.Floor((posFloat+1.0)/float64(m.attentionTemperatureFloorScale))+1.0)*float64(m.attentionTemperatureScale) + 1.0
+			scales[i] = float32(scaleValue)
+		}
+
+		attentionScales = ctx.Input().FromFloats(scales, 1, 1, nTokens)
+	}
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
@@ -341,7 +395,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			outputs = batch.Outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
+		hiddenStates = layer.Forward(ctx, hiddenStates, positions, attentionScales, outputs, m.Cache, m.Options)
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
