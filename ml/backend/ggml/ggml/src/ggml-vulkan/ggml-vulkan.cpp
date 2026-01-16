@@ -14326,7 +14326,7 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
     vk::PhysicalDeviceMemoryProperties2 memprops = {};
     const bool membudget_supported = vk_instance.device_supports_membudget[ctx->device];
     const bool is_integrated_gpu = vkdev.getProperties().deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
-    
+
     vk::PhysicalDeviceProperties2 props2;
     vkdev.getProperties2(&props2);
     GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s\n", ctx->uuid.c_str());
@@ -14512,10 +14512,10 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
     props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->caps = {
-        /* .async                 = */ false,
+        /* .async                 = */ true,
         /* .host_buffer           = */ true,
         /* .buffer_from_host_ptr  = */ false,
-        /* .events                = */ false,
+        /* .events                = */ true,
     };
 
     props->compute_major = ctx->major;

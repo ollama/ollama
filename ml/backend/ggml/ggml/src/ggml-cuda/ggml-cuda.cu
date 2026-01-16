@@ -3894,7 +3894,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx) {
 static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
 	cuda_ctx->pool_set_alloc(true);
-	
+
     ggml_cuda_set_device(cuda_ctx->device);
 
     bool use_cuda_graph             = false;
@@ -3957,7 +3957,7 @@ static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, 
 
     try {
         bool use_cuda_graph = false;
-        bool cuda_graph_update_required = false;        
+        bool cuda_graph_update_required = false;
 
         ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, use_cuda_graph, cuda_graph_update_required);
     } catch (const std::exception &e) {
@@ -4346,7 +4346,7 @@ struct ggml_backend_cuda_device_context {
     std::string name;
     std::string description;
     std::string pci_bus_id;
-    std::string id;
+	std::string id;
     int op_offload_min_batch_size;
     int major;
     int minor;
