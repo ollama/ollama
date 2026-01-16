@@ -7,6 +7,56 @@ We sometimes will also add different features that we like. If you have any ques
 Here is the docker image:
 https://hub.docker.com/r/julianvanderhorst/ollama-framework-desktop
 
+## Setup your frameworks
+
+You need to have the correct ROCM install on your framework. Make sure to follow these two guides:
+
+https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installryz/native_linux/install-ryzen.html
+
+and then 
+
+https://instinct.docs.amd.com/projects/container-toolkit/en/latest/container-runtime/quick-start-guide.html
+
+Make sure your frameworks have a good and fast connection between them. You can use a good usb4 cable or network them together with a switch
+
+## RPC docker compose
+```
+services:
+  ollama:
+    volumes:
+      - ollama:/root/.ollama
+    container_name: ollama
+    tty: true
+    restart: unless-stopped
+    image: julianvanderhorst/ollama-framework-desktop:latest
+    network_mode: "host"
+    environment:
+      - export OLLAMA_LOAD_TIMEOUT=10m
+      - OLLAMA_RPC_SERVERS=127.0.0.1:50053
+      - OLLAMA_LIBRARY_PATH=/usr/lib/ollama:/usr/lib/ollama/rocm_v7
+      - LD_LIBRARY_PATH=/opt/rocm/lib:/usr/lib/ollama:/usr/lib/ollama/rocm_v7
+    depends_on:
+      - ollama_rpc_worker
+
+  ollama_rpc_worker:
+    container_name: ollama_rpc_worker_sam
+    volumes:
+      - ollama:/root/.ollama
+    image: julianvanderhorst/ollama-framework-desktop:latest
+    runtime: amd
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      - AMD_VISIBLE_DEVICES=all
+      - OLLAMA_LIBRARY_PATH=/usr/lib/ollama:/usr/lib/ollama/rocm_v7
+      - LD_LIBRARY_PATH=/opt/rocm/lib:/usr/lib/ollama:/usr/lib/ollama/rocm_v7
+    command: rpc --host 0.0.0.0 --port 50053 --device ROCm0
+volumes:
+  ollama: {}
+```
+
+You can just add RPC clients to OLLAMA_RPC_SERVERS by appending them with a comma. 127.0.0.1:50053,192.168.1.1:50053,192.168.1.12:50053 etc.
+  
 <div align="center">
   <a href="https://ollama.com">
     <img alt="ollama" width="240" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
