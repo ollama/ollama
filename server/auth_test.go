@@ -41,7 +41,7 @@ func TestGetAuthorizationTokenRejectsCrossDomain(t *testing.T) {
 
 func TestParseRegistryChallenge(t *testing.T) {
 	tests := []struct {
-		input                        string
+		input                             string
 		wantRealm, wantService, wantScope string
 	}{
 		{
