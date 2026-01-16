@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: inforithmics <thomas.stocker@gmail.com>
-Date: Fri, 16 Jan 2026 22:35:19 +0100
+From: Viraj Wadhwa <viraj.wadhwa@intel.com>
+Date: Tue, 4 Nov 2025 12:04:04 -0800
 Subject: [PATCH] Add memory detection using DXGI + PDH
 
 ---
