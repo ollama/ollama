@@ -1,8 +1,18 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: inforithmics <thomas.stocker@gmail.com>
-Date: Fri, 16 Jan 2026 23:08:43 +0100
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 26 Aug 2025 12:48:29 -0700
 Subject: [PATCH] GPU discovery enhancements
 
+Expose more information about the devices through backend props, and leverage
+management libraries for more accurate VRAM usage reporting if available.
+
+vulkan: get GPU ID (ollama v0.11.5)
+
+Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
+
+Vulkan PCI and Memory
+
+fix vulkan PCI ID and ID handling
 ---
  ggml/include/ggml-backend.h          |   6 +
  ggml/src/CMakeLists.txt              |   2 +
