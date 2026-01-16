@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -172,7 +173,7 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 		cfg.Height = 1024
 	}
 	if cfg.Steps <= 0 {
-		cfg.Steps = 30
+		cfg.Steps = 50
 	}
 	if cfg.CFGScale <= 0 {
 		cfg.CFGScale = 4.0

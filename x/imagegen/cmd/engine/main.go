@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
@@ -48,7 +49,7 @@ func main() {
 	// Image generation params
 	width := flag.Int("width", 1024, "Image width")
 	height := flag.Int("height", 1024, "Image height")
-	steps := flag.Int("steps", 9, "Denoising steps")
+	steps := flag.Int("steps", 0, "Denoising steps (0 = model default)")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
 

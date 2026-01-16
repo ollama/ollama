@@ -95,8 +95,3 @@ func EstimateVRAM(modelName string) uint64 {
 	}
 	return 21 * GB
 }
-
-// HasTensorLayers checks if the given model has tensor layers.
-func HasTensorLayers(modelName string) bool {
-	return ResolveModelName(modelName) != ""
-}

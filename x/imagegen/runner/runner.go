@@ -136,16 +136,8 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Apply defaults
-	if req.Width <= 0 {
-		req.Width = 1024
-	}
-	if req.Height <= 0 {
-		req.Height = 1024
-	}
-	if req.Steps <= 0 {
-		req.Steps = 9
-	}
+	// Model applies its own defaults for width/height/steps
+	// Only seed needs to be set here if not provided
 	if req.Seed <= 0 {
 		req.Seed = time.Now().UnixNano()
 	}

@@ -7,7 +7,6 @@ package imagegen
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,69 +38,9 @@ func DefaultOptions() ImageGenOptions {
 	return ImageGenOptions{
 		Width:  1024,
 		Height: 1024,
-		Steps:  9,
+		Steps:  0, // 0 means model default
 		Seed:   0, // 0 means random
 	}
-}
-
-// ModelInfo contains metadata about an image generation model.
-type ModelInfo struct {
-	Architecture   string
-	ParameterCount int64
-	Quantization   string
-}
-
-// GetModelInfo returns metadata about an image generation model.
-func GetModelInfo(modelName string) (*ModelInfo, error) {
-	manifest, err := LoadManifest(modelName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load manifest: %w", err)
-	}
-
-	info := &ModelInfo{}
-
-	// Read model_index.json for architecture, parameter count, and quantization
-	if data, err := manifest.ReadConfig("model_index.json"); err == nil {
-		var index struct {
-			Architecture   string `json:"architecture"`
-			ParameterCount int64  `json:"parameter_count"`
-			Quantization   string `json:"quantization"`
-		}
-		if json.Unmarshal(data, &index) == nil {
-			info.Architecture = index.Architecture
-			info.ParameterCount = index.ParameterCount
-			info.Quantization = index.Quantization
-		}
-	}
-
-	// Fallback: detect quantization from tensor names if not in config
-	if info.Quantization == "" {
-		for _, layer := range manifest.Manifest.Layers {
-			if strings.HasSuffix(layer.Name, ".weight_scale") {
-				info.Quantization = "FP8"
-				break
-			}
-		}
-		if info.Quantization == "" {
-			info.Quantization = "BF16"
-		}
-	}
-
-	// Fallback: estimate parameter count if not in config
-	if info.ParameterCount == 0 {
-		var totalSize int64
-		for _, layer := range manifest.Manifest.Layers {
-			if layer.MediaType == "application/vnd.ollama.image.tensor" {
-				if !strings.HasSuffix(layer.Name, "_scale") && !strings.HasSuffix(layer.Name, "_qbias") {
-					totalSize += layer.Size
-				}
-			}
-		}
-		// Assume BF16 (2 bytes/param) as rough estimate
-		info.ParameterCount = totalSize / 2
-	}
-
-	return info, nil
 }
 
 // RegisterFlags adds image generation flags to the given command.
@@ -109,7 +48,7 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("width", 1024, "Image width")
 	cmd.Flags().Int("height", 1024, "Image height")
-	cmd.Flags().Int("steps", 9, "Denoising steps")
+	cmd.Flags().Int("steps", 0, "Denoising steps (0 = model default)")
 	cmd.Flags().Int("seed", 0, "Random seed (0 for random)")
 	cmd.Flags().String("negative", "", "Negative prompt")
 	cmd.Flags().MarkHidden("width")
@@ -152,23 +91,18 @@ func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, ke
 }
 
 // generateImageWithOptions generates an image with the given options.
-func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keepAlive *api.Duration, opts ImageGenOptions) error {
+// Note: opts are currently unused as the native API doesn't support size parameters.
+// Use OpenAI-compatible endpoint (/v1/images/generations) for dimension control.
+func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keepAlive *api.Duration, _ ImageGenOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	// Build request with image gen options encoded in Options fields
-	// NumCtx=width, NumGPU=height, NumPredict=steps, Seed=seed
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
-		Options: map[string]any{
-			"num_ctx":     opts.Width,
-			"num_gpu":     opts.Height,
-			"num_predict": opts.Steps,
-			"seed":        opts.Seed,
-		},
+		// Note: Size is only available via OpenAI-compatible /v1/images/generations endpoint
 	}
 	if keepAlive != nil {
 		req.KeepAlive = keepAlive
