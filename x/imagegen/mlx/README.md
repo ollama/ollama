@@ -1,7 +1,5 @@
 # MLX Memory Management
 
-| This package will get consolidated with `x/ml/backend/mlx` in the future.
-
 ## Automatic Tracking
 
 All arrays are automatically tracked when created. On `Eval()`, non-kept arrays are freed.
