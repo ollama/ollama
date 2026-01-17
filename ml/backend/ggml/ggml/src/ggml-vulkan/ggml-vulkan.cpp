@@ -14483,7 +14483,7 @@ static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
 
 static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
-    ggml_backend_vk_get_device_memory(ctx->device, free, total);
+    ggml_backend_vk_get_device_memory(ctx, free, total);
 }
 
 static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
