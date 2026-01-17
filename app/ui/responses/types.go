@@ -100,6 +100,17 @@ type HealthResponse struct {
 	Healthy bool `json:"healthy"`
 }
 
+type UpdateInfo struct {
+	CurrentVersion   string `json:"currentVersion"`
+	AvailableVersion string `json:"availableVersion"`
+	UpdateAvailable  bool   `json:"updateAvailable"`
+	UpdateDownloaded bool   `json:"updateDownloaded"`
+}
+
+type UpdateCheckResponse struct {
+	UpdateInfo UpdateInfo `json:"updateInfo"`
+}
+
 type User struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
