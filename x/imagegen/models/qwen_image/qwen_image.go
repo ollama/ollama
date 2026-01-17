@@ -172,7 +172,7 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 		cfg.Height = 1024
 	}
 	if cfg.Steps <= 0 {
-		cfg.Steps = 30
+		cfg.Steps = 50
 	}
 	if cfg.CFGScale <= 0 {
 		cfg.CFGScale = 4.0
@@ -222,6 +222,14 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 		mlx.Keep(posEmb, negEmb)
 	}
 
+	// Pre-compute batched embeddings for CFG (single forward pass optimization)
+	var batchedEmb *mlx.Array
+	if useCFG {
+		batchedEmb = mlx.Concatenate([]*mlx.Array{posEmb, negEmb}, 0)
+		mlx.Keep(batchedEmb)
+		mlx.Eval(batchedEmb)
+	}
+
 	// Scheduler
 	scheduler := NewFlowMatchScheduler(DefaultSchedulerConfig())
 	scheduler.SetTimesteps(cfg.Steps, imgSeqLen)
@@ -264,10 +272,19 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 
 		var output *mlx.Array
 		if useCFG {
-			// True CFG: run twice and combine with norm rescaling
+			// CFG Batching: single forward pass with batch=2
 			// Note: layer caching with CFG is not supported yet (would need 2 caches)
-			posOutput := m.Transformer.Forward(patches, posEmb, timestep, ropeCache.ImgFreqs, ropeCache.TxtFreqs)
-			negOutput := m.Transformer.Forward(patches, negEmb, timestep, ropeCache.ImgFreqs, ropeCache.TxtFreqs)
+			batchedPatches := mlx.Tile(patches, []int32{2, 1, 1})
+			batchedTimestep := mlx.Tile(timestep, []int32{2})
+
+			// Single batched forward pass
+			batchedOutput := m.Transformer.Forward(batchedPatches, batchedEmb, batchedTimestep, ropeCache.ImgFreqs, ropeCache.TxtFreqs)
+
+			// Split output: [2, L, D] -> pos [1, L, D], neg [1, L, D]
+			L := batchedOutput.Shape()[1]
+			D := batchedOutput.Shape()[2]
+			posOutput := mlx.Slice(batchedOutput, []int32{0, 0, 0}, []int32{1, L, D})
+			negOutput := mlx.Slice(batchedOutput, []int32{1, 0, 0}, []int32{2, L, D})
 
 			diff := mlx.Sub(posOutput, negOutput)
 			scaledDiff := mlx.MulScalar(diff, cfg.CFGScale)
@@ -304,6 +321,9 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 	posEmb.Free()
 	if negEmb != nil {
 		negEmb.Free()
+	}
+	if batchedEmb != nil {
+		batchedEmb.Free()
 	}
 	ropeCache.ImgFreqs.Free()
 	ropeCache.TxtFreqs.Free()

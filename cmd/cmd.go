@@ -46,8 +46,9 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	"github.com/ollama/ollama/x/create"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
-	imagegenclient "github.com/ollama/ollama/x/imagegen/client"
 )
 
 const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
@@ -93,14 +94,87 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
+	// Validate model name early to fail fast
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Check for --experimental flag for safetensors model creation
+	experimental, _ := cmd.Flags().GetBool("experimental")
+	if experimental {
+		// Get Modelfile content - either from -f flag or default to "FROM ."
+		var reader io.Reader
+		filename, err := getModelfileName(cmd)
+		if os.IsNotExist(err) || filename == "" {
+			// No Modelfile specified or found - use default
+			reader = strings.NewReader("FROM .\n")
+		} else if err != nil {
+			return err
+		} else {
+			f, err := os.Open(filename)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			reader = f
+		}
+
+		// Parse the Modelfile
+		modelfile, err := parser.ParseFile(reader)
+		if err != nil {
+			return fmt.Errorf("failed to parse Modelfile: %w", err)
+		}
+
+		// Extract FROM path and configuration
+		var modelDir string
+		mfConfig := &xcreateclient.ModelfileConfig{}
+
+		for _, cmd := range modelfile.Commands {
+			switch cmd.Name {
+			case "model":
+				modelDir = cmd.Args
+			case "template":
+				mfConfig.Template = cmd.Args
+			case "system":
+				mfConfig.System = cmd.Args
+			case "license":
+				mfConfig.License = cmd.Args
+			}
+		}
+
+		if modelDir == "" {
+			modelDir = "."
+		}
+
+		// Resolve relative paths based on Modelfile location
+		if !filepath.IsAbs(modelDir) && filename != "" {
+			modelDir = filepath.Join(filepath.Dir(filename), modelDir)
+		}
+
+		quantize, _ := cmd.Flags().GetString("quantize")
+		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+			ModelName: modelName,
+			ModelDir:  modelDir,
+			Quantize:  quantize,
+			Modelfile: mfConfig,
+		}, p)
+	}
+
 	var reader io.Reader
 
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
 			// No Modelfile found - check if current directory is an image gen model
-			if imagegen.IsTensorModelDir(".") {
-				return imagegenclient.CreateModel(args[0], ".", p)
+			if create.IsTensorModelDir(".") {
+				quantize, _ := cmd.Flags().GetString("quantize")
+				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+					ModelName: modelName,
+					ModelDir:  ".",
+					Quantize:  quantize,
+				}, p)
 			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
@@ -133,7 +207,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop()
 
-	req.Model = args[0]
+	req.Model = modelName
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
@@ -464,14 +538,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 
-	// Check if this is a known image generation model (skip Show/Pull)
-	if imagegen.HasTensorLayers(name) {
-		if opts.Prompt == "" && !interactive {
-			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
-		}
-		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
-	}
-
 	info, err := func() (*api.ShowResponse, error) {
 		showReq := &api.ShowRequest{Name: name}
 		info, err := client.Show(cmd.Context(), showReq)
@@ -533,9 +599,18 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
 	}
 
+	// Check if this is an image generation model
+	if slices.Contains(info.Capabilities, model.CapabilityImageGeneration) {
+		if opts.Prompt == "" && !interactive {
+			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
+		}
+		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+	}
+
 	// Check for experimental flag
 	isExperimental, _ := cmd.Flags().GetBool("experimental")
 	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
+	enableWebsearch, _ := cmd.Flags().GetBool("experimental-websearch")
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -565,7 +640,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 		// Use experimental agent loop with tools
 		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode)
+			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, enableWebsearch)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -671,7 +746,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pushing %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				msg := resp.Status
+				if msg == "" {
+					msg = fmt.Sprintf("pushing %s...", resp.Digest[7:19])
+				}
+				bar = progress.NewBar(msg, resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -837,11 +916,6 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
-	// Check if this is an image generation model
-	if imagegen.HasTensorLayers(args[0]) {
-		return imagegen.Show(args[0], os.Stdout)
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -1741,15 +1815,22 @@ func NewCLI() *cobra.Command {
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 
 	createCmd := &cobra.Command{
-		Use:     "create MODEL",
-		Short:   "Create a model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    CreateHandler,
+		Use:   "create MODEL",
+		Short: "Create a model",
+		Args:  cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// Skip server check for experimental mode (writes directly to disk)
+			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: CreateHandler,
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -1786,6 +1867,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
 	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
+	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
 
 	// Image generation flags (width, height, steps, seed, etc.)
 	imagegen.RegisterFlags(runCmd)

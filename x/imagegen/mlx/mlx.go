@@ -3,12 +3,13 @@
 package mlx
 
 /*
-#cgo CFLAGS: -O3 -I${SRCDIR}/../../../build/_deps/mlx-c-src
-#cgo LDFLAGS: -L${SRCDIR}/../../../build/lib/ollama/ -lmlxc -Wl,-rpath,${SRCDIR}/../../../build/lib/ollama/
+#cgo CFLAGS: -O3 -I${SRCDIR}/../../../build/_deps/mlx-c-src -I${SRCDIR}
 #cgo darwin LDFLAGS: -lc++ -framework Metal -framework Foundation -framework Accelerate
-#cgo linux LDFLAGS: -lstdc++ -lcuda -lcudart -lnvrtc
+#cgo linux LDFLAGS: -lstdc++ -ldl
+#cgo windows LDFLAGS: -lstdc++
 
-#include "mlx/c/mlx.h"
+// Use generated wrappers instead of direct MLX headers
+#include "mlx.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -42,192 +43,6 @@ static inline mlx_stream cpu_stream() {
 // CGO noescape/nocallback hints to reduce CGO overhead
 // noescape: pointers won't escape, no heap allocation needed
 // nocallback: function won't call back into Go
-#cgo noescape mlx_add
-#cgo nocallback mlx_add
-#cgo noescape mlx_subtract
-#cgo nocallback mlx_subtract
-#cgo noescape mlx_multiply
-#cgo nocallback mlx_multiply
-#cgo noescape mlx_divide
-#cgo nocallback mlx_divide
-#cgo noescape mlx_negative
-#cgo nocallback mlx_negative
-#cgo noescape mlx_abs
-#cgo nocallback mlx_abs
-#cgo noescape mlx_exp
-#cgo nocallback mlx_exp
-#cgo noescape mlx_log
-#cgo nocallback mlx_log
-#cgo noescape mlx_sqrt
-#cgo nocallback mlx_sqrt
-#cgo noescape mlx_rsqrt
-#cgo nocallback mlx_rsqrt
-#cgo noescape mlx_square
-#cgo nocallback mlx_square
-#cgo noescape mlx_power
-#cgo nocallback mlx_power
-#cgo noescape mlx_erf
-#cgo nocallback mlx_erf
-#cgo noescape mlx_sigmoid
-#cgo nocallback mlx_sigmoid
-#cgo noescape mlx_tanh
-#cgo nocallback mlx_tanh
-#cgo noescape mlx_sin
-#cgo nocallback mlx_sin
-#cgo noescape mlx_cos
-#cgo nocallback mlx_cos
-#cgo noescape mlx_maximum
-#cgo nocallback mlx_maximum
-#cgo noescape mlx_minimum
-#cgo nocallback mlx_minimum
-#cgo noescape mlx_clip
-#cgo nocallback mlx_clip
-#cgo noescape mlx_sum
-#cgo nocallback mlx_sum
-#cgo noescape mlx_sum_axis
-#cgo nocallback mlx_sum_axis
-#cgo noescape mlx_mean
-#cgo nocallback mlx_mean
-#cgo noescape mlx_mean_axis
-#cgo nocallback mlx_mean_axis
-#cgo noescape mlx_var_axis
-#cgo nocallback mlx_var_axis
-#cgo noescape mlx_argmax
-#cgo nocallback mlx_argmax
-#cgo noescape mlx_argmax_axis
-#cgo nocallback mlx_argmax_axis
-#cgo noescape mlx_softmax_axis
-#cgo nocallback mlx_softmax_axis
-#cgo noescape mlx_cumsum
-#cgo nocallback mlx_cumsum
-#cgo noescape mlx_matmul
-#cgo nocallback mlx_matmul
-#cgo noescape mlx_addmm
-#cgo nocallback mlx_addmm
-#cgo noescape mlx_gather_mm
-#cgo nocallback mlx_gather_mm
-#cgo noescape mlx_gather_qmm
-#cgo nocallback mlx_gather_qmm
-#cgo noescape mlx_reshape
-#cgo nocallback mlx_reshape
-#cgo noescape mlx_transpose_axes
-#cgo nocallback mlx_transpose_axes
-#cgo noescape mlx_expand_dims
-#cgo nocallback mlx_expand_dims
-#cgo noescape mlx_squeeze_axis
-#cgo nocallback mlx_squeeze_axis
-#cgo noescape mlx_flatten
-#cgo nocallback mlx_flatten
-#cgo noescape mlx_concatenate_axis
-#cgo nocallback mlx_concatenate_axis
-#cgo noescape mlx_slice
-#cgo nocallback mlx_slice
-#cgo noescape mlx_slice_update
-#cgo nocallback mlx_slice_update
-#cgo noescape mlx_as_strided
-#cgo nocallback mlx_as_strided
-#cgo noescape mlx_view
-#cgo nocallback mlx_view
-#cgo noescape mlx_contiguous
-#cgo nocallback mlx_contiguous
-#cgo noescape mlx_pad
-#cgo nocallback mlx_pad
-#cgo noescape mlx_tile
-#cgo nocallback mlx_tile
-#cgo noescape mlx_take_axis
-#cgo nocallback mlx_take_axis
-#cgo noescape mlx_take_along_axis
-#cgo nocallback mlx_take_along_axis
-#cgo noescape mlx_put_along_axis
-#cgo nocallback mlx_put_along_axis
-#cgo noescape mlx_where
-#cgo nocallback mlx_where
-#cgo noescape mlx_argsort_axis
-#cgo nocallback mlx_argsort_axis
-#cgo noescape mlx_argpartition_axis
-#cgo nocallback mlx_argpartition_axis
-#cgo noescape mlx_topk_axis
-#cgo nocallback mlx_topk_axis
-#cgo noescape mlx_less
-#cgo nocallback mlx_less
-#cgo noescape mlx_greater_equal
-#cgo nocallback mlx_greater_equal
-#cgo noescape mlx_logical_and
-#cgo nocallback mlx_logical_and
-#cgo noescape mlx_zeros
-#cgo nocallback mlx_zeros
-#cgo noescape mlx_zeros_like
-#cgo nocallback mlx_zeros_like
-#cgo noescape mlx_ones
-#cgo nocallback mlx_ones
-#cgo noescape mlx_full
-#cgo nocallback mlx_full
-#cgo noescape mlx_arange
-#cgo nocallback mlx_arange
-#cgo noescape mlx_linspace
-#cgo nocallback mlx_linspace
-#cgo noescape mlx_tri
-#cgo nocallback mlx_tri
-#cgo noescape mlx_astype
-#cgo nocallback mlx_astype
-#cgo noescape mlx_fast_rms_norm
-#cgo nocallback mlx_fast_rms_norm
-#cgo noescape mlx_fast_rope
-#cgo nocallback mlx_fast_rope
-#cgo noescape mlx_fast_scaled_dot_product_attention
-#cgo nocallback mlx_fast_scaled_dot_product_attention
-#cgo noescape mlx_conv2d
-#cgo nocallback mlx_conv2d
-#cgo noescape mlx_conv3d
-#cgo nocallback mlx_conv3d
-#cgo noescape mlx_random_key
-#cgo nocallback mlx_random_key
-#cgo noescape mlx_random_split
-#cgo nocallback mlx_random_split
-#cgo noescape mlx_random_categorical_num_samples
-#cgo nocallback mlx_random_categorical_num_samples
-#cgo noescape mlx_random_normal
-#cgo nocallback mlx_random_normal
-#cgo noescape mlx_random_uniform
-#cgo nocallback mlx_random_uniform
-#cgo noescape mlx_array_eval
-#cgo nocallback mlx_array_eval
-#cgo noescape mlx_eval
-#cgo nocallback mlx_eval
-#cgo noescape mlx_async_eval
-#cgo nocallback mlx_async_eval
-#cgo noescape mlx_synchronize
-#cgo nocallback mlx_synchronize
-#cgo noescape mlx_array_new
-#cgo nocallback mlx_array_new
-#cgo noescape mlx_array_new_data
-#cgo nocallback mlx_array_new_data
-#cgo noescape mlx_array_new_float
-#cgo nocallback mlx_array_new_float
-#cgo noescape mlx_array_free
-#cgo nocallback mlx_array_free
-#cgo noescape mlx_array_size
-#cgo nocallback mlx_array_size
-#cgo noescape mlx_array_ndim
-#cgo nocallback mlx_array_ndim
-#cgo noescape mlx_array_dim
-#cgo nocallback mlx_array_dim
-#cgo noescape mlx_array_dtype
-#cgo nocallback mlx_array_dtype
-#cgo noescape mlx_array_item_int32
-#cgo nocallback mlx_array_item_int32
-#cgo noescape mlx_vector_array_new_data
-#cgo nocallback mlx_vector_array_new_data
-#cgo noescape mlx_vector_array_free
-#cgo nocallback mlx_vector_array_free
-#cgo noescape mlx_array_new_int
-#cgo nocallback mlx_array_new_int
-#cgo noescape mlx_stream_new_device
-#cgo nocallback mlx_stream_new_device
-#cgo noescape mlx_get_default_stream
-#cgo nocallback mlx_get_default_stream
-#cgo noescape mlx_set_default_stream
-#cgo nocallback mlx_set_default_stream
 */
 import "C"
 import (
@@ -605,6 +420,11 @@ func (a *Array) Eval() *Array {
 // Valid returns true if the array hasn't been freed.
 func (a *Array) Valid() bool {
 	return a != nil && a.c.ctx != nil
+}
+
+// Kept returns true if the array is marked to survive Eval() cleanup.
+func (a *Array) Kept() bool {
+	return a != nil && a.kept
 }
 
 func int32ToCInt(s []int32) *C.int {
@@ -1480,6 +1300,44 @@ func (a *Array) ItemInt32() int32 {
 	return int32(val)
 }
 
+// Bytes copies the raw bytes out of the array without type conversion.
+// Works with common dtypes (float32, int32, uint32, uint8).
+// For non-contiguous arrays, call Contiguous() first.
+// Note: Triggers cleanup of non-kept arrays.
+func (a *Array) Bytes() []byte {
+	cleanup()
+	nbytes := a.Nbytes()
+	if nbytes == 0 {
+		return nil
+	}
+
+	// Get raw pointer based on dtype
+	var ptr unsafe.Pointer
+	switch a.Dtype() {
+	case DtypeFloat32:
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(a.c))
+	case DtypeInt32:
+		ptr = unsafe.Pointer(C.mlx_array_data_int32(a.c))
+	case DtypeUint32:
+		ptr = unsafe.Pointer(C.mlx_array_data_uint32(a.c))
+	case DtypeUint8:
+		ptr = unsafe.Pointer(C.mlx_array_data_uint8(a.c))
+	default:
+		// For other types (bf16, f16, etc), convert to float32
+		arr := AsType(a, DtypeFloat32)
+		arr.Eval()
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(arr.c))
+		nbytes = arr.Nbytes()
+	}
+
+	if ptr == nil {
+		return nil
+	}
+	data := make([]byte, nbytes)
+	copy(data, unsafe.Slice((*byte)(ptr), nbytes))
+	return data
+}
+
 // ============ Utility ============
 
 // String returns a string representation
@@ -1658,6 +1516,34 @@ func (s *SafetensorsFile) Free() {
 	C.mlx_map_string_to_string_free(s.metadata)
 }
 
+// SaveSafetensors saves arrays to a safetensors file using MLX's native implementation.
+// This correctly handles all dtypes including uint32 for quantized weights.
+func SaveSafetensors(path string, arrays map[string]*Array) error {
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+
+	// Create the map
+	cArrays := C.mlx_map_string_to_array_new()
+	defer C.mlx_map_string_to_array_free(cArrays)
+
+	// Add each array to the map
+	for name, arr := range arrays {
+		cName := C.CString(name)
+		C.mlx_map_string_to_array_insert(cArrays, cName, arr.c)
+		C.free(unsafe.Pointer(cName))
+	}
+
+	// Create empty metadata (optional)
+	cMeta := C.mlx_map_string_to_string_new()
+	defer C.mlx_map_string_to_string_free(cMeta)
+
+	// Save
+	if C.mlx_save_safetensors(cPath, cArrays, cMeta) != 0 {
+		return fmt.Errorf("failed to save safetensors: %s", path)
+	}
+	return nil
+}
+
 // ============ NPY Loading ============
 
 // LoadNpy loads a numpy array from an npy file
@@ -1725,7 +1611,57 @@ func ArgmaxKeepArray(logits *Array) *Array {
 var RandomState = []*Array{nil}
 var randomStateMu sync.Mutex
 
+var mlxInitialized bool
+var mlxInitError error
+
+// InitMLX initializes the MLX library by dynamically loading libmlxc.
+// This must be called before using any MLX functions.
+// Returns an error if the library cannot be loaded.
+func InitMLX() error {
+	if mlxInitialized {
+		return mlxInitError
+	}
+
+	// Try to load the MLX dynamic library
+	ret := C.mlx_dynamic_init()
+	if ret != 0 {
+		errMsg := C.GoString(C.mlx_dynamic_error())
+		mlxInitError = fmt.Errorf("failed to initialize MLX: %s", errMsg)
+		return mlxInitError
+	}
+
+	// Initialize all function pointers via dlsym
+	handle := C.mlx_get_handle()
+	ret = C.mlx_load_functions(handle)
+	if ret != 0 {
+		mlxInitError = fmt.Errorf("failed to load MLX function symbols")
+		return mlxInitError
+	}
+
+	mlxInitialized = true
+	mlxInitError = nil
+	return nil
+}
+
+// IsMLXAvailable returns whether MLX was successfully initialized
+func IsMLXAvailable() bool {
+	return mlxInitialized && mlxInitError == nil
+}
+
+// GetMLXInitError returns any error that occurred during MLX initialization
+func GetMLXInitError() error {
+	return mlxInitError
+}
+
 func init() {
+	// Initialize MLX dynamic library first
+	if err := InitMLX(); err != nil {
+		// Don't panic in init - let the caller handle the error
+		// Store the error for later retrieval
+		mlxInitError = err
+		return
+	}
+
 	// Lock main goroutine to OS thread for CUDA context stability.
 	// CUDA contexts are bound to threads; Go can migrate goroutines between threads.
 	runtime.LockOSThread()
@@ -1986,7 +1922,8 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 // Returns (quantized_weights, scales, biases).
 // groupSize: number of elements quantized together (default 64)
 // bits: bits per element, 2, 4, or 8 (default 4)
-// mode: "affine" (default) or "mxfp4"
+// mode: "affine" (default), "mxfp4", or "mxfp8"
+// Note: mxfp8 mode returns nil biases (only weights and scales)
 func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
@@ -1995,14 +1932,21 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	res := C.mlx_vector_array_new()
 	C.mlx_quantize(&res, w.c, optGroupSize, optBits, cMode, C.default_stream())
 
-	// Result is a vector of 3 arrays: [weights, scales, biases]
+	// Result is a vector of arrays: [weights, scales, biases?]
+	// mxfp8 mode returns only 2 elements (no biases)
+	vecSize := int(C.mlx_vector_array_size(res))
 	var w0, w1, w2 C.mlx_array
 	C.mlx_vector_array_get(&w0, res, 0)
 	C.mlx_vector_array_get(&w1, res, 1)
-	C.mlx_vector_array_get(&w2, res, 2)
+	if vecSize >= 3 {
+		C.mlx_vector_array_get(&w2, res, 2)
+	}
 	C.mlx_vector_array_free(res)
 
-	return newArray(w0), newArray(w1), newArray(w2)
+	if vecSize >= 3 {
+		return newArray(w0), newArray(w1), newArray(w2)
+	}
+	return newArray(w0), newArray(w1), nil
 }
 
 // Dequantize reconstructs weights from quantized form.

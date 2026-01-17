@@ -175,3 +175,63 @@ func (m *ModelManifest) HasTensorLayers() bool {
 	}
 	return false
 }
+
+// ModelInfo contains metadata about an image generation model.
+type ModelInfo struct {
+	Architecture   string
+	ParameterCount int64
+	Quantization   string
+}
+
+// GetModelInfo returns metadata about an image generation model.
+func GetModelInfo(modelName string) (*ModelInfo, error) {
+	manifest, err := LoadManifest(modelName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	info := &ModelInfo{}
+
+	// Read model_index.json for architecture, parameter count, and quantization
+	if data, err := manifest.ReadConfig("model_index.json"); err == nil {
+		var index struct {
+			Architecture   string `json:"architecture"`
+			ParameterCount int64  `json:"parameter_count"`
+			Quantization   string `json:"quantization"`
+		}
+		if json.Unmarshal(data, &index) == nil {
+			info.Architecture = index.Architecture
+			info.ParameterCount = index.ParameterCount
+			info.Quantization = index.Quantization
+		}
+	}
+
+	// Fallback: detect quantization from tensor names if not in config
+	if info.Quantization == "" {
+		for _, layer := range manifest.Manifest.Layers {
+			if strings.HasSuffix(layer.Name, ".weight_scale") {
+				info.Quantization = "FP8"
+				break
+			}
+		}
+		if info.Quantization == "" {
+			info.Quantization = "BF16"
+		}
+	}
+
+	// Fallback: estimate parameter count if not in config
+	if info.ParameterCount == 0 {
+		var totalSize int64
+		for _, layer := range manifest.Manifest.Layers {
+			if layer.MediaType == "application/vnd.ollama.image.tensor" {
+				if !strings.HasSuffix(layer.Name, "_scale") && !strings.HasSuffix(layer.Name, "_qbias") {
+					totalSize += layer.Size
+				}
+			}
+		}
+		// Assume BF16 (2 bytes/param) as rough estimate
+		info.ParameterCount = totalSize / 2
+	}
+
+	return info, nil
+}

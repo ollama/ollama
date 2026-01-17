@@ -104,6 +104,8 @@ func (gn *GroupNormLayer) forwardTiled(x *mlx.Array, B, H, W, C int32) *mlx.Arra
 	groupSize := C / gn.NumGroups
 
 	// Keep the input - we need it for slicing tiles later
+	// Track if we were the ones who kept it, so we can restore state after
+	wasKept := x.Kept()
 	mlx.Keep(x)
 
 	// Compute per-group mean and variance using flattened spatial dimensions
@@ -205,6 +207,10 @@ func (gn *GroupNormLayer) forwardTiled(x *mlx.Array, B, H, W, C int32) *mlx.Arra
 	}
 
 	// Clean up kept arrays
+	// Restore x's kept state - only free if we were the ones who kept it
+	if !wasKept {
+		x.Free()
+	}
 	mean.Free()
 	invStd.Free()
 	if weightGN != nil {
@@ -734,18 +740,26 @@ func (vae *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
 	h := vae.ConvIn.Forward(z)
 	mlx.Eval(h)
 
+	prev := h
 	h = vae.MidBlock.Forward(h)
+	prev.Free()
 
 	for _, upBlock := range vae.UpBlocks {
+		prev = h
 		h = upBlock.Forward(h)
+		prev.Free()
 	}
 
-	prev := h
+	prev = h
 	h = vae.ConvNormOut.Forward(h)
 	mlx.Eval(h) // Eval after GroupNorm to avoid grid dimension issues
+	prev.Free()
+
+	prev = h
 	h = mlx.SiLU(h)
 	h = vae.ConvOut.Forward(h)
 	mlx.Eval(h)
+	prev.Free()
 
 	// VAE outputs [-1, 1], convert to [0, 1]
 	h = mlx.MulScalar(h, 0.5)
@@ -754,7 +768,6 @@ func (vae *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
 
 	// Convert NHWC -> NCHW for output
 	h = mlx.Transpose(h, 0, 3, 1, 2)
-	prev.Free()
 	mlx.Eval(h)
 
 	return h

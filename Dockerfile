@@ -32,7 +32,7 @@ ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
 RUN yum install -y yum-utils epel-release \
-    && dnf install -y clang ccache \
+    && dnf install -y clang ccache git \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
 ENV CC=clang CXX=clang++
 
@@ -158,6 +158,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 COPY x/ml/backend/mlx x/ml/backend/mlx
 COPY go.mod go.sum .
+COPY MLX_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
@@ -165,11 +166,6 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
         && cmake --build --parallel ${PARALLEL} --preset 'MLX CUDA 13' \
         && cmake --install build --component MLX --strip --parallel ${PARALLEL}
-COPY . .
-ARG GOFLAGS="'-ldflags=-w -s'"
-ENV CGO_ENABLED=1
-ARG CGO_CFLAGS
-ARG CGO_CXXFLAGS
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
@@ -181,12 +177,14 @@ COPY . .
 # Copy FFmpeg libraries from ffmpeg-build stage
 COPY --from=ffmpeg-build /usr/local/ffmpeg-minimal /usr/local/ffmpeg-minimal
 ENV PKG_CONFIG_PATH=/usr/local/ffmpeg-minimal/lib/pkgconfig
+# Clone mlx-c headers for CGO (version from MLX_VERSION file)
+RUN git clone --depth 1 --branch "$(cat MLX_VERSION)" https://github.com/ml-explore/mlx-c.git build/_deps/mlx-c-src
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
-ARG CGO_CFLAGS
+ENV CGO_CFLAGS="-I/go/src/github.com/ollama/ollama/build/_deps/mlx-c-src"
 ARG CGO_CXXFLAGS
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -buildmode=pie -tags "ffmpeg,cgo" -o /bin/ollama .
+    go build -tags mlx -trimpath -buildmode=pie -tags "ffmpeg,cgo" -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/

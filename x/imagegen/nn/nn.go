@@ -10,6 +10,13 @@ type Layer interface {
 	Forward(x *mlx.Array) *mlx.Array
 }
 
+// LinearLayer is an interface for linear layers (both regular and quantized).
+// This allows swapping between Linear and QuantizedLinear at runtime.
+type LinearLayer interface {
+	Forward(x *mlx.Array) *mlx.Array
+	OutputDim() int32 // Returns the output dimension of the layer
+}
+
 // Linear applies an affine transformation: y = x @ W.T + b
 // Weight is stored as [out_features, in_features], matching PyTorch/MLX convention.
 type Linear struct {
@@ -49,6 +56,11 @@ func (l *Linear) Forward(x *mlx.Array) *mlx.Array {
 	return mlx.Linear(x, w)
 }
 
+// OutputDim returns the output dimension of the linear layer.
+func (l *Linear) OutputDim() int32 {
+	return l.Weight.Shape()[0]
+}
+
 // ToQuantized converts this Linear to a QuantizedLinear.
 func (l *Linear) ToQuantized(groupSize, bits int, mode string) *QuantizedLinear {
 	qw, scales, qbiases := mlx.Quantize(l.Weight, groupSize, bits, mode)
@@ -82,6 +94,13 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 		out = mlx.Add(out, ql.Bias)
 	}
 	return out
+}
+
+// OutputDim returns the output dimension of the quantized linear layer.
+// For mxfp8/mxfp4, quantized weight shape is [out_features, in_features / group_size].
+// The output dimension is the first dimension of the weight.
+func (ql *QuantizedLinear) OutputDim() int32 {
+	return ql.Weight.Shape()[0]
 }
 
 // RMSNorm represents an RMS normalization layer.

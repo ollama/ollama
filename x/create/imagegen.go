@@ -1,4 +1,4 @@
-package imagegen
+package create
 
 import (
 	"bytes"
@@ -12,38 +12,24 @@ import (
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
 
-// IsTensorModelDir checks if the directory contains a tensor model
-// by looking for model_index.json, which is the standard diffusers pipeline config.
-func IsTensorModelDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "model_index.json"))
-	return err == nil
-}
-
-// LayerInfo holds metadata for a created layer.
-type LayerInfo struct {
-	Digest    string
-	Size      int64
-	MediaType string
-	Name      string // Path-style name: "component/tensor" or "path/to/config.json"
-}
-
-// LayerCreator is called to create a blob layer.
-// name is the path-style name (e.g., "tokenizer/tokenizer.json")
-type LayerCreator func(r io.Reader, mediaType, name string) (LayerInfo, error)
-
-// TensorLayerCreator creates a tensor blob layer with metadata.
-// name is the path-style name including component (e.g., "text_encoder/model.embed_tokens.weight")
-type TensorLayerCreator func(r io.Reader, name, dtype string, shape []int32) (LayerInfo, error)
-
-// ManifestWriter writes the manifest file.
-type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo) error
-
-// CreateModel imports an image generation model from a directory.
+// CreateImageGenModel imports an image generation model from a directory.
 // Stores each tensor as a separate blob for fine-grained deduplication.
+// If quantize is specified, linear weights in transformer/text_encoder are quantized.
+// Supported quantization types: fp8 (or empty for no quantization).
 // Layer creation and manifest writing are done via callbacks to avoid import cycles.
-func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTensorLayer TensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
+func CreateImageGenModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
+	// Validate quantization type
+	switch quantize {
+	case "", "fp8":
+		// valid
+	default:
+		return fmt.Errorf("unsupported quantization type %q: supported types are fp8", quantize)
+	}
+
 	var layers []LayerInfo
 	var configLayer LayerInfo
+	var totalParams int64 // Count parameters from original tensor shapes
+	var torchDtype string // Read from component config for quantization display
 
 	// Components to process - extract individual tensors from each
 	components := []string{"text_encoder", "transformer", "vae"}
@@ -74,7 +60,11 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 			}
 
 			tensorNames := extractor.ListTensors()
-			fn(fmt.Sprintf("importing %s/%s (%d tensors)", component, entry.Name(), len(tensorNames)))
+			quantizeMsg := ""
+			if quantize != "" && component != "vae" {
+				quantizeMsg = ", quantizing to " + quantize
+			}
+			fn(fmt.Sprintf("importing %s/%s (%d tensors%s)", component, entry.Name(), len(tensorNames), quantizeMsg))
 
 			for _, tensorName := range tensorNames {
 				td, err := extractor.GetTensor(tensorName)
@@ -83,19 +73,49 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 					return fmt.Errorf("failed to get tensor %s: %w", tensorName, err)
 				}
 
+				// Count parameters from original tensor shape
+				if len(td.Shape) > 0 {
+					numElements := int64(1)
+					for _, dim := range td.Shape {
+						numElements *= int64(dim)
+					}
+					totalParams += numElements
+				}
+
 				// Store as minimal safetensors format (88 bytes header overhead)
 				// This enables native mmap loading via mlx_load_safetensors
 				// Use path-style name: "component/tensor_name"
 				fullName := component + "/" + tensorName
-				layer, err := createTensorLayer(td.SafetensorsReader(), fullName, td.Dtype, td.Shape)
+
+				// Determine quantization type for this tensor (empty string if not quantizing)
+				quantizeType := ""
+				if quantize != "" && ShouldQuantize(tensorName, component) && canQuantizeShape(td.Shape) {
+					quantizeType = quantize
+				}
+
+				// createTensorLayer returns multiple layers if quantizing (weight + scales)
+				newLayers, err := createTensorLayer(td.SafetensorsReader(), fullName, td.Dtype, td.Shape, quantizeType)
 				if err != nil {
 					extractor.Close()
 					return fmt.Errorf("failed to create layer for %s: %w", fullName, err)
 				}
-				layers = append(layers, layer)
+				layers = append(layers, newLayers...)
 			}
 
 			extractor.Close()
+		}
+	}
+
+	// Read torch_dtype from text_encoder config for quantization display
+	if torchDtype == "" {
+		textEncoderConfig := filepath.Join(modelDir, "text_encoder/config.json")
+		if data, err := os.ReadFile(textEncoderConfig); err == nil {
+			var cfg struct {
+				TorchDtype string `json:"torch_dtype"`
+			}
+			if json.Unmarshal(data, &cfg) == nil && cfg.TorchDtype != "" {
+				torchDtype = cfg.TorchDtype
+			}
 		}
 	}
 
@@ -122,7 +142,7 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 
 		var r io.Reader
 
-		// For model_index.json, normalize to Ollama format
+		// For model_index.json, normalize to Ollama format and add metadata
 		if cfgPath == "model_index.json" {
 			data, err := os.ReadFile(fullPath)
 			if err != nil {
@@ -140,6 +160,16 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 				delete(cfg, "_class_name")
 			}
 			delete(cfg, "_diffusers_version")
+
+			// Add parameter count (counted from tensor shapes during import)
+			cfg["parameter_count"] = totalParams
+
+			// Add quantization info - use quantize type if set, otherwise torch_dtype
+			if quantize != "" {
+				cfg["quantization"] = strings.ToUpper(quantize)
+			} else {
+				cfg["quantization"] = torchDtype
+			}
 
 			data, err = json.MarshalIndent(cfg, "", "    ")
 			if err != nil {
@@ -180,4 +210,13 @@ func CreateModel(modelName, modelDir string, createLayer LayerCreator, createTen
 
 	fn(fmt.Sprintf("successfully imported %s with %d layers", modelName, len(layers)))
 	return nil
+}
+
+// canQuantizeShape returns true if a tensor shape is compatible with MLX quantization.
+// MLX requires the last dimension to be divisible by the group size (32).
+func canQuantizeShape(shape []int32) bool {
+	if len(shape) < 2 {
+		return false
+	}
+	return shape[len(shape)-1]%32 == 0
 }
