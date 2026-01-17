@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
