@@ -571,10 +571,10 @@ func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
 		llama:           server,
-		Options:         &req.opts,
 		loading:         false,
 		sessionDuration: sessionDuration,
-		refCount:        1,
+		totalSize:       server.TotalSize(),
+		vramSize:        server.VRAMSize(),
 	}
 
 	s.loadedMu.Lock()

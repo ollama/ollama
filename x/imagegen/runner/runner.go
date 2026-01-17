@@ -36,6 +36,8 @@ type Response struct {
 	Content string `json:"content,omitempty"`
 	Image   string `json:"image,omitempty"` // Base64-encoded PNG
 	Done    bool   `json:"done"`
+	Step    int    `json:"step,omitempty"`
+	Total   int    `json:"total,omitempty"`
 }
 
 // Server holds the model and handles requests
@@ -167,8 +169,9 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		Seed:   req.Seed,
 		Progress: func(step, total int) {
 			resp := Response{
-				Content: fmt.Sprintf("\rGenerating: step %d/%d", step, total),
-				Done:    false,
+				Step:  step,
+				Total: total,
+				Done:  false,
 			}
 			data, _ := json.Marshal(resp)
 			w.Write(data)

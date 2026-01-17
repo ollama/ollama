@@ -220,6 +220,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// Handle image generation models
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		s.handleImageGenerate(c, req, name.String(), checkpointStart)
+		return
+	}
+
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
@@ -1096,7 +1102,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	// For image generation models, populate details from imagegen package
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
@@ -1202,7 +1208,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		// Populate tensor info if verbose
 		if req.Verbose {
 			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
@@ -1594,8 +1600,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
-	// Experimental OpenAI-compatible image generation endpoint
-	r.POST("/v1/images/generations", s.handleImageGeneration)
+	// OpenAI-compatible image generation endpoint
+	r.POST("/v1/images/generations", middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
@@ -1915,62 +1921,6 @@ func toolCallId() string {
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
 	return "call_" + strings.ToLower(string(b))
-}
-
-func (s *Server) handleImageGeneration(c *gin.Context) {
-	var req struct {
-		Model  string `json:"model"`
-		Prompt string `json:"prompt"`
-		Size   string `json:"size"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	m, err := GetModel(req.Model)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-
-	runnerCh, errCh := s.sched.GetRunner(c.Request.Context(), m, api.Options{}, nil)
-	var runner *runnerRef
-	select {
-	case runner = <-runnerCh:
-	case err := <-errCh:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Parse size (e.g., "1024x768") into width and height
-	width, height := int32(1024), int32(1024)
-	if req.Size != "" {
-		if _, err := fmt.Sscanf(req.Size, "%dx%d", &width, &height); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid size format, expected WxH"})
-			return
-		}
-	}
-
-	var image []byte
-	err = runner.llama.Completion(c.Request.Context(), llm.CompletionRequest{
-		Prompt: req.Prompt,
-		Width:  width,
-		Height: height,
-	}, func(resp llm.CompletionResponse) {
-		if len(resp.Image) > 0 {
-			image = resp.Image
-		}
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"created": time.Now().Unix(),
-		"data":    []gin.H{{"b64_json": base64.StdEncoding.EncodeToString(image)}},
-	})
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
@@ -2521,4 +2471,92 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+// handleImageGenerate handles image generation requests within GenerateHandler.
+// This is called when the model has the Image capability.
+func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, modelName string, checkpointStart time.Time) {
+	// Validate image dimensions
+	const maxDimension int32 = 4096
+	if req.Width > maxDimension || req.Height > maxDimension {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("width and height must be <= %d", maxDimension)})
+		return
+	}
+
+	// Schedule the runner for image generation
+	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	// Handle load-only request (empty prompt)
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Done:       true,
+			DoneReason: "load",
+		})
+		return
+	}
+
+	// Set headers for streaming response
+	c.Header("Content-Type", "application/x-ndjson")
+
+	// Get seed from options if provided
+	var seed int64
+	if s, ok := req.Options["seed"]; ok {
+		switch v := s.(type) {
+		case int:
+			seed = int64(v)
+		case int64:
+			seed = v
+		case float64:
+			seed = int64(v)
+		}
+	}
+
+	var streamStarted bool
+	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
+		Prompt: req.Prompt,
+		Width:  req.Width,
+		Height: req.Height,
+		Steps:  req.Steps,
+		Seed:   seed,
+	}, func(cr llm.CompletionResponse) {
+		streamStarted = true
+		res := api.GenerateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			Done:      cr.Done,
+		}
+
+		if cr.TotalSteps > 0 {
+			res.Completed = int64(cr.Step)
+			res.Total = int64(cr.TotalSteps)
+		}
+
+		if cr.Image != "" {
+			res.Image = cr.Image
+		}
+
+		if cr.Done {
+			res.DoneReason = cr.DoneReason.String()
+			res.Metrics.TotalDuration = time.Since(checkpointStart)
+			res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+		}
+
+		data, _ := json.Marshal(res)
+		c.Writer.Write(append(data, '\n'))
+		c.Writer.Flush()
+	}); err != nil {
+		// Only send JSON error if streaming hasn't started yet
+		// (once streaming starts, headers are committed and we can't change status code)
+		if !streamStarted {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+	}
 }

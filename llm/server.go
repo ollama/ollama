@@ -1468,6 +1468,7 @@ type CompletionRequest struct {
 	// Image generation fields
 	Width  int32 `json:"width,omitempty"`
 	Height int32 `json:"height,omitempty"`
+	Steps  int32 `json:"steps,omitempty"`
 	Seed   int64 `json:"seed,omitempty"`
 }
 
@@ -1518,10 +1519,14 @@ type CompletionResponse struct {
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
 
-	// Image generation fields
-	Image []byte `json:"image,omitempty"` // Generated image
-	Step  int    `json:"step,omitempty"`  // Current generation step
-	Total int    `json:"total,omitempty"` // Total generation steps
+	// Image contains base64-encoded image data for image generation
+	Image string `json:"image,omitempty"`
+
+	// Step is the current step in image generation
+	Step int `json:"step,omitempty"`
+
+	// TotalSteps is the total number of steps for image generation
+	TotalSteps int `json:"total_steps,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
