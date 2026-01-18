@@ -175,13 +175,29 @@ func (m *Model) GenerateFromConfig(ctx context.Context, cfg *GenerateConfig) (*m
 	return result, nil
 }
 
-// GenerateImage implements model.ImageModel interface.
-func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64) (*mlx.Array, error) {
-	return m.Generate(prompt, width, height, steps, seed)
+// GenerateImage implements runner.ImageModel interface.
+func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error) {
+	return m.GenerateFromConfig(ctx, &GenerateConfig{
+		Prompt:   prompt,
+		Width:    width,
+		Height:   height,
+		Steps:    steps,
+		Seed:     seed,
+		Progress: progress,
+	})
 }
+
+// MaxOutputPixels is the maximum output resolution (about 1 megapixel, ~1024x1024)
+const MaxOutputPixels = 1024 * 1024
+
+// MaxRefPixels is the maximum resolution for reference images (smaller to reduce attention memory)
+const MaxRefPixels = 512 * 1024 // ~720x720
 
 // generate is the internal denoising pipeline.
 func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, error) {
+	// Enable MLX compilation for fused kernels
+	mlx.EnableCompile()
+
 	// Apply defaults
 	if cfg.Steps <= 0 {
 		cfg.Steps = 4 // Klein default: 4 steps for distilled model
@@ -190,18 +206,16 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		cfg.GuidanceScale = 1.0 // Klein doesn't need guidance
 	}
 
-	// If input images are provided and dimensions not explicitly set, match first input image
+	// Determine output dimensions
 	if len(cfg.InputImages) > 0 && cfg.Width <= 0 && cfg.Height <= 0 {
+		// Match first input image's aspect ratio
 		img, err := LoadImage(cfg.InputImages[0])
 		if err == nil {
 			bounds := img.Bounds()
 			cfg.Width = int32(bounds.Dx())
 			cfg.Height = int32(bounds.Dy())
-			fmt.Printf("  Matching output size to input image: %dx%d\n", cfg.Width, cfg.Height)
 		}
 	}
-
-	// Apply dimension defaults if still not set
 	if cfg.Width <= 0 {
 		cfg.Width = 1024
 	}
@@ -209,16 +223,16 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		cfg.Height = 1024
 	}
 
-	// Clamp dimensions to multiples of 16 (vae_scale_factor * 2)
-	vaeScaleFactor := int32(8)
-	newHeight := (cfg.Height / (vaeScaleFactor * 2)) * (vaeScaleFactor * 2)
-	newWidth := (cfg.Width / (vaeScaleFactor * 2)) * (vaeScaleFactor * 2)
-	if newHeight != cfg.Height || newWidth != cfg.Width {
-		fmt.Printf("  Note: dimensions adjusted from %dx%d to %dx%d (must be multiple of 16)\n",
-			cfg.Width, cfg.Height, newWidth, newHeight)
+	// Cap to max pixels, preserve aspect ratio, round to multiple of 16
+	pixels := int(cfg.Width) * int(cfg.Height)
+	if pixels > MaxOutputPixels {
+		scale := math.Sqrt(float64(MaxOutputPixels) / float64(pixels))
+		cfg.Width = int32(float64(cfg.Width) * scale)
+		cfg.Height = int32(float64(cfg.Height) * scale)
 	}
-	cfg.Height = newHeight
-	cfg.Width = newWidth
+	cfg.Height = (cfg.Height / 16) * 16
+	cfg.Width = (cfg.Width / 16) * 16
+	fmt.Printf("  Output: %dx%d\n", cfg.Width, cfg.Height)
 
 	tcfg := m.Transformer.TransformerConfig
 	patchSize := m.VAE.Config.PatchSize
@@ -233,15 +247,14 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	// Text encoding with multi-layer extraction (no padding, use true sequence length)
 	fmt.Print("  Encoding prompt... ")
 	promptEmbeds, textLen := m.TextEncoder.EncodePromptWithLayers(m.Tokenizer, cfg.Prompt, 512, TextEncoderLayerIndices, false)
-	mlx.Keep(promptEmbeds)
-	mlx.Eval(promptEmbeds)
+	// Defer eval - will be done with other setup arrays
 	fmt.Println("✓")
 
 	// Load and encode reference images if provided
 	var refTokens *ImageCondTokens
 	var refHeights, refWidths []int32
 	if len(cfg.InputImages) > 0 {
-		fmt.Printf("  Encoding %d reference image(s)... ", len(cfg.InputImages))
+		fmt.Printf("  Encoding %d reference image(s):\n", len(cfg.InputImages))
 		var images []image.Image
 		for _, path := range cfg.InputImages {
 			img, err := LoadImage(path)
@@ -257,18 +270,16 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 			return nil, fmt.Errorf("encode reference images: %w", err)
 		}
 
-		// Extract heights/widths for RoPE computation
-		// Pixel limit for multiple images
-		limitPixels := 2024 * 2024
+		// Extract heights/widths for RoPE computation (same limits as EncodeImageRefs)
+		limitPixels := MaxRefPixels
 		if len(images) > 1 {
-			limitPixels = 1024 * 1024
+			limitPixels = MaxRefPixels / 2
 		}
 		for _, img := range images {
 			_, w, h := PrepareImage(img, limitPixels)
 			refHeights = append(refHeights, int32(h/16))
 			refWidths = append(refWidths, int32(w/16))
 		}
-		fmt.Println("✓")
 	}
 
 	// Scheduler
@@ -294,103 +305,105 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		rope = PrepareRoPECache(textLen, patchH, patchW, tcfg.AxesDimsRoPE, tcfg.RopeTheta)
 	}
 
-	// Evaluate all arrays together
-	toEval := []*mlx.Array{patches, rope.Cos, rope.Sin}
+	// Pre-compute all timesteps before the loop to avoid per-step tensor creation
+	timesteps := make([]*mlx.Array, cfg.Steps)
+	for i := 0; i < cfg.Steps; i++ {
+		tCurr := scheduler.Timesteps[i] / float32(m.SchedulerConfig.NumTrainTimesteps)
+		timesteps[i] = mlx.ToBFloat16(mlx.NewArray([]float32{tCurr}, []int32{1}))
+	}
+
+	// Evaluate all setup arrays together (single sync point)
+	toEval := []*mlx.Array{promptEmbeds, patches, rope.Cos, rope.Sin}
+	toEval = append(toEval, timesteps...)
 	if refTokens != nil {
 		toEval = append(toEval, refTokens.Tokens)
 	}
 	mlx.Eval(toEval...)
+	fmt.Println("  Setup complete")
 
-	// Cleanup function
-	cleanup := func() {
-		promptEmbeds.Free()
-		rope.Cos.Free()
-		rope.Sin.Free()
-		latents.Free()
-	}
-
-	// Denoising loop - work entirely in sequence form [B, L, C]
-	// patches is [B, 4096, 128], transformer output is [B, 4096, 128]
-	// Scheduler step operates directly on sequence form
 	if cfg.Progress != nil {
 		cfg.Progress(0, cfg.Steps)
 	}
+
+	loopStart := time.Now()
+	stepStart := time.Now()
+
+	// Pipelined denoising: build step N+1's graph while GPU executes step N
+	// Pattern: AsyncEval(current), then Eval(previous)
+	var prevPatches *mlx.Array
 
 	for i := 0; i < cfg.Steps; i++ {
 		// Check for cancellation
 		if ctx != nil {
 			select {
 			case <-ctx.Done():
-				cleanup()
 				return nil, ctx.Err()
 			default:
 			}
 		}
-		stepStart := time.Now()
 
 		// GPU capture on step 2 if requested
 		if cfg.CapturePath != "" && i == 1 {
 			mlx.MetalStartCapture(cfg.CapturePath)
 		}
 
-		tCurr := scheduler.Timesteps[i] / float32(m.SchedulerConfig.NumTrainTimesteps)
-		// Flow matching: transformer expects t in [0,1]; it multiplies by 1000 internally
-		timestep := mlx.ToBFloat16(mlx.NewArray([]float32{tCurr}, []int32{1}))
+		timestep := timesteps[i]
 
 		// Prepare input - concatenate noise patches with reference tokens if present
-		// This matches diffusers: img_input = torch.cat((img, img_cond_seq), dim=1)
-		var imgInput *mlx.Array
+		imgInput := patches
 		if refTokens != nil {
 			imgInput = mlx.Concatenate([]*mlx.Array{patches, refTokens.Tokens}, 1)
-		} else {
-			imgInput = patches
 		}
 
-		// Transformer forward: [B, L, C] -> [B, L, C]
+		// Build transformer graph - chains onto patches (may still be computing)
 		output := m.Transformer.Forward(imgInput, promptEmbeds, timestep, rope)
 
 		// If we concatenated reference tokens, slice to only get noise portion
-		// This matches diffusers: pred = pred[:, : img.shape[1]]
 		if refTokens != nil {
 			output = mlx.Slice(output, []int32{0, 0, 0}, []int32{1, noiseSeqLen, output.Shape()[2]})
-			imgInput.Free() // Free the concatenated input
+			imgInput.Free()
 		}
 
-		// Scheduler step directly on sequence form [B, L, C]
-		// No unpatchify/patchify - everything stays in sequence form
-		oldPatches := patches
-		patches = scheduler.Step(output, patches, i)
-		mlx.Eval(patches)
-		oldPatches.Free()
+		// Scheduler step - chains onto output
+		newPatches := scheduler.Step(output, patches, i)
 
 		if cfg.CapturePath != "" && i == 1 {
 			mlx.MetalStopCapture()
 		}
 
-		activeMem := float64(mlx.MetalGetActiveMemory()) / (1024 * 1024 * 1024)
-		peakMem := float64(mlx.MetalGetPeakMemory()) / (1024 * 1024 * 1024)
-		fmt.Printf("  Step %d/%d: t=%.4f (%.2fs) [%.1f GB active, %.1f GB peak]\n",
-			i+1, cfg.Steps, tCurr, time.Since(stepStart).Seconds(), activeMem, peakMem)
+		// Queue this step (GPU starts working)
+		mlx.AsyncEval(newPatches)
 
-		if cfg.Progress != nil {
-			cfg.Progress(i+1, cfg.Steps)
+		// Wait for PREVIOUS step (while GPU works on current)
+		if prevPatches != nil {
+			mlx.Eval(prevPatches)
+			fmt.Printf("    step %d: %.2fs\n", i, time.Since(stepStart).Seconds())
+			stepStart = time.Now()
+			if cfg.Progress != nil {
+				cfg.Progress(i, cfg.Steps)
+			}
 		}
+
+		prevPatches = newPatches
+		patches = newPatches
 	}
 
-	// Free denoising temporaries (but not patches - need it for decode)
-	promptEmbeds.Free()
-	rope.Cos.Free()
-	rope.Sin.Free()
-	latents.Free() // Free the spatial-form latents we created initially
-	if refTokens != nil {
-		refTokens.Tokens.Free()
+	// Final eval for last step
+	mlx.Eval(patches)
+	fmt.Printf("    step %d: %.2fs\n", cfg.Steps, time.Since(stepStart).Seconds())
+	if cfg.Progress != nil {
+		cfg.Progress(cfg.Steps, cfg.Steps)
 	}
+	loopTime := time.Since(loopStart).Seconds()
 
-	// VAE decode - patches is already in [B, L, 128] sequence form
-	// VAE.Decode handles denormalization and unpatchify internally
+	// Report timing and memory at end
+	peakMem := float64(mlx.MetalGetPeakMemory()) / (1024 * 1024 * 1024)
+	fmt.Printf("  Denoised %d steps in %.2fs (%.2fs/step), peak %.1f GB\n",
+		cfg.Steps, loopTime, loopTime/float64(cfg.Steps), peakMem)
+
+	// VAE decode
 	fmt.Print("  Decoding... ")
 	decoded := m.VAE.Decode(patches, patchH, patchW)
-	patches.Free()
 	mlx.Eval(decoded)
 	fmt.Println("✓")
 
@@ -500,25 +513,29 @@ func (m *Model) EncodeImageRefs(images []image.Image) (*ImageCondTokens, error) 
 		return nil, nil
 	}
 
-	// Pixel limit depends on number of images (like diffusers)
-	limitPixels := 2024 * 2024
+	// Limit reference images to reduce attention memory
+	limitPixels := MaxRefPixels
 	if len(images) > 1 {
-		limitPixels = 1024 * 1024
+		limitPixels = MaxRefPixels / 2
 	}
 
 	var allTokens []*mlx.Array
 
 	for _, img := range images {
 		// Prepare image (resize, crop to multiple of 16)
-		prepared, _, _ := PrepareImage(img, limitPixels)
+		prepared, prepW, prepH := PrepareImage(img, limitPixels)
+		fmt.Printf("    Encoding %dx%d image... ", prepW, prepH)
 
 		// Convert to tensor [-1, 1]
 		tensor := ImageToTensor(prepared)
 
 		// Encode with VAE - returns [1, L, 128]
 		encoded := m.VAE.EncodeImage(tensor)
+		squeezed := mlx.Squeeze(encoded, 0) // [L, C]
 
-		allTokens = append(allTokens, mlx.Squeeze(encoded, 0)) // [L, C]
+		// Defer eval - will be done with other setup arrays
+		allTokens = append(allTokens, squeezed)
+		fmt.Println("✓")
 	}
 
 	// For single image, just add batch dimension directly

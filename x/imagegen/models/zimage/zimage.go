@@ -179,9 +179,16 @@ func (m *Model) GenerateFromConfig(ctx context.Context, cfg *GenerateConfig) (*m
 	return result, nil
 }
 
-// GenerateImage implements model.ImageModel interface.
-func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64) (*mlx.Array, error) {
-	return m.Generate(prompt, width, height, steps, seed)
+// GenerateImage implements runner.ImageModel interface.
+func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error) {
+	return m.GenerateFromConfig(ctx, &GenerateConfig{
+		Prompt:   prompt,
+		Width:    width,
+		Height:   height,
+		Steps:    steps,
+		Seed:     seed,
+		Progress: progress,
+	})
 }
 
 // generate is the internal denoising pipeline.

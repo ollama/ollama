@@ -158,6 +158,19 @@ func ComputeRoPE(ids *mlx.Array, axesDims []int32, theta int32) (*mlx.Array, *ml
 	return cos, sin
 }
 
+// compiledRoPERotation fuses: x * cos + x_rotated * sin
+var compiledRoPERotation *mlx.CompiledFunc
+
+func getCompiledRoPERotation() *mlx.CompiledFunc {
+	if compiledRoPERotation == nil {
+		compiledRoPERotation = mlx.CompileShapeless(func(inputs []*mlx.Array) []*mlx.Array {
+			x, xRotated, cos, sin := inputs[0], inputs[1], inputs[2], inputs[3]
+			return []*mlx.Array{mlx.Add(mlx.Mul(x, cos), mlx.Mul(xRotated, sin))}
+		}, true)
+	}
+	return compiledRoPERotation
+}
+
 // ApplyRoPE4D applies 4D rotary position embeddings to queries and keys.
 // x: [B, L, nheads, head_dim]
 // cos, sin: [1, L, 1, head_dim] (with repeat_interleave applied)
@@ -188,8 +201,8 @@ func ApplyRoPE4D(x *mlx.Array, cos, sin *mlx.Array) *mlx.Array {
 	xRotated := mlx.Concatenate([]*mlx.Array{negXImag, xReal}, 4) // [B, L, nheads, half, 2]
 	xRotated = mlx.Reshape(xRotated, B, L, nheads, headDim)       // [B, L, nheads, headDim]
 
-	// out = x * cos + x_rotated * sin
-	return mlx.Add(mlx.Mul(x, cos), mlx.Mul(xRotated, sin))
+	// out = x * cos + x_rotated * sin (fused kernel)
+	return getCompiledRoPERotation().Call(x, xRotated, cos, sin)[0]
 }
 
 // PrepareRoPECache precomputes RoPE values for text and image sequences.

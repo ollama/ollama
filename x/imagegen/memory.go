@@ -73,26 +73,38 @@ func ResolveModelName(modelName string) string {
 // EstimateVRAM returns the estimated VRAM needed for an image generation model.
 // Returns a conservative default of 21GB if the model type cannot be determined.
 func EstimateVRAM(modelName string) uint64 {
+	className := DetectModelType(modelName)
+	if estimate, ok := modelVRAMEstimates[className]; ok {
+		return estimate
+	}
+	return 21 * GB
+}
+
+// DetectModelType reads model_index.json and returns the model type.
+// Checks both "architecture" (Ollama format) and "_class_name" (diffusers format).
+// Returns empty string if detection fails.
+func DetectModelType(modelName string) string {
 	manifest, err := LoadManifest(modelName)
 	if err != nil {
-		return 21 * GB
+		return ""
 	}
 
 	data, err := manifest.ReadConfig("model_index.json")
 	if err != nil {
-		return 21 * GB
+		return ""
 	}
 
-	// Parse just the class name
 	var index struct {
-		ClassName string `json:"_class_name"`
+		Architecture string `json:"architecture"`
+		ClassName    string `json:"_class_name"`
 	}
 	if err := json.Unmarshal(data, &index); err != nil {
-		return 21 * GB
+		return ""
 	}
 
-	if estimate, ok := modelVRAMEstimates[index.ClassName]; ok {
-		return estimate
+	// Prefer architecture (Ollama format), fall back to _class_name (diffusers)
+	if index.Architecture != "" {
+		return index.Architecture
 	}
-	return 21 * GB
+	return index.ClassName
 }
