@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/server/internal/power"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen"
 )
@@ -49,6 +50,10 @@ type Scheduler struct {
 	// happen in parallel
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
+
+	// activeReqs is the number of currently active requests (inluding those loading)
+	// if > 0, we prevent the system from sleeping
+	activeReqs int
 
 	loadFn          func(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
 	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
@@ -105,6 +110,7 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 	runner := s.loaded[req.model.ModelPath]
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
+		s.notifyActive()
 		req.useLoadedRunner(runner, s.finishedReqCh)
 	} else {
 		select {
@@ -164,6 +170,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						// Runner is usable, return it
 						logutil.Trace("using existing loaded runner", "model", pending.model.ModelPath)
+						s.notifyActive()
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
@@ -287,6 +294,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 			runner.refMu.Lock()
 			runner.refCount--
+			s.notifyIdle()
 			if runner.refCount <= 0 {
 				if runner.sessionDuration <= 0 {
 					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
@@ -433,6 +441,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 			}
 			slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
 			req.errCh <- err
+			s.notifyIdle()
 			s.loadedMu.Unlock()
 			return false
 		}
@@ -444,6 +453,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 		}
 	}
 
+	s.notifyActive() // will be decremented on error or when request finishes
 	s.loadedMu.Unlock()
 
 	systemTotalMemory := systemInfo.TotalMemory
@@ -472,6 +482,9 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 				s.activeLoading.Close()
 				s.activeLoading = nil
 				req.errCh <- err
+				s.loadedMu.Lock()
+				s.notifyIdle()
+				s.loadedMu.Unlock()
 			}
 			return true
 		}
@@ -480,6 +493,9 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 		s.activeLoading.Close()
 		s.activeLoading = nil
 		req.errCh <- err
+		s.loadedMu.Lock()
+		s.notifyIdle()
+		s.loadedMu.Unlock()
 		return false
 	}
 
@@ -579,6 +595,7 @@ func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
 
 	s.loadedMu.Lock()
 	s.loaded[req.model.ModelPath] = runner
+	s.notifyActive()
 	s.loadedMu.Unlock()
 
 	// Set up expiration timer
@@ -914,5 +931,19 @@ func (s *Scheduler) expireRunner(model *Model) {
 			s.expiredCh <- runner
 		}
 		runner.refMu.Unlock()
+	}
+}
+
+func (s *Scheduler) notifyActive() {
+	s.activeReqs++
+	if s.activeReqs == 1 {
+		power.PreventSleep()
+	}
+}
+
+func (s *Scheduler) notifyIdle() {
+	s.activeReqs--
+	if s.activeReqs == 0 {
+		power.AllowSleep()
 	}
 }
