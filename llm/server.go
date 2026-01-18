@@ -360,6 +360,36 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 
 	// Note: we always put our dependency paths first
 	// since these are the exact version we compiled/linked against
+	userLibs := []string{}
+	if existing, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok && existing != "" {
+		userLibs = filepath.SplitList(existing)
+	}
+	if len(userLibs) != 0 {
+		seen := make(map[string]struct{}, len(userLibs)+len(gpuLibs))
+		merged := make([]string, 0, len(userLibs)+len(gpuLibs))
+		for _, dir := range userLibs {
+			if dir == "" {
+				continue
+			}
+			if _, ok := seen[dir]; ok {
+				continue
+			}
+			seen[dir] = struct{}{}
+			merged = append(merged, dir)
+		}
+		for _, dir := range gpuLibs {
+			if dir == "" {
+				continue
+			}
+			if _, ok := seen[dir]; ok {
+				continue
+			}
+			seen[dir] = struct{}{}
+			merged = append(merged, dir)
+		}
+		gpuLibs = merged
+	}
+
 	libraryPaths := append([]string{}, gpuLibs...)
 	if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 		libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
