@@ -37,6 +37,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
+		fmt.Fprintln(os.Stderr, "  /connect        Configure an external app to use Ollama")
+		fmt.Fprintln(os.Stderr, "  /launch [app]   Launch a configured app")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -460,6 +462,136 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
+		case strings.HasPrefix(line, "/connect"):
+			args := strings.Fields(line)
+			var appName string
+			if len(args) > 1 {
+				appName = args[1]
+			} else {
+				var err error
+				appName, err = selectApp()
+				if err != nil {
+					fmt.Printf("error: %v\n", err)
+					continue
+				}
+			}
+
+			if _, ok := GetApp(appName); !ok {
+				fmt.Printf("Unknown app: %s\n", appName)
+				continue
+			}
+
+			modelName, err := selectModelForConnect(cmd.Context(), opts.Model)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+
+			if err := SaveConnection(appName, modelName); err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+
+			fmt.Fprintf(os.Stderr, "Added %s to %s\n", modelName, appName)
+
+			if launch, _ := confirmLaunch(appName); launch {
+				if err := runInApp(appName, modelName); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+			}
+			continue
+		case strings.HasPrefix(line, "/launch"):
+			args := strings.Fields(line)
+			var appName string
+			if len(args) >= 2 {
+				appName = args[1]
+			} else {
+				selected, err := selectConnectedApp()
+				if err != nil {
+					fmt.Printf("error: %v\n", err)
+					continue
+				}
+				if selected == "" {
+					// No connected apps, start connect flow
+					fmt.Fprintf(os.Stderr, "No apps configured. Let's set one up.\n\n")
+					appName, err = selectApp()
+					if err != nil {
+						fmt.Printf("error: %v\n", err)
+						continue
+					}
+
+					modelName, err := selectModelForConnect(cmd.Context(), opts.Model)
+					if err != nil {
+						fmt.Printf("error: %v\n", err)
+						continue
+					}
+
+					if err := SaveConnection(appName, modelName); err != nil {
+						fmt.Printf("error: %v\n", err)
+						continue
+					}
+
+					fmt.Fprintf(os.Stderr, "Added %s to %s\n", modelName, appName)
+					if err := runInApp(appName, modelName); err != nil {
+						fmt.Printf("error: %v\n", err)
+					}
+					continue
+				}
+				appName = selected
+			}
+
+			app, ok := GetApp(appName)
+			if !ok {
+				fmt.Printf("Unknown app: %s\n", appName)
+				continue
+			}
+
+			// Check app's own config first
+			modelName := getAppConfiguredModel(appName)
+
+			// Fall back to our saved connection config
+			if modelName == "" {
+				config, err := LoadConnection(appName)
+				if err != nil {
+					if os.IsNotExist(err) {
+						// No config, drop into connect flow
+						modelName, err = selectModelForConnect(cmd.Context(), opts.Model)
+						if err != nil {
+							fmt.Printf("error: %v\n", err)
+							continue
+						}
+
+						if err := SaveConnection(appName, modelName); err != nil {
+							fmt.Printf("error: %v\n", err)
+							continue
+						}
+
+						fmt.Fprintf(os.Stderr, "Added %s to %s\n", modelName, appName)
+					} else {
+						fmt.Printf("error: %v\n", err)
+						continue
+					}
+				} else {
+					modelName = config.Model
+				}
+			}
+
+			// If running model differs from configured, offer to switch
+			if opts.Model != "" && modelName != opts.Model {
+				if switchModel, _ := confirmPrompt(fmt.Sprintf("Switch %s to use %s?", app.DisplayName, opts.Model)); switchModel {
+					modelName = opts.Model
+					if err := SaveConnection(appName, modelName); err != nil {
+						fmt.Printf("error: %v\n", err)
+						continue
+					}
+					fmt.Fprintf(os.Stderr, "Updated %s to %s\n", appName, modelName)
+				}
+			}
+
+			if err := runInApp(app.Name, modelName); err != nil {
+				fmt.Printf("error: %v\n", err)
+			}
+			continue
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			isFile := false
