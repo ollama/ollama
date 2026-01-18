@@ -172,7 +172,7 @@ func (m *Model) generate(cfg *GenerateConfig) (*mlx.Array, error) {
 		cfg.Height = 1024
 	}
 	if cfg.Steps <= 0 {
-		cfg.Steps = 30
+		cfg.Steps = 50
 	}
 	if cfg.CFGScale <= 0 {
 		cfg.CFGScale = 4.0

@@ -11,10 +11,11 @@ import (
 	"github.com/ollama/ollama/x/imagegen/mlx"
 )
 
-// quantizeTensor loads a tensor from safetensors format, quantizes it to affine int8,
+// quantizeTensor loads a tensor from safetensors format, quantizes it,
 // and returns safetensors data for the quantized weights, scales, and biases.
+// Supported quantization types: "fp8" (affine 8-bit)
 // Uses MLX's native SaveSafetensors to ensure correct dtype handling (especially uint32 for quantized weights).
-func quantizeTensor(r io.Reader, name, dtype string, shape []int32) (qweightData, scalesData, qbiasData []byte, qweightShape, scalesShape, qbiasShape []int32, err error) {
+func quantizeTensor(r io.Reader, name, dtype string, shape []int32, quantize string) (qweightData, scalesData, qbiasData []byte, qweightShape, scalesShape, qbiasShape []int32, err error) {
 	tmpDir := ensureTempDir()
 
 	// Read safetensors data to a temp file (LoadSafetensorsNative needs a path)
@@ -50,9 +51,15 @@ func quantizeTensor(r io.Reader, name, dtype string, shape []int32) (qweightData
 		mlx.Eval(arr)
 	}
 
-	// Quantize with affine mode: group_size=32, bits=8
-	// Note: mxfp8 mode doesn't have matmul kernels in MLX, affine mode does
-	qweight, scales, qbiases := mlx.Quantize(arr, 32, 8, "affine")
+	// Quantize based on quantization type
+	var qweight, scales, qbiases *mlx.Array
+	switch quantize {
+	case "fp8":
+		// affine mode: group_size=32, bits=8
+		qweight, scales, qbiases = mlx.Quantize(arr, 32, 8, "affine")
+	default:
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("unsupported quantization type: %s", quantize)
+	}
 
 	// Eval and make contiguous for data access
 	qweight = mlx.Contiguous(qweight)

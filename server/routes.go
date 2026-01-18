@@ -51,7 +51,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen"
-	imagegenapi "github.com/ollama/ollama/x/imagegen/api"
+	xserver "github.com/ollama/ollama/x/server"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -164,29 +164,6 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
-// ScheduleImageGenRunner schedules an image generation model runner.
-// This implements the imagegenapi.RunnerScheduler interface.
-func (s *Server) ScheduleImageGenRunner(c *gin.Context, modelName string, opts api.Options, keepAlive *api.Duration) (llm.LlamaServer, error) {
-	m := &Model{
-		Name:      modelName,
-		ShortName: modelName,
-		ModelPath: modelName, // For image gen, ModelPath is just the model name
-		Config: model.ConfigV2{
-			Capabilities: []string{"image"},
-		},
-	}
-
-	runnerCh, errCh := s.sched.GetRunner(c.Request.Context(), m, opts, keepAlive)
-	var runner *runnerRef
-	select {
-	case runner = <-runnerCh:
-	case err := <-errCh:
-		return nil, err
-	}
-
-	return runner.llama, nil
-}
-
 func signinURL() (string, error) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
@@ -211,12 +188,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
-		return
-	}
-
-	// Check if this is a known image generation model
-	if imagegen.ResolveModelName(req.Model) != "" {
-		imagegenapi.HandleGenerateRequest(c, s, req.Model, req.Prompt, req.KeepAlive, streamResponse)
 		return
 	}
 
@@ -246,6 +217,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	// Handle image generation models
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		s.handleImageGenerate(c, req, name.String(), checkpointStart)
 		return
 	}
 
@@ -1125,11 +1102,27 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	// For image generation models, populate details from imagegen package
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
 			modelDetails.QuantizationLevel = info.Quantization
+		}
+	}
+
+	// For safetensors LLM models (experimental), populate details from config.json
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
+				modelDetails.Family = arch
+			}
+			if paramCount, ok := info["general.parameter_count"].(int64); ok && paramCount > 0 {
+				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
+			}
+		}
+		// Get torch_dtype directly from config.json for quantization level
+		if dtype, err := xserver.GetSafetensorsDtype(name.String()); err == nil && dtype != "" {
+			modelDetails.QuantizationLevel = dtype
 		}
 	}
 
@@ -1215,7 +1208,27 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		// Populate tensor info if verbose
+		if req.Verbose {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+				resp.Tensors = tensors
+			}
+		}
+		return resp, nil
+	}
+
+	// For safetensors LLM models (experimental), populate ModelInfo from config.json
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+			resp.ModelInfo = info
+		}
+		// Populate tensor info if verbose
+		if req.Verbose {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+				resp.Tensors = tensors
+			}
+		}
 		return resp, nil
 	}
 
@@ -1587,12 +1600,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
+	// OpenAI-compatible image generation endpoint
+	r.POST("/v1/images/generations", middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
-
-	// Experimental image generation support
-	imagegenapi.RegisterRoutes(r, s)
 
 	if rc != nil {
 		// wrap old with new
@@ -2459,4 +2471,92 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+// handleImageGenerate handles image generation requests within GenerateHandler.
+// This is called when the model has the Image capability.
+func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, modelName string, checkpointStart time.Time) {
+	// Validate image dimensions
+	const maxDimension int32 = 4096
+	if req.Width > maxDimension || req.Height > maxDimension {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("width and height must be <= %d", maxDimension)})
+		return
+	}
+
+	// Schedule the runner for image generation
+	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	// Handle load-only request (empty prompt)
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Done:       true,
+			DoneReason: "load",
+		})
+		return
+	}
+
+	// Set headers for streaming response
+	c.Header("Content-Type", "application/x-ndjson")
+
+	// Get seed from options if provided
+	var seed int64
+	if s, ok := req.Options["seed"]; ok {
+		switch v := s.(type) {
+		case int:
+			seed = int64(v)
+		case int64:
+			seed = v
+		case float64:
+			seed = int64(v)
+		}
+	}
+
+	var streamStarted bool
+	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
+		Prompt: req.Prompt,
+		Width:  req.Width,
+		Height: req.Height,
+		Steps:  req.Steps,
+		Seed:   seed,
+	}, func(cr llm.CompletionResponse) {
+		streamStarted = true
+		res := api.GenerateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			Done:      cr.Done,
+		}
+
+		if cr.TotalSteps > 0 {
+			res.Completed = int64(cr.Step)
+			res.Total = int64(cr.TotalSteps)
+		}
+
+		if cr.Image != "" {
+			res.Image = cr.Image
+		}
+
+		if cr.Done {
+			res.DoneReason = cr.DoneReason.String()
+			res.Metrics.TotalDuration = time.Since(checkpointStart)
+			res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+		}
+
+		data, _ := json.Marshal(res)
+		c.Writer.Write(append(data, '\n'))
+		c.Writer.Flush()
+	}); err != nil {
+		// Only send JSON error if streaming hasn't started yet
+		// (once streaming starts, headers are committed and we can't change status code)
+		if !streamStarted {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+	}
 }

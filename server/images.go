@@ -41,6 +41,7 @@ var (
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
+	errCapabilityImage      = errors.New("image generation")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -76,7 +77,7 @@ func (m *Model) Capabilities() []model.Capability {
 
 	// Check for image generation model via config capabilities
 	if slices.Contains(m.Config.Capabilities, "image") {
-		return []model.Capability{model.CapabilityImageGeneration}
+		return []model.Capability{model.CapabilityImage}
 	}
 
 	// Check for completion capability
@@ -159,6 +160,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
+		model.CapabilityImage:      errCapabilityImage,
 	}
 
 	for _, cap := range want {
@@ -775,7 +777,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifes
 			Realm:   challenge.Realm,
 			Service: challenge.Service,
 			Scope:   challenge.Scope,
-		})
+		}, base.Host)
 	}
 
 	if err := transfer.Download(ctx, transfer.DownloadOptions{
@@ -850,7 +852,7 @@ func pushWithTransfer(ctx context.Context, mp ModelPath, layers []Layer, manifes
 			Realm:   challenge.Realm,
 			Service: challenge.Service,
 			Scope:   challenge.Scope,
-		})
+		}, base.Host)
 	}
 
 	return transfer.Upload(ctx, transfer.UploadOptions{
@@ -916,7 +918,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
-			token, err := getAuthorizationToken(ctx, challenge)
+			token, err := getAuthorizationToken(ctx, challenge, requestURL.Host)
 			if err != nil {
 				return nil, err
 			}

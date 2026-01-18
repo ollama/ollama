@@ -94,13 +94,6 @@ func TestEstimateVRAMDefault(t *testing.T) {
 	}
 }
 
-func TestHasTensorLayers(t *testing.T) {
-	// Non-existent model should return false
-	if HasTensorLayers("nonexistent-model") {
-		t.Error("HasTensorLayers() should return false for non-existent model")
-	}
-}
-
 func TestResolveModelName(t *testing.T) {
 	// Non-existent model should return empty string
 	result := ResolveModelName("nonexistent-model")

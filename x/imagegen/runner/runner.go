@@ -36,6 +36,8 @@ type Response struct {
 	Content string `json:"content,omitempty"`
 	Image   string `json:"image,omitempty"` // Base64-encoded PNG
 	Done    bool   `json:"done"`
+	Step    int    `json:"step,omitempty"`
+	Total   int    `json:"total,omitempty"`
 }
 
 // Server holds the model and handles requests
@@ -62,6 +64,12 @@ func Execute(args []string) error {
 		return fmt.Errorf("--port is required")
 	}
 
+	err := mlx.InitMLX()
+	if err != nil {
+		slog.Error("unable to initialize MLX", "error", err)
+		return err
+	}
+	slog.Info("MLX library initialized")
 	slog.Info("starting image runner", "model", *modelName, "port", *port)
 
 	// Check memory requirements before loading
@@ -136,16 +144,8 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Apply defaults
-	if req.Width <= 0 {
-		req.Width = 1024
-	}
-	if req.Height <= 0 {
-		req.Height = 1024
-	}
-	if req.Steps <= 0 {
-		req.Steps = 9
-	}
+	// Model applies its own defaults for width/height/steps
+	// Only seed needs to be set here if not provided
 	if req.Seed <= 0 {
 		req.Seed = time.Now().UnixNano()
 	}
@@ -169,8 +169,9 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		Seed:   req.Seed,
 		Progress: func(step, total int) {
 			resp := Response{
-				Content: fmt.Sprintf("\rGenerating: step %d/%d", step, total),
-				Done:    false,
+				Step:  step,
+				Total: total,
+				Done:  false,
 			}
 			data, _ := json.Marshal(resp)
 			w.Write(data)

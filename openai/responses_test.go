@@ -850,7 +850,7 @@ func TestFromResponsesRequest_Images(t *testing.T) {
 }
 
 func TestResponsesStreamConverter_TextOnly(t *testing.T) {
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	// First chunk with content
 	events := converter.Process(api.ChatResponse{
@@ -916,7 +916,7 @@ func TestResponsesStreamConverter_TextOnly(t *testing.T) {
 }
 
 func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{
@@ -952,7 +952,7 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 }
 
 func TestResponsesStreamConverter_Reasoning(t *testing.T) {
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	// First chunk with thinking
 	events := converter.Process(api.ChatResponse{
@@ -1267,7 +1267,7 @@ func TestToResponse_WithReasoning(t *testing.T) {
 			Content:  "The answer is 42",
 		},
 		Done: true,
-	})
+	}, ResponsesRequest{})
 
 	// Should have 2 output items: reasoning + message
 	if len(response.Output) != 2 {
@@ -1638,7 +1638,7 @@ func TestFromResponsesRequest_ShorthandFormats(t *testing.T) {
 
 func TestResponsesStreamConverter_OutputIncludesContent(t *testing.T) {
 	// Verify that response.output_item.done includes content field for messages
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	// First chunk
 	converter.Process(api.ChatResponse{
@@ -1686,7 +1686,7 @@ func TestResponsesStreamConverter_OutputIncludesContent(t *testing.T) {
 
 func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) {
 	// Verify that response.completed includes the output array
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	// Process some content
 	converter.Process(api.ChatResponse{
@@ -1730,7 +1730,7 @@ func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) 
 
 func TestResponsesStreamConverter_ResponseCreatedIncludesOutput(t *testing.T) {
 	// Verify that response.created includes an empty output array
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{Content: "Hi"},
@@ -1757,7 +1757,7 @@ func TestResponsesStreamConverter_ResponseCreatedIncludesOutput(t *testing.T) {
 
 func TestResponsesStreamConverter_SequenceNumbers(t *testing.T) {
 	// Verify that events include incrementing sequence numbers
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{Content: "Hello"},
@@ -1791,7 +1791,7 @@ func TestResponsesStreamConverter_SequenceNumbers(t *testing.T) {
 
 func TestResponsesStreamConverter_FunctionCallStatus(t *testing.T) {
 	// Verify that function call items include status field
-	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b")
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{

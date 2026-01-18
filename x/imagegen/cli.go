@@ -7,7 +7,6 @@ package imagegen
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,69 +38,9 @@ func DefaultOptions() ImageGenOptions {
 	return ImageGenOptions{
 		Width:  1024,
 		Height: 1024,
-		Steps:  9,
+		Steps:  0, // 0 means model default
 		Seed:   0, // 0 means random
 	}
-}
-
-// ModelInfo contains metadata about an image generation model.
-type ModelInfo struct {
-	Architecture   string
-	ParameterCount int64
-	Quantization   string
-}
-
-// GetModelInfo returns metadata about an image generation model.
-func GetModelInfo(modelName string) (*ModelInfo, error) {
-	manifest, err := LoadManifest(modelName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load manifest: %w", err)
-	}
-
-	info := &ModelInfo{}
-
-	// Read model_index.json for architecture, parameter count, and quantization
-	if data, err := manifest.ReadConfig("model_index.json"); err == nil {
-		var index struct {
-			Architecture   string `json:"architecture"`
-			ParameterCount int64  `json:"parameter_count"`
-			Quantization   string `json:"quantization"`
-		}
-		if json.Unmarshal(data, &index) == nil {
-			info.Architecture = index.Architecture
-			info.ParameterCount = index.ParameterCount
-			info.Quantization = index.Quantization
-		}
-	}
-
-	// Fallback: detect quantization from tensor names if not in config
-	if info.Quantization == "" {
-		for _, layer := range manifest.Manifest.Layers {
-			if strings.HasSuffix(layer.Name, ".weight_scale") {
-				info.Quantization = "FP8"
-				break
-			}
-		}
-		if info.Quantization == "" {
-			info.Quantization = "BF16"
-		}
-	}
-
-	// Fallback: estimate parameter count if not in config
-	if info.ParameterCount == 0 {
-		var totalSize int64
-		for _, layer := range manifest.Manifest.Layers {
-			if layer.MediaType == "application/vnd.ollama.image.tensor" {
-				if !strings.HasSuffix(layer.Name, "_scale") && !strings.HasSuffix(layer.Name, "_qbias") {
-					totalSize += layer.Size
-				}
-			}
-		}
-		// Assume BF16 (2 bytes/param) as rough estimate
-		info.ParameterCount = totalSize / 2
-	}
-
-	return info, nil
 }
 
 // RegisterFlags adds image generation flags to the given command.
@@ -109,14 +48,28 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("width", 1024, "Image width")
 	cmd.Flags().Int("height", 1024, "Image height")
-	cmd.Flags().Int("steps", 9, "Denoising steps")
+	cmd.Flags().Int("steps", 0, "Denoising steps (0 = model default)")
 	cmd.Flags().Int("seed", 0, "Random seed (0 for random)")
 	cmd.Flags().String("negative", "", "Negative prompt")
+	// Hide from main flags section - shown in separate section via AppendFlagsDocs
 	cmd.Flags().MarkHidden("width")
 	cmd.Flags().MarkHidden("height")
 	cmd.Flags().MarkHidden("steps")
 	cmd.Flags().MarkHidden("seed")
 	cmd.Flags().MarkHidden("negative")
+}
+
+// AppendFlagsDocs appends image generation flags documentation to the command's usage template.
+func AppendFlagsDocs(cmd *cobra.Command) {
+	usage := `
+Image Generation Flags (experimental):
+      --width int      Image width
+      --height int     Image height
+      --steps int      Denoising steps
+      --seed int       Random seed
+      --negative str   Negative prompt
+`
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + usage)
 }
 
 // RunCLI handles the CLI for image generation models.
@@ -158,17 +111,15 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		return err
 	}
 
-	// Build request with image gen options encoded in Options fields
-	// NumCtx=width, NumGPU=height, NumPredict=steps, Seed=seed
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
-		Options: map[string]any{
-			"num_ctx":     opts.Width,
-			"num_gpu":     opts.Height,
-			"num_predict": opts.Steps,
-			"seed":        opts.Seed,
-		},
+		Width:  int32(opts.Width),
+		Height: int32(opts.Height),
+		Steps:  int32(opts.Steps),
+	}
+	if opts.Seed != 0 {
+		req.Options = map[string]any{"seed": opts.Seed}
 	}
 	if keepAlive != nil {
 		req.KeepAlive = keepAlive
@@ -182,32 +133,25 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 	var stepBar *progress.StepBar
 	var imageBase64 string
 	err = client.Generate(cmd.Context(), req, func(resp api.GenerateResponse) error {
-		content := resp.Response
-
-		// Handle progress updates - parse step info and switch to step bar
-		if strings.HasPrefix(content, "\rGenerating:") {
-			var step, total int
-			fmt.Sscanf(content, "\rGenerating: step %d/%d", &step, &total)
-			if stepBar == nil && total > 0 {
+		// Handle progress updates using structured fields
+		if resp.Total > 0 {
+			if stepBar == nil {
 				spinner.Stop()
-				stepBar = progress.NewStepBar("Generating", total)
+				stepBar = progress.NewStepBar("Generating", int(resp.Total))
 				p.Add("", stepBar)
 			}
-			if stepBar != nil {
-				stepBar.Set(step)
-			}
-			return nil
+			stepBar.Set(int(resp.Completed))
 		}
 
-		// Handle final response with base64 image data
-		if resp.Done && strings.HasPrefix(content, "IMAGE_BASE64:") {
-			imageBase64 = content[13:]
+		// Handle final response with image data
+		if resp.Done && resp.Image != "" {
+			imageBase64 = resp.Image
 		}
 
 		return nil
 	})
 
-	p.Stop()
+	p.StopAndClear()
 	if err != nil {
 		return err
 	}
@@ -244,6 +188,23 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 	if err != nil {
 		return err
 	}
+
+	// Preload the model with the specified keepalive
+	p := progress.NewProgress(os.Stderr)
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
+
+	preloadReq := &api.GenerateRequest{
+		Model:     modelName,
+		KeepAlive: keepAlive,
+	}
+	if err := client.Generate(cmd.Context(), preloadReq, func(resp api.GenerateResponse) error {
+		return nil
+	}); err != nil {
+		p.StopAndClear()
+		return fmt.Errorf("failed to load model: %w", err)
+	}
+	p.StopAndClear()
 
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:      ">>> ",
@@ -282,7 +243,7 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 		case strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/?"), strings.HasPrefix(line, "/help"):
-			printInteractiveHelp(opts)
+			printInteractiveHelp()
 			continue
 		case strings.HasPrefix(line, "/set "):
 			if err := handleSetCommand(line[5:], &opts); err != nil {
@@ -301,12 +262,12 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 		req := &api.GenerateRequest{
 			Model:  modelName,
 			Prompt: line,
-			Options: map[string]any{
-				"num_ctx":     opts.Width,
-				"num_gpu":     opts.Height,
-				"num_predict": opts.Steps,
-				"seed":        opts.Seed,
-			},
+			Width:  int32(opts.Width),
+			Height: int32(opts.Height),
+			Steps:  int32(opts.Steps),
+		}
+		if opts.Seed != 0 {
+			req.Options = map[string]any{"seed": opts.Seed}
 		}
 		if keepAlive != nil {
 			req.KeepAlive = keepAlive
@@ -321,32 +282,25 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 		var imageBase64 string
 
 		err = client.Generate(cmd.Context(), req, func(resp api.GenerateResponse) error {
-			content := resp.Response
-
-			// Handle progress updates - parse step info and switch to step bar
-			if strings.HasPrefix(content, "\rGenerating:") {
-				var step, total int
-				fmt.Sscanf(content, "\rGenerating: step %d/%d", &step, &total)
-				if stepBar == nil && total > 0 {
+			// Handle progress updates using structured fields
+			if resp.Total > 0 {
+				if stepBar == nil {
 					spinner.Stop()
-					stepBar = progress.NewStepBar("Generating", total)
+					stepBar = progress.NewStepBar("Generating", int(resp.Total))
 					p.Add("", stepBar)
 				}
-				if stepBar != nil {
-					stepBar.Set(step)
-				}
-				return nil
+				stepBar.Set(int(resp.Completed))
 			}
 
-			// Handle final response with base64 image data
-			if resp.Done && strings.HasPrefix(content, "IMAGE_BASE64:") {
-				imageBase64 = content[13:]
+			// Handle final response with image data
+			if resp.Done && resp.Image != "" {
+				imageBase64 = resp.Image
 			}
 
 			return nil
 		})
 
-		p.Stop()
+		p.StopAndClear()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue
@@ -397,12 +351,13 @@ func sanitizeFilename(s string) string {
 }
 
 // printInteractiveHelp prints help for interactive mode commands.
-func printInteractiveHelp(opts ImageGenOptions) {
+// TODO: reconcile /set commands with /set parameter in text gen REPL (cmd/cmd.go)
+func printInteractiveHelp() {
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  /set width <n>     Set image width (current:", opts.Width, ")")
-	fmt.Fprintln(os.Stderr, "  /set height <n>    Set image height (current:", opts.Height, ")")
-	fmt.Fprintln(os.Stderr, "  /set steps <n>     Set denoising steps (current:", opts.Steps, ")")
-	fmt.Fprintln(os.Stderr, "  /set seed <n>      Set random seed (current:", opts.Seed, ", 0=random)")
+	fmt.Fprintln(os.Stderr, "  /set width <n>     Set image width")
+	fmt.Fprintln(os.Stderr, "  /set height <n>    Set image height")
+	fmt.Fprintln(os.Stderr, "  /set steps <n>     Set denoising steps")
+	fmt.Fprintln(os.Stderr, "  /set seed <n>      Set random seed")
 	fmt.Fprintln(os.Stderr, "  /set negative <s>  Set negative prompt")
 	fmt.Fprintln(os.Stderr, "  /show              Show current settings")
 	fmt.Fprintln(os.Stderr, "  /bye               Exit")

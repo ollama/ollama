@@ -48,7 +48,7 @@ func main() {
 	// Image generation params
 	width := flag.Int("width", 1024, "Image width")
 	height := flag.Int("height", 1024, "Image height")
-	steps := flag.Int("steps", 9, "Denoising steps")
+	steps := flag.Int("steps", 0, "Denoising steps (0 = model default)")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
 
@@ -76,6 +76,11 @@ func main() {
 	if *modelPath == "" {
 		flag.Usage()
 		return
+	}
+
+	// Check if MLX initialized successfully
+	if !mlx.IsMLXAvailable() {
+		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
 	}
 
 	// CPU profiling
