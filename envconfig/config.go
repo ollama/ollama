@@ -206,6 +206,9 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// DefaultThink sets the default thinking behavior when not explicitly specified in API requests
+	// Can be "true", "false", "high", "medium", or "low"
+	DefaultThink = String("OLLAMA_DEFAULT_THINK")
 )
 
 func String(s string) func() string {
@@ -274,6 +277,7 @@ type EnvVar struct {
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_DEFAULT_THINK":     {"OLLAMA_DEFAULT_THINK", DefaultThink(), "Default thinking behavior for reasoning models (values: true, false, high, medium, low)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
