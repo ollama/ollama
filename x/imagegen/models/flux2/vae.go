@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/imagegen/vae"
 )
 
 // VAEConfig holds AutoencoderKLFlux2 configuration
@@ -311,6 +312,12 @@ func (mb *VAEMidBlock) Forward(x *mlx.Array) *mlx.Array {
 	return x
 }
 
+// DefaultTilingConfig returns reasonable defaults for tiled decoding
+// Matches diffusers: tile_latent_min_size=64, tile_overlap_factor=0.25
+func DefaultTilingConfig() *vae.TilingConfig {
+	return vae.DefaultTilingConfig()
+}
+
 // AutoencoderKLFlux2 is the Flux2 VAE with BatchNorm
 type AutoencoderKLFlux2 struct {
 	Config *VAEConfig
@@ -335,6 +342,9 @@ type AutoencoderKLFlux2 struct {
 
 	// BatchNorm for latent normalization
 	LatentBN *BatchNorm2D
+
+	// Tiling configuration (nil = no tiling)
+	Tiling *vae.TilingConfig
 }
 
 // DownEncoderBlock2D implements a downsampling encoder block
@@ -725,21 +735,37 @@ func (vae *AutoencoderKLFlux2) denormalizePatchified(x *mlx.Array) *mlx.Array {
 }
 
 // Decode decodes latent patches to images.
+// If Tiling is set, uses tiled decoding to reduce memory for large images.
 // latents: [B, L, C*4] patchified latents from transformer
 // pH, pW: patch grid dimensions
 // Returns: [B, 3, H, W] image tensor
-func (vae *AutoencoderKLFlux2) Decode(latents *mlx.Array, pH, pW int32) *mlx.Array {
-	// Denormalize patchified latents using BatchNorm
-	// latents: [B, L, 128] where 128 = 32 latent channels * 4 (2x2 patch)
-	// BatchNorm has 128 channels matching this dimension
-	z := vae.denormalizePatchified(latents)
+func (v *AutoencoderKLFlux2) Decode(latents *mlx.Array, pH, pW int32) *mlx.Array {
+	// Denormalize patchified latents
+	z := v.denormalizePatchified(latents)
 
 	// Unpatchify: [B, L, C*4] -> [B, C, H, W]
-	z = vae.Unpatchify(z, pH, pW, vae.Config.LatentChannels)
+	z = v.Unpatchify(z, pH, pW, v.Config.LatentChannels)
 
 	// Convert NCHW -> NHWC for processing
 	z = mlx.Transpose(z, 0, 2, 3, 1)
 
+	// Use tiled decoding if enabled
+	if v.Tiling != nil {
+		mlx.Eval(z)
+		return vae.DecodeTiled(z, v.Tiling, v.decodeTile)
+	}
+
+	// Direct decode (no tiling)
+	h := v.decodeTile(z)
+	h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
+	h = mlx.Transpose(h, 0, 3, 1, 2)
+	return h
+}
+
+// decodeTile decodes a single latent tile to pixels (internal helper)
+// z: [B, H, W, C] latent tile in NHWC format
+// Returns: [B, H*8, W*8, 3] pixel tile in NHWC format (before clipping)
+func (vae *AutoencoderKLFlux2) decodeTile(z *mlx.Array) *mlx.Array {
 	// Post-quant conv
 	if vae.PostQuantConv != nil {
 		z = vae.PostQuantConv.Forward(z)
@@ -760,10 +786,6 @@ func (vae *AutoencoderKLFlux2) Decode(latents *mlx.Array, pH, pW int32) *mlx.Arr
 	// VAE outputs [-1, 1], convert to [0, 1]
 	h = mlx.MulScalar(h, 0.5)
 	h = mlx.AddScalar(h, 0.5)
-	h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
-
-	// Convert NHWC -> NCHW for output
-	h = mlx.Transpose(h, 0, 3, 1, 2)
 
 	return h
 }

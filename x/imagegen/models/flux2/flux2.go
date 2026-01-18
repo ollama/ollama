@@ -102,30 +102,26 @@ func (m *Model) Load(modelName string) error {
 	if err := m.TextEncoder.Load(manifest, "text_encoder/config.json"); err != nil {
 		return fmt.Errorf("text encoder: %w", err)
 	}
-	mlx.Eval(mlx.Collect(m.TextEncoder)...)
-	fmt.Printf("  (%.1f GB, peak %.1f GB)\n",
-		float64(mlx.MetalGetActiveMemory())/(1024*1024*1024),
-		float64(mlx.MetalGetPeakMemory())/(1024*1024*1024))
 
 	// Load transformer
 	m.Transformer = &Flux2Transformer2DModel{}
 	if err := m.Transformer.Load(manifest); err != nil {
 		return fmt.Errorf("transformer: %w", err)
 	}
-	mlx.Eval(mlx.Collect(m.Transformer)...)
-	fmt.Printf("  (%.1f GB, peak %.1f GB)\n",
-		float64(mlx.MetalGetActiveMemory())/(1024*1024*1024),
-		float64(mlx.MetalGetPeakMemory())/(1024*1024*1024))
 
 	// Load VAE
 	m.VAE = &AutoencoderKLFlux2{}
 	if err := m.VAE.Load(manifest); err != nil {
 		return fmt.Errorf("VAE: %w", err)
 	}
-	mlx.Eval(mlx.Collect(m.VAE)...)
-	fmt.Printf("  (%.1f GB, peak %.1f GB)\n",
-		float64(mlx.MetalGetActiveMemory())/(1024*1024*1024),
-		float64(mlx.MetalGetPeakMemory())/(1024*1024*1024))
+
+	// Evaluate all weights in a single batch (reduces GPU sync overhead)
+	fmt.Print("  Evaluating weights... ")
+	allWeights := mlx.Collect(m.TextEncoder)
+	allWeights = append(allWeights, mlx.Collect(m.Transformer)...)
+	allWeights = append(allWeights, mlx.Collect(m.VAE)...)
+	mlx.Eval(allWeights...)
+	fmt.Println("✓")
 
 	// Load scheduler config
 	m.SchedulerConfig = DefaultSchedulerConfig()
@@ -187,11 +183,11 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 	})
 }
 
-// MaxOutputPixels is the maximum output resolution (about 1 megapixel, ~1024x1024)
-const MaxOutputPixels = 1024 * 1024
+// MaxOutputPixels is the maximum output resolution (4 megapixels, ~2048x2048)
+const MaxOutputPixels = 2048 * 2048
 
 // MaxRefPixels is the maximum resolution for reference images (smaller to reduce attention memory)
-const MaxRefPixels = 512 * 1024 // ~720x720
+const MaxRefPixels = 728 * 728
 
 // generate is the internal denoising pipeline.
 func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, error) {
@@ -247,7 +243,6 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	// Text encoding with multi-layer extraction (no padding, use true sequence length)
 	fmt.Print("  Encoding prompt... ")
 	promptEmbeds, textLen := m.TextEncoder.EncodePromptWithLayers(m.Tokenizer, cfg.Prompt, 512, TextEncoderLayerIndices, false)
-	// Defer eval - will be done with other setup arrays
 	fmt.Println("✓")
 
 	// Load and encode reference images if provided
@@ -304,6 +299,10 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	} else {
 		rope = PrepareRoPECache(textLen, patchH, patchW, tcfg.AxesDimsRoPE, tcfg.RopeTheta)
 	}
+	defer func() {
+		rope.Cos.Free()
+		rope.Sin.Free()
+	}()
 
 	// Pre-compute all timesteps before the loop to avoid per-step tensor creation
 	timesteps := make([]*mlx.Array, cfg.Steps)
@@ -312,14 +311,18 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		timesteps[i] = mlx.ToBFloat16(mlx.NewArray([]float32{tCurr}, []int32{1}))
 	}
 
-	// Evaluate all setup arrays together (single sync point)
+	// Evaluate setup arrays
+	fmt.Print("  Evaluating setup... ")
+	setupStart := time.Now()
 	toEval := []*mlx.Array{promptEmbeds, patches, rope.Cos, rope.Sin}
 	toEval = append(toEval, timesteps...)
 	if refTokens != nil {
 		toEval = append(toEval, refTokens.Tokens)
 	}
 	mlx.Eval(toEval...)
-	fmt.Println("  Setup complete")
+	mlx.MetalResetPeakMemory() // Reset peak to measure generation separately
+	fmt.Printf("✓ (%.2fs, %.1f GB)\n", time.Since(setupStart).Seconds(),
+		float64(mlx.MetalGetActiveMemory())/(1024*1024*1024))
 
 	if cfg.Progress != nil {
 		cfg.Progress(0, cfg.Steps)
@@ -328,10 +331,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	loopStart := time.Now()
 	stepStart := time.Now()
 
-	// Pipelined denoising: build step N+1's graph while GPU executes step N
-	// Pattern: AsyncEval(current), then Eval(previous)
-	var prevPatches *mlx.Array
-
+	// Denoising loop
 	for i := 0; i < cfg.Steps; i++ {
 		// Check for cancellation
 		if ctx != nil {
@@ -355,57 +355,54 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 			imgInput = mlx.Concatenate([]*mlx.Array{patches, refTokens.Tokens}, 1)
 		}
 
-		// Build transformer graph - chains onto patches (may still be computing)
+		// Transformer forward pass
 		output := m.Transformer.Forward(imgInput, promptEmbeds, timestep, rope)
 
 		// If we concatenated reference tokens, slice to only get noise portion
 		if refTokens != nil {
 			output = mlx.Slice(output, []int32{0, 0, 0}, []int32{1, noiseSeqLen, output.Shape()[2]})
-			imgInput.Free()
 		}
 
-		// Scheduler step - chains onto output
+		// Scheduler step (keep reference to old patches for the computation graph)
 		newPatches := scheduler.Step(output, patches, i)
 
 		if cfg.CapturePath != "" && i == 1 {
 			mlx.MetalStopCapture()
 		}
 
-		// Queue this step (GPU starts working)
-		mlx.AsyncEval(newPatches)
-
-		// Wait for PREVIOUS step (while GPU works on current)
-		if prevPatches != nil {
-			mlx.Eval(prevPatches)
-			fmt.Printf("    step %d: %.2fs\n", i, time.Since(stepStart).Seconds())
-			stepStart = time.Now()
-			if cfg.Progress != nil {
-				cfg.Progress(i, cfg.Steps)
-			}
-		}
-
-		prevPatches = newPatches
+		mlx.Eval(newPatches)
 		patches = newPatches
+
+		elapsed := time.Since(stepStart).Seconds()
+		peakGB := float64(mlx.MetalGetPeakMemory()) / (1024 * 1024 * 1024)
+		if i == 0 {
+			fmt.Printf("    step %d: %.2fs (JIT warmup), peak %.1f GB\n", i+1, elapsed, peakGB)
+		} else {
+			fmt.Printf("    step %d: %.2fs, peak %.1f GB\n", i+1, elapsed, peakGB)
+		}
+		stepStart = time.Now()
+		if cfg.Progress != nil {
+			cfg.Progress(i+1, cfg.Steps)
+		}
 	}
 
-	// Final eval for last step
-	mlx.Eval(patches)
-	fmt.Printf("    step %d: %.2fs\n", cfg.Steps, time.Since(stepStart).Seconds())
-	if cfg.Progress != nil {
-		cfg.Progress(cfg.Steps, cfg.Steps)
-	}
 	loopTime := time.Since(loopStart).Seconds()
-
-	// Report timing and memory at end
 	peakMem := float64(mlx.MetalGetPeakMemory()) / (1024 * 1024 * 1024)
 	fmt.Printf("  Denoised %d steps in %.2fs (%.2fs/step), peak %.1f GB\n",
 		cfg.Steps, loopTime, loopTime/float64(cfg.Steps), peakMem)
 
-	// VAE decode
-	fmt.Print("  Decoding... ")
+	// VAE decode with tiling for larger images
+	fmt.Print("  Decoding VAE... ")
+	vaeStart := time.Now()
+	// Enable tiling for images > 512x512 (latent > 64x64)
+	// VAE attention is O(n²) on latent pixels, tiling reduces memory significantly
+	if patchH*2 > 64 || patchW*2 > 64 {
+		m.VAE.Tiling = DefaultTilingConfig()
+	}
 	decoded := m.VAE.Decode(patches, patchH, patchW)
 	mlx.Eval(decoded)
-	fmt.Println("✓")
+	fmt.Printf("✓ (%.2fs, peak %.1f GB)\n", time.Since(vaeStart).Seconds(),
+		float64(mlx.MetalGetPeakMemory())/(1024*1024*1024))
 
 	return decoded, nil
 }
