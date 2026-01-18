@@ -7,16 +7,20 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
 	"github.com/ollama/ollama/x/imagegen/models/llama"
-	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image_edit"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
@@ -47,8 +51,8 @@ func main() {
 	imagePath := flag.String("image", "", "Image path for multimodal models")
 
 	// Image generation params
-	width := flag.Int("width", 1024, "Image width")
-	height := flag.Int("height", 1024, "Image height")
+	width := flag.Int("width", 0, "Image width (0 = auto from input or 1024)")
+	height := flag.Int("height", 0, "Image height (0 = auto from input or 1024)")
 	steps := flag.Int("steps", 0, "Denoising steps (0 = model default)")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
@@ -129,12 +133,24 @@ func main() {
 		if loadErr := m.Load(*modelPath); loadErr != nil {
 			log.Fatal(loadErr)
 		}
+		// Load input images with EXIF orientation correction
+		var loadedImages []image.Image
+		for _, path := range inputImages {
+			img, loadErr := loadImageWithEXIF(path)
+			if loadErr != nil {
+				log.Fatalf("Failed to load image %s: %v", path, loadErr)
+			}
+			loadedImages = append(loadedImages, img)
+		}
 		// When input images provided and user didn't override dimensions, use 0 to match input
 		fluxWidth := int32(*width)
 		fluxHeight := int32(*height)
-		if len(inputImages) > 0 && *width == 1024 && *height == 1024 {
-			fluxWidth = 0
-			fluxHeight = 0
+		if len(loadedImages) > 0 && *width == 0 && *height == 0 {
+			// Both unset, will auto-detect from input
+		} else if len(loadedImages) > 0 && *width == 0 {
+			fluxWidth = 0 // Compute from height + aspect ratio
+		} else if len(loadedImages) > 0 && *height == 0 {
+			fluxHeight = 0 // Compute from width + aspect ratio
 		}
 		var img *mlx.Array
 		img, err = m.GenerateFromConfig(context.Background(), &flux2.GenerateConfig{
@@ -145,7 +161,7 @@ func main() {
 			GuidanceScale: float32(*cfgScale),
 			Seed:          *seed,
 			CapturePath:   *gpuCapture,
-			InputImages:   inputImages,
+			InputImages:   loadedImages,
 		})
 		if err == nil {
 			err = saveImageArray(img, *out)
@@ -325,4 +341,13 @@ func detectModelKind(modelPath string) (string, error) {
 	}
 
 	return cfg.ModelType, nil
+}
+
+// loadImageWithEXIF loads an image from a file path with EXIF orientation correction.
+func loadImageWithEXIF(path string) (image.Image, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	return imagegen.LoadImageFromBytes(data)
 }

@@ -9,10 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	_ "image/jpeg"
-	_ "image/png"
 	"math"
-	"os"
 	"time"
 
 	"github.com/ollama/ollama/x/imagegen"
@@ -32,7 +29,7 @@ type GenerateConfig struct {
 	Seed          int64        // Random seed
 	Progress      ProgressFunc // Optional progress callback
 	CapturePath   string       // GPU capture path (debug)
-	InputImages   []string     // Paths to reference images for image conditioning
+	InputImages   []image.Image // Reference images for image conditioning (already loaded)
 }
 
 // ProgressFunc is called during generation with step progress.
@@ -203,13 +200,22 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	}
 
 	// Determine output dimensions
-	if len(cfg.InputImages) > 0 && cfg.Width <= 0 && cfg.Height <= 0 {
-		// Match first input image's aspect ratio
-		img, err := LoadImage(cfg.InputImages[0])
-		if err == nil {
-			bounds := img.Bounds()
-			cfg.Width = int32(bounds.Dx())
-			cfg.Height = int32(bounds.Dy())
+	if len(cfg.InputImages) > 0 {
+		// With input images, compute missing dimension from aspect ratio
+		// Images are already EXIF-rotated by the caller
+		bounds := cfg.InputImages[0].Bounds()
+		imgW, imgH := bounds.Dx(), bounds.Dy()
+		aspectRatio := float64(imgH) / float64(imgW)
+		if cfg.Width > 0 && cfg.Height <= 0 {
+			// Width specified, compute height
+			cfg.Height = int32(math.Round(float64(cfg.Width)*aspectRatio/16) * 16)
+		} else if cfg.Height > 0 && cfg.Width <= 0 {
+			// Height specified, compute width
+			cfg.Width = int32(math.Round(float64(cfg.Height)/aspectRatio/16) * 16)
+		} else if cfg.Width <= 0 && cfg.Height <= 0 {
+			// Neither specified, use input dimensions
+			cfg.Width = int32(imgW)
+			cfg.Height = int32(imgH)
 		}
 	}
 	if cfg.Width <= 0 {
@@ -223,11 +229,11 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	pixels := int(cfg.Width) * int(cfg.Height)
 	if pixels > MaxOutputPixels {
 		scale := math.Sqrt(float64(MaxOutputPixels) / float64(pixels))
-		cfg.Width = int32(float64(cfg.Width) * scale)
-		cfg.Height = int32(float64(cfg.Height) * scale)
+		cfg.Width = int32(math.Round(float64(cfg.Width) * scale / 16) * 16)
+		cfg.Height = int32(math.Round(float64(cfg.Height) * scale / 16) * 16)
 	}
-	cfg.Height = (cfg.Height / 16) * 16
-	cfg.Width = (cfg.Width / 16) * 16
+	cfg.Height = int32((cfg.Height + 8) / 16 * 16) // round to nearest 16
+	cfg.Width = int32((cfg.Width + 8) / 16 * 16)
 	fmt.Printf("  Output: %dx%d\n", cfg.Width, cfg.Height)
 
 	tcfg := m.Transformer.TransformerConfig
@@ -245,32 +251,24 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	promptEmbeds, textLen := m.TextEncoder.EncodePromptWithLayers(m.Tokenizer, cfg.Prompt, 512, TextEncoderLayerIndices, false)
 	fmt.Println("✓")
 
-	// Load and encode reference images if provided
+	// Encode reference images if provided
 	var refTokens *ImageCondTokens
 	var refHeights, refWidths []int32
 	if len(cfg.InputImages) > 0 {
 		fmt.Printf("  Encoding %d reference image(s):\n", len(cfg.InputImages))
-		var images []image.Image
-		for _, path := range cfg.InputImages {
-			img, err := LoadImage(path)
-			if err != nil {
-				return nil, fmt.Errorf("load image %s: %w", path, err)
-			}
-			images = append(images, img)
-		}
 
 		var err error
-		refTokens, err = m.EncodeImageRefs(images)
+		refTokens, err = m.EncodeImageRefs(cfg.InputImages)
 		if err != nil {
 			return nil, fmt.Errorf("encode reference images: %w", err)
 		}
 
 		// Extract heights/widths for RoPE computation (same limits as EncodeImageRefs)
 		limitPixels := MaxRefPixels
-		if len(images) > 1 {
+		if len(cfg.InputImages) > 1 {
 			limitPixels = MaxRefPixels / 2
 		}
-		for _, img := range images {
+		for _, img := range cfg.InputImages {
 			_, w, h := PrepareImage(img, limitPixels)
 			refHeights = append(refHeights, int32(h/16))
 			refWidths = append(refWidths, int32(w/16))
@@ -430,21 +428,6 @@ func LoadPersistent(modelName string) (*Model, error) {
 
 // ImageRefScale is the time coordinate offset between reference images (matches diffusers scale=10)
 const ImageRefScale = 10
-
-// LoadImage loads an image from disk.
-func LoadImage(path string) (image.Image, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open image: %w", err)
-	}
-	defer f.Close()
-
-	img, _, err := image.Decode(f)
-	if err != nil {
-		return nil, fmt.Errorf("decode image: %w", err)
-	}
-	return img, nil
-}
 
 // PrepareImage resizes and crops an image to be a multiple of 16, with optional pixel limit.
 // Returns the processed image and its dimensions.
