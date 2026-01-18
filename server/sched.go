@@ -451,16 +451,50 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 	systemSwapFreeMemory := systemInfo.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
+	// Get per-GPU overhead configuration for logging
+	overheadMap := envconfig.GpuOverheadMap()
+
+	// Build a mapping from GPU order (0, 1, ...) to GPU ID
+	gpuOrderToID := make(map[string]string)
+	for i, gpu := range gpus {
+		gpuOrderToID[fmt.Sprintf("%d", i)] = gpu.DeviceID.ID
+	}
+
+	getOverheadForGPU := func(deviceID string) uint64 {
+		// If overheadMap is empty, use global overhead
+		if len(overheadMap) == 0 {
+			return envconfig.GpuOverhead()
+		}
+
+		// Try to find the GPU in our mapping and get its overhead
+		for order, id := range gpuOrderToID {
+			if id == deviceID {
+				if overhead, ok := overheadMap[order]; ok {
+					return overhead
+				}
+			}
+		}
+
+		// If not found in the mapping, try direct match (in case user used UUID)
+		if overhead, ok := overheadMap[deviceID]; ok {
+			return overhead
+		}
+
+		// Default to 0 if not found
+		return 0
+	}
+
 	for _, gpu := range gpus {
-		available := gpu.FreeMemory - envconfig.GpuOverhead() - gpu.MinimumMemory()
-		if gpu.FreeMemory < envconfig.GpuOverhead()+gpu.MinimumMemory() {
+		deviceOverhead := getOverheadForGPU(gpu.DeviceID.ID)
+		available := gpu.FreeMemory - deviceOverhead - gpu.MinimumMemory()
+		if gpu.FreeMemory < deviceOverhead+gpu.MinimumMemory() {
 			available = 0
 		}
 		slog.Info("gpu memory", "id", gpu.ID, "library", gpu.Library,
 			"available", format.HumanBytes2(available),
 			"free", format.HumanBytes2(gpu.FreeMemory),
 			"minimum", format.HumanBytes2(gpu.MinimumMemory()),
-			"overhead", format.HumanBytes2(envconfig.GpuOverhead()))
+			"overhead", format.HumanBytes2(deviceOverhead))
 	}
 
 	gpuIDs, err := llama.Load(req.ctx, systemInfo, gpus, requireFull)

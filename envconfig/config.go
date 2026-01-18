@@ -262,8 +262,105 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 	}
 }
 
+// parseBytes parses a byte string with optional suffix (KB, MB, GB, TB)
+func parseBytes(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	multiplier := uint64(1)
+
+	// Check for suffixes (case-insensitive)
+	upper := strings.ToUpper(s)
+	switch {
+	case strings.HasSuffix(upper, "KB"):
+		s = strings.TrimSpace(s[:len(s)-2])
+		multiplier = 1024
+	case strings.HasSuffix(upper, "MB"):
+		s = strings.TrimSpace(s[:len(s)-2])
+		multiplier = 1024 * 1024
+	case strings.HasSuffix(upper, "GB"):
+		s = strings.TrimSpace(s[:len(s)-2])
+		multiplier = 1024 * 1024 * 1024
+	case strings.HasSuffix(upper, "TB"):
+		s = strings.TrimSpace(s[:len(s)-2])
+		multiplier = 1024 * 1024 * 1024 * 1024
+	}
+
+	val, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return val * multiplier, nil
+}
+
+// GpuOverheadMap returns a map of device ID to overhead in bytes
+// Format: "device1:overhead1,device2:overhead2,..."
+// Example: "0:0,1:16106127360" or "0:0,1:15GB"
+// A single value without device prefix applies to all GPUs (backwards compatible)
+// When using CUDA_VISIBLE_DEVICES, device indices refer to the visible GPUs (0, 1, ...)
+// not the original GPU indices in the system.
+func GpuOverheadMap() map[string]uint64 {
+	ret := make(map[string]uint64)
+	s := Var("OLLAMA_GPU_OVERHEAD")
+	if s == "" {
+		return ret
+	}
+
+	// Check if this is a single value (no colon) - backwards compatible
+	if !strings.Contains(s, ":") {
+		// Validate the format but return empty map to signal "use global value"
+		_, _ = parseBytes(s)
+		return ret
+	}
+
+	pairs := strings.Split(s, ",")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			slog.Warn("invalid GPU overhead format, skipping pair", "pair", pair)
+			continue
+		}
+
+		deviceID := strings.TrimSpace(parts[0])
+		overheadStr := strings.TrimSpace(parts[1])
+
+		overhead, err := parseBytes(overheadStr)
+		if err != nil {
+			slog.Warn("invalid overhead value, skipping device", "device", deviceID, "value", overheadStr)
+			continue
+		}
+
+		ret[deviceID] = overhead
+	}
+
+	return ret
+}
+
 // Set aside VRAM per GPU
-var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
+// GpuOverhead returns the global GPU overhead in bytes for backwards compatibility.
+// When using per-GPU format (device:overhead,...), this returns 0.
+func GpuOverhead() uint64 {
+	s := Var("OLLAMA_GPU_OVERHEAD")
+	if s == "" {
+		return 0
+	}
+
+	// If using per-GPU format, return 0 for global overhead
+	if strings.Contains(s, ":") {
+		return 0
+	}
+
+	// Single value format (backwards compatible)
+	overhead, err := parseBytes(s)
+	if err != nil {
+		slog.Warn("invalid GPU overhead value, using default 0", "value", s)
+		return 0
+	}
+	return overhead
+}
 
 type EnvVar struct {
 	Name        string
@@ -276,7 +373,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
-		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve VRAM per GPU. Format: \"device:bytes,...\" (e.g., \"0:0,1:18GB\"). Single value applies to all GPUs."},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},

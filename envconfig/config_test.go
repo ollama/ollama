@@ -326,3 +326,101 @@ func TestLogLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestParseBytes(t *testing.T) {
+	cases := map[string]struct {
+		input    string
+		expected uint64
+		wantErr  bool
+	}{
+		"zero":       {"0", 0, false},
+		"bytes":      {"1024", 1024, false},
+		"kilobytes":  {"1KB", 1024, false},
+		"megabytes":  {"1MB", 1024 * 1024, false},
+		"gigabytes":  {"1GB", 1024 * 1024 * 1024, false},
+		"terabytes":  {"1TB", 1024 * 1024 * 1024 * 1024, false},
+		"multi GB":   {"4GB", 4 * 1024 * 1024 * 1024, false},
+		"mixed case": {"2gb", 2 * 1024 * 1024 * 1024, false},
+		"invalid":    {"invalid", 0, true},
+		"empty":      {"", 0, true},
+	}
+
+	for k, tt := range cases {
+		t.Run(k, func(t *testing.T) {
+			result, err := parseBytes(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseBytes() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("parseBytes() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGpuOverheadMap(t *testing.T) {
+	cases := map[string]struct {
+		envValue string
+		expected map[string]uint64
+	}{
+		"empty string": {
+			envValue: "",
+			expected: map[string]uint64{},
+		},
+		"single value bytes backwards compatible": {
+			envValue: "4294967296",
+			expected: map[string]uint64{}, // Empty means use global
+		},
+		"single value with suffix backwards compatible": {
+			envValue: "4GB",
+			expected: map[string]uint64{}, // Empty means use global
+		},
+		"per-GPU with bytes": {
+			envValue: "0:0,1:4294967296",
+			expected: map[string]uint64{"0": 0, "1": 4294967296},
+		},
+		"per-GPU with suffixes": {
+			envValue: "0:0,1:18GB",
+			expected: map[string]uint64{"0": 0, "1": 18 * 1024 * 1024 * 1024},
+		},
+		"mixed suffixes": {
+			envValue: "0:1GB,1:512MB,2:1048576KB",
+			expected: map[string]uint64{
+				"0": 1 * 1024 * 1024 * 1024,
+				"1": 512 * 1024 * 1024,
+				"2": 1048576 * 1024,
+			},
+		},
+		"whitespace handling": {
+			envValue: "0 : 0 , 1 : 4GB ",
+			expected: map[string]uint64{"0": 0, "1": 4 * 1024 * 1024 * 1024},
+		},
+		"invalid format skipped": {
+			envValue: "0:0,invalid,1:4GB",
+			expected: map[string]uint64{"0": 0, "1": 4 * 1024 * 1024 * 1024},
+		},
+		"single GPU": {
+			envValue: "0:2GB",
+			expected: map[string]uint64{"0": 2 * 1024 * 1024 * 1024},
+		},
+	}
+
+	for k, tt := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_GPU_OVERHEAD", tt.envValue)
+			result := GpuOverheadMap()
+
+			if len(result) != len(tt.expected) {
+				t.Errorf("expected %d entries, got %d", len(tt.expected), len(result))
+				return
+			}
+
+			for dk, dv := range tt.expected {
+				if result[dk] != dv {
+					t.Errorf("expected %s=%d, got %d", dk, dv, result[dk])
+				}
+			}
+		})
+	}
+}
