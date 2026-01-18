@@ -16,6 +16,7 @@ import (
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
 	"github.com/ollama/ollama/x/imagegen/models/llama"
+	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image_edit"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
@@ -61,6 +62,7 @@ func main() {
 
 	// Legacy mode flags
 	zimageFlag := flag.Bool("zimage", false, "Z-Image generation")
+	flux2Flag := flag.Bool("flux2", false, "FLUX.2 Klein generation")
 	qwenImage := flag.Bool("qwen-image", false, "Qwen-Image text-to-image generation")
 	qwenImageEdit := flag.Bool("qwen-image-edit", false, "Qwen-Image-Edit image editing")
 	var inputImages stringSlice
@@ -118,6 +120,32 @@ func main() {
 			TeaCache:          *teaCache,
 			TeaCacheThreshold: float32(*teaCacheThreshold),
 			FusedQKV:          *fusedQKV,
+		})
+		if err == nil {
+			err = saveImageArray(img, *out)
+		}
+	case *flux2Flag:
+		m := &flux2.Model{}
+		if loadErr := m.Load(*modelPath); loadErr != nil {
+			log.Fatal(loadErr)
+		}
+		// When input images provided and user didn't override dimensions, use 0 to match input
+		fluxWidth := int32(*width)
+		fluxHeight := int32(*height)
+		if len(inputImages) > 0 && *width == 1024 && *height == 1024 {
+			fluxWidth = 0
+			fluxHeight = 0
+		}
+		var img *mlx.Array
+		img, err = m.GenerateFromConfig(context.Background(), &flux2.GenerateConfig{
+			Prompt:        *prompt,
+			Width:         fluxWidth,
+			Height:        fluxHeight,
+			Steps:         *steps,
+			GuidanceScale: float32(*cfgScale),
+			Seed:          *seed,
+			CapturePath:   *gpuCapture,
+			InputImages:   inputImages,
 		})
 		if err == nil {
 			err = saveImageArray(img, *out)
@@ -276,6 +304,8 @@ func detectModelKind(modelPath string) (string, error) {
 			switch index.ClassName {
 			case "FluxPipeline", "ZImagePipeline":
 				return "zimage", nil
+			case "Flux2KleinPipeline":
+				return "flux2", nil
 			}
 		}
 		return "zimage", nil

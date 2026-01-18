@@ -93,7 +93,7 @@ func (m *Model) Load(modelName string) error {
 
 	// Load text encoder
 	m.TextEncoder = &Qwen3TextEncoder{}
-	if err := m.TextEncoder.Load(manifest); err != nil {
+	if err := m.TextEncoder.Load(manifest, "text_encoder/config.json"); err != nil {
 		return fmt.Errorf("text encoder: %w", err)
 	}
 	mlx.Eval(mlx.Collect(m.TextEncoder)...)
@@ -222,9 +222,9 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	// Text encoding with padding to multiple of 32
 	var posEmb, negEmb *mlx.Array
 	{
-		posEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.Prompt, 512)
+		posEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.Prompt, 512, false)
 		if useCFG {
-			negEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.NegativePrompt, 512)
+			negEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.NegativePrompt, 512, false)
 		}
 
 		// Pad both to same length (multiple of 32)

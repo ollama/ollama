@@ -24,9 +24,10 @@ var SupportedBackends = []string{"metal", "cuda", "cpu"}
 
 // modelVRAMEstimates maps pipeline class names to their estimated VRAM requirements.
 var modelVRAMEstimates = map[string]uint64{
-	"ZImagePipeline":    21 * GB, // ~21GB for Z-Image (text encoder + transformer + VAE)
-	"FluxPipeline":      21 * GB, // ~21GB for Flux (same architecture)
-	"QwenImagePipeline": 80 * GB, // TODO: verify actual requirements, using conservative estimate for now
+	"ZImagePipeline":     21 * GB, // ~21GB for Z-Image (text encoder + transformer + VAE)
+	"FluxPipeline":       21 * GB, // ~21GB for Flux (same architecture)
+	"Flux2KleinPipeline": 13 * GB, // ~13GB for Flux2 Klein (4B distilled model)
+	"QwenImagePipeline":  80 * GB, // TODO: verify actual requirements, using conservative estimate for now
 }
 
 // CheckPlatformSupport validates that image generation is supported on the current platform.

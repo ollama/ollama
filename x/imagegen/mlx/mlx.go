@@ -364,6 +364,34 @@ func Eval(outputs ...*Array) []*Array {
 	return outputs
 }
 
+// Debug synchronously evaluates arrays WITHOUT cleanup.
+// WARNING: This will cause memory leaks! Use only for debugging to isolate
+// which array is being freed prematurely.
+func Debug(outputs ...*Array) []*Array {
+	// Keep outputs so they survive any future cleanup
+	for _, o := range outputs {
+		if o != nil {
+			o.kept = true
+		}
+	}
+
+	// Evaluate WITHOUT cleanup - this will leak memory but helps debug
+	if len(outputs) > 0 {
+		evalHandles = evalHandles[:0]
+		for _, o := range outputs {
+			if o != nil {
+				evalHandles = append(evalHandles, o.c)
+			}
+		}
+		if len(evalHandles) > 0 {
+			vec := C.mlx_vector_array_new_data(&evalHandles[0], C.size_t(len(evalHandles)))
+			C.mlx_eval(vec)
+			C.mlx_vector_array_free(vec)
+		}
+	}
+	return outputs
+}
+
 // AsyncEval dispatches async evaluation and cleans up non-kept arrays.
 // Outputs are automatically kept (survive cleanup).
 func AsyncEval(outputs ...*Array) {
