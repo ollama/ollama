@@ -286,7 +286,7 @@ extern "C" {
         // NULL-terminated list of buffer types to use for tensors that match a pattern
         const struct llama_model_tensor_buft_override * tensor_buft_overrides;
 
-        int32_t n_gpu_layers; // number of layers to store in VRAM
+        int32_t n_gpu_layers; // number of layers to store in VRAM, a negative value means all layers
         enum llama_split_mode split_mode; // how to split the model across multiple GPUs
 
         // the GPU that is used for the entire model when split_mode is LLAMA_SPLIT_MODE_NONE
@@ -309,11 +309,17 @@ extern "C" {
         // Keep the booleans together to avoid misalignment during copy-by-value.
         bool vocab_only;      // only load the vocabulary, no weights
         bool use_mmap;        // use mmap if possible
+        bool use_direct_io;   // use direct io, takes precedence over use_mmap
         bool use_mlock;       // force system to keep model in RAM
         bool check_tensors;   // validate model tensor data
         bool use_extra_bufts; // use extra buffer types (used for weight repacking)
         bool no_host;         // bypass host buffer allowing extra buffers to be used
         bool no_alloc;        // only load metadata and simulate memory allocations
+    };
+
+    struct llama_sampler_seq_config {
+        llama_seq_id           seq_id;
+        struct llama_sampler * sampler;
     };
 
     // NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may cause crashes or incorrect results in certain configurations
@@ -364,6 +370,12 @@ extern "C" {
         bool kv_unified;  // use a unified buffer across the input sequences when computing the attention
                           // try to disable when n_seq_max > 1 for improved performance when the sequences do not share a large prefix
                           // ref: https://github.com/ggml-org/llama.cpp/pull/14363
+
+        // [EXPERIMENTAL]
+        // backend sampler chain configuration (make sure the caller keeps the sampler chains alive)
+        // note: the samplers must be sampler chains (i.e. use llama_sampler_chain_init)
+        struct llama_sampler_seq_config * samplers;
+        size_t                            n_samplers;
     };
 
     // model quantization parameters
@@ -467,16 +479,23 @@ extern "C" {
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
 
+    enum llama_params_fit_status {
+        LLAMA_PARAMS_FIT_STATUS_SUCCESS = 0, // found allocations that are projected to fit
+        LLAMA_PARAMS_FIT_STATUS_FAILURE = 1, // could not find allocations that are projected to fit
+        LLAMA_PARAMS_FIT_STATUS_ERROR   = 2, // a hard error occured, e.g. because no model could be found at the specified path
+    };
+
     // fits mparams and cparams to free device memory (assumes system memory is unlimited)
-    // returns true if the parameters could be successfully modified to fit device memory
-    // this function is NOT thread safe because it modifies the global llama logger state
-    LLAMA_API bool llama_params_fit(
+    //   - returns true if the parameters could be successfully modified to fit device memory
+    //   - this function is NOT thread safe because it modifies the global llama logger state
+    //   - only parameters that have the same value as in llama_default_model_params are modified
+    LLAMA_API enum llama_params_fit_status llama_params_fit(
                                    const char   * path_model,
                     struct llama_model_params   * mparams,
                     struct llama_context_params * cparams,
                                           float * tensor_split,          // writable buffer for tensor split, needs at least llama_max_devices elements
         struct llama_model_tensor_buft_override * tensor_buft_overrides, // writable buffer for overrides, needs at least llama_max_tensor_buft_overrides elements
-                                         size_t   margin,                // margin of memory to leave per device in bytes
+                                         size_t * margins,               // margins of memory to leave per device in bytes
                                        uint32_t   n_ctx_min,             // minimum context size to set when trying to reduce memory use
                             enum ggml_log_level   log_level);            // minimum log level to print during fitting, lower levels go to debug log
 
@@ -517,6 +536,7 @@ extern "C" {
     LLAMA_API int32_t llama_model_n_ctx_train(const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_embd     (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_embd_inp (const struct llama_model * model);
+    LLAMA_API int32_t llama_model_n_embd_out (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_layer    (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_head     (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_head_kv  (const struct llama_model * model);
@@ -600,6 +620,8 @@ extern "C" {
     //
 
     // Load a LoRA adapter from file
+    // The adapter is valid as long as the associated model is not freed
+    // All adapters must be loaded before context creation
     LLAMA_API struct llama_adapter_lora * llama_adapter_lora_init(
             struct llama_model * model,
             const char * path_lora);
@@ -984,6 +1006,32 @@ extern "C" {
     LLAMA_API float * llama_get_embeddings_seq(struct llama_context * ctx, llama_seq_id seq_id);
 
     //
+    // backend sampling API [EXPERIMENTAL]
+    // note: use only if the llama_context was created with at least one llama_sampler_seq_config
+    //
+
+    // Get the backend sampled token for the ith token.
+    // Returns LLAMA_TOKEN_NULL if no token was sampled.
+    LLAMA_API llama_token llama_get_sampled_token_ith(struct llama_context * ctx, int32_t i);
+
+    // Get the backend sampled probabilites for the ith token
+    // The index matches llama_get_sampled_token_ith().
+    // Returns NULL if no probabilites were generated.
+    LLAMA_API float *  llama_get_sampled_probs_ith      (struct llama_context * ctx, int32_t i);
+    LLAMA_API uint32_t llama_get_sampled_probs_count_ith(struct llama_context * ctx, int32_t i);
+
+    // Get the backend sampled logits for the ith token
+    // Returns NULL if no logits were sampled.
+    LLAMA_API float *  llama_get_sampled_logits_ith      (struct llama_context * ctx, int32_t i);
+    LLAMA_API uint32_t llama_get_sampled_logits_count_ith(struct llama_context * ctx, int32_t i);
+
+    // Get the backend sampled candidates (token ids) for the ith token
+    // These are needed to map probability/logit indices to vocab token ids.
+    // Returns NULL if no candidates were sampled.
+    LLAMA_API llama_token * llama_get_sampled_candidates_ith      (struct llama_context * ctx, int32_t i);
+    LLAMA_API uint32_t      llama_get_sampled_candidates_count_ith(struct llama_context * ctx, int32_t i);
+
+    //
     // Vocab
     //
 
@@ -1154,10 +1202,15 @@ extern "C" {
     //
     //    llama_sampler_free(smpl);
     //
-    // TODO: In the future, llama_sampler will be utilized to offload the sampling to the backends (e.g. GPU).
-    //
 
     typedef void * llama_sampler_context_t;
+
+    struct llama_sampler_data {
+        struct ggml_tensor * logits;
+        struct ggml_tensor * probs;
+        struct ggml_tensor * sampled;
+        struct ggml_tensor * candidates;
+    };
 
     // user code can implement the interface below in order to create custom llama_sampler
     struct llama_sampler_i {
@@ -1168,17 +1221,45 @@ extern "C" {
         struct llama_sampler * (*clone) (const struct llama_sampler * smpl);                                 // can be NULL if ctx is NULL
         void                   (*free)  (      struct llama_sampler * smpl);                                 // can be NULL if ctx is NULL
 
-        // TODO: API for internal libllama usage for appending the sampling to an existing ggml_cgraph
-        //void (*apply_ggml) (struct llama_sampler * smpl, ...);
+        // [EXPERIMENTAL]
+        // backend sampling interface:
+
+        // return true if the backend supports all ops needed by the sampler
+        // note: call once per sampler
+        bool (*backend_init)(struct llama_sampler * smpl, ggml_backend_buffer_type_t buft);
+
+        // call after .backend_apply()
+        void (*backend_accept)(
+                struct llama_sampler * smpl,
+                struct ggml_context  * ctx,
+                struct ggml_cgraph   * gf,
+                struct ggml_tensor   * selected_token);
+
+        // call after .backend_init()
+        void (*backend_apply)(
+                struct llama_sampler      * smpl,
+                struct ggml_context       * ctx,
+                struct ggml_cgraph        * gf,
+                struct llama_sampler_data * data);
+
+        // called before graph execution to set inputs for the current ubatch
+        void (*backend_set_input)(struct llama_sampler * smpl);
     };
 
     struct llama_sampler {
-        const struct llama_sampler_i * iface;
-        llama_sampler_context_t        ctx;
+        struct llama_sampler_i * iface;
+
+        llama_sampler_context_t ctx;
     };
 
+    // [EXPERIMENTAL]
+    // attach a sampler to the context
+    // note: prefer initializing the context with llama_context_params.samplers when possible
+    // note: changing the samplers of a context can cause graph reallocations and degraded performance
+    LLAMA_API bool llama_set_sampler(struct llama_context * ctx, llama_seq_id seq_id, struct llama_sampler * smpl);
+
     // mirror of llama_sampler_i:
-    LLAMA_API struct llama_sampler * llama_sampler_init  (const struct llama_sampler_i * iface, llama_sampler_context_t ctx);
+    LLAMA_API struct llama_sampler * llama_sampler_init  (      struct llama_sampler_i * iface, llama_sampler_context_t ctx);
     LLAMA_API const char *           llama_sampler_name  (const struct llama_sampler * smpl);
     LLAMA_API void                   llama_sampler_accept(      struct llama_sampler * smpl, llama_token token);
     LLAMA_API void                   llama_sampler_apply (      struct llama_sampler * smpl, llama_token_data_array * cur_p);
@@ -1194,7 +1275,15 @@ extern "C" {
 
     // important: takes ownership of the sampler object and will free it when llama_sampler_free is called
     LLAMA_API void                   llama_sampler_chain_add(      struct llama_sampler * chain, struct llama_sampler * smpl);
-    LLAMA_API struct llama_sampler * llama_sampler_chain_get(const struct llama_sampler * chain, int32_t i);
+
+    // return NULL if:
+    //   - the sampler is NULL
+    //   - the sampler is not a llama_sampler_chain
+    //   - the index is out of bounds, unless i == -1
+    //   - if i == -1, returns the chain itself (can be used to check if the sampler is a chain)
+    LLAMA_API struct llama_sampler * llama_sampler_chain_get(      struct llama_sampler * chain, int32_t i);
+
+    // the total number of samplers in the chain
     LLAMA_API int                    llama_sampler_chain_n  (const struct llama_sampler * chain);
 
     // after removing a sampler, the chain will no longer own it, and it will not be freed when the chain is freed
@@ -1203,7 +1292,9 @@ extern "C" {
     // available samplers:
 
     LLAMA_API struct llama_sampler * llama_sampler_init_greedy(void);
-    LLAMA_API struct llama_sampler * llama_sampler_init_dist  (uint32_t seed);
+
+    /// seed == LLAMA_DEFAULT_SEED to use a random seed.
+    LLAMA_API struct llama_sampler * llama_sampler_init_dist(uint32_t seed);
 
     /// @details Top-K sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751
     /// Setting k <= 0 makes this a noop

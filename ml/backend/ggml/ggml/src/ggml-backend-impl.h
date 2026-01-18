@@ -160,7 +160,7 @@ extern "C" {
         // device description: short informative description of the device, could be the model name
         const char * (*get_description)(ggml_backend_dev_t dev);
 
-        // device memory in bytes
+        // device memory in bytes: 0 bytes to indicate no memory to report
         void         (*get_memory)(ggml_backend_dev_t dev, size_t * free, size_t * total);
 
         // device type

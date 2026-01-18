@@ -2144,7 +2144,7 @@ void ggml_backend_graph_copy_free(struct ggml_backend_graph_copy copy) {
     ggml_free(copy.ctx_unallocated);
 }
 
-bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor * test_node) {
+bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor const * const * test_nodes, size_t num_test_nodes) {
     struct ggml_backend_graph_copy copy = ggml_backend_graph_copy(backend2, graph);
     if (copy.buffer == NULL) {
         return false;
@@ -2155,22 +2155,22 @@ bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t 
 
     assert(g1->n_nodes == g2->n_nodes);
 
-    if (test_node != nullptr) {
-        // Compute the whole graph and only test the output for a specific tensor
+    if (num_test_nodes != 0) {
+        GGML_ASSERT(test_nodes);
+        // Compute the whole graph and only test the output for specific tensors
         ggml_backend_graph_compute(backend1, g1);
         ggml_backend_graph_compute(backend2, g2);
 
-        int test_node_idx = -1;
+        bool verified = false;
         for (int i = 0; i < g1->n_nodes; i++) {
-            struct ggml_tensor * t1 = g1->nodes[i];
-            if (t1 == test_node) {
-                test_node_idx = i;
-                break;
+            for (size_t j = 0; j < num_test_nodes; ++j) {
+                if (g1->nodes[i] == test_nodes[j]) {
+                    callback(i, g1->nodes[i], g2->nodes[i], user_data);
+                    verified = true;
+                }
             }
         }
-        GGML_ASSERT(test_node_idx != -1);
-
-        callback(test_node_idx, g1->nodes[test_node_idx], g2->nodes[test_node_idx], user_data);
+        GGML_ASSERT(verified);
     } else {
         for (int i = 0; i < g1->n_nodes; i++) {
             struct ggml_tensor * t1 = g1->nodes[i];

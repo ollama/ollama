@@ -34,13 +34,11 @@ void ggml_cuda_op_mean(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
             // CUDA_GRAPHS_DISABLED
             ((ncols > 65536) &&
              ((ctx.cuda_graph->instance == nullptr) && (iscapturing == cudaStreamCaptureStatusNone) ||
-              ctx.cuda_graph->disable_due_to_gpu_arch || ctx.cuda_graph->disable_due_to_too_many_updates ||
-              ctx.cuda_graph->disable_due_to_failed_graph_capture)) ||
+              ctx.cuda_graph->is_enabled())) ||
         // CUDA_GRAPHS ENABLED
         ((ncols > 32768) &&
          !((ctx.cuda_graph->instance == nullptr) && (iscapturing == cudaStreamCaptureStatusNone) ||
-           ctx.cuda_graph->disable_due_to_gpu_arch || ctx.cuda_graph->disable_due_to_too_many_updates ||
-           ctx.cuda_graph->disable_due_to_failed_graph_capture))) {
+            ctx.cuda_graph->is_enabled()))) {
 #else
         (ncols > 65536)) {
 #endif // USE_CUDA_GRAPH
@@ -63,6 +61,9 @@ void ggml_cuda_op_mean(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
     const int id  = ggml_cuda_get_device();
     const int nsm = ggml_cuda_info().devices[id].nsm;
+
+    // Heuristic for block size selection to optimize occupancy.
+    // See discussion in: https://github.com/ggml-org/llama.cpp/pull/15132
     if ((nrows / nsm) < 2) {
         const dim3 block_dims(512, 1, 1);
         reduce_rows_f32</*norm=*/true><<<block_nums, block_dims, 0, stream>>>(src0_d, dst_d, ncols);
