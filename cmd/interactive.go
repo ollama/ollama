@@ -38,8 +38,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
+		fmt.Fprintln(os.Stderr, "  /!              Run a shell command")
+		fmt.Fprintln(os.Stderr, "  /shell          Start a shell")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
+		fmt.Fprintln(os.Stderr, "  /! <command>    Execute a shell command")
+		fmt.Fprintln(os.Stderr, "  /shell          Start a shell")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
@@ -459,6 +463,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
+		case strings.HasPrefix(line, "/!"):
+			if err := runShellCommand(strings.TrimPrefix(line, "/!")); err != nil {
+				fmt.Printf("Error running command: %v\n", err)
+			}
+			fmt.Println("Press Enter to continue...")
+			scanner.Readline()
+			continue
+		case strings.HasPrefix(line, "/shell"):
+			if err := startShell(); err != nil {
+				fmt.Printf("Error starting shell: %v\n", err)
+			}
+			continue
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			isFile := false
