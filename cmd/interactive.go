@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
@@ -38,10 +37,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
-		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
-		fmt.Fprintln(os.Stderr, "  /! <command>    Execute a shell command")
+		fmt.Fprintln(os.Stderr, "  /!              Run a shell command")
 		fmt.Fprintln(os.Stderr, "  /shell          Start a shell")
+		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
@@ -491,8 +489,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				continue
 			}
 
-			sb.WriteString(line)
-		default:
 			sb.WriteString(line)
 		}
 
