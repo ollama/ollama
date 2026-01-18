@@ -16,6 +16,11 @@ import (
 // Supported quantization types: "fp8" (affine 8-bit)
 // Uses MLX's native SaveSafetensors to ensure correct dtype handling (especially uint32 for quantized weights).
 func quantizeTensor(r io.Reader, name, dtype string, shape []int32, quantize string) (qweightData, scalesData, qbiasData []byte, qweightShape, scalesShape, qbiasShape []int32, err error) {
+	// Lazy init MLX when needed for quantization
+	if err := mlx.InitMLX(); err != nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("MLX initialization failed: %w", err)
+	}
+
 	tmpDir := ensureTempDir()
 
 	// Read safetensors data to a temp file (LoadSafetensorsNative needs a path)
