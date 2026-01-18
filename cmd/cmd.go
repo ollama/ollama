@@ -600,7 +600,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if this is an image generation model
-	if slices.Contains(info.Capabilities, model.CapabilityImageGeneration) {
+	if slices.Contains(info.Capabilities, model.CapabilityImage) {
 		if opts.Prompt == "" && !interactive {
 			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
 		}
@@ -1985,6 +1985,7 @@ func NewCLI() *cobra.Command {
 	} {
 		switch cmd {
 		case runCmd:
+			imagegen.AppendFlagsDocs(cmd)
 			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -232,11 +231,13 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		Prompt string `json:"prompt"`
 		Width  int32  `json:"width,omitempty"`
 		Height int32  `json:"height,omitempty"`
+		Steps  int32  `json:"steps,omitempty"`
 		Seed   int64  `json:"seed,omitempty"`
 	}{
 		Prompt: req.Prompt,
 		Width:  req.Width,
 		Height: req.Height,
+		Steps:  req.Steps,
 		Seed:   seed,
 	}
 
@@ -279,15 +280,11 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 		// Convert to llm.CompletionResponse
 		cresp := llm.CompletionResponse{
-			Content: raw.Content,
-			Done:    raw.Done,
-			Step:    raw.Step,
-			Total:   raw.Total,
-		}
-		if raw.Image != "" {
-			if data, err := base64.StdEncoding.DecodeString(raw.Image); err == nil {
-				cresp.Image = data
-			}
+			Content:    raw.Content,
+			Done:       raw.Done,
+			Step:       raw.Step,
+			TotalSteps: raw.Total,
+			Image:      raw.Image,
 		}
 
 		fn(cresp)

@@ -737,3 +737,60 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }
+
+// ImageGenerationRequest is an OpenAI-compatible image generation request.
+type ImageGenerationRequest struct {
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt"`
+	N              int    `json:"n,omitempty"`
+	Size           string `json:"size,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+	Seed           *int64 `json:"seed,omitempty"`
+}
+
+// ImageGenerationResponse is an OpenAI-compatible image generation response.
+type ImageGenerationResponse struct {
+	Created int64            `json:"created"`
+	Data    []ImageURLOrData `json:"data"`
+}
+
+// ImageURLOrData contains either a URL or base64-encoded image data.
+type ImageURLOrData struct {
+	URL     string `json:"url,omitempty"`
+	B64JSON string `json:"b64_json,omitempty"`
+}
+
+// FromImageGenerationRequest converts an OpenAI image generation request to an Ollama GenerateRequest.
+func FromImageGenerationRequest(r ImageGenerationRequest) api.GenerateRequest {
+	req := api.GenerateRequest{
+		Model:  r.Model,
+		Prompt: r.Prompt,
+	}
+	// Parse size if provided (e.g., "1024x768")
+	if r.Size != "" {
+		var w, h int32
+		if _, err := fmt.Sscanf(r.Size, "%dx%d", &w, &h); err == nil {
+			req.Width = w
+			req.Height = h
+		}
+	}
+	if r.Seed != nil {
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+		req.Options["seed"] = *r.Seed
+	}
+	return req
+}
+
+// ToImageGenerationResponse converts an Ollama GenerateResponse to an OpenAI ImageGenerationResponse.
+func ToImageGenerationResponse(resp api.GenerateResponse) ImageGenerationResponse {
+	var data []ImageURLOrData
+	if resp.Image != "" {
+		data = []ImageURLOrData{{B64JSON: resp.Image}}
+	}
+	return ImageGenerationResponse{
+		Created: resp.CreatedAt.Unix(),
+		Data:    data,
+	}
+}
