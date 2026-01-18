@@ -1358,7 +1358,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		// Dummy load to get the backend wired up
 		f, err := os.CreateTemp("", "*.bin")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 		defer f.Close()
@@ -1368,13 +1368,13 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"general.architecture": "llama",
 			"tokenizer.ggml.model": "gpt2",
 		}, nil); err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 		slog.Debug("dummy model load took", "duration", time.Since(startLoad))
