@@ -899,11 +899,11 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	for _, arg := range args {
 		// Unload the model if it's running before deletion
 		if err := loadOrUnloadModel(cmd, &runOptions{
-			Model:     args[0],
+			Model:     arg,
 			KeepAlive: &api.Duration{Duration: 0},
 		}); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-				fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", args[0])
+				fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", arg)
 			}
 		}
 
