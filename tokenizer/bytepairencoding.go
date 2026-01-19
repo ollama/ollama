@@ -1,8 +1,10 @@
-package model
+package tokenizer
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -16,19 +18,19 @@ type BytePairEncoding struct {
 	regexps []*regexp2.Regexp
 }
 
-var _ TextProcessor = (*BytePairEncoding)(nil)
+var _ Tokenizer = (*BytePairEncoding)(nil)
 
-func NewBytePairEncoding(vocab *Vocabulary, pretokenizers ...string) BytePairEncoding {
-	if len(pretokenizers) == 0 {
+func NewBytePairEncoding(vocab *Vocabulary, pretokenizer ...string) BytePairEncoding {
+	if len(pretokenizer) == 0 {
 		// set default byte-level pretokenizer if none provided, e.g.
-		// https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/pre_tokenizers/byte_level.rs#L44
-		pretokenizers = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
+		// https://github.com/huggingface/tokenizer/blob/main/tokenizer/src/pre_tokenizer/byte_level.rs#L44
+		pretokenizer = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
 	}
 
 	return BytePairEncoding{
 		vocab: vocab,
 		regexps: slices.Collect(func(yield func(*regexp2.Regexp) bool) {
-			for _, p := range pretokenizers {
+			for _, p := range pretokenizer {
 				if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
 					return
 				}
@@ -243,6 +245,14 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
+type lazyIdsString struct {
+	ids []int32
+}
+
+func (l lazyIdsString) LogValue() slog.Value {
+	return slog.AnyValue(fmt.Sprint(l.ids))
+}
+
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
@@ -267,6 +277,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	logutil.Trace("decoded", "string", sb.String(), "from", ids)
+	logutil.Trace("decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
 	return sb.String(), nil
 }
