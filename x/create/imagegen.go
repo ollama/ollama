@@ -20,10 +20,10 @@ import (
 func CreateImageGenModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
 	// Validate quantization type
 	switch quantize {
-	case "", "fp8":
+	case "", "fp4", "fp8":
 		// valid
 	default:
-		return fmt.Errorf("unsupported quantization type %q: supported types are fp8", quantize)
+		return fmt.Errorf("unsupported quantization type %q: supported types are fp4, fp8", quantize)
 	}
 
 	var layers []LayerInfo

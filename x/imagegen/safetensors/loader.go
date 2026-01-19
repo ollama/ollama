@@ -17,6 +17,18 @@ type WeightSource interface {
 	GetTensor(name string) (*mlx.Array, error)
 	ListTensors() []string
 	HasTensor(name string) bool
+	Quantization() string // Returns "FP4", "FP8", or ""
+}
+
+// quantizationParams returns groupSize, bits, mode for a quantization type.
+// Returns defaults (32, 8, "affine") for unknown types (backward compatibility).
+func quantizationParams(quantization string) (groupSize, bits int, mode string) {
+	switch strings.ToUpper(quantization) {
+	case "FP4":
+		return 32, 4, "affine"
+	default:
+		return 32, 8, "affine" // FP8 or unknown
+	}
 }
 
 // Transformer allows structs to transform weight arrays before assignment.
@@ -233,19 +245,21 @@ func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) 
 			qbiases, _ = weights.GetTensor(qbiasPath)
 		}
 
+		groupSize, bits, mode := quantizationParams(weights.Quantization())
+
 		if mlx.MetalIsAvailable() {
 			return &nn.QuantizedLinear{
 				Weight:    weight,
 				Scales:    scales,
 				QBiases:   qbiases,
 				Bias:      bias,
-				GroupSize: 32,
-				Bits:      8,
-				Mode:      "affine",
+				GroupSize: groupSize,
+				Bits:      bits,
+				Mode:      mode,
 			}, nil
 		}
 
-		dequantized := mlx.Dequantize(weight, scales, qbiases, 32, 8, "affine")
+		dequantized := mlx.Dequantize(weight, scales, qbiases, groupSize, bits, mode)
 		return nn.NewLinear(dequantized, bias), nil
 	}
 

@@ -106,6 +106,21 @@ func (mw *ManifestWeights) HasTensor(name string) bool {
 	return ok
 }
 
+// Quantization returns the model's quantization type from model_index.json.
+// Returns empty string if not quantized or unknown.
+func (mw *ManifestWeights) Quantization() string {
+	if mw.manifest == nil {
+		return ""
+	}
+	var index struct {
+		Quantization string `json:"quantization"`
+	}
+	if err := mw.manifest.ReadConfigJSON("model_index.json", &index); err != nil {
+		return ""
+	}
+	return index.Quantization
+}
+
 // ReleaseAll frees all native handles and clears the tensor cache.
 func (mw *ManifestWeights) ReleaseAll() {
 	for _, sf := range mw.nativeCache {
