@@ -8,6 +8,7 @@ import (
 
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/imagegen/nn"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 	"github.com/ollama/ollama/x/imagegen/vae"
 )
@@ -97,8 +98,8 @@ func (bn *BatchNorm2D) Denormalize(x *mlx.Array) *mlx.Array {
 // GroupNormLayer implements group normalization
 // Reused from zimage package pattern
 type GroupNormLayer struct {
-	Weight    *mlx.Array
-	Bias      *mlx.Array
+	Weight    *mlx.Array `weight:"weight"`
+	Bias      *mlx.Array `weight:"bias"`
 	NumGroups int32
 	Eps       float32
 }
@@ -169,11 +170,11 @@ func (conv *Conv2D) Forward(x *mlx.Array) *mlx.Array {
 
 // ResnetBlock2D implements a ResNet block for VAE
 type ResnetBlock2D struct {
-	Norm1        *GroupNormLayer `weight:"norm1"`
-	Conv1        *Conv2D         `weight:"conv1"`
-	Norm2        *GroupNormLayer `weight:"norm2"`
-	Conv2        *Conv2D         `weight:"conv2"`
-	ConvShortcut *Conv2D         `weight:"conv_shortcut,optional"` // nil if not present
+	Norm1        *GroupNormLayer
+	Conv1        *Conv2D
+	Norm2        *GroupNormLayer
+	Conv2        *Conv2D
+	ConvShortcut *Conv2D // nil if not present
 }
 
 // Forward applies the ResNet block
@@ -195,16 +196,11 @@ func (rb *ResnetBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 // VAEAttentionBlock implements self-attention for VAE
 type VAEAttentionBlock struct {
-	GroupNorm   *GroupNormLayer
-	ToQWeight   *mlx.Array
-	ToQBias     *mlx.Array
-	ToKWeight   *mlx.Array
-	ToKBias     *mlx.Array
-	ToVWeight   *mlx.Array
-	ToVBias     *mlx.Array
-	ToOutWeight *mlx.Array
-	ToOutBias   *mlx.Array
-	NumHeads    int32
+	GroupNorm *GroupNormLayer `weight:"group_norm"`
+	ToQ       nn.LinearLayer  `weight:"to_q"`
+	ToK       nn.LinearLayer  `weight:"to_k"`
+	ToV       nn.LinearLayer  `weight:"to_v"`
+	ToOut     nn.LinearLayer  `weight:"to_out.0"`
 }
 
 // Forward applies attention (NHWC format)
@@ -219,12 +215,9 @@ func (ab *VAEAttentionBlock) Forward(x *mlx.Array) *mlx.Array {
 	h := ab.GroupNorm.Forward(x)
 	h = mlx.Reshape(h, B, H*W, C)
 
-	q := mlx.Linear(h, ab.ToQWeight)
-	q = mlx.Add(q, ab.ToQBias)
-	k := mlx.Linear(h, ab.ToKWeight)
-	k = mlx.Add(k, ab.ToKBias)
-	v := mlx.Linear(h, ab.ToVWeight)
-	v = mlx.Add(v, ab.ToVBias)
+	q := ab.ToQ.Forward(h)
+	k := ab.ToK.Forward(h)
+	v := ab.ToV.Forward(h)
 
 	q = mlx.ExpandDims(q, 1)
 	k = mlx.ExpandDims(k, 1)
@@ -234,8 +227,7 @@ func (ab *VAEAttentionBlock) Forward(x *mlx.Array) *mlx.Array {
 	out := mlx.ScaledDotProductAttention(q, k, v, scale, false)
 	out = mlx.Squeeze(out, 1)
 
-	out = mlx.Linear(out, ab.ToOutWeight)
-	out = mlx.Add(out, ab.ToOutBias)
+	out = ab.ToOut.Forward(out)
 	out = mlx.Reshape(out, B, H, W, C)
 	out = mlx.Add(out, residual)
 
@@ -457,7 +449,7 @@ func (m *AutoencoderKLFlux2) loadWeights(weights safetensors.WeightSource, cfg *
 	return nil
 }
 
-// loadVAEMidBlock loads the mid block
+// loadVAEMidBlock loads the mid block.
 func loadVAEMidBlock(weights safetensors.WeightSource, prefix string, numGroups int32) (*VAEMidBlock, error) {
 	resnet1, err := loadResnetBlock2D(weights, prefix+".resnets.0", numGroups)
 	if err != nil {
@@ -481,7 +473,7 @@ func loadVAEMidBlock(weights safetensors.WeightSource, prefix string, numGroups 
 	}, nil
 }
 
-// loadResnetBlock2D loads a ResNet block using safetensors helpers.
+// loadResnetBlock2D loads a ResNet block.
 func loadResnetBlock2D(weights safetensors.WeightSource, prefix string, numGroups int32) (*ResnetBlock2D, error) {
 	norm1W, norm1B, err := safetensors.LoadGroupNorm(weights, prefix+".norm1")
 	if err != nil {
@@ -519,68 +511,18 @@ func loadResnetBlock2D(weights safetensors.WeightSource, prefix string, numGroup
 	return block, nil
 }
 
-// loadVAEAttentionBlock loads an attention block
+// loadVAEAttentionBlock loads an attention block using LoadModule.
 func loadVAEAttentionBlock(weights safetensors.WeightSource, prefix string, numGroups int32) (*VAEAttentionBlock, error) {
-	normWeight, err := weights.GetTensor(prefix + ".group_norm.weight")
-	if err != nil {
+	ab := &VAEAttentionBlock{
+		GroupNorm: &GroupNormLayer{NumGroups: numGroups, Eps: 1e-5},
+	}
+	if err := safetensors.LoadModule(ab, weights, prefix); err != nil {
 		return nil, err
 	}
-	normBias, err := weights.GetTensor(prefix + ".group_norm.bias")
-	if err != nil {
-		return nil, err
-	}
-
-	toQWeight, err := weights.GetTensor(prefix + ".to_q.weight")
-	if err != nil {
-		return nil, err
-	}
-	toQBias, err := weights.GetTensor(prefix + ".to_q.bias")
-	if err != nil {
-		return nil, err
-	}
-
-	toKWeight, err := weights.GetTensor(prefix + ".to_k.weight")
-	if err != nil {
-		return nil, err
-	}
-	toKBias, err := weights.GetTensor(prefix + ".to_k.bias")
-	if err != nil {
-		return nil, err
-	}
-
-	toVWeight, err := weights.GetTensor(prefix + ".to_v.weight")
-	if err != nil {
-		return nil, err
-	}
-	toVBias, err := weights.GetTensor(prefix + ".to_v.bias")
-	if err != nil {
-		return nil, err
-	}
-
-	toOutWeight, err := weights.GetTensor(prefix + ".to_out.0.weight")
-	if err != nil {
-		return nil, err
-	}
-	toOutBias, err := weights.GetTensor(prefix + ".to_out.0.bias")
-	if err != nil {
-		return nil, err
-	}
-
-	return &VAEAttentionBlock{
-		GroupNorm:   &GroupNormLayer{Weight: normWeight, Bias: normBias, NumGroups: numGroups, Eps: 1e-5},
-		ToQWeight:   mlx.Transpose(toQWeight, 1, 0),
-		ToQBias:     toQBias,
-		ToKWeight:   mlx.Transpose(toKWeight, 1, 0),
-		ToKBias:     toKBias,
-		ToVWeight:   mlx.Transpose(toVWeight, 1, 0),
-		ToVBias:     toVBias,
-		ToOutWeight: mlx.Transpose(toOutWeight, 1, 0),
-		ToOutBias:   toOutBias,
-		NumHeads:    1,
-	}, nil
+	return ab, nil
 }
 
-// loadUpDecoderBlock2D loads an up decoder block
+// loadUpDecoderBlock2D loads an up decoder block.
 func loadUpDecoderBlock2D(weights safetensors.WeightSource, prefix string, numLayers, numGroups int32, hasUpsample bool) (*UpDecoderBlock2D, error) {
 	resnets := make([]*ResnetBlock2D, numLayers)
 	for i := int32(0); i < numLayers; i++ {
@@ -782,7 +724,7 @@ func (m *AutoencoderKLFlux2) loadEncoderWeights(weights safetensors.WeightSource
 	return nil
 }
 
-// loadDownEncoderBlock2D loads a down encoder block
+// loadDownEncoderBlock2D loads a down encoder block.
 func loadDownEncoderBlock2D(weights safetensors.WeightSource, prefix string, numLayers, numGroups int32, hasDownsample bool) (*DownEncoderBlock2D, error) {
 	resnets := make([]*ResnetBlock2D, numLayers)
 	for i := int32(0); i < numLayers; i++ {
