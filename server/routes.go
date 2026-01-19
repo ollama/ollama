@@ -220,12 +220,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// Handle image generation models
-	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
-		s.handleImageGenerate(c, req, name.String(), checkpointStart)
-		return
-	}
-
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
@@ -321,7 +315,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// expire the runner
+	// expire the runner if unload is requested (empty prompt, keep alive is 0)
 	if req.Prompt == "" && req.KeepAlive != nil && req.KeepAlive.Duration == 0 {
 		s.sched.expireRunner(m)
 
@@ -332,6 +326,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Done:       true,
 			DoneReason: "unload",
 		})
+		return
+	}
+
+	// Handle image generation models
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		s.handleImageGenerate(c, req, name.String(), checkpointStart)
 		return
 	}
 
