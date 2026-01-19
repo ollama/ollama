@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
+	"github.com/ollama/ollama/x/imagegen/vae"
 )
 
 // GenerateConfig holds all options for image generation.
@@ -452,7 +453,11 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		teaCache.Free()
 	}
 
-	// VAE decode
+	// VAE decode - enable tiling for larger images to reduce memory
+	// VAE attention is O(n²) on latent pixels, tiling helps significantly
+	if latentH > 64 || latentW > 64 {
+		m.VAEDecoder.Tiling = vae.DefaultTilingConfig()
+	}
 	decoded := m.VAEDecoder.Decode(latents)
 	latents.Free()
 
