@@ -7,8 +7,6 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// Edge cases covered: assistant output with thinking enabled, typed argument coercion,
-// tool-call content containing XML-sensitive characters, and thinking disabled mode.
 func TestGLM47ParserAdd(t *testing.T) {
 	parser := GLM47Parser{}
 	parser.Init([]api.Tool{

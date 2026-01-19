@@ -59,8 +59,7 @@ func (p *glm4MoeLiteModel) KV(t *Tokenizer) KV {
 	kv["glm4moelite.expert_feed_forward_length"] = p.ExpertIntermediateSize
 	kv["glm4moelite.expert_shared_count"] = p.ExpertSharedCount
 
-	// GLM-4.7 MOE Lite uses sigmoid gating
-	kv["glm4moelite.expert_gating_func"] = uint32(2) // sigmoid
+	kv["glm4moelite.expert_gating_func"] = uint32(2)
 	kv["glm4moelite.expert_used_count"] = p.ExpertUsedCount
 	kv["glm4moelite.expert_weights_norm"] = p.ExpertWeightsNorm
 	kv["glm4moelite.expert_weights_scale"] = p.ExpertWeightsScale

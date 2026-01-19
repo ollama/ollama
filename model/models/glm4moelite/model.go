@@ -35,7 +35,6 @@ type Options struct {
 }
 
 func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, t, p ml.Tensor) ml.Tensor {
-	// Standard RoPE without YARN scaling
 	return nn.RoPE(ctx, t, p, o.qkRopeHeadDim, o.ropeBase, 1.0)
 }
 
@@ -79,8 +78,6 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	qRot := opts.applyRotaryPositionEmbeddings(ctx, queryChunks[1], positions)
 	kRot = opts.applyRotaryPositionEmbeddings(ctx, kRot, positions)
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
-
-	// GLM-4.7 MOE Lite uses v3-style MLA (no v3.1 absorbed mode)
 	kPass = attn.KVB.Forward(ctx, kPass)
 
 	kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
@@ -221,7 +218,6 @@ func New(c fs.Config) (model.Model, error) {
 	keyLength := int(c.Uint("attention.key_length"))
 	valueLength := int(c.Uint("attention.value_length"))
 
-	// Simple kqScale for GLM-4.7 MOE Lite (no mScale factor like DeepSeek)
 	kqScale := 1.0 / math.Sqrt(float64(keyLength))
 
 	var pre []string
