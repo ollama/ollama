@@ -311,6 +311,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &deepseekocr{}
 	case "DeepseekV3ForCausalLM":
 		conv = &deepseek2Model{}
+	case "MistralForCausalLM":
+		conv = &mistralLarge3Model{}
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
