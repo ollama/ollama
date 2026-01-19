@@ -349,5 +349,5 @@ func loadImageWithEXIF(path string) (image.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
-	return imagegen.LoadImageFromBytes(data)
+	return imagegen.DecodeImage(data)
 }
