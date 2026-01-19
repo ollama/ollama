@@ -749,7 +749,7 @@ type ShowResponse struct {
 	Messages      []Message          `json:"messages,omitempty"`
 	RemoteModel   string             `json:"remote_model,omitempty"`
 	RemoteHost    string             `json:"remote_host,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info,omitempty"`
+	ModelInfo     map[string]any     `json:"model_info"`
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`

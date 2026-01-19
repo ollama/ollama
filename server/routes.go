@@ -1149,6 +1149,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Capabilities: m.Capabilities(),
 		ModifiedAt:   manifest.fi.ModTime(),
 		Requires:     m.Config.Requires,
+		// Several integrations crash on a nil/omitempty+empty ModelInfo, so by
+		// default we return an empty map.
+		ModelInfo: make(map[string]any),
 	}
 
 	if m.Config.RemoteHost != "" {
