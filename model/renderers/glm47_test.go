@@ -7,7 +7,6 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// Test cases validated against zai-org/GLM-4.7 chat template from HuggingFace.
 // Edge cases covered: tool JSON spacing, think disabling, tool calls without content,
 // sorted tool argument keys, multiple tool calls, and multiple tool responses under
 // a single observation tag.
