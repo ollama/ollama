@@ -54,6 +54,9 @@ func quantizeTensor(r io.Reader, name, dtype string, shape []int32, quantize str
 	// Quantize based on quantization type
 	var qweight, scales, qbiases *mlx.Array
 	switch quantize {
+	case "fp4":
+		// affine mode: group_size=32, bits=4
+		qweight, scales, qbiases = mlx.Quantize(arr, 32, 4, "affine")
 	case "fp8":
 		// affine mode: group_size=32, bits=8
 		qweight, scales, qbiases = mlx.Quantize(arr, 32, 8, "affine")
