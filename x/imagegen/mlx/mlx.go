@@ -1137,6 +1137,27 @@ func RMSNormNoWeight(x *Array, eps float32) *Array {
 	return RMSNorm(x, ones, eps)
 }
 
+// LayerNorm applies layer normalization without learnable params
+// (x - mean) / sqrt(var + eps)
+func LayerNorm(x *Array, eps float32) *Array {
+	return LayerNormWithWeightBias(x, nil, nil, eps)
+}
+
+// LayerNormWithWeightBias computes layer normalization using mlx.fast
+// weight and bias can be nil for elementwise_affine=False
+func LayerNormWithWeightBias(x, weight, bias *Array, eps float32) *Array {
+	res := C.mlx_array_new()
+	var wc, bc C.mlx_array
+	if weight != nil {
+		wc = weight.c
+	}
+	if bias != nil {
+		bc = bias.c
+	}
+	C.mlx_fast_layer_norm(&res, x.c, wc, bc, C.float(eps), C.default_stream())
+	return newArray(res)
+}
+
 // RoPE applies rotary position embeddings using mlx.fast
 func RoPE(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
 	res := C.mlx_array_new()

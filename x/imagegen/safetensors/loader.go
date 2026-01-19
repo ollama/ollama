@@ -19,6 +19,12 @@ type WeightSource interface {
 	HasTensor(name string) bool
 }
 
+// Transformer allows structs to transform weight arrays before assignment.
+// Implement this to apply operations like transpose during loading.
+type Transformer interface {
+	Transform(field string, arr *mlx.Array) *mlx.Array
+}
+
 // LoadModule loads weights into a struct using reflection and struct tags.
 //
 // Struct tags use the format: `weight:"path[,optional]"`
@@ -135,6 +141,10 @@ func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]st
 						*errs = append(*errs, fullPath)
 					}
 					continue
+				}
+				// Transform before assigning if parent implements Transformer
+				if t, ok := v.Addr().Interface().(Transformer); ok {
+					arr = t.Transform(field.Name, arr)
 				}
 				fieldVal.Set(reflect.ValueOf(arr))
 				continue

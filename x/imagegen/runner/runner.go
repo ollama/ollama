@@ -19,6 +19,7 @@ import (
 
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
 )
 
@@ -40,10 +41,15 @@ type Response struct {
 	Total   int    `json:"total,omitempty"`
 }
 
+// ImageModel is the interface for image generation models
+type ImageModel interface {
+	GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error)
+}
+
 // Server holds the model and handles requests
 type Server struct {
 	mu        sync.Mutex
-	model     *zimage.Model
+	model     ImageModel
 	modelName string
 }
 
@@ -80,10 +86,25 @@ func Execute(args []string) error {
 			requiredMemory/(1024*1024*1024), availableMemory/(1024*1024*1024))
 	}
 
-	// Load model
-	model := &zimage.Model{}
-	if err := model.Load(*modelName); err != nil {
-		return fmt.Errorf("failed to load model: %w", err)
+	// Detect model type and load appropriate model
+	modelType := imagegen.DetectModelType(*modelName)
+	slog.Info("detected model type", "type", modelType)
+
+	var model ImageModel
+	switch modelType {
+	case "Flux2KleinPipeline":
+		m := &flux2.Model{}
+		if err := m.Load(*modelName); err != nil {
+			return fmt.Errorf("failed to load model: %w", err)
+		}
+		model = m
+	default:
+		// Default to Z-Image for ZImagePipeline, FluxPipeline, etc.
+		m := &zimage.Model{}
+		if err := m.Load(*modelName); err != nil {
+			return fmt.Errorf("failed to load model: %w", err)
+		}
+		model = m
 	}
 
 	server := &Server{
@@ -159,26 +180,19 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate image
+	// Generate image using the common interface
 	ctx := r.Context()
-	img, err := s.model.GenerateFromConfig(ctx, &zimage.GenerateConfig{
-		Prompt: req.Prompt,
-		Width:  req.Width,
-		Height: req.Height,
-		Steps:  req.Steps,
-		Seed:   req.Seed,
-		Progress: func(step, total int) {
-			resp := Response{
-				Step:  step,
-				Total: total,
-				Done:  false,
-			}
-			data, _ := json.Marshal(resp)
-			w.Write(data)
-			w.Write([]byte("\n"))
-			flusher.Flush()
-		},
-	})
+	enc := json.NewEncoder(w)
+
+	// Progress callback streams step updates
+	progress := func(step, total int) {
+		resp := Response{Step: step, Total: total}
+		enc.Encode(resp)
+		w.Write([]byte("\n"))
+		flusher.Flush()
+	}
+
+	img, err := s.model.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
 
 	if err != nil {
 		// Don't send error for cancellation

@@ -72,9 +72,8 @@ func TestCheckMemoryRequirements(t *testing.T) {
 func TestModelVRAMEstimates(t *testing.T) {
 	// Verify the VRAM estimates map has expected entries
 	expected := map[string]uint64{
-		"ZImagePipeline":    21 * GB,
-		"FluxPipeline":      21 * GB,
-		"QwenImagePipeline": 80 * GB,
+		"ZImagePipeline": 21 * GB,
+		"FluxPipeline":   20 * GB,
 	}
 
 	for name, expectedVRAM := range expected {
