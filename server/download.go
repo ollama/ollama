@@ -95,25 +95,36 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 const (
-	numDownloadParts          = 16
+	// numDownloadParts is the default number of concurrent download parts for standard downloads
+	numDownloadParts = 16
+	// numHFDownloadParts is the reduced number of concurrent download parts for HuggingFace
+	// downloads to avoid triggering rate limits (HTTP 429 errors). See GitHub issue #13297.
 	numHFDownloadParts        = 4
 	minDownloadPartSize int64 = 100 * format.MegaByte
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
 
-// isHuggingFaceURL returns true if the URL is from HuggingFace domains
+// isHuggingFaceURL returns true if the URL is from a HuggingFace domain.
+// This includes:
+//   - huggingface.co (main domain)
+//   - *.huggingface.co (subdomains like cdn-lfs.huggingface.co)
+//   - hf.co (shortlink domain)
+//   - *.hf.co (CDN domains like cdn-lfs.hf.co, cdn-lfs3.hf.co)
 func isHuggingFaceURL(u *url.URL) bool {
 	if u == nil {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
-	return strings.HasSuffix(host, "huggingface.co") ||
-		strings.HasSuffix(host, ".hf.co") ||
-		host == "hf.co"
+	return host == "huggingface.co" ||
+		strings.HasSuffix(host, ".huggingface.co") ||
+		host == "hf.co" ||
+		strings.HasSuffix(host, ".hf.co")
 }
 
 // getNumDownloadParts returns the number of concurrent download parts to use
-// for the given URL. HuggingFace URLs use reduced concurrency to avoid rate limiting.
+// for the given URL. HuggingFace URLs use reduced concurrency (default 4) to
+// avoid triggering rate limits. This can be overridden via the OLLAMA_HF_CONCURRENCY
+// environment variable. For non-HuggingFace URLs, returns the standard concurrency (16).
 func getNumDownloadParts(u *url.URL) int {
 	if isHuggingFaceURL(u) {
 		if v := os.Getenv("OLLAMA_HF_CONCURRENCY"); v != "" {
