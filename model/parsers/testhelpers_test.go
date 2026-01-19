@@ -104,11 +104,3 @@ func args(s string) api.ToolCallFunctionArguments {
 	}
 	return result
 }
-
-func propsMap(s string) *api.ToolPropertiesMap {
-	var result api.ToolPropertiesMap
-	if err := json.Unmarshal([]byte(s), &result); err != nil {
-		panic("invalid JSON in propsMap(): " + err.Error())
-	}
-	return &result
-}
