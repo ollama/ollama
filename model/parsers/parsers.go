@@ -68,6 +68,8 @@ func ParserForName(name string) Parser {
 		return &Nemotron3NanoParser{}
 	case "functiongemma":
 		return &FunctionGemmaParser{}
+	case "minimaxm2":
+		return &MiniMaxM2Parser{}
 	default:
 		return nil
 	}
