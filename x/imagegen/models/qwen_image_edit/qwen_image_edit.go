@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -25,7 +24,7 @@ type GenerateConfig struct {
 	Height         int32                 // Output height (default: from input image)
 	Steps          int                   // Denoising steps (default: 50)
 	Seed           int64                 // Random seed
-	Progress       imagegen.ProgressFunc // Optional progress callback
+	Progress       func(step, totalSteps int) // Optional progress callback
 }
 
 // Model represents a Qwen-Image-Edit diffusion model.

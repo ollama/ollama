@@ -19,6 +19,12 @@ type WeightSource interface {
 	HasTensor(name string) bool
 }
 
+// Transformer allows structs to transform weight arrays before assignment.
+// Implement this to apply operations like transpose during loading.
+type Transformer interface {
+	Transform(field string, arr *mlx.Array) *mlx.Array
+}
+
 // LoadModule loads weights into a struct using reflection and struct tags.
 //
 // Struct tags use the format: `weight:"path[,optional]"`
@@ -136,6 +142,10 @@ func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]st
 					}
 					continue
 				}
+				// Transform before assigning if parent implements Transformer
+				if t, ok := v.Addr().Interface().(Transformer); ok {
+					arr = t.Transform(field.Name, arr)
+				}
 				fieldVal.Set(reflect.ValueOf(arr))
 				continue
 			}
@@ -192,42 +202,6 @@ func joinPath(prefix, suffix string) string {
 		return prefix
 	}
 	return prefix + "." + suffix
-}
-
-// LoadConv2D loads a Conv2D layer from weights.
-// Returns weight in OHWI format (transposed from PyTorch's OIHW) and optional bias.
-func LoadConv2D(weights WeightSource, path string) (*mlx.Array, *mlx.Array, error) {
-	weight, err := weights.GetTensor(path + ".weight")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load weight %s: %w", path, err)
-	}
-
-	// Transpose weight from OIHW to OHWI for MLX
-	weightOHWI := mlx.Transpose(weight, 0, 2, 3, 1)
-
-	// Bias is optional
-	var bias *mlx.Array
-	biasPath := path + ".bias"
-	if weights.HasTensor(biasPath) {
-		bias, _ = weights.GetTensor(biasPath)
-	}
-
-	return weightOHWI, bias, nil
-}
-
-// LoadGroupNorm loads a GroupNormLayer from weights.
-func LoadGroupNorm(weights WeightSource, path string) (*mlx.Array, *mlx.Array, error) {
-	weight, err := weights.GetTensor(path + ".weight")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load weight %s: %w", path, err)
-	}
-
-	bias, err := weights.GetTensor(path + ".bias")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load bias %s: %w", path, err)
-	}
-
-	return weight, bias, nil
 }
 
 // LoadLinearLayer loads a linear layer from weights, automatically detecting if it's quantized.

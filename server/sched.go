@@ -571,7 +571,7 @@ func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
 		llama:           server,
-		Options:         &req.opts,
+		Options:         &req.opts, // Required for needsReload to not always return true
 		loading:         false,
 		sessionDuration: sessionDuration,
 		totalSize:       server.TotalSize(),

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -24,7 +23,7 @@ type GenerateConfig struct {
 	Height         int32                 // Image height (default: 1024)
 	Steps          int                   // Denoising steps (default: 30)
 	Seed           int64                 // Random seed
-	Progress       imagegen.ProgressFunc // Optional progress callback
+	Progress       func(step, totalSteps int) // Optional progress callback
 
 	// Layer caching (DeepCache/Learning-to-Cache speedup)
 	LayerCache    bool // Enable layer caching (default: false)
@@ -115,7 +114,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 }
 
 // GenerateWithProgress creates an image with progress callback.
-func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress imagegen.ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(&GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
@@ -127,7 +126,7 @@ func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps i
 }
 
 // GenerateWithCFG creates an image with classifier-free guidance.
-func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress imagegen.ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(&GenerateConfig{
 		Prompt:         prompt,
 		NegativePrompt: negativePrompt,

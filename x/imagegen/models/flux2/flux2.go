@@ -27,7 +27,7 @@ type GenerateConfig struct {
 	Steps         int                   // Denoising steps (default: 4 for Klein)
 	GuidanceScale float32               // Guidance scale (default: 1.0, Klein doesn't need CFG)
 	Seed          int64                 // Random seed
-	Progress      imagegen.ProgressFunc // Optional progress callback
+	Progress      func(step, totalSteps int) // Optional progress callback
 	CapturePath   string                // GPU capture path (debug)
 	InputImages   []image.Image         // Reference images for image conditioning (already loaded)
 }
@@ -143,7 +143,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 }
 
 // GenerateWithProgress creates an image with progress callback.
-func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress imagegen.ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
@@ -289,9 +289,15 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 
 	// RoPE cache - includes reference images if present
 	rope := PrepareRoPECache(textLen, patchH, patchW, tcfg.AxesDimsRoPE, tcfg.RopeTheta, refHeights, refWidths, ImageRefScale)
+
+	// Cleanup setup arrays when done
 	defer func() {
 		rope.Cos.Free()
 		rope.Sin.Free()
+		promptEmbeds.Free()
+		if refTokens != nil {
+			refTokens.Tokens.Free()
+		}
 	}()
 
 	// Pre-compute all timesteps before the loop to avoid per-step tensor creation
@@ -381,6 +387,11 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	fmt.Printf("  Denoised %d steps in %.2fs (%.2fs/step), peak %.1f GB\n",
 		cfg.Steps, loopTime, loopTime/float64(cfg.Steps), peakMem)
 
+	// Free timesteps now that denoising is done
+	for _, ts := range timesteps {
+		ts.Free()
+	}
+
 	// VAE decode with tiling for larger images
 	fmt.Print("  Decoding VAE... ")
 	vaeStart := time.Now()
@@ -391,6 +402,10 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	}
 	decoded := m.VAE.Decode(patches, patchH, patchW)
 	mlx.Eval(decoded)
+
+	// Free patches now that decode is done
+	patches.Free()
+
 	fmt.Printf("✓ (%.2fs, peak %.1f GB)\n", time.Since(vaeStart).Seconds(),
 		float64(mlx.MetalGetPeakMemory())/(1024*1024*1024))
 

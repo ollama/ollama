@@ -150,10 +150,18 @@ func (gn *GroupNormLayer) Forward(x *mlx.Array) *mlx.Array {
 
 // Conv2D represents a 2D convolution layer (reused pattern)
 type Conv2D struct {
-	Weight  *mlx.Array
-	Bias    *mlx.Array
+	Weight  *mlx.Array `weight:"weight"`
+	Bias    *mlx.Array `weight:"bias,optional"`
 	Stride  int32
 	Padding int32
+}
+
+// Transform implements safetensors.Transformer to transpose weights from PyTorch's OIHW to MLX's OHWI.
+func (conv *Conv2D) Transform(field string, arr *mlx.Array) *mlx.Array {
+	if field == "Weight" {
+		return mlx.Transpose(arr, 0, 2, 3, 1)
+	}
+	return arr
 }
 
 // Forward applies convolution (NHWC format)
@@ -170,11 +178,11 @@ func (conv *Conv2D) Forward(x *mlx.Array) *mlx.Array {
 
 // ResnetBlock2D implements a ResNet block for VAE
 type ResnetBlock2D struct {
-	Norm1        *GroupNormLayer
-	Conv1        *Conv2D
-	Norm2        *GroupNormLayer
-	Conv2        *Conv2D
-	ConvShortcut *Conv2D // nil if not present
+	Norm1        *GroupNormLayer `weight:"norm1"`
+	Conv1        *Conv2D         `weight:"conv1"`
+	Norm2        *GroupNormLayer `weight:"norm2"`
+	Conv2        *Conv2D         `weight:"conv2"`
+	ConvShortcut *Conv2D         `weight:"conv_shortcut,optional"`
 }
 
 // Forward applies the ResNet block
@@ -381,11 +389,10 @@ func (m *AutoencoderKLFlux2) loadWeights(weights safetensors.WeightSource, cfg *
 	}
 
 	// Load decoder conv_in
-	convInW, convInB, err := safetensors.LoadConv2D(weights, "decoder.conv_in")
-	if err != nil {
+	m.DecoderConvIn = &Conv2D{Stride: 1, Padding: 1}
+	if err := safetensors.LoadModule(m.DecoderConvIn, weights, "decoder.conv_in"); err != nil {
 		return fmt.Errorf("decoder.conv_in: %w", err)
 	}
-	m.DecoderConvIn = &Conv2D{Weight: convInW, Bias: convInB, Stride: 1, Padding: 1}
 
 	// Load mid block
 	m.DecoderMid, err = loadVAEMidBlock(weights, "decoder.mid_block", cfg.NormNumGroups)
@@ -406,25 +413,22 @@ func (m *AutoencoderKLFlux2) loadWeights(weights safetensors.WeightSource, cfg *
 	}
 
 	// Load decoder conv_norm_out and conv_out
-	normW, normB, err := safetensors.LoadGroupNorm(weights, "decoder.conv_norm_out")
-	if err != nil {
+	m.DecoderNormOut = &GroupNormLayer{NumGroups: cfg.NormNumGroups, Eps: 1e-5}
+	if err := safetensors.LoadModule(m.DecoderNormOut, weights, "decoder.conv_norm_out"); err != nil {
 		return fmt.Errorf("decoder.conv_norm_out: %w", err)
 	}
-	m.DecoderNormOut = &GroupNormLayer{Weight: normW, Bias: normB, NumGroups: cfg.NormNumGroups, Eps: 1e-5}
 
-	convOutW, convOutB, err := safetensors.LoadConv2D(weights, "decoder.conv_out")
-	if err != nil {
+	m.DecoderConvOut = &Conv2D{Stride: 1, Padding: 1}
+	if err := safetensors.LoadModule(m.DecoderConvOut, weights, "decoder.conv_out"); err != nil {
 		return fmt.Errorf("decoder.conv_out: %w", err)
 	}
-	m.DecoderConvOut = &Conv2D{Weight: convOutW, Bias: convOutB, Stride: 1, Padding: 1}
 
 	// Load post_quant_conv
 	if cfg.UsePostQuantConv {
-		pqW, pqB, err := safetensors.LoadConv2D(weights, "post_quant_conv")
-		if err != nil {
+		m.PostQuantConv = &Conv2D{Stride: 1, Padding: 0}
+		if err := safetensors.LoadModule(m.PostQuantConv, weights, "post_quant_conv"); err != nil {
 			return fmt.Errorf("post_quant_conv: %w", err)
 		}
-		m.PostQuantConv = &Conv2D{Weight: pqW, Bias: pqB, Stride: 1, Padding: 0}
 	}
 
 	// Load latent BatchNorm (affine=False, so no weight/bias)
@@ -475,39 +479,20 @@ func loadVAEMidBlock(weights safetensors.WeightSource, prefix string, numGroups 
 
 // loadResnetBlock2D loads a ResNet block.
 func loadResnetBlock2D(weights safetensors.WeightSource, prefix string, numGroups int32) (*ResnetBlock2D, error) {
-	norm1W, norm1B, err := safetensors.LoadGroupNorm(weights, prefix+".norm1")
-	if err != nil {
-		return nil, err
-	}
-	conv1W, conv1B, err := safetensors.LoadConv2D(weights, prefix+".conv1")
-	if err != nil {
-		return nil, err
-	}
-	norm2W, norm2B, err := safetensors.LoadGroupNorm(weights, prefix+".norm2")
-	if err != nil {
-		return nil, err
-	}
-	conv2W, conv2B, err := safetensors.LoadConv2D(weights, prefix+".conv2")
-	if err != nil {
-		return nil, err
-	}
-
 	block := &ResnetBlock2D{
-		Norm1: &GroupNormLayer{Weight: norm1W, Bias: norm1B, NumGroups: numGroups, Eps: 1e-5},
-		Conv1: &Conv2D{Weight: conv1W, Bias: conv1B, Stride: 1, Padding: 1},
-		Norm2: &GroupNormLayer{Weight: norm2W, Bias: norm2B, NumGroups: numGroups, Eps: 1e-5},
-		Conv2: &Conv2D{Weight: conv2W, Bias: conv2B, Stride: 1, Padding: 1},
+		Norm1:        &GroupNormLayer{NumGroups: numGroups, Eps: 1e-5},
+		Conv1:        &Conv2D{Stride: 1, Padding: 1},
+		Norm2:        &GroupNormLayer{NumGroups: numGroups, Eps: 1e-5},
+		Conv2:        &Conv2D{Stride: 1, Padding: 1},
+		ConvShortcut: &Conv2D{Stride: 1, Padding: 0}, // Pre-allocate for optional loading
 	}
-
-	// ConvShortcut is optional
-	if weights.HasTensor(prefix + ".conv_shortcut.weight") {
-		shortcutW, shortcutB, err := safetensors.LoadConv2D(weights, prefix+".conv_shortcut")
-		if err != nil {
-			return nil, err
-		}
-		block.ConvShortcut = &Conv2D{Weight: shortcutW, Bias: shortcutB, Stride: 1, Padding: 0}
+	if err := safetensors.LoadModule(block, weights, prefix); err != nil {
+		return nil, err
 	}
-
+	// If ConvShortcut wasn't loaded (no weights found), nil it out
+	if block.ConvShortcut.Weight == nil {
+		block.ConvShortcut = nil
+	}
 	return block, nil
 }
 
@@ -536,11 +521,10 @@ func loadUpDecoderBlock2D(weights safetensors.WeightSource, prefix string, numLa
 
 	var upsample *Conv2D
 	if hasUpsample {
-		upW, upB, err := safetensors.LoadConv2D(weights, prefix+".upsamplers.0.conv")
-		if err != nil {
+		upsample = &Conv2D{Stride: 1, Padding: 1}
+		if err := safetensors.LoadModule(upsample, weights, prefix+".upsamplers.0.conv"); err != nil {
 			return nil, err
 		}
-		upsample = &Conv2D{Weight: upW, Bias: upB, Stride: 1, Padding: 1}
 	}
 
 	return &UpDecoderBlock2D{
@@ -674,12 +658,13 @@ func (vae *AutoencoderKLFlux2) decodeTile(z *mlx.Array) *mlx.Array {
 
 // loadEncoderWeights loads the encoder components for image conditioning
 func (m *AutoencoderKLFlux2) loadEncoderWeights(weights safetensors.WeightSource, cfg *VAEConfig) error {
+	var err error
+
 	// Load encoder conv_in
-	convInW, convInB, err := safetensors.LoadConv2D(weights, "encoder.conv_in")
-	if err != nil {
+	m.EncoderConvIn = &Conv2D{Stride: 1, Padding: 1}
+	if err := safetensors.LoadModule(m.EncoderConvIn, weights, "encoder.conv_in"); err != nil {
 		return fmt.Errorf("encoder.conv_in: %w", err)
 	}
-	m.EncoderConvIn = &Conv2D{Weight: convInW, Bias: convInB, Stride: 1, Padding: 1}
 
 	// Load encoder down blocks
 	numBlocks := len(cfg.BlockOutChannels)
@@ -700,25 +685,22 @@ func (m *AutoencoderKLFlux2) loadEncoderWeights(weights safetensors.WeightSource
 	}
 
 	// Load encoder conv_norm_out and conv_out
-	normW, normB, err := safetensors.LoadGroupNorm(weights, "encoder.conv_norm_out")
-	if err != nil {
+	m.EncoderNormOut = &GroupNormLayer{NumGroups: cfg.NormNumGroups, Eps: 1e-5}
+	if err := safetensors.LoadModule(m.EncoderNormOut, weights, "encoder.conv_norm_out"); err != nil {
 		return fmt.Errorf("encoder.conv_norm_out: %w", err)
 	}
-	m.EncoderNormOut = &GroupNormLayer{Weight: normW, Bias: normB, NumGroups: cfg.NormNumGroups, Eps: 1e-5}
 
-	convOutW, convOutB, err := safetensors.LoadConv2D(weights, "encoder.conv_out")
-	if err != nil {
+	m.EncoderConvOut = &Conv2D{Stride: 1, Padding: 1}
+	if err := safetensors.LoadModule(m.EncoderConvOut, weights, "encoder.conv_out"); err != nil {
 		return fmt.Errorf("encoder.conv_out: %w", err)
 	}
-	m.EncoderConvOut = &Conv2D{Weight: convOutW, Bias: convOutB, Stride: 1, Padding: 1}
 
 	// Load quant_conv (for encoding)
 	if cfg.UseQuantConv {
-		qW, qB, err := safetensors.LoadConv2D(weights, "quant_conv")
-		if err != nil {
+		m.QuantConv = &Conv2D{Stride: 1, Padding: 0}
+		if err := safetensors.LoadModule(m.QuantConv, weights, "quant_conv"); err != nil {
 			return fmt.Errorf("quant_conv: %w", err)
 		}
-		m.QuantConv = &Conv2D{Weight: qW, Bias: qB, Stride: 1, Padding: 0}
 	}
 
 	return nil
@@ -738,11 +720,10 @@ func loadDownEncoderBlock2D(weights safetensors.WeightSource, prefix string, num
 
 	var downsample *Conv2D
 	if hasDownsample {
-		downW, downB, err := safetensors.LoadConv2D(weights, prefix+".downsamplers.0.conv")
-		if err != nil {
+		downsample = &Conv2D{Stride: 2, Padding: 0}
+		if err := safetensors.LoadModule(downsample, weights, prefix+".downsamplers.0.conv"); err != nil {
 			return nil, err
 		}
-		downsample = &Conv2D{Weight: downW, Bias: downB, Stride: 2, Padding: 0}
 	}
 
 	return &DownEncoderBlock2D{

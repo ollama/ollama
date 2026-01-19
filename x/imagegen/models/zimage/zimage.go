@@ -23,7 +23,7 @@ type GenerateConfig struct {
 	Height         int32                 // Image height (default: 1024)
 	Steps          int                   // Denoising steps (default: 9 for turbo)
 	Seed           int64                 // Random seed
-	Progress       imagegen.ProgressFunc // Optional progress callback
+	Progress       func(step, totalSteps int) // Optional progress callback
 	CapturePath    string                // GPU capture path (debug)
 
 	// TeaCache options (timestep embedding aware caching)
@@ -136,7 +136,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 }
 
 // GenerateWithProgress creates an image with progress callback.
-func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress imagegen.ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
@@ -148,7 +148,7 @@ func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps i
 }
 
 // GenerateWithCFG creates an image with classifier-free guidance.
-func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress imagegen.ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:         prompt,
 		NegativePrompt: negativePrompt,
