@@ -108,26 +108,46 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 		}
 		return "", "", calls, nil
 	case ministralCollectingToolArgs:
-		if strings.Contains(p.buffer.String(), "}") {
-			before, _ := splitAtTag(&p.buffer, "}", false)
-			before += "}"
+		bufStr := p.buffer.String()
+		if strings.Contains(bufStr, "}") {
+			// Find the matching closing brace by counting nesting levels
+			braceCount := 0
+			foundStart := false
+			endPos := -1
 
-			var args api.ToolCallFunctionArguments
-			if err := json.Unmarshal([]byte(before), &args); err != nil {
-				// todo - throw a better error
-				return "", "", calls, err
+			for i, r := range bufStr {
+				if r == '{' {
+					braceCount++
+					foundStart = true
+				} else if r == '}' {
+					braceCount--
+					if foundStart && braceCount == 0 {
+						endPos = i + 1
+						break
+					}
+				}
 			}
 
-			p.state = ministralCollectingContent
+			if endPos > 0 {
+				before := bufStr[:endPos]
 
-			call := api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      p.currentTool.Function.Name,
-					Arguments: args,
-				},
+				var args api.ToolCallFunctionArguments
+				if err := json.Unmarshal([]byte(before), &args); err != nil {
+					// todo - throw a better error
+					return "", "", calls, err
+				}
+
+				p.state = ministralCollectingContent
+
+				call := api.ToolCall{
+					Function: api.ToolCallFunction{
+						Name:      p.currentTool.Function.Name,
+						Arguments: args,
+					},
+				}
+				calls = append(calls, call)
+				return "", "", calls, nil
 			}
-			calls = append(calls, call)
-			return "", "", calls, nil
 		}
 		return "", "", calls, nil
 	}
