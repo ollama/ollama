@@ -77,7 +77,7 @@ int mlx_dynamic_init(void) {
         tried_paths[num_tried++] = lib_path;
         if (try_load_lib(lib_path)) goto success;
     }
-    // Try build directory relative to cwd (for tests)
+    // Try build directory (for tests run from repo root)
     lib_path = "./build/lib/ollama/libmlxc.dylib";
     tried_paths[num_tried++] = lib_path;
     if (try_load_lib(lib_path)) goto success;

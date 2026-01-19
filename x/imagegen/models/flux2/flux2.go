@@ -22,18 +22,15 @@ import (
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
 	Prompt        string
-	Width         int32        // Image width (default: 1024)
-	Height        int32        // Image height (default: 1024)
-	Steps         int          // Denoising steps (default: 4 for Klein)
-	GuidanceScale float32      // Guidance scale (default: 1.0, Klein doesn't need CFG)
-	Seed          int64        // Random seed
-	Progress      ProgressFunc // Optional progress callback
-	CapturePath   string       // GPU capture path (debug)
-	InputImages   []image.Image // Reference images for image conditioning (already loaded)
+	Width         int32                 // Image width (default: 1024)
+	Height        int32                 // Image height (default: 1024)
+	Steps         int                   // Denoising steps (default: 4 for Klein)
+	GuidanceScale float32               // Guidance scale (default: 1.0, Klein doesn't need CFG)
+	Seed          int64                 // Random seed
+	Progress      imagegen.ProgressFunc // Optional progress callback
+	CapturePath   string                // GPU capture path (debug)
+	InputImages   []image.Image         // Reference images for image conditioning (already loaded)
 }
-
-// ProgressFunc is called during generation with step progress.
-type ProgressFunc func(step, totalSteps int)
 
 // Model represents a FLUX.2 Klein model.
 type Model struct {
@@ -146,7 +143,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 }
 
 // GenerateWithProgress creates an image with progress callback.
-func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress imagegen.ProgressFunc) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
@@ -291,12 +288,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	noiseSeqLen := patches.Shape()[1]
 
 	// RoPE cache - includes reference images if present
-	var rope *RoPECache
-	if refTokens != nil {
-		rope = PrepareRoPECacheWithImages(textLen, patchH, patchW, refHeights, refWidths, ImageRefScale, tcfg.AxesDimsRoPE, tcfg.RopeTheta)
-	} else {
-		rope = PrepareRoPECache(textLen, patchH, patchW, tcfg.AxesDimsRoPE, tcfg.RopeTheta)
-	}
+	rope := PrepareRoPECache(textLen, patchH, patchW, tcfg.AxesDimsRoPE, tcfg.RopeTheta, refHeights, refWidths, ImageRefScale)
 	defer func() {
 		rope.Cos.Free()
 		rope.Sin.Free()
@@ -453,9 +445,9 @@ func PrepareImage(img image.Image, limitPixels int) (image.Image, int, int) {
 		h = 16
 	}
 
-	// Resize using bilinear interpolation
+	// Resize using high-quality bicubic interpolation (matches diffusers' default lanczos)
 	resized := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.BiLinear.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
+	draw.CatmullRom.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
 
 	return resized, w, h
 }

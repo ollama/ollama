@@ -540,7 +540,7 @@ func parseModulation3(mod *mlx.Array, dim int32, offset int32) (*mlx.Array, *mlx
 // Diffusers uses LayerNorm(elementwise_affine=False) which centers the data
 func modulateLayerNorm(x *mlx.Array, shift, scale *mlx.Array) *mlx.Array {
 	// Fast LayerNorm without learnable params
-	x = mlx.LayerNormNoParams(x, 1e-6)
+	x = mlx.LayerNorm(x, 1e-6)
 
 	// Modulate: x * (1 + scale) + shift
 	x = mlx.Mul(x, mlx.AddScalar(scale, 1.0))

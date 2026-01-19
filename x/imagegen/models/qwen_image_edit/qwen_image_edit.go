@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -18,17 +19,14 @@ import (
 // GenerateConfig holds all options for image editing.
 type GenerateConfig struct {
 	Prompt         string
-	NegativePrompt string       // Unconditional prompt for CFG (empty string "" is valid)
-	CFGScale       float32      // CFG enabled when > 1.0 (default: 4.0)
-	Width          int32        // Output width (default: from input image)
-	Height         int32        // Output height (default: from input image)
-	Steps          int          // Denoising steps (default: 50)
-	Seed           int64        // Random seed
-	Progress       ProgressFunc // Optional progress callback
+	NegativePrompt string                // Unconditional prompt for CFG (empty string "" is valid)
+	CFGScale       float32               // CFG enabled when > 1.0 (default: 4.0)
+	Width          int32                 // Output width (default: from input image)
+	Height         int32                 // Output height (default: from input image)
+	Steps          int                   // Denoising steps (default: 50)
+	Seed           int64                 // Random seed
+	Progress       imagegen.ProgressFunc // Optional progress callback
 }
-
-// ProgressFunc is called during generation with step progress.
-type ProgressFunc func(step, totalSteps int)
 
 // Model represents a Qwen-Image-Edit diffusion model.
 type Model struct {

@@ -158,19 +158,6 @@ func ComputeRoPE(ids *mlx.Array, axesDims []int32, theta int32) (*mlx.Array, *ml
 	return cos, sin
 }
 
-// compiledRoPERotation fuses: x * cos + x_rotated * sin
-var compiledRoPERotation *mlx.CompiledFunc
-
-func getCompiledRoPERotation() *mlx.CompiledFunc {
-	if compiledRoPERotation == nil {
-		compiledRoPERotation = mlx.CompileShapeless(func(inputs []*mlx.Array) []*mlx.Array {
-			x, xRotated, cos, sin := inputs[0], inputs[1], inputs[2], inputs[3]
-			return []*mlx.Array{mlx.Add(mlx.Mul(x, cos), mlx.Mul(xRotated, sin))}
-		}, true)
-	}
-	return compiledRoPERotation
-}
-
 // ApplyRoPE4D applies 4D rotary position embeddings to queries and keys.
 // x: [B, L, nheads, head_dim]
 // cos, sin: [1, L, 1, head_dim] (with repeat_interleave applied)
@@ -201,72 +188,37 @@ func ApplyRoPE4D(x *mlx.Array, cos, sin *mlx.Array) *mlx.Array {
 	xRotated := mlx.Concatenate([]*mlx.Array{negXImag, xReal}, 4) // [B, L, nheads, half, 2]
 	xRotated = mlx.Reshape(xRotated, B, L, nheads, headDim)       // [B, L, nheads, headDim]
 
-	// out = x * cos + x_rotated * sin (fused kernel)
-	return getCompiledRoPERotation().Call(x, xRotated, cos, sin)[0]
+	// out = x * cos + x_rotated * sin
+	return mlx.Add(mlx.Mul(x, cos), mlx.Mul(xRotated, sin))
 }
 
-// PrepareRoPECache precomputes RoPE values for text and image sequences.
+// PrepareRoPECache creates RoPE cache for text + noise, optionally with reference images.
 // textLen: number of text tokens
-// imgH, imgW: dimensions of the image in patch tokens
+// noiseH, noiseW: dimensions of the noise latent in patch tokens
 // axesDims: [32, 32, 32, 32]
 // theta: 2000
-func PrepareRoPECache(textLen, imgH, imgW int32, axesDims []int32, theta int32) *RoPECache {
-	// Prepare position IDs
-	textIDs := PrepareTextIDs(textLen)
-	latentIDs := PrepareLatentIDs(imgH, imgW)
-
-	// Concatenate: text first, then image
-	// Keep float32 for precision during RoPE computation
-	allIDs := mlx.Concatenate([]*mlx.Array{textIDs, latentIDs}, 0)
-
-	// Compute RoPE in float32
-	cos, sin := ComputeRoPE(allIDs, axesDims, theta)
-
-	// Cast final output to bfloat16
-	cos = mlx.ToBFloat16(cos)
-	sin = mlx.ToBFloat16(sin)
-
-	return &RoPECache{
-		Cos:      cos,
-		Sin:      sin,
-		TextLen:  textLen,
-		ImageLen: imgH * imgW,
-	}
-}
-
-// PrepareRoPECacheWithImages precomputes RoPE for text, noise, and reference images (editing mode).
-func PrepareRoPECacheWithImages(textLen, noiseH, noiseW int32, refHeights, refWidths []int32, scale int32, axesDims []int32, theta int32) *RoPECache {
-	// Prepare position IDs
+// refHeights, refWidths: optional reference image dimensions (pass nil/empty for no images)
+// scale: time coordinate offset between reference images (e.g., 10)
+func PrepareRoPECache(textLen, noiseH, noiseW int32, axesDims []int32, theta int32, refHeights, refWidths []int32, scale int32) *RoPECache {
 	textIDs := PrepareTextIDs(textLen)
 	noiseIDs := PrepareLatentIDs(noiseH, noiseW)
 
-	// Reference images if any
-	// Keep float32 for precision during RoPE computation
 	var allIDs *mlx.Array
+	imageLen := noiseH * noiseW
+
 	if len(refHeights) > 0 {
 		refIDs := PrepareImageIDs(refHeights, refWidths, scale)
 		allIDs = mlx.Concatenate([]*mlx.Array{textIDs, noiseIDs, refIDs}, 0)
+		for i := range refHeights {
+			imageLen += refHeights[i] * refWidths[i]
+		}
 	} else {
 		allIDs = mlx.Concatenate([]*mlx.Array{textIDs, noiseIDs}, 0)
 	}
 
-	// Compute RoPE in float32
 	cos, sin := ComputeRoPE(allIDs, axesDims, theta)
-
-	// Cast final output to bfloat16
 	cos = mlx.ToBFloat16(cos)
 	sin = mlx.ToBFloat16(sin)
 
-	// Calculate total image length
-	imageLen := noiseH * noiseW
-	for i := range refHeights {
-		imageLen += refHeights[i] * refWidths[i]
-	}
-
-	return &RoPECache{
-		Cos:      cos,
-		Sin:      sin,
-		TextLen:  textLen,
-		ImageLen: imageLen,
-	}
+	return &RoPECache{Cos: cos, Sin: sin, TextLen: textLen, ImageLen: imageLen}
 }

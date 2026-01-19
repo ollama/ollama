@@ -17,14 +17,14 @@ import (
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
 	Prompt         string
-	NegativePrompt string       // Empty = no CFG
-	CFGScale       float32      // Only used if NegativePrompt is set (default: 4.0)
-	Width          int32        // Image width (default: 1024)
-	Height         int32        // Image height (default: 1024)
-	Steps          int          // Denoising steps (default: 9 for turbo)
-	Seed           int64        // Random seed
-	Progress       ProgressFunc // Optional progress callback
-	CapturePath    string       // GPU capture path (debug)
+	NegativePrompt string                // Empty = no CFG
+	CFGScale       float32               // Only used if NegativePrompt is set (default: 4.0)
+	Width          int32                 // Image width (default: 1024)
+	Height         int32                 // Image height (default: 1024)
+	Steps          int                   // Denoising steps (default: 9 for turbo)
+	Seed           int64                 // Random seed
+	Progress       imagegen.ProgressFunc // Optional progress callback
+	CapturePath    string                // GPU capture path (debug)
 
 	// TeaCache options (timestep embedding aware caching)
 	TeaCache          bool    // TeaCache is always enabled for faster inference
@@ -33,9 +33,6 @@ type GenerateConfig struct {
 	// Fused QKV (fuse Q/K/V projections into single matmul)
 	FusedQKV bool // Enable fused QKV projection (default: false)
 }
-
-// ProgressFunc is called during generation with step progress.
-type ProgressFunc func(step, totalSteps int)
 
 // Model represents a Z-Image diffusion model.
 type Model struct {
@@ -139,7 +136,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 }
 
 // GenerateWithProgress creates an image with progress callback.
-func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress imagegen.ProgressFunc) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
@@ -151,7 +148,7 @@ func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps i
 }
 
 // GenerateWithCFG creates an image with classifier-free guidance.
-func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress imagegen.ProgressFunc) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:         prompt,
 		NegativePrompt: negativePrompt,
