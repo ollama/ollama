@@ -9,9 +9,12 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
@@ -279,4 +282,52 @@ func createModelfileLayers(mf *ModelfileConfig) ([]server.Layer, error) {
 	}
 
 	return layers, nil
+}
+
+// ErrNotImageGenModel is returned when TryCreateImageGen is called with a non-imagegen model.
+var ErrNotImageGenModel = errors.New("not an image generation model")
+
+// TryCreateImageGen attempts to create an image generation model from a parsed Modelfile.
+// Returns ErrNotImageGenModel if the model directory is not an imagegen model.
+// Returns nil on success, or another error on failure.
+func TryCreateImageGen(modelfile *parser.Modelfile, modelfileDir, modelName, quantize string, p *progress.Progress) error {
+	// Extract model directory from Modelfile
+	var modelDir string
+	for _, cmd := range modelfile.Commands {
+		if cmd.Name == "model" {
+			modelDir = cmd.Args
+			break
+		}
+	}
+	if modelDir == "" {
+		modelDir = "."
+	}
+	if !filepath.IsAbs(modelDir) && modelfileDir != "" {
+		modelDir = filepath.Join(modelfileDir, modelDir)
+	}
+
+	// Check if this is an imagegen model
+	if !create.IsTensorModelDir(modelDir) {
+		return ErrNotImageGenModel
+	}
+
+	// Extract Modelfile config
+	mfConfig := &ModelfileConfig{}
+	for _, cmd := range modelfile.Commands {
+		switch cmd.Name {
+		case "template":
+			mfConfig.Template = cmd.Args
+		case "system":
+			mfConfig.System = cmd.Args
+		case "license":
+			mfConfig.License = cmd.Args
+		}
+	}
+
+	return CreateModel(CreateOptions{
+		ModelName: modelName,
+		ModelDir:  modelDir,
+		Quantize:  quantize,
+		Modelfile: mfConfig,
+	}, p)
 }
