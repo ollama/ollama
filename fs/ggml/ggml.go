@@ -269,6 +269,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
+		"glm4moelite",
 	}, kv.Architecture())
 }
 
@@ -856,6 +857,7 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"bert",
 		"gemma3",
+		"glm4moelite",
 		"gptoss", "gpt-oss",
 		"mistral3",
 		"olmo3",
