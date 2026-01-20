@@ -40,9 +40,7 @@ func (sc *ShortConv) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ ml.Tensor
 	}
 	sx := state.Concat(ctx, bx, 0)
 
-	// Cast weight to F32 for SSMConv (Metal requires F32)
-	weightF32 := sc.Conv.Weight.Cast(ctx, ml.DTypeF32)
-	convOut := sx.SSMConv(ctx, weightF32)
+	convOut := sx.SSMConv(ctx, sc.Conv.Weight)
 	y := c.Mul(ctx, convOut)
 
 	dConv := sx.Dim(0) - seqTokens
