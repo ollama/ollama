@@ -64,15 +64,17 @@ func (mw *ManifestWeights) Load(dtype mlx.Dtype) error {
 			return fmt.Errorf("tensor 'data' not found in blob for %s", name)
 		}
 
-		// Convert dtype if needed
+		// Convert dtype if needed - only eval and free when converting
 		if dtype != 0 && arr.Dtype() != dtype {
 			arr = mlx.AsType(arr, dtype)
+			mlx.Eval(arr)
+			mw.cache[name] = arr
+			sf.Free() // Safe to free - arr is now an independent copy
+		} else {
+			// No conversion needed - keep native handle alive for mmap
+			mw.cache[name] = arr
+			mw.nativeCache = append(mw.nativeCache, sf)
 		}
-		// ALWAYS make a contiguous copy to ensure independence from mmap
-		arr = mlx.Contiguous(arr)
-		mlx.Eval(arr)
-		mw.cache[name] = arr
-		sf.Free() // Safe to free - arr is now an independent copy
 	}
 
 	return nil
