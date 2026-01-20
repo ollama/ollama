@@ -825,11 +825,6 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 		return true
 	}
 
-	// Hybrid cache architectures don't support quantized KV cache
-	if arch := f.KV().Architecture(); slices.Contains([]string{"lfm2"}, arch) {
-		return false
-	}
-
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
