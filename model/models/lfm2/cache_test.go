@@ -363,3 +363,82 @@ func TestHybridCache_IsSupportedForBatch(t *testing.T) {
 		t.Error("expected IsSupportedForBatch to be true with valid batch")
 	}
 }
+
+func TestHybridCache_ZeroConvSlots_EmptyInputs(t *testing.T) {
+	cache := createSlotOnlyCache(4)
+
+	// zeroConvSlots should handle empty slots without panicking
+	cache.zeroConvSlots(nil, nil)
+	cache.zeroConvSlots(nil, []int{})
+
+	// zeroConvSlots should handle empty convStates without panicking
+	cache.zeroConvSlots(nil, []int{0, 1, 2})
+}
+
+func TestHybridCache_SlotRecycling_TracksNewSlots(t *testing.T) {
+	cache := createSlotOnlyCache(4)
+
+	// Allocate slot for seq 1
+	slot1, _ := cache.allocSlot()
+	cache.slotForSeq[1] = slot1
+	cache.refCount[slot1] = 1
+
+	// Free the slot (simulating sequence removal)
+	cache.refCount[slot1]--
+	cache.freeSlot(slot1)
+	delete(cache.slotForSeq, 1)
+
+	// Verify slot is in free list
+	if len(cache.freeSlots) != 4 {
+		t.Errorf("expected 4 free slots after freeing, got %d", len(cache.freeSlots))
+	}
+
+	// Allocate for new seq 2 - should get recycled slot
+	slot2, _ := cache.allocSlot()
+	if slot2 != slot1 {
+		t.Errorf("expected recycled slot %d, got %d", slot1, slot2)
+	}
+
+	// This recycled slot would need zeroing in the real implementation
+	// The actual zeroing is tested via integration tests since it requires ML context
+}
+
+func TestHybridCache_NewSequence_GetsTrackedForZeroing(t *testing.T) {
+	cache := createSlotOnlyCache(4)
+
+	// Simulate the slot allocation flow from StartForward
+	// When a sequence doesn't have a slot, it gets allocated and tracked as "new"
+
+	newSlots := []int{}
+
+	// Seq 1 doesn't have a slot - allocate and track
+	seq := 1
+	if _, ok := cache.slotForSeq[seq]; !ok {
+		slot, err := cache.allocSlot()
+		if err != nil {
+			t.Fatalf("allocSlot failed: %v", err)
+		}
+		cache.slotForSeq[seq] = slot
+		cache.refCount[slot] = 1
+		newSlots = append(newSlots, slot)
+	}
+
+	// Verify newSlots contains the allocated slot
+	if len(newSlots) != 1 {
+		t.Errorf("expected 1 new slot, got %d", len(newSlots))
+	}
+
+	// Seq 1 already has a slot - should NOT be tracked as new
+	newSlots2 := []int{}
+	if _, ok := cache.slotForSeq[seq]; !ok {
+		slot, _ := cache.allocSlot()
+		cache.slotForSeq[seq] = slot
+		cache.refCount[slot] = 1
+		newSlots2 = append(newSlots2, slot)
+	}
+
+	// Verify no new slots for existing sequence
+	if len(newSlots2) != 0 {
+		t.Errorf("expected 0 new slots for existing sequence, got %d", len(newSlots2))
+	}
+}

@@ -142,6 +142,7 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 
 	// Ensure slots exist for sequences in this batch
 	c.curSlots = c.curSlots[:0]
+	var newSlots []int // track newly allocated slots that need zeroing
 	for _, s := range c.curSeqs {
 		slot, ok := c.slotForSeq[s]
 		if !ok {
@@ -152,8 +153,14 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 			}
 			c.slotForSeq[s] = slot
 			c.refCount[slot] = 1
+			newSlots = append(newSlots, slot)
 		}
 		c.curSlots = append(c.curSlots, slot)
+	}
+
+	// Zero conv state for newly allocated slots to clear stale data from previous sequences
+	if len(newSlots) > 0 {
+		c.zeroConvSlots(ctx, newSlots)
 	}
 
 	// Create a tensor for the current slots
@@ -183,6 +190,32 @@ func (c *HybridCache) freeSlot(slot int) {
 	// Bounds check before freeing
 	if slot >= 0 && slot < c.maxSequences {
 		c.freeSlots = append(c.freeSlots, slot)
+	}
+}
+
+// zeroConvSlots zeros the conv state for the given slots across all layers.
+// This must be called when recycling slots to prevent stale state from affecting new sequences.
+func (c *HybridCache) zeroConvSlots(ctx ml.Context, slots []int) {
+	if len(slots) == 0 || len(c.convStates) == 0 {
+		return
+	}
+
+	// Use input context for creating tensors
+	inputCtx := ctx.Input()
+
+	// Create slot indices tensor
+	slotIndices := make([]int32, len(slots))
+	for i, s := range slots {
+		slotIndices[i] = int32(s)
+	}
+	slotsTensor := inputCtx.FromInts(slotIndices, len(slotIndices))
+
+	// Create zero tensor for the slots (SetRows requires F32 source)
+	zeros := inputCtx.Zeros(ml.DTypeF32, c.dConv*c.hiddenSize, len(slots))
+
+	// Zero each layer's conv state for these slots
+	for _, buf := range c.convStates {
+		ctx.Forward(buf.SetRows(ctx, zeros, slotsTensor))
 	}
 }
 
@@ -217,7 +250,9 @@ func (c *HybridCache) EnsureWritable(ctx ml.Context) error {
 		for _, buf := range c.convStates {
 			// buf: [dConv*hiddenSize, maxSlots]
 			src := buf.Rows(ctx, ctx.Input().FromInts([]int32{int32(slot)}, 1))
-			ctx.Forward(buf.SetRows(ctx, src, ctx.Input().FromInts([]int32{int32(newSlot)}, 1)))
+			// SetRows requires F32 source
+			srcF32 := src.Cast(ctx, ml.DTypeF32)
+			ctx.Forward(buf.SetRows(ctx, srcF32, ctx.Input().FromInts([]int32{int32(newSlot)}, 1)))
 		}
 	}
 
@@ -359,7 +394,9 @@ func (c *HybridCache) ConvState(ctx ml.Context, layer int) (ml.Tensor, error) {
 func (c *HybridCache) UpdateConvState(ctx ml.Context, layer int, newState ml.Tensor) {
 	buf := c.convBuffer(ctx, layer)
 	src := newState.Reshape(ctx, c.dConv*c.hiddenSize, c.numSeqs())
-	ctx.Forward(buf.SetRows(ctx, src, c.slotsTensor()))
+	// SetRows requires F32 source
+	srcF32 := src.Cast(ctx, ml.DTypeF32)
+	ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
 }
 
 // IsSupportedForBatch returns true if the current batch layout supports shortconv.
