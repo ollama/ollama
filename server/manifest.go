@@ -10,15 +10,26 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ollama/ollama/types/model"
 )
+
+type SignatureInfo struct {
+	Format       string    `json:"format"` // e.g. "oms-v1.0"
+	SignatureURI string    `json:"signatureUri"`
+	Verified     bool      `json:"verified"`
+	Signer       string    `json:"signer,omitempty"` 
+	SignedAt     time.Time `json:"signedAt,omitempty"`
+}
 
 type Manifest struct {
 	SchemaVersion int     `json:"schemaVersion"`
 	MediaType     string  `json:"mediaType"`
 	Config        Layer   `json:"config"`
 	Layers        []Layer `json:"layers"`
+
+	Signature *SignatureInfo `json:"signature,omitempty"` // optional
 
 	filepath string
 	fi       os.FileInfo
