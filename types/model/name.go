@@ -235,8 +235,11 @@ func (n Name) DisplayShortest() string {
 
 	// always include model and tag
 	sb.WriteString(n.Model)
-	sb.WriteString(":")
-	sb.WriteString(n.Tag)
+	if !strings.EqualFold(n.Tag, defaultTag) {
+
+		sb.WriteString(":") 
+		sb.WriteString(n.Tag)
+	}
 	return sb.String()
 }
 
