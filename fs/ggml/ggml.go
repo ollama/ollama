@@ -270,6 +270,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 		"glm4moelite",
+		"lfm2",
 	}, kv.Architecture())
 }
 
