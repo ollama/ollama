@@ -92,6 +92,9 @@ type Backend struct {
 	schedBackends []C.ggml_backend_t
 	schedBufts    []C.ggml_backend_buffer_type_t
 
+	// layerBufts is true for buffer types that have model layers assigned
+	layerBufts map[C.ggml_backend_buffer_type_t]bool
+
 	tensors map[string]*C.struct_ggml_tensor
 
 	// input is the backend buffer type used for inputs
@@ -353,6 +356,19 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
 	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
 
+	// Build a set of GPU buffer types that have layers assigned
+	// This is used to filter out GPUs without layers from the scheduler
+	gpuBuftsWithLayers := make(map[C.ggml_backend_buffer_type_t]bool)
+	for _, p := range params.GPULayers {
+		for i := range requiredMemory.GPUs {
+			if requiredMemory.GPUs[i].DeviceID == p.DeviceID {
+				bt := C.ggml_backend_dev_buffer_type(gpus[i])
+				gpuBuftsWithLayers[bt] = true
+				break
+			}
+		}
+	}
+
 	// create backends and buffer types used for the compute graph scheduler
 	var schedBackends []C.ggml_backend_t
 	var schedBufts []C.ggml_backend_buffer_type_t
@@ -360,9 +376,17 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		b := backends[d]
 		bt := C.ggml_backend_get_default_buffer_type(b)
 
-		// Always include CPU as a fallback but otherwise, just use the devices where we assigned layers
-		if !slices.Contains(cpuDeviceBufferType.bts, bt) {
-			if c, ok := ctxs[bt]; !ok || C.ggml_get_first_tensor(c) == nil {
+		// Always include CPU as a fallback
+		// For GPUs, only include if they have layers assigned OR if they have actual tensors
+		isCPU := slices.Contains(cpuDeviceBufferType.bts, bt)
+		if !isCPU {
+			// Check if this GPU has layers assigned
+			if !gpuBuftsWithLayers[bt] {
+				// GPU doesn't have layers assigned, skip it
+				continue
+			}
+			// Also verify it has actual tensors (in case of edge cases)
+			if c, ok := ctxs[bt]; ok && C.ggml_get_first_tensor(c) == nil {
 				continue
 			}
 		}
@@ -438,6 +462,13 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 					d:  layer.d,
 					bt: deviceBufferTypes[layer.d],
 				}
+			}
+			return m
+		}(),
+		layerBufts: func() map[C.ggml_backend_buffer_type_t]bool {
+			m := make(map[C.ggml_backend_buffer_type_t]bool)
+			for _, layer := range layers {
+				m[deviceBufferTypes[layer.d]] = true
 			}
 			return m
 		}(),
@@ -856,12 +887,22 @@ func (c *Context) Reserve() {
 		c.b.btDeviceMemory[bt].Graph = 0
 	}
 
+	// Only allocate compute graph memory on buffer types that have model layers assigned
+	// This prevents allocating graph memory on GPUs that aren't used for model layers
 	for i := range c.b.schedBackends {
+		buft := c.b.schedBufts[i]
+		if !c.b.layerBufts[buft] {
+			// Skip backends without layers - they don't need compute graph allocation
+			logutil.Trace("compute graph skipped", "backend", C.GoString(C.ggml_backend_name(c.b.schedBackends[i])),
+				"buffer_type", C.GoString(C.ggml_backend_buft_name(buft)), "reason", "no layers assigned")
+			continue
+		}
+
 		bufferSize := C.ggml_backend_sched_get_attempted_buffer_size(c.b.sched, c.b.schedBackends[i])
-		c.b.btDeviceMemory[c.b.schedBufts[i]].Graph += uint64(bufferSize)
+		c.b.btDeviceMemory[buft].Graph += uint64(bufferSize)
 
 		logutil.Trace("compute graph", "backend", C.GoString(C.ggml_backend_name(c.b.schedBackends[i])),
-			"buffer_type", C.GoString(C.ggml_backend_buft_name(c.b.schedBufts[i])), "size", format.HumanBytes2(uint64(bufferSize)))
+			"buffer_type", C.GoString(C.ggml_backend_buft_name(buft)), "size", format.HumanBytes2(uint64(bufferSize)))
 	}
 
 	if !reserved {

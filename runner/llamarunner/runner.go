@@ -908,16 +908,53 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		var llamaIDs []uint64
 
 		gpuIDs := llama.EnumerateGPUs()
-		sort.Sort(req.GPULayers)
-		for _, layers := range req.GPULayers {
-			for i := range gpuIDs {
-				if gpuIDs[i].DeviceID == layers.DeviceID {
-					numGPU += len(layers.Layers)
-					tensorSplit = append(tensorSplit, float32(len(layers.Layers)))
-					llamaIDs = append(llamaIDs, gpuIDs[i].LlamaID)
-				}
-			}
+
+		slog.Debug("loadModel: GPU allocation starting",
+			"gpu_layers_count", len(req.GPULayers),
+			"gpu_enumerated_count", len(gpuIDs))
+
+		// Build a map from DeviceID.ID to LlamaID for quick lookup
+		deviceIDToLlamaID := make(map[string]uint64)
+		for i := range gpuIDs {
+			deviceIDToLlamaID[gpuIDs[i].DeviceID.ID] = gpuIDs[i].LlamaID
+			slog.Debug("loadModel: enumerated GPU",
+				"index", i,
+				"device_id", gpuIDs[i].DeviceID.ID,
+				"llama_id", gpuIDs[i].LlamaID)
 		}
+
+		// Sort GPULayers by first layer to ensure sequential order
+		sort.Sort(req.GPULayers)
+
+		for _, layers := range req.GPULayers {
+			slog.Debug("loadModel: processing GPU layers",
+				"device_id", layers.DeviceID.ID,
+				"library", layers.Library,
+				"layer_count", len(layers.Layers),
+				"layers_range", fmt.Sprintf("%d..%d", layers.FirstLayer(), layers.FirstLayer()+len(layers.Layers)-1))
+
+			llamaID, ok := deviceIDToLlamaID[layers.DeviceID.ID]
+			if !ok {
+				slog.Warn("loadModel: GPU layers had no matching enumerated GPU",
+					"device_id", layers.DeviceID.ID,
+					"library", layers.Library)
+				continue
+			}
+
+			numGPU += len(layers.Layers)
+			tensorSplit = append(tensorSplit, float32(len(layers.Layers)))
+			llamaIDs = append(llamaIDs, llamaID)
+
+			slog.Debug("loadModel: assigned layers to GPU",
+				"device_id", layers.DeviceID.ID,
+				"llama_id", llamaID,
+				"layers_assigned", len(layers.Layers))
+		}
+
+		slog.Debug("loadModel: final GPU allocation",
+			"total_gpu_layers", numGPU,
+			"tensor_split", tensorSplit,
+			"llama_ids", llamaIDs)
 
 		params := llama.ModelParams{
 			Devices:      llamaIDs,

@@ -936,7 +936,12 @@ func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 
 func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, []uint64) {
 	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
-	sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
+
+	// Only sort by free memory if OLLAMA_GPU_ORDER is not set.
+	// When OLLAMA_GPU_ORDER is set, the GPUs are already sorted in user preference order.
+	if envconfig.GpuOrder() == "" {
+		sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
+	}
 
 	layers := make([]uint64, len(memory.CPU.Weights))
 	for i := range layers {
@@ -1024,7 +1029,7 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 		}
 
 		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, lastUsedGPU)
-		if libraryGpuLayers.Sum() > gpuLayers.Sum() {
+		if libraryGpuLayers.Sum() > gpuLayers.Sum() || gpuLayers.Sum() == 0 {
 			gpuLayers = libraryGpuLayers
 		}
 	}
@@ -1103,14 +1108,23 @@ func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, reque
 		}
 	}
 
+	// Check if OLLAMA_GPU_ORDER is set - if so, use sequential fill by priority
+	gpuOrderSet := envconfig.GpuOrder() != ""
+
 	// If we can't fit everything then prefer offloading layers other than the output layer
 	for range 2 {
 		// requestedLayers may be -1 if nothing was requested
 		requestedLayers = min(len(layers), requestedLayers)
 
-		if !envconfig.SchedSpread() {
+		if gpuOrderSet {
+			// When OLLAMA_GPU_ORDER is set, use sequential fill starting from highest priority GPU
+			// Try ALL GPUs in order, filling each completely before moving to the next
+			slog.Debug("assignLayers: using sequential fill", "gpu_count", len(gpus), "layers", len(layers))
+			gpuLayers = findBestFitSequential(layers, gpus, requestedLayers)
+			slog.Debug("assignLayers: sequential result", "gpuLayers", gpuLayers.Sum(), "total_layers", len(layers))
+		} else if !envconfig.SchedSpread() {
+			// Default behavior: try to pack things into as few GPUs as possible
 			for i := lastUsedGPU; i < len(gpus); i++ {
-				// Try to pack things into as few GPUs as possible
 				forceRequest := i == len(gpus)-1 && !requireFull
 				gpuLayers = findBestFit(layers, gpus[:i+1], requestedLayers, forceRequest)
 				if gpuLayers.Sum() == len(layers) || gpuLayers.Sum() == requestedLayers {
@@ -1118,6 +1132,7 @@ func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, reque
 				}
 			}
 		} else {
+			// Spread mode: use all GPUs
 			gpuLayers = findBestFit(layers, gpus, requestedLayers, !requireFull)
 		}
 
@@ -1169,7 +1184,14 @@ func findBestFit(layers []uint64, gpus []ml.DeviceInfo, requestedLayers int, for
 	return gpuLayers
 }
 
-// greedyFit assigns layers incrementally to GPUs, spilling over as each runs out of free space
+// findBestFitSequential uses sequential fill starting from highest priority GPU.
+// This respects OLLAMA_GPU_ORDER and fills each GPU before moving to the next.
+func findBestFitSequential(layers []uint64, gpus []ml.DeviceInfo, requestedLayers int) (gpuLayers ml.GPULayersList) {
+	return sequentialFit(layers, gpus, requestedLayers)
+}
+
+// greedyFit assigns layers incrementally to GPUs, spilling over as each runs out of free space.
+// This starts from the LAST GPU (highest index) and works backwards.
 func greedyFit(layers []uint64, gpus []ml.DeviceInfo, capacity float32, requestedLayers int) (gpuLayers ml.GPULayersList) {
 	device := len(gpus) - 1
 	gpuLayers = ml.GPULayersList{{DeviceID: gpus[device].DeviceID}}
@@ -1194,6 +1216,60 @@ func greedyFit(layers []uint64, gpus []ml.DeviceInfo, capacity float32, requeste
 			freeSpace = uint64(float32(gpus[device].FreeMemory) * capacity)
 		}
 	}
+	return gpuLayers
+}
+
+// sequentialFit assigns layers starting from the FIRST GPU (highest priority) and fills
+// each GPU completely before moving to the next. This respects OLLAMA_GPU_ORDER priority.
+func sequentialFit(layers []uint64, gpus []ml.DeviceInfo, requestedLayers int) (gpuLayers ml.GPULayersList) {
+	if len(gpus) == 0 {
+		return gpuLayers
+	}
+
+	device := 0
+	gpuLayers = ml.GPULayersList{{DeviceID: gpus[device].DeviceID}}
+	freeSpace := gpus[device].FreeMemory
+
+	slog.Debug("sequentialFit: starting", "gpu_count", len(gpus), "total_layers", len(layers),
+		"first_gpu", gpus[0].ID, "first_gpu_free", format.HumanBytes2(freeSpace))
+
+	for i := len(layers) - 1; i >= 0; i-- {
+		if requestedLayers >= 0 && len(layers)-1-i >= requestedLayers {
+			slog.Debug("sequentialFit: reached requested layers limit", "requested", requestedLayers)
+			break
+		}
+
+		for {
+			if layers[i] <= freeSpace {
+				gpuLayers[device].Layers = append(gpuLayers[device].Layers, i)
+				freeSpace -= layers[i]
+				break
+			}
+
+			device++
+			if device >= len(gpus) {
+				// No more GPUs, remaining layers would go to CPU
+				slog.Debug("sequentialFit: no more GPUs, layer goes to CPU", "layer", i, "size", format.HumanBytes2(layers[i]))
+				return gpuLayers
+			}
+			gpuLayers = append(gpuLayers, ml.GPULayers{DeviceID: gpus[device].DeviceID})
+			freeSpace = gpus[device].FreeMemory
+			slog.Debug("sequentialFit: moved to next GPU", "layer", i, "new_gpu", gpus[device].ID, "free_space", format.HumanBytes2(freeSpace))
+		}
+	}
+
+	// Log final distribution
+	for j, gl := range gpuLayers {
+		var layerSize uint64
+		for _, layerIdx := range gl.Layers {
+			if layerIdx < len(layers) {
+				layerSize += layers[layerIdx]
+			}
+		}
+		slog.Debug("sequentialFit: GPU layer distribution", "gpu_index", j, "gpu_id", gl.DeviceID,
+			"layer_count", len(gl.Layers), "total_size", format.HumanBytes2(layerSize))
+	}
+
 	return gpuLayers
 }
 

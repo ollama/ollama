@@ -362,6 +362,39 @@ func GpuOverhead() uint64 {
 	return overhead
 }
 
+// GpuOrder returns the user-specified GPU usage order
+// Format: "device1,device2,device3,..." (e.g., "cuda:0,cuda:1,cpu")
+// When specified, GPUs will be used in this order instead of sorting by memory.
+// Special values:
+//   - "cpu" indicates CPU fallback should be used after GPUs
+//   - Device IDs can be specified as: "0", "1" (numeric index) or "cuda:0", "cuda:1" (library:ID)
+//
+// Examples:
+//
+//	OLLAMA_GPU_ORDER="cuda:0,cuda:1"          # Use GPU 0 first, then GPU 1
+//	OLLAMA_GPU_ORDER="cuda:1,cuda:0,cpu"      # Use GPU 1 first, then GPU 0, then CPU
+//	OLLAMA_GPU_ORDER="GPU-12345678,GPU-87654321"  # Use UUIDs if available
+func GpuOrder() string {
+	return strings.TrimSpace(Var("OLLAMA_GPU_ORDER"))
+}
+
+// ParseGpuOrder parses the GPU order string into a slice of normalized device identifiers
+func ParseGpuOrder(order string) []string {
+	if order == "" {
+		return nil
+	}
+	parts := strings.Split(order, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			// Normalize to lowercase for case-insensitive matching
+			result = append(result, strings.ToLower(trimmed))
+		}
+	}
+	return result
+}
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -374,6 +407,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve VRAM per GPU. Format: \"device:bytes,...\" (e.g., \"0:0,1:18GB\"). Single value applies to all GPUs."},
+		"OLLAMA_GPU_ORDER":         {"OLLAMA_GPU_ORDER", GpuOrder(), "Set GPU usage order (e.g., \"cuda:1,cuda:0,cpu\"). Overrides memory-based sorting for layer distribution."},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},

@@ -872,6 +872,39 @@ type ModelDetails struct {
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
+// GPULayerInfo represents the layer distribution on a single GPU device.
+type GPULayerInfo struct {
+	// DeviceID is the identifier for the GPU device (e.g., "0", "cuda:0", "metal").
+	DeviceID string `json:"device_id"`
+
+	// Library is the compute library used (e.g., "CUDA", "Metal", "ROCm").
+	Library string `json:"library,omitempty"`
+
+	// LayerCount is the number of layers allocated to this GPU.
+	LayerCount int `json:"layer_count"`
+
+	// LayerRange is a string representation of the layer range (e.g., "0-15", "16-31").
+	LayerRange string `json:"layer_range,omitempty"`
+
+	// VRAMUsage is the VRAM used by these layers in bytes.
+	VRAMUsage int64 `json:"vram_usage_bytes,omitempty"`
+}
+
+// GPULayerDistribution represents the layer distribution across CPU and GPUs for a model.
+type GPULayerDistribution struct {
+	// TotalLayers is the total number of layers in the model.
+	TotalLayers int `json:"total_layers"`
+
+	// GPULayers is the total number of layers on GPU.
+	GPULayers int `json:"gpu_layers"`
+
+	// CPULayers is the number of layers on CPU.
+	CPULayers int `json:"cpu_layers"`
+
+	// GPUDevices contains the per-GPU layer distribution.
+	GPUDevices []GPULayerInfo `json:"gpu_devices,omitempty"`
+}
+
 // UserResponse provides information about a user.
 type UserResponse struct {
 	ID        uuid.UUID `json:"id"`

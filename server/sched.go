@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"reflect"
 	"slices"
 	"sort"
@@ -179,6 +180,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
 						gpus = s.getGpuFn(ctx, runnersSnapshot)
+					}
+
+					// Sort GPUs according to OLLAMA_GPU_ORDER if set
+					gpuOrderStr := envconfig.GpuOrder()
+					if gpuOrderStr != "" && len(gpus) > 0 {
+						gpus = sortGPUsByOrder(gpus, gpuOrderStr)
+						slog.Debug("GPUs sorted by OLLAMA_GPU_ORDER", "order", gpuOrderStr, "gpu_count", len(gpus))
 					}
 					logutil.Trace("refreshing system information", "model", pending.model.ModelPath)
 					systemInfo := s.getSystemInfoFn()
@@ -949,4 +957,131 @@ func (s *Scheduler) expireRunner(model *Model) {
 		}
 		runner.refMu.Unlock()
 	}
+}
+
+// getNvidiaSmiIndexToUUID returns a map from nvidia-smi index to GPU UUID
+// This is used to map user-specified indices (0, 1, 2, 3) to actual GPU UUIDs
+func getNvidiaSmiIndexToUUID() map[string]string {
+	indexToUUID := make(map[string]string)
+	nvidiaSmiPath, err := exec.LookPath("nvidia-smi")
+	if err != nil {
+		return indexToUUID
+	}
+	output, err := exec.Command(nvidiaSmiPath, "--query-gpu=index,uuid", "--format=csv,noheader,nounits").Output()
+	if err != nil {
+		return indexToUUID
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(strings.TrimSpace(line), ",", 2)
+		if len(parts) == 2 {
+			index := strings.TrimSpace(parts[0])
+			uuid := strings.TrimSpace(parts[1])
+			// Normalize UUID: remove "GPU-" prefix and convert to lowercase
+			if strings.HasPrefix(uuid, "GPU-") {
+				uuid = uuid[4:]
+			}
+			uuid = strings.ToLower(uuid)
+			indexToUUID[index] = uuid
+		}
+	}
+	return indexToUUID
+}
+
+// getGpuUUID extracts and normalizes the UUID from a DeviceID
+// UUIDs can be in format: "GPU-xxx-yyyy-zzzz-wwwwwwwwwwww" or just "xxx-yyyy-zzzz-wwwwwwwwwwww"
+func getGpuUUID(deviceID string) string {
+	uuid := deviceID
+	if strings.HasPrefix(uuid, "GPU-") {
+		uuid = uuid[4:]
+	}
+	return strings.ToLower(uuid)
+}
+
+// sortGPUsByOrder sorts GPUs according to user-specified OLLAMA_GPU_ORDER
+// The order can specify GPUs by UUID (with or without "GPU-" prefix) or by nvidia-smi index
+func sortGPUsByOrder(gpus []ml.DeviceInfo, gpuOrderStr string) []ml.DeviceInfo {
+	if gpuOrderStr == "" || len(gpus) == 0 {
+		return gpus
+	}
+
+	userOrder := envconfig.ParseGpuOrder(gpuOrderStr)
+	if len(userOrder) == 0 {
+		return gpus
+	}
+
+	// Get nvidia-smi index to UUID mapping
+	nvidiaSmiIndexToUUID := getNvidiaSmiIndexToUUID()
+
+	// Build a map of available GPU UUIDs for quick lookup
+	availableUUIDs := make(map[string]int) // uuid -> index in gpus slice
+	for i, gpu := range gpus {
+		uuid := getGpuUUID(gpu.DeviceID.ID)
+		availableUUIDs[uuid] = i
+		// Also try with "GPU-" prefix
+		availableUUIDs["GPU-"+uuid] = i
+	}
+
+	// Create a position map for user-specified order
+	positionMap := make(map[string]int) // uuid -> position in user order
+	for pos, item := range userOrder {
+		positionMap[item] = pos
+	}
+
+	// Create a score for each GPU: lower score = higher priority
+	// Score = position in user order (if specified), or len(userOrder) + original index
+	scores := make([]int, len(gpus))
+	for i, gpu := range gpus {
+		uuid := getGpuUUID(gpu.DeviceID.ID)
+		altUUID := "GPU-" + uuid
+
+		// Check if this GPU matches any user-specified item
+		score := -1
+		if pos, ok := positionMap[uuid]; ok {
+			score = pos
+		} else if pos, ok := positionMap[altUUID]; ok {
+			score = pos
+		} else if pos, ok := positionMap[strings.ToLower(gpu.ID)]; ok {
+			// Also try matching against the short ID (e.g., "cuda:0")
+			score = pos
+		} else {
+			// Check if user specified an nvidia-smi index
+			for index, gpuUUID := range nvidiaSmiIndexToUUID {
+				if gpuUUID == uuid || gpuUUID == altUUID {
+					if pos, ok := positionMap[index]; ok {
+						score = pos
+						break
+					}
+				}
+			}
+		}
+
+		if score >= 0 {
+			scores[i] = score
+		} else {
+			// GPU not in user order, put at end preserving original order
+			scores[i] = len(userOrder) + i
+		}
+	}
+
+	// Sort GPUs by score, then by original index for stable sorting
+	sortedIndices := make([]int, len(gpus))
+	for i := range sortedIndices {
+		sortedIndices[i] = i
+	}
+
+	sort.Slice(sortedIndices, func(i, j int) bool {
+		if scores[sortedIndices[i]] != scores[sortedIndices[j]] {
+			return scores[sortedIndices[i]] < scores[sortedIndices[j]]
+		}
+		return sortedIndices[i] < sortedIndices[j]
+	})
+
+	// Reorder the GPU slice
+	sortedGpus := make([]ml.DeviceInfo, len(gpus))
+	for newIdx, oldIdx := range sortedIndices {
+		sortedGpus[newIdx] = gpus[oldIdx]
+	}
+
+	return sortedGpus
 }
