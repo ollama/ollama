@@ -1,7 +1,7 @@
 // Package api implements the client-side API for code wishing to interact
-// with the ollama service. The methods of the [Client] type correspond to
-// the ollama REST API as described in [the API documentation].
-// The ollama command-line client itself uses this package to interact with
+// with the Ollama service. The methods of the [Client] type correspond to
+// the Ollama REST API as described in [the API documentation].
+// The Ollama command-line client itself uses this package to interact with
 // the backend service.
 //
 // # Examples
@@ -33,7 +33,7 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-// Client encapsulates client state for interacting with the ollama
+// Client encapsulates client state for interacting with the Ollama
 // service. Use [ClientFromEnvironment] to create new Clients.
 type Client struct {
 	base *url.URL
@@ -64,12 +64,12 @@ func checkError(resp *http.Response, body []byte) error {
 
 // ClientFromEnvironment creates a new [Client] using configuration from the
 // environment variable OLLAMA_HOST, which points to the network host and
-// port on which the ollama service is listening. The format of this variable
+// port on which the Ollama service is listening. The format of this variable
 // is:
 //
 //	<scheme>://<host>:<port>
 //
-// If the variable is not specified, a default ollama host and port will be
+// If the variable is not specified, a default Ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
 	return &Client{
@@ -306,7 +306,7 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc
 // returns an error, [Client.Pull] will stop the process and return this error.
 type PullProgressFunc func(ProgressResponse) error
 
-// Pull downloads a model from the ollama library. fn is called each time
+// Pull downloads a model from the Ollama library. fn is called each time
 // progress is made on the request and can be used to display a progress bar,
 // etc.
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
@@ -449,12 +449,12 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return version.Version, nil
 }
 
-// Signout will signout a client for a local ollama server.
+// Signout will signout a client for a local Ollama server.
 func (c *Client) Signout(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)
 }
 
-// Disconnect will disconnect an ollama instance from ollama.com.
+// Disconnect will disconnect an Ollama instance from ollama.com.
 func (c *Client) Disconnect(ctx context.Context, encodedKey string) error {
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
 }
