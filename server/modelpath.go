@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
@@ -30,11 +29,10 @@ const (
 )
 
 var (
-	ErrInvalidImageFormat  = errors.New("invalid image format")
-	ErrInvalidDigestFormat = errors.New("invalid digest format")
-	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
-	ErrInsecureProtocol    = errors.New("insecure protocol http")
-	ErrModelPathInvalid    = errors.New("invalid model path")
+	ErrInvalidImageFormat = errors.New("invalid image format")
+	ErrInvalidProtocol    = errors.New("invalid protocol scheme")
+	ErrInsecureProtocol   = errors.New("insecure protocol http")
+	ErrModelPathInvalid   = errors.New("invalid model path")
 )
 
 func ParseModelPath(name string) ModelPath {
@@ -111,36 +109,4 @@ func (mp ModelPath) BaseURL() *url.URL {
 		Scheme: mp.ProtocolScheme,
 		Host:   mp.Registry,
 	}
-}
-
-func GetManifestPath() (string, error) {
-	path := filepath.Join(envconfig.Models(), "manifests")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
-	}
-
-	return path, nil
-}
-
-func GetBlobsPath(digest string) (string, error) {
-	// only accept actual sha256 digests
-	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
-	re := regexp.MustCompile(pattern)
-
-	if digest != "" && !re.MatchString(digest) {
-		return "", ErrInvalidDigestFormat
-	}
-
-	digest = strings.ReplaceAll(digest, ":", "-")
-	path := filepath.Join(envconfig.Models(), "blobs", digest)
-	dirPath := filepath.Dir(path)
-	if digest == "" {
-		dirPath = path
-	}
-
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
-	}
-
-	return path, nil
 }

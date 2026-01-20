@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/manifest"
 )
 
 func TestGetBlobsPath(t *testing.T) {
@@ -40,26 +42,26 @@ func TestGetBlobsPath(t *testing.T) {
 			"digest too short",
 			"sha256-45640291",
 			"",
-			ErrInvalidDigestFormat,
+			manifest.ErrInvalidDigestFormat,
 		},
 		{
 			"digest too long",
 			"sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9aaaaaaaaaa",
 			"",
-			ErrInvalidDigestFormat,
+			manifest.ErrInvalidDigestFormat,
 		},
 		{
 			"digest invalid chars",
 			"../sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7a",
 			"",
-			ErrInvalidDigestFormat,
+			manifest.ErrInvalidDigestFormat,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("OLLAMA_MODELS", tempDir)
 
-			got, err := GetBlobsPath(tc.digest)
+			got, err := manifest.GetBlobsPath(tc.digest)
 
 			require.ErrorIs(t, tc.err, err, tc.name)
 			assert.Equal(t, tc.expected, got, tc.name)

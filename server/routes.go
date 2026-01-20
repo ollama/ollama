@@ -38,6 +38,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
@@ -974,7 +975,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 // is.
 func getExistingName(n model.Name) (model.Name, error) {
 	var zero model.Name
-	existing, err := Manifests(true)
+	existing, err := manifest.Manifests(true)
 	if err != nil {
 		return zero, err
 	}
@@ -1018,7 +1019,7 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := ParseNamedManifest(n)
+	m, err := manifest.ParseNamedManifest(n)
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
@@ -1112,7 +1113,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models (experimental), populate details from config.json
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
 			}
@@ -1121,7 +1122,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 			}
 		}
 		// Get torch_dtype directly from config.json for quantization level
-		if dtype, err := xserver.GetSafetensorsDtype(name.String()); err == nil && dtype != "" {
+		if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
 			modelDetails.QuantizationLevel = dtype
 		}
 	}
@@ -1135,7 +1136,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
 	}
 
-	manifest, err := ParseNamedManifest(name)
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, err
 	}
@@ -1147,7 +1148,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Details:      modelDetails,
 		Messages:     msgs,
 		Capabilities: m.Capabilities(),
-		ModifiedAt:   manifest.fi.ModTime(),
+		ModifiedAt:   mf.FileInfo().ModTime(),
 		Requires:     m.Config.Requires,
 		// Several integrations crash on a nil/omitempty+empty ModelInfo, so by
 		// default we return an empty map.
@@ -1214,7 +1215,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		// Populate tensor info if verbose
 		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
 				resp.Tensors = tensors
 			}
 		}
@@ -1223,12 +1224,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models (experimental), populate ModelInfo from config.json
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			resp.ModelInfo = info
 		}
 		// Populate tensor info if verbose
 		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
 				resp.Tensors = tensors
 			}
 		}
@@ -1285,7 +1286,7 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := Manifests(true)
+	ms, err := manifest.Manifests(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1316,8 +1317,8 @@ func (s *Server) ListHandler(c *gin.Context) {
 			RemoteModel: cf.RemoteModel,
 			RemoteHost:  cf.RemoteHost,
 			Size:        m.Size(),
-			Digest:      m.digest,
-			ModifiedAt:  m.fi.ModTime(),
+			Digest:      m.Digest(),
+			ModifiedAt:  m.FileInfo().ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1376,7 +1377,7 @@ func (s *Server) CopyHandler(c *gin.Context) {
 }
 
 func (s *Server) HeadBlobHandler(c *gin.Context) {
-	path, err := GetBlobsPath(c.Param("digest"))
+	path, err := manifest.GetBlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1392,7 +1393,7 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
 	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
-		p, err := GetBlobsPath(ib)
+		p, err := manifest.GetBlobsPath(ib)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -1410,7 +1411,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		}
 	}
 
-	path, err := GetBlobsPath(c.Param("digest"))
+	path, err := manifest.GetBlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1428,7 +1429,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	layer, err := NewLayer(c.Request.Body, "")
+	layer, err := manifest.NewLayer(c.Request.Body, "")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1628,7 +1629,7 @@ func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
 
-	blobsDir, err := GetBlobsPath("")
+	blobsDir, err := manifest.GetBlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -1637,7 +1638,7 @@ func Serve(ln net.Listener) error {
 	}
 
 	if !envconfig.NoPrune() {
-		if _, err := Manifests(false); err != nil {
+		if _, err := manifest.Manifests(false); err != nil {
 			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
 		} else {
 			// clean up unused layers and manifests
@@ -1645,12 +1646,12 @@ func Serve(ln net.Listener) error {
 				return err
 			}
 
-			manifestsPath, err := GetManifestPath()
+			manifestsPath, err := manifest.GetManifestPath()
 			if err != nil {
 				return err
 			}
 
-			if err := PruneDirectory(manifestsPath); err != nil {
+			if err := manifest.PruneDirectory(manifestsPath); err != nil {
 				return err
 			}
 		}

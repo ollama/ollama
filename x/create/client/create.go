@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/progress"
-	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
 )
@@ -103,7 +103,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 // newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
 func newLayerCreator() create.LayerCreator {
 	return func(r io.Reader, mediaType, name string) (create.LayerInfo, error) {
-		layer, err := server.NewLayer(r, mediaType)
+		layer, err := manifest.NewLayer(r, mediaType)
 		if err != nil {
 			return create.LayerInfo{}, err
 		}
@@ -141,13 +141,13 @@ func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quant
 	}
 
 	// Create layer for quantized weight
-	weightLayer, err := server.NewLayer(bytes.NewReader(qweightData), server.MediaTypeImageTensor)
+	weightLayer, err := manifest.NewLayer(bytes.NewReader(qweightData), manifest.MediaTypeImageTensor)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create layer for scales
-	scalesLayer, err := server.NewLayer(bytes.NewReader(scalesData), server.MediaTypeImageTensor)
+	scalesLayer, err := manifest.NewLayer(bytes.NewReader(scalesData), manifest.MediaTypeImageTensor)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quant
 
 	// Add qbiases layer if present (affine mode)
 	if qbiasData != nil {
-		qbiasLayer, err := server.NewLayer(bytes.NewReader(qbiasData), server.MediaTypeImageTensor)
+		qbiasLayer, err := manifest.NewLayer(bytes.NewReader(qbiasData), manifest.MediaTypeImageTensor)
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +186,7 @@ func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quant
 
 // createUnquantizedLayer creates a single tensor layer without quantization.
 func createUnquantizedLayer(r io.Reader, name string) ([]create.LayerInfo, error) {
-	layer, err := server.NewLayer(r, server.MediaTypeImageTensor)
+	layer, err := manifest.NewLayer(r, manifest.MediaTypeImageTensor)
 	if err != nil {
 		return nil, err
 	}
@@ -221,15 +221,15 @@ func newManifestWriter(opts CreateOptions, capabilities []string) create.Manifes
 		}
 
 		// Create config layer blob
-		configLayer, err := server.NewLayer(bytes.NewReader(configJSON), "application/vnd.docker.container.image.v1+json")
+		configLayer, err := manifest.NewLayer(bytes.NewReader(configJSON), "application/vnd.docker.container.image.v1+json")
 		if err != nil {
 			return fmt.Errorf("failed to create config layer: %w", err)
 		}
 
-		// Convert LayerInfo to server.Layer
-		serverLayers := make([]server.Layer, 0, len(layers))
+		// Convert LayerInfo to manifest.Layer
+		manifestLayers := make([]manifest.Layer, 0, len(layers))
 		for _, l := range layers {
-			serverLayers = append(serverLayers, server.Layer{
+			manifestLayers = append(manifestLayers, manifest.Layer{
 				MediaType: l.MediaType,
 				Digest:    l.Digest,
 				Size:      l.Size,
@@ -243,19 +243,19 @@ func newManifestWriter(opts CreateOptions, capabilities []string) create.Manifes
 			if err != nil {
 				return err
 			}
-			serverLayers = append(serverLayers, modelfileLayers...)
+			manifestLayers = append(manifestLayers, modelfileLayers...)
 		}
 
-		return server.WriteManifest(name, configLayer, serverLayers)
+		return manifest.WriteManifest(name, configLayer, manifestLayers)
 	}
 }
 
 // createModelfileLayers creates layers for template, system, and license from Modelfile config.
-func createModelfileLayers(mf *ModelfileConfig) ([]server.Layer, error) {
-	var layers []server.Layer
+func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
+	var layers []manifest.Layer
 
 	if mf.Template != "" {
-		layer, err := server.NewLayer(bytes.NewReader([]byte(mf.Template)), "application/vnd.ollama.image.template")
+		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.Template)), "application/vnd.ollama.image.template")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create template layer: %w", err)
 		}
@@ -263,7 +263,7 @@ func createModelfileLayers(mf *ModelfileConfig) ([]server.Layer, error) {
 	}
 
 	if mf.System != "" {
-		layer, err := server.NewLayer(bytes.NewReader([]byte(mf.System)), "application/vnd.ollama.image.system")
+		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.System)), "application/vnd.ollama.image.system")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create system layer: %w", err)
 		}
@@ -271,7 +271,7 @@ func createModelfileLayers(mf *ModelfileConfig) ([]server.Layer, error) {
 	}
 
 	if mf.License != "" {
-		layer, err := server.NewLayer(bytes.NewReader([]byte(mf.License)), "application/vnd.ollama.image.license")
+		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.License)), "application/vnd.ollama.image.license")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create license layer: %w", err)
 		}

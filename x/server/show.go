@@ -9,7 +9,8 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 // modelConfig represents the HuggingFace config.json structure
@@ -35,22 +36,22 @@ type modelConfig struct {
 
 // GetSafetensorsLLMInfo extracts model information from safetensors LLM models.
 // It reads the config.json layer and returns a map compatible with GGML's KV format.
-func GetSafetensorsLLMInfo(modelName string) (map[string]any, error) {
-	manifest, err := imagegen.LoadManifest(modelName)
+func GetSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
 	var config modelConfig
-	if err := manifest.ReadConfigJSON("config.json", &config); err != nil {
+	if err := mf.ReadConfigJSON("config.json", &config); err != nil {
 		return nil, fmt.Errorf("failed to read config.json: %w", err)
 	}
 
 	// Calculate total tensor bytes from manifest layers
 	var totalBytes int64
 	var tensorCount int64
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+	for _, layer := range mf.Layers {
+		if layer.MediaType == manifest.MediaTypeImageTensor {
 			totalBytes += layer.Size
 			tensorCount++
 		}
@@ -151,27 +152,30 @@ func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map
 
 // GetSafetensorsTensorInfo extracts tensor information from safetensors model layers.
 // Each tensor is stored as a minimal safetensors file with an 88-byte header containing metadata.
-func GetSafetensorsTensorInfo(modelName string) ([]api.Tensor, error) {
-	manifest, err := imagegen.LoadManifest(modelName)
+func GetSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	return getTensorInfoFromManifest(manifest)
+	return getTensorInfoFromManifest(mf)
 }
 
 // getTensorInfoFromManifest extracts tensor info from a manifest.
 // This is separated for testability.
-func getTensorInfoFromManifest(manifest *imagegen.ModelManifest) ([]api.Tensor, error) {
+func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 	var tensors []api.Tensor
 
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType != "application/vnd.ollama.image.tensor" {
+	for _, layer := range mf.Layers {
+		if layer.MediaType != manifest.MediaTypeImageTensor {
 			continue
 		}
 
 		// Read the safetensors header from the blob
-		blobPath := manifest.BlobPath(layer.Digest)
+		blobPath, err := manifest.GetBlobsPath(layer.Digest)
+		if err != nil {
+			continue
+		}
 		info, err := readSafetensorsHeader(blobPath)
 		if err != nil {
 			// Skip tensors we can't read
@@ -197,15 +201,15 @@ func getTensorInfoFromManifest(manifest *imagegen.ModelManifest) ([]api.Tensor, 
 // GetSafetensorsDtype returns the quantization type for a safetensors model.
 // If the model is quantized (has _scale tensors), returns the quantization type (e.g., "FP8").
 // Otherwise returns the torch_dtype from config.json.
-func GetSafetensorsDtype(modelName string) (string, error) {
-	manifest, err := imagegen.LoadManifest(modelName)
+func GetSafetensorsDtype(name model.Name) (string, error) {
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}
 
 	// Check if model is quantized by looking for _scale tensors
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+	for _, layer := range mf.Layers {
+		if layer.MediaType == manifest.MediaTypeImageTensor {
 			if strings.HasSuffix(layer.Name, "_scale") {
 				// Model is quantized - return FP8 (affine quantization)
 				return "FP8", nil
@@ -217,7 +221,7 @@ func GetSafetensorsDtype(modelName string) (string, error) {
 	var cfg struct {
 		TorchDtype string `json:"torch_dtype"`
 	}
-	if err := manifest.ReadConfigJSON("config.json", &cfg); err != nil {
+	if err := mf.ReadConfigJSON("config.json", &cfg); err != nil {
 		return "", fmt.Errorf("failed to read config.json: %w", err)
 	}
 

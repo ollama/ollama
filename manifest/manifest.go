@@ -1,10 +1,9 @@
-package server
+package manifest
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,6 +30,32 @@ func (m *Manifest) Size() (size int64) {
 	}
 
 	return
+}
+
+func (m *Manifest) Digest() string {
+	return m.digest
+}
+
+func (m *Manifest) FileInfo() os.FileInfo {
+	return m.fi
+}
+
+// ReadConfigJSON reads and unmarshals a config layer as JSON.
+func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
+	for _, layer := range m.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.json" && layer.Name == configPath {
+			blobPath, err := GetBlobsPath(layer.Digest)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(blobPath)
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(data, v)
+		}
+	}
+	return fmt.Errorf("config %q not found in manifest", configPath)
 }
 
 func (m *Manifest) Remove() error {
@@ -74,7 +99,7 @@ func (m *Manifest) RemoveLayers() error {
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(blob); errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(blob); os.IsNotExist(err) {
 			slog.Debug("layer does not exist", "digest", layer.Digest)
 		} else if err != nil {
 			return err

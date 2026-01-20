@@ -24,6 +24,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/manifest"
 )
 
 const maxRetries = 6
@@ -468,7 +469,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return false, fmt.Errorf(("%s: %s"), opts.mp.GetNamespaceRepository(), "digest is empty")
 	}
 
-	fp, err := GetBlobsPath(opts.digest)
+	fp, err := manifest.GetBlobsPath(opts.digest)
 	if err != nil {
 		return false, err
 	}

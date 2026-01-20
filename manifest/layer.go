@@ -1,4 +1,4 @@
-package server
+package manifest
 
 import (
 	"crypto/sha256"
@@ -14,7 +14,7 @@ type Layer struct {
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
 	Name      string `json:"name,omitempty"` // tensor name, e.g., "text_encoder/model.embed_tokens.weight"
-	status    string
+	Status    string `json:"-"`
 }
 
 const (
@@ -65,7 +65,7 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 		MediaType: mediatype,
 		Digest:    digest,
 		Size:      n,
-		status:    fmt.Sprintf("%s %s", status, digest),
+		Status:    fmt.Sprintf("%s %s", status, digest),
 	}, nil
 }
 
@@ -89,7 +89,7 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		Digest:    digest,
 		Size:      fi.Size(),
 		From:      from,
-		status:    fmt.Sprintf("using existing layer %s", digest),
+		Status:    fmt.Sprintf("using existing layer %s", digest),
 	}, nil
 }
 
