@@ -500,9 +500,8 @@ func TestAtomicWriteJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("creates backup", func(t *testing.T) {
+	t.Run("creates backup in /tmp/ollama-backups", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "backup.json")
-		backupPath := path + ".bak"
 
 		// Write initial file
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
@@ -512,16 +511,36 @@ func TestAtomicWriteJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Check backup exists with original content
-		backup, err := os.ReadFile(backupPath)
+		// Check backup exists in /tmp/ollama-backups/ with original content
+		entries, err := os.ReadDir(backupDir)
 		if err != nil {
-			t.Fatal("backup file not created")
+			t.Fatal("backup directory not created")
 		}
 
-		var backupData map[string]bool
-		json.Unmarshal(backup, &backupData)
-		if !backupData["original"] {
-			t.Error("backup doesn't contain original data")
+		var foundBackup bool
+		for _, entry := range entries {
+			if filepath.Ext(entry.Name()) != ".json" {
+				// Look for backup.json.<timestamp>
+				name := entry.Name()
+				if len(name) > len("backup.json.") && name[:len("backup.json.")] == "backup.json." {
+					backupPath := filepath.Join(backupDir, name)
+					backup, err := os.ReadFile(backupPath)
+					if err == nil {
+						var backupData map[string]bool
+						json.Unmarshal(backup, &backupData)
+						if backupData["original"] {
+							foundBackup = true
+							// Clean up after test
+							os.Remove(backupPath)
+							break
+						}
+					}
+				}
+			}
+		}
+
+		if !foundBackup {
+			t.Error("backup file not created in /tmp/ollama-backups")
 		}
 
 		// Check new file has updated content
@@ -535,14 +554,17 @@ func TestAtomicWriteJSON(t *testing.T) {
 
 	t.Run("no backup for new file", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "nobak.json")
-		backupPath := path + ".bak"
 
 		if err := atomicWriteJSON(path, map[string]string{"new": "file"}); err != nil {
 			t.Fatal(err)
 		}
 
-		if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
-			t.Error("backup should not exist for new file")
+		// Check no backup was created for this specific file
+		entries, _ := os.ReadDir(backupDir)
+		for _, entry := range entries {
+			if len(entry.Name()) > len("nobak.json.") && entry.Name()[:len("nobak.json.")] == "nobak.json." {
+				t.Error("backup should not exist for new file")
+			}
 		}
 	})
 
@@ -567,7 +589,6 @@ func TestAtomicWriteJSON(t *testing.T) {
 
 	t.Run("no backup when content unchanged", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "unchanged.json")
-		backupPath := path + ".bak"
 
 		data := map[string]string{"key": "value"}
 
@@ -576,18 +597,202 @@ func TestAtomicWriteJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Create a "stale" backup to verify it's not overwritten
-		os.WriteFile(backupPath, []byte(`{"stale": "backup"}`), 0o644)
+		// Count backups before
+		entries1, _ := os.ReadDir(backupDir)
+		countBefore := 0
+		for _, e := range entries1 {
+			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
+				countBefore++
+			}
+		}
 
 		// Second write with same content
 		if err := atomicWriteJSON(path, data); err != nil {
 			t.Fatal(err)
 		}
 
-		// Backup should still contain stale content (not overwritten)
-		backup, _ := os.ReadFile(backupPath)
-		if string(backup) != `{"stale": "backup"}` {
-			t.Errorf("backup was overwritten when content unchanged")
+		// Count backups after - should be same (no new backup created)
+		entries2, _ := os.ReadDir(backupDir)
+		countAfter := 0
+		for _, e := range entries2 {
+			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
+				countAfter++
+			}
+		}
+
+		if countAfter != countBefore {
+			t.Errorf("backup was created when content unchanged (before=%d, after=%d)", countBefore, countAfter)
+		}
+	})
+
+	t.Run("backup filename contains unix timestamp", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "timestamped.json")
+
+		os.WriteFile(path, []byte(`{"v": 1}`), 0o644)
+		if err := atomicWriteJSON(path, map[string]int{"v": 2}); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, _ := os.ReadDir(backupDir)
+		var found bool
+		for _, entry := range entries {
+			name := entry.Name()
+			if len(name) > len("timestamped.json.") && name[:len("timestamped.json.")] == "timestamped.json." {
+				// Extract timestamp part and verify it's numeric
+				timestamp := name[len("timestamped.json."):]
+				for _, c := range timestamp {
+					if c < '0' || c > '9' {
+						t.Errorf("backup filename timestamp contains non-numeric character: %s", name)
+					}
+				}
+				found = true
+				os.Remove(filepath.Join(backupDir, name))
+				break
+			}
+		}
+		if !found {
+			t.Error("backup file with timestamp not found")
+		}
+	})
+}
+
+func TestIntegrationConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	t.Run("save and load round-trip", func(t *testing.T) {
+		models := []string{"llama3.2", "mistral", "qwen2.5"}
+		if err := SaveIntegration("claude", models); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := LoadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(config.Models) != len(models) {
+			t.Errorf("expected %d models, got %d", len(models), len(config.Models))
+		}
+		for i, m := range models {
+			if config.Models[i] != m {
+				t.Errorf("model %d: expected %s, got %s", i, m, config.Models[i])
+			}
+		}
+	})
+
+	t.Run("DefaultModel returns first model", func(t *testing.T) {
+		SaveIntegration("codex", []string{"model-a", "model-b"})
+
+		config, _ := LoadIntegration("codex")
+		if config.DefaultModel() != "model-a" {
+			t.Errorf("expected model-a, got %s", config.DefaultModel())
+		}
+	})
+
+	t.Run("DefaultModel returns empty for no models", func(t *testing.T) {
+		config := &IntegrationConfig{Models: []string{}}
+		if config.DefaultModel() != "" {
+			t.Errorf("expected empty string, got %s", config.DefaultModel())
+		}
+	})
+
+	t.Run("app name is case-insensitive", func(t *testing.T) {
+		SaveIntegration("Claude", []string{"model-x"})
+
+		config, err := LoadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.DefaultModel() != "model-x" {
+			t.Errorf("expected model-x, got %s", config.DefaultModel())
+		}
+	})
+}
+
+func TestGetExistingConfigPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	t.Run("returns empty for claude (no config files)", func(t *testing.T) {
+		paths := getExistingConfigPaths("claude")
+		if len(paths) != 0 {
+			t.Errorf("expected no paths for claude, got %v", paths)
+		}
+	})
+
+	t.Run("returns empty for codex (no config files)", func(t *testing.T) {
+		paths := getExistingConfigPaths("codex")
+		if len(paths) != 0 {
+			t.Errorf("expected no paths for codex, got %v", paths)
+		}
+	})
+
+	t.Run("returns empty for droid when no config exists", func(t *testing.T) {
+		paths := getExistingConfigPaths("droid")
+		if len(paths) != 0 {
+			t.Errorf("expected no paths, got %v", paths)
+		}
+	})
+
+	t.Run("returns path for droid when config exists", func(t *testing.T) {
+		settingsDir := filepath.Join(tmpDir, ".factory")
+		os.MkdirAll(settingsDir, 0o755)
+		os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{}`), 0o644)
+
+		paths := getExistingConfigPaths("droid")
+		if len(paths) != 1 {
+			t.Errorf("expected 1 path, got %d", len(paths))
+		}
+	})
+
+	t.Run("returns paths for opencode when configs exist", func(t *testing.T) {
+		configDir := filepath.Join(tmpDir, ".config", "opencode")
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(configDir, 0o755)
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(`{}`), 0o644)
+
+		paths := getExistingConfigPaths("opencode")
+		if len(paths) != 2 {
+			t.Errorf("expected 2 paths, got %d: %v", len(paths), paths)
+		}
+	})
+
+	t.Run("case insensitive app name", func(t *testing.T) {
+		paths1 := getExistingConfigPaths("DROID")
+		paths2 := getExistingConfigPaths("droid")
+		if len(paths1) != len(paths2) {
+			t.Error("app name should be case insensitive")
+		}
+	})
+}
+
+func TestListIntegrations(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	t.Run("returns empty when no integrations", func(t *testing.T) {
+		configs, err := ListIntegrations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(configs) != 0 {
+			t.Errorf("expected 0 integrations, got %d", len(configs))
+		}
+	})
+
+	t.Run("returns all saved integrations", func(t *testing.T) {
+		SaveIntegration("claude", []string{"model-1"})
+		SaveIntegration("droid", []string{"model-2"})
+
+		configs, err := ListIntegrations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(configs) != 2 {
+			t.Errorf("expected 2 integrations, got %d", len(configs))
 		}
 	})
 }

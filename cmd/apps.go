@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/spf13/cobra"
@@ -150,6 +151,20 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
+const backupDir = "/tmp/ollama-backups"
+
+func backupToTmp(srcPath string) (string, error) {
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		return "", err
+	}
+
+	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.%d", filepath.Base(srcPath), time.Now().Unix()))
+	if err := copyFile(srcPath, backupPath); err != nil {
+		return "", err
+	}
+	return backupPath, nil
+}
+
 func atomicWriteJSON(path string, data any) error {
 	content, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -161,10 +176,11 @@ func atomicWriteJSON(path string, data any) error {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	backupPath := path + ".bak"
+	var backupPath string
 	if existingContent, err := os.ReadFile(path); err == nil {
 		if !bytes.Equal(existingContent, content) {
-			if err := copyFile(path, backupPath); err != nil {
+			backupPath, err = backupToTmp(path)
+			if err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}
 		}
@@ -189,8 +205,8 @@ func atomicWriteJSON(path string, data any) error {
 
 	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
-		if _, statErr := os.Stat(backupPath); statErr == nil {
-			os.Rename(backupPath, path)
+		if backupPath != "" {
+			copyFile(backupPath, path)
 		}
 		return fmt.Errorf("rename failed: %w", err)
 	}
@@ -459,30 +475,6 @@ func getOpenCodeConfiguredModels() []string {
 	return result
 }
 
-func getOpenCodeConfiguredModel() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-
-	state, err := readJSONFile(filepath.Join(home, ".local", "state", "opencode", "model.json"))
-	if err != nil {
-		return ""
-	}
-
-	recent, _ := state["recent"].([]any)
-	if len(recent) == 0 {
-		return ""
-	}
-
-	first, _ := recent[0].(map[string]any)
-	if first["providerID"] == "ollama" {
-		modelID, _ := first["modelID"].(string)
-		return modelID
-	}
-	return ""
-}
-
 func readDroidSettings() (map[string]any, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -513,29 +505,6 @@ func getDroidConfiguredModels() []string {
 	return result
 }
 
-func getDroidConfiguredModel() string {
-	settings, err := readDroidSettings()
-	if err != nil {
-		return ""
-	}
-
-	sessionSettings, _ := settings["sessionDefaultSettings"].(map[string]any)
-	modelID, _ := sessionSettings["model"].(string)
-	if modelID == "" {
-		return ""
-	}
-
-	customModels, _ := settings["customModels"].([]any)
-	for _, m := range customModels {
-		entry, _ := m.(map[string]any)
-		if entry["id"] == modelID {
-			model, _ := entry["model"].(string)
-			return model
-		}
-	}
-	return ""
-}
-
 func getAppConfiguredModels(appName string) []string {
 	// Get models that exist in the app's config
 	var appModels []string
@@ -546,8 +515,8 @@ func getAppConfiguredModels(appName string) []string {
 		appModels = getDroidConfiguredModels()
 	}
 
-	// Get our saved connection config for the correct order (default first)
-	savedConfig, err := LoadConnection(appName)
+	// Get our saved integration config for the correct order (default first)
+	savedConfig, err := LoadIntegration(appName)
 	if err != nil || len(savedConfig.Models) == 0 {
 		return appModels
 	}
@@ -598,7 +567,7 @@ func runInApp(appName, modelName string) error {
 
 	if app.Setup != nil {
 		models := []string{modelName}
-		if config, err := LoadConnection(appName); err == nil && len(config.Models) > 0 {
+		if config, err := LoadIntegration(appName); err == nil && len(config.Models) > 0 {
 			models = config.Models
 		}
 		if err := app.Setup(models); err != nil {
@@ -629,13 +598,42 @@ func handleCancelled(err error) (cancelled bool, origErr error) {
 	return false, err
 }
 
-func ConnectCmd() *cobra.Command {
+// getExistingConfigPaths returns config paths that exist on disk for the given app.
+// Returns empty slice if the app doesn't modify config files or no config exists yet.
+func getExistingConfigPaths(appName string) []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	var paths []string
+	switch strings.ToLower(appName) {
+	case "droid":
+		p := filepath.Join(home, ".factory", "settings.json")
+		if _, err := os.Stat(p); err == nil {
+			paths = append(paths, p)
+		}
+	case "opencode":
+		p := filepath.Join(home, ".config", "opencode", "opencode.json")
+		if _, err := os.Stat(p); err == nil {
+			paths = append(paths, p)
+		}
+		sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
+		if _, err := os.Stat(sp); err == nil {
+			paths = append(paths, sp)
+		}
+	}
+	return paths
+}
+
+func IntegrationsCmd() *cobra.Command {
 	var modelFlag string
+	var launchFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "connect [APP]",
+		Use:   "integrations [APP]",
 		Short: "Configure an external app to use Ollama",
-		Long: `Configure an external application to use Ollama as its backend.
+		Long: `Configure an external application to use Ollama models.
 
 Supported apps:
   claude    Claude Code
@@ -644,9 +642,9 @@ Supported apps:
   opencode  OpenCode
 
 Examples:
-  ollama connect
-  ollama connect claude
-  ollama connect claude --model llama3.2`,
+  ollama integrations
+  ollama integrations claude
+  ollama integrations droid --launch`,
 		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -663,16 +661,32 @@ Examples:
 				}
 			}
 
-			if _, ok := GetApp(appName); !ok {
+			app, ok := GetApp(appName)
+			if !ok {
 				return fmt.Errorf("unknown app: %s", appName)
+			}
+
+			// If --launch without --model, use saved config if available
+			if launchFlag && modelFlag == "" {
+				if config, err := LoadIntegration(appName); err == nil && config.DefaultModel() != "" {
+					return runInApp(appName, config.DefaultModel())
+				}
 			}
 
 			var models []string
 			if modelFlag != "" {
+				// When --model is specified, merge with existing models (new model becomes default)
 				models = []string{modelFlag}
+				if existing, err := LoadIntegration(appName); err == nil && len(existing.Models) > 0 {
+					for _, m := range existing.Models {
+						if m != modelFlag {
+							models = append(models, m)
+						}
+					}
+				}
 			} else {
 				var err error
-				models, err = selectModelForConnect(cmd.Context(), appName)
+				models, err = selectModels(cmd.Context(), appName)
 				if cancelled, err := handleCancelled(err); cancelled {
 					return nil
 				} else if err != nil {
@@ -680,12 +694,25 @@ Examples:
 				}
 			}
 
-			if err := SaveConnection(appName, models); err != nil {
+			if app.Setup != nil {
+				paths := getExistingConfigPaths(appName)
+				if len(paths) > 0 {
+					fmt.Fprintf(os.Stderr, "\nWarning: This will modify your %s configuration:\n", app.DisplayName)
+					for _, p := range paths {
+						fmt.Fprintf(os.Stderr, "  %s\n", p)
+					}
+					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir)
+
+					if ok, _ := confirmPrompt("Proceed?"); !ok {
+						return nil
+					}
+				}
+			}
+
+			if err := SaveIntegration(appName, models); err != nil {
 				return fmt.Errorf("failed to save: %w", err)
 			}
 
-			// Apply app-specific configuration (e.g., update OpenCode/Droid config files)
-			app, _ := GetApp(appName)
 			if app.Setup != nil {
 				if err := app.Setup(models); err != nil {
 					return fmt.Errorf("setup failed: %w", err)
@@ -694,107 +721,20 @@ Examples:
 
 			printModelsAdded(appName, models)
 
-			if launch, _ := confirmLaunch(appName); launch {
+			if launchFlag {
 				return runInApp(appName, models[0])
 			}
 
-			fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start later with %s \n", strings.ToLower(appName), models[0])
+			if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", app.DisplayName)); launch {
+				return runInApp(appName, models[0])
+			}
+
+			fmt.Fprintf(os.Stderr, "Run 'ollama integrations %s --launch' to start with %s\n", strings.ToLower(appName), models[0])
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
-	return cmd
-}
-
-func getAppConfiguredModel(appName string) string {
-	switch strings.ToLower(appName) {
-	case "opencode":
-		return getOpenCodeConfiguredModel()
-	case "droid":
-		return getDroidConfiguredModel()
-	default:
-		return ""
-	}
-}
-
-func getOrConfigureModel(ctx context.Context, appName string) (string, error) {
-	if modelName := getAppConfiguredModel(appName); modelName != "" {
-		return modelName, nil
-	}
-
-	if config, err := LoadConnection(appName); err == nil {
-		return config.DefaultModel(), nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-
-	models, err := selectModelForConnect(ctx, appName)
-	if err != nil {
-		return "", err
-	}
-
-	if err := SaveConnection(appName, models); err != nil {
-		return "", fmt.Errorf("failed to save: %w", err)
-	}
-
-	printModelsAdded(appName, models)
-	return models[0], nil
-}
-
-func LaunchCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "launch [APP]",
-		Short: "Launch a configured app",
-		Long: `Launch a configured application with Ollama as its backend.
-
-If no app is specified, shows a list of configured apps to choose from.
-If no apps have been configured, starts the connect flow.
-
-Examples:
-  ollama launch
-  ollama launch claude`,
-		Args:    cobra.MaximumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var appName string
-			if len(args) > 0 {
-				appName = args[0]
-			} else {
-				selected, err := selectConnectedApp()
-				if errors.Is(err, ErrCancelled) {
-					return nil // Silent exit on cancel
-				} else if err != nil {
-					return err
-				}
-				if selected == "" {
-					fmt.Fprintf(os.Stderr, "No apps configured. Let's set one up.\n\n")
-					appName, err = selectApp()
-					if errors.Is(err, ErrCancelled) {
-						return nil
-					} else if err != nil {
-						return err
-					}
-				} else {
-					appName = selected
-				}
-			}
-
-			app, ok := GetApp(appName)
-			if !ok {
-				return fmt.Errorf("unknown app: %s", appName)
-			}
-
-			modelName, err := getOrConfigureModel(cmd.Context(), appName)
-			if errors.Is(err, ErrCancelled) {
-				return nil
-			} else if err != nil {
-				return err
-			}
-
-			return runInApp(app.Name, modelName)
-		},
-	}
-
+	cmd.Flags().BoolVar(&launchFlag, "launch", false, "Launch the app after configuring")
 	return cmd
 }

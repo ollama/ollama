@@ -8,30 +8,30 @@ import (
 	"time"
 )
 
-type ConnectionConfig struct {
+type IntegrationConfig struct {
 	App          string    `json:"app"`
 	Models       []string  `json:"models"`
 	ConfiguredAt time.Time `json:"configured_at"`
 }
 
 // DefaultModel returns the first (default) model, or empty string if none
-func (c *ConnectionConfig) DefaultModel() string {
+func (c *IntegrationConfig) DefaultModel() string {
 	if len(c.Models) > 0 {
 		return c.Models[0]
 	}
 	return ""
 }
 
-func connectionsDir() (string, error) {
+func integrationsDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".ollama", "connections"), nil
+	return filepath.Join(home, ".ollama", "integrations"), nil
 }
 
 func configPath(appName string) (string, error) {
-	dir, err := connectionsDir()
+	dir, err := integrationsDir()
 	if err != nil {
 		return "", err
 	}
@@ -39,7 +39,7 @@ func configPath(appName string) (string, error) {
 	return filepath.Join(dir, strings.ToLower(appName)+".json"), nil
 }
 
-func SaveConnection(appName string, models []string) error {
+func SaveIntegration(appName string, models []string) error {
 	path, err := configPath(appName)
 	if err != nil {
 		return err
@@ -49,14 +49,14 @@ func SaveConnection(appName string, models []string) error {
 		return err
 	}
 
-	return atomicWriteJSON(path, ConnectionConfig{
+	return atomicWriteJSON(path, IntegrationConfig{
 		App:          appName,
 		Models:       models,
 		ConfiguredAt: time.Now(),
 	})
 }
 
-func LoadConnection(appName string) (*ConnectionConfig, error) {
+func LoadIntegration(appName string) (*IntegrationConfig, error) {
 	path, err := configPath(appName)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func LoadConnection(appName string) (*ConnectionConfig, error) {
 		return nil, err
 	}
 
-	var config ConnectionConfig
+	var config IntegrationConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
@@ -75,8 +75,8 @@ func LoadConnection(appName string) (*ConnectionConfig, error) {
 	return &config, nil
 }
 
-func ListConnections() ([]ConnectionConfig, error) {
-	dir, err := connectionsDir()
+func ListIntegrations() ([]IntegrationConfig, error) {
+	dir, err := integrationsDir()
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func ListConnections() ([]ConnectionConfig, error) {
 		return nil, err
 	}
 
-	var configs []ConnectionConfig
+	var configs []IntegrationConfig
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -100,7 +100,7 @@ func ListConnections() ([]ConnectionConfig, error) {
 			continue
 		}
 
-		var config ConnectionConfig
+		var config IntegrationConfig
 		if err := json.Unmarshal(data, &config); err != nil {
 			continue
 		}

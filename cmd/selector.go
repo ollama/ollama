@@ -18,7 +18,7 @@ const maxDisplayedItems = 10
 
 var AppOrder = []string{"claude", "codex", "opencode", "droid"}
 
-var ErrCancelled = errors.New("no ollama connections created")
+var ErrCancelled = errors.New("no ollama integrations created")
 
 type SelectItem struct {
 	Name        string
@@ -371,7 +371,7 @@ func selectApp() (string, error) {
 		}
 		description := app.DisplayName
 		// Show configured model if one exists
-		if conn, err := LoadConnection(name); err == nil && conn.DefaultModel() != "" {
+		if conn, err := LoadIntegration(name); err == nil && conn.DefaultModel() != "" {
 			description = fmt.Sprintf("%s (%s)", app.DisplayName, conn.DefaultModel())
 		}
 		items = append(items, SelectItem{Name: app.Name, Description: description})
@@ -382,39 +382,6 @@ func selectApp() (string, error) {
 	}
 
 	return Select("Select app:", items)
-}
-
-func selectConnectedApp() (string, error) {
-	connections, err := ListConnections()
-	if err != nil {
-		return "", err
-	}
-
-	if len(connections) == 0 {
-		return "", nil
-	}
-
-	var items []SelectItem
-	for _, conn := range connections {
-		app, ok := GetApp(conn.App)
-		if !ok {
-			continue
-		}
-		items = append(items, SelectItem{
-			Name:        app.Name,
-			Description: fmt.Sprintf("%s (%s)", app.DisplayName, conn.DefaultModel()),
-		})
-	}
-
-	if len(items) == 0 {
-		return "", nil
-	}
-
-	return Select("Select app to launch (use ollama connect to configure other apps):", items)
-}
-
-func confirmLaunch(appName string) (bool, error) {
-	return confirmPrompt(fmt.Sprintf("Launch %s now?", appName))
 }
 
 func confirmPrompt(prompt string) (bool, error) {
@@ -444,7 +411,7 @@ func confirmPrompt(prompt string) (bool, error) {
 	}
 }
 
-func selectModelForConnect(ctx context.Context, appName string) ([]string, error) {
+func selectModels(ctx context.Context, appName string) ([]string, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, err
