@@ -6,8 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // ManifestLayer represents a layer in the manifest.
@@ -32,31 +33,15 @@ type ModelManifest struct {
 	BlobDir  string
 }
 
-// DefaultBlobDir returns the default blob storage directory.
 func DefaultBlobDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	case "linux":
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	case "windows":
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	default:
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	}
+	return filepath.Join(envconfig.Models(), "blobs")
 }
 
-// DefaultManifestDir returns the default manifest storage directory.
+// DefaultManifestDir returns the manifest storage directory.
+// Respects OLLAMA_MODELS.
+
 func DefaultManifestDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".ollama", "models", "manifests")
+	return filepath.Join(envconfig.Models(), "manifests")
 }
 
 // LoadManifest loads a manifest for the given model name.
