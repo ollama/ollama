@@ -82,6 +82,10 @@ func rendererForName(name string) Renderer {
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
 		return &GLM47Renderer{}
+	case "lfm2":
+		return &LFM2Renderer{IsThinking: false}
+	case "lfm2-thinking":
+		return &LFM2Renderer{IsThinking: true}
 	default:
 		return nil
 	}

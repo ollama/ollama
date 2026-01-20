@@ -70,6 +70,10 @@ func ParserForName(name string) Parser {
 		return &FunctionGemmaParser{}
 	case "glm-4.7":
 		return &GLM47Parser{}
+	case "lfm2":
+		return &LFM2Parser{hasThinkingSupport: false}
+	case "lfm2-thinking":
+		return &LFM2Parser{hasThinkingSupport: true}
 	default:
 		return nil
 	}
