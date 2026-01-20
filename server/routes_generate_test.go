@@ -22,6 +22,29 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
 type mockRunner struct {
 	llm.LlamaServer
 
@@ -488,7 +511,7 @@ func TestGenerateChat(t *testing.T) {
 					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -497,7 +520,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -559,15 +582,15 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
 		expectedToolCall.ID = gotToolCall.ID
-		if diff := cmp.Diff(gotToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(gotToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -582,7 +605,7 @@ func TestGenerateChat(t *testing.T) {
 					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -591,7 +614,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -688,10 +711,10 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
@@ -703,7 +726,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		expectedToolCall.ID = finalToolCall.ID
-		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(finalToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -716,9 +739,9 @@ func TestGenerateChat(t *testing.T) {
 					Name: "get_weather",
 					Parameters: api.ToolFunctionParameters{
 						Type: "object",
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {Type: api.PropertyType{"string"}},
-						},
+						}),
 					},
 				},
 			},
@@ -2075,6 +2098,98 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if last.DoneReason != "stop" {
 			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
+		}
+	})
+}
+
+func TestGenerateUnload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var loadFnCalled bool
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mockRunner{}),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFnCalled = true
+				req.successCh <- &runnerRef{llama: &mockRunner{}}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("unload with empty prompt and keepalive 0", func(t *testing.T) {
+		loadFnCalled = false
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:     "test",
+			Prompt:    "",
+			KeepAlive: &api.Duration{Duration: 0},
+			Stream:    &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if resp.DoneReason != "unload" {
+			t.Errorf("expected done_reason 'unload', got %q", resp.DoneReason)
+		}
+
+		if !resp.Done {
+			t.Error("expected done to be true")
+		}
+
+		if loadFnCalled {
+			t.Error("expected model NOT to be loaded for unload request, but loadFn was called")
 		}
 	})
 }

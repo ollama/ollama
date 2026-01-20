@@ -80,6 +80,8 @@ func rendererForName(name string) Renderer {
 		return &Nemotron3NanoRenderer{}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
+	case "glm-4.7":
+		return &GLM47Renderer{}
 	default:
 		return nil
 	}

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -239,6 +241,18 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	return val.values
 }
 
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
 		"bert",
@@ -255,6 +269,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
+		"glm4moelite",
 	}, kv.Architecture())
 }
 
@@ -842,6 +857,7 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"bert",
 		"gemma3",
+		"glm4moelite",
 		"gptoss", "gpt-oss",
 		"mistral3",
 		"olmo3",

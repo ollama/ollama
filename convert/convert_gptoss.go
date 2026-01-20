@@ -37,7 +37,7 @@ type gptossModel struct {
 
 var _ ModelConverter = (*gptossModel)(nil)
 
-func (m *gptossModel) KV(t *Tokenizer) ggml.KV {
+func (m *gptossModel) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "gptoss"
 	kv["general.file_type"] = uint32(4)

@@ -3,8 +3,6 @@ package convert
 import (
 	"cmp"
 	"slices"
-
-	"github.com/ollama/ollama/fs/ggml"
 )
 
 type gemma3Model struct {
@@ -55,7 +53,7 @@ const (
 	gemma27BLayerCount = 62
 )
 
-func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
+func (p *gemma3Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma3"
 
