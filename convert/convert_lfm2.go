@@ -1,11 +1,37 @@
 package convert
 
 import (
+	"encoding/binary"
+	"io"
 	"slices"
 	"strings"
 
+	"github.com/d4l3k/go-bfloat16"
 	"github.com/ollama/ollama/fs/ggml"
 )
+
+// bf16ToF32 wraps a tensor and converts BF16 data to F32 on write
+type bf16ToF32 struct {
+	Tensor
+}
+
+func (c bf16ToF32) WriteTo(w io.Writer) (int64, error) {
+	// Read BF16 data from original tensor
+	var buf strings.Builder
+	if _, err := c.Tensor.WriteTo(&buf); err != nil {
+		return 0, err
+	}
+	bf16Data := []byte(buf.String())
+
+	// Convert BF16 to F32
+	f32s := bfloat16.DecodeFloat32(bf16Data)
+
+	// Write F32 data
+	if err := binary.Write(w, binary.LittleEndian, f32s); err != nil {
+		return 0, err
+	}
+	return int64(len(f32s) * 4), nil
+}
 
 type lfm2Model struct {
 	ModelParameters
@@ -45,6 +71,8 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 
 	kv["lfm2.attention.head_count"] = headCounts
 	kv["lfm2.attention.head_count_kv"] = kvHeadCounts
+	kv["lfm2.attention.key_length"] = p.HiddenSize / p.NumAttentionHeads
+	kv["lfm2.attention.value_length"] = p.HiddenSize / p.NumAttentionHeads
 	kv["lfm2.attention.layer_norm_rms_epsilon"] = p.NormEps
 	kv["lfm2.rope.freq_base"] = p.RopeTheta
 	kv["lfm2.shortconv.l_cache"] = p.ConvLCache
@@ -57,17 +85,26 @@ func (p *lfm2Model) Tensors(ts []Tensor) []*ggml.Tensor {
 
 	for _, t := range ts {
 		shape := t.Shape()
+		kind := t.Kind()
+		var writer io.WriterTo = t
 
-		// Squeeze conv weights: [D, 1, K] -> [D, K]
-		if strings.HasSuffix(t.Name(), "shortconv.conv.weight") && len(shape) == 3 && shape[1] == 1 {
-			shape = []uint64{shape[0], shape[2]}
+		// Squeeze conv weights: [D, 1, K] -> [D, K] and convert to F32
+		if strings.HasSuffix(t.Name(), "shortconv.conv.weight") {
+			if len(shape) == 3 && shape[1] == 1 {
+				shape = []uint64{shape[0], shape[2]}
+			}
+			// Convert BF16 to F32 for accuracy (small kernel, runtime casts to F32 anyway)
+			if kind == tensorKindBF16 {
+				kind = tensorKindFP32
+				writer = bf16ToF32{t}
+			}
 		}
 
 		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
-			Kind:     t.Kind(),
+			Kind:     kind,
 			Shape:    slices.Clone(shape),
-			WriterTo: t,
+			WriterTo: writer,
 		})
 	}
 
