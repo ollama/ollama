@@ -31,12 +31,6 @@ func TestLFM2Parser(t *testing.T) {
 			hasThinking:      true,
 		},
 		{
-			name:            "no_thinking_simple",
-			input:           "Just a regular response.",
-			expectedContent: "Just a regular response.",
-			hasThinking:     false,
-		},
-		{
 			name:             "thinking_with_newlines",
 			input:            "Let me think:\n- Point 1\n- Point 2</think>\n\nHere's my answer.",
 			expectedThinking: "Let me think:\n- Point 1\n- Point 2",
@@ -134,12 +128,6 @@ func TestLFM2Parser(t *testing.T) {
 			name:            "unicode_content",
 			input:           "مرحبا بالعالم! 你好世界! 🌍",
 			expectedContent: "مرحبا بالعالم! 你好世界! 🌍",
-			hasThinking:     false,
-		},
-		{
-			name:            "emoji_passthrough",
-			input:           "Task completed ✅ 🎉",
-			expectedContent: "Task completed ✅ 🎉",
 			hasThinking:     false,
 		},
 		{

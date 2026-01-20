@@ -234,6 +234,30 @@ func TestLFM2Renderer(t *testing.T) {
 			expected:   `<|im_start|>system` + "\n" + `List of tools: [{"type":"function","function":{"name":"get_weather","description":"Get current weather","parameters":{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}}}]<|im_end|>` + "\n" + `<|im_start|>user` + "\n" + `What's the weather?<|im_end|>` + "\n" + `<|im_start|>assistant` + "\n",
 		},
 		{
+			name: "multiple tools without system message",
+			messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_weather",
+						Description: "Get weather",
+					},
+				},
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_time",
+						Description: "Get time",
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   "<|im_start|>system\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}, {\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"description\":\"Get time\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
 			name: "user-tool sequence",
 			messages: []api.Message{
 				{Role: "user", Content: "Check weather"},
@@ -402,167 +426,3 @@ func TestLFM2Renderer(t *testing.T) {
 	}
 }
 
-func TestLFM2Renderer_GoldenTests(t *testing.T) {
-	tests := []struct {
-		name       string
-		messages   []api.Message
-		tools      []api.Tool
-		thinkValue *api.ThinkValue
-		expected   string
-	}{
-		{
-			name: "simple user message",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "with system message",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a helpful assistant."},
-				{Role: "user", Content: "Hello"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "tool call and response",
-			messages: []api.Message{
-				{Role: "user", Content: "What is the weather?"},
-				{
-					Role: "assistant",
-					ToolCalls: []api.ToolCall{
-						{
-							Function: api.ToolCallFunction{
-								Name:      "get_weather",
-								Arguments: testArgs(map[string]any{"location": "NYC"}),
-							},
-						},
-					},
-				},
-				{Role: "tool", Content: "Sunny, 72F"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>user\nWhat is the weather?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny, 72F<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "last assistant thinking preserved",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "<think>Thinking...</think>Hi there!"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>Thinking...</think>Hi there!<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "past assistant thinking stripped",
-			messages: []api.Message{
-				{Role: "user", Content: "First question"},
-				{Role: "assistant", Content: "<think>First thought</think>First answer"},
-				{Role: "user", Content: "Second question"},
-				{Role: "assistant", Content: "<think>Second thought</think>Second answer"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>user\nFirst question<|im_end|>\n<|im_start|>assistant\nFirst answer<|im_end|>\n<|im_start|>user\nSecond question<|im_end|>\n<|im_start|>assistant\n<think>Second thought</think>Second answer<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "thinking with tool call",
-			messages: []api.Message{
-				{Role: "user", Content: "What's the weather?"},
-				{
-					Role:    "assistant",
-					Content: "<think>I should check the weather</think>",
-					ToolCalls: []api.ToolCall{
-						{
-							Function: api.ToolCallFunction{
-								Name:      "get_weather",
-								Arguments: testArgs(map[string]any{"location": "NYC"}),
-							},
-						},
-					},
-				},
-				{Role: "tool", Content: "Sunny"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>user\nWhat's the weather?<|im_end|>\n<|im_start|>assistant\n<think>I should check the weather</think><|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "multi-assistant tool cycle strips past thinking",
-			messages: []api.Message{
-				{Role: "user", Content: "What's the weather?"},
-				{
-					Role:    "assistant",
-					Content: "<think>Let me check</think>",
-					ToolCalls: []api.ToolCall{
-						{
-							Function: api.ToolCallFunction{
-								Name:      "get_weather",
-								Arguments: testArgs(map[string]any{"location": "NYC"}),
-							},
-						},
-					},
-				},
-				{Role: "tool", Content: "Sunny"},
-				{Role: "assistant", Content: "<think>Got it</think>It's sunny!"},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>user\nWhat's the weather?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n<think>Got it</think>It's sunny!<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "multiple tools in system",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-			},
-			tools: []api.Tool{
-				{
-					Type: "function",
-					Function: api.ToolFunction{
-						Name:        "get_weather",
-						Description: "Get weather",
-					},
-				},
-				{
-					Type: "function",
-					Function: api.ToolFunction{
-						Name:        "get_time",
-						Description: "Get time",
-					},
-				},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>system\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}, {\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"description\":\"Get time\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name: "system message combined with tools",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a weather assistant."},
-				{Role: "user", Content: "What is the weather?"},
-			},
-			tools: []api.Tool{
-				{
-					Type: "function",
-					Function: api.ToolFunction{
-						Name: "get_weather",
-					},
-				},
-			},
-			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|im_start|>system\nYou are a weather assistant.\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nWhat is the weather?<|im_end|>\n<|im_start|>assistant\n",
-		},
-	}
-
-	renderer := &LFM2Renderer{IsThinking: true}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := renderer.Render(tt.messages, tt.tools, tt.thinkValue)
-			if err != nil {
-				t.Fatalf("Render() error = %v", err)
-			}
-			if diff := cmp.Diff(tt.expected, rendered); diff != "" {
-				t.Errorf("Render() mismatch (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
