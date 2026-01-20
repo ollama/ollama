@@ -1840,14 +1840,35 @@ func (s *Server) PsHandler(c *gin.Context) {
 			QuantizationLevel: model.Config.FileType,
 		}
 
+		// Build layer distribution
+		layerDist := &api.GPULayerDistribution{
+			TotalLayers: v.llama.GetLayerInfo().TotalLayers,
+			GPULayers:   v.llama.GetLayerInfo().GPULayers,
+			CPULayers:   v.llama.GetLayerInfo().CPULayers,
+		}
+
+		// Build per-GPU info
+		for _, gl := range v.gpuLayers {
+			gpuInfo := api.GPULayerInfo{
+				DeviceID:   gl.DeviceID.ID,
+				Library:    gl.DeviceID.Library,
+				LayerCount: len(gl.Layers),
+			}
+			if len(gl.Layers) > 0 {
+				gpuInfo.LayerRange = fmt.Sprintf("%d-%d", gl.Layers[0], gl.Layers[len(gl.Layers)-1])
+			}
+			layerDist.GPUDevices = append(layerDist.GPUDevices, gpuInfo)
+		}
+
 		mr := api.ProcessModelResponse{
-			Model:     model.ShortName,
-			Name:      model.ShortName,
-			Size:      int64(v.totalSize),
-			SizeVRAM:  int64(v.vramSize),
-			Digest:    model.Digest,
-			Details:   modelDetails,
-			ExpiresAt: v.expiresAt,
+			Model:             model.ShortName,
+			Name:              model.ShortName,
+			Size:              int64(v.totalSize),
+			SizeVRAM:          int64(v.vramSize),
+			Digest:            model.Digest,
+			Details:           modelDetails,
+			ExpiresAt:         v.expiresAt,
+			LayerDistribution: layerDist,
 		}
 		if v.Options != nil {
 			mr.ContextLength = v.Options.NumCtx

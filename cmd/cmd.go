@@ -791,6 +791,25 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
 			}
 
+			// Build layer distribution string
+			var layerStr string
+			if m.LayerDistribution != nil {
+				if len(m.LayerDistribution.GPUDevices) > 0 {
+					var gpuParts []string
+					for _, gpu := range m.LayerDistribution.GPUDevices {
+						gpuParts = append(gpuParts, fmt.Sprintf("%s:%d", gpu.DeviceID, gpu.LayerCount))
+					}
+					layerStr = fmt.Sprintf("%d layers [%s] + %d CPU",
+						m.LayerDistribution.GPULayers,
+						strings.Join(gpuParts, ", "),
+						m.LayerDistribution.CPULayers)
+				} else {
+					layerStr = fmt.Sprintf("%d CPU", m.LayerDistribution.CPULayers)
+				}
+			} else {
+				layerStr = procStr // Fall back to processor percentage
+			}
+
 			var until string
 			delta := time.Since(m.ExpiresAt)
 			if delta > 0 {
@@ -799,12 +818,12 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
 			ctxStr := strconv.Itoa(m.ContextLength)
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, until})
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, layerStr, ctxStr, until})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "CONTEXT", "UNTIL"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "LAYERS", "CONTEXT", "UNTIL"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)

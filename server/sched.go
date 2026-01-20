@@ -546,6 +546,7 @@ iGPUScan:
 		Options:         &req.opts,
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
+		gpuLayers:       llama.GetLayerInfo().GPULayersList,
 		discreteGPUs:    discreteGPUs,
 		vramSize:        llama.VRAMSize(),
 		totalSize:       llama.TotalSize(),
@@ -685,9 +686,10 @@ type runnerRef struct {
 
 	llama        llm.LlamaServer
 	pid          int
-	loading      bool          // True only during initial load, then false forever
-	gpus         []ml.DeviceID // Recorded at time of provisioning
-	discreteGPUs bool          // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
+	loading      bool             // True only during initial load, then false forever
+	gpus         []ml.DeviceID    // Recorded at time of provisioning
+	gpuLayers    ml.GPULayersList // Layer distribution across GPUs
+	discreteGPUs bool             // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
 	vramSize     uint64
 	totalSize    uint64
 

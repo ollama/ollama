@@ -36,6 +36,14 @@ import (
 	"github.com/ollama/ollama/model"
 )
 
+// LayerInfo provides information about layer distribution across CPU and GPUs.
+type LayerInfo struct {
+	TotalLayers   int
+	GPULayers     int
+	CPULayers     int
+	GPULayersList ml.GPULayersList
+}
+
 type filteredEnv []string
 
 func (e filteredEnv) LogValue() slog.Value {
@@ -80,6 +88,7 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	GetLayerInfo() LayerInfo
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -913,12 +922,6 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 	return devices
 }
 
-// createLayout uses the current best view of memory requirements and creates a layout of model layers on GPUs.
-// It does this by:
-// - Calculating how much space each layer requires
-// - Calculating how much space each GPU has available for layers, based on free memory and space occupied by the graph
-// - Assigning layers
-// - Ensuring that we don't exceed limits, such as requirements about partial offloading or system memory
 func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, error) {
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
@@ -2008,6 +2011,19 @@ func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
 	return 0
 }
 
+func (s *llmServer) GetLayerInfo() LayerInfo {
+	if s.mem == nil {
+		return LayerInfo{}
+	}
+
+	return LayerInfo{
+		TotalLayers:   int(s.totalLayers),
+		GPULayers:     s.loadRequest.GPULayers.Sum(),
+		CPULayers:     int(s.totalLayers) - s.loadRequest.GPULayers.Sum(),
+		GPULayersList: s.loadRequest.GPULayers,
+	}
+}
+
 func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	devices, err := ml.GetDevicesFromRunner(ctx, s)
 	if err != nil {
@@ -2018,4 +2034,8 @@ func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 		// else no longer running so suppress logging as a failure is expected
 	}
 	return devices
+}
+
+func (s *ollamaServer) GetLayerInfo() LayerInfo {
+	return LayerInfo{}
 }

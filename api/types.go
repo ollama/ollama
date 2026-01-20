@@ -806,14 +806,15 @@ type ListModelResponse struct {
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
 type ProcessModelResponse struct {
-	Name          string       `json:"name"`
-	Model         string       `json:"model"`
-	Size          int64        `json:"size"`
-	Digest        string       `json:"digest"`
-	Details       ModelDetails `json:"details,omitempty"`
-	ExpiresAt     time.Time    `json:"expires_at"`
-	SizeVRAM      int64        `json:"size_vram"`
-	ContextLength int          `json:"context_length"`
+	Name              string                `json:"name"`
+	Model             string                `json:"model"`
+	Size              int64                 `json:"size"`
+	Digest            string                `json:"digest"`
+	Details           ModelDetails          `json:"details,omitempty"`
+	ExpiresAt         time.Time             `json:"expires_at"`
+	SizeVRAM          int64                 `json:"size_vram"`
+	ContextLength     int                   `json:"context_length"`
+	LayerDistribution *GPULayerDistribution `json:"layer_distribution,omitempty"`
 }
 
 type TokenResponse struct {

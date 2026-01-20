@@ -368,5 +368,9 @@ func (s *Server) HasExited() bool {
 	}
 }
 
+func (s *Server) GetLayerInfo() llm.LayerInfo {
+	return llm.LayerInfo{}
+}
+
 // Ensure Server implements llm.LlamaServer
 var _ llm.LlamaServer = (*Server)(nil)
