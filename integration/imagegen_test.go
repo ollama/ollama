@@ -3,18 +3,14 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
-	imagegenapi "github.com/ollama/ollama/x/imagegen/api"
 )
 
 func TestImageGeneration(t *testing.T) {
@@ -41,7 +37,7 @@ func TestImageGeneration(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 
-			client, testEndpoint, cleanup := InitServerConnection(ctx, t)
+			client, _, cleanup := InitServerConnection(ctx, t)
 			defer cleanup()
 
 			// Pull both models
@@ -54,7 +50,7 @@ func TestImageGeneration(t *testing.T) {
 
 			// Generate the image
 			t.Logf("Generating image with prompt: %s", tc.prompt)
-			imageBase64, err := generateImage(ctx, testEndpoint, tc.imageGenModel, tc.prompt)
+			imageBase64, err := generateImage(ctx, client, tc.imageGenModel, tc.prompt)
 			if err != nil {
 				if strings.Contains(err.Error(), "image generation not available") {
 					t.Skip("Target system does not support image generation")
@@ -127,48 +123,26 @@ func TestImageGeneration(t *testing.T) {
 	}
 }
 
-// generateImage calls the OpenAI-compatible image generation API and returns the base64 image data
-func generateImage(ctx context.Context, endpoint, model, prompt string) (string, error) {
-	reqBody := imagegenapi.ImageGenerationRequest{
-		Model:          model,
-		Prompt:         prompt,
-		N:              1,
-		Size:           "512x512",
-		ResponseFormat: "b64_json",
-	}
+// generateImage calls the Ollama API to generate an image and returns the base64 image data
+func generateImage(ctx context.Context, client *api.Client, model, prompt string) (string, error) {
+	var imageBase64 string
 
-	jsonBody, err := json.Marshal(reqBody)
+	err := client.Generate(ctx, &api.GenerateRequest{
+		Model:  model,
+		Prompt: prompt,
+	}, func(resp api.GenerateResponse) error {
+		if resp.Image != "" {
+			imageBase64 = resp.Image
+		}
+		return nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to generate image: %w", err)
 	}
 
-	url := fmt.Sprintf("http://%s/v1/images/generations", endpoint)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var buf bytes.Buffer
-		buf.ReadFrom(resp.Body)
-		return "", fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, buf.String())
-	}
-
-	var genResp imagegenapi.ImageGenerationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(genResp.Data) == 0 {
+	if imageBase64 == "" {
 		return "", fmt.Errorf("no image data in response")
 	}
 
-	return genResp.Data[0].B64JSON, nil
+	return imageBase64, nil
 }
