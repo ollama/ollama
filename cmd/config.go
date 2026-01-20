@@ -4,24 +4,42 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 type ConnectionConfig struct {
 	App          string    `json:"app"`
-	Model        string    `json:"model"`
+	Models       []string  `json:"models"`
 	ConfiguredAt time.Time `json:"configured_at"`
 }
 
-func configPath(appName string) (string, error) {
+// DefaultModel returns the first (default) model, or empty string if none
+func (c *ConnectionConfig) DefaultModel() string {
+	if len(c.Models) > 0 {
+		return c.Models[0]
+	}
+	return ""
+}
+
+func connectionsDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".ollama", "connections", appName+".json"), nil
+	return filepath.Join(home, ".ollama", "connections"), nil
 }
 
-func SaveConnection(appName, model string) error {
+func configPath(appName string) (string, error) {
+	dir, err := connectionsDir()
+	if err != nil {
+		return "", err
+	}
+	// Normalize to lowercase for consistent file naming across case-sensitive filesystems
+	return filepath.Join(dir, strings.ToLower(appName)+".json"), nil
+}
+
+func SaveConnection(appName string, models []string) error {
 	path, err := configPath(appName)
 	if err != nil {
 		return err
@@ -31,16 +49,11 @@ func SaveConnection(appName, model string) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(ConnectionConfig{
+	return atomicWriteJSON(path, ConnectionConfig{
 		App:          appName,
-		Model:        model,
+		Models:       models,
 		ConfiguredAt: time.Now(),
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, data, 0644)
+	})
 }
 
 func LoadConnection(appName string) (*ConnectionConfig, error) {
@@ -63,12 +76,11 @@ func LoadConnection(appName string) (*ConnectionConfig, error) {
 }
 
 func ListConnections() ([]ConnectionConfig, error) {
-	home, err := os.UserHomeDir()
+	dir, err := connectionsDir()
 	if err != nil {
 		return nil, err
 	}
 
-	dir := filepath.Join(home, ".ollama", "connections")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -97,3 +109,4 @@ func ListConnections() ([]ConnectionConfig, error) {
 
 	return configs, nil
 }
+

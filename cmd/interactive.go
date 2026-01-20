@@ -470,7 +470,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				var err error
 				appName, err = selectApp()
-				if err != nil {
+				if cancelled, _ := handleCancelled(err); cancelled {
+					continue
+				} else if err != nil {
 					fmt.Printf("error: %v\n", err)
 					continue
 				}
@@ -481,21 +483,23 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				continue
 			}
 
-			modelName, err := selectModelForConnect(cmd.Context(), opts.Model)
-			if err != nil {
+			models, err := selectModelForConnect(cmd.Context(), appName)
+			if cancelled, _ := handleCancelled(err); cancelled {
+				continue
+			} else if err != nil {
 				fmt.Printf("error: %v\n", err)
 				continue
 			}
 
-			if err := SaveConnection(appName, modelName); err != nil {
+			if err := SaveConnection(appName, models); err != nil {
 				fmt.Printf("error: %v\n", err)
 				continue
 			}
 
-			fmt.Fprintf(os.Stderr, "Added %s to %s\n", modelName, appName)
+			printModelsAdded(appName, models)
 
 			if launch, _ := confirmLaunch(appName); launch {
-				if err := runInApp(appName, modelName); err != nil {
+				if err := runInApp(appName, models[0]); err != nil {
 					fmt.Printf("error: %v\n", err)
 				}
 			}
@@ -507,37 +511,24 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				appName = args[1]
 			} else {
 				selected, err := selectConnectedApp()
-				if err != nil {
+				if errors.Is(err, ErrCancelled) {
+					continue // Silent exit on cancel
+				} else if err != nil {
 					fmt.Printf("error: %v\n", err)
 					continue
 				}
 				if selected == "" {
-					// No connected apps, start connect flow
 					fmt.Fprintf(os.Stderr, "No apps configured. Let's set one up.\n\n")
 					appName, err = selectApp()
-					if err != nil {
+					if errors.Is(err, ErrCancelled) {
+						continue
+					} else if err != nil {
 						fmt.Printf("error: %v\n", err)
 						continue
 					}
-
-					modelName, err := selectModelForConnect(cmd.Context(), opts.Model)
-					if err != nil {
-						fmt.Printf("error: %v\n", err)
-						continue
-					}
-
-					if err := SaveConnection(appName, modelName); err != nil {
-						fmt.Printf("error: %v\n", err)
-						continue
-					}
-
-					fmt.Fprintf(os.Stderr, "Added %s to %s\n", modelName, appName)
-					if err := runInApp(appName, modelName); err != nil {
-						fmt.Printf("error: %v\n", err)
-					}
-					continue
+				} else {
+					appName = selected
 				}
-				appName = selected
 			}
 
 			app, ok := GetApp(appName)
@@ -546,41 +537,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				continue
 			}
 
-			// Check app's own config first
-			modelName := getAppConfiguredModel(appName)
-
-			// Fall back to our saved connection config
-			if modelName == "" {
-				config, err := LoadConnection(appName)
-				if err != nil {
-					if os.IsNotExist(err) {
-						// No config, drop into connect flow
-						modelName, err = selectModelForConnect(cmd.Context(), opts.Model)
-						if err != nil {
-							fmt.Printf("error: %v\n", err)
-							continue
-						}
-
-						if err := SaveConnection(appName, modelName); err != nil {
-							fmt.Printf("error: %v\n", err)
-							continue
-						}
-
-						fmt.Fprintf(os.Stderr, "Added %s to %s\n", modelName, appName)
-					} else {
-						fmt.Printf("error: %v\n", err)
-						continue
-					}
-				} else {
-					modelName = config.Model
-				}
+			modelName, err := getOrConfigureModel(cmd.Context(), appName)
+			if errors.Is(err, ErrCancelled) {
+				continue
+			} else if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
 			}
 
-			// If running model differs from configured, offer to switch
 			if opts.Model != "" && modelName != opts.Model {
 				if switchModel, _ := confirmPrompt(fmt.Sprintf("Switch %s to use %s?", app.DisplayName, opts.Model)); switchModel {
 					modelName = opts.Model
-					if err := SaveConnection(appName, modelName); err != nil {
+					if err := SaveConnection(appName, []string{modelName}); err != nil {
 						fmt.Printf("error: %v\n", err)
 						continue
 					}
