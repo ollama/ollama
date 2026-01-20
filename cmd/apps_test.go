@@ -9,9 +9,7 @@ import (
 
 func TestSetupOpenCodeSettings(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
 
 	configDir := filepath.Join(tmpDir, ".config", "opencode")
 	configPath := filepath.Join(configDir, "opencode.json")
@@ -34,8 +32,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("preserve other providers", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(configDir, 0755)
-		os.WriteFile(configPath, []byte(`{"provider":{"anthropic":{"apiKey":"xxx"}}}`), 0644)
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"anthropic":{"apiKey":"xxx"}}}`), 0o644)
 		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -51,8 +49,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("preserve other models", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(configDir, 0755)
-		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"mistral":{"name":"Mistral"}}}}}`), 0644)
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"mistral":{"name":"Mistral"}}}}}`), 0o644)
 		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -69,8 +67,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("preserve top-level keys", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(configDir, 0755)
-		os.WriteFile(configPath, []byte(`{"theme":"dark","keybindings":{}}`), 0644)
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"theme":"dark","keybindings":{}}`), 0o644)
 		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -87,8 +85,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("model state - insert at index 0", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(stateDir, 0755)
-		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0644)
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0o644)
 		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -98,8 +96,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("model state - preserve favorites and variants", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(stateDir, 0755)
-		os.WriteFile(statePath, []byte(`{"recent":[],"favorite":[{"providerID":"x","modelID":"y"}],"variant":{"a":"b"}}`), 0644)
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(statePath, []byte(`{"recent":[],"favorite":[{"providerID":"x","modelID":"y"}],"variant":{"a":"b"}}`), 0o644)
 		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -116,8 +114,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("model state - deduplicate on re-add", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(stateDir, 0755)
-		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"ollama","modelID":"llama3.2"},{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0644)
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"ollama","modelID":"llama3.2"},{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0o644)
 		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -146,9 +144,9 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("remove model preserves non-ollama models", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(configDir, 0755)
+		os.MkdirAll(configDir, 0o755)
 		// Add a non-Ollama model manually
-		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"external":{"name":"External Model"}}}}}`), 0644)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"external":{"name":"External Model"}}}}}`), 0o644)
 
 		setupOpenCodeSettings([]string{"llama3.2"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
@@ -241,9 +239,7 @@ func assertOpenCodeRecentModel(t *testing.T, path string, index int, providerID,
 
 func TestSetupDroidSettings(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
 
 	settingsDir := filepath.Join(tmpDir, ".factory")
 	settingsPath := filepath.Join(settingsDir, "settings.json")
@@ -359,13 +355,13 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("preserves non-Ollama custom models", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(settingsDir, 0755)
+		os.MkdirAll(settingsDir, 0o755)
 		// Pre-existing non-Ollama model
 		os.WriteFile(settingsPath, []byte(`{
 			"customModels": [
 				{"model": "gpt-4", "displayName": "GPT-4", "provider": "openai"}
 			]
-		}`), 0644)
+		}`), 0o644)
 
 		setupDroidSettings([]string{"model-a"})
 
@@ -389,12 +385,12 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("preserves other settings", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(settingsDir, 0755)
+		os.MkdirAll(settingsDir, 0o755)
 		os.WriteFile(settingsPath, []byte(`{
 			"theme": "dark",
 			"enableHooks": true,
 			"sessionDefaultSettings": {"autonomyMode": "auto-high"}
-		}`), 0644)
+		}`), 0o644)
 
 		setupDroidSettings([]string{"model-a"})
 
@@ -445,11 +441,11 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("fixes invalid reasoningEffort", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(settingsDir, 0755)
+		os.MkdirAll(settingsDir, 0o755)
 		// Pre-existing settings with invalid reasoningEffort
 		os.WriteFile(settingsPath, []byte(`{
 			"sessionDefaultSettings": {"reasoningEffort": "off"}
-		}`), 0644)
+		}`), 0o644)
 
 		setupDroidSettings([]string{"model-a"})
 
@@ -463,10 +459,10 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("preserves valid reasoningEffort", func(t *testing.T) {
 		cleanup()
-		os.MkdirAll(settingsDir, 0755)
+		os.MkdirAll(settingsDir, 0o755)
 		os.WriteFile(settingsPath, []byte(`{
 			"sessionDefaultSettings": {"reasoningEffort": "high"}
-		}`), 0644)
+		}`), 0o644)
 
 		setupDroidSettings([]string{"model-a"})
 
@@ -509,7 +505,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		backupPath := path + ".bak"
 
 		// Write initial file
-		os.WriteFile(path, []byte(`{"original": true}`), 0644)
+		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
 		// Update with atomicWriteJSON
 		if err := atomicWriteJSON(path, map[string]bool{"updated": true}); err != nil {
@@ -581,7 +577,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		}
 
 		// Create a "stale" backup to verify it's not overwritten
-		os.WriteFile(backupPath, []byte(`{"stale": "backup"}`), 0644)
+		os.WriteFile(backupPath, []byte(`{"stale": "backup"}`), 0o644)
 
 		// Second write with same content
 		if err := atomicWriteJSON(path, data); err != nil {

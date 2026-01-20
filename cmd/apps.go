@@ -217,7 +217,7 @@ func setupDroidSettings(models []string) error {
 	}
 
 	settingsPath := filepath.Join(home, ".factory", "settings.json")
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		return err
 	}
 
@@ -297,7 +297,7 @@ func setupOpenCodeSettings(modelList []string) error {
 	}
 
 	configPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
 
@@ -359,7 +359,7 @@ func setupOpenCodeSettings(modelList []string) error {
 	}
 
 	statePath := filepath.Join(home, ".local", "state", "opencode", "model.json")
-	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return err
 	}
 
@@ -698,7 +698,7 @@ Examples:
 				return runInApp(appName, models[0])
 			}
 
-			fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start later\n", strings.ToLower(appName))
+			fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start later with %s \n", strings.ToLower(appName), models[0])
 			return nil
 		},
 	}
