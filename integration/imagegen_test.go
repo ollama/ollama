@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	imagegenapi "github.com/ollama/ollama/x/imagegen/api"
+	"github.com/ollama/ollama/openai"
 )
 
 func TestImageGeneration(t *testing.T) {
@@ -129,7 +129,7 @@ func TestImageGeneration(t *testing.T) {
 
 // generateImage calls the OpenAI-compatible image generation API and returns the base64 image data
 func generateImage(ctx context.Context, endpoint, model, prompt string) (string, error) {
-	reqBody := imagegenapi.ImageGenerationRequest{
+	reqBody := openai.ImageGenerationRequest{
 		Model:          model,
 		Prompt:         prompt,
 		N:              1,
@@ -161,7 +161,7 @@ func generateImage(ctx context.Context, endpoint, model, prompt string) (string,
 		return "", fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, buf.String())
 	}
 
-	var genResp imagegenapi.ImageGenerationResponse
+	var genResp openai.ImageGenerationResponse
 	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
