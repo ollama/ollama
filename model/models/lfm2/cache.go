@@ -8,6 +8,8 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
+var _ kvcache.Cache = (*HybridCache)(nil)
+
 // HybridCache stores:
 // - a standard causal KV cache for attention layers
 // - a per-sequence recurrent conv state for shortconv layers
@@ -124,6 +126,19 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 	}
 
 	c.curSeqTokens = want
+
+	// When reserving memory for estimation, use fake slot assignments
+	// without modifying permanent state (slotForSeq, refCount)
+	if reserve {
+		c.curSlots = c.curSlots[:0]
+		slots := make([]int32, nSeqs)
+		for i := range nSeqs {
+			c.curSlots = append(c.curSlots, i)
+			slots[i] = int32(i)
+		}
+		c.curSlotsInput = ctx.Input().FromInts(slots, len(slots))
+		return nil
+	}
 
 	// Ensure slots exist for sequences in this batch
 	c.curSlots = c.curSlots[:0]
