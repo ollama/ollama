@@ -181,6 +181,127 @@ func TestLFM2Parser(t *testing.T) {
 			},
 			hasThinking: false,
 		},
+		// Python-style tool call tests (from Liquid AI docs)
+		{
+			name:            "python_style_tool_call",
+			input:           "Let me check that.<|tool_call_start|>[get_candidate_status(candidate_id=\"12345\")]<|tool_call_end|>",
+			expectedContent: "Let me check that.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_candidate_status",
+						Arguments: testArgs(map[string]any{
+							"candidate_id": "12345",
+						}),
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:            "python_style_multiple_calls",
+			input:           "Running commands.<|tool_call_start|>[bash(command='ls'),bash(command='pwd')]<|tool_call_end|>",
+			expectedContent: "Running commands.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "bash",
+						Arguments: testArgs(map[string]any{
+							"command": "ls",
+						}),
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Name: "bash",
+						Arguments: testArgs(map[string]any{
+							"command": "pwd",
+						}),
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:             "thinking_then_python_tool_call",
+			input:            "I should check the status...</think>Let me look that up.<|tool_call_start|>[get_status(id=\"123\")]<|tool_call_end|>",
+			expectedThinking: "I should check the status...",
+			expectedContent:  "Let me look that up.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_status",
+						Arguments: testArgs(map[string]any{
+							"id": "123",
+						}),
+					},
+				},
+			},
+			hasThinking: true,
+		},
+		{
+			name:            "python_style_no_args",
+			input:           "Pinging.<|tool_call_start|>[ping()]<|tool_call_end|>",
+			expectedContent: "Pinging.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "ping",
+						Arguments: api.NewToolCallFunctionArguments(),
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:            "python_style_mixed_types",
+			input:           "Processing.<|tool_call_start|>[process(name=\"test\", count=42, enabled=true)]<|tool_call_end|>",
+			expectedContent: "Processing.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "process",
+						Arguments: testArgs(map[string]any{
+							"name":    "test",
+							"count":   int64(42),
+							"enabled": true,
+						}),
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:            "tool_call_only_no_content",
+			input:           "<|tool_call_start|>[check()]<|tool_call_end|>",
+			expectedContent: "",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "check",
+						Arguments: api.NewToolCallFunctionArguments(),
+					},
+				},
+			},
+			hasThinking: false,
+		},
+		{
+			name:             "thinking_directly_to_tool_call",
+			input:            "Let me run this command...</think><|tool_call_start|>[bash(command='ls')]<|tool_call_end|>",
+			expectedThinking: "Let me run this command...",
+			expectedContent:  "",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "bash",
+						Arguments: testArgs(map[string]any{
+							"command": "ls",
+						}),
+					},
+				},
+			},
+			hasThinking: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -692,6 +813,193 @@ func TestLFM2Parser_parseToolCallsContent(t *testing.T) {
 						Name: "bash",
 						Arguments: testArgs(map[string]any{
 							"command": `echo \'hello\'`,
+						}),
+					},
+				},
+			},
+		},
+		// Tests based on Liquid AI documentation examples
+		{
+			name:    "docs_example_candidate_status",
+			content: `[get_candidate_status(candidate_id="12345")]`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_candidate_status",
+						Arguments: testArgs(map[string]any{
+							"candidate_id": "12345",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "boolean_true_arg",
+			content: `configure(enabled=true)`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "configure",
+						Arguments: testArgs(map[string]any{
+							"enabled": true,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "boolean_false_arg",
+			content: `configure(enabled=false)`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "configure",
+						Arguments: testArgs(map[string]any{
+							"enabled": false,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "float_arg",
+			content: `set_threshold(value=0.95)`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "set_threshold",
+						Arguments: testArgs(map[string]any{
+							"value": 0.95,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "negative_number_arg",
+			content: `adjust(offset=-10)`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "adjust",
+						Arguments: testArgs(map[string]any{
+							"offset": int64(-10),
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "mixed_arg_types",
+			content: `process(name="test", count=42, ratio=3.14, active=true)`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "process",
+						Arguments: testArgs(map[string]any{
+							"name":   "test",
+							"count":  int64(42),
+							"ratio":  3.14,
+							"active": true,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "newline_in_string_arg",
+			content: `write_file(content="line1\nline2\nline3")`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "write_file",
+						Arguments: testArgs(map[string]any{
+							"content": "line1\\nline2\\nline3",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "empty_string_arg",
+			content: `search(query="")`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": "",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "underscore_function_name",
+			content: `get_user_profile(user_id="abc123")`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_user_profile",
+						Arguments: testArgs(map[string]any{
+							"user_id": "abc123",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "whitespace_around_args",
+			content: `func( arg1 = "value1" , arg2 = 42 )`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "func",
+						Arguments: testArgs(map[string]any{
+							"arg1": "value1",
+							"arg2": int64(42),
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "json_in_string_arg",
+			content: `send_data(payload='{"key": "value", "num": 123}')`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "send_data",
+						Arguments: testArgs(map[string]any{
+							"payload": `{"key": "value", "num": 123}`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "url_in_arg",
+			content: `fetch(url="https://example.com/api?foo=bar&baz=qux")`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "fetch",
+						Arguments: testArgs(map[string]any{
+							"url": "https://example.com/api?foo=bar&baz=qux",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "path_with_spaces",
+			content: `read_file(path="/home/user/My Documents/file.txt")`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "read_file",
+						Arguments: testArgs(map[string]any{
+							"path": "/home/user/My Documents/file.txt",
 						}),
 					},
 				},
