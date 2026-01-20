@@ -136,12 +136,26 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Check if this is an image generation model and handle it directly
+	// Check if this is a tensor model (image generation) and handle it directly
 	quantize, _ := cmd.Flags().GetString("quantize")
-	if err := xcreateclient.TryCreateImageGen(modelfile, filepath.Dir(filename), modelName, quantize, p); err == nil {
-		return nil
-	} else if !errors.Is(err, xcreateclient.ErrNotImageGenModel) {
-		return err
+	modelDir := filepath.Dir(filename)
+	for _, cmd := range modelfile.Commands {
+		if cmd.Name == "model" {
+			if filepath.IsAbs(cmd.Args) {
+				modelDir = cmd.Args
+			} else {
+				modelDir = filepath.Join(filepath.Dir(filename), cmd.Args)
+			}
+			break
+		}
+	}
+	if create.IsTensorModelDir(modelDir) {
+		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+			ModelName: modelName,
+			ModelDir:  modelDir,
+			Quantize:  quantize,
+			Modelfile: xcreateclient.ExtractModelfileConfig(modelfile),
+		}, p)
 	}
 
 	status := "gathering model components"
