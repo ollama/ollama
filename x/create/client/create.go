@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
@@ -279,4 +280,20 @@ func createModelfileLayers(mf *ModelfileConfig) ([]server.Layer, error) {
 	}
 
 	return layers, nil
+}
+
+// ExtractModelfileConfig extracts template, system, and license from a parsed Modelfile.
+func ExtractModelfileConfig(modelfile *parser.Modelfile) *ModelfileConfig {
+	mfConfig := &ModelfileConfig{}
+	for _, cmd := range modelfile.Commands {
+		switch cmd.Name {
+		case "template":
+			mfConfig.Template = cmd.Args
+		case "system":
+			mfConfig.System = cmd.Args
+		case "license":
+			mfConfig.License = cmd.Args
+		}
+	}
+	return mfConfig
 }
