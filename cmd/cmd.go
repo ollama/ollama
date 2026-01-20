@@ -43,7 +43,6 @@ import (
 	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
 	"github.com/ollama/ollama/x/create"
@@ -205,7 +204,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	spinner.Stop()
 
 	req.Model = modelName
 	quantize, _ := cmd.Flags().GetString("quantize")
@@ -219,42 +217,29 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	var g errgroup.Group
-	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
+	g.SetLimit(runtime.GOMAXPROCS(0))
+	for blob, err := range createBlobs(req.Files, req.Adapters) {
+		if err != nil {
+			return err
+		}
 
-	files := syncmap.NewSyncMap[string, string]()
-	for f, digest := range req.Files {
 		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
-				return err
-			}
-
-			// TODO: this is incorrect since the file might be in a subdirectory
-			//       instead this should take the path relative to the model directory
-			//       but the current implementation does not allow this
-			files.Store(filepath.Base(f), digest)
-			return nil
+			_, err := createBlob(cmd, client, blob.Abs, blob.Digest, p)
+			return err
 		})
-	}
 
-	adapters := syncmap.NewSyncMap[string, string]()
-	for f, digest := range req.Adapters {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
-				return err
-			}
-
-			// TODO: same here
-			adapters.Store(filepath.Base(f), digest)
-			return nil
-		})
+		if _, ok := req.Files[blob.Rel]; ok {
+			req.Files[blob.Rel] = blob.Digest
+		} else if _, ok := req.Adapters[blob.Rel]; ok {
+			req.Adapters[blob.Rel] = blob.Digest
+		}
 	}
 
 	if err := g.Wait(); err != nil {
 		return err
 	}
 
-	req.Files = files.Items()
-	req.Adapters = adapters.Items()
+	spinner.Stop()
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
@@ -290,54 +275,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
-	realPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
-	}
-
-	bin, err := os.Open(realPath)
-	if err != nil {
-		return "", err
-	}
-	defer bin.Close()
-
-	// Get file info to retrieve the size
-	fileInfo, err := bin.Stat()
-	if err != nil {
-		return "", err
-	}
-	fileSize := fileInfo.Size()
-
-	var pw progressWriter
-	status := fmt.Sprintf("copying file %s 0%%", digest)
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
-	defer spinner.Stop()
-
-	done := make(chan struct{})
-	defer close(done)
-
-	go func() {
-		ticker := time.NewTicker(60 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
-			case <-done:
-				spinner.SetMessage(fmt.Sprintf("copying file %s 100%%", digest))
-				return
-			}
-		}
-	}()
-
-	if err := client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
-		return "", err
-	}
-	return digest, nil
 }
 
 type progressWriter struct {
