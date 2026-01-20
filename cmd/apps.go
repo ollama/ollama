@@ -576,11 +576,27 @@ func getAppConfiguredModels(appName string) []string {
 	return result
 }
 
+func hasLocalModel(models []string) bool {
+	for _, m := range models {
+		if !strings.HasSuffix(m, ":cloud") {
+			return true
+		}
+	}
+	return false
+}
+
 func printModelsAdded(appName string, models []string) {
 	if len(models) == 1 {
 		fmt.Fprintf(os.Stderr, "Added %s to %s\n", models[0], appName)
 	} else {
 		fmt.Fprintf(os.Stderr, "Added %d models to %s (default: %s)\n", len(models), appName, models[0])
+	}
+
+	if hasLocalModel(models) {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Tip: Coding agents work best with at least 64k context. Either:")
+		fmt.Fprintln(os.Stderr, "  - Set the context slider in Ollama app settings, or")
+		fmt.Fprintln(os.Stderr, "  - Run: OLLAMA_CONTEXT_LENGTH=64000 ollama serve")
 	}
 }
 
