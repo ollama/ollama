@@ -127,6 +127,20 @@ type GenerateRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// Experimental: Image generation fields (may change or be removed)
+
+	// Width is the width of the generated image in pixels.
+	// Only used for image generation models.
+	Width int32 `json:"width,omitempty"`
+
+	// Height is the height of the generated image in pixels.
+	// Only used for image generation models.
+	Height int32 `json:"height,omitempty"`
+
+	// Steps is the number of diffusion steps for image generation.
+	// Only used for image generation models.
+	Steps int32 `json:"steps,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -737,7 +751,7 @@ type ShowResponse struct {
 	Messages      []Message          `json:"messages,omitempty"`
 	RemoteModel   string             `json:"remote_model,omitempty"`
 	RemoteHost    string             `json:"remote_host,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info,omitempty"`
+	ModelInfo     map[string]any     `json:"model_info"`
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
@@ -862,6 +876,20 @@ type GenerateResponse struct {
 	// Logprobs contains log probability information for the generated tokens,
 	// if requested via the Logprobs parameter.
 	Logprobs []Logprob `json:"logprobs,omitempty"`
+
+	// Experimental: Image generation fields (may change or be removed)
+
+	// Image contains a base64-encoded generated image.
+	// Only present for image generation models.
+	Image string `json:"image,omitempty"`
+
+	// Completed is the number of completed steps in image generation.
+	// Only present for image generation models during streaming.
+	Completed int64 `json:"completed,omitempty"`
+
+	// Total is the total number of steps for image generation.
+	// Only present for image generation models during streaming.
+	Total int64 `json:"total,omitempty"`
 }
 
 // ModelDetails provides details about a model.

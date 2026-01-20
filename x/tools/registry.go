@@ -38,6 +38,32 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Name()] = tool
 }
 
+// Unregister removes a tool from the registry by name.
+func (r *Registry) Unregister(name string) {
+	delete(r.tools, name)
+}
+
+// Has checks if a tool with the given name is registered.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.tools[name]
+	return ok
+}
+
+// RegisterBash adds the bash tool to the registry.
+func (r *Registry) RegisterBash() {
+	r.Register(&BashTool{})
+}
+
+// RegisterWebSearch adds the web search tool to the registry.
+func (r *Registry) RegisterWebSearch() {
+	r.Register(&WebSearchTool{})
+}
+
+// RegisterWebFetch adds the web fetch tool to the registry.
+func (r *Registry) RegisterWebFetch() {
+	r.Register(&WebFetchTool{})
+}
+
 // Get retrieves a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
 	tool, ok := r.tools[name]
@@ -94,9 +120,10 @@ func (r *Registry) Count() int {
 // - OLLAMA_AGENT_DISABLE_BASH=1 disables bash
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
-	if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
-		r.Register(&WebSearchTool{})
-	}
+	// TODO(parthsareen): re-enable web search once it's ready for release
+	// if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
+	// 	r.Register(&WebSearchTool{})
+	// }
 	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" {
 		r.Register(&BashTool{})
 	}

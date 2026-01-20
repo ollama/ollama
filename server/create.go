@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	ofs "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
@@ -551,7 +552,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	return layers, nil
 }
 
-func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
+func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 	for _, l := range baseLayers {
 		if l.GGML != nil {
 			return l.KV(), nil

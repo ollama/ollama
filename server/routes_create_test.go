@@ -22,6 +22,7 @@ import (
 	gocmpopts "github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/types/model"
@@ -41,7 +42,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	}
 	defer f.Close()
 
-	base := map[string]any{"general.architecture": "test"}
+	var base convert.KV = map[string]any{"general.architecture": "test"}
 	maps.Copy(base, kv)
 
 	if err := ggml.WriteGGUF(f, base, ti); err != nil {

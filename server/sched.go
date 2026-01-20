@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/imagegen"
 )
 
 type LlmRequest struct {
@@ -195,6 +196,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							maxRunners = uint(defaultModelsPerGPU * max(len(gpus), 1))
 						}
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
+					}
+
+					// Check for image generation model before attempting GGML load
+					if slices.Contains(pending.model.Config.Capabilities, "image") {
+						if s.loadImageGen(pending) {
+							break
+						}
+						continue
 					}
 
 					// Load model for fitting
@@ -544,6 +553,49 @@ iGPUScan:
 	}()
 
 	return false
+}
+
+// loadImageGen loads an image generation model.
+func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
+	// Use model name for imagegen (it resolves manifests by name, not file path)
+	modelName := req.model.ShortName
+	server, err := imagegen.NewServer(modelName)
+	if err != nil {
+		req.errCh <- err
+		return true
+	}
+
+	sessionDuration := envconfig.KeepAlive()
+	if req.sessionDuration != nil {
+		sessionDuration = req.sessionDuration.Duration
+	}
+
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       req.model.ModelPath,
+		llama:           server,
+		Options:         &req.opts,
+		loading:         false,
+		sessionDuration: sessionDuration,
+		totalSize:       server.TotalSize(),
+		vramSize:        server.VRAMSize(),
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[req.model.ModelPath] = runner
+	s.loadedMu.Unlock()
+
+	// Set up expiration timer
+	runner.refMu.Lock()
+	if sessionDuration > 0 {
+		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			s.expiredCh <- runner
+		})
+	}
+	runner.refMu.Unlock()
+
+	req.useLoadedRunner(runner, s.finishedReqCh)
+	return true
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 type Prompt struct {
@@ -36,10 +37,11 @@ type Terminal struct {
 }
 
 type Instance struct {
-	Prompt   *Prompt
-	Terminal *Terminal
-	History  *History
-	Pasting  bool
+	Prompt      *Prompt
+	Terminal    *Terminal
+	History     *History
+	Pasting     bool
+	pastedLines []string
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -174,6 +176,8 @@ func (i *Instance) Readline() (string, error) {
 		case CharEsc:
 			esc = true
 		case CharInterrupt:
+			i.pastedLines = nil
+			i.Prompt.UseAlt = false
 			return "", ErrInterrupt
 		case CharPrev:
 			i.historyPrev(buf, &currentLineBuf)
@@ -188,7 +192,23 @@ func (i *Instance) Readline() (string, error) {
 		case CharForward:
 			buf.MoveRight()
 		case CharBackspace, CharCtrlH:
-			buf.Remove()
+			if buf.IsEmpty() && len(i.pastedLines) > 0 {
+				lastIdx := len(i.pastedLines) - 1
+				prevLine := i.pastedLines[lastIdx]
+				i.pastedLines = i.pastedLines[:lastIdx]
+				fmt.Print(CursorBOL + ClearToEOL + CursorUp + CursorBOL + ClearToEOL)
+				if len(i.pastedLines) == 0 {
+					fmt.Print(i.Prompt.Prompt)
+					i.Prompt.UseAlt = false
+				} else {
+					fmt.Print(i.Prompt.AltPrompt)
+				}
+				for _, r := range prevLine {
+					buf.Add(r)
+				}
+			} else {
+				buf.Remove()
+			}
 		case CharTab:
 			// todo: convert back to real tabs
 			for range 8 {
@@ -206,21 +226,33 @@ func (i *Instance) Readline() (string, error) {
 			buf.DeleteBefore()
 		case CharCtrlL:
 			buf.ClearScreen()
-		case CharCtrlO:
-			// Ctrl+O - expand tool output
-			return "", ErrExpandOutput
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
 			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
-		case CharEnter, CharCtrlJ:
+		case CharCtrlJ:
+			i.pastedLines = append(i.pastedLines, buf.String())
+			buf.Buf.Clear()
+			buf.Pos = 0
+			buf.DisplayPos = 0
+			buf.LineHasSpace.Clear()
+			fmt.Println()
+			fmt.Print(i.Prompt.AltPrompt)
+			i.Prompt.UseAlt = true
+			continue
+		case CharEnter:
 			output := buf.String()
+			if len(i.pastedLines) > 0 {
+				output = strings.Join(i.pastedLines, "\n") + "\n" + output
+				i.pastedLines = nil
+			}
 			if output != "" {
 				i.History.Add(output)
 			}
 			buf.MoveToEnd()
 			fmt.Println()
+			i.Prompt.UseAlt = false
 
 			return output, nil
 		default:

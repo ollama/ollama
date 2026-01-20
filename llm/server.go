@@ -1566,6 +1566,12 @@ type CompletionRequest struct {
 
 	// TopLogprobs specifies the number of most likely alternative tokens to return (0-20)
 	TopLogprobs int
+
+	// Image generation fields
+	Width  int32 `json:"width,omitempty"`
+	Height int32 `json:"height,omitempty"`
+	Steps  int32 `json:"steps,omitempty"`
+	Seed   int64 `json:"seed,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1614,6 +1620,15 @@ type CompletionResponse struct {
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
+
+	// Image contains base64-encoded image data for image generation
+	Image string `json:"image,omitempty"`
+
+	// Step is the current step in image generation
+	Step int `json:"step,omitempty"`
+
+	// TotalSteps is the total number of steps for image generation
+	TotalSteps int `json:"total_steps,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {

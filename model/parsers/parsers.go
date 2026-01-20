@@ -68,6 +68,8 @@ func ParserForName(name string) Parser {
 		return &Nemotron3NanoParser{}
 	case "functiongemma":
 		return &FunctionGemmaParser{}
+	case "glm-4.7":
+		return &GLM47Parser{}
 	default:
 		return nil
 	}

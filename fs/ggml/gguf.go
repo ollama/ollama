@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"runtime"
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/fs"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -508,7 +508,7 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 	return binary.Write(w, binary.LittleEndian, s)
 }
 
-func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
+func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
 	arch := kv.String("general.architecture")
 	if arch == "" {
 		return fmt.Errorf("architecture not set")
@@ -526,12 +526,12 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 		return err
 	}
 
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(kv))); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, uint64(kv.Len())); err != nil {
 		return err
 	}
 
-	for _, key := range slices.Sorted(maps.Keys(kv)) {
-		if err := ggufWriteKV(f, arch, key, kv[key]); err != nil {
+	for _, key := range slices.Sorted(kv.Keys()) {
+		if err := ggufWriteKV(f, arch, key, kv.Value(key)); err != nil {
 			return err
 		}
 	}

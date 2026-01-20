@@ -34,7 +34,7 @@ type olmoModel struct {
 
 var _ ModelConverter = (*olmoModel)(nil)
 
-func (p *olmoModel) KV(t *Tokenizer) ggml.KV {
+func (p *olmoModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "olmo3"
 	kv["olmo3.block_count"] = p.NumHiddenLayers

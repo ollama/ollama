@@ -13,8 +13,13 @@ type Layer struct {
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
+	Name      string `json:"name,omitempty"` // tensor name, e.g., "text_encoder/model.embed_tokens.weight"
 	status    string
 }
+
+const (
+	MediaTypeImageTensor = "application/vnd.ollama.image.tensor"
+)
 
 func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 	blobs, err := GetBlobsPath("")
