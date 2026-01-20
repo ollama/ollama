@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/semver"
 )
 
 type EnvVar struct {
@@ -40,6 +41,32 @@ func checkCommand(cmd, installInstructions string) func() error {
 		}
 		return nil
 	}
+}
+
+func checkCodexVersion() error {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return fmt.Errorf("codex is not installed. Install with: npm install -g @openai/codex")
+	}
+
+	out, err := exec.Command("codex", "--version").Output()
+	if err != nil {
+		return fmt.Errorf("failed to get codex version: %w", err)
+	}
+
+	// Parse output like "codex-cli 0.87.0"
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) < 2 {
+		return fmt.Errorf("unexpected codex version output: %s", string(out))
+	}
+
+	version := "v" + fields[len(fields)-1]
+	minVersion := "v0.81.0"
+
+	if semver.Compare(version, minVersion) < 0 {
+		return fmt.Errorf("codex version %s is too old, minimum required is %s. Update with: npm update -g @openai/codex", fields[len(fields)-1], "0.81.0")
+	}
+
+	return nil
 }
 
 var ClaudeConfig = &AppConfig{
@@ -70,13 +97,12 @@ var CodexConfig = &AppConfig{
 		return []EnvVar{}
 	},
 	Args: func(model string) []string {
-		// Defaults to gpt-oss:20b in codex
 		if model == "" {
 			return []string{"--oss"}
 		}
 		return []string{"--oss", "-m", model}
 	},
-	CheckInstall: checkCommand("codex", "Install with: npm install -g @openai/codex or brew install --cask codex"),
+	CheckInstall: checkCodexVersion,
 }
 
 var DroidConfig = &AppConfig{
@@ -151,9 +177,12 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
-const backupDir = "/tmp/ollama-backups"
+func getBackupDir() string {
+	return filepath.Join(os.TempDir(), "ollama-backups")
+}
 
 func backupToTmp(srcPath string) (string, error) {
+	backupDir := getBackupDir()
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return "", err
 	}
@@ -701,7 +730,7 @@ Examples:
 					for _, p := range paths {
 						fmt.Fprintf(os.Stderr, "  %s\n", p)
 					}
-					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir)
+					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", getBackupDir())
 
 					if ok, _ := confirmPrompt("Proceed?"); !ok {
 						return nil

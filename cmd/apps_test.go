@@ -7,9 +7,15 @@ import (
 	"testing"
 )
 
+// setTestHome sets both HOME (Unix) and USERPROFILE (Windows) for cross-platform tests
+func setTestHome(t *testing.T, dir string) {
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 func TestSetupOpenCodeSettings(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setTestHome(t, tmpDir)
 
 	configDir := filepath.Join(tmpDir, ".config", "opencode")
 	configPath := filepath.Join(configDir, "opencode.json")
@@ -239,7 +245,7 @@ func assertOpenCodeRecentModel(t *testing.T, path string, index int, providerID,
 
 func TestSetupDroidSettings(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setTestHome(t, tmpDir)
 
 	settingsDir := filepath.Join(tmpDir, ".factory")
 	settingsPath := filepath.Join(settingsDir, "settings.json")
@@ -512,7 +518,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		}
 
 		// Check backup exists in /tmp/ollama-backups/ with original content
-		entries, err := os.ReadDir(backupDir)
+		entries, err := os.ReadDir(getBackupDir())
 		if err != nil {
 			t.Fatal("backup directory not created")
 		}
@@ -523,7 +529,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 				// Look for backup.json.<timestamp>
 				name := entry.Name()
 				if len(name) > len("backup.json.") && name[:len("backup.json.")] == "backup.json." {
-					backupPath := filepath.Join(backupDir, name)
+					backupPath := filepath.Join(getBackupDir(), name)
 					backup, err := os.ReadFile(backupPath)
 					if err == nil {
 						var backupData map[string]bool
@@ -560,7 +566,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		}
 
 		// Check no backup was created for this specific file
-		entries, _ := os.ReadDir(backupDir)
+		entries, _ := os.ReadDir(getBackupDir())
 		for _, entry := range entries {
 			if len(entry.Name()) > len("nobak.json.") && entry.Name()[:len("nobak.json.")] == "nobak.json." {
 				t.Error("backup should not exist for new file")
@@ -598,7 +604,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		}
 
 		// Count backups before
-		entries1, _ := os.ReadDir(backupDir)
+		entries1, _ := os.ReadDir(getBackupDir())
 		countBefore := 0
 		for _, e := range entries1 {
 			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
@@ -612,7 +618,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		}
 
 		// Count backups after - should be same (no new backup created)
-		entries2, _ := os.ReadDir(backupDir)
+		entries2, _ := os.ReadDir(getBackupDir())
 		countAfter := 0
 		for _, e := range entries2 {
 			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
@@ -633,7 +639,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries, _ := os.ReadDir(backupDir)
+		entries, _ := os.ReadDir(getBackupDir())
 		var found bool
 		for _, entry := range entries {
 			name := entry.Name()
@@ -646,7 +652,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 					}
 				}
 				found = true
-				os.Remove(filepath.Join(backupDir, name))
+				os.Remove(filepath.Join(getBackupDir(), name))
 				break
 			}
 		}
@@ -658,7 +664,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 
 func TestIntegrationConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setTestHome(t, tmpDir)
 
 	t.Run("save and load round-trip", func(t *testing.T) {
 		models := []string{"llama3.2", "mistral", "qwen2.5"}
@@ -712,7 +718,7 @@ func TestIntegrationConfig(t *testing.T) {
 
 func TestGetExistingConfigPaths(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setTestHome(t, tmpDir)
 
 	t.Run("returns empty for claude (no config files)", func(t *testing.T) {
 		paths := getExistingConfigPaths("claude")
@@ -771,7 +777,7 @@ func TestGetExistingConfigPaths(t *testing.T) {
 
 func TestListIntegrations(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setTestHome(t, tmpDir)
 
 	t.Run("returns empty when no integrations", func(t *testing.T) {
 		configs, err := ListIntegrations()

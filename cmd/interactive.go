@@ -498,7 +498,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					for _, p := range paths {
 						fmt.Fprintf(os.Stderr, "  %s\n", p)
 					}
-					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir)
+					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", getBackupDir())
 
 					if ok, _ := confirmPrompt("Proceed?"); !ok {
 						continue
