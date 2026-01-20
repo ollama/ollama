@@ -59,17 +59,16 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 	kv["lfm2.feed_forward_length"] = p.IntermediateSize
 	kv["lfm2.context_length"] = p.MaxPositionEmbeddings
 
-	// Build per-layer head count arrays based on layer_types
-	headCounts := make([]uint32, p.NumHiddenLayers)
+	// Build per-layer KV head count array based on layer_types
+	// (0 = shortconv layer, non-zero = attention layer with that many KV heads)
 	kvHeadCounts := make([]uint32, p.NumHiddenLayers)
 	for i := range p.NumHiddenLayers {
 		if int(i) < len(p.LayerTypes) && p.LayerTypes[i] == "full_attention" {
-			headCounts[i] = p.NumAttentionHeads
 			kvHeadCounts[i] = p.NumKeyValueHeads
 		}
 	}
 
-	kv["lfm2.attention.head_count"] = headCounts
+	kv["lfm2.attention.head_count"] = p.NumAttentionHeads
 	kv["lfm2.attention.head_count_kv"] = kvHeadCounts
 	kv["lfm2.attention.key_length"] = p.HiddenSize / p.NumAttentionHeads
 	kv["lfm2.attention.value_length"] = p.HiddenSize / p.NumAttentionHeads
