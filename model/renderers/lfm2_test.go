@@ -402,24 +402,16 @@ func TestLFM2Renderer(t *testing.T) {
 	}
 }
 
-// TestLFM2Renderer_GoldenTests validates renderer output against the exact expected output
-// from the LFM2.5-1.2B-Thinking chat_template.jinja file.
-// Note: BOS token (<|startoftext|>) is added by the tokenizer, not the renderer.
 func TestLFM2Renderer_GoldenTests(t *testing.T) {
 	tests := []struct {
 		name       string
 		messages   []api.Message
 		tools      []api.Tool
 		thinkValue *api.ThinkValue
-		// expected is the jinja template output WITHOUT the BOS token
-		// (tokenizer adds BOS, not the renderer)
-		expected string
+		expected   string
 	}{
 		{
-			// Jinja Test 1: Simple user message
-			// Input: [{"role": "user", "content": "Hello"}]
-			// Jinja output: '<|startoftext|><|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n'
-			name: "jinja_test_1_simple_user",
+			name: "simple user message",
 			messages: []api.Message{
 				{Role: "user", Content: "Hello"},
 			},
@@ -427,10 +419,7 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 			expected:   "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Jinja Test 2: With system message
-			// Input: [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "Hello"}]
-			// Jinja output: '<|startoftext|><|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n'
-			name: "jinja_test_2_with_system",
+			name: "with system message",
 			messages: []api.Message{
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: "Hello"},
@@ -439,10 +428,7 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 			expected:   "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Jinja Test 6: Tool call and response
-			// Input: [{"role": "user", "content": "What is the weather?"}, {"role": "assistant", "content": "<|tool_call_start|>{...}<|tool_call_end|>"}, {"role": "tool", "content": "Sunny, 72F"}]
-			// Jinja output: '<|startoftext|><|im_start|>user\nWhat is the weather?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>{"name": "get_weather", "arguments": {"location": "NYC"}}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny, 72F<|im_end|>\n<|im_start|>assistant\n'
-			name: "jinja_test_6_tool_call_response",
+			name: "tool call and response",
 			messages: []api.Message{
 				{Role: "user", Content: "What is the weather?"},
 				{
@@ -462,26 +448,16 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 			expected:   "<|im_start|>user\nWhat is the weather?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny, 72F<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Jinja Test 8: Last assistant with thinking (NOT stripped)
-			// Input: [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "<think>Thinking...</think>Hi there!"}]
-			// add_generation_prompt=False
-			// Jinja output: '<|startoftext|><|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>Thinking...</think>Hi there!<|im_end|>\n'
-			// Note: We always add generation prompt, so we test this indirectly
-			name: "jinja_test_8_last_assistant_thinking_kept",
+			name: "last assistant thinking preserved",
 			messages: []api.Message{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "<think>Thinking...</think>Hi there!"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			// The assistant IS the last assistant, so thinking is preserved
-			expected: "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>Thinking...</think>Hi there!<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>Thinking...</think>Hi there!<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Jinja Test 9: Multiple assistants - only past stripped
-			// Input: [{"role": "user", "content": "First question"}, {"role": "assistant", "content": "<think>First thought</think>First answer"}, {"role": "user", "content": "Second question"}, {"role": "assistant", "content": "<think>Second thought</think>Second answer"}]
-			// add_generation_prompt=False
-			// Jinja output: '<|startoftext|><|im_start|>user\nFirst question<|im_end|>\n<|im_start|>assistant\nFirst answer<|im_end|>\n<|im_start|>user\nSecond question<|im_end|>\n<|im_start|>assistant\n<think>Second thought</think>Second answer<|im_end|>\n'
-			name: "jinja_test_9_multiple_assistants_past_stripped",
+			name: "past assistant thinking stripped",
 			messages: []api.Message{
 				{Role: "user", Content: "First question"},
 				{Role: "assistant", Content: "<think>First thought</think>First answer"},
@@ -489,16 +465,10 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 				{Role: "assistant", Content: "<think>Second thought</think>Second answer"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			// First assistant is NOT the last, so thinking stripped. Second IS the last, thinking kept.
-			expected: "<|im_start|>user\nFirst question<|im_end|>\n<|im_start|>assistant\nFirst answer<|im_end|>\n<|im_start|>user\nSecond question<|im_end|>\n<|im_start|>assistant\n<think>Second thought</think>Second answer<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|im_start|>user\nFirst question<|im_end|>\n<|im_start|>assistant\nFirst answer<|im_end|>\n<|im_start|>user\nSecond question<|im_end|>\n<|im_start|>assistant\n<think>Second thought</think>Second answer<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Jinja Test 10: Thinking + tool call (past assistant)
-			// When there's a tool response after, the assistant is NOT the last
-			// Input: user asks, assistant thinks+calls tool, tool responds
-			// Jinja output: '<|startoftext|><|im_start|>user\nWhat\'s the weather?<|im_end|>\n<|im_start|>assistant\n<think>I should check the weather</think><|tool_call_start|>{"name": "get_weather", "arguments": {"location": "NYC"}}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n'
-			// Note: In this case the assistant IS still the last assistant (tool is not assistant)
-			name: "jinja_test_10_thinking_with_tool_call",
+			name: "thinking with tool call",
 			messages: []api.Message{
 				{Role: "user", Content: "What's the weather?"},
 				{
@@ -516,14 +486,10 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 				{Role: "tool", Content: "Sunny"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			// The assistant IS the last assistant (tool messages don't count), so thinking preserved
-			expected: "<|im_start|>user\nWhat's the weather?<|im_end|>\n<|im_start|>assistant\n<think>I should check the weather</think><|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|im_start|>user\nWhat's the weather?<|im_end|>\n<|im_start|>assistant\n<think>I should check the weather</think><|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Multi-assistant with tool call cycle: first assistant thinking stripped
-			// user -> assistant (think + tool) -> tool -> assistant (think + answer)
-			// First assistant is NOT last, second IS last
-			name: "multi_assistant_tool_cycle",
+			name: "multi-assistant tool cycle strips past thinking",
 			messages: []api.Message{
 				{Role: "user", Content: "What's the weather?"},
 				{
@@ -542,14 +508,10 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 				{Role: "assistant", Content: "<think>Got it</think>It's sunny!"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			// First assistant: NOT last -> thinking stripped
-			// Second assistant: IS last -> thinking kept
-			expected: "<|im_start|>user\nWhat's the weather?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n<think>Got it</think>It's sunny!<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|im_start|>user\nWhat's the weather?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>{\"arguments\":{\"location\":\"NYC\"},\"name\":\"get_weather\"}<|tool_call_end|><|im_end|>\n<|im_start|>tool\nSunny<|im_end|>\n<|im_start|>assistant\n<think>Got it</think>It's sunny!<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// Tools list in system - matches jinja format exactly
-			// Note: Go json.Marshal includes all struct fields, including empty parameters
-			name: "tools_list_format",
+			name: "multiple tools in system",
 			messages: []api.Message{
 				{Role: "user", Content: "Hello"},
 			},
@@ -570,13 +532,10 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 				},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			// Tools are JSON serialized as array: List of tools: [{...}, {...}]
-			// Note: json.Marshal includes empty parameters field
-			expected: "<|im_start|>system\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}, {\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"description\":\"Get time\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|im_start|>system\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}, {\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"description\":\"Get time\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			// System + tools combined (jinja Test 7 equivalent)
-			name: "system_plus_tools",
+			name: "system message combined with tools",
 			messages: []api.Message{
 				{Role: "system", Content: "You are a weather assistant."},
 				{Role: "user", Content: "What is the weather?"},
@@ -590,9 +549,7 @@ func TestLFM2Renderer_GoldenTests(t *testing.T) {
 				},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			// System content + newline + tools list
-			// Note: json.Marshal includes empty parameters field
-			expected: "<|im_start|>system\nYou are a weather assistant.\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nWhat is the weather?<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|im_start|>system\nYou are a weather assistant.\nList of tools: [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"parameters\":{\"type\":\"\",\"properties\":null}}}]<|im_end|>\n<|im_start|>user\nWhat is the weather?<|im_end|>\n<|im_start|>assistant\n",
 		},
 	}
 
