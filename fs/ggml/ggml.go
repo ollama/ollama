@@ -860,6 +860,7 @@ func (f GGML) FlashAttention() bool {
 		"gemma3",
 		"glm4moelite",
 		"gptoss", "gpt-oss",
+		"lfm2",
 		"mistral3",
 		"olmo3",
 		"qwen3", "qwen3moe",

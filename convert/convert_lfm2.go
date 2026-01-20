@@ -36,14 +36,10 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 	// Build per-layer head count arrays based on layer_types
 	headCounts := make([]uint32, p.NumHiddenLayers)
 	kvHeadCounts := make([]uint32, p.NumHiddenLayers)
-	for i := uint32(0); i < p.NumHiddenLayers; i++ {
-		if i < uint32(len(p.LayerTypes)) && p.LayerTypes[i] == "full_attention" {
+	for i := range p.NumHiddenLayers {
+		if int(i) < len(p.LayerTypes) && p.LayerTypes[i] == "full_attention" {
 			headCounts[i] = p.NumAttentionHeads
 			kvHeadCounts[i] = p.NumKeyValueHeads
-		} else {
-			// Conv layers have 0 head counts
-			headCounts[i] = 0
-			kvHeadCounts[i] = 0
 		}
 	}
 
@@ -52,10 +48,6 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 	kv["lfm2.attention.layer_norm_rms_epsilon"] = p.NormEps
 	kv["lfm2.rope.freq_base"] = p.RopeTheta
 	kv["lfm2.shortconv.l_cache"] = p.ConvLCache
-
-	// Renderer and parser config for thinking model
-	kv["tokenizer.chat_template.renderer"] = "lfm2-thinking"
-	kv["tokenizer.chat_template.parser"] = "lfm2-thinking"
 
 	return kv
 }
@@ -69,11 +61,6 @@ func (p *lfm2Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		// Squeeze conv weights: [D, 1, K] -> [D, K]
 		if strings.HasSuffix(t.Name(), "shortconv.conv.weight") && len(shape) == 3 && shape[1] == 1 {
 			shape = []uint64{shape[0], shape[2]}
-
-			// No repacker needed - data layout is already correct since the middle dim is 1
-			t.SetRepacker(func(_ string, data []float32, _ []uint64) ([]float32, error) {
-				return data, nil
-			})
 		}
 
 		out = append(out, &ggml.Tensor{

@@ -43,7 +43,7 @@ func TestHybridCache_SlotAllocation(t *testing.T) {
 	}
 
 	// Allocate all slots
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		slot, err := cache.allocSlot()
 		if err != nil {
 			t.Fatalf("allocSlot failed: %v", err)
@@ -363,6 +363,3 @@ func TestHybridCache_IsSupportedForBatch(t *testing.T) {
 		t.Error("expected IsSupportedForBatch to be true with valid batch")
 	}
 }
-
-// Ensure ml import is used (to avoid unused import error)
-var _ ml.DType = ml.DTypeF32
