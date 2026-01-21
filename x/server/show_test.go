@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/manifest"
 )
 
 func TestBuildModelInfo(t *testing.T) {
@@ -451,8 +451,14 @@ func TestParseSafetensorsHeader_Errors(t *testing.T) {
 }
 
 func TestGetTensorInfoFromManifest(t *testing.T) {
-	// Create a temp directory for blobs
+	// Create a temp directory for blobs and set OLLAMA_MODELS
 	tempDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempDir)
+
+	blobDir := filepath.Join(tempDir, "blobs")
+	if err := os.MkdirAll(blobDir, 0o755); err != nil {
+		t.Fatalf("failed to create blobs dir: %v", err)
+	}
 
 	// Create test tensor blobs
 	tensors := []struct {
@@ -463,26 +469,26 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 	}{
 		{
 			name:   "model.embed_tokens.weight",
-			digest: "sha256:abc123",
+			digest: "sha256:abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc0",
 			dtype:  "BF16",
 			shape:  []int64{262144, 2560},
 		},
 		{
 			name:   "model.layers.0.self_attn.q_proj.weight",
-			digest: "sha256:def456",
+			digest: "sha256:def456def456def456def456def456def456def456def456def456def456def0",
 			dtype:  "BF16",
 			shape:  []int64{2560, 2560},
 		},
 		{
 			name:   "model.norm.weight",
-			digest: "sha256:ghi789",
+			digest: "sha256:789789789789789789789789789789789789789789789789789789789789abc0",
 			dtype:  "F32",
 			shape:  []int64{2560},
 		},
 	}
 
 	// Create blob files
-	var layers []imagegen.ManifestLayer
+	var layers []manifest.Layer
 	for _, tensor := range tensors {
 		// Create safetensors blob
 		header := map[string]any{
@@ -498,15 +504,17 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 		binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON)))
 		buf.Write(headerJSON)
 
-		// Write blob file
-		blobName := "sha256-" + tensor.digest[7:]
-		blobPath := filepath.Join(tempDir, blobName)
+		// Write blob file using the digest format expected by GetBlobsPath
+		blobPath, err := manifest.BlobsPath(tensor.digest)
+		if err != nil {
+			t.Fatalf("failed to get blob path: %v", err)
+		}
 		if err := os.WriteFile(blobPath, buf.Bytes(), 0o644); err != nil {
 			t.Fatalf("failed to write blob: %v", err)
 		}
 
-		layers = append(layers, imagegen.ManifestLayer{
-			MediaType: "application/vnd.ollama.image.tensor",
+		layers = append(layers, manifest.Layer{
+			MediaType: manifest.MediaTypeImageTensor,
 			Digest:    tensor.digest,
 			Size:      int64(buf.Len() + 1000), // header + fake data
 			Name:      tensor.name,
@@ -514,21 +522,20 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 	}
 
 	// Add a non-tensor layer (should be skipped)
-	layers = append(layers, imagegen.ManifestLayer{
+	layers = append(layers, manifest.Layer{
 		MediaType: "application/vnd.ollama.image.json",
-		Digest:    "sha256:config",
+		Digest:    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 		Size:      100,
 		Name:      "config.json",
 	})
 
-	manifest := &imagegen.ModelManifest{
-		Manifest: &imagegen.Manifest{
-			Layers: layers,
-		},
-		BlobDir: tempDir,
+	mf := &manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+		Layers:        layers,
 	}
 
-	result, err := getTensorInfoFromManifest(manifest)
+	result, err := getTensorInfoFromManifest(mf)
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
