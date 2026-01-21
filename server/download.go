@@ -470,7 +470,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return false, fmt.Errorf(("%s: %s"), opts.n.DisplayNamespaceModel(), "digest is empty")
 	}
 
-	fp, err := manifest.GetBlobsPath(opts.digest)
+	fp, err := manifest.BlobsPath(opts.digest)
 	if err != nil {
 		return false, err
 	}

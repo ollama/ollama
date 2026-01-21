@@ -1377,7 +1377,7 @@ func (s *Server) CopyHandler(c *gin.Context) {
 }
 
 func (s *Server) HeadBlobHandler(c *gin.Context) {
-	path, err := manifest.GetBlobsPath(c.Param("digest"))
+	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1393,7 +1393,7 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
 	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
-		p, err := manifest.GetBlobsPath(ib)
+		p, err := manifest.BlobsPath(ib)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -1411,7 +1411,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		}
 	}
 
-	path, err := manifest.GetBlobsPath(c.Param("digest"))
+	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1629,7 +1629,7 @@ func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
 
-	blobsDir, err := manifest.GetBlobsPath("")
+	blobsDir, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -1646,7 +1646,7 @@ func Serve(ln net.Listener) error {
 				return err
 			}
 
-			manifestsPath, err := manifest.GetManifestPath()
+			manifestsPath, err := manifest.Path()
 			if err != nil {
 				return err
 			}

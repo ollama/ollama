@@ -505,7 +505,7 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 		buf.Write(headerJSON)
 
 		// Write blob file using the digest format expected by GetBlobsPath
-		blobPath, err := manifest.GetBlobsPath(tensor.digest)
+		blobPath, err := manifest.BlobsPath(tensor.digest)
 		if err != nil {
 			t.Fatalf("failed to get blob path: %v", err)
 		}

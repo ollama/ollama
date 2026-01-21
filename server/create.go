@@ -126,7 +126,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
 					mf, mErr := manifest.ParseNamedManifest(fromName)
 					if mErr == nil && mf.Config.Digest != "" {
-						configPath, pErr := manifest.GetBlobsPath(mf.Config.Digest)
+						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
 						if pErr == nil {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
 								var baseConfig model.ConfigV2
@@ -343,7 +343,7 @@ func detectModelTypeFromFiles(files map[string]string) string {
 			return "gguf"
 		} else {
 			// try to see if we can find a gguf file even without the file extension
-			blobPath, err := manifest.GetBlobsPath(files[fn])
+			blobPath, err := manifest.BlobsPath(files[fn])
 			if err != nil {
 				slog.Error("error getting blobs path", "file", fn)
 				return ""
@@ -395,7 +395,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
 		}
 
-		blobPath, err := manifest.GetBlobsPath(digest)
+		blobPath, err := manifest.BlobsPath(digest)
 		if err != nil {
 			return nil, err
 		}
@@ -578,7 +578,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	blob, err := manifest.GetBlobsPath(layer.Digest)
+	blob, err := manifest.BlobsPath(layer.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -620,7 +620,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 	var layers []*layerGGML
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
-	blobPath, err := manifest.GetBlobsPath(digest)
+	blobPath, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return nil, err
 	}
@@ -732,7 +732,7 @@ func setParameters(layers []manifest.Layer, p map[string]any) ([]manifest.Layer,
 			continue
 		}
 
-		digestPath, err := manifest.GetBlobsPath(layer.Digest)
+		digestPath, err := manifest.BlobsPath(layer.Digest)
 		if err != nil {
 			return nil, err
 		}

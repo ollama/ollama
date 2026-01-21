@@ -53,7 +53,7 @@ const (
 )
 
 func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
-	p, err := manifest.GetBlobsPath(b.Digest)
+	p, err := manifest.BlobsPath(b.Digest)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	defer blobUploadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
-	p, err := manifest.GetBlobsPath(b.Digest)
+	p, err := manifest.BlobsPath(b.Digest)
 	if err != nil {
 		b.err = err
 		return

@@ -172,7 +172,7 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 		}
 
 		// Read the safetensors header from the blob
-		blobPath, err := manifest.GetBlobsPath(layer.Digest)
+		blobPath, err := manifest.BlobsPath(layer.Digest)
 		if err != nil {
 			continue
 		}

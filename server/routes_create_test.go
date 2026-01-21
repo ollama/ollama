@@ -232,7 +232,7 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 		t.Fatalf("unexpected empty config digest for child manifest")
 	}
 
-	configPath, err := manifest.GetBlobsPath(mf.Config.Digest)
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
 	if err != nil {
 		t.Fatalf("config blob path: %v", err)
 	}

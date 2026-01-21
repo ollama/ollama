@@ -14,7 +14,7 @@ import (
 
 var ErrInvalidDigestFormat = errors.New("invalid digest format")
 
-func GetManifestPath() (string, error) {
+func Path() (string, error) {
 	path := filepath.Join(envconfig.Models(), "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
@@ -23,13 +23,13 @@ func GetManifestPath() (string, error) {
 	return path, nil
 }
 
-// GetManifestPathForName returns the path to the manifest file for a specific model name.
-func GetManifestPathForName(n model.Name) (string, error) {
+// PathForName returns the path to the manifest file for a specific model name.
+func PathForName(n model.Name) (string, error) {
 	if !n.IsValid() {
 		return "", os.ErrNotExist
 	}
 
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return "", err
 	}
@@ -37,7 +37,7 @@ func GetManifestPathForName(n model.Name) (string, error) {
 	return filepath.Join(manifests, n.Filepath()), nil
 }
 
-func GetBlobsPath(digest string) (string, error) {
+func BlobsPath(digest string) (string, error) {
 	// only accept actual sha256 digests
 	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
 	re := regexp.MustCompile(pattern)

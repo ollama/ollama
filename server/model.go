@@ -51,7 +51,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		case "application/vnd.ollama.image.model",
 			"application/vnd.ollama.image.projector",
 			"application/vnd.ollama.image.adapter":
-			blobpath, err := manifest.GetBlobsPath(layer.Digest)
+			blobpath, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
 				return nil, err
 			}

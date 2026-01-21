@@ -22,7 +22,7 @@ const (
 )
 
 func NewLayer(r io.Reader, mediatype string) (Layer, error) {
-	blobs, err := GetBlobsPath("")
+	blobs, err := BlobsPath("")
 	if err != nil {
 		return Layer{}, err
 	}
@@ -45,7 +45,7 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 	}
 
 	digest := fmt.Sprintf("sha256:%x", sha256sum.Sum(nil))
-	blob, err := GetBlobsPath(digest)
+	blob, err := BlobsPath(digest)
 	if err != nil {
 		return Layer{}, err
 	}
@@ -74,7 +74,7 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		return Layer{}, errors.New("creating new layer from layer with empty digest")
 	}
 
-	blob, err := GetBlobsPath(digest)
+	blob, err := BlobsPath(digest)
 	if err != nil {
 		return Layer{}, err
 	}
@@ -98,7 +98,7 @@ func (l *Layer) Open() (io.ReadSeekCloser, error) {
 		return nil, errors.New("opening layer with empty digest")
 	}
 
-	blob, err := GetBlobsPath(l.Digest)
+	blob, err := BlobsPath(l.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (l *Layer) Remove() error {
 		}
 	}
 
-	blob, err := GetBlobsPath(l.Digest)
+	blob, err := BlobsPath(l.Digest)
 	if err != nil {
 		return err
 	}

@@ -289,7 +289,7 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	if mf.Config.Digest != "" {
-		filename, err := manifest.GetBlobsPath(mf.Config.Digest)
+		filename, err := manifest.BlobsPath(mf.Config.Digest)
 		if err != nil {
 			return nil, err
 		}
@@ -306,7 +306,7 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	for _, layer := range mf.Layers {
-		filename, err := manifest.GetBlobsPath(layer.Digest)
+		filename, err := manifest.BlobsPath(layer.Digest)
 		if err != nil {
 			return nil, err
 		}
@@ -386,7 +386,7 @@ func CopyModel(src, dst model.Name) error {
 		return nil
 	}
 
-	manifests, err := manifest.GetManifestPath()
+	manifests, err := manifest.Path()
 	if err != nil {
 		return err
 	}
@@ -430,7 +430,7 @@ func deleteUnusedLayers(deleteMap map[string]struct{}) error {
 
 	// only delete the files which are still in the deleteMap
 	for k := range deleteMap {
-		fp, err := manifest.GetBlobsPath(k)
+		fp, err := manifest.BlobsPath(k)
 		if err != nil {
 			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
 			continue
@@ -446,7 +446,7 @@ func deleteUnusedLayers(deleteMap map[string]struct{}) error {
 
 func PruneLayers() error {
 	deleteMap := make(map[string]struct{})
-	p, err := manifest.GetBlobsPath("")
+	p, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func PruneLayers() error {
 		name := blob.Name()
 		name = strings.ReplaceAll(name, "-", ":")
 
-		_, err := manifest.GetBlobsPath(name)
+		_, err := manifest.BlobsPath(name)
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidDigestFormat) {
 				// remove invalid blobs (e.g. partial downloads)
@@ -511,7 +511,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
 		// Read raw manifest JSON to preserve tensor metadata fields
-		manifestPath, err := manifest.GetManifestPathForName(n)
+		manifestPath, err := manifest.PathForName(n)
 		if err != nil {
 			return err
 		}
@@ -622,7 +622,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 		if err := verifyBlob(layer.Digest); err != nil {
 			if errors.Is(err, errDigestMismatch) {
-				fp, err := manifest.GetBlobsPath(layer.Digest)
+				fp, err := manifest.BlobsPath(layer.Digest)
 				if err != nil {
 					return err
 				}
@@ -646,7 +646,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	fp, err := manifest.GetManifestPathForName(n)
+	fp, err := manifest.PathForName(n)
 	if err != nil {
 		return err
 	}
@@ -692,7 +692,7 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		}
 	}
 
-	destDir, err := manifest.GetBlobsPath("")
+	destDir, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -745,7 +745,7 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		return err
 	}
 
-	fp, err := manifest.GetManifestPathForName(n)
+	fp, err := manifest.PathForName(n)
 	if err != nil {
 		return err
 	}
@@ -767,7 +767,7 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		}
 	}
 
-	srcDir, err := manifest.GetBlobsPath("")
+	srcDir, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -987,7 +987,7 @@ func parseRegistryChallenge(authStr string) registryChallenge {
 var errDigestMismatch = errors.New("digest mismatch, file must be downloaded again")
 
 func verifyBlob(digest string) error {
-	fp, err := manifest.GetBlobsPath(digest)
+	fp, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return err
 	}

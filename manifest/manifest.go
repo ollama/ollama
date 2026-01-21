@@ -44,7 +44,7 @@ func (m *Manifest) FileInfo() os.FileInfo {
 func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
 	for _, layer := range m.Layers {
 		if layer.MediaType == "application/vnd.ollama.image.json" && layer.Name == configPath {
-			blobPath, err := GetBlobsPath(layer.Digest)
+			blobPath, err := BlobsPath(layer.Digest)
 			if err != nil {
 				return err
 			}
@@ -63,7 +63,7 @@ func (m *Manifest) Remove() error {
 		return err
 	}
 
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (m *Manifest) RemoveLayers() error {
 		if _, used := inUse[layer.Digest]; used {
 			continue
 		}
-		blob, err := GetBlobsPath(layer.Digest)
+		blob, err := BlobsPath(layer.Digest)
 		if err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, model.Unqualified(n)
 	}
 
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 }
 
 func WriteManifest(name model.Name, config Layer, layers []Layer) error {
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 }
 
 func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return nil, err
 	}
