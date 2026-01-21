@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -114,6 +115,8 @@ var DroidConfig = &AppConfig{
 	Setup:        setupDroidSettings,
 	CheckInstall: checkCommand("droid", "Install from: https://docs.factory.ai/cli/getting-started/quickstart"),
 }
+
+var AppOrder = []string{"claude", "codex", "opencode", "droid"}
 
 var AppRegistry = map[string]*AppConfig{
 	"claude":   ClaudeConfig,
@@ -576,9 +579,141 @@ func getAppConfiguredModels(appName string) []string {
 	return result
 }
 
+func selectApp() (string, error) {
+	var items []SelectItem
+
+	for _, name := range AppOrder {
+		app, ok := AppRegistry[name]
+		if !ok {
+			continue
+		}
+		description := app.DisplayName
+		if conn, err := LoadIntegration(name); err == nil && conn.DefaultModel() != "" {
+			description = fmt.Sprintf("%s (%s)", app.DisplayName, conn.DefaultModel())
+		}
+		items = append(items, SelectItem{Name: app.Name, Description: description})
+	}
+
+	if len(items) == 0 {
+		return "", fmt.Errorf("no apps available")
+	}
+
+	return Select("Select app:", items)
+}
+
+func selectModels(ctx context.Context, appName string) ([]string, error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+
+	models, err := client.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(models.Models) == 0 {
+		return nil, fmt.Errorf("no models available. Run 'ollama pull <model>' first")
+	}
+
+	var items []SelectItem
+	cloudModels := make(map[string]bool)
+	for _, m := range models.Models {
+		if m.RemoteModel != "" {
+			cloudModels[m.Name] = true
+		}
+		items = append(items, SelectItem{Name: m.Name})
+	}
+
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no local models available. Run 'ollama pull <model>' first")
+	}
+
+	preChecked := getAppConfiguredModels(appName)
+	preCheckedSet := make(map[string]bool)
+	for _, name := range preChecked {
+		preCheckedSet[name] = true
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		iName, jName := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
+		iChecked, jChecked := preCheckedSet[items[i].Name], preCheckedSet[items[j].Name]
+		if iChecked != jChecked {
+			return iChecked
+		}
+		return iName < jName
+	})
+
+	app, _ := GetApp(appName)
+	supportsMultiModel := app != nil && app.Setup != nil
+
+	var selected []string
+	if supportsMultiModel {
+		selected, err = MultiSelect(fmt.Sprintf("Select models for %s:", app.DisplayName), items, preChecked)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		model, err := Select(fmt.Sprintf("Select model for %s:", app.DisplayName), items)
+		if err != nil {
+			return nil, err
+		}
+		selected = []string{model}
+	}
+
+	for _, model := range selected {
+		if cloudModels[model] {
+			if err := ensureSignedIn(ctx, client); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+
+	return selected, nil
+}
+
+func ensureSignedIn(ctx context.Context, client *api.Client) error {
+	user, err := client.Whoami(ctx)
+	if err == nil && user != nil && user.Name != "" {
+		return nil
+	}
+
+	var aErr api.AuthorizationError
+	if !errors.As(err, &aErr) || aErr.SigninURL == "" {
+		return err
+	}
+
+	yes, err := confirmPrompt("Sign in to ollama.com?")
+	if err != nil || !yes {
+		return fmt.Errorf("sign in required for cloud models")
+	}
+
+	fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
+	fmt.Fprintf(os.Stderr, "\033[90mwaiting for sign in to complete...\033[0m")
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "\n")
+			return ctx.Err()
+		case <-ticker.C:
+			user, err := client.Whoami(ctx)
+			if err == nil && user != nil && user.Name != "" {
+				fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", user.Name)
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, ".")
+		}
+	}
+}
+
 func hasLocalModel(models []string) bool {
 	for _, m := range models {
-		if !strings.HasSuffix(m, ":cloud") {
+		if !strings.Contains(m, "cloud") {
 			return true
 		}
 	}
@@ -633,11 +768,8 @@ func runInApp(appName, modelName string) error {
 	return proc.Run()
 }
 
-// handleCancelled prints the cancellation message and returns true if err is ErrCancelled.
-// Returns false and the original error otherwise.
 func handleCancelled(err error) (cancelled bool, origErr error) {
 	if errors.Is(err, ErrCancelled) {
-		fmt.Fprintln(os.Stderr, err.Error())
 		return true, nil
 	}
 	return false, err
