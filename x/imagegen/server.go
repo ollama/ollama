@@ -75,34 +75,48 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
-	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
-	if runtime.GOOS == "linux" {
+	// Set library path environment variable for MLX libraries
+	// Linux: LD_LIBRARY_PATH, Windows: PATH
+	var libPathEnvVar string
+	switch runtime.GOOS {
+	case "linux":
+		libPathEnvVar = "LD_LIBRARY_PATH"
+	case "windows":
+		libPathEnvVar = "PATH"
+	}
+
+	if libPathEnvVar != "" {
 		// Build library paths: start with LibOllamaPath, then add any mlx_* subdirectories
 		libraryPaths := []string{ml.LibOllamaPath}
 		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
 			libraryPaths = append(libraryPaths, mlxDirs...)
 		}
 
-		// Append existing LD_LIBRARY_PATH if set
-		if existingPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+		// Append existing path
+		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
 		}
 
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
-		// Update or add LD_LIBRARY_PATH in cmd.Env
+		// Update or add the environment variable in cmd.Env
 		found := false
 		for i := range cmd.Env {
-			if strings.HasPrefix(cmd.Env[i], "LD_LIBRARY_PATH=") {
-				cmd.Env[i] = "LD_LIBRARY_PATH=" + pathEnvVal
+			// Windows PATH is case-insensitive
+			envName := cmd.Env[i]
+			if runtime.GOOS == "windows" {
+				envName = strings.ToUpper(envName)
+			}
+			if strings.HasPrefix(envName, libPathEnvVar+"=") {
+				cmd.Env[i] = libPathEnvVar + "=" + pathEnvVal
 				found = true
 				break
 			}
 		}
 		if !found {
-			cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+pathEnvVal)
+			cmd.Env = append(cmd.Env, libPathEnvVar+"="+pathEnvVal)
 		}
-		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
+		slog.Debug("mlx subprocess library path", libPathEnvVar, pathEnvVal)
 	}
 
 	// Estimate VRAM based on tensor size from manifest
@@ -121,7 +135,7 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 		mode:      mode,
 		vramSize:  vramSize,
 		done:      make(chan error, 1),
-		client:    &http.Client{Timeout: 10 * time.Minute},
+		client:    &http.Client{Timeout: 15 * time.Minute},
 	}
 
 	// Forward subprocess stdout/stderr to server logs
@@ -283,6 +297,7 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
+		slog.Warn("image runner HTTP request failed", "error", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -294,6 +309,7 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024) // 16MB max
+
 	for scanner.Scan() {
 		// Parse subprocess response
 		var raw struct {

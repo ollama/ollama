@@ -2511,6 +2511,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	// Schedule the runner for image generation
 	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
 	if err != nil {
+		slog.Warn("failed to schedule image runner", "error", err)
 		handleScheduleError(c, req.Model, err)
 		return
 	}
@@ -2567,6 +2568,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		Images: images,
 	}, func(cr llm.CompletionResponse) {
 		streamStarted = true
+
 		res := api.GenerateResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
@@ -2597,6 +2599,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		c.Writer.Write(append(data, '\n'))
 		c.Writer.Flush()
 	}); err != nil {
+		slog.Warn("image generation failed", "error", err)
 		// Only send JSON error if streaming hasn't started yet
 		// (once streaming starts, headers are committed and we can't change status code)
 		if !streamStarted {

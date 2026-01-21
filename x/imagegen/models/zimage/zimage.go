@@ -336,7 +336,6 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 			default:
 			}
 		}
-		stepStart := time.Now()
 
 		// GPU capture on step 2 if requested
 		if cfg.CapturePath != "" && i == 1 {
@@ -363,6 +362,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 
 				// Single batched forward pass (RoPE broadcasts from [1,L,H,D] to [2,L,H,D])
 				batchedOutput := m.Transformer.Forward(batchedPatches, batchedTimestep, batchedEmb, ropeCache)
+				mlx.Eval(batchedOutput)
 
 				// Split output: [2, L, D] -> pos [1, L, D], neg [1, L, D]
 				outputShape := batchedOutput.Shape()
@@ -390,6 +390,8 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 			} else {
 				// Non-CFG forward pass
 				output = m.Transformer.Forward(patches, timestep, posEmb, ropeCache)
+				mlx.Eval(output)
+
 				noisePred = UnpatchifyLatents(output, tcfg.PatchSize, latentH, latentW, tcfg.InChannels)
 				noisePred = mlx.Neg(noisePred)
 
@@ -405,16 +407,13 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 			diff := mlx.Sub(posPred, negPred)
 			scaledDiff := mlx.MulScalar(diff, cfg.CFGScale)
 			noisePred = mlx.Add(negPred, scaledDiff)
-			fmt.Printf("    [TeaCache: reusing cached pos/neg outputs]\n")
 		} else {
 			// Non-CFG mode: reuse cached noise prediction
 			noisePred = teaCache.GetCached()
-			fmt.Printf("    [TeaCache: reusing cached output]\n")
 		}
 
 		oldLatents := latents
 		latents = scheduler.Step(noisePred, latents, i)
-
 		mlx.Eval(latents)
 		oldLatents.Free()
 
@@ -422,13 +421,8 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 			mlx.MetalStopCapture()
 		}
 
-		activeMem := float64(mlx.MetalGetActiveMemory()) / (1024 * 1024 * 1024)
-		peakMem := float64(mlx.MetalGetPeakMemory()) / (1024 * 1024 * 1024)
-		fmt.Printf("  Step %d/%d: t=%.4f (%.2fs) [%.1f GB active, %.1f GB peak]\n",
-			i+1, cfg.Steps, tCurr, time.Since(stepStart).Seconds(), activeMem, peakMem)
-
 		if cfg.Progress != nil {
-			cfg.Progress(i+1, cfg.Steps) // Report completed step
+			cfg.Progress(i+1, cfg.Steps)
 		}
 	}
 
@@ -447,9 +441,6 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		batchedEmb.Free()
 	}
 	if teaCache != nil {
-		hits, misses := teaCache.Stats()
-		fmt.Printf("  TeaCache stats: %d hits, %d misses (%.1f%% cache rate)\n",
-			hits, misses, float64(hits)/float64(hits+misses)*100)
 		teaCache.Free()
 	}
 
@@ -458,7 +449,9 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	if latentH > 64 || latentW > 64 {
 		m.VAEDecoder.Tiling = vae.DefaultTilingConfig()
 	}
+
 	decoded := m.VAEDecoder.Decode(latents)
+
 	latents.Free()
 
 	return decoded, nil
