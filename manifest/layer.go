@@ -1,4 +1,4 @@
-package server
+package manifest
 
 import (
 	"crypto/sha256"
@@ -14,7 +14,7 @@ type Layer struct {
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
 	Name      string `json:"name,omitempty"` // tensor name, e.g., "text_encoder/model.embed_tokens.weight"
-	status    string
+	Status    string `json:"-"`
 }
 
 const (
@@ -22,7 +22,7 @@ const (
 )
 
 func NewLayer(r io.Reader, mediatype string) (Layer, error) {
-	blobs, err := GetBlobsPath("")
+	blobs, err := BlobsPath("")
 	if err != nil {
 		return Layer{}, err
 	}
@@ -45,7 +45,7 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 	}
 
 	digest := fmt.Sprintf("sha256:%x", sha256sum.Sum(nil))
-	blob, err := GetBlobsPath(digest)
+	blob, err := BlobsPath(digest)
 	if err != nil {
 		return Layer{}, err
 	}
@@ -65,7 +65,7 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 		MediaType: mediatype,
 		Digest:    digest,
 		Size:      n,
-		status:    fmt.Sprintf("%s %s", status, digest),
+		Status:    fmt.Sprintf("%s %s", status, digest),
 	}, nil
 }
 
@@ -74,7 +74,7 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		return Layer{}, errors.New("creating new layer from layer with empty digest")
 	}
 
-	blob, err := GetBlobsPath(digest)
+	blob, err := BlobsPath(digest)
 	if err != nil {
 		return Layer{}, err
 	}
@@ -89,7 +89,7 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		Digest:    digest,
 		Size:      fi.Size(),
 		From:      from,
-		status:    fmt.Sprintf("using existing layer %s", digest),
+		Status:    fmt.Sprintf("using existing layer %s", digest),
 	}, nil
 }
 
@@ -98,7 +98,7 @@ func (l *Layer) Open() (io.ReadSeekCloser, error) {
 		return nil, errors.New("opening layer with empty digest")
 	}
 
-	blob, err := GetBlobsPath(l.Digest)
+	blob, err := BlobsPath(l.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (l *Layer) Remove() error {
 		}
 	}
 
-	blob, err := GetBlobsPath(l.Digest)
+	blob, err := BlobsPath(l.Digest)
 	if err != nil {
 		return err
 	}

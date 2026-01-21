@@ -1,4 +1,4 @@
-package server
+package manifest
 
 import (
 	"encoding/json"
