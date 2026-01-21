@@ -2524,7 +2524,6 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		}
 	}
 
-	// Convert api.ImageData to llm.ImageData for image editing
 	var images []llm.ImageData
 	for i, imgData := range req.Images {
 		images = append(images, llm.ImageData{ID: i, Data: imgData})

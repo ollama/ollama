@@ -171,7 +171,7 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate and decode input images
-	const maxInputImages = 4
+	const maxInputImages = 2
 	if len(req.Images) > maxInputImages {
 		http.Error(w, fmt.Sprintf("too many input images, maximum is %d", maxInputImages), http.StatusBadRequest)
 		return
