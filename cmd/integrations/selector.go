@@ -1,4 +1,4 @@
-package cmd
+package integrations
 
 import (
 	"errors"
@@ -12,9 +12,9 @@ import (
 
 const maxDisplayedItems = 10
 
-var ErrCancelled = errors.New("cancelled")
+var errCancelled = errors.New("cancelled")
 
-type SelectItem struct {
+type selectItem struct {
 	Name        string
 	Description string
 }
@@ -32,17 +32,17 @@ const (
 )
 
 type selectState struct {
-	items        []SelectItem
+	items        []selectItem
 	filter       string
 	selected     int
 	scrollOffset int
 }
 
-func newSelectState(items []SelectItem) *selectState {
+func newSelectState(items []selectItem) *selectState {
 	return &selectState{items: items}
 }
 
-func (s *selectState) filtered() []SelectItem {
+func (s *selectState) filtered() []selectItem {
 	return filterItems(s.items, s.filter)
 }
 
@@ -55,7 +55,7 @@ func (s *selectState) handleInput(event inputEvent, char byte) (done bool, resul
 			return true, filtered[s.selected].Name, nil
 		}
 	case eventEscape:
-		return true, "", ErrCancelled
+		return true, "", errCancelled
 	case eventBackspace:
 		if len(s.filter) > 0 {
 			s.filter = s.filter[:len(s.filter)-1]
@@ -86,7 +86,7 @@ func (s *selectState) handleInput(event inputEvent, char byte) (done bool, resul
 }
 
 type multiSelectState struct {
-	items         []SelectItem
+	items         []selectItem
 	itemIndex     map[string]int
 	filter        string
 	highlighted   int
@@ -96,7 +96,7 @@ type multiSelectState struct {
 	focusOnButton bool
 }
 
-func newMultiSelectState(items []SelectItem, preChecked []string) *multiSelectState {
+func newMultiSelectState(items []selectItem, preChecked []string) *multiSelectState {
 	s := &multiSelectState{
 		items:     items,
 		itemIndex: make(map[string]int, len(items)),
@@ -117,7 +117,7 @@ func newMultiSelectState(items []SelectItem, preChecked []string) *multiSelectSt
 	return s
 }
 
-func (s *multiSelectState) filtered() []SelectItem {
+func (s *multiSelectState) filtered() []selectItem {
 	return filterItems(s.items, s.filter)
 }
 
@@ -163,7 +163,7 @@ func (s *multiSelectState) handleInput(event inputEvent, char byte) (done bool, 
 			s.focusOnButton = !s.focusOnButton
 		}
 	case eventEscape:
-		return true, nil, ErrCancelled
+		return true, nil, errCancelled
 	case eventBackspace:
 		if len(s.filter) > 0 {
 			s.filter = s.filter[:len(s.filter)-1]
@@ -372,9 +372,8 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 	return lineCount
 }
 
-// Public API
-
-func Select(prompt string, items []SelectItem) (string, error) {
+// selectPrompt prompts the user to select a single item from a list.
+func selectPrompt(prompt string, items []selectItem) (string, error) {
 	if len(items) == 0 {
 		return "", fmt.Errorf("no items to select from")
 	}
@@ -414,7 +413,8 @@ func Select(prompt string, items []SelectItem) (string, error) {
 	}
 }
 
-func MultiSelect(prompt string, items []SelectItem, preChecked []string) ([]string, error) {
+// multiSelectPrompt prompts the user to select multiple items from a list.
+func multiSelectPrompt(prompt string, items []selectItem, preChecked []string) ([]string, error) {
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no items to select from")
 	}
@@ -481,11 +481,11 @@ func confirmPrompt(prompt string) (bool, error) {
 	}
 }
 
-func filterItems(items []SelectItem, filter string) []SelectItem {
+func filterItems(items []selectItem, filter string) []selectItem {
 	if filter == "" {
 		return items
 	}
-	var result []SelectItem
+	var result []selectItem
 	filterLower := strings.ToLower(filter)
 	for _, item := range items {
 		if strings.Contains(strings.ToLower(item.Name), filterLower) {

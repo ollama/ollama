@@ -1,4 +1,4 @@
-package cmd
+package integrations
 
 import (
 	"encoding/json"
@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-type IntegrationConfig struct {
+type integrationConfig struct {
 	App          string    `json:"app"`
 	Models       []string  `json:"models"`
 	ConfiguredAt time.Time `json:"configured_at"`
 }
 
-// DefaultModel returns the first (default) model, or empty string if none
-func (c *IntegrationConfig) DefaultModel() string {
+// defaultModel returns the first (default) model, or empty string if none
+func (c *integrationConfig) defaultModel() string {
 	if len(c.Models) > 0 {
 		return c.Models[0]
 	}
@@ -39,7 +39,7 @@ func configPath(appName string) (string, error) {
 	return filepath.Join(dir, strings.ToLower(appName)+".json"), nil
 }
 
-func SaveIntegration(appName string, models []string) error {
+func saveIntegration(appName string, models []string) error {
 	path, err := configPath(appName)
 	if err != nil {
 		return err
@@ -49,14 +49,14 @@ func SaveIntegration(appName string, models []string) error {
 		return err
 	}
 
-	return atomicWriteJSON(path, IntegrationConfig{
+	return atomicWriteJSON(path, integrationConfig{
 		App:          appName,
 		Models:       models,
 		ConfiguredAt: time.Now(),
 	})
 }
 
-func LoadIntegration(appName string) (*IntegrationConfig, error) {
+func loadIntegration(appName string) (*integrationConfig, error) {
 	path, err := configPath(appName)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func LoadIntegration(appName string) (*IntegrationConfig, error) {
 		return nil, err
 	}
 
-	var config IntegrationConfig
+	var config integrationConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func LoadIntegration(appName string) (*IntegrationConfig, error) {
 	return &config, nil
 }
 
-func ListIntegrations() ([]IntegrationConfig, error) {
+func listIntegrations() ([]integrationConfig, error) {
 	dir, err := integrationsDir()
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func ListIntegrations() ([]IntegrationConfig, error) {
 		return nil, err
 	}
 
-	var configs []IntegrationConfig
+	var configs []integrationConfig
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -100,7 +100,7 @@ func ListIntegrations() ([]IntegrationConfig, error) {
 			continue
 		}
 
-		var config IntegrationConfig
+		var config integrationConfig
 		if err := json.Unmarshal(data, &config); err != nil {
 			continue
 		}

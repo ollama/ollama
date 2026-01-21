@@ -1,4 +1,4 @@
-package cmd
+package integrations
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestFilterItems(t *testing.T) {
-	items := []SelectItem{
+	items := []selectItem{
 		{Name: "llama3.2:latest"},
 		{Name: "qwen2.5:7b"},
 		{Name: "deepseek-v3:cloud"},
@@ -51,7 +51,7 @@ func TestFilterItems(t *testing.T) {
 }
 
 func TestSelectState(t *testing.T) {
-	items := []SelectItem{
+	items := []selectItem{
 		{Name: "item1"},
 		{Name: "item2"},
 		{Name: "item3"},
@@ -99,8 +99,8 @@ func TestSelectState(t *testing.T) {
 	t.Run("Escape_ReturnsCancelledError", func(t *testing.T) {
 		s := newSelectState(items)
 		done, result, err := s.handleInput(eventEscape, 0)
-		if !done || result != "" || err != ErrCancelled {
-			t.Errorf("expected (true, '', ErrCancelled), got (%v, %v, %v)", done, result, err)
+		if !done || result != "" || err != errCancelled {
+			t.Errorf("expected (true, '', errCancelled), got (%v, %v, %v)", done, result, err)
 		}
 	})
 
@@ -192,9 +192,9 @@ func TestSelectState(t *testing.T) {
 
 	t.Run("Scroll_DownPastVisibleItems_ScrollsViewport", func(t *testing.T) {
 		// maxDisplayedItems is 10, so with 15 items we need to scroll
-		manyItems := make([]SelectItem, 15)
+		manyItems := make([]selectItem, 15)
 		for i := range manyItems {
-			manyItems[i] = SelectItem{Name: string(rune('a' + i))}
+			manyItems[i] = selectItem{Name: string(rune('a' + i))}
 		}
 		s := newSelectState(manyItems)
 
@@ -212,9 +212,9 @@ func TestSelectState(t *testing.T) {
 	})
 
 	t.Run("Scroll_UpPastScrollOffset_ScrollsViewport", func(t *testing.T) {
-		manyItems := make([]SelectItem, 15)
+		manyItems := make([]selectItem, 15)
 		for i := range manyItems {
-			manyItems[i] = SelectItem{Name: string(rune('a' + i))}
+			manyItems[i] = selectItem{Name: string(rune('a' + i))}
 		}
 		s := newSelectState(manyItems)
 		s.selected = 5
@@ -232,7 +232,7 @@ func TestSelectState(t *testing.T) {
 }
 
 func TestMultiSelectState(t *testing.T) {
-	items := []SelectItem{
+	items := []selectItem{
 		{Name: "item1"},
 		{Name: "item2"},
 		{Name: "item3"},
@@ -372,8 +372,8 @@ func TestMultiSelectState(t *testing.T) {
 	t.Run("Escape_ReturnsCancelledError", func(t *testing.T) {
 		s := newMultiSelectState(items, []string{"item1"})
 		done, result, err := s.handleInput(eventEscape, 0)
-		if !done || result != nil || err != ErrCancelled {
-			t.Errorf("expected (true, nil, ErrCancelled), got (%v, %v, %v)", done, result, err)
+		if !done || result != nil || err != errCancelled {
+			t.Errorf("expected (true, nil, errCancelled), got (%v, %v, %v)", done, result, err)
 		}
 	})
 
@@ -429,9 +429,9 @@ func TestMultiSelectState(t *testing.T) {
 	})
 
 	t.Run("Char_ResetsHighlightAndScroll", func(t *testing.T) {
-		manyItems := make([]SelectItem, 15)
+		manyItems := make([]selectItem, 15)
 		for i := range manyItems {
-			manyItems[i] = SelectItem{Name: string(rune('a' + i))}
+			manyItems[i] = selectItem{Name: string(rune('a' + i))}
 		}
 		s := newMultiSelectState(manyItems, nil)
 		s.highlighted = 10
@@ -540,7 +540,7 @@ func TestParseInput(t *testing.T) {
 }
 
 func TestRenderSelect(t *testing.T) {
-	items := []SelectItem{
+	items := []selectItem{
 		{Name: "item1", Description: "first item"},
 		{Name: "item2"},
 	}
@@ -580,9 +580,9 @@ func TestRenderSelect(t *testing.T) {
 	})
 
 	t.Run("LongList_ShowsRemainingCount", func(t *testing.T) {
-		manyItems := make([]SelectItem, 15)
+		manyItems := make([]selectItem, 15)
 		for i := range manyItems {
-			manyItems[i] = SelectItem{Name: string(rune('a' + i))}
+			manyItems[i] = selectItem{Name: string(rune('a' + i))}
 		}
 		s := newSelectState(manyItems)
 		var buf bytes.Buffer
@@ -596,7 +596,7 @@ func TestRenderSelect(t *testing.T) {
 }
 
 func TestRenderMultiSelect(t *testing.T) {
-	items := []SelectItem{
+	items := []selectItem{
 		{Name: "item1"},
 		{Name: "item2"},
 	}
@@ -648,14 +648,14 @@ func TestRenderMultiSelect(t *testing.T) {
 
 func TestErrCancelled(t *testing.T) {
 	t.Run("NotNil", func(t *testing.T) {
-		if ErrCancelled == nil {
-			t.Error("ErrCancelled should not be nil")
+		if errCancelled == nil {
+			t.Error("errCancelled should not be nil")
 		}
 	})
 
 	t.Run("Message", func(t *testing.T) {
-		if ErrCancelled.Error() != "cancelled" {
-			t.Errorf("expected 'cancelled', got %q", ErrCancelled.Error())
+		if errCancelled.Error() != "cancelled" {
+			t.Errorf("expected 'cancelled', got %q", errCancelled.Error())
 		}
 	})
 }
