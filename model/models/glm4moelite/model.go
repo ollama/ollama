@@ -47,7 +47,9 @@ type Attention struct {
 
 	KVA     *nn.Linear  `gguf:"attn_kv_a_mqa"`
 	KVANorm *nn.RMSNorm `gguf:"attn_kv_a_norm"`
-	KVB     *nn.Linear  `gguf:"attn_kv_b"`
+
+	KB *nn.Linear `gguf:"attn_k_b"`
+	VB *nn.Linear `gguf:"attn_v_b"`
 
 	Output *nn.Linear `gguf:"attn_out,alt:attn_output"`
 }
@@ -78,15 +80,16 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	qRot := opts.applyRotaryPositionEmbeddings(ctx, queryChunks[1], positions)
 	kRot = opts.applyRotaryPositionEmbeddings(ctx, kRot, positions)
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
-	kPass = attn.KVB.Forward(ctx, kPass)
 
-	kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
-	kvChunks := kv.ChunkSections(ctx, 0, opts.kqNopeHeadDim, opts.vHeadDim)
+	// MLA absorption: absorb K projection into query
+	qPass := queryChunks[0].Permute(ctx, 0, 2, 1, 3)
+	qPassAbsorb := attn.KB.Forward(ctx, qPass).Permute(ctx, 0, 2, 1, 3)
+	query = qRot.Concat(ctx, qPassAbsorb, 0)
 
-	kRot = kRot.Repeat(ctx, 1, queryChunks[0].Dim(1))
-	query = qRot.Concat(ctx, queryChunks[0], 0)
-	key := kRot.Concat(ctx, kvChunks[0], 0)
-	attention := nn.Attention(ctx, query, key, kvChunks[1], opts.kqScale, cache)
+	kPass = kPass.Reshape(ctx, opts.kvLoraRank, 1, seqLength)
+	key := kRot.Concat(ctx, kPass, 0)
+
+	attention := nn.AttentionWithVMLA(ctx, query, key, kPass, nil, attn.VB.Weight, opts.kqScale, cache)
 
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
 	return attn.Output.Forward(ctx, attention)
@@ -217,8 +220,12 @@ func New(c fs.Config) (model.Model, error) {
 
 	keyLength := int(c.Uint("attention.key_length"))
 	valueLength := int(c.Uint("attention.value_length"))
+	kvLoraRank := int(c.Uint("attention.kv_lora_rank"))
+	qkRopeHeadDim := int(c.Uint("rope.dimension_count"))
 
-	kqScale := 1.0 / math.Sqrt(float64(keyLength))
+	// For MLA absorption, the effective key dimension is kvLoraRank + qkRopeHeadDim
+	mlaKeyLength := kvLoraRank + qkRopeHeadDim
+	kqScale := 1.0 / math.Sqrt(float64(mlaKeyLength))
 
 	var pre []string
 	switch c.String("tokenizer.ggml.pre") {
