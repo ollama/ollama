@@ -21,8 +21,6 @@ import (
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
 	"github.com/ollama/ollama/x/imagegen/models/llama"
-	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
-	"github.com/ollama/ollama/x/imagegen/models/qwen_image_edit"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
@@ -61,14 +59,11 @@ func main() {
 	listTensors := flag.Bool("list", false, "List tensors only")
 	cpuProfile := flag.String("cpuprofile", "", "Write CPU profile to file")
 	gpuCapture := flag.String("gpu-capture", "", "Capture GPU trace to .gputrace file (run with MTL_CAPTURE_ENABLED=1)")
-	layerCache := flag.Bool("layer-cache", false, "Enable layer caching for faster diffusion (Z-Image, Qwen-Image). Not compatible with CFG/negative prompts.")
 	wiredLimitGB := flag.Int("wired-limit", 32, "Metal wired memory limit in GB")
 
 	// Legacy mode flags
 	zimageFlag := flag.Bool("zimage", false, "Z-Image generation")
 	flux2Flag := flag.Bool("flux2", false, "FLUX.2 Klein generation")
-	qwenImage := flag.Bool("qwen-image", false, "Qwen-Image text-to-image generation")
-	qwenImageEdit := flag.Bool("qwen-image-edit", false, "Qwen-Image-Edit image editing")
 	var inputImages stringSlice
 	flag.Var(&inputImages, "input-image", "Input image for image editing (can be specified multiple times)")
 	negativePrompt := flag.String("negative-prompt", "", "Negative prompt for CFG (empty = no CFG, matching Python)")
@@ -163,60 +158,6 @@ func main() {
 			CapturePath:   *gpuCapture,
 			InputImages:   loadedImages,
 		})
-		if err == nil {
-			err = saveImageArray(img, *out)
-		}
-	case *qwenImage:
-		m, loadErr := qwen_image.LoadPersistent(*modelPath)
-		if loadErr != nil {
-			log.Fatal(loadErr)
-		}
-		var img *mlx.Array
-		img, err = m.GenerateFromConfig(&qwen_image.GenerateConfig{
-			Prompt:         *prompt,
-			NegativePrompt: *negativePrompt,
-			CFGScale:       float32(*cfgScale),
-			Width:          int32(*width),
-			Height:         int32(*height),
-			Steps:          *steps,
-			Seed:           *seed,
-			LayerCache:     *layerCache,
-		})
-		if err == nil {
-			err = saveImageArray(img, *out)
-		}
-	case *qwenImageEdit:
-		if len(inputImages) == 0 {
-			log.Fatal("qwen-image-edit requires at least one -input-image")
-		}
-
-		m, loadErr := qwen_image_edit.LoadPersistent(*modelPath)
-		if loadErr != nil {
-			log.Fatal(loadErr)
-		}
-		// For image editing, use 0 for dimensions to auto-detect from input image
-		// unless explicitly overridden from defaults
-		editWidth := int32(0)
-		editHeight := int32(0)
-		if *width != 1024 {
-			editWidth = int32(*width)
-		}
-		if *height != 1024 {
-			editHeight = int32(*height)
-		}
-
-		cfg := &qwen_image_edit.GenerateConfig{
-			Prompt:         *prompt,
-			NegativePrompt: *negativePrompt,
-			CFGScale:       float32(*cfgScale),
-			Width:          editWidth,
-			Height:         editHeight,
-			Steps:          *steps,
-			Seed:           *seed,
-		}
-
-		var img *mlx.Array
-		img, err = m.EditFromConfig(inputImages, cfg)
 		if err == nil {
 			err = saveImageArray(img, *out)
 		}
