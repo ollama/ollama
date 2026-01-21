@@ -27,7 +27,7 @@ func integrationsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".ollama", "integrations"), nil
+	return filepath.Join(home, ".ollama", "config", "integrations"), nil
 }
 
 func configPath(appName string) (string, error) {

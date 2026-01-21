@@ -594,8 +594,8 @@ func printModelsAdded(appName string, models []string) {
 
 	if hasLocalModel(models) {
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Tip: Coding agents work best with at least 64k context. Either:")
-		fmt.Fprintln(os.Stderr, "  - Set the context slider in Ollama app settings, or")
+		fmt.Fprintln(os.Stderr, "Coding agents work best with at least 64k context. Either:")
+		fmt.Fprintln(os.Stderr, "  - Set the context slider in Ollama app settings")
 		fmt.Fprintln(os.Stderr, "  - Run: OLLAMA_CONTEXT_LENGTH=64000 ollama serve")
 	}
 }
@@ -643,6 +643,10 @@ func handleCancelled(err error) (cancelled bool, origErr error) {
 	return false, err
 }
 
+func clearScreen() {
+	fmt.Fprint(os.Stderr, "\033[2J\033[H")
+}
+
 // getExistingConfigPaths returns config paths that exist on disk for the given app.
 // Returns empty slice if the app doesn't modify config files or no config exists yet.
 func getExistingConfigPaths(appName string) []string {
@@ -671,12 +675,12 @@ func getExistingConfigPaths(appName string) []string {
 	return paths
 }
 
-func IntegrationsCmd() *cobra.Command {
+func ConfigCmd() *cobra.Command {
 	var modelFlag string
 	var launchFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "integrations [APP]",
+		Use:   "config [APP]",
 		Short: "Configure an external app to use Ollama",
 		Long: `Configure an external application to use Ollama models.
 
@@ -687,9 +691,9 @@ Supported apps:
   opencode  OpenCode
 
 Examples:
-  ollama integrations
-  ollama integrations claude
-  ollama integrations droid --launch`,
+  ollama config
+  ollama config claude
+  ollama config droid --launch`,
 		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -704,6 +708,7 @@ Examples:
 				} else if err != nil {
 					return err
 				}
+				clearScreen()
 			}
 
 			app, ok := GetApp(appName)
@@ -737,12 +742,13 @@ Examples:
 				} else if err != nil {
 					return err
 				}
+				clearScreen()
 			}
 
 			if app.Setup != nil {
 				paths := getExistingConfigPaths(appName)
 				if len(paths) > 0 {
-					fmt.Fprintf(os.Stderr, "\nWarning: This will modify your %s configuration:\n", app.DisplayName)
+					fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", app.DisplayName)
 					for _, p := range paths {
 						fmt.Fprintf(os.Stderr, "  %s\n", p)
 					}
@@ -751,6 +757,7 @@ Examples:
 					if ok, _ := confirmPrompt("Proceed?"); !ok {
 						return nil
 					}
+					clearScreen()
 				}
 			}
 
@@ -774,7 +781,7 @@ Examples:
 				return runInApp(appName, models[0])
 			}
 
-			fmt.Fprintf(os.Stderr, "Run 'ollama integrations %s --launch' to start with %s\n", strings.ToLower(appName), models[0])
+			fmt.Fprintf(os.Stderr, "Run 'ollama config %s --launch' to start with %s\n", strings.ToLower(appName), models[0])
 			return nil
 		},
 	}

@@ -37,7 +37,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
-		fmt.Fprintln(os.Stderr, "  /integrations   Configure an external app to use Ollama")
+		fmt.Fprintln(os.Stderr, "  /config         Configure an external app to use Ollama")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -461,7 +461,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
-		case strings.HasPrefix(line, "/integrations"):
+		case strings.HasPrefix(line, "/config"):
 			args := strings.Fields(line)
 			var appName string
 			if len(args) > 1 {

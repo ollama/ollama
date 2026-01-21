@@ -2026,7 +2026,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
-		IntegrationsCmd(),
+		ConfigCmd(),
 	)
 
 	return rootCmd
