@@ -2193,3 +2193,157 @@ func TestGenerateUnload(t *testing.T) {
 		}
 	})
 }
+
+func TestGenerateWithImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{
+					llama: &mock,
+				}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("images passed to completion request", func(t *testing.T) {
+		testImage := []byte("test-image-data")
+
+		mock.CompletionResponse.Content = "Image processed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Describe this image",
+			Images: []api.ImageData{testImage},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify images were passed to the completion request
+		if len(mock.CompletionRequest.Images) != 1 {
+			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Images))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage) {
+			t.Errorf("image data mismatch in completion request")
+		}
+
+		if mock.CompletionRequest.Images[0].ID != 0 {
+			t.Errorf("expected image ID 0, got %d", mock.CompletionRequest.Images[0].ID)
+		}
+	})
+
+	t.Run("multiple images passed to completion request", func(t *testing.T) {
+		testImage1 := []byte("test-image-1")
+		testImage2 := []byte("test-image-2")
+
+		mock.CompletionResponse.Content = "Images processed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Compare these images",
+			Images: []api.ImageData{testImage1, testImage2},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify both images were passed
+		if len(mock.CompletionRequest.Images) != 2 {
+			t.Fatalf("expected 2 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage1) {
+			t.Errorf("first image data mismatch")
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[1].Data, testImage2) {
+			t.Errorf("second image data mismatch")
+		}
+
+		if mock.CompletionRequest.Images[0].ID != 0 || mock.CompletionRequest.Images[1].ID != 1 {
+			t.Errorf("expected image IDs 0 and 1, got %d and %d",
+				mock.CompletionRequest.Images[0].ID, mock.CompletionRequest.Images[1].ID)
+		}
+	})
+
+	t.Run("no images when none provided", func(t *testing.T) {
+		mock.CompletionResponse.Content = "No images"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Hello",
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify no images in completion request
+		if len(mock.CompletionRequest.Images) != 0 {
+			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		}
+	})
+}
