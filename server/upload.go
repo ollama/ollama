@@ -22,6 +22,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 var blobUploadManager sync.Map
@@ -60,7 +61,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 	if b.From != "" {
 		values := requestURL.Query()
 		values.Add("mount", b.Digest)
-		values.Add("from", ParseModelPath(b.From).GetNamespaceRepository())
+		values.Add("from", model.ParseName(b.From).DisplayNamespaceModel())
 		requestURL.RawQuery = values.Encode()
 	}
 
@@ -365,9 +366,9 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer manifest.Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
+func uploadBlob(ctx context.Context, n model.Name, layer manifest.Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
+	requestURL := n.BaseURL()
+	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "blobs", layer.Digest)
 
 	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
 	switch {
@@ -389,8 +390,8 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer manifest.Layer, opts *r
 	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
 	upload := data.(*blobUpload)
 	if !ok {
-		requestURL := mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
+		requestURL := n.BaseURL()
+		requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "blobs/uploads/")
 		if err := upload.Prepare(ctx, requestURL, opts); err != nil {
 			blobUploadManager.Delete(layer.Digest)
 			return err

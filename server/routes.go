@@ -1081,7 +1081,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return nil, ErrModelPathInvalid
+		return nil, model.Unqualified(name)
 	}
 	name, err := getExistingName(name)
 	if err != nil {

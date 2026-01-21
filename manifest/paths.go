@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 var (
@@ -22,6 +23,20 @@ func GetManifestPath() (string, error) {
 	}
 
 	return path, nil
+}
+
+// GetManifestPathForName returns the path to the manifest file for a specific model name.
+func GetManifestPathForName(n model.Name) (string, error) {
+	if !n.IsValid() {
+		return "", os.ErrNotExist
+	}
+
+	manifests, err := GetManifestPath()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(manifests, n.Filepath()), nil
 }
 
 func GetBlobsPath(digest string) (string, error) {

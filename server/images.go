@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -275,39 +274,17 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
-func GetManifest(mp ModelPath) (*manifest.Manifest, string, error) {
-	fp, err := mp.GetManifestPath()
-	if err != nil {
-		return nil, "", err
-	}
-
-	f, err := os.Open(fp)
-	if err != nil {
-		return nil, "", err
-	}
-	defer f.Close()
-
-	sha256sum := sha256.New()
-
-	var mf manifest.Manifest
-	if err := json.NewDecoder(io.TeeReader(f, sha256sum)).Decode(&mf); err != nil {
-		return nil, "", err
-	}
-
-	return &mf, hex.EncodeToString(sha256sum.Sum(nil)), nil
-}
-
 func GetModel(name string) (*Model, error) {
-	mp := ParseModelPath(name)
-	mf, digest, err := GetManifest(mp)
+	n := model.ParseName(name)
+	mf, err := manifest.ParseNamedManifest(n)
 	if err != nil {
 		return nil, err
 	}
 
-	model := &Model{
-		Name:      mp.GetFullTagname(),
-		ShortName: mp.GetShortTagname(),
-		Digest:    digest,
+	m := &Model{
+		Name:      n.String(),
+		ShortName: n.DisplayShortest(),
+		Digest:    mf.Digest(),
 		Template:  template.DefaultTemplate,
 	}
 
@@ -323,7 +300,7 @@ func GetModel(name string) (*Model, error) {
 		}
 		defer configFile.Close()
 
-		if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
 			return nil, err
 		}
 	}
@@ -336,16 +313,16 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
-			model.ModelPath = filename
-			model.ParentModel = layer.From
+			m.ModelPath = filename
+			m.ParentModel = layer.From
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
 			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
-			model.AdapterPaths = append(model.AdapterPaths, filename)
+			m.AdapterPaths = append(m.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
-			model.ProjectorPaths = append(model.ProjectorPaths, filename)
+			m.ProjectorPaths = append(m.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
@@ -353,7 +330,7 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 
-			model.Template, err = template.Parse(string(bts))
+			m.Template, err = template.Parse(string(bts))
 			if err != nil {
 				return nil, err
 			}
@@ -363,7 +340,7 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 
-			model.System = string(bts)
+			m.System = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
@@ -372,7 +349,7 @@ func GetModel(name string) (*Model, error) {
 			defer params.Close()
 
 			// parse model options parameters into a map so that we can see which fields have been specified explicitly
-			if err = json.NewDecoder(params).Decode(&model.Options); err != nil {
+			if err = json.NewDecoder(params).Decode(&m.Options); err != nil {
 				return nil, err
 			}
 		case "application/vnd.ollama.image.messages":
@@ -382,7 +359,7 @@ func GetModel(name string) (*Model, error) {
 			}
 			defer msgs.Close()
 
-			if err = json.NewDecoder(msgs).Decode(&model.Messages); err != nil {
+			if err = json.NewDecoder(msgs).Decode(&m.Messages); err != nil {
 				return nil, err
 			}
 		case "application/vnd.ollama.image.license":
@@ -390,11 +367,11 @@ func GetModel(name string) (*Model, error) {
 			if err != nil {
 				return nil, err
 			}
-			model.License = append(model.License, string(bts))
+			m.License = append(m.License, string(bts))
 		}
 	}
 
-	return model, nil
+	return m, nil
 }
 
 func CopyModel(src, dst model.Name) error {
@@ -512,14 +489,14 @@ func PruneLayers() error {
 }
 
 func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
+	n := model.ParseName(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
+	if n.ProtocolScheme == "http" && !regOpts.Insecure {
 		return errInsecureProtocol
 	}
 
-	mf, _, err := GetManifest(mp)
+	mf, err := manifest.ParseNamedManifest(n)
 	if err != nil {
 		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
 		return err
@@ -534,7 +511,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
 		// Read raw manifest JSON to preserve tensor metadata fields
-		manifestPath, err := mp.GetManifestPath()
+		manifestPath, err := manifest.GetManifestPathForName(n)
 		if err != nil {
 			return err
 		}
@@ -542,7 +519,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err != nil {
 			return err
 		}
-		if err := pushWithTransfer(ctx, mp, layers, manifestJSON, regOpts, fn); err != nil {
+		if err := pushWithTransfer(ctx, n, layers, manifestJSON, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -550,15 +527,15 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	for _, layer := range layers {
-		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
+		if err := uploadBlob(ctx, n, layer, regOpts, fn); err != nil {
 			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
 			return err
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "pushing manifest"})
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
+	requestURL := n.BaseURL()
+	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
 	manifestJSON, err := json.Marshal(mf)
 	if err != nil {
@@ -579,11 +556,11 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 }
 
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
+	n := model.ParseName(name)
 
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
-	existingMf, _, err := GetManifest(mp)
+	existingMf, err := manifest.ParseNamedManifest(n)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
 	} else if err != nil {
@@ -597,13 +574,13 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 	}
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
+	if n.ProtocolScheme == "http" && !regOpts.Insecure {
 		return errInsecureProtocol
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
-	mf, err := pullModelManifest(ctx, mp, regOpts)
+	mf, err := pullModelManifest(ctx, n, regOpts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
@@ -616,7 +593,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		if err := pullWithTransfer(ctx, mp, layers, mf, regOpts, fn); err != nil {
+		if err := pullWithTransfer(ctx, n, layers, mf, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -626,7 +603,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
 		cacheHit, err := downloadBlob(ctx, downloadOpts{
-			mp:      mp,
+			n:       n,
 			digest:  layer.Digest,
 			regOpts: regOpts,
 			fn:      fn,
@@ -669,7 +646,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	fp, err := mp.GetManifestPath()
+	fp, err := manifest.GetManifestPathForName(n)
 	if err != nil {
 		return err
 	}
@@ -706,7 +683,7 @@ func hasTensorLayers(layers []manifest.Layer) bool {
 }
 
 // pullWithTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer, mf *manifest.Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, mf *manifest.Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -720,7 +697,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer
 		return err
 	}
 
-	base := mp.BaseURL()
+	base := n.BaseURL()
 	if base.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		base.Scheme = "http"
 	}
@@ -752,7 +729,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer
 		Blobs:      blobs,
 		BaseURL:    baseURL,
 		DestDir:    destDir,
-		Repository: mp.GetNamespaceRepository(),
+		Repository: n.DisplayNamespaceModel(),
 		Progress:   progress,
 		Token:      regOpts.Token,
 		GetToken:   getToken,
@@ -768,7 +745,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer
 		return err
 	}
 
-	fp, err := mp.GetManifestPath()
+	fp, err := manifest.GetManifestPathForName(n)
 	if err != nil {
 		return err
 	}
@@ -780,7 +757,7 @@ func pullWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer
 }
 
 // pushWithTransfer uses the simplified x/transfer package for uploading blobs and manifest.
-func pushWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -795,7 +772,7 @@ func pushWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer
 		return err
 	}
 
-	base := mp.BaseURL()
+	base := n.BaseURL()
 	if base.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		base.Scheme = "http"
 	}
@@ -832,13 +809,13 @@ func pushWithTransfer(ctx context.Context, mp ModelPath, layers []manifest.Layer
 		GetToken:    getToken,
 		Logger:      slog.Default(),
 		Manifest:    manifestJSON,
-		ManifestRef: mp.Tag,
-		Repository:  mp.GetNamespaceRepository(),
+		ManifestRef: n.Tag,
+		Repository:  n.DisplayNamespaceModel(),
 	})
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*manifest.Manifest, error) {
-	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
+func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, error) {
+	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
