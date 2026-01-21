@@ -14,15 +14,15 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## How can I view the logs?
 
-Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
+Review the [Troubleshooting](./troubleshooting) docs for more about using logs.
 
 ## Is my GPU compatible with Ollama?
 
-Please refer to the [GPU docs](./gpu.md).
+Please refer to the [GPU docs](./gpu).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 2048 tokens.
+By default, Ollama uses a context window size of 4096 tokens.
 
 This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use:
 
@@ -57,8 +57,13 @@ ollama ps
 ```
 
 <Info>
-  **Output**: ``` NAME ID SIZE PROCESSOR UNTIL llama3:70b bcfb190ca3a7 42 GB
-  100% GPU 4 minutes from now ```
+
+**Output**:
+
+```
+NAME        ID            SIZE    PROCESSOR   UNTIL
+llama3:70b  bcfb190ca3a7  42 GB   100% GPU    4 minutes from now
+```
 </Info>
 
 The `Processor` column will show which memory the model was loaded in to:
@@ -223,7 +228,7 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 ## How can I use Ollama in Visual Studio Code?
 
-There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. See the list of [extensions & plugins](https://github.com/ollama/ollama#extensions--plugins) at the bottom of the main repository readme.
+There is already a large collection of plugins available for VS Code as well as other editors that leverage Ollama. See the list of [extensions & plugins](https://github.com/ollama/ollama#extensions--plugins) at the bottom of the main repository readme.
 
 ## How do I use Ollama with GPU acceleration in Docker?
 
@@ -376,3 +381,13 @@ ollama signin
 <Note>
   Replace &lt;username&gt; with your actual Windows user name.
 </Note>
+
+## How can I stop Ollama from starting when I login to my computer
+
+Ollama for Windows and macOS register as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
+
+**Windows**
+- In `Task Manager` go to the `Startup apps` tab, search for `ollama` then click `Disable`
+
+**MacOS**
+- Open `Settings` and search for "Login Items", find the `Ollama` entry under "Allow in the Background`, then click the slider to disable.

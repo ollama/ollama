@@ -1,14 +1,17 @@
 package parsers
 
 import (
+	"strings"
+	"unicode"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/harmony"
 )
 
 type Parser interface {
-	// Init initializes the parser with tools and optional last message for chat prefill
+	// Init initializes the parser with tools, optional last message for chat prefill, and think value
 	// Returns processed tools if the parser needs to modify them (e.g., harmony renames them)
-	Init(tools []api.Tool, lastMessage *api.Message) []api.Tool
+	Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool
 	// Add processes streamed content and returns parsed content, thinking, and tool calls
 	// The done flag indicates if this is the last chunk (used for draining accumulators)
 	Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error)
@@ -38,28 +41,48 @@ func ParserForName(name string) Parser {
 	if parser, ok := registry.constructors[name]; ok {
 		return parser()
 	}
+	var p Parser
+
 	switch name {
 	case "qwen3-coder":
-		parser := &Qwen3CoderParser{}
-		return parser
+		p = &Qwen3CoderParser{}
 	case "qwen3-vl-instruct":
-		parser := &Qwen3VLParser{hasThinkingSupport: false}
-		return parser
+		p = &Qwen3VLParser{hasThinkingSupport: false}
 	case "qwen3-vl-thinking":
-		parser := &Qwen3VLParser{hasThinkingSupport: true}
-		return parser
+		p = &Qwen3VLParser{hasThinkingSupport: true}
+	case "ministral":
+		p = &MinistralParser{hasThinkingSupport: false}
 	case "passthrough":
 		return &PassthroughParser{}
 	case "harmony":
 		return harmony.NewHarmonyMessageHandler()
+	case "cogito":
+		return &CogitoParser{}
+	case "deepseek3":
+		return &DeepSeek3Parser{hasThinkingSupport: true}
+	case "olmo3":
+		return &Olmo3Parser{}
+	case "olmo3-think":
+		return &Olmo3ThinkParser{}
+	case "nemotron-3-nano":
+		return &Nemotron3NanoParser{}
+	case "functiongemma":
+		return &FunctionGemmaParser{}
+	case "glm-4.7":
+		return &GLM47Parser{}
+	case "lfm2":
+		return &LFM2Parser{hasThinkingSupport: false}
+	case "lfm2-thinking":
+		return &LFM2Parser{hasThinkingSupport: true}
 	default:
 		return nil
 	}
+	return p
 }
 
 type PassthroughParser struct{}
 
-func (p *PassthroughParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *PassthroughParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	return tools // passthrough doesn't modify tools
 }
 
@@ -73,4 +96,21 @@ func (p *PassthroughParser) HasToolSupport() bool {
 
 func (p *PassthroughParser) HasThinkingSupport() bool {
 	return false
+}
+
+func splitAtTag(sb *strings.Builder, tag string, trimAfter bool) (string, string) {
+	split := strings.SplitN(sb.String(), tag, 2)
+	if len(split) == 1 {
+		sb.Reset()
+		return split[0], ""
+	}
+	before := split[0]
+	before = strings.TrimRightFunc(before, unicode.IsSpace)
+	after := split[1]
+	if trimAfter {
+		after = strings.TrimLeftFunc(after, unicode.IsSpace)
+	}
+	sb.Reset()
+	sb.WriteString(after)
+	return before, after // return events
 }

@@ -22,6 +22,29 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
 type mockRunner struct {
 	llm.LlamaServer
 
@@ -485,16 +508,10 @@ func TestGenerateChat(t *testing.T) {
 				Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
-					}{
+					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -503,7 +520,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -554,17 +571,26 @@ func TestGenerateChat(t *testing.T) {
 			t.Error("expected tool calls, got nil")
 		}
 
+		gotToolCall := resp.Message.ToolCalls[0]
+		if gotToolCall.ID == "" {
+			t.Error("expected tool call ID to be populated")
+		}
+		if !strings.HasPrefix(gotToolCall.ID, "call_") {
+			t.Errorf("expected tool call ID to have call_ prefix, got %q", gotToolCall.ID)
+		}
+
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
-		if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall); diff != "" {
+		expectedToolCall.ID = gotToolCall.ID
+		if diff := cmp.Diff(gotToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -576,16 +602,10 @@ func TestGenerateChat(t *testing.T) {
 				Function: api.ToolFunction{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					Parameters: struct {
-						Type       string                      `json:"type"`
-						Defs       any                         `json:"$defs,omitempty"`
-						Items      any                         `json:"items,omitempty"`
-						Required   []string                    `json:"required"`
-						Properties map[string]api.ToolProperty `json:"properties"`
-					}{
+					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -594,7 +614,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -669,6 +689,17 @@ func TestGenerateChat(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			if len(resp.Message.ToolCalls) > 0 {
+				for _, call := range resp.Message.ToolCalls {
+					if call.ID == "" {
+						t.Fatal("expected streaming tool call to have an ID")
+					}
+					if !strings.HasPrefix(call.ID, "call_") {
+						t.Fatalf("expected streaming tool call ID to have call_ prefix, got %q", call.ID)
+					}
+				}
+			}
+
 			if resp.Done {
 				if len(resp.Message.ToolCalls) != 1 {
 					t.Errorf("expected 1 tool call in final response, got %d", len(resp.Message.ToolCalls))
@@ -680,15 +711,112 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
+				}),
+			},
+		}
+
+		if finalToolCall.ID == "" {
+			t.Fatal("expected final tool call to have an ID")
+		}
+		if !strings.HasPrefix(finalToolCall.ID, "call_") {
+			t.Fatalf("expected final tool call ID to have call_ prefix, got %q", finalToolCall.ID)
+		}
+
+		expectedToolCall.ID = finalToolCall.ID
+		if diff := cmp.Diff(finalToolCall, expectedToolCall, argsComparer); diff != "" {
+			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("messages with tools and logprobs (streaming)", func(t *testing.T) {
+		tools := []api.Tool{
+			{
+				Type: "function",
+				Function: api.ToolFunction{
+					Name: "get_weather",
+					Parameters: api.ToolFunctionParameters{
+						Type: "object",
+						Properties: testPropsMap(map[string]api.ToolProperty{
+							"location": {Type: api.PropertyType{"string"}},
+						}),
+					},
 				},
 			},
 		}
 
-		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
-			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			defer wg.Done()
+
+			// Simulate a response where logprobs are sent while the tool call is being buffered
+			responses := []llm.CompletionResponse{
+				{
+					Content:  `{ "name": "get_weather"`,
+					Done:     false,
+					Logprobs: []llm.Logprob{{}},
+				},
+				{
+					Content:  `,"arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
+					Done:     false,
+					Logprobs: []llm.Logprob{{}},
+				},
+				{
+					Content:    ``,
+					Done:       true,
+					DoneReason: llm.DoneReasonStop,
+					Logprobs:   nil,
+				},
+			}
+
+			for _, resp := range responses {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					fn(resp)
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			return nil
+		}
+
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "Weather?"},
+			},
+			Tools:  tools,
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		decoder := json.NewDecoder(w.Body)
+		var totalLogprobs int
+
+		for {
+			var resp api.ChatResponse
+			if err := decoder.Decode(&resp); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+
+			totalLogprobs += len(resp.Logprobs)
+		}
+
+		expectedLogprobs := 2
+		if totalLogprobs != expectedLogprobs {
+			t.Errorf("expected %d logprobs, got %d", expectedLogprobs, totalLogprobs)
 		}
 	})
 
@@ -1168,6 +1296,355 @@ func TestGenerate(t *testing.T) {
 	})
 }
 
+func TestGenerateLogprobs(t *testing.T) {
+	t.Run("invalid top_logprobs negative", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test",
+			Prompt:      "Hello",
+			TopLogprobs: -1,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid top_logprobs too high", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test",
+			Prompt:      "Hello",
+			TopLogprobs: 21,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("returns logprob bytes when requested", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+
+		mock := &mockRunner{}
+		expectedPrimary := llm.TokenLogprob{
+			Token:   "Hi",
+			Logprob: -0.01,
+		}
+		expectedAlternatives := []llm.TokenLogprob{
+			{
+				Token:   "Hello",
+				Logprob: -0.25,
+			},
+			{
+				Token:   "Hey",
+				Logprob: -0.5,
+			},
+		}
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			fn(llm.CompletionResponse{
+				Content:            "Hi",
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+				Logprobs: []llm.Logprob{
+					{
+						TokenLogprob: expectedPrimary,
+						TopLogprobs:  expectedAlternatives,
+					},
+				},
+			})
+			return nil
+		}
+
+		s := &Server{
+			sched: &Scheduler{
+				pendingReqCh:    make(chan *LlmRequest, 1),
+				finishedReqCh:   make(chan *LlmRequest, 1),
+				expiredCh:       make(chan *runnerRef, 1),
+				unloadedCh:      make(chan any, 1),
+				loaded:          make(map[string]*runnerRef),
+				newServerFn:     newMockServer(mock),
+				getGpuFn:        getGpuFn,
+				getSystemInfoFn: getSystemInfoFn,
+				waitForRecovery: 250 * time.Millisecond,
+				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+					req.successCh <- &runnerRef{llama: mock}
+					return false
+				},
+			},
+		}
+
+		go s.sched.Run(t.Context())
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":          "llama",
+			"llama.block_count":             uint32(1),
+			"llama.context_length":          uint32(8192),
+			"llama.embedding_length":        uint32(4096),
+			"llama.attention.head_count":    uint32(32),
+			"llama.attention.head_count_kv": uint32(8),
+			"tokenizer.ggml.tokens":         []string{""},
+			"tokenizer.ggml.scores":         []float32{0},
+			"tokenizer.ggml.token_type":     []int32{0},
+		}, []*ggml.Tensor{
+			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		})
+
+		if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Model:    "test-logprob-bytes",
+			Files:    map[string]string{"file.gguf": digest},
+			Template: `{{ .Prompt }}`,
+			Stream:   &stream,
+		}); w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		stream := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:       "test-logprob-bytes",
+			Prompt:      "Hi",
+			Stream:      &stream,
+			Logprobs:    true,
+			TopLogprobs: len(expectedAlternatives),
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if len(resp.Logprobs) != 1 {
+			t.Fatalf("expected 1 logprob entry, got %d", len(resp.Logprobs))
+		}
+
+		expectedPrimaryBytes := stringToByteInts(expectedPrimary.Token)
+		expectedAlternativesBytes := make([][]int, len(expectedAlternatives))
+		for i, alternative := range expectedAlternatives {
+			expectedAlternativesBytes[i] = stringToByteInts(alternative.Token)
+		}
+		if diff := cmp.Diff(expectedPrimaryBytes, resp.Logprobs[0].Bytes); diff != "" {
+			t.Fatalf("primary token bytes mismatch (-want +got):\n%s", diff)
+		}
+
+		if len(resp.Logprobs[0].TopLogprobs) != len(expectedAlternatives) {
+			t.Fatalf("expected %d top logprobs, got %d", len(expectedAlternatives), len(resp.Logprobs[0].TopLogprobs))
+		}
+
+		for i, top := range resp.Logprobs[0].TopLogprobs {
+			if diff := cmp.Diff(expectedAlternativesBytes[i], top.Bytes); diff != "" {
+				t.Fatalf("top logprob[%d] bytes mismatch (-want +got):\n%s", i, diff)
+			}
+		}
+	})
+}
+
+func TestChatLogprobs(t *testing.T) {
+	t.Run("invalid top_logprobs negative", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			TopLogprobs: -1,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid top_logprobs too high", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		s := Server{}
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			TopLogprobs: 21,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("returns logprob bytes when requested", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+
+		mock := &mockRunner{}
+		expectedPrimary := llm.TokenLogprob{
+			Token:   "Hi",
+			Logprob: -0.02,
+		}
+		expectedAlternatives := []llm.TokenLogprob{
+			{
+				Token:   "Hello",
+				Logprob: -0.3,
+			},
+			{
+				Token:   "Hey",
+				Logprob: -0.45,
+			},
+		}
+		expectedPrimaryBytes := stringToByteInts(expectedPrimary.Token)
+		expectedAlternativesBytes := make([][]int, len(expectedAlternatives))
+		for i, alternative := range expectedAlternatives {
+			expectedAlternativesBytes[i] = stringToByteInts(alternative.Token)
+		}
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			fn(llm.CompletionResponse{
+				Content:            "Hi",
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+				Logprobs: []llm.Logprob{
+					{
+						TokenLogprob: expectedPrimary,
+						TopLogprobs:  expectedAlternatives,
+					},
+				},
+			})
+			return nil
+		}
+
+		s := &Server{
+			sched: &Scheduler{
+				pendingReqCh:    make(chan *LlmRequest, 1),
+				finishedReqCh:   make(chan *LlmRequest, 1),
+				expiredCh:       make(chan *runnerRef, 1),
+				unloadedCh:      make(chan any, 1),
+				loaded:          make(map[string]*runnerRef),
+				newServerFn:     newMockServer(mock),
+				getGpuFn:        getGpuFn,
+				getSystemInfoFn: getSystemInfoFn,
+				waitForRecovery: 250 * time.Millisecond,
+				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+					req.successCh <- &runnerRef{llama: mock}
+					return false
+				},
+			},
+		}
+
+		go s.sched.Run(t.Context())
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":          "llama",
+			"llama.block_count":             uint32(1),
+			"llama.context_length":          uint32(8192),
+			"llama.embedding_length":        uint32(4096),
+			"llama.attention.head_count":    uint32(32),
+			"llama.attention.head_count_kv": uint32(8),
+			"tokenizer.ggml.tokens":         []string{""},
+			"tokenizer.ggml.scores":         []float32{0},
+			"tokenizer.ggml.token_type":     []int32{0},
+		}, []*ggml.Tensor{
+			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		})
+
+		if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Model: "test-chat-logprob-bytes",
+			Files: map[string]string{"file.gguf": digest},
+			Template: `{{- range .Messages }}{{ .Role }}: {{ .Content }}
+{{ end }}`,
+			Stream: &stream,
+		}); w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		stream := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-chat-logprob-bytes",
+			Messages: []api.Message{
+				{Role: "user", Content: "Say hi"},
+			},
+			Stream:      &stream,
+			Logprobs:    true,
+			TopLogprobs: len(expectedAlternatives),
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if len(resp.Logprobs) != 1 {
+			t.Fatalf("expected 1 logprob entry, got %d", len(resp.Logprobs))
+		}
+
+		if diff := cmp.Diff(expectedPrimaryBytes, resp.Logprobs[0].Bytes); diff != "" {
+			t.Fatalf("primary token bytes mismatch (-want +got):\n%s", diff)
+		}
+
+		if len(resp.Logprobs[0].TopLogprobs) != len(expectedAlternatives) {
+			t.Fatalf("expected %d top logprobs, got %d", len(expectedAlternatives), len(resp.Logprobs[0].TopLogprobs))
+		}
+
+		for i, top := range resp.Logprobs[0].TopLogprobs {
+			if diff := cmp.Diff(expectedAlternativesBytes[i], top.Bytes); diff != "" {
+				t.Fatalf("top logprob[%d] bytes mismatch (-want +got):\n%s", i, diff)
+			}
+		}
+	})
+}
+
 func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1621,6 +2098,98 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if last.DoneReason != "stop" {
 			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
+		}
+	})
+}
+
+func TestGenerateUnload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var loadFnCalled bool
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mockRunner{}),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFnCalled = true
+				req.successCh <- &runnerRef{llama: &mockRunner{}}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("unload with empty prompt and keepalive 0", func(t *testing.T) {
+		loadFnCalled = false
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:     "test",
+			Prompt:    "",
+			KeepAlive: &api.Duration{Duration: 0},
+			Stream:    &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if resp.DoneReason != "unload" {
+			t.Errorf("expected done_reason 'unload', got %q", resp.DoneReason)
+		}
+
+		if !resp.Done {
+			t.Error("expected done to be true")
+		}
+
+		if loadFnCalled {
+			t.Error("expected model NOT to be loaded for unload request, but loadFn was called")
 		}
 	})
 }

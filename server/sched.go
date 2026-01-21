@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/imagegen"
 )
 
 type LlmRequest struct {
@@ -143,6 +144,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
+			logutil.Trace("processing incoming request", "model", pending.model.ModelPath)
 
 			for {
 				var runnerToExpire *runnerRef
@@ -161,6 +163,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						runnerToExpire = runner
 					} else {
 						// Runner is usable, return it
+						logutil.Trace("using existing loaded runner", "model", pending.model.ModelPath)
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
@@ -174,13 +177,16 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					if pending.opts.NumGPU == 0 {
 						gpus = []ml.DeviceInfo{}
 					} else {
+						logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
 						gpus = s.getGpuFn(ctx, runnersSnapshot)
 					}
+					logutil.Trace("refreshing system information", "model", pending.model.ModelPath)
 					systemInfo := s.getSystemInfoFn()
 					if maxRunners <= 0 {
 						// No user specified MaxRunners, so figure out what automatic setting to use for the next load attempt
 						if pending.opts.NumGPU == 0 {
 							// Need to get actual GPU list to set the correct default max models
+							logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
 							g := s.getGpuFn(ctx, runnersSnapshot)
 							maxRunners = uint(defaultModelsPerGPU * max(len(g), 1))
 						} else {
@@ -189,7 +195,16 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
 					}
 
+					// Check for image generation model before attempting GGML load
+					if slices.Contains(pending.model.Config.Capabilities, "image") {
+						if s.loadImageGen(pending) {
+							break
+						}
+						continue
+					}
+
 					// Load model for fitting
+					logutil.Trace("loading model metadata", "model", pending.model.ModelPath)
 					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
 					if err != nil {
 						pending.errCh <- err
@@ -197,6 +212,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Update free memory from currently loaded models
+					logutil.Trace("updating free space", "gpu_count", len(gpus), "model", pending.model.ModelPath)
 					s.updateFreeSpace(gpus)
 
 					if loadedCount == 0 {
@@ -208,7 +224,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 					// More than one loaded model, so we have to see if the
 					// new one fits
-
+					logutil.Trace("loading additional model", "model", pending.model.ModelPath)
 					needEvict := s.loadFn(pending, ggml, systemInfo, gpus, true)
 					if !needEvict {
 						slog.Debug("new model fits with existing models, loading")
@@ -430,6 +446,23 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	s.loadedMu.Unlock()
 
+	systemTotalMemory := systemInfo.TotalMemory
+	systemFreeMemory := systemInfo.FreeMemory
+	systemSwapFreeMemory := systemInfo.FreeSwap
+	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+
+	for _, gpu := range gpus {
+		available := gpu.FreeMemory - envconfig.GpuOverhead() - gpu.MinimumMemory()
+		if gpu.FreeMemory < envconfig.GpuOverhead()+gpu.MinimumMemory() {
+			available = 0
+		}
+		slog.Info("gpu memory", "id", gpu.ID, "library", gpu.Library,
+			"available", format.HumanBytes2(available),
+			"free", format.HumanBytes2(gpu.FreeMemory),
+			"minimum", format.HumanBytes2(gpu.MinimumMemory()),
+			"overhead", format.HumanBytes2(envconfig.GpuOverhead()))
+	}
+
 	gpuIDs, err := llama.Load(req.ctx, systemInfo, gpus, requireFull)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
@@ -517,6 +550,49 @@ iGPUScan:
 	}()
 
 	return false
+}
+
+// loadImageGen loads an image generation model.
+func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
+	// Use model name for imagegen (it resolves manifests by name, not file path)
+	modelName := req.model.ShortName
+	server, err := imagegen.NewServer(modelName)
+	if err != nil {
+		req.errCh <- err
+		return true
+	}
+
+	sessionDuration := envconfig.KeepAlive()
+	if req.sessionDuration != nil {
+		sessionDuration = req.sessionDuration.Duration
+	}
+
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       req.model.ModelPath,
+		llama:           server,
+		Options:         &req.opts,
+		loading:         false,
+		sessionDuration: sessionDuration,
+		totalSize:       server.TotalSize(),
+		vramSize:        server.VRAMSize(),
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[req.model.ModelPath] = runner
+	s.loadedMu.Unlock()
+
+	// Set up expiration timer
+	runner.refMu.Lock()
+	if sessionDuration > 0 {
+		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			s.expiredCh <- runner
+		})
+	}
+	runner.refMu.Unlock()
+
+	req.useLoadedRunner(runner, s.finishedReqCh)
+	return true
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {

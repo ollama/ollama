@@ -42,6 +42,7 @@ import (
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
 	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
+	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd/models"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
@@ -63,8 +64,13 @@ func BackendInit() {
 	C.llama_backend_init()
 }
 
-func EnumerateGPUs() []ml.DeviceID {
-	var ids []ml.DeviceID
+type Devices struct {
+	ml.DeviceID
+	LlamaID uint64
+}
+
+func EnumerateGPUs() []Devices {
+	var ids []Devices
 
 	for i := range C.ggml_backend_dev_count() {
 		device := C.ggml_backend_dev_get(i)
@@ -74,9 +80,12 @@ func EnumerateGPUs() []ml.DeviceID {
 			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			var props C.struct_ggml_backend_dev_props
 			C.ggml_backend_dev_get_props(device, &props)
-			ids = append(ids, ml.DeviceID{
-				ID:      C.GoString(props.id),
-				Library: C.GoString(props.library),
+			ids = append(ids, Devices{
+				DeviceID: ml.DeviceID{
+					ID:      C.GoString(props.id),
+					Library: C.GoString(props.library),
+				},
+				LlamaID: uint64(i),
 			})
 		}
 	}
@@ -110,18 +119,22 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, kvCacheType string) ContextParams {
+func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention ml.FlashAttentionType, kvCacheType string) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
-	params.n_batch = C.uint(batchSize)
+	params.n_batch = C.uint(batchSize * numSeqMax)
+	params.n_ubatch = C.uint(batchSize)
 	params.n_seq_max = C.uint(numSeqMax)
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
-	if flashAttention {
-		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
-	} else {
-		params.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_DISABLED
+	switch flashAttention {
+	case ml.FlashAttentionEnabled:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_ENABLED)
+	case ml.FlashAttentionDisabled:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_DISABLED)
+	case ml.FlashAttentionAuto:
+		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_AUTO)
 	}
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
@@ -217,7 +230,21 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	return embeddings
 }
 
+// GetLogitsIth gets the logits for the ith token
+func (c *Context) GetLogitsIth(i int) []float32 {
+	logits := unsafe.Pointer(C.llama_get_logits_ith(c.c, C.int32_t(i)))
+	if logits == nil {
+		return nil
+	}
+
+	vocabSize := c.Model().NumVocab()
+	result := make([]float32, vocabSize)
+	_ = copy(result, unsafe.Slice((*float32)(logits), vocabSize))
+	return result
+}
+
 type ModelParams struct {
+	Devices      []uint64
 	NumGpuLayers int
 	MainGpu      int
 	UseMmap      bool
@@ -240,6 +267,21 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams.main_gpu = C.int32_t(params.MainGpu)
 	cparams.use_mmap = C.bool(params.UseMmap)
 	cparams.vocab_only = C.bool(params.VocabOnly)
+
+	var devices []C.ggml_backend_dev_t
+	for _, llamaID := range params.Devices {
+		devices = append(devices, C.ggml_backend_dev_get(C.size_t(llamaID)))
+	}
+	if len(devices) > 0 {
+		devices = append(devices, C.ggml_backend_dev_t(C.NULL))
+		devicesData := &devices[0]
+
+		var devicesPin runtime.Pinner
+		devicesPin.Pin(devicesData)
+		defer devicesPin.Unpin()
+
+		cparams.devices = devicesData
+	}
 
 	if len(params.TensorSplit) > 0 {
 		tensorSplitData := &params.TensorSplit[0]

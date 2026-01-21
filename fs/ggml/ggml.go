@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/ml"
 )
 
 type GGML struct {
@@ -238,17 +241,36 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	return val.values
 }
 
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"bert",
+		"deepseek2",
+		"deepseekocr",
 		"gemma3",
 		"gemma3n",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nomic-bert",
+		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
+		"glm4moelite",
+		"lfm2",
 	}, kv.Architecture())
 }
 
@@ -547,7 +569,7 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention bool) (kv []uint64, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention ml.FlashAttentionType) (kv []uint64, partialOffload, fullOffload uint64) {
 	context *= uint64(numParallel)
 
 	embedding := f.KV().EmbeddingLength()
@@ -788,80 +810,13 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		}
 
 		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
-		if useFlashAttention {
+		if useFlashAttention == ml.FlashAttentionEnabled {
 			// rough estimate of graph size with flash attention on
 			partialOffload = (4*uint64(numParallel) + context>>10 + 110) * format.MebiByte
 		}
 	}
 
 	return
-}
-
-func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
-	if llm.KV().Uint("vision.block_count") == 0 {
-		return
-	}
-
-	for name, layer := range llm.Tensors().GroupLayers() {
-		if name == "v" || strings.HasPrefix(name, "v.") {
-			for _, tensor := range layer {
-				weights += tensor.Size()
-			}
-		}
-	}
-
-	imageSize := uint64(llm.KV().Uint("vision.image_size"))
-	patchSize := uint64(llm.KV().Uint("vision.patch_size"))
-	if patchSize == 0 {
-		slog.Warn("unknown patch size for vision model")
-		return
-	}
-
-	numChannels := uint64(llm.KV().Uint("vision.num_channels"))
-
-	numPatches := (imageSize / patchSize) * (imageSize / patchSize)
-	if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-		numPatches++
-	}
-
-	headCount := uint64(llm.KV().Uint("vision.attention.head_count"))
-	embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
-
-	switch llm.KV().Architecture() {
-	case "mllama":
-		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
-
-		maxNumTiles := uint64(llm.KV().Uint("vision.max_num_tiles"))
-
-		graphSize = 4 * (8 +
-			imageSize*imageSize*numChannels*maxNumTiles +
-			embeddingLength*numPatches*maxNumTiles +
-			9*embeddingLength*numPaddedPatches*maxNumTiles +
-			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
-	case "gemma3", "mistral3":
-		graphSize = 4 * (imageSize*imageSize*numChannels +
-			embeddingLength*patchSize +
-			numPatches*numPatches*headCount)
-	case "qwen25vl":
-		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
-
-		numPatches := maxPixels / (patchSize * patchSize)
-
-		graphSize = 4 * (maxPixels*numChannels + // Original image storage
-			// Normalized pixels
-			maxPixels*numChannels +
-			// Patches storage (numPatches * channels * patchSize^2)
-			numPatches*numChannels*patchSize*patchSize +
-			// Self-attention calculations
-			numPatches*numPatches*headCount +
-			// Additional buffer for processing
-			embeddingLength*numPatches)
-	case "llama4":
-		// vision graph is computed independently in the same schedule
-		// and is negligible compared to the worst case text graph
-	}
-
-	return weights, graphSize
 }
 
 // SupportsKVCacheType checks if the requested cache type is supported
@@ -871,6 +826,14 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	}
 
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
+}
+
+// KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
+func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
@@ -893,8 +856,13 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"bert",
 		"gemma3",
+		"glm4moelite",
 		"gptoss", "gpt-oss",
+		"lfm2",
+		"mistral3",
+		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))

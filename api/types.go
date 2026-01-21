@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"math"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -117,6 +119,28 @@ type GenerateRequest struct {
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
+
+	// Logprobs specifies whether to return log probabilities of the output tokens.
+	Logprobs bool `json:"logprobs,omitempty"`
+
+	// TopLogprobs is the number of most likely tokens to return at each token position,
+	// each with an associated log probability. Only applies when Logprobs is true.
+	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
+	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// Experimental: Image generation fields (may change or be removed)
+
+	// Width is the width of the generated image in pixels.
+	// Only used for image generation models.
+	Width int32 `json:"width,omitempty"`
+
+	// Height is the height of the generated image in pixels.
+	// Only used for image generation models.
+	Height int32 `json:"height,omitempty"`
+
+	// Steps is the number of diffusion steps for image generation.
+	// Only used for image generation models.
+	Steps int32 `json:"steps,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -159,6 +183,14 @@ type ChatRequest struct {
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
+
+	// Logprobs specifies whether to return log probabilities of the output tokens.
+	Logprobs bool `json:"logprobs,omitempty"`
+
+	// TopLogprobs is the number of most likely tokens to return at each token position,
+	// each with an associated log probability. Only applies when Logprobs is true.
+	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
+	TopLogprobs int `json:"top_logprobs,omitempty"`
 }
 
 type Tools []Tool
@@ -181,10 +213,11 @@ type Message struct {
 	Content string `json:"content"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking  string      `json:"thinking,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
-	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
-	ToolName  string      `json:"tool_name,omitempty"`
+	Thinking   string      `json:"thinking,omitempty"`
+	Images     []ImageData `json:"images,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName   string      `json:"tool_name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -200,6 +233,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 }
 
 type ToolCall struct {
+	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
@@ -209,11 +243,77 @@ type ToolCallFunction struct {
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
 
-type ToolCallFunctionArguments map[string]any
+// ToolCallFunctionArguments holds tool call arguments in insertion order.
+type ToolCallFunctionArguments struct {
+	om *orderedmap.Map[string, any]
+}
+
+// NewToolCallFunctionArguments creates a new empty ToolCallFunctionArguments.
+func NewToolCallFunctionArguments() ToolCallFunctionArguments {
+	return ToolCallFunctionArguments{om: orderedmap.New[string, any]()}
+}
+
+// Get retrieves a value by key.
+func (t *ToolCallFunctionArguments) Get(key string) (any, bool) {
+	if t == nil || t.om == nil {
+		return nil, false
+	}
+	return t.om.Get(key)
+}
+
+// Set sets a key-value pair, preserving insertion order.
+func (t *ToolCallFunctionArguments) Set(key string, value any) {
+	if t == nil {
+		return
+	}
+	if t.om == nil {
+		t.om = orderedmap.New[string, any]()
+	}
+	t.om.Set(key, value)
+}
+
+// Len returns the number of arguments.
+func (t *ToolCallFunctionArguments) Len() int {
+	if t == nil || t.om == nil {
+		return 0
+	}
+	return t.om.Len()
+}
+
+// All returns an iterator over all key-value pairs in insertion order.
+func (t *ToolCallFunctionArguments) All() iter.Seq2[string, any] {
+	if t == nil || t.om == nil {
+		return func(yield func(string, any) bool) {}
+	}
+	return t.om.All()
+}
+
+// ToMap returns a regular map (order not preserved).
+func (t *ToolCallFunctionArguments) ToMap() map[string]any {
+	if t == nil || t.om == nil {
+		return nil
+	}
+	return t.om.ToMap()
+}
 
 func (t *ToolCallFunctionArguments) String() string {
-	bts, _ := json.Marshal(t)
+	if t == nil || t.om == nil {
+		return "{}"
+	}
+	bts, _ := json.Marshal(t.om)
 	return string(bts)
+}
+
+func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
+	t.om = orderedmap.New[string, any]()
+	return json.Unmarshal(data, t.om)
+}
+
+func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
+	if t.om == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(t.om)
 }
 
 type Tool struct {
@@ -264,12 +364,78 @@ func (pt PropertyType) String() string {
 	return fmt.Sprintf("%v", []string(pt))
 }
 
+// ToolPropertiesMap holds tool properties in insertion order.
+type ToolPropertiesMap struct {
+	om *orderedmap.Map[string, ToolProperty]
+}
+
+// NewToolPropertiesMap creates a new empty ToolPropertiesMap.
+func NewToolPropertiesMap() *ToolPropertiesMap {
+	return &ToolPropertiesMap{om: orderedmap.New[string, ToolProperty]()}
+}
+
+// Get retrieves a property by name.
+func (t *ToolPropertiesMap) Get(key string) (ToolProperty, bool) {
+	if t == nil || t.om == nil {
+		return ToolProperty{}, false
+	}
+	return t.om.Get(key)
+}
+
+// Set sets a property, preserving insertion order.
+func (t *ToolPropertiesMap) Set(key string, value ToolProperty) {
+	if t == nil {
+		return
+	}
+	if t.om == nil {
+		t.om = orderedmap.New[string, ToolProperty]()
+	}
+	t.om.Set(key, value)
+}
+
+// Len returns the number of properties.
+func (t *ToolPropertiesMap) Len() int {
+	if t == nil || t.om == nil {
+		return 0
+	}
+	return t.om.Len()
+}
+
+// All returns an iterator over all properties in insertion order.
+func (t *ToolPropertiesMap) All() iter.Seq2[string, ToolProperty] {
+	if t == nil || t.om == nil {
+		return func(yield func(string, ToolProperty) bool) {}
+	}
+	return t.om.All()
+}
+
+// ToMap returns a regular map (order not preserved).
+func (t *ToolPropertiesMap) ToMap() map[string]ToolProperty {
+	if t == nil || t.om == nil {
+		return nil
+	}
+	return t.om.ToMap()
+}
+
+func (t ToolPropertiesMap) MarshalJSON() ([]byte, error) {
+	if t.om == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(t.om)
+}
+
+func (t *ToolPropertiesMap) UnmarshalJSON(data []byte) error {
+	t.om = orderedmap.New[string, ToolProperty]()
+	return json.Unmarshal(data, t.om)
+}
+
 type ToolProperty struct {
-	AnyOf       []ToolProperty `json:"anyOf,omitempty"`
-	Type        PropertyType   `json:"type,omitempty"`
-	Items       any            `json:"items,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Enum        []any          `json:"enum,omitempty"`
+	AnyOf       []ToolProperty     `json:"anyOf,omitempty"`
+	Type        PropertyType       `json:"type,omitempty"`
+	Items       any                `json:"items,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Enum        []any              `json:"enum,omitempty"`
+	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
@@ -318,11 +484,11 @@ func mapToTypeScriptType(jsonType string) string {
 }
 
 type ToolFunctionParameters struct {
-	Type       string                  `json:"type"`
-	Defs       any                     `json:"$defs,omitempty"`
-	Items      any                     `json:"items,omitempty"`
-	Required   []string                `json:"required"`
-	Properties map[string]ToolProperty `json:"properties"`
+	Type       string             `json:"type"`
+	Defs       any                `json:"$defs,omitempty"`
+	Items      any                `json:"items,omitempty"`
+	Required   []string           `json:"required,omitempty"`
+	Properties *ToolPropertiesMap `json:"properties"`
 }
 
 func (t *ToolFunctionParameters) String() string {
@@ -339,6 +505,27 @@ type ToolFunction struct {
 func (t *ToolFunction) String() string {
 	bts, _ := json.Marshal(t)
 	return string(bts)
+}
+
+// TokenLogprob represents log probability information for a single token alternative.
+type TokenLogprob struct {
+	// Token is the text representation of the token.
+	Token string `json:"token"`
+
+	// Logprob is the log probability of this token.
+	Logprob float64 `json:"logprob"`
+
+	// Bytes contains the raw byte representation of the token
+	Bytes []int `json:"bytes,omitempty"`
+}
+
+// Logprob contains log probability information for a generated token.
+type Logprob struct {
+	TokenLogprob
+
+	// TopLogprobs contains the most likely tokens and their log probabilities
+	// at this position, if requested via TopLogprobs parameter.
+	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
@@ -366,6 +553,10 @@ type ChatResponse struct {
 	DoneReason string `json:"done_reason,omitempty"`
 
 	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
+
+	// Logprobs contains log probability information for the generated tokens,
+	// if requested via the Logprobs parameter.
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 
 	Metrics
 }
@@ -510,6 +701,9 @@ type CreateRequest struct {
 	Renderer string `json:"renderer,omitempty"`
 	Parser   string `json:"parser,omitempty"`
 
+	// Requires is the minimum version of Ollama required by the model.
+	Requires string `json:"requires,omitempty"`
+
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
 
@@ -555,11 +749,12 @@ type ShowResponse struct {
 	Messages      []Message          `json:"messages,omitempty"`
 	RemoteModel   string             `json:"remote_model,omitempty"`
 	RemoteHost    string             `json:"remote_host,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info,omitempty"`
+	ModelInfo     map[string]any     `json:"model_info"`
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
+	Requires      string             `json:"requires,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -675,6 +870,24 @@ type GenerateResponse struct {
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 
 	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
+
+	// Logprobs contains log probability information for the generated tokens,
+	// if requested via the Logprobs parameter.
+	Logprobs []Logprob `json:"logprobs,omitempty"`
+
+	// Experimental: Image generation fields (may change or be removed)
+
+	// Image contains a base64-encoded generated image.
+	// Only present for image generation models.
+	Image string `json:"image,omitempty"`
+
+	// Completed is the number of completed steps in image generation.
+	// Only present for image generation models during streaming.
+	Completed int64 `json:"completed,omitempty"`
+
+	// Total is the total number of steps for image generation.
+	// Only present for image generation models during streaming.
+	Total int64 `json:"total,omitempty"`
 }
 
 // ModelDetails provides details about a model.

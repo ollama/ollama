@@ -134,15 +134,15 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
             const uint ib = idx / 128;                         // 2 values per idx
             const uint iqs = idx % 128;                        // 0..127
 
-            const uint qsi = (iqs / 64) * 32 + (iqs % 16) * 2; // 0,2,4..30
+            const uint qsi = (iqs / 64) * 16 + (iqs % 16);     // 0..15
             const uint scalesi = iqs / 8;                      // 0..15
             const uint qsshift = ((iqs % 64) / 16) * 2;        // 0,2,4,6
 
-            const uvec2 qs = uvec2(data_a[ib].qs[qsi], data_a[ib].qs[qsi + 1]);
+            const uvec2 qs = uvec2(unpack8(data_a_packed16[ib].qs[qsi]));
             const uint scales = data_a[ib].scales[scalesi];
-            const vec2 d = vec2(data_a[ib].d);
+            const vec2 dm = vec2(data_a[ib].dm);
 
-            const vec2 v = d.x * float(scales & 0xF) * vec2((qs >> qsshift) & 3) - d.y * float(scales >> 4);
+            const vec2 v = dm.x * float(scales & 0xF) * vec2((qs >> qsshift) & 3) - dm.y * float(scales >> 4);
 
             buf_a[buf_idx] = FLOAT_TYPE_VEC2(v.xy);
 #elif defined(DATA_A_Q3_K)
@@ -179,7 +179,7 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
             const uint is = 2 * n + b;                 // 0..7
             const uint qsi = n * 32 + (iqs % 16) * 2;  // 0,2,4..126
 
-            const vec2 loadd = vec2(data_a[ib].d);
+            const vec2 loadd = vec2(data_a[ib].dm);
 
             const uint scidx0 = (is < 4) ? is : (is + 4);
             const uint scidx1 = (is < 4) ? is : (is - 4);
@@ -215,7 +215,7 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
 
             const uint8_t hm = uint8_t(1 << (iqs / 16));
 
-            const vec2 loadd = vec2(data_a[ib].d);
+            const vec2 loadd = vec2(data_a[ib].dm);
 
             const uint scidx0 = (is < 4) ? is : (is + 4);
             const uint scidx1 = (is < 4) ? is : (is - 4);
@@ -244,17 +244,20 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
             const uint iqs = idx % 128;                 // 0..127
 
             const uint n = iqs / 64;                    // 0,1
-            const uint b = (iqs % 64) / 32;             // 0,1
+            const uint b = ((iqs % 64) / 32) * 4;       // 0,4
             const uint is_b = (iqs % 16) / 8;           // 0,1
             const uint qhshift = ((iqs % 64) / 16) * 2; // 0,2,4,6
             const uint is = 8 * n + qhshift + is_b;     // 0..15
-            const uint qsi = n * 64 + (iqs % 32) * 2;   // 0,2,4..126
-            const uint qhi = n * 32 + (iqs % 16) * 2;   // 0,2,4..62
+            const uint qsi = n * 32 + (iqs % 32);       // 0..63
+            const uint qhi = n * 16 + (iqs % 16);       // 0..31
 
             const float dscale = float(data_a[ib].d) * float(data_a[ib].scales[is]);
 
-            buf_a[buf_idx] = FLOAT_TYPE_VEC2(dscale * float(int8_t(((data_a[ib].ql[qsi    ] >> (b * 4)) & 0xF) | (((data_a[ib].qh[qhi    ] >> qhshift) & 3) << 4)) - 32),
-                                             dscale * float(int8_t(((data_a[ib].ql[qsi + 1] >> (b * 4)) & 0xF) | (((data_a[ib].qh[qhi + 1] >> qhshift) & 3) << 4)) - 32));
+            const uint ql = (uint(data_a_packed16[ib].ql[qsi]) >> b) & 0x0F0F;
+            const uint qh = (uint(data_a_packed16[ib].qh[qhi]) >> qhshift) & 0x0303;
+            const vec2 q = (vec2(unpack8(ql | (qh << 4)).xy) - 32) * dscale;
+
+            buf_a[buf_idx] = FLOAT_TYPE_VEC2(q.x, q.y);
 #elif defined(DATA_A_IQ1_S)
             const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
             const uint buf_idx = col * SHMEM_STRIDE + row * LOAD_VEC_A / 2;
@@ -468,7 +471,7 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
             const uint ib = idx / 8;
             const uint iqs = (idx & 0x07) * 2;
 
-            const float d = e8m0_to_fp32(data_a[ib].e);
+            const float d = e8m0_to_fp32(data_a[ib].e) * 0.5;
             const uint vui = uint(data_a[ib].qs[iqs]);
             const uint vui2 = uint(data_a[ib].qs[iqs+1]);
 

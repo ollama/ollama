@@ -26,9 +26,9 @@ void main() {
             const uint d_offset = get_doffset() + i10*p.nb21 + i11*p.nb22 + i12*p.nb23;
 
 #if defined(DATA_A_BF16)
-            FLOAT_TYPE v = FLOAT_TYPE(bf16_to_fp32(data_a[a_offset + i00]));
+            TEMP_TYPE v = TEMP_TYPE(bf16_to_fp32(data_a[a_offset + i00]));
 #else
-            FLOAT_TYPE v = FLOAT_TYPE(data_a[a_offset + i00]);
+            TEMP_TYPE v = TEMP_TYPE(data_a[a_offset + i00]);
 #endif
 #ifndef OPTIMIZATION_ERROR_WORKAROUND
             data_d[d_offset + i00] = D_TYPE(v);

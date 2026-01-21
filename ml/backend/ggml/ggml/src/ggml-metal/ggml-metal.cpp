@@ -199,6 +199,15 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
                 res += ggml_metal_op_flash_attn_ext_extra_blk(tensor);
                 res += ggml_metal_op_flash_attn_ext_extra_tmp(tensor);
             } break;
+        case GGML_OP_CUMSUM:
+        case GGML_OP_ARGSORT:
+            {
+                res *= 2;
+            } break;
+        case GGML_OP_TOP_K:
+            {
+                res = 2*sizeof(int32_t)*ggml_nelements(tensor->src[0]);
+            } break;
         default:
             break;
     }
@@ -410,10 +419,12 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
     GGML_UNUSED(dst);
 }
 
-static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     ggml_metal_t ctx = (ggml_metal_t)backend->context;
 
     return ggml_metal_graph_compute(ctx, cgraph);
+
+    GGML_UNUSED(batch_size);
 }
 
 static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {

@@ -37,7 +37,7 @@ type gptossModel struct {
 
 var _ ModelConverter = (*gptossModel)(nil)
 
-func (m *gptossModel) KV(t *Tokenizer) ggml.KV {
+func (m *gptossModel) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "gptoss"
 	kv["general.file_type"] = uint32(4)
@@ -110,9 +110,12 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 
 	for name, mxfp4 := range mxfp4s {
 		dims := mxfp4.blocks.Shape()
+		if !strings.HasSuffix(name, ".weight") {
+			name = name + ".weight"
+		}
 		if strings.Contains(name, "ffn_down_exps") {
 			out = append(out, &ggml.Tensor{
-				Name:     name + ".weight",
+				Name:     name,
 				Kind:     uint32(ggml.TensorTypeMXFP4),
 				Shape:    []uint64{dims[0], dims[1], dims[2] * dims[3] * 2},
 				WriterTo: mxfp4,
@@ -121,12 +124,12 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 			// gate_up_exps is interleaved, need to split into gate_exps and up_exps
 			// e.g. gate_exps, up_exps = gate_up_exps[:, 0::2, ...], gate_up_exps[:, 1::2, ...]
 			out = append(out, &ggml.Tensor{
-				Name:     strings.Replace(name, "gate_up", "gate", 1) + ".weight",
+				Name:     strings.Replace(name, "gate_up", "gate", 1),
 				Kind:     uint32(ggml.TensorTypeMXFP4),
 				Shape:    []uint64{dims[0], dims[1] / 2, dims[2] * dims[3] * 2},
 				WriterTo: mxfp4.slice(1, 0, int(dims[1]), 2),
 			}, &ggml.Tensor{
-				Name:     strings.Replace(name, "gate_up", "up", 1) + ".weight",
+				Name:     strings.Replace(name, "gate_up", "up", 1),
 				Kind:     uint32(ggml.TensorTypeMXFP4),
 				Shape:    []uint64{dims[0], dims[1] / 2, dims[2] * dims[3] * 2},
 				WriterTo: mxfp4.slice(1, 1, int(dims[1]), 2),

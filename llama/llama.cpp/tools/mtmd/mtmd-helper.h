@@ -20,6 +20,11 @@ extern "C" {
 // BREAKING CHANGES are expected.
 //
 
+// Set callback for all future logging events.
+// If this is not called, or NULL is supplied, everything is output on stderr.
+// Note: this also call mtmd_log_set() internally
+MTMD_API void mtmd_helper_log_set(ggml_log_callback log_callback, void * user_data);
+
 // helper function to construct a mtmd_bitmap from a file
 // it calls mtmd_helper_bitmap_init_from_buf() internally
 // returns nullptr on failure

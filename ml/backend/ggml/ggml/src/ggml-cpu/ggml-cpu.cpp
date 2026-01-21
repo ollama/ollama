@@ -164,7 +164,7 @@ static enum ggml_status ggml_backend_cpu_graph_plan_compute(ggml_backend_t backe
     GGML_UNUSED(backend);
 }
 
-static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
     struct ggml_backend_cpu_context * cpu_ctx = (struct ggml_backend_cpu_context *)backend->context;
 
     struct ggml_cplan cplan = ggml_graph_plan(cgraph, cpu_ctx->n_threads, cpu_ctx->threadpool);
@@ -184,6 +184,8 @@ static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, s
     cplan.abort_callback_data = cpu_ctx->abort_callback_data;
 
     return ggml_graph_compute(cgraph, &cplan);
+
+    GGML_UNUSED(batch_size);
 }
 
 static const struct ggml_backend_i ggml_backend_cpu_i = {
@@ -582,6 +584,10 @@ static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t r
         }
         if (ggml_cpu_has_riscv_v()) {
             features.push_back({ "RISCV_V", "1" });
+        }
+        if (ggml_cpu_get_rvv_vlen() > 0) {
+            static std::string rvv_vlen = std::to_string(ggml_cpu_get_rvv_vlen());
+            features.push_back({ "RVV_VLEN", rvv_vlen.c_str() });
         }
         if (ggml_cpu_has_vsx()) {
             features.push_back({ "VSX", "1" });

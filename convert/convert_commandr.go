@@ -24,7 +24,7 @@ type commandrModel struct {
 
 var _ ModelConverter = (*commandrModel)(nil)
 
-func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
+func (p *commandrModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "command-r"
 	kv["general.name"] = "command-r"

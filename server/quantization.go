@@ -175,7 +175,6 @@ func quantize(in, out *os.File, orig *fsggml.GGML, newFileType fsggml.FileType, 
 	origTensors := orig.Tensors().Items()
 	outputTensors := make([]*fsggml.Tensor, len(origTensors))
 	for i, tensor := range origTensors {
-		tensor := tensor
 		newType := newType(tensor, kv, qs, newFileType)
 		newTensor := &fsggml.Tensor{
 			Name:  tensor.Name,
@@ -199,8 +198,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")
 
-	// don't quantize vision stuff
-	quantize = quantize && (!strings.Contains(name, "v.") || strings.Contains(name, "_v."))
+	// don't quantize vision encoder tensors (named with "v." prefix)
+	quantize = quantize && !strings.HasPrefix(name, "v.")
 	quantize = quantize && !strings.Contains(name, "mm.")
 
 	// quantize only 2D and 3D tensors (experts)
@@ -219,6 +218,9 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	// do not quantize Mamba's small yet 2D weights
 	// NOTE: can't use LLM_TN here because the layer number is not known
 	quantize = quantize && !strings.Contains(name, "ssm_conv1d.weight")
+
+	// do not quantize LFM2's shortconv kernel weights
+	quantize = quantize && !strings.Contains(name, "shortconv.conv.weight")
 
 	// do not quantize RWKV's time_mix_first tensors
 	quantize = quantize && !strings.Contains(name, "time_mix_first.weight")

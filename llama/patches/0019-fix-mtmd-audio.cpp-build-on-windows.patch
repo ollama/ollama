@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Wed, 6 Aug 2025 12:35:29 -0700
+Subject: [PATCH] fix mtmd-audio.cpp build on windows
+
+---
+ tools/mtmd/mtmd-audio.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/mtmd/mtmd-audio.cpp b/tools/mtmd/mtmd-audio.cpp
+index f68829a61..2024d3d37 100644
+--- a/tools/mtmd/mtmd-audio.cpp
++++ b/tools/mtmd/mtmd-audio.cpp
+@@ -1,6 +1,6 @@
++#define _USE_MATH_DEFINES // for M_PI
+ #include "mtmd-audio.h"
+ 
+-#define _USE_MATH_DEFINES // for M_PI
+ #include <cmath>
+ #include <cstdint>
+ #include <cstring>
