@@ -601,7 +601,7 @@ func selectApp() (string, error) {
 	return Select("Select app:", items)
 }
 
-func selectModels(ctx context.Context, appName string) ([]string, error) {
+func selectModels(ctx context.Context, appName, currentModel string) ([]string, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, err
@@ -635,13 +635,45 @@ func selectModels(ctx context.Context, appName string) ([]string, error) {
 		preCheckedSet[name] = true
 	}
 
+	// Resolve currentModel to full name from list (e.g., "llama3.2" -> "llama3.2:latest")
+	if currentModel != "" {
+		for _, item := range items {
+			if item.Name == currentModel || strings.HasPrefix(item.Name, currentModel+":") {
+				currentModel = item.Name
+				break
+			}
+		}
+	}
+
+	// If currentModel is already configured, move it to front of preChecked
+	if currentModel != "" && preCheckedSet[currentModel] {
+		newPreChecked := []string{currentModel}
+		for _, m := range preChecked {
+			if m != currentModel {
+				newPreChecked = append(newPreChecked, m)
+			}
+		}
+		preChecked = newPreChecked
+	}
+
 	sort.Slice(items, func(i, j int) bool {
-		iName, jName := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
-		iChecked, jChecked := preCheckedSet[items[i].Name], preCheckedSet[items[j].Name]
+		iName, jName := items[i].Name, items[j].Name
+		iChecked, jChecked := preCheckedSet[iName], preCheckedSet[jName]
+		iCurrent, jCurrent := iName == currentModel, jName == currentModel
+
+		// Current model comes first
+		if iCurrent != jCurrent {
+			if iChecked || jChecked {
+				return iCurrent && iChecked
+			}
+			return iCurrent
+		}
+		// Pre-checked models come before unchecked
 		if iChecked != jChecked {
 			return iChecked
 		}
-		return iName < jName
+		// Alphabetical within groups
+		return strings.ToLower(iName) < strings.ToLower(jName)
 	})
 
 	app, _ := GetApp(appName)
@@ -720,11 +752,13 @@ func hasLocalModel(models []string) bool {
 	return false
 }
 
-func printModelsAdded(appName string, models []string) {
-	if len(models) == 1 {
-		fmt.Fprintf(os.Stderr, "Added %s to %s\n", models[0], appName)
-	} else {
-		fmt.Fprintf(os.Stderr, "Added %d models to %s (default: %s)\n", len(models), appName, models[0])
+func printModelsAdded(app *AppConfig, models []string) {
+	if app.Setup != nil {
+		if len(models) == 1 {
+			fmt.Fprintf(os.Stderr, "Added %s to %s\n", models[0], app.DisplayName)
+		} else {
+			fmt.Fprintf(os.Stderr, "Added %d models to %s (default: %s)\n", len(models), app.DisplayName, models[0])
+		}
 	}
 
 	if hasLocalModel(models) {
@@ -863,7 +897,7 @@ Examples:
 				}
 			} else {
 				var err error
-				models, err = selectModels(cmd.Context(), appName)
+				models, err = selectModels(cmd.Context(), appName, "")
 				if cancelled, err := handleCancelled(err); cancelled {
 					return nil
 				} else if err != nil {
@@ -896,7 +930,7 @@ Examples:
 				}
 			}
 
-			printModelsAdded(appName, models)
+			printModelsAdded(app, models)
 
 			if launchFlag {
 				return runInApp(appName, models[0])

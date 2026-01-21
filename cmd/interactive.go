@@ -37,7 +37,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
-		fmt.Fprintln(os.Stderr, "  /config         Configure an external app to use Ollama")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -461,71 +460,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
-		case strings.HasPrefix(line, "/config"):
-			args := strings.Fields(line)
-			var appName string
-			if len(args) > 1 {
-				appName = args[1]
-			} else {
-				var err error
-				appName, err = selectApp()
-				if cancelled, _ := handleCancelled(err); cancelled {
-					continue
-				} else if err != nil {
-					fmt.Printf("error: %v\n", err)
-					continue
-				}
-			}
-
-			app, ok := GetApp(appName)
-			if !ok {
-				fmt.Printf("Unknown app: %s\n", appName)
-				continue
-			}
-
-			models, err := selectModels(cmd.Context(), appName)
-			if cancelled, _ := handleCancelled(err); cancelled {
-				continue
-			} else if err != nil {
-				fmt.Printf("error: %v\n", err)
-				continue
-			}
-
-			if app.Setup != nil {
-				paths := getExistingConfigPaths(appName)
-				if len(paths) > 0 {
-					fmt.Fprintf(os.Stderr, "\nWarning: This will modify your %s configuration:\n", app.DisplayName)
-					for _, p := range paths {
-						fmt.Fprintf(os.Stderr, "  %s\n", p)
-					}
-					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", getBackupDir())
-
-					if ok, _ := confirmPrompt("Proceed?"); !ok {
-						continue
-					}
-				}
-			}
-
-			if err := SaveIntegration(appName, models); err != nil {
-				fmt.Printf("error: %v\n", err)
-				continue
-			}
-
-			if app.Setup != nil {
-				if err := app.Setup(models); err != nil {
-					fmt.Printf("error: %v\n", err)
-					continue
-				}
-			}
-
-			printModelsAdded(appName, models)
-
-			if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", app.DisplayName)); launch {
-				if err := runInApp(appName, models[0]); err != nil {
-					fmt.Printf("error: %v\n", err)
-				}
-			}
-			continue
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			isFile := false
