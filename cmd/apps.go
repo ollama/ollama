@@ -629,7 +629,7 @@ func runInApp(appName, modelName string) error {
 		proc.Env = append(proc.Env, fmt.Sprintf("%s=%s", env.Name, env.Value))
 	}
 
-	fmt.Fprintf(os.Stderr, "Launching %s with %s...\n", app.DisplayName, modelName)
+	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", app.DisplayName, modelName)
 	return proc.Run()
 }
 
@@ -641,10 +641,6 @@ func handleCancelled(err error) (cancelled bool, origErr error) {
 		return true, nil
 	}
 	return false, err
-}
-
-func clearScreen() {
-	fmt.Fprint(os.Stderr, "\033[2J\033[H")
 }
 
 // getExistingConfigPaths returns config paths that exist on disk for the given app.
@@ -708,7 +704,6 @@ Examples:
 				} else if err != nil {
 					return err
 				}
-				clearScreen()
 			}
 
 			app, ok := GetApp(appName)
@@ -742,7 +737,6 @@ Examples:
 				} else if err != nil {
 					return err
 				}
-				clearScreen()
 			}
 
 			if app.Setup != nil {
@@ -757,7 +751,6 @@ Examples:
 					if ok, _ := confirmPrompt("Proceed?"); !ok {
 						return nil
 					}
-					clearScreen()
 				}
 			}
 
@@ -777,7 +770,7 @@ Examples:
 				return runInApp(appName, models[0])
 			}
 
-			if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", app.DisplayName)); launch {
+			if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", app.DisplayName)); launch {
 				return runInApp(appName, models[0])
 			}
 
