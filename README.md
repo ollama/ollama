@@ -322,6 +322,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Agentic Signal](https://github.com/code-forge-temple/agentic-signal) (Visual AI workflow automation platform with local Ollama integration)
 - [Onyx](https://github.com/onyx-dot-app/onyx)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
