@@ -12,9 +12,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-var (
-	ErrInvalidDigestFormat = errors.New("invalid digest format")
-)
+var ErrInvalidDigestFormat = errors.New("invalid digest format")
 
 func GetManifestPath() (string, error) {
 	path := filepath.Join(envconfig.Models(), "manifests")
