@@ -21,14 +21,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-type MultilineState int
-
-const (
-	MultilineNone MultilineState = iota
-	MultilinePrompt
-	MultilineSystem
-)
-
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
@@ -130,7 +122,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	defer fmt.Printf(readline.EndBracketedPaste)
 
 	var sb strings.Builder
-	var multiline MultilineState
 	var thinkExplicitlySet bool = opts.Think != nil
 
 	for {
@@ -153,35 +144,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		}
 
 		switch {
-		case multiline != MultilineNone:
-			// check if there's a multiline terminating string
-			before, ok := strings.CutSuffix(line, `"""`)
-			sb.WriteString(before)
-			if !ok {
-				fmt.Fprintln(&sb)
-				continue
-			}
-
-			switch multiline {
-			case MultilineSystem:
-				opts.System = sb.String()
-				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
-				fmt.Println("Set system message.")
-				sb.Reset()
-			}
-
-			multiline = MultilineNone
-			scanner.Prompt.UseAlt = false
-		case strings.HasPrefix(line, `"""`):
-			line := strings.TrimPrefix(line, `"""`)
-			line, ok := strings.CutSuffix(line, `"""`)
-			sb.WriteString(line)
-			if !ok {
-				// no multiline terminating string; need more input
-				fmt.Fprintln(&sb)
-				multiline = MultilinePrompt
-				scanner.Prompt.UseAlt = true
-			}
 		case scanner.Pasting:
 			fmt.Fprintln(&sb, line)
 			continue
@@ -334,41 +296,19 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.Options[args[2]] = fp[args[2]]
 				case "system":
 					if len(args) < 3 {
-						usageSet()
+						fmt.Println("Usage: /set system <message>")
 						continue
 					}
 
-					multiline = MultilineSystem
-
-					line := strings.Join(args[2:], " ")
-					line, ok := strings.CutPrefix(line, `"""`)
-					if !ok {
-						multiline = MultilineNone
-					} else {
-						// only cut suffix if the line is multiline
-						line, ok = strings.CutSuffix(line, `"""`)
-						if ok {
-							multiline = MultilineNone
-						}
-					}
-
-					sb.WriteString(line)
-					if multiline != MultilineNone {
-						scanner.Prompt.UseAlt = true
-						continue
-					}
-
-					opts.System = sb.String() // for display in modelfile
-					newMessage := api.Message{Role: "system", Content: sb.String()}
+					opts.System = strings.Join(args[2:], " ")
+					newMessage := api.Message{Role: "system", Content: opts.System}
 					// Check if the slice is not empty and the last message is from 'system'
 					if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
-						// Replace the last message
 						opts.Messages[len(opts.Messages)-1] = newMessage
 					} else {
 						opts.Messages = append(opts.Messages, newMessage)
 					}
 					fmt.Println("Set system message.")
-					sb.Reset()
 					continue
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
@@ -483,7 +423,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(line)
 		}
 
-		if sb.Len() > 0 && multiline == MultilineNone {
+		if sb.Len() > 0 {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
