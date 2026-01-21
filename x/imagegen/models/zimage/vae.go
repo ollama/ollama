@@ -4,6 +4,7 @@ package zimage
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 
 	"github.com/ollama/ollama/x/imagegen"
@@ -738,21 +739,48 @@ func (m *VAEDecoder) loadWeights(weights safetensors.WeightSource, cfg *VAEConfi
 func (v *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
 	// Scale latents
 	z := mlx.DivScalar(latents, v.Config.ScalingFactor)
+	if z == nil {
+		slog.Warn("VAEDecoder.Decode: DivScalar returned nil")
+		return nil
+	}
 	z = mlx.AddScalar(z, v.Config.ShiftFactor)
+	if z == nil {
+		slog.Warn("VAEDecoder.Decode: AddScalar returned nil")
+		return nil
+	}
 	// Convert NCHW -> NHWC for internal processing
 	z = mlx.Transpose(z, 0, 2, 3, 1)
+	if z == nil {
+		slog.Warn("VAEDecoder.Decode: Transpose returned nil")
+		return nil
+	}
+	mlx.Eval(z)
 
 	// Use tiled decoding if enabled
 	if v.Tiling != nil {
-		mlx.Eval(z)
 		return vae.DecodeTiled(z, v.Tiling, v.decodeTile)
 	}
 
 	// Direct decode
 	h := v.decodeTile(z)
+	if h == nil {
+		slog.Warn("VAEDecoder.Decode: decodeTile returned nil")
+		return nil
+	}
+
 	h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
+	if h == nil {
+		slog.Warn("VAEDecoder.Decode: ClipScalar returned nil")
+		return nil
+	}
+
 	// Convert NHWC -> NCHW for output
 	h = mlx.Transpose(h, 0, 3, 1, 2)
+	if h == nil {
+		slog.Warn("VAEDecoder.Decode: final Transpose returned nil")
+		return nil
+	}
+
 	mlx.Eval(h)
 	return h
 }
@@ -762,32 +790,66 @@ func (v *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
 // Output: [B, H*8, W*8, 3] pixel tile in NHWC format
 func (v *VAEDecoder) decodeTile(z *mlx.Array) *mlx.Array {
 	h := v.ConvIn.Forward(z)
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: ConvIn returned nil")
+		return nil
+	}
 	mlx.Eval(h)
 
 	prev := h
 	h = v.MidBlock.Forward(h)
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: MidBlock returned nil")
+		return nil
+	}
+	mlx.Eval(h)
 	prev.Free()
 
-	for _, upBlock := range v.UpBlocks {
+	for i, upBlock := range v.UpBlocks {
 		prev = h
 		h = upBlock.Forward(h)
+		if h == nil {
+			slog.Warn("VAEDecoder.decodeTile: UpBlock returned nil", "blockIndex", i)
+			return nil
+		}
+		mlx.Eval(h)
 		prev.Free()
 	}
 
 	prev = h
 	h = v.ConvNormOut.Forward(h)
-	mlx.Eval(h) // Eval after GroupNorm to avoid grid dimension issues
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: ConvNormOut returned nil")
+		return nil
+	}
+	mlx.Eval(h)
 	prev.Free()
 
 	prev = h
 	h = mlx.SiLU(h)
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: SiLU returned nil")
+		return nil
+	}
 	h = v.ConvOut.Forward(h)
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: ConvOut returned nil")
+		return nil
+	}
 	mlx.Eval(h)
 	prev.Free()
 
 	// VAE outputs [-1, 1], convert to [0, 1]
 	h = mlx.MulScalar(h, 0.5)
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: MulScalar returned nil")
+		return nil
+	}
 	h = mlx.AddScalar(h, 0.5)
+	if h == nil {
+		slog.Warn("VAEDecoder.decodeTile: AddScalar returned nil")
+		return nil
+	}
 
 	return h
 }

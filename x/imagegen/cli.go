@@ -143,6 +143,7 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 
 	var stepBar *progress.StepBar
 	var imageBase64 string
+
 	err = client.Generate(cmd.Context(), req, func(resp api.GenerateResponse) error {
 		// Handle progress updates using structured fields
 		if resp.Total > 0 {

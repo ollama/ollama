@@ -1,0 +1,87 @@
+From c7d4038b40032c9b1a48fc90f1df72c7c80ff5c8 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 20 Jan 2026 10:47:10 -0800
+Subject: [PATCH 1/2] win: add Complex type for MSVC compatibility
+
+---
+ mlx/c/array.cpp | 11 +++++++----
+ mlx/c/array.h   | 17 +++++++++++++++--
+ 2 files changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/mlx/c/array.cpp b/mlx/c/array.cpp
+index af6cca5..3d2c755 100644
+--- a/mlx/c/array.cpp
++++ b/mlx/c/array.cpp
+@@ -426,10 +426,12 @@ extern "C" int mlx_array_item_float64(double* res, const mlx_array arr) {
+   return 0;
+ }
+ extern "C" int mlx_array_item_complex64(
+-    float _Complex* res,
++    mlx_complex64_t* res,
+     const mlx_array arr) {
+   try {
+-    *res = mlx_array_get_(arr).item<float _Complex>();
++    auto val = mlx_array_get_(arr).item<std::complex<float>>();
++    res->real = val.real();
++    res->imag = val.imag();
+   } catch (std::exception& e) {
+     mlx_error(e.what());
+     return 1;
+@@ -549,9 +551,10 @@ extern "C" const double* mlx_array_data_float64(const mlx_array arr) {
+     return nullptr;
+   }
+ }
+-extern "C" const float _Complex* mlx_array_data_complex64(const mlx_array arr) {
++extern "C" const mlx_complex64_t* mlx_array_data_complex64(const mlx_array arr) {
+   try {
+-    return mlx_array_get_(arr).data<float _Complex>();
++    // std::complex<float> and mlx_complex64_t have the same memory layout
++    return reinterpret_cast<const mlx_complex64_t*>(mlx_array_get_(arr).data<std::complex<float>>());
+   } catch (std::exception& e) {
+     mlx_error(e.what());
+     return nullptr;
+diff --git a/mlx/c/array.h b/mlx/c/array.h
+index fce8841..ae4dc91 100644
+--- a/mlx/c/array.h
++++ b/mlx/c/array.h
+@@ -10,6 +10,19 @@
+ #include <stdint.h>
+ #include <stdlib.h>
+ 
++// Complex number support
++// MSVC doesn't support C99 _Complex, so we define a compatible struct
++// that has the same memory layout as std::complex<float>
++#ifdef _MSC_VER
++typedef struct {
++    float real;
++    float imag;
++} mlx_complex64_t;
++#else
++#include <complex.h>
++typedef float _Complex mlx_complex64_t;
++#endif
++
+ #include "half.h"
+ 
+ #ifdef __cplusplus
+@@ -247,7 +260,7 @@ int mlx_array_item_float64(double* res, const mlx_array arr);
+ /**
+  * Access the value of a scalar array.
+  */
+-int mlx_array_item_complex64(float _Complex* res, const mlx_array arr);
++int mlx_array_item_complex64(mlx_complex64_t* res, const mlx_array arr);
+ 
+ #ifdef HAS_FLOAT16
+ /**
+@@ -322,7 +335,7 @@ const double* mlx_array_data_float64(const mlx_array arr);
+  * Returns a pointer to the array data, cast to `_Complex*`.
+  * Array must be evaluated, otherwise returns NULL.
+  */
+-const float _Complex* mlx_array_data_complex64(const mlx_array arr);
++const mlx_complex64_t* mlx_array_data_complex64(const mlx_array arr);
+ 
+ #ifdef HAS_FLOAT16
+ /**
+-- 
+2.50.1.windows.1
+
