@@ -60,7 +60,7 @@ _build_darwin() {
             cmake --install $BUILD_DIR --component MLX
             # Override CGO flags to point to the amd64 build directory
             MLX_CGO_CFLAGS="-O3 -I$(pwd)/$BUILD_DIR/_deps/mlx-c-src -mmacosx-version-min=14.0"
-            MLX_CGO_LDFLAGS="-L$(pwd)/$BUILD_DIR/lib/ollama -lmlxc -lmlx -Wl,-rpath,@executable_path -lc++ -framework Accelerate -mmacosx-version-min=14.0"
+            MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
         else
             BUILD_DIR=build
             cmake --preset MLX \
@@ -71,10 +71,12 @@ _build_darwin() {
             cmake --install $BUILD_DIR --component MLX
             # Use default CGO flags from mlx.go for arm64
             MLX_CGO_CFLAGS="-O3 -I$(pwd)/$BUILD_DIR/_deps/mlx-c-src -mmacosx-version-min=14.0"
-            MLX_CGO_LDFLAGS="-L$(pwd)/$BUILD_DIR/lib/ollama -lmlxc -lmlx -Wl,-rpath,@executable_path -lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
+            MLX_CGO_LDFLAGS="-lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
         fi
-        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -tags mlx -o $INSTALL_PREFIX/ollama-mlx .
-        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -tags mlx -o $INSTALL_PREFIX .
+        # Copy MLX libraries to same directory as executable for dlopen
+        cp $INSTALL_PREFIX/lib/ollama/libmlxc.dylib $INSTALL_PREFIX/
+        cp $INSTALL_PREFIX/lib/ollama/libmlx.dylib $INSTALL_PREFIX/
     done
 }
 
@@ -82,12 +84,10 @@ _sign_darwin() {
     status "Creating universal binary..."
     mkdir -p dist/darwin
     lipo -create -output dist/darwin/ollama dist/darwin-*/ollama
-    lipo -create -output dist/darwin/ollama-mlx dist/darwin-*/ollama-mlx
     chmod +x dist/darwin/ollama
-    chmod +x dist/darwin/ollama-mlx
 
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/* dist/darwin/ollama-mlx; do
+        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/*; do
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime $F
         done
 
@@ -154,7 +154,6 @@ _build_macapp() {
     mkdir -p dist/Ollama.app/Contents/Resources
     if [ -d dist/darwin-amd64 ]; then
         lipo -create -output dist/Ollama.app/Contents/Resources/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
-        lipo -create -output dist/Ollama.app/Contents/Resources/ollama-mlx dist/darwin-amd64/ollama-mlx dist/darwin-arm64/ollama-mlx
         for F in dist/darwin-amd64/lib/ollama/*mlx*.dylib ; do
             lipo -create -output dist/darwin/$(basename $F) $F dist/darwin-arm64/lib/ollama/$(basename $F)
         done
@@ -166,28 +165,27 @@ _build_macapp() {
         cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
         cp dist/darwin/*.so dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
     fi
-    cp -a dist/darwin/ollama-mlx dist/Ollama.app/Contents/Resources/ollama-mlx
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     # Sign
     if [ -n "$APPLE_IDENTITY" ]; then
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
-        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib dist/Ollama.app/Contents/Resources/ollama-mlx ; do
+        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib ; do
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime ${lib}
         done
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier com.electron.ollama --deep --options=runtime dist/Ollama.app
     fi
 
     rm -f dist/Ollama-darwin.zip
-    ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama ollama-mlx *.so *.dylib *.metallib 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama *.so *.dylib *.metallib 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then
         $(xcrun -f notarytool) submit dist/Ollama-darwin.zip --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
         rm -f dist/Ollama-darwin.zip
         $(xcrun -f stapler) staple dist/Ollama.app
-        ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
+        ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
 
         rm -f dist/Ollama.dmg
 

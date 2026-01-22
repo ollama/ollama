@@ -9,7 +9,7 @@ const (
 	CapabilityVision          = Capability("vision")
 	CapabilityEmbedding       = Capability("embedding")
 	CapabilityThinking        = Capability("thinking")
-	CapabilityImageGeneration = Capability("image")
+	CapabilityImage = Capability("image")
 )
 
 func (c Capability) String() string {

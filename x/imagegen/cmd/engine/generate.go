@@ -65,12 +65,12 @@ func (s *utf8Streamer) Flush() string {
 	return result
 }
 
-func init() {
-	generationStream = mlx.NewStream()
-}
-
 // withStream runs fn with the generation stream as default
 func withStream(fn func()) {
+	// Lazy initialization of generationStream
+	if generationStream == nil {
+		generationStream = mlx.NewStream()
+	}
 	orig := mlx.GetDefaultStream()
 	mlx.SetDefaultStream(generationStream)
 	fn()

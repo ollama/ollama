@@ -961,3 +961,154 @@ func TestRetrieveMiddleware(t *testing.T) {
 		}
 	}
 }
+
+func TestImageGenerationsMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.GenerateRequest
+		err  openai.ErrorResponse
+	}
+
+	var capturedRequest *api.GenerateRequest
+
+	testCases := []testCase{
+		{
+			name: "image generation basic",
+			body: `{
+				"model": "test-model",
+				"prompt": "a beautiful sunset"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "a beautiful sunset",
+			},
+		},
+		{
+			name: "image generation with size",
+			body: `{
+				"model": "test-model",
+				"prompt": "a beautiful sunset",
+				"size": "512x768"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "a beautiful sunset",
+				Width:  512,
+				Height: 768,
+			},
+		},
+		{
+			name: "image generation missing prompt",
+			body: `{
+				"model": "test-model"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "prompt is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "image generation missing model",
+			body: `{
+				"prompt": "a beautiful sunset"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "model is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ImageGenerationsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/generate", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			defer func() { capturedRequest = nil }()
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if tc.err.Error.Message != "" {
+				var errResp openai.ErrorResponse
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(tc.err, errResp); diff != "" {
+					t.Fatalf("errors did not match:\n%s", diff)
+				}
+				return
+			}
+
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+
+			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+				t.Fatalf("requests did not match:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestImageWriterResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Test that ImageWriter transforms GenerateResponse to OpenAI format
+	endpoint := func(c *gin.Context) {
+		resp := api.GenerateResponse{
+			Model:     "test-model",
+			CreatedAt: time.Unix(1234567890, 0).UTC(),
+			Done:      true,
+			Image:     "dGVzdC1pbWFnZS1kYXRh", // base64 of "test-image-data"
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.Write(append(data, '\n'))
+	}
+
+	router := gin.New()
+	router.Use(ImageGenerationsMiddleware())
+	router.Handle(http.MethodPost, "/api/generate", endpoint)
+
+	body := `{"model": "test-model", "prompt": "test"}`
+	req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var imageResp openai.ImageGenerationResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &imageResp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if imageResp.Created != 1234567890 {
+		t.Errorf("expected created 1234567890, got %d", imageResp.Created)
+	}
+
+	if len(imageResp.Data) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(imageResp.Data))
+	}
+
+	if imageResp.Data[0].B64JSON != "dGVzdC1pbWFnZS1kYXRh" {
+		t.Errorf("expected image data 'dGVzdC1pbWFnZS1kYXRh', got %s", imageResp.Data[0].B64JSON)
+	}
+}

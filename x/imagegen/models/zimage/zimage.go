@@ -12,19 +12,20 @@ import (
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
+	"github.com/ollama/ollama/x/imagegen/vae"
 )
 
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
 	Prompt         string
-	NegativePrompt string       // Empty = no CFG
-	CFGScale       float32      // Only used if NegativePrompt is set (default: 4.0)
-	Width          int32        // Image width (default: 1024)
-	Height         int32        // Image height (default: 1024)
-	Steps          int          // Denoising steps (default: 9 for turbo)
-	Seed           int64        // Random seed
-	Progress       ProgressFunc // Optional progress callback
-	CapturePath    string       // GPU capture path (debug)
+	NegativePrompt string                // Empty = no CFG
+	CFGScale       float32               // Only used if NegativePrompt is set (default: 4.0)
+	Width          int32                 // Image width (default: 1024)
+	Height         int32                 // Image height (default: 1024)
+	Steps          int                   // Denoising steps (default: 9 for turbo)
+	Seed           int64                 // Random seed
+	Progress       func(step, totalSteps int) // Optional progress callback
+	CapturePath    string                // GPU capture path (debug)
 
 	// TeaCache options (timestep embedding aware caching)
 	TeaCache          bool    // TeaCache is always enabled for faster inference
@@ -33,9 +34,6 @@ type GenerateConfig struct {
 	// Fused QKV (fuse Q/K/V projections into single matmul)
 	FusedQKV bool // Enable fused QKV projection (default: false)
 }
-
-// ProgressFunc is called during generation with step progress.
-type ProgressFunc func(step, totalSteps int)
 
 // Model represents a Z-Image diffusion model.
 type Model struct {
@@ -93,7 +91,7 @@ func (m *Model) Load(modelName string) error {
 
 	// Load text encoder
 	m.TextEncoder = &Qwen3TextEncoder{}
-	if err := m.TextEncoder.Load(manifest); err != nil {
+	if err := m.TextEncoder.Load(manifest, "text_encoder/config.json"); err != nil {
 		return fmt.Errorf("text encoder: %w", err)
 	}
 	mlx.Eval(mlx.Collect(m.TextEncoder)...)
@@ -139,7 +137,7 @@ func (m *Model) Generate(prompt string, width, height int32, steps int, seed int
 }
 
 // GenerateWithProgress creates an image with progress callback.
-func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps int, seed int64, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:   prompt,
 		Width:    width,
@@ -151,7 +149,7 @@ func (m *Model) GenerateWithProgress(prompt string, width, height int32, steps i
 }
 
 // GenerateWithCFG creates an image with classifier-free guidance.
-func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress ProgressFunc) (*mlx.Array, error) {
+func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress func(step, totalSteps int)) (*mlx.Array, error) {
 	return m.GenerateFromConfig(context.Background(), &GenerateConfig{
 		Prompt:         prompt,
 		NegativePrompt: negativePrompt,
@@ -179,9 +177,16 @@ func (m *Model) GenerateFromConfig(ctx context.Context, cfg *GenerateConfig) (*m
 	return result, nil
 }
 
-// GenerateImage implements model.ImageModel interface.
-func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64) (*mlx.Array, error) {
-	return m.Generate(prompt, width, height, steps, seed)
+// GenerateImage implements runner.ImageModel interface.
+func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error) {
+	return m.GenerateFromConfig(ctx, &GenerateConfig{
+		Prompt:   prompt,
+		Width:    width,
+		Height:   height,
+		Steps:    steps,
+		Seed:     seed,
+		Progress: progress,
+	})
 }
 
 // generate is the internal denoising pipeline.
@@ -194,7 +199,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		cfg.Height = 1024
 	}
 	if cfg.Steps <= 0 {
-		cfg.Steps = 9 // Turbo default
+		cfg.Steps = 9 // Z-Image turbo default
 	}
 	if cfg.CFGScale <= 0 {
 		cfg.CFGScale = 4.0
@@ -222,9 +227,9 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	// Text encoding with padding to multiple of 32
 	var posEmb, negEmb *mlx.Array
 	{
-		posEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.Prompt, 512)
+		posEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.Prompt, 512, false)
 		if useCFG {
-			negEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.NegativePrompt, 512)
+			negEmb, _ = m.TextEncoder.EncodePrompt(m.Tokenizer, cfg.NegativePrompt, 512, false)
 		}
 
 		// Pad both to same length (multiple of 32)
@@ -448,7 +453,11 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		teaCache.Free()
 	}
 
-	// VAE decode
+	// VAE decode - enable tiling for larger images to reduce memory
+	// VAE attention is O(n²) on latent pixels, tiling helps significantly
+	if latentH > 64 || latentW > 64 {
+		m.VAEDecoder.Tiling = vae.DefaultTilingConfig()
+	}
 	decoded := m.VAEDecoder.Decode(latents)
 	latents.Free()
 

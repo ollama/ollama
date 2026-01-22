@@ -54,7 +54,7 @@ func TestModelCapabilities(t *testing.T) {
 					Capabilities: []string{"image"},
 				},
 			},
-			expectedCaps: []model.Capability{model.CapabilityImageGeneration},
+			expectedCaps: []model.Capability{model.CapabilityImage},
 		},
 		{
 			name: "model with completion capability",
@@ -241,6 +241,24 @@ func TestModelCheckCapabilities(t *testing.T) {
 			},
 			checkCaps:      []model.Capability{"unknown"},
 			expectedErrMsg: "unknown capability",
+		},
+		{
+			name: "model missing image generation capability",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+			},
+			checkCaps:      []model.Capability{model.CapabilityImage},
+			expectedErrMsg: "does not support image generation",
+		},
+		{
+			name: "model with image generation capability",
+			model: Model{
+				Config: model.ConfigV2{
+					Capabilities: []string{"image"},
+				},
+			},
+			checkCaps: []model.Capability{model.CapabilityImage},
 		},
 	}
 

@@ -72,9 +72,8 @@ func TestCheckMemoryRequirements(t *testing.T) {
 func TestModelVRAMEstimates(t *testing.T) {
 	// Verify the VRAM estimates map has expected entries
 	expected := map[string]uint64{
-		"ZImagePipeline":    21 * GB,
-		"FluxPipeline":      21 * GB,
-		"QwenImagePipeline": 80 * GB,
+		"ZImagePipeline": 21 * GB,
+		"FluxPipeline":   20 * GB,
 	}
 
 	for name, expectedVRAM := range expected {
@@ -91,13 +90,6 @@ func TestEstimateVRAMDefault(t *testing.T) {
 	vram := EstimateVRAM("nonexistent-model-that-does-not-exist")
 	if vram != 21*GB {
 		t.Errorf("EstimateVRAM() = %d GB, want 21 GB", vram/GB)
-	}
-}
-
-func TestHasTensorLayers(t *testing.T) {
-	// Non-existent model should return false
-	if HasTensorLayers("nonexistent-model") {
-		t.Error("HasTensorLayers() should return false for non-existent model")
 	}
 }
 

@@ -574,7 +574,8 @@ func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
 		Options:         &req.opts,
 		loading:         false,
 		sessionDuration: sessionDuration,
-		refCount:        1,
+		totalSize:       server.TotalSize(),
+		vramSize:        server.VRAMSize(),
 	}
 
 	s.loadedMu.Lock()
