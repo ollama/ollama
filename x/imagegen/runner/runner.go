@@ -191,6 +191,21 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 			inputImages[i] = img
 		}
 		slog.Info("decoded input images", "count", len(inputImages))
+
+		// Default width/height to first input image dimensions, scaled to max 1024
+		bounds := inputImages[0].Bounds()
+		w, h := bounds.Dx(), bounds.Dy()
+		if w > 1024 || h > 1024 {
+			if w > h {
+				h = h * 1024 / w
+				w = 1024
+			} else {
+				w = w * 1024 / h
+				h = 1024
+			}
+		}
+		req.Width = int32(w)
+		req.Height = int32(h)
 	}
 
 	// Serialize generation requests - MLX model may not handle concurrent generation
