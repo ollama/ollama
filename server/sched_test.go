@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,7 +218,16 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
-	s.getGpuFn = getGpuFn
+	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+	gMu := sync.Mutex{}
+	g.TotalMemory = 24 * format.GigaByte
+	g.FreeMemory = 12 * format.GigaByte
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		slog.Info("getGpuFn called")
+		gMu.Lock()
+		defer gMu.Unlock()
+		return []ml.DeviceInfo{g}
+	}
 	s.getSystemInfoFn = getSystemInfoFn
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
@@ -251,13 +261,10 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 	a.ctxDone()
 	// Report recovered VRAM usage
 	time.Sleep(1 * time.Millisecond)
-	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
-		slog.Info("altered getGpuFn called")
-		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
-		g.TotalMemory = 24 * format.GigaByte
-		g.FreeMemory = 24 * format.GigaByte
-		return []ml.DeviceInfo{g}
-	}
+	gMu.Lock()
+	g.TotalMemory = 24 * format.GigaByte
+	g.FreeMemory = 24 * format.GigaByte
+	gMu.Unlock()
 	select {
 	case resp := <-b.req.successCh:
 		require.Equal(t, resp.llama, b.srv)
@@ -276,7 +283,16 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
-	s.getGpuFn = getGpuFn // 1 Metal GPU
+	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+	gMu := sync.Mutex{}
+	g.TotalMemory = 24 * format.GigaByte
+	g.FreeMemory = 12 * format.GigaByte
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		slog.Info("getGpuFn called")
+		gMu.Lock()
+		defer gMu.Unlock()
+		return []ml.DeviceInfo{g}
+	}
 	s.getSystemInfoFn = getSystemInfoFn
 
 	// Multiple loaded models
@@ -362,12 +378,10 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.ctxDone()
 	// Report recovered VRAM usage so scheduler will finish waiting and unload
 	time.Sleep(1 * time.Millisecond)
-	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
-		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
-		g.TotalMemory = 24 * format.GigaByte
-		g.FreeMemory = 24 * format.GigaByte
-		return []ml.DeviceInfo{g}
-	}
+	gMu.Lock()
+	g.TotalMemory = 24 * format.GigaByte
+	g.FreeMemory = 24 * format.GigaByte
+	gMu.Unlock()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
