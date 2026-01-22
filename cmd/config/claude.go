@@ -7,7 +7,7 @@ var claudeIntegration = &integrationDef{
 	EnvVars: func(model string) []envVar {
 		return []envVar{
 			{Name: "ANTHROPIC_BASE_URL", Value: "http://localhost:11434"},
-			{Name: "ANTHROPIC_API_KEY", Value: "ollama"},
+			{Name: "ANTHROPIC_API_KEY", Value: ""},
 			{Name: "ANTHROPIC_AUTH_TOKEN", Value: "ollama"},
 		}
 	},

@@ -12,7 +12,7 @@ func TestClaudeIntegration(t *testing.T) {
 
 		expected := map[string]string{
 			"ANTHROPIC_BASE_URL":   "http://localhost:11434",
-			"ANTHROPIC_API_KEY":    "ollama",
+			"ANTHROPIC_API_KEY":    "",
 			"ANTHROPIC_AUTH_TOKEN": "ollama",
 		}
 
@@ -49,8 +49,8 @@ func TestClaudeIntegration(t *testing.T) {
 		// Verify our values come last (and thus take precedence)
 		result := resolveEnv(env)
 
-		if result["ANTHROPIC_API_KEY"] != "ollama" {
-			t.Errorf("ANTHROPIC_API_KEY should be overridden to 'ollama', got %q", result["ANTHROPIC_API_KEY"])
+		if result["ANTHROPIC_API_KEY"] != "" {
+			t.Errorf("ANTHROPIC_API_KEY should be overridden to empty string, got %q", result["ANTHROPIC_API_KEY"])
 		}
 		if result["ANTHROPIC_BASE_URL"] != "http://localhost:11434" {
 			t.Errorf("ANTHROPIC_BASE_URL should be overridden to localhost, got %q", result["ANTHROPIC_BASE_URL"])
