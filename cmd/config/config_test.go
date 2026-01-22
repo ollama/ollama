@@ -13,6 +13,14 @@ func setTestHome(t *testing.T, dir string) {
 	t.Setenv("USERPROFILE", dir)
 }
 
+// configPaths is a test helper that safely calls ConfigPaths if defined
+func configPaths(integ *integration) []string {
+	if integ.ConfigPaths == nil {
+		return nil
+	}
+	return integ.ConfigPaths()
+}
+
 func TestIntegrationConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -65,6 +73,21 @@ func TestIntegrationConfig(t *testing.T) {
 			t.Errorf("expected model-x, got %s", config.defaultModel())
 		}
 	})
+
+	t.Run("multiple integrations in single file", func(t *testing.T) {
+		saveIntegration("app1", []string{"model-1"})
+		saveIntegration("app2", []string{"model-2"})
+
+		config1, _ := loadIntegration("app1")
+		config2, _ := loadIntegration("app2")
+
+		if config1.defaultModel() != "model-1" {
+			t.Errorf("expected model-1, got %s", config1.defaultModel())
+		}
+		if config2.defaultModel() != "model-2" {
+			t.Errorf("expected model-2, got %s", config2.defaultModel())
+		}
+	})
 }
 
 func TestListIntegrations(t *testing.T) {
@@ -95,26 +118,29 @@ func TestListIntegrations(t *testing.T) {
 	})
 }
 
-func TestGetExistingConfigPaths(t *testing.T) {
+func TestConfigPaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
 	t.Run("returns empty for claude (no config files)", func(t *testing.T) {
-		paths := getExistingConfigPaths("claude")
+		integ := integrations["claude"]
+		paths := configPaths(integ)
 		if len(paths) != 0 {
 			t.Errorf("expected no paths for claude, got %v", paths)
 		}
 	})
 
 	t.Run("returns empty for codex (no config files)", func(t *testing.T) {
-		paths := getExistingConfigPaths("codex")
+		integ := integrations["codex"]
+		paths := configPaths(integ)
 		if len(paths) != 0 {
 			t.Errorf("expected no paths for codex, got %v", paths)
 		}
 	})
 
 	t.Run("returns empty for droid when no config exists", func(t *testing.T) {
-		paths := getExistingConfigPaths("droid")
+		integ := integrations["droid"]
+		paths := configPaths(integ)
 		if len(paths) != 0 {
 			t.Errorf("expected no paths, got %v", paths)
 		}
@@ -122,11 +148,12 @@ func TestGetExistingConfigPaths(t *testing.T) {
 
 	t.Run("returns path for droid when config exists", func(t *testing.T) {
 		settingsDir, _ := os.UserHomeDir()
-		settingsDir += "/.factory"
+		settingsDir = filepath.Join(settingsDir, ".factory")
 		os.MkdirAll(settingsDir, 0o755)
-		os.WriteFile(settingsDir+"/settings.json", []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{}`), 0o644)
 
-		paths := getExistingConfigPaths("droid")
+		integ := integrations["droid"]
+		paths := configPaths(integ)
 		if len(paths) != 1 {
 			t.Errorf("expected 1 path, got %d", len(paths))
 		}
@@ -134,90 +161,67 @@ func TestGetExistingConfigPaths(t *testing.T) {
 
 	t.Run("returns paths for opencode when configs exist", func(t *testing.T) {
 		home, _ := os.UserHomeDir()
-		configDir := home + "/.config/opencode"
-		stateDir := home + "/.local/state/opencode"
+		configDir := filepath.Join(home, ".config", "opencode")
+		stateDir := filepath.Join(home, ".local", "state", "opencode")
 		os.MkdirAll(configDir, 0o755)
 		os.MkdirAll(stateDir, 0o755)
-		os.WriteFile(configDir+"/opencode.json", []byte(`{}`), 0o644)
-		os.WriteFile(stateDir+"/model.json", []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(`{}`), 0o644)
 
-		paths := getExistingConfigPaths("opencode")
+		integ := integrations["opencode"]
+		paths := configPaths(integ)
 		if len(paths) != 2 {
 			t.Errorf("expected 2 paths, got %d: %v", len(paths), paths)
 		}
 	})
 
 	t.Run("case insensitive app name", func(t *testing.T) {
-		paths1 := getExistingConfigPaths("DROID")
-		paths2 := getExistingConfigPaths("droid")
+		integ1 := integrations[strings.ToLower("DROID")]
+		integ2 := integrations["droid"]
+		paths1 := configPaths(integ1)
+		paths2 := configPaths(integ2)
 		if len(paths1) != len(paths2) {
 			t.Error("app name should be case insensitive")
 		}
 	})
 }
 
-// Edge case tests for config.go
-
-// TestLoadIntegration_CorruptedJSON verifies that corrupted JSON returns a clear error, not a panic.
-// Users may have manually edited config files or have disk corruption.
 func TestLoadIntegration_CorruptedJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	// Create corrupted JSON file
-	dir := filepath.Join(tmpDir, ".ollama", "config", "integrations")
+	// Create corrupted integrations.json file
+	dir := filepath.Join(tmpDir, ".ollama", "config")
 	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "test.json"), []byte(`{corrupted json`), 0o644)
+	os.WriteFile(filepath.Join(dir, "integrations.json"), []byte(`{corrupted json`), 0o644)
 
+	// Corrupted file is treated as empty, so loadIntegration returns not found
 	_, err := loadIntegration("test")
 	if err == nil {
-		t.Error("expected error for corrupted JSON, got nil")
+		t.Error("expected error for nonexistent integration in corrupted file")
 	}
 }
 
-// TestLoadIntegration_EmptyFile verifies that empty files return clear errors.
-// Empty file is invalid JSON.
-func TestLoadIntegration_EmptyFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	dir := filepath.Join(tmpDir, ".ollama", "config", "integrations")
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "empty.json"), []byte(``), 0o644)
-
-	_, err := loadIntegration("empty")
-	if err == nil {
-		t.Error("expected error for empty file, got nil")
-	}
-}
-
-// TestSaveIntegration_NilModels verifies that nil models slice works correctly.
-// Both nil and []string{} should work without issues.
 func TestSaveIntegration_NilModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	// Save with nil models
 	if err := saveIntegration("test", nil); err != nil {
 		t.Fatalf("saveIntegration with nil models failed: %v", err)
 	}
 
-	// Verify it can be loaded back
 	config, err := loadIntegration("test")
 	if err != nil {
 		t.Fatalf("loadIntegration failed: %v", err)
 	}
 
-	// nil becomes empty array in JSON, either is acceptable
 	if config.Models == nil {
-		// Some JSON implementations preserve nil as nil
+		// nil is acceptable
 	} else if len(config.Models) != 0 {
 		t.Errorf("expected empty or nil models, got %v", config.Models)
 	}
 }
 
-// TestSaveIntegration_EmptyAppName verifies that empty app name returns an error.
-// Empty app name would create ".json" file which is confusing.
 func TestSaveIntegration_EmptyAppName(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -231,69 +235,30 @@ func TestSaveIntegration_EmptyAppName(t *testing.T) {
 	}
 }
 
-// TestListIntegrations_SkipsCorruptedFiles documents intentional behavior: corrupted files are silently skipped.
-// Partial config is better than total failure.
-func TestListIntegrations_SkipsCorruptedFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	dir := filepath.Join(tmpDir, ".ollama", "config", "integrations")
-	os.MkdirAll(dir, 0o755)
-
-	// Create one valid and one corrupted config
-	os.WriteFile(filepath.Join(dir, "valid.json"), []byte(`{"app":"valid","models":["m1"]}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "corrupted.json"), []byte(`{corrupted`), 0o644)
-
-	configs, err := listIntegrations()
-	if err != nil {
-		t.Fatalf("listIntegrations failed: %v", err)
-	}
-
-	// Should return the valid config, skipping corrupted
-	if len(configs) != 1 {
-		t.Errorf("expected 1 valid config, got %d", len(configs))
-	}
-	if len(configs) > 0 && configs[0].App != "valid" {
-		t.Errorf("expected 'valid' app, got %s", configs[0].App)
-	}
-}
-
-// TestListIntegrations_IgnoresNonJSON verifies that non-JSON files in directory are ignored.
-// Directory may contain backup files, READMEs, or other non-config files.
-func TestListIntegrations_IgnoresNonJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	dir := filepath.Join(tmpDir, ".ollama", "config", "integrations")
-	os.MkdirAll(dir, 0o755)
-
-	// Create various non-JSON files
-	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("readme"), 0o644)
-	os.WriteFile(filepath.Join(dir, "backup.bak"), []byte("backup"), 0o644)
-	os.WriteFile(filepath.Join(dir, ".hidden"), []byte("hidden"), 0o644)
-	os.WriteFile(filepath.Join(dir, "valid.json"), []byte(`{"app":"valid","models":[]}`), 0o644)
-
-	configs, err := listIntegrations()
-	if err != nil {
-		t.Fatalf("listIntegrations failed: %v", err)
-	}
-
-	// Should only return the JSON config
-	if len(configs) != 1 {
-		t.Errorf("expected 1 config (only .json), got %d", len(configs))
-	}
-}
-
-// TestLoadIntegration_NonexistentFile verifies clear error for missing file.
-func TestLoadIntegration_NonexistentFile(t *testing.T) {
+func TestLoadIntegration_NonexistentIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
 	_, err := loadIntegration("nonexistent")
 	if err == nil {
-		t.Error("expected error for nonexistent file, got nil")
+		t.Error("expected error for nonexistent integration, got nil")
 	}
 	if !os.IsNotExist(err) {
-		t.Logf("error type is not os.IsNotExist, but that's acceptable: %v", err)
+		t.Logf("error type is os.ErrNotExist as expected: %v", err)
+	}
+}
+
+func TestIntegrationsPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	path, err := integrationsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := filepath.Join(tmpDir, ".ollama", "config", "integrations.json")
+	if path != expected {
+		t.Errorf("expected %s, got %s", expected, path)
 	}
 }

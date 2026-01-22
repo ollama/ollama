@@ -9,14 +9,16 @@ import (
 	"strings"
 )
 
-var droidIntegration = &integrationDef{
-	Name:         "Droid",
-	DisplayName:  "Droid",
-	Command:      "droid",
-	EnvVars:      func(model string) []envVar { return nil },
-	Args:         func(model string) []string { return nil },
-	Setup:        setupDroidSettings,
-	CheckInstall: checkCommand("droid", "Install from: https://docs.factory.ai/cli/getting-started/quickstart"),
+var droidIntegration = &integration{
+	Name:             "Droid",
+	DisplayName:      "Droid",
+	Command:          "droid",
+	EnvVars:          func(model string) []envVar { return nil },
+	Args:             func(model string) []string { return nil },
+	Setup:            setupDroidSettings,
+	CheckInstall:     checkCommand("droid", "install from https://docs.factory.ai/cli/getting-started/quickstart"),
+	ConfigPaths:      droidConfigPaths,
+	ConfiguredModels: droidModels,
 }
 
 var validReasoningEfforts = []string{"high", "medium", "low", "none"}
@@ -51,7 +53,7 @@ func setupDroidSettings(models []string) error {
 
 	settings := make(map[string]any)
 	if data, err := os.ReadFile(settingsPath); err == nil {
-		json.Unmarshal(data, &settings)
+		_ = json.Unmarshal(data, &settings) // ignore parse errors; treat as empty
 	}
 
 	customModels, _ := settings["customModels"].([]any)
@@ -70,7 +72,7 @@ func setupDroidSettings(models []string) error {
 			"baseUrl":         "http://localhost:11434/v1",
 			"apiKey":          "ollama",
 			"provider":        "generic-chat-completion-api",
-			"maxOutputTokens": getModelContextLength(model),
+			"maxOutputTokens": modelContextLength(model),
 			"supportsImages":  modelSupportsImages(model),
 			"id":              modelID,
 			"index":           i,
@@ -103,7 +105,7 @@ func setupDroidSettings(models []string) error {
 	return atomicWrite(settingsPath, data)
 }
 
-func readDroidSettings() (map[string]any, error) {
+func droidSettings() (map[string]any, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -119,8 +121,8 @@ func readDroidSettings() (map[string]any, error) {
 	return result, nil
 }
 
-func getDroidConfiguredModels() []string {
-	settings, err := readDroidSettings()
+func droidModels() []string {
+	settings, err := droidSettings()
 	if err != nil {
 		return nil
 	}
@@ -132,7 +134,10 @@ func getDroidConfiguredModels() []string {
 		if !isOllamaModelEntry(m) {
 			continue
 		}
-		entry := m.(map[string]any)
+		entry, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
 		if model, _ := entry["model"].(string); model != "" {
 			result = append(result, model)
 		}
@@ -140,7 +145,7 @@ func getDroidConfiguredModels() []string {
 	return result
 }
 
-func getDroidExistingConfigPaths() []string {
+func droidConfigPaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil

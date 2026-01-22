@@ -10,14 +10,16 @@ import (
 	"strings"
 )
 
-var openCodeIntegration = &integrationDef{
-	Name:         "OpenCode",
-	DisplayName:  "OpenCode",
-	Command:      "opencode",
-	EnvVars:      func(model string) []envVar { return nil },
-	Args:         func(model string) []string { return nil },
-	Setup:        setupOpenCodeSettings,
-	CheckInstall: checkCommand("opencode", "Install from: https://opencode.ai"),
+var openCodeIntegration = &integration{
+	Name:             "OpenCode",
+	DisplayName:      "OpenCode",
+	Command:          "opencode",
+	EnvVars:          func(model string) []envVar { return nil },
+	Args:             func(model string) []string { return nil },
+	Setup:            setupOpenCodeSettings,
+	CheckInstall:     checkCommand("opencode", "install from https://opencode.ai"),
+	ConfigPaths:      openCodeConfigPaths,
+	ConfiguredModels: openCodeModels,
 }
 
 func setupOpenCodeSettings(modelList []string) error {
@@ -37,7 +39,7 @@ func setupOpenCodeSettings(modelList []string) error {
 
 	config := make(map[string]any)
 	if data, err := os.ReadFile(configPath); err == nil {
-		json.Unmarshal(data, &config)
+		_ = json.Unmarshal(data, &config) // ignore parse errors; treat as empty
 	}
 
 	config["$schema"] = "https://opencode.ai/config.json"
@@ -107,7 +109,7 @@ func setupOpenCodeSettings(modelList []string) error {
 		"variant":  map[string]any{},
 	}
 	if data, err := os.ReadFile(statePath); err == nil {
-		json.Unmarshal(data, &state)
+		_ = json.Unmarshal(data, &state) // ignore parse errors; use defaults
 	}
 
 	recent, _ := state["recent"].([]any)
@@ -135,7 +137,8 @@ func setupOpenCodeSettings(modelList []string) error {
 		}))
 	}
 
-	newRecent = newRecent[:min(len(newRecent), 10)]
+	const maxRecentModels = 10
+	newRecent = newRecent[:min(len(newRecent), maxRecentModels)]
 
 	state["recent"] = newRecent
 
@@ -146,7 +149,7 @@ func setupOpenCodeSettings(modelList []string) error {
 	return atomicWrite(statePath, stateData)
 }
 
-func getOpenCodeOllamaModels() (map[string]any, error) {
+func ollamaModelsFromConfig() (map[string]any, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -167,15 +170,17 @@ func getOpenCodeOllamaModels() (map[string]any, error) {
 	return models, nil
 }
 
-func getOpenCodeConfiguredModels() []string {
-	models, err := getOpenCodeOllamaModels()
+func openCodeModels() []string {
+	models, err := ollamaModelsFromConfig()
 	if err != nil || models == nil {
 		return nil
 	}
-	return slices.Collect(maps.Keys(models))
+	keys := slices.Collect(maps.Keys(models))
+	slices.Sort(keys)
+	return keys
 }
 
-func getOpenCodeExistingConfigPaths() []string {
+func openCodeConfigPaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil

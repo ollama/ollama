@@ -1,8 +1,10 @@
+// Package config provides integration configuration for external coding tools
+// (Claude Code, Codex, Droid, OpenCode) to use Ollama models.
 package config
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,12 +12,11 @@ import (
 )
 
 type integrationConfig struct {
-	App          string    `json:"app"`
 	Models       []string  `json:"models"`
 	ConfiguredAt time.Time `json:"configured_at"`
 }
 
-// defaultModel returns the first (default) model, or empty string if none
+// defaultModel returns the first (default) model, or empty string if none.
 func (c *integrationConfig) defaultModel() string {
 	if len(c.Models) > 0 {
 		return c.Models[0]
@@ -23,29 +24,38 @@ func (c *integrationConfig) defaultModel() string {
 	return ""
 }
 
-func integrationsDir() (string, error) {
+func integrationsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".ollama", "config", "integrations"), nil
+	return filepath.Join(home, ".ollama", "config", "integrations.json"), nil
 }
 
-func configPath(appName string) (string, error) {
-	dir, err := integrationsDir()
+func loadIntegrationsFile() (map[string]*integrationConfig, error) {
+	path, err := integrationsPath()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	// Normalize to lowercase for consistent file naming across case-sensitive filesystems
-	return filepath.Join(dir, strings.ToLower(appName)+".json"), nil
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]*integrationConfig), nil
+		}
+		return nil, err
+	}
+
+	var configs map[string]*integrationConfig
+	_ = json.Unmarshal(data, &configs) // ignore parse errors; treat as empty
+	if configs == nil {
+		configs = make(map[string]*integrationConfig)
+	}
+	return configs, nil
 }
 
-func saveIntegration(appName string, models []string) error {
-	if appName == "" {
-		return fmt.Errorf("app name cannot be empty")
-	}
-
-	path, err := configPath(appName)
+func saveIntegrationsFile(configs map[string]*integrationConfig) error {
+	path, err := integrationsPath()
 	if err != nil {
 		return err
 	}
@@ -54,11 +64,7 @@ func saveIntegration(appName string, models []string) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(integrationConfig{
-		App:          appName,
-		Models:       models,
-		ConfiguredAt: time.Now(),
-	}, "", "  ")
+	data, err := json.MarshalIndent(configs, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -66,56 +72,50 @@ func saveIntegration(appName string, models []string) error {
 	return atomicWrite(path, data)
 }
 
+func saveIntegration(appName string, models []string) error {
+	if appName == "" {
+		return errEmptyAppName
+	}
+
+	configs, err := loadIntegrationsFile()
+	if err != nil {
+		return err
+	}
+
+	configs[strings.ToLower(appName)] = &integrationConfig{
+		Models:       models,
+		ConfiguredAt: time.Now(),
+	}
+
+	return saveIntegrationsFile(configs)
+}
+
 func loadIntegration(appName string) (*integrationConfig, error) {
-	path, err := configPath(appName)
+	configs, err := loadIntegrationsFile()
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+	config, ok := configs[strings.ToLower(appName)]
+	if !ok {
+		return nil, os.ErrNotExist
 	}
 
-	var config integrationConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
+	return config, nil
 }
 
 func listIntegrations() ([]integrationConfig, error) {
-	dir, err := integrationsDir()
+	configs, err := loadIntegrationsFile()
 	if err != nil {
 		return nil, err
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
+	result := make([]integrationConfig, 0, len(configs))
+	for _, config := range configs {
+		result = append(result, *config)
 	}
 
-	var configs []integrationConfig
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-
-		var config integrationConfig
-		if err := json.Unmarshal(data, &config); err != nil {
-			continue
-		}
-		configs = append(configs, config)
-	}
-
-	return configs, nil
+	return result, nil
 }
+
+var errEmptyAppName = errors.New("app name cannot be empty")

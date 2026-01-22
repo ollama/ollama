@@ -2,12 +2,13 @@ package config
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
 
-func TestGetIntegration(t *testing.T) {
+func TestIntegrationLookup(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
@@ -26,12 +27,12 @@ func TestGetIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			integration, found := getIntegration(tt.input)
+			integ, found := integrations[strings.ToLower(tt.input)]
 			if found != tt.wantFound {
-				t.Errorf("getIntegration(%q) found = %v, want %v", tt.input, found, tt.wantFound)
+				t.Errorf("integrations[%q] found = %v, want %v", tt.input, found, tt.wantFound)
 			}
-			if found && integration.Name != tt.wantName {
-				t.Errorf("getIntegration(%q).Name = %q, want %q", tt.input, integration.Name, tt.wantName)
+			if found && integ.Name != tt.wantName {
+				t.Errorf("integrations[%q].Name = %q, want %q", tt.input, integ.Name, tt.wantName)
 			}
 		})
 	}
@@ -42,7 +43,7 @@ func TestIntegrationRegistry(t *testing.T) {
 
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
-			integration, ok := integrationRegistry[name]
+			integration, ok := integrations[name]
 			if !ok {
 				t.Fatalf("integration %q not found in registry", name)
 			}
@@ -143,10 +144,10 @@ func TestCheckCommand(t *testing.T) {
 		}
 		if err != nil {
 			errMsg := err.Error()
-			if !contains(errMsg, "nonexistent-command-12345") {
+			if !strings.Contains(errMsg, "nonexistent-command-12345") {
 				t.Errorf("error should mention command name, got: %s", errMsg)
 			}
-			if !contains(errMsg, "Install instructions here") {
+			if !strings.Contains(errMsg, "Install instructions here") {
 				t.Errorf("error should include install instructions, got: %s", errMsg)
 			}
 		}
@@ -192,24 +193,11 @@ func TestConfigCmd(t *testing.T) {
 	})
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // Edge case tests for integrations.go
 
-// TestGetIntegration_UnknownName_ErrorMessage verifies that unknown integration returns false.
+// TestIntegrationLookup_UnknownName verifies that unknown integration returns false.
 // Clear error handling for invalid integration names.
-func TestGetIntegration_UnknownName_ErrorMessage(t *testing.T) {
+func TestIntegrationLookup_UnknownName(t *testing.T) {
 	unknownNames := []string{
 		"unknown",
 		"notreal",
@@ -221,9 +209,9 @@ func TestGetIntegration_UnknownName_ErrorMessage(t *testing.T) {
 
 	for _, name := range unknownNames {
 		t.Run(name, func(t *testing.T) {
-			integration, found := getIntegration(name)
+			integ, found := integrations[strings.ToLower(name)]
 			if found {
-				t.Errorf("getIntegration(%q) should return false, got integration: %v", name, integration.Name)
+				t.Errorf("integrations[%q] should return false, got integration: %v", name, integ.Name)
 			}
 		})
 	}
@@ -235,7 +223,7 @@ func TestRunIntegration_UnknownIntegration(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for unknown integration, got nil")
 	}
-	if !contains(err.Error(), "unknown integration") {
+	if !strings.Contains(err.Error(), "unknown integration") {
 		t.Errorf("error should mention 'unknown integration', got: %v", err)
 	}
 }
@@ -285,7 +273,7 @@ func TestConfigCmd_NilHeartbeat(t *testing.T) {
 
 // TestIntegrationDef_AllHaveRequiredFields verifies all integrations are properly defined.
 func TestIntegrationDef_AllHaveRequiredFields(t *testing.T) {
-	for name, integration := range integrationRegistry {
+	for name, integration := range integrations {
 		t.Run(name, func(t *testing.T) {
 			// Test EnvVars doesn't panic
 			envs := integration.EnvVars("test-model")
@@ -307,25 +295,6 @@ func TestIntegrationDef_AllHaveRequiredFields(t *testing.T) {
 	}
 }
 
-// TestGetIntegrationConfiguredModels_MergesCorrectly verifies model merging behavior.
-func TestGetIntegrationConfiguredModels_MergesCorrectly(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	t.Run("returns saved models when no integration config", func(t *testing.T) {
-		// Save integration config
-		saveIntegration("testapp", []string{"model-a", "model-b"})
-
-		// For unknown integration (no special handling), should return saved models
-		models := getIntegrationConfiguredModels("testapp")
-
-		// Since testapp isn't opencode or droid, it should return saved models
-		if len(models) != 2 {
-			t.Errorf("expected 2 models, got %d", len(models))
-		}
-	})
-}
-
 // TestHandleCancelled_WrappedError verifies wrapped error handling.
 func TestHandleCancelled_WrappedError(t *testing.T) {
 	// Direct errCancelled
@@ -345,10 +314,13 @@ func TestHandleCancelled_WrappedError(t *testing.T) {
 	}
 }
 
-// TestGetExistingConfigPaths_UnknownIntegration verifies unknown integration returns nil.
-func TestGetExistingConfigPaths_UnknownIntegration(t *testing.T) {
-	paths := getExistingConfigPaths("unknown")
-	if len(paths) > 0 {
-		t.Errorf("expected nil/empty for unknown integration, got %v", paths)
+// TestConfigPaths_UnknownIntegration verifies unknown integration returns nil.
+func TestConfigPaths_UnknownIntegration(t *testing.T) {
+	integ, ok := integrations["unknown"]
+	if ok {
+		t.Error("expected unknown integration to not be found")
+	}
+	if integ != nil {
+		t.Errorf("expected nil integration, got %v", integ)
 	}
 }

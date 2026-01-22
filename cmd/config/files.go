@@ -24,17 +24,17 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
-func getBackupDir() string {
+func backupDir() string {
 	return filepath.Join(os.TempDir(), "ollama-backups")
 }
 
 func backupToTmp(srcPath string) (string, error) {
-	backupDir := getBackupDir()
-	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+	dir := backupDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 
-	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.%d", filepath.Base(srcPath), time.Now().Unix()))
+	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", filepath.Base(srcPath), time.Now().Unix()))
 	if err := copyFile(srcPath, backupPath); err != nil {
 		return "", err
 	}
@@ -50,6 +50,8 @@ func atomicWrite(path string, data []byte) error {
 				return fmt.Errorf("backup failed: %w", err)
 			}
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read existing file: %w", err)
 	}
 
 	dir := filepath.Dir(path)
@@ -60,19 +62,19 @@ func atomicWrite(path string, data []byte) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write failed: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close failed: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		if backupPath != "" {
-			copyFile(backupPath, path)
+			_ = copyFile(backupPath, path)
 		}
 		return fmt.Errorf("rename failed: %w", err)
 	}
@@ -80,7 +82,7 @@ func atomicWrite(path string, data []byte) error {
 	return nil
 }
 
-func getModelInfo(model string) *api.ShowResponse {
+func modelInfo(model string) *api.ShowResponse {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil
@@ -92,9 +94,12 @@ func getModelInfo(model string) *api.ShowResponse {
 	return resp
 }
 
-func getModelContextLength(model string) int {
-	const defaultCtx = 64000
-	resp := getModelInfo(model)
+func modelContextLength(model string) int {
+	const (
+		defaultCtx = 64000
+		maxCtx     = 128000
+	)
+	resp := modelInfo(model)
 	if resp == nil || resp.ModelInfo == nil {
 		return defaultCtx
 	}
@@ -103,13 +108,13 @@ func getModelContextLength(model string) int {
 		return defaultCtx
 	}
 	if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64); ok {
-		return min(int(v), 128000)
+		return min(int(v), maxCtx)
 	}
 	return defaultCtx
 }
 
 func modelSupportsImages(model string) bool {
-	resp := getModelInfo(model)
+	resp := modelInfo(model)
 	if resp == nil {
 		return false
 	}

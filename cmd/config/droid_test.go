@@ -344,9 +344,9 @@ func TestSetupDroidSettings_DuplicateModels(t *testing.T) {
 		t.Fatalf("setupDroidSettings with duplicates failed: %v", err)
 	}
 
-	settings, err := readDroidSettings()
+	settings, err := droidSettings()
 	if err != nil {
-		t.Fatalf("readDroidSettings failed: %v", err)
+		t.Fatalf("droidSettings failed: %v", err)
 	}
 
 	customModels, _ := settings["customModels"].([]any)
@@ -375,7 +375,7 @@ func TestSetupDroidSettings_MalformedModelEntry(t *testing.T) {
 	}
 
 	// Malformed entries should be preserved in nonOllamaModels
-	settings, _ := readDroidSettings()
+	settings, _ := droidSettings()
 	customModels, _ := settings["customModels"].([]any)
 
 	// Should have: 1 new Ollama model + 2 preserved malformed entries
@@ -402,7 +402,7 @@ func TestSetupDroidSettings_WrongTypeSessionSettings(t *testing.T) {
 	}
 
 	// Should create proper sessionDefaultSettings
-	settings, _ := readDroidSettings()
+	settings, _ := droidSettings()
 	session, ok := settings["sessionDefaultSettings"].(map[string]any)
 	if !ok {
 		t.Fatalf("sessionDefaultSettings should be map after setup, got %T", settings["sessionDefaultSettings"])

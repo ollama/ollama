@@ -52,7 +52,7 @@ func TestAtomicWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries, err := os.ReadDir(getBackupDir())
+		entries, err := os.ReadDir(backupDir())
 		if err != nil {
 			t.Fatal("backup directory not created")
 		}
@@ -62,7 +62,7 @@ func TestAtomicWrite(t *testing.T) {
 			if filepath.Ext(entry.Name()) != ".json" {
 				name := entry.Name()
 				if len(name) > len("backup.json.") && name[:len("backup.json.")] == "backup.json." {
-					backupPath := filepath.Join(getBackupDir(), name)
+					backupPath := filepath.Join(backupDir(), name)
 					backup, err := os.ReadFile(backupPath)
 					if err == nil {
 						var backupData map[string]bool
@@ -97,7 +97,7 @@ func TestAtomicWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries, _ := os.ReadDir(getBackupDir())
+		entries, _ := os.ReadDir(backupDir())
 		for _, entry := range entries {
 			if len(entry.Name()) > len("nobak.json.") && entry.Name()[:len("nobak.json.")] == "nobak.json." {
 				t.Error("backup should not exist for new file")
@@ -114,7 +114,7 @@ func TestAtomicWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries1, _ := os.ReadDir(getBackupDir())
+		entries1, _ := os.ReadDir(backupDir())
 		countBefore := 0
 		for _, e := range entries1 {
 			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
@@ -126,7 +126,7 @@ func TestAtomicWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries2, _ := os.ReadDir(getBackupDir())
+		entries2, _ := os.ReadDir(backupDir())
 		countAfter := 0
 		for _, e := range entries2 {
 			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
@@ -148,7 +148,7 @@ func TestAtomicWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries, _ := os.ReadDir(getBackupDir())
+		entries, _ := os.ReadDir(backupDir())
 		var found bool
 		for _, entry := range entries {
 			name := entry.Name()
@@ -160,7 +160,7 @@ func TestAtomicWrite(t *testing.T) {
 					}
 				}
 				found = true
-				os.Remove(filepath.Join(getBackupDir(), name))
+				os.Remove(filepath.Join(backupDir(), name))
 				break
 			}
 		}
@@ -187,7 +187,7 @@ func TestAtomicWrite_FailsIfBackupFails(t *testing.T) {
 	os.WriteFile(path, originalContent, 0o644)
 
 	// Make backup directory read-only to force backup failure
-	backupDir := getBackupDir()
+	backupDir := backupDir()
 	os.MkdirAll(backupDir, 0o755)
 	os.Chmod(backupDir, 0o444) // Read-only
 	defer os.Chmod(backupDir, 0o755)

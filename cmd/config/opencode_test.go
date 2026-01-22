@@ -416,9 +416,9 @@ func TestGetOpenCodeOllamaModels_NoConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	models, err := getOpenCodeOllamaModels()
+	models, err := ollamaModelsFromConfig()
 	if err == nil {
-		t.Log("getOpenCodeOllamaModels returns nil error for missing config (acceptable)")
+		t.Log("ollamaModelsFromConfig returns nil error for missing config (acceptable)")
 	}
 	if len(models) > 0 {
 		t.Errorf("expected nil/empty models for missing config, got %v", models)
@@ -430,7 +430,7 @@ func TestGetOpenCodeConfiguredModels_NoConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	models := getOpenCodeConfiguredModels()
+	models := openCodeModels()
 	if len(models) > 0 {
 		t.Errorf("expected nil/empty for missing config, got %v", models)
 	}

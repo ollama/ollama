@@ -10,6 +10,16 @@ import (
 	"golang.org/x/term"
 )
 
+// ANSI escape sequences for terminal formatting.
+const (
+	ansiHideCursor = "\033[?25l"
+	ansiShowCursor = "\033[?25h"
+	ansiBold       = "\033[1m"
+	ansiReset      = "\033[0m"
+	ansiGray       = "\033[37m"
+	ansiClearDown  = "\033[J"
+)
+
 const maxDisplayedItems = 10
 
 var errCancelled = errors.New("cancelled")
@@ -22,7 +32,8 @@ type selectItem struct {
 type inputEvent int
 
 const (
-	eventEnter inputEvent = iota
+	eventNone inputEvent = iota
+	eventEnter
 	eventEscape
 	eventUp
 	eventDown
@@ -224,19 +235,19 @@ func enterRawMode() (*terminalState, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprint(os.Stderr, "\033[?25l")
+	fmt.Fprint(os.Stderr, ansiHideCursor)
 	return &terminalState{fd: fd, oldState: oldState}, nil
 }
 
 func (t *terminalState) restore() {
-	fmt.Fprint(os.Stderr, "\033[?25h")
+	fmt.Fprint(os.Stderr, ansiShowCursor)
 	term.Restore(t.fd, t.oldState)
 }
 
 func clearLines(n int) {
 	if n > 0 {
 		fmt.Fprintf(os.Stderr, "\033[%dA", n)
-		fmt.Fprint(os.Stderr, "\033[J")
+		fmt.Fprint(os.Stderr, ansiClearDown)
 	}
 }
 
@@ -264,7 +275,7 @@ func parseInput(r io.Reader) (inputEvent, byte, error) {
 		return eventChar, buf[0], nil
 	}
 
-	return 0, 0, nil
+	return eventNone, 0, nil
 }
 
 // Rendering
@@ -276,7 +287,7 @@ func renderSelect(w io.Writer, prompt string, s *selectState) int {
 	lineCount := 1
 
 	if len(filtered) == 0 {
-		fmt.Fprintf(w, "  \033[37m(no matches)\033[0m\r\n")
+		fmt.Fprintf(w, "  %s(no matches)%s\r\n", ansiGray, ansiReset)
 		lineCount++
 	} else {
 		displayCount := min(len(filtered), maxDisplayedItems)
@@ -289,18 +300,18 @@ func renderSelect(w io.Writer, prompt string, s *selectState) int {
 			item := filtered[idx]
 			prefix := "    "
 			if idx == s.selected {
-				prefix = "  \033[1m> "
+				prefix = "  " + ansiBold + "> "
 			}
 			if item.Description != "" {
-				fmt.Fprintf(w, "%s%s\033[0m \033[37m- %s\033[0m\r\n", prefix, item.Name, item.Description)
+				fmt.Fprintf(w, "%s%s%s %s- %s%s\r\n", prefix, item.Name, ansiReset, ansiGray, item.Description, ansiReset)
 			} else {
-				fmt.Fprintf(w, "%s%s\033[0m\r\n", prefix, item.Name)
+				fmt.Fprintf(w, "%s%s%s\r\n", prefix, item.Name, ansiReset)
 			}
 			lineCount++
 		}
 
 		if remaining := len(filtered) - s.scrollOffset - displayCount; remaining > 0 {
-			fmt.Fprintf(w, "  \033[37m... and %d more\033[0m\r\n", remaining)
+			fmt.Fprintf(w, "  %s... and %d more%s\r\n", ansiGray, remaining, ansiReset)
 			lineCount++
 		}
 	}
@@ -315,7 +326,7 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 	lineCount := 1
 
 	if len(filtered) == 0 {
-		fmt.Fprintf(w, "  \033[37m(no matches)\033[0m\r\n")
+		fmt.Fprintf(w, "  %s(no matches)%s\r\n", ansiGray, ansiReset)
 		lineCount++
 	} else {
 		displayCount := min(len(filtered), maxDisplayedItems)
@@ -339,11 +350,11 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 				prefix = "> "
 			}
 			if s.isDefault(origIdx) {
-				suffix = " \033[37m(default)\033[0m"
+				suffix = " " + ansiGray + "(default)" + ansiReset
 			}
 
 			if idx == s.highlighted && !s.focusOnButton {
-				fmt.Fprintf(w, "  \033[1m%s %s %s\033[0m%s\r\n", prefix, checkbox, item.Name, suffix)
+				fmt.Fprintf(w, "  %s%s %s %s%s%s\r\n", ansiBold, prefix, checkbox, item.Name, ansiReset, suffix)
 			} else {
 				fmt.Fprintf(w, "  %s %s %s%s\r\n", prefix, checkbox, item.Name, suffix)
 			}
@@ -351,7 +362,7 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 		}
 
 		if remaining := len(filtered) - s.scrollOffset - displayCount; remaining > 0 {
-			fmt.Fprintf(w, "  \033[37m... and %d more\033[0m\r\n", remaining)
+			fmt.Fprintf(w, "  %s... and %d more%s\r\n", ansiGray, remaining, ansiReset)
 			lineCount++
 		}
 	}
@@ -361,11 +372,11 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 	count := s.selectedCount()
 	switch {
 	case count == 0:
-		fmt.Fprintf(w, "  \033[37mSelect at least one model.\033[0m\r\n")
+		fmt.Fprintf(w, "  %sSelect at least one model.%s\r\n", ansiGray, ansiReset)
 	case s.focusOnButton:
-		fmt.Fprintf(w, "  \033[1m> [ Continue ]\033[0m \033[37m(%d selected)\033[0m\r\n", count)
+		fmt.Fprintf(w, "  %s> [ Continue ]%s %s(%d selected)%s\r\n", ansiBold, ansiReset, ansiGray, count, ansiReset)
 	default:
-		fmt.Fprintf(w, "    \033[37m[ Continue ] (%d selected) - press Tab\033[0m\r\n", count)
+		fmt.Fprintf(w, "    %s[ Continue ] (%d selected) - press Tab%s\r\n", ansiGray, count, ansiReset)
 	}
 	lineCount++
 

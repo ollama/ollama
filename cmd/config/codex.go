@@ -8,13 +8,11 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-var codexIntegration = &integrationDef{
+var codexIntegration = &integration{
 	Name:        "Codex",
 	DisplayName: "Codex",
 	Command:     "codex",
-	EnvVars: func(model string) []envVar {
-		return []envVar{}
-	},
+	EnvVars:     func(model string) []envVar { return nil },
 	Args: func(model string) []string {
 		if model == "" {
 			return []string{"--oss"}
@@ -26,7 +24,7 @@ var codexIntegration = &integrationDef{
 
 func checkCodexVersion() error {
 	if _, err := exec.LookPath("codex"); err != nil {
-		return fmt.Errorf("codex is not installed. Install with: npm install -g @openai/codex")
+		return fmt.Errorf("codex is not installed, install with: npm install -g @openai/codex")
 	}
 
 	out, err := exec.Command("codex", "--version").Output()
@@ -44,7 +42,7 @@ func checkCodexVersion() error {
 	minVersion := "v0.81.0"
 
 	if semver.Compare(version, minVersion) < 0 {
-		return fmt.Errorf("codex version %s is too old, minimum required is %s. Update with: npm update -g @openai/codex", fields[len(fields)-1], "0.81.0")
+		return fmt.Errorf("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex", fields[len(fields)-1], "0.81.0")
 	}
 
 	return nil
