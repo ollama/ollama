@@ -799,8 +799,8 @@ func ToImageGenerationResponse(resp api.GenerateResponse) ImageGenerationRespons
 type ImageEditRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
-	Image  string `json:"image"`           // Base64-encoded image data
-	Size   string `json:"size,omitempty"`  // e.g., "1024x1024"
+	Image  string `json:"image"`          // Base64-encoded image data
+	Size   string `json:"size,omitempty"` // e.g., "1024x1024"
 	Seed   *int64 `json:"seed,omitempty"`
 }
 
