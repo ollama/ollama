@@ -19,6 +19,7 @@ import (
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
+	"github.com/ollama/ollama/x/imagegen/models/glm4_moe_lite"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
 	"github.com/ollama/ollama/x/imagegen/models/llama"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
@@ -242,6 +243,8 @@ func load(modelPath string) (Model, error) {
 		return gemma3.Load(modelPath)
 	case "gemma3_text":
 		return gemma3.LoadText(modelPath)
+	case "glm4_moe_lite":
+		return glm4_moe_lite.Load(modelPath)
 	default:
 		return llama.Load(modelPath)
 	}
