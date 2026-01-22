@@ -5,6 +5,37 @@ import (
 	"testing"
 )
 
+func TestTotalTensorSize(t *testing.T) {
+	m := &ModelManifest{
+		Manifest: &Manifest{
+			Layers: []ManifestLayer{
+				{MediaType: "application/vnd.ollama.image.tensor", Size: 1000},
+				{MediaType: "application/vnd.ollama.image.tensor", Size: 2000},
+				{MediaType: "application/vnd.ollama.image.json", Size: 500}, // not a tensor
+				{MediaType: "application/vnd.ollama.image.tensor", Size: 3000},
+			},
+		},
+	}
+
+	got := m.TotalTensorSize()
+	want := int64(6000)
+	if got != want {
+		t.Errorf("TotalTensorSize() = %d, want %d", got, want)
+	}
+}
+
+func TestTotalTensorSizeEmpty(t *testing.T) {
+	m := &ModelManifest{
+		Manifest: &Manifest{
+			Layers: []ManifestLayer{},
+		},
+	}
+
+	if got := m.TotalTensorSize(); got != 0 {
+		t.Errorf("TotalTensorSize() = %d, want 0", got)
+	}
+}
+
 func TestManifestAndBlobDirsRespectOLLAMAModels(t *testing.T) {
 	modelsDir := filepath.Join(t.TempDir(), "models")
 

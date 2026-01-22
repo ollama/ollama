@@ -104,11 +104,17 @@ func NewServer(modelName string) (*Server, error) {
 		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
 	}
 
+	// Get total weight size from manifest
+	var weightSize uint64
+	if manifest, err := LoadManifest(modelName); err == nil {
+		weightSize = uint64(manifest.TotalTensorSize())
+	}
+
 	s := &Server{
 		cmd:       cmd,
 		port:      port,
 		modelName: modelName,
-		vramSize:  EstimateVRAM(modelName),
+		vramSize:  weightSize,
 		done:      make(chan error, 1),
 		client:    &http.Client{Timeout: 10 * time.Minute},
 	}
