@@ -1,232 +1,40 @@
 import React from "react";
 import { Streamdown, defaultRemarkPlugins } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
-import CopyButton from "./CopyButton";
-import type { BundledLanguage } from "shiki";
-import { highlighter } from "@/lib/highlighter";
 
 interface StreamingMarkdownContentProps {
   content: string;
   isStreaming?: boolean;
-  size?: "sm" | "md" | "lg";
   browserToolResult?: any; // TODO: proper type
 }
 
-// Helper to extract text from React nodes
-const extractText = (node: React.ReactNode): string => {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (!node) return "";
-  if (React.isValidElement(node)) {
-    const props = node.props as any;
-    if (props?.children) {
-      return extractText(props.children as React.ReactNode);
-    }
-  }
-  if (Array.isArray(node)) {
-    return node.map(extractText).join("");
-  }
-  return "";
-};
-
-const CodeBlock = React.memo(
-  ({ children }: React.HTMLAttributes<HTMLPreElement>) => {
-    // Extract code and language from children
-    const codeElement = children as React.ReactElement<{
-      className?: string;
-      children: React.ReactNode;
-    }>;
-    const language =
-      codeElement.props.className?.replace(/language-/, "") || "";
-    const codeText = extractText(codeElement.props.children);
-
-    // Synchronously highlight code using the pre-loaded highlighter
-    const tokens = React.useMemo(() => {
-      if (!highlighter) return null;
-
-      try {
-        return {
-          light: highlighter.codeToTokensBase(codeText, {
-            lang: language as BundledLanguage,
-            theme: "one-light" as any,
-          }),
-          dark: highlighter.codeToTokensBase(codeText, {
-            lang: language as BundledLanguage,
-            theme: "one-dark" as any,
-          }),
-        };
-      } catch (error) {
-        console.error("Failed to highlight code:", error);
-        return null;
-      }
-    }, [codeText, language]);
-
-    return (
-      <div className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
-        <div className="flex select-none">
-          {language && (
-            <div className="text-[13px] text-neutral-500 dark:text-neutral-400 font-mono px-4 py-2">
-              {language}
-            </div>
-          )}
-          <CopyButton
-            content={codeText}
-            showLabels={true}
-            className="copy-button text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 ml-auto"
-          />
-        </div>
-        {/* Light mode */}
-        <pre className="dark:hidden m-0 bg-neutral-100 text-sm overflow-x-auto p-4">
-          <code className="font-mono text-sm">
-            {tokens?.light
-              ? tokens.light.map((line: any, i: number) => (
-                  <React.Fragment key={i}>
-                    {line.map((token: any, j: number) => (
-                      <span
-                        key={j}
-                        style={{
-                          color: token.color,
-                        }}
-                      >
-                        {token.content}
-                      </span>
-                    ))}
-                    {i < tokens.light.length - 1 && "\n"}
-                  </React.Fragment>
-                ))
-              : codeText}
-          </code>
-        </pre>
-        {/* Dark mode */}
-        <pre className="hidden dark:block m-0 bg-neutral-800 text-sm overflow-x-auto p-4">
-          <code className="font-mono text-sm">
-            {tokens?.dark
-              ? tokens.dark.map((line: any, i: number) => (
-                  <React.Fragment key={i}>
-                    {line.map((token: any, j: number) => (
-                      <span
-                        key={j}
-                        style={{
-                          color: token.color,
-                        }}
-                      >
-                        {token.content}
-                      </span>
-                    ))}
-                    {i < tokens.dark.length - 1 && "\n"}
-                  </React.Fragment>
-                ))
-              : codeText}
-          </code>
-        </pre>
-      </div>
-    );
-  },
-);
-
-const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
-  React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
+const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> = ({
+  content,
+  isStreaming = false,
+  browserToolResult,
+}) => {
     // Build the remark plugins array - keep default GFM and Math, add citations
     const remarkPlugins = React.useMemo(() => {
       return [
         defaultRemarkPlugins.gfm,
         defaultRemarkPlugins.math,
+        defaultRemarkPlugins.cjkFriendly,
+        defaultRemarkPlugins.cjkFriendlyGfmStrikethrough,
         remarkCitationParser,
       ];
     }, []);
 
     return (
-      <div
-        className={`
-          max-w-full
-          ${size === "sm" ? "prose-sm" : size === "lg" ? "prose-lg" : ""}
-          prose
-          prose-neutral
-          prose-headings:font-semibold
-          prose:text-neutral-800
-          prose-strong:font-semibold
-          prose-ul:marker:text-neutral-700
-          prose-li:marker:text-neutral-700
-          prose-headings:text-neutral-800
-          prose-pre:bg-transparent
-          prose-pre:rounded-xl
-          prose-pre:text-neutral-800
-          prose-pre:font-normal
-          prose-pre:my-0
-          prose-pre:max-w-full
-          prose-pre:pt-1
-          [&_table]:border-collapse
-          [&_table]:w-full
-          [&_table]:border
-          [&_table]:border-neutral-200
-          [&_table]:rounded-lg
-          [&_table]:overflow-hidden
-          [&_th]:px-3
-          [&_th]:py-2
-          [&_th]:text-left
-          [&_th]:font-semibold
-          [&_th]:border-b
-          [&_th]:border-r
-          [&_th]:border-neutral-200
-          [&_th:last-child]:border-r-0
-          [&_td]:px-3
-          [&_td]:py-2
-          [&_td]:border-r
-          [&_td]:border-neutral-200
-          [&_td:last-child]:border-r-0
-          [&_tbody_tr:not(:last-child)_td]:border-b
-          [&_code:not(pre_code)]:text-neutral-700
-          [&_code:not(pre_code)]:bg-neutral-100
-          [&_code:not(pre_code)]:font-normal
-          [&_code:not(pre_code)]:px-1.5
-          [&_code:not(pre_code)]:py-0.5
-          [&_code:not(pre_code)]:rounded-md
-          [&_code:not(pre_code)]:text-[90%]
-          [&_code:not(pre_code)]:before:hidden
-          [&_code:not(pre_code)]:after:hidden
-          dark:prose-invert
-          dark:prose:text-neutral-200
-          dark:prose-pre:bg-none
-          dark:prose-headings:text-neutral-200
-          dark:prose-strong:text-neutral-200
-          dark:prose-pre:text-neutral-200
-          dark:prose:pre:text-neutral-200
-          dark:[&_table]:border-neutral-700
-          dark:[&_thead]:bg-neutral-800
-          dark:[&_th]:border-neutral-700
-          dark:[&_td]:border-neutral-700
-          dark:[&_code:not(pre_code)]:text-neutral-200
-          dark:[&_code:not(pre_code)]:bg-neutral-800
-          dark:[&_code:not(pre_code)]:font-normal
-          dark:prose-ul:marker:text-neutral-300
-          dark:prose-li:marker:text-neutral-300
-          break-words
-        `}
-      >
+      <div className="max-w-full break-words">
         <StreamingMarkdownErrorBoundary
           content={content}
           isStreaming={isStreaming}
         >
           <Streamdown
-            parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
             remarkPlugins={remarkPlugins}
             controls={false}
             components={{
-              pre: CodeBlock,
-              table: ({
-                children,
-                ...props
-              }: React.HTMLAttributes<HTMLTableElement>) => (
-                <div className="overflow-x-auto max-w-full">
-                  <table
-                    {...props}
-                    className="border-collapse w-full border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden"
-                  >
-                    {children}
-                  </table>
-                </div>
-              ),
               // @ts-expect-error: custom citation type
               "ol-citation": ({
                 cursor,
@@ -281,7 +89,7 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
         </StreamingMarkdownErrorBoundary>
       </div>
     );
-  });
+};
 
 interface StreamingMarkdownErrorBoundaryProps {
   content: string;
