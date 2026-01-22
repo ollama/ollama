@@ -5,24 +5,57 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
-var openCodeIntegration = &integration{
-	Name:             "OpenCode",
-	DisplayName:      "OpenCode",
-	Command:          "opencode",
-	EnvVars:          func(model string) []envVar { return nil },
-	Args:             func(model string) []string { return nil },
-	Setup:            setupOpenCodeSettings,
-	CheckInstall:     checkCommand("opencode", "install from https://opencode.ai"),
-	ConfigPaths:      openCodeConfigPaths,
-	ConfiguredModels: openCodeModels,
+// OpenCode implements Runner and Editor for OpenCode integration
+type OpenCode struct{}
+
+func (o *OpenCode) String() string { return "OpenCode" }
+
+func (o *OpenCode) Run(model string) error {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
+	}
+
+	// Call Edit() to ensure config is up-to-date before launch
+	models := []string{model}
+	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
+		models = config.Models
+	}
+	if err := o.Edit(models); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+
+	cmd := exec.Command("opencode")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
-func setupOpenCodeSettings(modelList []string) error {
+func (o *OpenCode) Paths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	var paths []string
+	p := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if _, err := os.Stat(p); err == nil {
+		paths = append(paths, p)
+	}
+	sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
+	if _, err := os.Stat(sp); err == nil {
+		paths = append(paths, sp)
+	}
+	return paths
+}
+
+func (o *OpenCode) Edit(modelList []string) error {
 	if len(modelList) == 0 {
 		return nil
 	}
@@ -39,7 +72,7 @@ func setupOpenCodeSettings(modelList []string) error {
 
 	config := make(map[string]any)
 	if data, err := os.ReadFile(configPath); err == nil {
-		_ = json.Unmarshal(data, &config) // ignore parse errors; treat as empty
+		_ = json.Unmarshal(data, &config) // Ignore parse errors; treat missing/corrupt files as empty
 	}
 
 	config["$schema"] = "https://opencode.ai/config.json"
@@ -109,7 +142,7 @@ func setupOpenCodeSettings(modelList []string) error {
 		"variant":  map[string]any{},
 	}
 	if data, err := os.ReadFile(statePath); err == nil {
-		_ = json.Unmarshal(data, &state) // ignore parse errors; use defaults
+		_ = json.Unmarshal(data, &state) // Ignore parse errors; use defaults
 	}
 
 	recent, _ := state["recent"].([]any)
@@ -149,51 +182,22 @@ func setupOpenCodeSettings(modelList []string) error {
 	return atomicWrite(statePath, stateData)
 }
 
-func ollamaModelsFromConfig() (map[string]any, error) {
+func (o *OpenCode) Models() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, err
+		return nil
 	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
+	config, err := readJSONFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	var config map[string]any
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-
 	provider, _ := config["provider"].(map[string]any)
 	ollama, _ := provider["ollama"].(map[string]any)
 	models, _ := ollama["models"].(map[string]any)
-	return models, nil
-}
-
-func openCodeModels() []string {
-	models, err := ollamaModelsFromConfig()
-	if err != nil || models == nil {
+	if len(models) == 0 {
 		return nil
 	}
 	keys := slices.Collect(maps.Keys(models))
 	slices.Sort(keys)
 	return keys
-}
-
-func openCodeConfigPaths() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-
-	var paths []string
-	p := filepath.Join(home, ".config", "opencode", "opencode.json")
-	if _, err := os.Stat(p); err == nil {
-		paths = append(paths, p)
-	}
-	sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
-	if _, err := os.Stat(sp); err == nil {
-		paths = append(paths, sp)
-	}
-	return paths
 }

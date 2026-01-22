@@ -256,7 +256,7 @@ func TestMultiSelectState(t *testing.T) {
 		if s.selectedCount() != 2 {
 			t.Errorf("expected 2 selected, got %d", s.selectedCount())
 		}
-		if !s.isChecked(1) || !s.isChecked(2) {
+		if !s.checked[1] || !s.checked[2] {
 			t.Error("expected item2 and item3 to be checked")
 		}
 	})
@@ -282,7 +282,7 @@ func TestMultiSelectState(t *testing.T) {
 	t.Run("Toggle_ChecksUncheckedItem", func(t *testing.T) {
 		s := newMultiSelectState(items, nil)
 		s.toggleItem()
-		if !s.isChecked(0) {
+		if !s.checked[0] {
 			t.Error("expected item1 to be checked after toggle")
 		}
 	})
@@ -290,7 +290,7 @@ func TestMultiSelectState(t *testing.T) {
 	t.Run("Toggle_UnchecksCheckedItem", func(t *testing.T) {
 		s := newMultiSelectState(items, []string{"item1"})
 		s.toggleItem()
-		if s.isChecked(0) {
+		if s.checked[0] {
 			t.Error("expected item1 to be unchecked after toggle")
 		}
 	})
@@ -312,7 +312,7 @@ func TestMultiSelectState(t *testing.T) {
 	t.Run("Enter_TogglesWhenNotOnButton", func(t *testing.T) {
 		s := newMultiSelectState(items, nil)
 		s.handleInput(eventEnter, 0)
-		if !s.isChecked(0) {
+		if !s.checked[0] {
 			t.Error("expected item1 to be checked after enter")
 		}
 	})
@@ -379,17 +379,17 @@ func TestMultiSelectState(t *testing.T) {
 
 	t.Run("IsDefault_TrueForFirstChecked", func(t *testing.T) {
 		s := newMultiSelectState(items, []string{"item2", "item1"})
-		if !s.isDefault(1) {
+		if !(len(s.checkOrder) > 0 && s.checkOrder[0] == 1) {
 			t.Error("expected item2 (idx 1) to be default (first checked)")
 		}
-		if s.isDefault(0) {
+		if len(s.checkOrder) > 0 && s.checkOrder[0] == 0 {
 			t.Error("expected item1 (idx 0) to NOT be default")
 		}
 	})
 
 	t.Run("IsDefault_FalseWhenNothingChecked", func(t *testing.T) {
 		s := newMultiSelectState(items, nil)
-		if s.isDefault(0) {
+		if len(s.checkOrder) > 0 && s.checkOrder[0] == 0 {
 			t.Error("expected isDefault=false when nothing checked")
 		}
 	})
@@ -776,10 +776,10 @@ func TestMultiSelectState_DuplicateNames(t *testing.T) {
 
 	// This documents the potentially surprising behavior:
 	// We toggled at highlighted=0, but itemIndex lookup returned 1
-	if !s.isChecked(1) {
+	if !s.checked[1] {
 		t.Error("toggle should check index 1 (due to name collision in itemIndex)")
 	}
-	if s.isChecked(0) {
+	if s.checked[0] {
 		t.Log("Note: index 0 is NOT checked, even though highlighted=0 (name collision behavior)")
 	}
 }

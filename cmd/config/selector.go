@@ -210,14 +210,6 @@ func (s *multiSelectState) handleInput(event inputEvent, char byte) (done bool, 
 	return false, nil, nil
 }
 
-func (s *multiSelectState) isChecked(idx int) bool {
-	return s.checked[idx]
-}
-
-func (s *multiSelectState) isDefault(origIdx int) bool {
-	return len(s.checkOrder) > 0 && s.checkOrder[0] == origIdx
-}
-
 func (s *multiSelectState) selectedCount() int {
 	return len(s.checkOrder)
 }
@@ -340,7 +332,7 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 			origIdx := s.itemIndex[item.Name]
 
 			checkbox := "[ ]"
-			if s.isChecked(origIdx) {
+			if s.checked[origIdx] {
 				checkbox = "[x]"
 			}
 
@@ -349,7 +341,7 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 			if idx == s.highlighted && !s.focusOnButton {
 				prefix = "> "
 			}
-			if s.isDefault(origIdx) {
+			if len(s.checkOrder) > 0 && s.checkOrder[0] == origIdx {
 				suffix = " " + ansiGray + "(default)" + ansiReset
 			}
 

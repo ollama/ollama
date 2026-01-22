@@ -7,7 +7,26 @@ import (
 	"testing"
 )
 
-func TestSetupOpenCodeSettings(t *testing.T) {
+func TestOpenCodeIntegration(t *testing.T) {
+	o := &OpenCode{}
+
+	t.Run("String", func(t *testing.T) {
+		if got := o.String(); got != "OpenCode" {
+			t.Errorf("String() = %q, want %q", got, "OpenCode")
+		}
+	})
+
+	t.Run("implements Runner", func(t *testing.T) {
+		var _ Runner = o
+	})
+
+	t.Run("implements Editor", func(t *testing.T) {
+		var _ Editor = o
+	})
+}
+
+func TestOpenCodeEdit(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -23,7 +42,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("fresh install", func(t *testing.T) {
 		cleanup()
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
@@ -34,7 +53,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"provider":{"anthropic":{"apiKey":"xxx"}}}`), 0o644)
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(configPath)
@@ -51,7 +70,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"mistral":{"name":"Mistral"}}}}}`), 0o644)
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenCodeModelExists(t, configPath, "mistral")
@@ -60,8 +79,8 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 
 	t.Run("update existing model", func(t *testing.T) {
 		cleanup()
-		setupOpenCodeSettings([]string{"llama3.2"})
-		setupOpenCodeSettings([]string{"llama3.2"})
+		o.Edit([]string{"llama3.2"})
+		o.Edit([]string{"llama3.2"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 	})
 
@@ -69,7 +88,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"theme":"dark","keybindings":{}}`), 0o644)
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(configPath)
@@ -87,7 +106,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		cleanup()
 		os.MkdirAll(stateDir, 0o755)
 		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0o644)
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenCodeRecentModel(t, statePath, 0, "ollama", "llama3.2")
@@ -98,7 +117,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		cleanup()
 		os.MkdirAll(stateDir, 0o755)
 		os.WriteFile(statePath, []byte(`{"recent":[],"favorite":[{"providerID":"x","modelID":"y"}],"variant":{"a":"b"}}`), 0o644)
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(statePath)
@@ -116,7 +135,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		cleanup()
 		os.MkdirAll(stateDir, 0o755)
 		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"ollama","modelID":"llama3.2"},{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0o644)
-		if err := setupOpenCodeSettings([]string{"llama3.2"}); err != nil {
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(statePath)
@@ -132,12 +151,12 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 	t.Run("remove model", func(t *testing.T) {
 		cleanup()
 		// First add two models
-		setupOpenCodeSettings([]string{"llama3.2", "mistral"})
+		o.Edit([]string{"llama3.2", "mistral"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelExists(t, configPath, "mistral")
 
 		// Then remove one by only selecting the other
-		setupOpenCodeSettings([]string{"llama3.2"})
+		o.Edit([]string{"llama3.2"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelNotExists(t, configPath, "mistral")
 	})
@@ -148,7 +167,7 @@ func TestSetupOpenCodeSettings(t *testing.T) {
 		// Add a non-Ollama model manually
 		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"external":{"name":"External Model"}}}}}`), 0o644)
 
-		setupOpenCodeSettings([]string{"llama3.2"})
+		o.Edit([]string{"llama3.2"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelExists(t, configPath, "external") // Should be preserved
 	})
@@ -239,9 +258,8 @@ func assertOpenCodeRecentModel(t *testing.T, path string, index int, providerID,
 
 // Edge case tests for opencode.go
 
-// TestSetupOpenCodeSettings_CorruptedConfigJSON verifies handling of corrupted config.json.
-// Corrupted JSON should be handled gracefully, not cause panic or silently overwrite.
-func TestSetupOpenCodeSettings_CorruptedConfigJSON(t *testing.T) {
+func TestOpenCodeEdit_CorruptedConfigJSON(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -252,9 +270,9 @@ func TestSetupOpenCodeSettings_CorruptedConfigJSON(t *testing.T) {
 	os.WriteFile(configPath, []byte(`{corrupted json content`), 0o644)
 
 	// Should not panic - corrupted JSON should be treated as empty
-	err := setupOpenCodeSettings([]string{"llama3.2"})
+	err := o.Edit([]string{"llama3.2"})
 	if err != nil {
-		t.Fatalf("setupOpenCodeSettings failed with corrupted config: %v", err)
+		t.Fatalf("Edit failed with corrupted config: %v", err)
 	}
 
 	// Verify valid JSON was created
@@ -265,9 +283,8 @@ func TestSetupOpenCodeSettings_CorruptedConfigJSON(t *testing.T) {
 	}
 }
 
-// TestSetupOpenCodeSettings_CorruptedStateJSON verifies handling of corrupted state/model.json.
-// State file corruption should not break the setup process.
-func TestSetupOpenCodeSettings_CorruptedStateJSON(t *testing.T) {
+func TestOpenCodeEdit_CorruptedStateJSON(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -277,9 +294,9 @@ func TestSetupOpenCodeSettings_CorruptedStateJSON(t *testing.T) {
 	os.MkdirAll(stateDir, 0o755)
 	os.WriteFile(statePath, []byte(`{corrupted state`), 0o644)
 
-	err := setupOpenCodeSettings([]string{"llama3.2"})
+	err := o.Edit([]string{"llama3.2"})
 	if err != nil {
-		t.Fatalf("setupOpenCodeSettings failed with corrupted state: %v", err)
+		t.Fatalf("Edit failed with corrupted state: %v", err)
 	}
 
 	// Verify valid state was created
@@ -290,9 +307,8 @@ func TestSetupOpenCodeSettings_CorruptedStateJSON(t *testing.T) {
 	}
 }
 
-// TestSetupOpenCodeSettings_WrongTypeProvider verifies handling when provider is wrong type.
-// Type assertion safety - provider might be string instead of map.
-func TestSetupOpenCodeSettings_WrongTypeProvider(t *testing.T) {
+func TestOpenCodeEdit_WrongTypeProvider(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -302,9 +318,9 @@ func TestSetupOpenCodeSettings_WrongTypeProvider(t *testing.T) {
 	os.MkdirAll(configDir, 0o755)
 	os.WriteFile(configPath, []byte(`{"provider": "not a map"}`), 0o644)
 
-	err := setupOpenCodeSettings([]string{"llama3.2"})
+	err := o.Edit([]string{"llama3.2"})
 	if err != nil {
-		t.Fatalf("setupOpenCodeSettings with wrong type provider failed: %v", err)
+		t.Fatalf("Edit with wrong type provider failed: %v", err)
 	}
 
 	// Verify provider is now correct type
@@ -321,8 +337,8 @@ func TestSetupOpenCodeSettings_WrongTypeProvider(t *testing.T) {
 	}
 }
 
-// TestSetupOpenCodeSettings_WrongTypeRecent verifies handling when recent is wrong type.
-func TestSetupOpenCodeSettings_WrongTypeRecent(t *testing.T) {
+func TestOpenCodeEdit_WrongTypeRecent(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -332,9 +348,9 @@ func TestSetupOpenCodeSettings_WrongTypeRecent(t *testing.T) {
 	os.MkdirAll(stateDir, 0o755)
 	os.WriteFile(statePath, []byte(`{"recent": "not an array", "favorite": [], "variant": {}}`), 0o644)
 
-	err := setupOpenCodeSettings([]string{"llama3.2"})
+	err := o.Edit([]string{"llama3.2"})
 	if err != nil {
-		t.Fatalf("setupOpenCodeSettings with wrong type recent failed: %v", err)
+		t.Fatalf("Edit with wrong type recent failed: %v", err)
 	}
 
 	// The function should handle this gracefully
@@ -351,9 +367,8 @@ func TestSetupOpenCodeSettings_WrongTypeRecent(t *testing.T) {
 	}
 }
 
-// TestSetupOpenCodeSettings_EmptyModels documents intentional behavior: empty models = no-op.
-// Prevents accidental clearing of user's model config.
-func TestSetupOpenCodeSettings_EmptyModels(t *testing.T) {
+func TestOpenCodeEdit_EmptyModels(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -365,9 +380,9 @@ func TestSetupOpenCodeSettings_EmptyModels(t *testing.T) {
 	os.WriteFile(configPath, []byte(originalContent), 0o644)
 
 	// Empty models should be no-op
-	err := setupOpenCodeSettings([]string{})
+	err := o.Edit([]string{})
 	if err != nil {
-		t.Fatalf("setupOpenCodeSettings with empty models failed: %v", err)
+		t.Fatalf("Edit with empty models failed: %v", err)
 	}
 
 	// Original content should be preserved (file not modified)
@@ -377,18 +392,17 @@ func TestSetupOpenCodeSettings_EmptyModels(t *testing.T) {
 	}
 }
 
-// TestSetupOpenCodeSettings_SpecialCharsInModelName verifies model names with special JSON characters.
-// Model names might contain quotes, backslashes, etc.
-func TestSetupOpenCodeSettings_SpecialCharsInModelName(t *testing.T) {
+func TestOpenCodeEdit_SpecialCharsInModelName(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
 	// Model name with special characters (though unusual)
 	specialModel := `model-with-"quotes"`
 
-	err := setupOpenCodeSettings([]string{specialModel})
+	err := o.Edit([]string{specialModel})
 	if err != nil {
-		t.Fatalf("setupOpenCodeSettings with special chars failed: %v", err)
+		t.Fatalf("Edit with special chars failed: %v", err)
 	}
 
 	// Verify it was stored correctly
@@ -411,26 +425,12 @@ func TestSetupOpenCodeSettings_SpecialCharsInModelName(t *testing.T) {
 	}
 }
 
-// TestGetOpenCodeOllamaModels_NoConfig verifies behavior when no config exists.
-func TestGetOpenCodeOllamaModels_NoConfig(t *testing.T) {
+func TestOpenCodeModels_NoConfig(t *testing.T) {
+	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	models, err := ollamaModelsFromConfig()
-	if err == nil {
-		t.Log("ollamaModelsFromConfig returns nil error for missing config (acceptable)")
-	}
-	if len(models) > 0 {
-		t.Errorf("expected nil/empty models for missing config, got %v", models)
-	}
-}
-
-// TestGetOpenCodeConfiguredModels_NoConfig verifies behavior when no config exists.
-func TestGetOpenCodeConfiguredModels_NoConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	models := openCodeModels()
+	models := o.Models()
 	if len(models) > 0 {
 		t.Errorf("expected nil/empty for missing config, got %v", models)
 	}

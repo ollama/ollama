@@ -16,14 +16,6 @@ type integrationConfig struct {
 	ConfiguredAt time.Time `json:"configured_at"`
 }
 
-// defaultModel returns the first (default) model, or empty string if none.
-func (c *integrationConfig) defaultModel() string {
-	if len(c.Models) > 0 {
-		return c.Models[0]
-	}
-	return ""
-}
-
 func integrationsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

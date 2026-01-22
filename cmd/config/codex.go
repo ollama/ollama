@@ -2,24 +2,33 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"golang.org/x/mod/semver"
 )
 
-var codexIntegration = &integration{
-	Name:        "Codex",
-	DisplayName: "Codex",
-	Command:     "codex",
-	EnvVars:     func(model string) []envVar { return nil },
-	Args: func(model string) []string {
-		if model == "" {
-			return []string{"--oss"}
-		}
-		return []string{"--oss", "-m", model}
-	},
-	CheckInstall: checkCodexVersion,
+// Codex implements Runner for Codex integration
+type Codex struct{}
+
+func (c *Codex) String() string { return "Codex" }
+
+func (c *Codex) Run(model string) error {
+	if err := checkCodexVersion(); err != nil {
+		return err
+	}
+
+	args := []string{"--oss"}
+	if model != "" {
+		args = append(args, "-m", model)
+	}
+
+	cmd := exec.Command("codex", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func checkCodexVersion() error {

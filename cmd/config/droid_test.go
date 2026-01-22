@@ -7,7 +7,26 @@ import (
 	"testing"
 )
 
-func TestSetupDroidSettings(t *testing.T) {
+func TestDroidIntegration(t *testing.T) {
+	d := &Droid{}
+
+	t.Run("String", func(t *testing.T) {
+		if got := d.String(); got != "Droid" {
+			t.Errorf("String() = %q, want %q", got, "Droid")
+		}
+	})
+
+	t.Run("implements Runner", func(t *testing.T) {
+		var _ Runner = d
+	})
+
+	t.Run("implements Editor", func(t *testing.T) {
+		var _ Editor = d
+	})
+}
+
+func TestDroidEdit(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -41,7 +60,7 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("fresh install creates models with sequential indices", func(t *testing.T) {
 		cleanup()
-		if err := setupDroidSettings([]string{"model-a", "model-b"}); err != nil {
+		if err := d.Edit([]string{"model-a", "model-b"}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -77,7 +96,7 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("sets sessionDefaultSettings.model to first model ID", func(t *testing.T) {
 		cleanup()
-		if err := setupDroidSettings([]string{"model-a", "model-b"}); err != nil {
+		if err := d.Edit([]string{"model-a", "model-b"}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -94,10 +113,10 @@ func TestSetupDroidSettings(t *testing.T) {
 	t.Run("re-indexes when models removed", func(t *testing.T) {
 		cleanup()
 		// Add three models
-		setupDroidSettings([]string{"model-a", "model-b", "model-c"})
+		d.Edit([]string{"model-a", "model-b", "model-c"})
 
 		// Remove middle model
-		setupDroidSettings([]string{"model-a", "model-c"})
+		d.Edit([]string{"model-a", "model-c"})
 
 		settings := readSettings()
 		models := getCustomModels(settings)
@@ -133,7 +152,7 @@ func TestSetupDroidSettings(t *testing.T) {
 			]
 		}`), 0o644)
 
-		setupDroidSettings([]string{"model-a"})
+		d.Edit([]string{"model-a"})
 
 		settings := readSettings()
 		models := getCustomModels(settings)
@@ -162,7 +181,7 @@ func TestSetupDroidSettings(t *testing.T) {
 			"sessionDefaultSettings": {"autonomyMode": "auto-high"}
 		}`), 0o644)
 
-		setupDroidSettings([]string{"model-a"})
+		d.Edit([]string{"model-a"})
 
 		settings := readSettings()
 
@@ -181,7 +200,7 @@ func TestSetupDroidSettings(t *testing.T) {
 
 	t.Run("required fields present", func(t *testing.T) {
 		cleanup()
-		setupDroidSettings([]string{"test-model"})
+		d.Edit([]string{"test-model"})
 
 		settings := readSettings()
 		models := getCustomModels(settings)
@@ -217,7 +236,7 @@ func TestSetupDroidSettings(t *testing.T) {
 			"sessionDefaultSettings": {"reasoningEffort": "off"}
 		}`), 0o644)
 
-		setupDroidSettings([]string{"model-a"})
+		d.Edit([]string{"model-a"})
 
 		settings := readSettings()
 		session := settings["sessionDefaultSettings"].(map[string]any)
@@ -234,7 +253,7 @@ func TestSetupDroidSettings(t *testing.T) {
 			"sessionDefaultSettings": {"reasoningEffort": "high"}
 		}`), 0o644)
 
-		setupDroidSettings([]string{"model-a"})
+		d.Edit([]string{"model-a"})
 
 		settings := readSettings()
 		session := settings["sessionDefaultSettings"].(map[string]any)
@@ -247,9 +266,8 @@ func TestSetupDroidSettings(t *testing.T) {
 
 // Edge case tests for droid.go
 
-// TestSetupDroidSettings_CorruptedJSON verifies that corrupted settings.json does not cause panic.
-// User's existing non-Ollama settings must be preserved; corrupted file should be handled gracefully.
-func TestSetupDroidSettings_CorruptedJSON(t *testing.T) {
+func TestDroidEdit_CorruptedJSON(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -260,9 +278,9 @@ func TestSetupDroidSettings_CorruptedJSON(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(`{corrupted json content`), 0o644)
 
 	// Should not panic - corrupted JSON should be treated as empty
-	err := setupDroidSettings([]string{"model-a"})
+	err := d.Edit([]string{"model-a"})
 	if err != nil {
-		t.Fatalf("setupDroidSettings failed with corrupted JSON: %v", err)
+		t.Fatalf("Edit failed with corrupted JSON: %v", err)
 	}
 
 	// Verify new config was created
@@ -273,9 +291,8 @@ func TestSetupDroidSettings_CorruptedJSON(t *testing.T) {
 	}
 }
 
-// TestSetupDroidSettings_WrongTypeCustomModels verifies handling when customModels is wrong type.
-// Type assertion safety - customModels might be string instead of array.
-func TestSetupDroidSettings_WrongTypeCustomModels(t *testing.T) {
+func TestDroidEdit_WrongTypeCustomModels(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -287,9 +304,9 @@ func TestSetupDroidSettings_WrongTypeCustomModels(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(`{"customModels": "not an array"}`), 0o644)
 
 	// Should not panic - wrong type should be handled gracefully
-	err := setupDroidSettings([]string{"model-a"})
+	err := d.Edit([]string{"model-a"})
 	if err != nil {
-		t.Fatalf("setupDroidSettings failed with wrong type customModels: %v", err)
+		t.Fatalf("Edit failed with wrong type customModels: %v", err)
 	}
 
 	// Verify models were added correctly
@@ -306,9 +323,8 @@ func TestSetupDroidSettings_WrongTypeCustomModels(t *testing.T) {
 	}
 }
 
-// TestSetupDroidSettings_EmptyModels documents intentional behavior: empty models = no-op (early return).
-// Prevents accidental clearing of user's model config.
-func TestSetupDroidSettings_EmptyModels(t *testing.T) {
+func TestDroidEdit_EmptyModels(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -320,9 +336,9 @@ func TestSetupDroidSettings_EmptyModels(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(originalContent), 0o644)
 
 	// Empty models should be no-op
-	err := setupDroidSettings([]string{})
+	err := d.Edit([]string{})
 	if err != nil {
-		t.Fatalf("setupDroidSettings with empty models failed: %v", err)
+		t.Fatalf("Edit with empty models failed: %v", err)
 	}
 
 	// Original content should be preserved (file not modified)
@@ -332,21 +348,23 @@ func TestSetupDroidSettings_EmptyModels(t *testing.T) {
 	}
 }
 
-// TestSetupDroidSettings_DuplicateModels verifies handling of duplicate model names in input.
-// Should handle gracefully - current implementation keeps duplicates.
-func TestSetupDroidSettings_DuplicateModels(t *testing.T) {
+func TestDroidEdit_DuplicateModels(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
 	// Add same model twice
-	err := setupDroidSettings([]string{"model-a", "model-a"})
+	err := d.Edit([]string{"model-a", "model-a"})
 	if err != nil {
-		t.Fatalf("setupDroidSettings with duplicates failed: %v", err)
+		t.Fatalf("Edit with duplicates failed: %v", err)
 	}
 
-	settings, err := droidSettings()
+	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		t.Fatalf("droidSettings failed: %v", err)
+		t.Fatalf("readJSONFile failed: %v", err)
 	}
 
 	customModels, _ := settings["customModels"].([]any)
@@ -356,9 +374,8 @@ func TestSetupDroidSettings_DuplicateModels(t *testing.T) {
 	}
 }
 
-// TestSetupDroidSettings_MalformedModelEntry verifies handling when model entry is not a map.
-// xisting entries might be malformed.
-func TestSetupDroidSettings_MalformedModelEntry(t *testing.T) {
+func TestDroidEdit_MalformedModelEntry(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -369,13 +386,13 @@ func TestSetupDroidSettings_MalformedModelEntry(t *testing.T) {
 	// Model entry is a string instead of a map
 	os.WriteFile(settingsPath, []byte(`{"customModels": ["not a map", 123]}`), 0o644)
 
-	err := setupDroidSettings([]string{"model-a"})
+	err := d.Edit([]string{"model-a"})
 	if err != nil {
-		t.Fatalf("setupDroidSettings with malformed entries failed: %v", err)
+		t.Fatalf("Edit with malformed entries failed: %v", err)
 	}
 
 	// Malformed entries should be preserved in nonOllamaModels
-	settings, _ := droidSettings()
+	settings, _ := readJSONFile(settingsPath)
 	customModels, _ := settings["customModels"].([]any)
 
 	// Should have: 1 new Ollama model + 2 preserved malformed entries
@@ -384,8 +401,8 @@ func TestSetupDroidSettings_MalformedModelEntry(t *testing.T) {
 	}
 }
 
-// TestSetupDroidSettings_WrongTypeSessionSettings verifies handling when sessionDefaultSettings is wrong type.
-func TestSetupDroidSettings_WrongTypeSessionSettings(t *testing.T) {
+func TestDroidEdit_WrongTypeSessionSettings(t *testing.T) {
+	d := &Droid{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -396,13 +413,13 @@ func TestSetupDroidSettings_WrongTypeSessionSettings(t *testing.T) {
 	// sessionDefaultSettings is a string instead of map
 	os.WriteFile(settingsPath, []byte(`{"sessionDefaultSettings": "not a map"}`), 0o644)
 
-	err := setupDroidSettings([]string{"model-a"})
+	err := d.Edit([]string{"model-a"})
 	if err != nil {
-		t.Fatalf("setupDroidSettings with wrong type sessionDefaultSettings failed: %v", err)
+		t.Fatalf("Edit with wrong type sessionDefaultSettings failed: %v", err)
 	}
 
 	// Should create proper sessionDefaultSettings
-	settings, _ := droidSettings()
+	settings, _ := readJSONFile(settingsPath)
 	session, ok := settings["sessionDefaultSettings"].(map[string]any)
 	if !ok {
 		t.Fatalf("sessionDefaultSettings should be map after setup, got %T", settings["sessionDefaultSettings"])
@@ -412,7 +429,6 @@ func TestSetupDroidSettings_WrongTypeSessionSettings(t *testing.T) {
 	}
 }
 
-// TestIsValidReasoningEffort documents the valid values for reasoningEffort.
 func TestIsValidReasoningEffort(t *testing.T) {
 	tests := []struct {
 		effort string

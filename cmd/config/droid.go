@@ -4,39 +4,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
-var droidIntegration = &integration{
-	Name:             "Droid",
-	DisplayName:      "Droid",
-	Command:          "droid",
-	EnvVars:          func(model string) []envVar { return nil },
-	Args:             func(model string) []string { return nil },
-	Setup:            setupDroidSettings,
-	CheckInstall:     checkCommand("droid", "install from https://docs.factory.ai/cli/getting-started/quickstart"),
-	ConfigPaths:      droidConfigPaths,
-	ConfiguredModels: droidModels,
-}
+// Droid implements Runner and Editor for Droid integration
+type Droid struct{}
 
-var validReasoningEfforts = []string{"high", "medium", "low", "none"}
+func (d *Droid) String() string { return "Droid" }
 
-func isValidReasoningEffort(effort string) bool {
-	return slices.Contains(validReasoningEfforts, effort)
-}
-
-func isOllamaModelEntry(m any) bool {
-	entry, ok := m.(map[string]any)
-	if !ok {
-		return false
+func (d *Droid) Run(model string) error {
+	if _, err := exec.LookPath("droid"); err != nil {
+		return fmt.Errorf("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart")
 	}
-	displayName, _ := entry["displayName"].(string)
-	return strings.HasSuffix(displayName, "[Ollama]")
+
+	// Call Edit() to ensure config is up-to-date before launch
+	models := []string{model}
+	if config, err := loadIntegration("droid"); err == nil && len(config.Models) > 0 {
+		models = config.Models
+	}
+	if err := d.Edit(models); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+
+	cmd := exec.Command("droid")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
-func setupDroidSettings(models []string) error {
+func (d *Droid) Paths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	p := filepath.Join(home, ".factory", "settings.json")
+	if _, err := os.Stat(p); err == nil {
+		return []string{p}
+	}
+	return nil
+}
+
+func (d *Droid) Edit(models []string) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -53,7 +65,7 @@ func setupDroidSettings(models []string) error {
 
 	settings := make(map[string]any)
 	if data, err := os.ReadFile(settingsPath); err == nil {
-		_ = json.Unmarshal(data, &settings) // ignore parse errors; treat as empty
+		_ = json.Unmarshal(data, &settings) // Ignore parse errors; treat missing/corrupt files as empty
 	}
 
 	customModels, _ := settings["customModels"].([]any)
@@ -72,8 +84,8 @@ func setupDroidSettings(models []string) error {
 			"baseUrl":         "http://localhost:11434/v1",
 			"apiKey":          "ollama",
 			"provider":        "generic-chat-completion-api",
-			"maxOutputTokens": modelContextLength(model),
-			"supportsImages":  modelSupportsImages(model),
+			"maxOutputTokens": 64000,
+			"supportsImages":  false,
 			"id":              modelID,
 			"index":           i,
 		}
@@ -105,24 +117,12 @@ func setupDroidSettings(models []string) error {
 	return atomicWrite(settingsPath, data)
 }
 
-func droidSettings() (map[string]any, error) {
+func (d *Droid) Models() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".factory", "settings.json"))
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func droidModels() []string {
-	settings, err := droidSettings()
+	settings, err := readJSONFile(filepath.Join(home, ".factory", "settings.json"))
 	if err != nil {
 		return nil
 	}
@@ -145,16 +145,17 @@ func droidModels() []string {
 	return result
 }
 
-func droidConfigPaths() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
+var validReasoningEfforts = []string{"high", "medium", "low", "none"}
 
-	var paths []string
-	p := filepath.Join(home, ".factory", "settings.json")
-	if _, err := os.Stat(p); err == nil {
-		paths = append(paths, p)
+func isValidReasoningEffort(effort string) bool {
+	return slices.Contains(validReasoningEfforts, effort)
+}
+
+func isOllamaModelEntry(m any) bool {
+	entry, ok := m.(map[string]any)
+	if !ok {
+		return false
 	}
-	return paths
+	displayName, _ := entry["displayName"].(string)
+	return strings.HasSuffix(displayName, "[Ollama]")
 }

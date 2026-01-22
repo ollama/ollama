@@ -13,12 +13,12 @@ func setTestHome(t *testing.T, dir string) {
 	t.Setenv("USERPROFILE", dir)
 }
 
-// configPaths is a test helper that safely calls ConfigPaths if defined
-func configPaths(integ *integration) []string {
-	if integ.ConfigPaths == nil {
-		return nil
+// editorPaths is a test helper that safely calls Paths if the runner implements Editor
+func editorPaths(r Runner) []string {
+	if editor, ok := r.(Editor); ok {
+		return editor.Paths()
 	}
-	return integ.ConfigPaths()
+	return nil
 }
 
 func TestIntegrationConfig(t *testing.T) {
@@ -50,15 +50,23 @@ func TestIntegrationConfig(t *testing.T) {
 		saveIntegration("codex", []string{"model-a", "model-b"})
 
 		config, _ := loadIntegration("codex")
-		if config.defaultModel() != "model-a" {
-			t.Errorf("expected model-a, got %s", config.defaultModel())
+		defaultModel := ""
+		if len(config.Models) > 0 {
+			defaultModel = config.Models[0]
+		}
+		if defaultModel != "model-a" {
+			t.Errorf("expected model-a, got %s", defaultModel)
 		}
 	})
 
 	t.Run("defaultModel returns empty for no models", func(t *testing.T) {
 		config := &integrationConfig{Models: []string{}}
-		if config.defaultModel() != "" {
-			t.Errorf("expected empty string, got %s", config.defaultModel())
+		defaultModel := ""
+		if len(config.Models) > 0 {
+			defaultModel = config.Models[0]
+		}
+		if defaultModel != "" {
+			t.Errorf("expected empty string, got %s", defaultModel)
 		}
 	})
 
@@ -69,8 +77,12 @@ func TestIntegrationConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if config.defaultModel() != "model-x" {
-			t.Errorf("expected model-x, got %s", config.defaultModel())
+		defaultModel := ""
+		if len(config.Models) > 0 {
+			defaultModel = config.Models[0]
+		}
+		if defaultModel != "model-x" {
+			t.Errorf("expected model-x, got %s", defaultModel)
 		}
 	})
 
@@ -81,11 +93,19 @@ func TestIntegrationConfig(t *testing.T) {
 		config1, _ := loadIntegration("app1")
 		config2, _ := loadIntegration("app2")
 
-		if config1.defaultModel() != "model-1" {
-			t.Errorf("expected model-1, got %s", config1.defaultModel())
+		defaultModel1 := ""
+		if len(config1.Models) > 0 {
+			defaultModel1 = config1.Models[0]
 		}
-		if config2.defaultModel() != "model-2" {
-			t.Errorf("expected model-2, got %s", config2.defaultModel())
+		defaultModel2 := ""
+		if len(config2.Models) > 0 {
+			defaultModel2 = config2.Models[0]
+		}
+		if defaultModel1 != "model-1" {
+			t.Errorf("expected model-1, got %s", defaultModel1)
+		}
+		if defaultModel2 != "model-2" {
+			t.Errorf("expected model-2, got %s", defaultModel2)
 		}
 	})
 }
@@ -118,29 +138,29 @@ func TestListIntegrations(t *testing.T) {
 	})
 }
 
-func TestConfigPaths(t *testing.T) {
+func TestEditorPaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	t.Run("returns empty for claude (no config files)", func(t *testing.T) {
-		integ := integrations["claude"]
-		paths := configPaths(integ)
+	t.Run("returns empty for claude (no Editor)", func(t *testing.T) {
+		r := integrations["claude"]
+		paths := editorPaths(r)
 		if len(paths) != 0 {
 			t.Errorf("expected no paths for claude, got %v", paths)
 		}
 	})
 
-	t.Run("returns empty for codex (no config files)", func(t *testing.T) {
-		integ := integrations["codex"]
-		paths := configPaths(integ)
+	t.Run("returns empty for codex (no Editor)", func(t *testing.T) {
+		r := integrations["codex"]
+		paths := editorPaths(r)
 		if len(paths) != 0 {
 			t.Errorf("expected no paths for codex, got %v", paths)
 		}
 	})
 
 	t.Run("returns empty for droid when no config exists", func(t *testing.T) {
-		integ := integrations["droid"]
-		paths := configPaths(integ)
+		r := integrations["droid"]
+		paths := editorPaths(r)
 		if len(paths) != 0 {
 			t.Errorf("expected no paths, got %v", paths)
 		}
@@ -152,8 +172,8 @@ func TestConfigPaths(t *testing.T) {
 		os.MkdirAll(settingsDir, 0o755)
 		os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{}`), 0o644)
 
-		integ := integrations["droid"]
-		paths := configPaths(integ)
+		r := integrations["droid"]
+		paths := editorPaths(r)
 		if len(paths) != 1 {
 			t.Errorf("expected 1 path, got %d", len(paths))
 		}
@@ -168,20 +188,10 @@ func TestConfigPaths(t *testing.T) {
 		os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{}`), 0o644)
 		os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(`{}`), 0o644)
 
-		integ := integrations["opencode"]
-		paths := configPaths(integ)
+		r := integrations["opencode"]
+		paths := editorPaths(r)
 		if len(paths) != 2 {
 			t.Errorf("expected 2 paths, got %d: %v", len(paths), paths)
-		}
-	})
-
-	t.Run("case insensitive app name", func(t *testing.T) {
-		integ1 := integrations[strings.ToLower("DROID")]
-		integ2 := integrations["droid"]
-		paths1 := configPaths(integ1)
-		paths2 := configPaths(integ2)
-		if len(paths1) != len(paths2) {
-			t.Error("app name should be case insensitive")
 		}
 	})
 }

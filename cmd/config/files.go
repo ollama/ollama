@@ -2,15 +2,24 @@ package config
 
 import (
 	"bytes"
-	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"time"
-
-	"github.com/ollama/ollama/api"
 )
+
+func readJSONFile(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 
 func copyFile(src, dst string) error {
 	info, err := os.Stat(src)
@@ -80,43 +89,4 @@ func atomicWrite(path string, data []byte) error {
 	}
 
 	return nil
-}
-
-func modelInfo(model string) *api.ShowResponse {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return nil
-	}
-	resp, err := client.Show(context.Background(), &api.ShowRequest{Model: model})
-	if err != nil {
-		return nil
-	}
-	return resp
-}
-
-func modelContextLength(model string) int {
-	const (
-		defaultCtx = 64000
-		maxCtx     = 128000
-	)
-	resp := modelInfo(model)
-	if resp == nil || resp.ModelInfo == nil {
-		return defaultCtx
-	}
-	arch, ok := resp.ModelInfo["general.architecture"].(string)
-	if !ok {
-		return defaultCtx
-	}
-	if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64); ok {
-		return min(int(v), maxCtx)
-	}
-	return defaultCtx
-}
-
-func modelSupportsImages(model string) bool {
-	resp := modelInfo(model)
-	if resp == nil {
-		return false
-	}
-	return slices.Contains(resp.Capabilities, "vision")
 }
