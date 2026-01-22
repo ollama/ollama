@@ -179,6 +179,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
 						gpus = s.getGpuFn(ctx, runnersSnapshot)
+						if rpcServers := envconfig.RPCServers(); rpcServers != "" {
+							gpus = append(gpus, discover.GetRPCServers(rpcServers)...)
+						}
 					}
 					logutil.Trace("refreshing system information", "model", pending.model.ModelPath)
 					systemInfo := s.getSystemInfoFn()
@@ -698,9 +701,21 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if !reflect.DeepEqual(runner.Options.RPCServers, req.opts.RPCServers) {
+		slog.Info(
+			"RPC servers changed",
+			"model", runner.model.Name,
+			"new", req.opts.RPCServers,
+			"previous", runner.Options.RPCServers,
+		)
+		return true
+	}
+
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

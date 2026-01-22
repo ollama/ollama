@@ -8,6 +8,7 @@ package ggml
 // #include "ggml.h"
 // #include "ggml-cpu.h"
 // #include "ggml-backend.h"
+// #include "utils.h"
 import "C"
 
 import (
@@ -127,6 +128,83 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 	defer r.Close()
 
+	// Initialize devices first to set up backends map
+	initDevices()
+
+	// Add RPC servers to devices
+	if params.RPCServers != "" {
+		initialDeviceCount := C.ggml_backend_dev_count()
+		slog.Info("before adding RPC servers", "device_count", initialDeviceCount, "gpus", len(gpus), "cpus", len(cpus))
+
+		rpcServers := C.CString(params.RPCServers)
+		C.add_rpc_devices(rpcServers)
+		C.free(unsafe.Pointer(rpcServers))
+
+		// Manually enumerate RPC devices since initDevices() is a sync.OnceFunc
+		// and won't re-enumerate after RPC servers are added
+		deviceCount := C.ggml_backend_dev_count()
+		slog.Info("after adding RPC servers", "device_count", deviceCount, "initial_count", initialDeviceCount)
+		for i := range deviceCount {
+			d := C.ggml_backend_dev_get(i)
+			devType := C.ggml_backend_dev_type(d)
+
+			// Check if this device is already in our lists
+			isExisting := false
+			switch devType {
+			case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+				for _, existing := range cpus {
+					if existing == d {
+						isExisting = true
+						break
+					}
+				}
+			case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+				for _, existing := range accels {
+					if existing == d {
+						isExisting = true
+						break
+					}
+				}
+			case C.GGML_BACKEND_DEVICE_TYPE_GPU, C.GGML_BACKEND_DEVICE_TYPE_IGPU:
+				for _, existing := range gpus {
+					if existing == d {
+						isExisting = true
+						break
+					}
+				}
+			}
+
+			// If device is new (RPC device), add it to appropriate list and initialize backend
+			if !isExisting {
+				var props C.struct_ggml_backend_dev_props
+				C.ggml_backend_dev_get_props(d, &props)
+				deviceName := C.GoString(C.ggml_backend_dev_name(d))
+				deviceID := C.GoString(props.id)
+				deviceLibrary := C.GoString(props.library)
+
+				slog.Info("found new RPC device", "type", devType, "name", deviceName, "id", deviceID, "library", deviceLibrary)
+
+				switch devType {
+				case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+					if len(cpus) == 0 {
+						cpus = append(cpus, d)
+						slog.Info("added to cpus list")
+					}
+				case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+					accels = append(accels, d)
+					slog.Info("added to accels list")
+				case C.GGML_BACKEND_DEVICE_TYPE_GPU, C.GGML_BACKEND_DEVICE_TYPE_IGPU:
+					gpus = append(gpus, d)
+					slog.Info("added to gpus list", "new_gpus_len", len(gpus))
+				}
+
+				// Initialize backend for new device
+				backends[d] = C.ggml_backend_dev_init(d, nil)
+			}
+		}
+		slog.Info("RPC device enumeration complete", "total_gpus", len(gpus), "total_cpus", len(cpus), "total_accels", len(accels))
+	}
+
 	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
@@ -143,8 +221,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			"num_key_values", len(meta.KV()),
 		)
 	})
-
-	initDevices()
 
 	var requiredMemory ml.BackendMemory
 	btDeviceMemory := make(map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory)
@@ -193,6 +269,31 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		C.ggml_backend_dev_get_props(d, &props)
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Library = C.GoString(props.library)
+		slog.Info("DEBUG: got device props", "device_index", i, "name", requiredMemory.GPUs[i].Name, "props.id", requiredMemory.GPUs[i].ID, "props.library", requiredMemory.GPUs[i].Library)
+
+		// RPC backend doesn't populate props.id and props.library, so we need to set them manually
+		if requiredMemory.GPUs[i].Library == "" && strings.HasPrefix(requiredMemory.GPUs[i].Name, "RPC") {
+			origID := requiredMemory.GPUs[i].ID
+			requiredMemory.GPUs[i].Library = "rpc"
+			// Extract RPC server endpoint from params.RPCServers based on device index
+			if params.RPCServers != "" {
+				servers := strings.Split(params.RPCServers, ",")
+				// RPC device name is like "RPC0", "RPC1", etc.
+				// Extract the number and use it to index into servers list
+				deviceNum := strings.TrimPrefix(requiredMemory.GPUs[i].Name, "RPC")
+				if idx, err := strconv.Atoi(deviceNum); err == nil && idx < len(servers) {
+					// Only override ID if it's empty (new RPC backend populates props.id with endpoint:device)
+					if requiredMemory.GPUs[i].ID == "" {
+						requiredMemory.GPUs[i].ID = strings.TrimSpace(servers[idx])
+						slog.Info("DEBUG: overriding empty RPC device ID", "name", requiredMemory.GPUs[i].Name, "new_id", requiredMemory.GPUs[i].ID)
+					} else {
+						slog.Info("DEBUG: keeping existing RPC device ID from props", "name", requiredMemory.GPUs[i].Name, "id", requiredMemory.GPUs[i].ID)
+					}
+				}
+			}
+			slog.Info("DEBUG: RPC device ID after handling", "name", requiredMemory.GPUs[i].Name, "original_id", origID, "final_id", requiredMemory.GPUs[i].ID, "library", requiredMemory.GPUs[i].Library)
+		}
+
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
