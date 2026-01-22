@@ -127,7 +127,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	if err := atomicWrite(configPath, configData); err != nil {
+	if err := writeWithBackup(configPath, configData); err != nil {
 		return err
 	}
 
@@ -179,7 +179,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(statePath, stateData)
+	return writeWithBackup(statePath, stateData)
 }
 
 func (o *OpenCode) Models() []string {

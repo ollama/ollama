@@ -50,8 +50,10 @@ func backupToTmp(srcPath string) (string, error) {
 	return backupPath, nil
 }
 
-func atomicWrite(path string, data []byte) error {
+// writeWithBackup writes data to path via temp file + rename, backing up any existing file first
+func writeWithBackup(path string, data []byte) error {
 	var backupPath string
+	// backup must be created before any writes to the target file
 	if existingContent, err := os.ReadFile(path); err == nil {
 		if !bytes.Equal(existingContent, data) {
 			backupPath, err = backupToTmp(path)
@@ -74,6 +76,11 @@ func atomicWrite(path string, data []byte) error {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write failed: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync failed: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)

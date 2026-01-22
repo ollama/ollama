@@ -13,6 +13,19 @@ import (
 // Droid implements Runner and Editor for Droid integration
 type Droid struct{}
 
+// droidModelEntry represents a custom model entry in Droid's settings.json
+type droidModelEntry struct {
+	Model           string `json:"model"`
+	DisplayName     string `json:"displayName"`
+	BaseURL         string `json:"baseUrl"`
+	APIKey          string `json:"apiKey"`
+	Provider        string `json:"provider"`
+	MaxOutputTokens int    `json:"maxOutputTokens"`
+	SupportsImages  bool   `json:"supportsImages"`
+	ID              string `json:"id"`
+	Index           int    `json:"index"`
+}
+
 func (d *Droid) String() string { return "Droid" }
 
 func (d *Droid) Run(model string) error {
@@ -65,7 +78,9 @@ func (d *Droid) Edit(models []string) error {
 
 	settings := make(map[string]any)
 	if data, err := os.ReadFile(settingsPath); err == nil {
-		_ = json.Unmarshal(data, &settings) // Ignore parse errors; treat missing/corrupt files as empty
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("failed to parse settings file: %w, at: %s", err, settingsPath)
+		}
 	}
 
 	customModels, _ := settings["customModels"].([]any)
@@ -78,19 +93,17 @@ func (d *Droid) Edit(models []string) error {
 	var defaultModelID string
 	for i, model := range models {
 		modelID := fmt.Sprintf("custom:%s-[Ollama]-%d", model, i)
-		newEntry := map[string]any{
-			"model":           model,
-			"displayName":     fmt.Sprintf("%s [Ollama]", model),
-			"baseUrl":         "http://localhost:11434/v1",
-			"apiKey":          "ollama",
-			"provider":        "generic-chat-completion-api",
-			"maxOutputTokens": 64000,
-			"supportsImages":  false,
-			"id":              modelID,
-			"index":           i,
-		}
-		ollamaModels = append(ollamaModels, newEntry)
-
+		ollamaModels = append(ollamaModels, droidModelEntry{
+			Model:           model,
+			DisplayName:     fmt.Sprintf("%s [Ollama]", model),
+			BaseURL:         "http://localhost:11434/v1",
+			APIKey:          "ollama",
+			Provider:        "generic-chat-completion-api",
+			MaxOutputTokens: 64000,
+			SupportsImages:  false,
+			ID:              modelID,
+			Index:           i,
+		})
 		if i == 0 {
 			defaultModelID = modelID
 		}
@@ -114,7 +127,7 @@ func (d *Droid) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(settingsPath, data)
+	return writeWithBackup(settingsPath, data)
 }
 
 func (d *Droid) Models() []string {

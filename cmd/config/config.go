@@ -61,12 +61,12 @@ func saveIntegrationsFile(configs map[string]*integrationConfig) error {
 		return err
 	}
 
-	return atomicWrite(path, data)
+	return writeWithBackup(path, data)
 }
 
 func saveIntegration(appName string, models []string) error {
 	if appName == "" {
-		return errEmptyAppName
+		return errors.New("app name cannot be empty")
 	}
 
 	configs, err := loadIntegrationsFile()
@@ -109,5 +109,3 @@ func listIntegrations() ([]integrationConfig, error) {
 
 	return result, nil
 }
-
-var errEmptyAppName = errors.New("app name cannot be empty")

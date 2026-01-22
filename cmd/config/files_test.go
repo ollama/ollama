@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,14 +18,14 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return data
 }
 
-func TestAtomicWrite(t *testing.T) {
+func TestWriteWithBackup(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	t.Run("creates file", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "new.json")
 		data := mustMarshal(t, map[string]string{"key": "value"})
 
-		if err := atomicWrite(path, data); err != nil {
+		if err := writeWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -48,7 +49,7 @@ func TestAtomicWrite(t *testing.T) {
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
 		data := mustMarshal(t, map[string]bool{"updated": true})
-		if err := atomicWrite(path, data); err != nil {
+		if err := writeWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -93,7 +94,7 @@ func TestAtomicWrite(t *testing.T) {
 		path := filepath.Join(tmpDir, "nobak.json")
 
 		data := mustMarshal(t, map[string]string{"new": "file"})
-		if err := atomicWrite(path, data); err != nil {
+		if err := writeWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -110,7 +111,7 @@ func TestAtomicWrite(t *testing.T) {
 
 		data := mustMarshal(t, map[string]string{"key": "value"})
 
-		if err := atomicWrite(path, data); err != nil {
+		if err := writeWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -122,7 +123,7 @@ func TestAtomicWrite(t *testing.T) {
 			}
 		}
 
-		if err := atomicWrite(path, data); err != nil {
+		if err := writeWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -144,7 +145,7 @@ func TestAtomicWrite(t *testing.T) {
 
 		os.WriteFile(path, []byte(`{"v": 1}`), 0o644)
 		data := mustMarshal(t, map[string]int{"v": 2})
-		if err := atomicWrite(path, data); err != nil {
+		if err := writeWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -172,9 +173,9 @@ func TestAtomicWrite(t *testing.T) {
 
 // Edge case tests for files.go
 
-// TestAtomicWrite_FailsIfBackupFails documents critical behavior: if backup fails, we must not proceed.
+// TestWriteWithBackup_FailsIfBackupFails documents critical behavior: if backup fails, we must not proceed.
 // User could lose their config with no way to recover.
-func TestAtomicWrite_FailsIfBackupFails(t *testing.T) {
+func TestWriteWithBackup_FailsIfBackupFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission tests unreliable on Windows")
 	}
@@ -193,7 +194,7 @@ func TestAtomicWrite_FailsIfBackupFails(t *testing.T) {
 	defer os.Chmod(backupDir, 0o755)
 
 	newContent := []byte(`{"updated": true}`)
-	err := atomicWrite(path, newContent)
+	err := writeWithBackup(path, newContent)
 
 	// Should fail because backup couldn't be created
 	if err == nil {
@@ -207,9 +208,9 @@ func TestAtomicWrite_FailsIfBackupFails(t *testing.T) {
 	}
 }
 
-// TestAtomicWrite_PermissionDenied verifies clear error when target file has wrong permissions.
+// TestWriteWithBackup_PermissionDenied verifies clear error when target file has wrong permissions.
 // Common issue when config owned by root or wrong perms.
-func TestAtomicWrite_PermissionDenied(t *testing.T) {
+func TestWriteWithBackup_PermissionDenied(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission tests unreliable on Windows")
 	}
@@ -223,20 +224,20 @@ func TestAtomicWrite_PermissionDenied(t *testing.T) {
 	defer os.Chmod(readOnlyDir, 0o755)
 
 	path := filepath.Join(readOnlyDir, "config.json")
-	err := atomicWrite(path, []byte(`{"test": true}`))
+	err := writeWithBackup(path, []byte(`{"test": true}`))
 
 	if err == nil {
 		t.Error("expected permission error, got nil")
 	}
 }
 
-// TestAtomicWrite_DirectoryDoesNotExist verifies behavior when target directory doesn't exist.
-// atomicWrite doesn't create directories - caller is responsible.
-func TestAtomicWrite_DirectoryDoesNotExist(t *testing.T) {
+// TestWriteWithBackup_DirectoryDoesNotExist verifies behavior when target directory doesn't exist.
+// writeWithBackup doesn't create directories - caller is responsible.
+func TestWriteWithBackup_DirectoryDoesNotExist(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "nonexistent", "subdir", "config.json")
 
-	err := atomicWrite(path, []byte(`{"test": true}`))
+	err := writeWithBackup(path, []byte(`{"test": true}`))
 
 	// Should fail because directory doesn't exist
 	if err == nil {
@@ -244,9 +245,9 @@ func TestAtomicWrite_DirectoryDoesNotExist(t *testing.T) {
 	}
 }
 
-// TestAtomicWrite_SymlinkTarget documents behavior when target is a symlink.
+// TestWriteWithBackup_SymlinkTarget documents behavior when target is a symlink.
 // Documents what happens if user symlinks their config file.
-func TestAtomicWrite_SymlinkTarget(t *testing.T) {
+func TestWriteWithBackup_SymlinkTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink tests may require admin on Windows")
 	}
@@ -260,9 +261,9 @@ func TestAtomicWrite_SymlinkTarget(t *testing.T) {
 	os.Symlink(realFile, symlink)
 
 	// Write through symlink
-	err := atomicWrite(symlink, []byte(`{"v": 2}`))
+	err := writeWithBackup(symlink, []byte(`{"v": 2}`))
 	if err != nil {
-		t.Fatalf("atomicWrite through symlink failed: %v", err)
+		t.Fatalf("writeWithBackup through symlink failed: %v", err)
 	}
 
 	// The real file should be updated (symlink followed for temp file creation)
@@ -333,5 +334,169 @@ func TestCopyFile_SourceNotFound(t *testing.T) {
 	err := copyFile(src, dst)
 	if err == nil {
 		t.Error("expected error for nonexistent source, got nil")
+	}
+}
+
+// TestWriteWithBackup_TargetIsDirectory verifies error when path points to a directory.
+func TestWriteWithBackup_TargetIsDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	dirPath := filepath.Join(tmpDir, "actualdir")
+	os.MkdirAll(dirPath, 0o755)
+
+	err := writeWithBackup(dirPath, []byte(`{"test": true}`))
+	if err == nil {
+		t.Error("expected error when target is a directory, got nil")
+	}
+}
+
+// TestWriteWithBackup_EmptyData verifies writing zero bytes works correctly.
+func TestWriteWithBackup_EmptyData(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "empty.json")
+
+	err := writeWithBackup(path, []byte{})
+	if err != nil {
+		t.Fatalf("writeWithBackup with empty data failed: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("could not read file: %v", err)
+	}
+	if len(content) != 0 {
+		t.Errorf("expected empty file, got %d bytes", len(content))
+	}
+}
+
+// TestWriteWithBackup_FileUnreadableButDirWritable verifies behavior when existing file
+// cannot be read (for backup comparison) but directory is writable.
+func TestWriteWithBackup_FileUnreadableButDirWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission tests unreliable on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "unreadable.json")
+
+	// Create file and make it unreadable
+	os.WriteFile(path, []byte(`{"original": true}`), 0o644)
+	os.Chmod(path, 0o000)
+	defer os.Chmod(path, 0o644)
+
+	// Should fail because we can't read the file to compare/backup
+	err := writeWithBackup(path, []byte(`{"updated": true}`))
+	if err == nil {
+		t.Error("expected error when file is unreadable, got nil")
+	}
+}
+
+// TestWriteWithBackup_RapidSuccessiveWrites verifies backup works with multiple writes
+// within the same second (timestamp collision scenario).
+func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "rapid.json")
+
+	// Create initial file
+	os.WriteFile(path, []byte(`{"v": 0}`), 0o644)
+
+	// Rapid successive writes
+	for i := 1; i <= 3; i++ {
+		data := []byte(fmt.Sprintf(`{"v": %d}`, i))
+		if err := writeWithBackup(path, data); err != nil {
+			t.Fatalf("write %d failed: %v", i, err)
+		}
+	}
+
+	// Verify final content
+	content, _ := os.ReadFile(path)
+	if string(content) != `{"v": 3}` {
+		t.Errorf("expected final content {\"v\": 3}, got %s", string(content))
+	}
+
+	// Verify at least one backup exists
+	entries, _ := os.ReadDir(backupDir())
+	var backupCount int
+	for _, e := range entries {
+		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
+			backupCount++
+		}
+	}
+	if backupCount == 0 {
+		t.Error("expected at least one backup file from rapid writes")
+	}
+}
+
+// TestWriteWithBackup_BackupDirIsFile verifies error when backup directory path is a file.
+func TestWriteWithBackup_BackupDirIsFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test modifies system temp directory")
+	}
+
+	// Create a file at the backup directory path
+	backupPath := backupDir()
+	// Clean up any existing directory first
+	os.RemoveAll(backupPath)
+	// Create a file instead of directory
+	os.WriteFile(backupPath, []byte("not a directory"), 0o644)
+	defer func() {
+		os.Remove(backupPath)
+		os.MkdirAll(backupPath, 0o755)
+	}()
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.json")
+	os.WriteFile(path, []byte(`{"original": true}`), 0o644)
+
+	err := writeWithBackup(path, []byte(`{"updated": true}`))
+	if err == nil {
+		t.Error("expected error when backup dir is a file, got nil")
+	}
+}
+
+// TestWriteWithBackup_NoOrphanTempFiles verifies temp files are cleaned up on failure.
+func TestWriteWithBackup_NoOrphanTempFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission tests unreliable on Windows")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Count existing temp files
+	countTempFiles := func() int {
+		entries, _ := os.ReadDir(tmpDir)
+		count := 0
+		for _, e := range entries {
+			if len(e.Name()) > 4 && e.Name()[:4] == ".tmp" {
+				count++
+			}
+		}
+		return count
+	}
+
+	before := countTempFiles()
+
+	// Create a file, then make directory read-only to cause rename failure
+	path := filepath.Join(tmpDir, "orphan.json")
+	os.WriteFile(path, []byte(`{"v": 1}`), 0o644)
+
+	// Make a subdirectory and try to write there after making parent read-only
+	subDir := filepath.Join(tmpDir, "subdir")
+	os.MkdirAll(subDir, 0o755)
+	subPath := filepath.Join(subDir, "config.json")
+	os.WriteFile(subPath, []byte(`{"v": 1}`), 0o644)
+
+	// Make subdir read-only after creating temp file would succeed but rename would fail
+	// This is tricky to test - the temp file is created in the same dir, so if we can't
+	// rename, we also couldn't create. Let's just verify normal failure cleanup works.
+
+	// Force a failure by making the target a directory
+	badPath := filepath.Join(tmpDir, "isdir")
+	os.MkdirAll(badPath, 0o755)
+
+	_ = writeWithBackup(badPath, []byte(`{"test": true}`))
+
+	after := countTempFiles()
+	if after > before {
+		t.Errorf("orphan temp files left behind: before=%d, after=%d", before, after)
 	}
 }

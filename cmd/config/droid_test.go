@@ -277,17 +277,16 @@ func TestDroidEdit_CorruptedJSON(t *testing.T) {
 	os.MkdirAll(settingsDir, 0o755)
 	os.WriteFile(settingsPath, []byte(`{corrupted json content`), 0o644)
 
-	// Should not panic - corrupted JSON should be treated as empty
+	// Corrupted JSON should return an error so user knows something is wrong
 	err := d.Edit([]string{"model-a"})
-	if err != nil {
-		t.Fatalf("Edit failed with corrupted JSON: %v", err)
+	if err == nil {
+		t.Fatal("expected error for corrupted JSON, got nil")
 	}
 
-	// Verify new config was created
+	// Original corrupted file should be preserved (not overwritten)
 	data, _ := os.ReadFile(settingsPath)
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Errorf("resulting settings.json is not valid JSON: %v", err)
+	if string(data) != `{corrupted json content` {
+		t.Errorf("corrupted file was modified: got %s", string(data))
 	}
 }
 

@@ -20,15 +20,26 @@ import (
 // Editors can edit config files (supports multi-model selection) - opencode, droid
 // They are composable interfaces where in some cases an editor is also a runner - opencode, droid
 // Runner can run an integration with a model.
-type Runner interface {
-	Run(model string) error
+
+// Integration is the common interface for all integrations
+type Integration interface {
+	// String returns the human-readable name of the integration
 	String() string
 }
 
-// Editor can edit config files (supports multi-model selection).
+type Runner interface {
+	Integration
+	Run(model string) error
+}
+
+// Editor can edit config files (supports multi-model selection)
 type Editor interface {
+	Integration
+	// Paths returns the paths to the config files for the integration
 	Paths() []string
+	// Edit updates the config files for the integration with the given models
 	Edit(models []string) error
+	// Models returns the models currently configured for the integration
 	Models() []string
 }
 
@@ -160,13 +171,14 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 			return nil, err
 		}
 
-		yes, err := confirmPrompt("Sign in to ollama.com?")
+		yes, err := confirmPrompt("sign in")
 		if err != nil || !yes {
-			return nil, fmt.Errorf("sign in required for cloud models")
+			return nil, fmt.Errorf("the selected model(s) requires sign in")
 		}
 
 		fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
 
+		// TODO(parthsareen): extract into auth package for cmd
 		// Auto-open browser (best effort, fail silently)
 		switch runtime.GOOS {
 		case "darwin":
@@ -255,7 +267,7 @@ Examples:
 				}
 			}
 
-			r, ok := integrations[name]
+			r, ok := integrations[strings.ToLower(name)]
 			if !ok {
 				return fmt.Errorf("unknown integration: %s", name)
 			}
@@ -323,7 +335,7 @@ Examples:
 			}
 
 			if slices.ContainsFunc(models, func(m string) bool {
-				return !strings.Contains(m, "cloud")
+				return !strings.HasSuffix(m, "cloud")
 			}) {
 				fmt.Fprintln(os.Stderr)
 				fmt.Fprintln(os.Stderr, "Coding agents work best with at least 64k context. Either:")
