@@ -4,7 +4,7 @@
   </a>
 </div>
 
-# Ollama
+# Ollama Hgde
 
 Get up and running with large language models.
 
