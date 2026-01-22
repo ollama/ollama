@@ -17,5 +17,5 @@ var claudeIntegration = &integrationDef{
 		}
 		return []string{"--model", model}
 	},
-	CheckInstall: checkCommand("claude", "Install with: npm install -g @anthropic-ai/claude-code"),
+	CheckInstall: checkCommand("claude", "Install from: https://code.claude.com/docs/en/quickstart"),
 }

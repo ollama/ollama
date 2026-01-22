@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,6 +94,12 @@ func getIntegrationConfiguredModels(integrationName string) []string {
 	return result
 }
 
+func sortedIntegrationNames() []string {
+	names := slices.Collect(maps.Keys(integrationRegistry))
+	slices.Sort(names)
+	return names
+}
+
 // getExistingConfigPaths returns config paths that exist on disk for the given integration.
 // Returns empty slice if the integration doesn't modify config files or no config exists yet.
 func getExistingConfigPaths(integrationName string) []string {
@@ -106,18 +113,18 @@ func getExistingConfigPaths(integrationName string) []string {
 }
 
 func selectIntegration() (string, error) {
-	var items []selectItem
+	if len(integrationRegistry) == 0 {
+		return "", fmt.Errorf("no integrations available")
+	}
 
-	for name, integration := range integrationRegistry {
+	var items []selectItem
+	for _, name := range sortedIntegrationNames() {
+		integration := integrationRegistry[name]
 		description := integration.DisplayName
 		if conn, err := loadIntegration(name); err == nil && conn.defaultModel() != "" {
 			description = fmt.Sprintf("%s (%s)", integration.DisplayName, conn.defaultModel())
 		}
 		items = append(items, selectItem{Name: integration.Name, Description: description})
-	}
-
-	if len(items) == 0 {
-		return "", fmt.Errorf("no integrations available")
 	}
 
 	return selectPrompt("Select integration:", items)
@@ -178,24 +185,33 @@ func selectModels(ctx context.Context, integrationName, currentModel string) ([]
 		preChecked = newPreChecked
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		iName, jName := items[i].Name, items[j].Name
-		iChecked, jChecked := preCheckedSet[iName], preCheckedSet[jName]
-		iCurrent, jCurrent := iName == currentModel, jName == currentModel
+	slices.SortFunc(items, func(a, b selectItem) int {
+		aName, bName := a.Name, b.Name
+		aChecked, bChecked := preCheckedSet[aName], preCheckedSet[bName]
+		aCurrent, bCurrent := aName == currentModel, bName == currentModel
 
 		// Current model comes first
-		if iCurrent != jCurrent {
-			if iChecked || jChecked {
-				return iCurrent && iChecked
+		if aCurrent != bCurrent {
+			if aChecked || bChecked {
+				if aCurrent && aChecked {
+					return -1
+				}
+				return 1
 			}
-			return iCurrent
+			if aCurrent {
+				return -1
+			}
+			return 1
 		}
 		// Pre-checked models come before unchecked
-		if iChecked != jChecked {
-			return iChecked
+		if aChecked != bChecked {
+			if aChecked {
+				return -1
+			}
+			return 1
 		}
 		// Alphabetical within groups
-		return strings.ToLower(iName) < strings.ToLower(jName)
+		return strings.Compare(strings.ToLower(aName), strings.ToLower(bName))
 	})
 
 	integration, _ := getIntegration(integrationName)
@@ -266,12 +282,9 @@ func ensureSignedIn(ctx context.Context, client *api.Client) error {
 }
 
 func hasLocalModel(models []string) bool {
-	for _, m := range models {
-		if !strings.Contains(m, "cloud") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(models, func(m string) bool {
+		return !strings.Contains(m, "cloud")
+	})
 }
 
 func printModelsAdded(integration *integrationDef, models []string) {

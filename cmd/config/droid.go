@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -18,12 +19,19 @@ var droidIntegration = &integrationDef{
 	CheckInstall: checkCommand("droid", "Install from: https://docs.factory.ai/cli/getting-started/quickstart"),
 }
 
+var validReasoningEfforts = []string{"high", "medium", "low", "none"}
+
 func isValidReasoningEffort(effort string) bool {
-	switch effort {
-	case "high", "medium", "low", "none":
-		return true
+	return slices.Contains(validReasoningEfforts, effort)
+}
+
+func isOllamaModelEntry(m any) bool {
+	entry, ok := m.(map[string]any)
+	if !ok {
+		return false
 	}
-	return false
+	displayName, _ := entry["displayName"].(string)
+	return strings.HasSuffix(displayName, "[Ollama]")
 }
 
 func setupDroidSettings(models []string) error {
@@ -46,25 +54,10 @@ func setupDroidSettings(models []string) error {
 		json.Unmarshal(data, &settings)
 	}
 
-	var customModels []any
-	if existing, ok := settings["customModels"].([]any); ok {
-		customModels = existing
-	}
+	customModels, _ := settings["customModels"].([]any)
 
 	// Keep only non-Ollama models (we'll rebuild Ollama models fresh)
-	var nonOllamaModels []any
-	for _, m := range customModels {
-		entry, ok := m.(map[string]any)
-		if !ok {
-			nonOllamaModels = append(nonOllamaModels, m)
-			continue
-		}
-
-		displayName, _ := entry["displayName"].(string)
-		if !strings.HasSuffix(displayName, "[Ollama]") {
-			nonOllamaModels = append(nonOllamaModels, m)
-		}
-	}
+	nonOllamaModels := slices.DeleteFunc(slices.Clone(customModels), isOllamaModelEntry)
 
 	// Build new Ollama model entries with sequential indices (0, 1, 2, ...)
 	var ollamaModels []any
@@ -136,13 +129,12 @@ func getDroidConfiguredModels() []string {
 
 	var result []string
 	for _, m := range customModels {
-		entry, _ := m.(map[string]any)
-		displayName, _ := entry["displayName"].(string)
-		// Only include Ollama models (those with our displayName pattern)
-		if strings.HasSuffix(displayName, "[Ollama]") {
-			if model, _ := entry["model"].(string); model != "" {
-				result = append(result, model)
-			}
+		if !isOllamaModelEntry(m) {
+			continue
+		}
+		entry := m.(map[string]any)
+		if model, _ := entry["model"].(string); model != "" {
+			result = append(result, model)
 		}
 	}
 	return result

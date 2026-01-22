@@ -3,8 +3,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -115,28 +117,25 @@ func setupOpenCodeSettings(modelList []string) error {
 		modelSet[m] = true
 	}
 
-	newRecent := []any{}
-	for _, entry := range recent {
-		if e, ok := entry.(map[string]any); ok {
-			if e["providerID"] == "ollama" {
-				if modelID, ok := e["modelID"].(string); ok && modelSet[modelID] {
-					continue
-				}
-			}
+	// Filter out existing Ollama models we're about to re-add
+	newRecent := slices.DeleteFunc(slices.Clone(recent), func(entry any) bool {
+		e, ok := entry.(map[string]any)
+		if !ok || e["providerID"] != "ollama" {
+			return false
 		}
-		newRecent = append(newRecent, entry)
-	}
+		modelID, _ := e["modelID"].(string)
+		return modelSet[modelID]
+	})
 
-	for i := len(modelList) - 1; i >= 0; i-- {
-		newRecent = append([]any{map[string]any{
+	// Prepend models in reverse order so first model ends up first
+	for _, model := range slices.Backward(modelList) {
+		newRecent = slices.Insert(newRecent, 0, any(map[string]any{
 			"providerID": "ollama",
-			"modelID":    modelList[i],
-		}}, newRecent...)
+			"modelID":    model,
+		}))
 	}
 
-	if len(newRecent) > 10 {
-		newRecent = newRecent[:10]
-	}
+	newRecent = newRecent[:min(len(newRecent), 10)]
 
 	state["recent"] = newRecent
 
@@ -173,12 +172,7 @@ func getOpenCodeConfiguredModels() []string {
 	if err != nil || models == nil {
 		return nil
 	}
-
-	var result []string
-	for name := range models {
-		result = append(result, name)
-	}
-	return result
+	return slices.Collect(maps.Keys(models))
 }
 
 func getOpenCodeExistingConfigPaths() []string {
