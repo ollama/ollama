@@ -1,0 +1,63 @@
+---
+title: OpenCode
+---
+
+OpenCode is an agentic coding tool for the terminal.
+
+## Install
+
+Install [OpenCode](https://opencode.ai):
+
+```shell
+curl -fsSL https://opencode.ai/install | bash
+```
+
+## Usage with Ollama
+
+Configure OpenCode to use Ollama:
+
+```shell
+ollama config opencode
+```
+
+This will prompt you to select models and automatically configure OpenCode to use Ollama.
+
+<Accordion title="Manual Configuration">
+
+Add the Ollama provider to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3-coder": {
+          "name": "qwen3-coder [Ollama]"
+        }
+      }
+    }
+  }
+}
+```
+
+</Accordion>
+
+<Note>OpenCode requires a larger context window. It is recommended to use a context window of at least 32K tokens. See [Context length](/context-length) for more information.</Note>
+
+## Recommended Models
+
+### Cloud models
+- `qwen3-coder:480b` - Large coding model
+- `glm-4.7:cloud` - High-performance cloud model
+- `minimax-m2.1:cloud` - Fast cloud model
+
+### Local models
+- `qwen3-coder` - Excellent for coding tasks
+- `gpt-oss:20b` - Strong general-purpose model
+- `gpt-oss:120b` - Larger general-purpose model for more complex tasks

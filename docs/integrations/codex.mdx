@@ -2,22 +2,31 @@
 title: Codex
 ---
 
+Codex is OpenAI's agentic coding tool for the command line.
 
 ## Install
 
 Install the [Codex CLI](https://developers.openai.com/codex/cli/):
 
-```
+```shell
 npm install -g @openai/codex
 ```
 
 ## Usage with Ollama
 
-<Note>Codex requires a larger context window. It is recommended to use a context window of at least 32K tokens.</Note>
+Configure Codex to use Ollama:
+
+```shell
+ollama config codex
+```
+
+This will prompt you to select a model and automatically configure Codex to use Ollama.
+
+<Accordion title="Manual Configuration">
 
 To use `codex` with Ollama, use the `--oss` flag:
 
-```
+```shell
 codex --oss
 ```
 
@@ -25,19 +34,21 @@ codex --oss
 
 By default, codex will use the local `gpt-oss:20b` model. However, you can specify a different model with the `-m` flag:
 
-```
+```shell
 codex --oss -m gpt-oss:120b
 ```
 
 ### Cloud Models
 
-```
+```shell
 codex --oss -m gpt-oss:120b-cloud
 ```
 
+</Accordion>
+
+<Note>Codex requires a larger context window. It is recommended to use a context window of at least 32K tokens.</Note>
 
 ## Connecting to ollama.com
-
 
 Create an [API key](https://ollama.com/settings/keys) from ollama.com and export it as `OLLAMA_API_KEY`.
 

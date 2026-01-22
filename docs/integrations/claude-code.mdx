@@ -2,7 +2,7 @@
 title: Claude Code
 ---
 
-Claude Code is Anthropic's agentic coding tool that can read, modify, and execute code in your working directory. 
+Claude Code is Anthropic's agentic coding tool that can read, modify, and execute code in your working directory.
 
 Open models can be used with Claude Code through Ollama's Anthropic-compatible API, enabling you to use models such as `qwen3-coder`, `gpt-oss:20b`, or other models.
 
@@ -26,6 +26,16 @@ irm https://claude.ai/install.ps1 | iex
 
 ## Usage with Ollama
 
+Configure Claude Code to use Ollama:
+
+```shell
+ollama config claude
+```
+
+This will prompt you to select a model and automatically configure Claude Code to use Ollama.
+
+<Accordion title="Manual Configuration">
+
 Claude Code connects to Ollama using the Anthropic-compatible API.
 
 1. Set the environment variables:
@@ -47,7 +57,9 @@ Or run with environment variables inline:
 ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 claude --model gpt-oss:20b
 ```
 
-**Note:** Claude Code requires a large context window. We recommend at least 32K tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.
+</Accordion>
+
+<Note>Claude Code requires a large context window. We recommend at least 32K tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.</Note>
 
 ## Connecting to ollama.com
 
