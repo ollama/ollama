@@ -34,7 +34,6 @@ type ImageGenOptions struct {
 	Steps          int
 	Seed           int
 	NegativePrompt string
-	Images         []string // Input image paths for image editing
 }
 
 // DefaultOptions returns the default image generation options.
@@ -55,14 +54,12 @@ func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("steps", 0, "Denoising steps (0 = model default)")
 	cmd.Flags().Int("seed", 0, "Random seed (0 for random)")
 	cmd.Flags().String("negative", "", "Negative prompt")
-	cmd.Flags().StringSlice("image", nil, "Input image(s) for image editing")
 	// Hide from main flags section - shown in separate section via AppendFlagsDocs
 	cmd.Flags().MarkHidden("width")
 	cmd.Flags().MarkHidden("height")
 	cmd.Flags().MarkHidden("steps")
 	cmd.Flags().MarkHidden("seed")
 	cmd.Flags().MarkHidden("negative")
-	cmd.Flags().MarkHidden("image")
 }
 
 // AppendFlagsDocs appends image generation flags documentation to the command's usage template.
@@ -74,14 +71,14 @@ Image Generation Flags (experimental):
       --steps int      Denoising steps
       --seed int       Random seed
       --negative str   Negative prompt
-      --image str      Input image for editing (can be repeated)
 `
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + usage)
 }
 
 // RunCLI handles the CLI for image generation models.
 // Returns true if it handled the request, false if the caller should continue with normal flow.
-// Supports flags: --width, --height, --steps, --seed, --negative, --image
+// Supports flags: --width, --height, --steps, --seed, --negative
+// Image paths can be included in the prompt and will be extracted automatically.
 func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, keepAlive *api.Duration) error {
 	// Get options from flags (with env var defaults)
 	opts := DefaultOptions()
@@ -101,9 +98,6 @@ func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, ke
 		if v, err := cmd.Flags().GetString("negative"); err == nil && v != "" {
 			opts.NegativePrompt = v
 		}
-		if v, err := cmd.Flags().GetStringSlice("image"); err == nil && len(v) > 0 {
-			opts.Images = v
-		}
 	}
 
 	if interactive {
@@ -121,9 +115,16 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		return err
 	}
 
+	// Extract any image paths from the prompt
+	prompt, images, err := extractFileData(prompt)
+	if err != nil {
+		return err
+	}
+
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
+		Images: images,
 		Width:  int32(opts.Width),
 		Height: int32(opts.Height),
 		Steps:  int32(opts.Steps),
@@ -133,15 +134,6 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 	}
 	if keepAlive != nil {
 		req.KeepAlive = keepAlive
-	}
-
-	// Load input images for image editing
-	for _, imgPath := range opts.Images {
-		imgData, err := os.ReadFile(imgPath)
-		if err != nil {
-			return fmt.Errorf("failed to read image %s: %w", imgPath, err)
-		}
-		req.Images = append(req.Images, imgData)
 	}
 
 	// Show loading spinner until generation starts
