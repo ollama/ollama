@@ -489,6 +489,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
+- [orla](https://github.com/dorcha-inc/orla)(Use ollama agents as UNIX tools)
 - [cmdh](https://github.com/pgibler/cmdh)
 - [ooo](https://github.com/npahlfer/ooo)
 - [shell-pilot](https://github.com/reid41/shell-pilot)(Interact with models via pure shell scripts on Linux or macOS)
