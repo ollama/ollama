@@ -1,4 +1,4 @@
-package integrations
+package config
 
 var claudeIntegration = &integrationDef{
 	Name:        "Claude",

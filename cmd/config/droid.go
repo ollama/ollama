@@ -1,4 +1,4 @@
-package integrations
+package config
 
 import (
 	"encoding/json"
@@ -103,7 +103,11 @@ func setupDroidSettings(models []string) error {
 
 	settings["sessionDefaultSettings"] = sessionSettings
 
-	return atomicWriteJSON(settingsPath, settings)
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(settingsPath, data)
 }
 
 func readDroidSettings() (map[string]any, error) {
@@ -111,7 +115,15 @@ func readDroidSettings() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return readJSONFile(filepath.Join(home, ".factory", "settings.json"))
+	data, err := os.ReadFile(filepath.Join(home, ".factory", "settings.json"))
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func getDroidConfiguredModels() []string {

@@ -1,4 +1,4 @@
-package integrations
+package config
 
 import (
 	"encoding/json"
@@ -234,5 +234,204 @@ func assertOpenCodeRecentModel(t *testing.T, path string, index int, providerID,
 	}
 	if entry["modelID"] != modelID {
 		t.Errorf("expected modelID %s, got %s", modelID, entry["modelID"])
+	}
+}
+
+// Edge case tests for opencode.go
+
+// TestSetupOpenCodeSettings_CorruptedConfigJSON verifies handling of corrupted config.json.
+// Corrupted JSON should be handled gracefully, not cause panic or silently overwrite.
+func TestSetupOpenCodeSettings_CorruptedConfigJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{corrupted json content`), 0o644)
+
+	// Should not panic - corrupted JSON should be treated as empty
+	err := setupOpenCodeSettings([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("setupOpenCodeSettings failed with corrupted config: %v", err)
+	}
+
+	// Verify valid JSON was created
+	data, _ := os.ReadFile(configPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Errorf("resulting config is not valid JSON: %v", err)
+	}
+}
+
+// TestSetupOpenCodeSettings_CorruptedStateJSON verifies handling of corrupted state/model.json.
+// State file corruption should not break the setup process.
+func TestSetupOpenCodeSettings_CorruptedStateJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+	statePath := filepath.Join(stateDir, "model.json")
+
+	os.MkdirAll(stateDir, 0o755)
+	os.WriteFile(statePath, []byte(`{corrupted state`), 0o644)
+
+	err := setupOpenCodeSettings([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("setupOpenCodeSettings failed with corrupted state: %v", err)
+	}
+
+	// Verify valid state was created
+	data, _ := os.ReadFile(statePath)
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Errorf("resulting state is not valid JSON: %v", err)
+	}
+}
+
+// TestSetupOpenCodeSettings_WrongTypeProvider verifies handling when provider is wrong type.
+// Type assertion safety - provider might be string instead of map.
+func TestSetupOpenCodeSettings_WrongTypeProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{"provider": "not a map"}`), 0o644)
+
+	err := setupOpenCodeSettings([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("setupOpenCodeSettings with wrong type provider failed: %v", err)
+	}
+
+	// Verify provider is now correct type
+	data, _ := os.ReadFile(configPath)
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+
+	provider, ok := cfg["provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider should be map after setup, got %T", cfg["provider"])
+	}
+	if provider["ollama"] == nil {
+		t.Error("ollama provider should be created")
+	}
+}
+
+// TestSetupOpenCodeSettings_WrongTypeRecent verifies handling when recent is wrong type.
+func TestSetupOpenCodeSettings_WrongTypeRecent(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+	statePath := filepath.Join(stateDir, "model.json")
+
+	os.MkdirAll(stateDir, 0o755)
+	os.WriteFile(statePath, []byte(`{"recent": "not an array", "favorite": [], "variant": {}}`), 0o644)
+
+	err := setupOpenCodeSettings([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("setupOpenCodeSettings with wrong type recent failed: %v", err)
+	}
+
+	// The function should handle this gracefully
+	data, _ := os.ReadFile(statePath)
+	var state map[string]any
+	json.Unmarshal(data, &state)
+
+	// recent should be properly set after setup
+	recent, ok := state["recent"].([]any)
+	if !ok {
+		t.Logf("Note: recent type after setup is %T (documenting behavior)", state["recent"])
+	} else if len(recent) == 0 {
+		t.Logf("Note: recent is empty (documenting behavior)")
+	}
+}
+
+// TestSetupOpenCodeSettings_EmptyModels documents intentional behavior: empty models = no-op.
+// Prevents accidental clearing of user's model config.
+func TestSetupOpenCodeSettings_EmptyModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	os.MkdirAll(configDir, 0o755)
+	originalContent := `{"provider":{"ollama":{"models":{"existing":{}}}}}`
+	os.WriteFile(configPath, []byte(originalContent), 0o644)
+
+	// Empty models should be no-op
+	err := setupOpenCodeSettings([]string{})
+	if err != nil {
+		t.Fatalf("setupOpenCodeSettings with empty models failed: %v", err)
+	}
+
+	// Original content should be preserved (file not modified)
+	data, _ := os.ReadFile(configPath)
+	if string(data) != originalContent {
+		t.Errorf("empty models should not modify file, but content changed")
+	}
+}
+
+// TestSetupOpenCodeSettings_SpecialCharsInModelName verifies model names with special JSON characters.
+// Model names might contain quotes, backslashes, etc.
+func TestSetupOpenCodeSettings_SpecialCharsInModelName(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Model name with special characters (though unusual)
+	specialModel := `model-with-"quotes"`
+
+	err := setupOpenCodeSettings([]string{specialModel})
+	if err != nil {
+		t.Fatalf("setupOpenCodeSettings with special chars failed: %v", err)
+	}
+
+	// Verify it was stored correctly
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	data, _ := os.ReadFile(configPath)
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("resulting config is invalid JSON: %v", err)
+	}
+
+	// Model should be accessible
+	provider, _ := cfg["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	models, _ := ollama["models"].(map[string]any)
+
+	if models[specialModel] == nil {
+		t.Errorf("model with special chars not found in config")
+	}
+}
+
+// TestGetOpenCodeOllamaModels_NoConfig verifies behavior when no config exists.
+func TestGetOpenCodeOllamaModels_NoConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	models, err := getOpenCodeOllamaModels()
+	if err == nil {
+		t.Log("getOpenCodeOllamaModels returns nil error for missing config (acceptable)")
+	}
+	if len(models) > 0 {
+		t.Errorf("expected nil/empty models for missing config, got %v", models)
+	}
+}
+
+// TestGetOpenCodeConfiguredModels_NoConfig verifies behavior when no config exists.
+func TestGetOpenCodeConfiguredModels_NoConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	models := getOpenCodeConfiguredModels()
+	if len(models) > 0 {
+		t.Errorf("expected nil/empty for missing config, got %v", models)
 	}
 }

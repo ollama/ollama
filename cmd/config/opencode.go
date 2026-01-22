@@ -1,4 +1,4 @@
-package integrations
+package config
 
 import (
 	"encoding/json"
@@ -86,7 +86,11 @@ func setupOpenCodeSettings(modelList []string) error {
 	provider["ollama"] = ollama
 	config["provider"] = provider
 
-	if err := atomicWriteJSON(configPath, config); err != nil {
+	configData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := atomicWrite(configPath, configData); err != nil {
 		return err
 	}
 
@@ -136,7 +140,11 @@ func setupOpenCodeSettings(modelList []string) error {
 
 	state["recent"] = newRecent
 
-	return atomicWriteJSON(statePath, state)
+	stateData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(statePath, stateData)
 }
 
 func getOpenCodeOllamaModels() (map[string]any, error) {
@@ -145,8 +153,12 @@ func getOpenCodeOllamaModels() (map[string]any, error) {
 		return nil, err
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
+	data, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
 	if err != nil {
+		return nil, err
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
 

@@ -1,4 +1,4 @@
-package integrations
+package config
 
 import (
 	"encoding/json"
@@ -243,4 +243,197 @@ func TestSetupDroidSettings(t *testing.T) {
 			t.Errorf("expected reasoningEffort to remain 'high', got %s", session["reasoningEffort"])
 		}
 	})
+}
+
+// Edge case tests for droid.go
+
+// TestSetupDroidSettings_CorruptedJSON verifies that corrupted settings.json does not cause panic.
+// User's existing non-Ollama settings must be preserved; corrupted file should be handled gracefully.
+func TestSetupDroidSettings_CorruptedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	os.MkdirAll(settingsDir, 0o755)
+	os.WriteFile(settingsPath, []byte(`{corrupted json content`), 0o644)
+
+	// Should not panic - corrupted JSON should be treated as empty
+	err := setupDroidSettings([]string{"model-a"})
+	if err != nil {
+		t.Fatalf("setupDroidSettings failed with corrupted JSON: %v", err)
+	}
+
+	// Verify new config was created
+	data, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Errorf("resulting settings.json is not valid JSON: %v", err)
+	}
+}
+
+// TestSetupDroidSettings_WrongTypeCustomModels verifies handling when customModels is wrong type.
+// Type assertion safety - customModels might be string instead of array.
+func TestSetupDroidSettings_WrongTypeCustomModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	os.MkdirAll(settingsDir, 0o755)
+	// customModels is a string instead of array
+	os.WriteFile(settingsPath, []byte(`{"customModels": "not an array"}`), 0o644)
+
+	// Should not panic - wrong type should be handled gracefully
+	err := setupDroidSettings([]string{"model-a"})
+	if err != nil {
+		t.Fatalf("setupDroidSettings failed with wrong type customModels: %v", err)
+	}
+
+	// Verify models were added correctly
+	data, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+
+	customModels, ok := settings["customModels"].([]any)
+	if !ok {
+		t.Fatalf("customModels should be array after setup, got %T", settings["customModels"])
+	}
+	if len(customModels) != 1 {
+		t.Errorf("expected 1 model, got %d", len(customModels))
+	}
+}
+
+// TestSetupDroidSettings_EmptyModels documents intentional behavior: empty models = no-op (early return).
+// Prevents accidental clearing of user's model config.
+func TestSetupDroidSettings_EmptyModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	os.MkdirAll(settingsDir, 0o755)
+	originalContent := `{"customModels": [{"model": "existing"}]}`
+	os.WriteFile(settingsPath, []byte(originalContent), 0o644)
+
+	// Empty models should be no-op
+	err := setupDroidSettings([]string{})
+	if err != nil {
+		t.Fatalf("setupDroidSettings with empty models failed: %v", err)
+	}
+
+	// Original content should be preserved (file not modified)
+	data, _ := os.ReadFile(settingsPath)
+	if string(data) != originalContent {
+		t.Errorf("empty models should not modify file, but content changed")
+	}
+}
+
+// TestSetupDroidSettings_DuplicateModels verifies handling of duplicate model names in input.
+// Should handle gracefully - current implementation keeps duplicates.
+func TestSetupDroidSettings_DuplicateModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Add same model twice
+	err := setupDroidSettings([]string{"model-a", "model-a"})
+	if err != nil {
+		t.Fatalf("setupDroidSettings with duplicates failed: %v", err)
+	}
+
+	settings, err := readDroidSettings()
+	if err != nil {
+		t.Fatalf("readDroidSettings failed: %v", err)
+	}
+
+	customModels, _ := settings["customModels"].([]any)
+	// Document current behavior: duplicates are kept as separate entries
+	if len(customModels) != 2 {
+		t.Logf("Note: duplicates result in %d entries (documenting behavior)", len(customModels))
+	}
+}
+
+// TestSetupDroidSettings_MalformedModelEntry verifies handling when model entry is not a map.
+// xisting entries might be malformed.
+func TestSetupDroidSettings_MalformedModelEntry(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	os.MkdirAll(settingsDir, 0o755)
+	// Model entry is a string instead of a map
+	os.WriteFile(settingsPath, []byte(`{"customModels": ["not a map", 123]}`), 0o644)
+
+	err := setupDroidSettings([]string{"model-a"})
+	if err != nil {
+		t.Fatalf("setupDroidSettings with malformed entries failed: %v", err)
+	}
+
+	// Malformed entries should be preserved in nonOllamaModels
+	settings, _ := readDroidSettings()
+	customModels, _ := settings["customModels"].([]any)
+
+	// Should have: 1 new Ollama model + 2 preserved malformed entries
+	if len(customModels) != 3 {
+		t.Errorf("expected 3 entries (1 new + 2 preserved malformed), got %d", len(customModels))
+	}
+}
+
+// TestSetupDroidSettings_WrongTypeSessionSettings verifies handling when sessionDefaultSettings is wrong type.
+func TestSetupDroidSettings_WrongTypeSessionSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	os.MkdirAll(settingsDir, 0o755)
+	// sessionDefaultSettings is a string instead of map
+	os.WriteFile(settingsPath, []byte(`{"sessionDefaultSettings": "not a map"}`), 0o644)
+
+	err := setupDroidSettings([]string{"model-a"})
+	if err != nil {
+		t.Fatalf("setupDroidSettings with wrong type sessionDefaultSettings failed: %v", err)
+	}
+
+	// Should create proper sessionDefaultSettings
+	settings, _ := readDroidSettings()
+	session, ok := settings["sessionDefaultSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("sessionDefaultSettings should be map after setup, got %T", settings["sessionDefaultSettings"])
+	}
+	if session["model"] == nil {
+		t.Error("expected model to be set in sessionDefaultSettings")
+	}
+}
+
+// TestIsValidReasoningEffort documents the valid values for reasoningEffort.
+func TestIsValidReasoningEffort(t *testing.T) {
+	tests := []struct {
+		effort string
+		valid  bool
+	}{
+		{"high", true},
+		{"medium", true},
+		{"low", true},
+		{"none", true},
+		{"off", false},
+		{"", false},
+		{"HIGH", false}, // case sensitive
+		{"max", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.effort, func(t *testing.T) {
+			got := isValidReasoningEffort(tt.effort)
+			if got != tt.valid {
+				t.Errorf("isValidReasoningEffort(%q) = %v, want %v", tt.effort, got, tt.valid)
+			}
+		})
+	}
 }

@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/cmd/integrations"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -2027,7 +2027,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
-		integrations.ConfigCmd(checkServerHeartbeat),
+		config.ConfigCmd(checkServerHeartbeat),
 	)
 
 	return rootCmd

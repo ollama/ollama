@@ -1,7 +1,8 @@
-package integrations
+package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,10 @@ func configPath(appName string) (string, error) {
 }
 
 func saveIntegration(appName string, models []string) error {
+	if appName == "" {
+		return fmt.Errorf("app name cannot be empty")
+	}
+
 	path, err := configPath(appName)
 	if err != nil {
 		return err
@@ -49,11 +54,16 @@ func saveIntegration(appName string, models []string) error {
 		return err
 	}
 
-	return atomicWriteJSON(path, integrationConfig{
+	data, err := json.MarshalIndent(integrationConfig{
 		App:          appName,
 		Models:       models,
 		ConfiguredAt: time.Now(),
-	})
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return atomicWrite(path, data)
 }
 
 func loadIntegration(appName string) (*integrationConfig, error) {

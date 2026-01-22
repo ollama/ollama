@@ -1,4 +1,4 @@
-package integrations
+package config
 
 import (
 	"bytes"
@@ -199,7 +199,7 @@ func TestSelectState(t *testing.T) {
 		s := newSelectState(manyItems)
 
 		// move down 12 times (past the 10-item viewport)
-		for i := 0; i < 12; i++ {
+		for range 12 {
 			s.handleInput(eventDown, 0)
 		}
 
@@ -658,4 +658,256 @@ func TestErrCancelled(t *testing.T) {
 			t.Errorf("expected 'cancelled', got %q", errCancelled.Error())
 		}
 	})
+}
+
+// Edge case tests for selector.go
+
+// TestSelectState_SingleItem verifies that single item list works without crash.
+// List with only one item should still work.
+func TestSelectState_SingleItem(t *testing.T) {
+	items := []selectItem{{Name: "only-one"}}
+
+	s := newSelectState(items)
+
+	// Down should do nothing (already at bottom)
+	s.handleInput(eventDown, 0)
+	if s.selected != 0 {
+		t.Errorf("down on single item: expected selected=0, got %d", s.selected)
+	}
+
+	// Up should do nothing (already at top)
+	s.handleInput(eventUp, 0)
+	if s.selected != 0 {
+		t.Errorf("up on single item: expected selected=0, got %d", s.selected)
+	}
+
+	// Enter should select the only item
+	done, result, err := s.handleInput(eventEnter, 0)
+	if !done || result != "only-one" || err != nil {
+		t.Errorf("enter on single item: expected (true, 'only-one', nil), got (%v, %q, %v)", done, result, err)
+	}
+}
+
+// TestSelectState_ExactlyMaxItems verifies boundary condition at maxDisplayedItems.
+// List with exactly maxDisplayedItems items should not scroll.
+func TestSelectState_ExactlyMaxItems(t *testing.T) {
+	items := make([]selectItem, maxDisplayedItems)
+	for i := range items {
+		items[i] = selectItem{Name: string(rune('a' + i))}
+	}
+
+	s := newSelectState(items)
+
+	// Move to last item
+	for range maxDisplayedItems - 1 {
+		s.handleInput(eventDown, 0)
+	}
+
+	if s.selected != maxDisplayedItems-1 {
+		t.Errorf("expected selected=%d, got %d", maxDisplayedItems-1, s.selected)
+	}
+
+	// Should not scroll when exactly at max
+	if s.scrollOffset != 0 {
+		t.Errorf("expected scrollOffset=0 for exactly maxDisplayedItems, got %d", s.scrollOffset)
+	}
+
+	// One more down should do nothing
+	s.handleInput(eventDown, 0)
+	if s.selected != maxDisplayedItems-1 {
+		t.Errorf("down at max: expected selected=%d, got %d", maxDisplayedItems-1, s.selected)
+	}
+}
+
+// TestFilterItems_RegexSpecialChars verifies that filter is literal, not regex.
+// User typing "model.v1" shouldn't match "modelsv1".
+func TestFilterItems_RegexSpecialChars(t *testing.T) {
+	items := []selectItem{
+		{Name: "model.v1"},
+		{Name: "modelsv1"},
+		{Name: "model-v1"},
+	}
+
+	// Filter with dot should only match literal dot
+	result := filterItems(items, "model.v1")
+	if len(result) != 1 {
+		t.Errorf("expected 1 exact match, got %d", len(result))
+	}
+	if len(result) > 0 && result[0].Name != "model.v1" {
+		t.Errorf("expected 'model.v1', got %s", result[0].Name)
+	}
+
+	// Other regex special chars should be literal too
+	items2 := []selectItem{
+		{Name: "test[0]"},
+		{Name: "test0"},
+		{Name: "test(1)"},
+	}
+
+	result2 := filterItems(items2, "test[0]")
+	if len(result2) != 1 || result2[0].Name != "test[0]" {
+		t.Errorf("expected only 'test[0]', got %v", result2)
+	}
+}
+
+// TestMultiSelectState_DuplicateNames documents handling of duplicate item names.
+// itemIndex uses name as key - duplicates cause collision. This documents
+// the current behavior: the last index for a duplicate name is stored
+func TestMultiSelectState_DuplicateNames(t *testing.T) {
+	// Duplicate names - this is an edge case that shouldn't happen in practice
+	items := []selectItem{
+		{Name: "duplicate"},
+		{Name: "duplicate"},
+		{Name: "unique"},
+	}
+
+	s := newMultiSelectState(items, nil)
+
+	// DOCUMENTED BEHAVIOR: itemIndex maps name to LAST index
+	// When there are duplicates, only the last occurrence's index is stored
+	if s.itemIndex["duplicate"] != 1 {
+		t.Errorf("itemIndex should map 'duplicate' to last index (1), got %d", s.itemIndex["duplicate"])
+	}
+
+	// Toggle item at highlighted=0 (first "duplicate")
+	// Due to name collision, toggleItem uses itemIndex["duplicate"] = 1
+	// So it actually toggles the SECOND duplicate item, not the first
+	s.toggleItem()
+
+	// This documents the potentially surprising behavior:
+	// We toggled at highlighted=0, but itemIndex lookup returned 1
+	if !s.isChecked(1) {
+		t.Error("toggle should check index 1 (due to name collision in itemIndex)")
+	}
+	if s.isChecked(0) {
+		t.Log("Note: index 0 is NOT checked, even though highlighted=0 (name collision behavior)")
+	}
+}
+
+// TestSelectState_FilterReducesBelowSelection verifies selection resets when filter reduces list.
+// Prevents index-out-of-bounds on next keystroke
+func TestSelectState_FilterReducesBelowSelection(t *testing.T) {
+	items := []selectItem{
+		{Name: "apple"},
+		{Name: "banana"},
+		{Name: "cherry"},
+	}
+
+	s := newSelectState(items)
+	s.selected = 2 // Select "cherry"
+
+	// Type a filter that removes cherry from results
+	s.handleInput(eventChar, 'a') // Filter to "a" - matches "apple" and "banana"
+
+	// Selection should reset to 0
+	if s.selected != 0 {
+		t.Errorf("expected selected=0 after filter, got %d", s.selected)
+	}
+
+	filtered := s.filtered()
+	if len(filtered) != 2 {
+		t.Errorf("expected 2 filtered items, got %d", len(filtered))
+	}
+}
+
+// TestFilterItems_UnicodeCharacters verifies filtering works with UTF-8.
+// Model names might contain unicode characters
+func TestFilterItems_UnicodeCharacters(t *testing.T) {
+	items := []selectItem{
+		{Name: "llama-日本語"},
+		{Name: "模型-chinese"},
+		{Name: "émoji-🦙"},
+		{Name: "regular-model"},
+	}
+
+	t.Run("filter japanese", func(t *testing.T) {
+		result := filterItems(items, "日本")
+		if len(result) != 1 || result[0].Name != "llama-日本語" {
+			t.Errorf("expected llama-日本語, got %v", result)
+		}
+	})
+
+	t.Run("filter chinese", func(t *testing.T) {
+		result := filterItems(items, "模型")
+		if len(result) != 1 || result[0].Name != "模型-chinese" {
+			t.Errorf("expected 模型-chinese, got %v", result)
+		}
+	})
+
+	t.Run("filter emoji", func(t *testing.T) {
+		result := filterItems(items, "🦙")
+		if len(result) != 1 || result[0].Name != "émoji-🦙" {
+			t.Errorf("expected émoji-🦙, got %v", result)
+		}
+	})
+
+	t.Run("filter accented char", func(t *testing.T) {
+		result := filterItems(items, "émoji")
+		if len(result) != 1 || result[0].Name != "émoji-🦙" {
+			t.Errorf("expected émoji-🦙, got %v", result)
+		}
+	})
+}
+
+// TestMultiSelectState_FilterReducesBelowHighlight verifies highlight resets when filter reduces list.
+func TestMultiSelectState_FilterReducesBelowHighlight(t *testing.T) {
+	items := []selectItem{
+		{Name: "apple"},
+		{Name: "banana"},
+		{Name: "cherry"},
+	}
+
+	s := newMultiSelectState(items, nil)
+	s.highlighted = 2 // Highlight "cherry"
+
+	// Type a filter that removes cherry
+	s.handleInput(eventChar, 'a')
+
+	if s.highlighted != 0 {
+		t.Errorf("expected highlighted=0 after filter, got %d", s.highlighted)
+	}
+}
+
+// TestMultiSelectState_EmptyItems verifies handling of empty item list.
+// Empty list should be handled gracefully.
+func TestMultiSelectState_EmptyItems(t *testing.T) {
+	s := newMultiSelectState([]selectItem{}, nil)
+
+	// Toggle should not panic on empty list
+	s.toggleItem()
+
+	if s.selectedCount() != 0 {
+		t.Errorf("expected 0 selected for empty list, got %d", s.selectedCount())
+	}
+
+	// Render should handle empty list
+	var buf bytes.Buffer
+	lineCount := renderMultiSelect(&buf, "Select:", s)
+	if lineCount == 0 {
+		t.Error("renderMultiSelect should produce output even for empty list")
+	}
+	if !strings.Contains(buf.String(), "no matches") {
+		t.Error("expected 'no matches' for empty list")
+	}
+}
+
+// TestSelectState_RenderWithDescriptions verifies rendering items with descriptions.
+func TestSelectState_RenderWithDescriptions(t *testing.T) {
+	items := []selectItem{
+		{Name: "item1", Description: "First item description"},
+		{Name: "item2", Description: ""},
+		{Name: "item3", Description: "Third item"},
+	}
+
+	s := newSelectState(items)
+	var buf bytes.Buffer
+	renderSelect(&buf, "Select:", s)
+
+	output := buf.String()
+	if !strings.Contains(output, "First item description") {
+		t.Error("expected description to be rendered")
+	}
+	if !strings.Contains(output, "item2") {
+		t.Error("expected item without description to be rendered")
+	}
 }

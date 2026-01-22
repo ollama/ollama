@@ -1,9 +1,8 @@
-package integrations
+package config
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,7 +21,6 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	// Preserve source file permissions (important for files containing API keys)
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
@@ -43,20 +41,10 @@ func backupToTmp(srcPath string) (string, error) {
 	return backupPath, nil
 }
 
-func atomicWriteJSON(path string, data any) error {
-	content, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal failed: %w", err)
-	}
-
-	var check any
-	if err := json.Unmarshal(content, &check); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-
+func atomicWrite(path string, data []byte) error {
 	var backupPath string
 	if existingContent, err := os.ReadFile(path); err == nil {
-		if !bytes.Equal(existingContent, content) {
+		if !bytes.Equal(existingContent, data) {
 			backupPath, err = backupToTmp(path)
 			if err != nil {
 				return fmt.Errorf("backup failed: %w", err)
@@ -71,7 +59,7 @@ func atomicWriteJSON(path string, data any) error {
 	}
 	tmpPath := tmp.Name()
 
-	if _, err := tmp.Write(content); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write failed: %w", err)
@@ -92,18 +80,6 @@ func atomicWriteJSON(path string, data any) error {
 	return nil
 }
 
-func readJSONFile(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 func getModelInfo(model string) *api.ShowResponse {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -117,7 +93,7 @@ func getModelInfo(model string) *api.ShowResponse {
 }
 
 func getModelContextLength(model string) int {
-	const defaultCtx = 64000 // default context is set to 64k to support coding agents
+	const defaultCtx = 64000
 	resp := getModelInfo(model)
 	if resp == nil || resp.ModelInfo == nil {
 		return defaultCtx
@@ -126,7 +102,6 @@ func getModelContextLength(model string) int {
 	if !ok {
 		return defaultCtx
 	}
-	// currently being capped at 128k
 	if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64); ok {
 		return min(int(v), 128000)
 	}
