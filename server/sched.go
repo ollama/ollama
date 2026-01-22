@@ -63,6 +63,7 @@ type Scheduler struct {
 var defaultModelsPerGPU = 3
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
+var ErrEvictionDisabled = errors.New("unloading existing models is disabled (set OLLAMA_NO_MODEL_EVICT=0 to allow evictions)")
 
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
@@ -130,6 +131,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 func (s *Scheduler) processPending(ctx context.Context) {
 	maxRunners := envconfig.MaxRunners()
+	preventEvictions := envconfig.NoEvict()
 
 	for {
 		select {
@@ -168,6 +170,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 				} else if maxRunners > 0 && loadedCount >= int(maxRunners) {
+					if preventEvictions {
+						err := fmt.Errorf("%w: maximum loaded models reached while loading %s", ErrEvictionDisabled, pending.model.ModelPath)
+						slog.Info("skipping eviction because OLLAMA_NO_MODEL_EVICT is set", "runner_count", loadedCount, "model", pending.model.ModelPath)
+						pending.errCh <- err
+						s.abortActiveLoading()
+						break
+					}
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
 					runnerToExpire = s.findRunnerToUnload()
 				} else {
@@ -228,6 +237,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					needEvict := s.loadFn(pending, ggml, systemInfo, gpus, true)
 					if !needEvict {
 						slog.Debug("new model fits with existing models, loading")
+						break
+					}
+
+					if preventEvictions {
+						err := fmt.Errorf("%w: unable to load %s without unloading a loaded model", ErrEvictionDisabled, pending.model.ModelPath)
+						slog.Info("skipping eviction because OLLAMA_NO_MODEL_EVICT is set", "model", pending.model.ModelPath)
+						pending.errCh <- err
+						s.abortActiveLoading()
 						break
 					}
 
@@ -896,6 +913,16 @@ func (s *Scheduler) unloadAllRunners() {
 			slog.Debug("shutting down runner", "model", model)
 			runner.llama.Close()
 		}
+	}
+}
+
+func (s *Scheduler) abortActiveLoading() {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+
+	if s.activeLoading != nil {
+		s.activeLoading.Close()
+		s.activeLoading = nil
 	}
 }
 
