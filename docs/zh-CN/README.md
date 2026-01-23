@@ -11,6 +11,7 @@
 
 ### 📖 其他文檔資源
 - [故障排除指南](./troubleshooting.md) - 常見問題解決方案
+- [SSH 金鑰設置指南](./ssh-setup.md) - 配置 SSH 金鑰以訪問 Git 存儲庫
 - [API 文檔](../api.md)（英文）
 - [Modelfile 文檔](../modelfile.md)（英文）
 - [開發指南](../development.md)（英文）
