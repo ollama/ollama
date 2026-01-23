@@ -40,6 +40,8 @@ func HumanBytes(b int64) string {
 	}
 
 	switch {
+	case value >= 100:
+		return fmt.Sprintf("%d %s", int(value), unit)
 	case value >= 10:
 		return fmt.Sprintf("%d %s", int(value), unit)
 	case value != math.Trunc(value):

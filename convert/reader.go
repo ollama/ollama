@@ -11,15 +11,14 @@ type Tensor interface {
 	Name() string
 	Shape() []uint64
 	Kind() uint32
-	SetRepacker(Repacker)
+	SetRepacker(repacker)
 	WriteTo(io.Writer) (int64, error)
-	Clone() Tensor
 }
 
 type tensorBase struct {
-	name     string
-	shape    []uint64
-	repacker Repacker
+	name  string
+	shape []uint64
+	repacker
 }
 
 func (t tensorBase) Name() string {
@@ -31,49 +30,38 @@ func (t tensorBase) Shape() []uint64 {
 }
 
 const (
-	tensorKindFP32 uint32 = iota
-	tensorKindFP16
-	tensorKindBF16  = 30
-	tensorKindMXFP4 = 39
+	tensorKindF32 uint32 = iota
+	tensorKindF16
 )
 
 func (t tensorBase) Kind() uint32 {
-	if strings.HasSuffix(t.name, ".ffn_gate_inp.weight") ||
-		strings.HasSuffix(t.name, ".bias") ||
-		t.name == "token_types.weight" ||
-		t.name == "v.positional_embedding_vlm" ||
-		t.name == "v.tile_position_embd.weight" ||
-		t.name == "v.pre_tile_position_embd.weight" ||
-		t.name == "v.post_tile_position_embd.weight" ||
-		t.name == "s.position_embd" ||
-		strings.HasSuffix(t.name, "rel_pos_h") ||
-		strings.HasSuffix(t.name, "rel_pos_w") {
-		// these tensors are always F32
-		return tensorKindFP32
+	if strings.HasSuffix(t.name, ".block_sparse_moe.gate.weight") {
+		return 0
 	}
 
 	switch len(t.shape) {
 	case 0:
 		panic("invalid tensor shape")
 	case 1:
-		return tensorKindFP32
+		return tensorKindF32
 	default:
-		return tensorKindFP16
+		return tensorKindF16
 	}
 }
 
-func (t *tensorBase) SetRepacker(fn Repacker) {
+func (t *tensorBase) SetRepacker(fn repacker) {
 	t.repacker = fn
 }
 
-type Repacker func(string, []float32, []uint64) ([]float32, error)
+type repacker func(string, []float32, []uint64) ([]float32, error)
 
-func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
+func parseTensors(fsys fs.FS) ([]Tensor, error) {
 	patterns := []struct {
 		Pattern string
-		Func    func(fs.FS, *strings.Replacer, ...string) ([]Tensor, error)
+		Func    func(fs.FS, ...string) ([]Tensor, error)
 	}{
-		{"*.safetensors", parseSafetensors},
+		{"model-*-of-*.safetensors", parseSafetensors},
+		{"model.safetensors", parseSafetensors},
 		{"pytorch_model-*-of-*.bin", parseTorch},
 		{"pytorch_model.bin", parseTorch},
 		{"consolidated.*.pth", parseTorch},
@@ -86,7 +74,7 @@ func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
 		}
 
 		if len(matches) > 0 {
-			return pattern.Func(fsys, replacer, matches...)
+			return pattern.Func(fsys, matches...)
 		}
 	}
 

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"regexp"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -19,12 +19,11 @@ func startApp(ctx context.Context, client *api.Client) error {
 	if err != nil {
 		return err
 	}
-	r := regexp.MustCompile(`^.*/Ollama\s?\d*.app`)
-	m := r.FindStringSubmatch(link)
-	if len(m) != 1 {
+	if !strings.Contains(link, "Ollama.app") {
 		return errors.New("could not find ollama app")
 	}
-	if err := exec.Command("/usr/bin/open", "-j", "-a", m[0], "--args", "--fast-startup").Run(); err != nil {
+	path := strings.Split(link, "Ollama.app")
+	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
 		return err
 	}
 	return waitForServer(ctx, client)

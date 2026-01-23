@@ -18,13 +18,21 @@ import (
 
 const defaultPrivateKey = "id_ed25519"
 
-func GetPublicKey() (string, error) {
+func keyPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
-	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
+	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
+}
+
+func GetPublicKey() (string, error) {
+	keyPath, err := keyPath()
+	if err != nil {
+		return "", err
+	}
+
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
@@ -51,12 +59,11 @@ func NewNonce(r io.Reader, length int) (string, error) {
 }
 
 func Sign(ctx context.Context, bts []byte) (string, error) {
-	home, err := os.UserHomeDir()
+	keyPath, err := keyPath()
 	if err != nil {
 		return "", err
 	}
 
-	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))

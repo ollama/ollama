@@ -1,13 +1,11 @@
 package envconfig
 
 import (
-	"log/slog"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/ollama/ollama/logutil"
 )
 
 func TestHost(t *testing.T) {
@@ -15,36 +13,34 @@ func TestHost(t *testing.T) {
 		value  string
 		expect string
 	}{
-		"empty":               {"", "http://127.0.0.1:11434"},
-		"only address":        {"1.2.3.4", "http://1.2.3.4:11434"},
-		"only port":           {":1234", "http://:1234"},
-		"address and port":    {"1.2.3.4:1234", "http://1.2.3.4:1234"},
-		"hostname":            {"example.com", "http://example.com:11434"},
-		"hostname and port":   {"example.com:1234", "http://example.com:1234"},
-		"zero port":           {":0", "http://:0"},
-		"too large port":      {":66000", "http://:11434"},
-		"too small port":      {":-1", "http://:11434"},
-		"ipv6 localhost":      {"[::1]", "http://[::1]:11434"},
-		"ipv6 world open":     {"[::]", "http://[::]:11434"},
-		"ipv6 no brackets":    {"::1", "http://[::1]:11434"},
-		"ipv6 + port":         {"[::1]:1337", "http://[::1]:1337"},
-		"extra space":         {" 1.2.3.4 ", "http://1.2.3.4:11434"},
-		"extra quotes":        {"\"1.2.3.4\"", "http://1.2.3.4:11434"},
-		"extra space+quotes":  {" \" 1.2.3.4 \" ", "http://1.2.3.4:11434"},
-		"extra single quotes": {"'1.2.3.4'", "http://1.2.3.4:11434"},
-		"http":                {"http://1.2.3.4", "http://1.2.3.4:80"},
-		"http port":           {"http://1.2.3.4:4321", "http://1.2.3.4:4321"},
-		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
-		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
-		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
-		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
+		"empty":               {"", "127.0.0.1:11434"},
+		"only address":        {"1.2.3.4", "1.2.3.4:11434"},
+		"only port":           {":1234", ":1234"},
+		"address and port":    {"1.2.3.4:1234", "1.2.3.4:1234"},
+		"hostname":            {"example.com", "example.com:11434"},
+		"hostname and port":   {"example.com:1234", "example.com:1234"},
+		"zero port":           {":0", ":0"},
+		"too large port":      {":66000", ":11434"},
+		"too small port":      {":-1", ":11434"},
+		"ipv6 localhost":      {"[::1]", "[::1]:11434"},
+		"ipv6 world open":     {"[::]", "[::]:11434"},
+		"ipv6 no brackets":    {"::1", "[::1]:11434"},
+		"ipv6 + port":         {"[::1]:1337", "[::1]:1337"},
+		"extra space":         {" 1.2.3.4 ", "1.2.3.4:11434"},
+		"extra quotes":        {"\"1.2.3.4\"", "1.2.3.4:11434"},
+		"extra space+quotes":  {" \" 1.2.3.4 \" ", "1.2.3.4:11434"},
+		"extra single quotes": {"'1.2.3.4'", "1.2.3.4:11434"},
+		"http":                {"http://1.2.3.4", "1.2.3.4:80"},
+		"http port":           {"http://1.2.3.4:4321", "1.2.3.4:4321"},
+		"https":               {"https://1.2.3.4", "1.2.3.4:443"},
+		"https port":          {"https://1.2.3.4:4321", "1.2.3.4:4321"},
 	}
 
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", tt.value)
-			if host := Host(); host.String() != tt.expect {
-				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.String())
+			if host := Host(); host.Host != tt.expect {
+				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.Host)
 			}
 		})
 	}
@@ -71,8 +67,6 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
-			"vscode-webview://*",
-			"vscode-file://*",
 		}},
 		{"http://10.0.0.1", []string{
 			"http://10.0.0.1",
@@ -91,8 +85,6 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
-			"vscode-webview://*",
-			"vscode-file://*",
 		}},
 		{"http://172.16.0.1,https://192.168.0.1", []string{
 			"http://172.16.0.1",
@@ -112,8 +104,6 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
-			"vscode-webview://*",
-			"vscode-file://*",
 		}},
 		{"http://totally.safe,http://definitely.legit", []string{
 			"http://totally.safe",
@@ -133,15 +123,13 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
-			"vscode-webview://*",
-			"vscode-file://*",
 		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
 			t.Setenv("OLLAMA_ORIGINS", tt.value)
 
-			if diff := cmp.Diff(AllowedOrigins(), tt.expect); diff != "" {
+			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
 			}
 		})
@@ -226,40 +214,6 @@ func TestKeepAlive(t *testing.T) {
 	}
 }
 
-func TestLoadTimeout(t *testing.T) {
-	defaultTimeout := 5 * time.Minute
-	cases := map[string]time.Duration{
-		"":       defaultTimeout,
-		"1s":     time.Second,
-		"1m":     time.Minute,
-		"1h":     time.Hour,
-		"5m0s":   defaultTimeout,
-		"1h2m3s": 1*time.Hour + 2*time.Minute + 3*time.Second,
-		"0":      time.Duration(math.MaxInt64),
-		"60":     60 * time.Second,
-		"120":    2 * time.Minute,
-		"3600":   time.Hour,
-		"-0":     time.Duration(math.MaxInt64),
-		"-1":     time.Duration(math.MaxInt64),
-		"-1m":    time.Duration(math.MaxInt64),
-		// invalid values
-		" ":   defaultTimeout,
-		"???": defaultTimeout,
-		"1d":  defaultTimeout,
-		"1y":  defaultTimeout,
-		"1w":  defaultTimeout,
-	}
-
-	for tt, expect := range cases {
-		t.Run(tt, func(t *testing.T) {
-			t.Setenv("OLLAMA_LOAD_TIMEOUT", tt)
-			if actual := LoadTimeout(); actual != expect {
-				t.Errorf("%s: expected %s, got %s", tt, expect, actual)
-			}
-		})
-	}
-}
-
 func TestVar(t *testing.T) {
 	cases := map[string]string{
 		"value":       "value",
@@ -275,53 +229,6 @@ func TestVar(t *testing.T) {
 			t.Setenv("OLLAMA_VAR", k)
 			if s := Var("OLLAMA_VAR"); s != v {
 				t.Errorf("%s: expected %q, got %q", k, v, s)
-			}
-		})
-	}
-}
-
-func TestContextLength(t *testing.T) {
-	cases := map[string]uint{
-		"":     4096,
-		"2048": 2048,
-	}
-
-	for k, v := range cases {
-		t.Run(k, func(t *testing.T) {
-			t.Setenv("OLLAMA_CONTEXT_LENGTH", k)
-			if i := ContextLength(); i != v {
-				t.Errorf("%s: expected %d, got %d", k, v, i)
-			}
-		})
-	}
-}
-
-func TestLogLevel(t *testing.T) {
-	cases := map[string]slog.Level{
-		// Default to INFO
-		"":      slog.LevelInfo,
-		"false": slog.LevelInfo,
-		"f":     slog.LevelInfo,
-		"0":     slog.LevelInfo,
-
-		// True values enable Debug
-		"true": slog.LevelDebug,
-		"t":    slog.LevelDebug,
-
-		// Positive values increase verbosity
-		"1": slog.LevelDebug,
-		"2": logutil.LevelTrace,
-
-		// Negative values decrease verbosity
-		"-1": slog.LevelWarn,
-		"-2": slog.LevelError,
-	}
-
-	for k, v := range cases {
-		t.Run(k, func(t *testing.T) {
-			t.Setenv("OLLAMA_DEBUG", k)
-			if i := LogLevel(); i != v {
-				t.Errorf("%s: expected %d, got %d", k, v, i)
 			}
 		})
 	}

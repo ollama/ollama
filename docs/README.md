@@ -1,22 +1,21 @@
 # Documentation
 
 ### Getting Started
-* [Quickstart](https://docs.ollama.com/quickstart)
-* [Examples](./examples.md)
-* [Importing models](https://docs.ollama.com/import)
-* [MacOS Documentation](https://docs.ollama.com/macos)
-* [Linux Documentation](https://docs.ollama.com/linux)
-* [Windows Documentation](https://docs.ollama.com/windows)
-* [Docker Documentation](https://docs.ollama.com/docker)
+* [Quickstart](../README.md#quickstart)
+* [Examples](../examples)
+* [Importing models](./import.md)
+* [Linux Documentation](./linux.md)
+* [Windows Documentation](./windows.md)
+* [Docker Documentation](./docker.md)
 
 ### Reference
 
-* [API Reference](https://docs.ollama.com/api)
-* [Modelfile Reference](https://docs.ollama.com/modelfile)
-* [OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility)
+* [API Reference](./api.md)
+* [Modelfile Reference](./modelfile.md)
+* [OpenAI Compatibility](./openai.md)
 
 ### Resources
 
-* [Troubleshooting Guide](https://docs.ollama.com/troubleshooting)
-* [FAQ](https://docs.ollama.com/faq#faq)
+* [Troubleshooting Guide](./troubleshooting.md)
+* [FAQ](./faq.md)
 * [Development guide](./development.md)
