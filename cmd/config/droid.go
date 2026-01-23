@@ -95,7 +95,7 @@ func (d *Droid) Edit(models []string) error {
 		modelID := fmt.Sprintf("custom:%s-[Ollama]-%d", model, i)
 		ollamaModels = append(ollamaModels, droidModelEntry{
 			Model:           model,
-			DisplayName:     model,
+			DisplayName:     fmt.Sprintf("%s-[Ollama]", model),
 			BaseURL:         "http://localhost:11434/v1",
 			APIKey:          "ollama",
 			Provider:        "generic-chat-completion-api",
