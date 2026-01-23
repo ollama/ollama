@@ -4,16 +4,6 @@ title: Anthropic compatibility
 
 Ollama provides compatibility with the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) to help connect existing applications to Ollama, including tools like Claude Code.
 
-## Recommended models
-
-For coding use cases, models like `glm-4.7`, `minimax-m2.1`, and `qwen3-coder` are recommended.
-
-Download a model before use:
-```shell
-ollama pull qwen3-coder
-ollama pull glm-4.7:cloud
-```
-
 ## Usage
 
 ### Environment variables
@@ -245,7 +235,22 @@ curl -X POST http://localhost:11434/v1/messages \
 
 ## Using with Claude Code
 
-[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend.
+[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend. 
+
+### Recommended models
+
+For coding use cases, models like `glm-4.7`, `minimax-m2.1`, and `qwen3-coder` are recommended.
+
+Download a model before use:
+
+```shell
+ollama pull qwen3-coder
+```
+> Note: Qwen 3 coder is a 30B parameter model requiring at least 24GB of VRAM to run smoothly. More is required for longer context lengths. 
+
+```shell
+ollama pull glm-4.7:cloud
+```
 
 ### Quick setup
 
