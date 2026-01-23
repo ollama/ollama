@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net"
@@ -232,19 +233,27 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		seed = time.Now().UnixNano()
 	}
 
+	// Extract raw image bytes from llm.ImageData slice
+	var images [][]byte
+	for _, img := range req.Images {
+		images = append(images, img.Data)
+	}
+
 	// Build request for subprocess
 	creq := struct {
-		Prompt string `json:"prompt"`
-		Width  int32  `json:"width,omitempty"`
-		Height int32  `json:"height,omitempty"`
-		Steps  int32  `json:"steps,omitempty"`
-		Seed   int64  `json:"seed,omitempty"`
+		Prompt string   `json:"prompt"`
+		Width  int32    `json:"width,omitempty"`
+		Height int32    `json:"height,omitempty"`
+		Steps  int32    `json:"steps,omitempty"`
+		Seed   int64    `json:"seed,omitempty"`
+		Images [][]byte `json:"images,omitempty"`
 	}{
 		Prompt: req.Prompt,
 		Width:  req.Width,
 		Height: req.Height,
 		Steps:  req.Steps,
 		Seed:   seed,
+		Images: images,
 	}
 
 	body, err := json.Marshal(creq)
@@ -266,7 +275,8 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("request failed: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", strings.TrimSpace(string(body)))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)

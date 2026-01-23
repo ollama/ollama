@@ -1112,3 +1112,129 @@ func TestImageWriterResponse(t *testing.T) {
 		t.Errorf("expected image data 'dGVzdC1pbWFnZS1kYXRh', got %s", imageResp.Data[0].B64JSON)
 	}
 }
+
+func TestImageEditsMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.GenerateRequest
+		err  openai.ErrorResponse
+	}
+
+	var capturedRequest *api.GenerateRequest
+
+	// Base64-encoded test image (1x1 pixel PNG)
+	testImage := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	decodedImage, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+	testCases := []testCase{
+		{
+			name: "image edit basic",
+			body: `{
+				"model": "test-model",
+				"prompt": "make it blue",
+				"image": "` + testImage + `"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "make it blue",
+				Images: []api.ImageData{decodedImage},
+			},
+		},
+		{
+			name: "image edit with size",
+			body: `{
+				"model": "test-model",
+				"prompt": "make it blue",
+				"image": "` + testImage + `",
+				"size": "512x768"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "make it blue",
+				Images: []api.ImageData{decodedImage},
+				Width:  512,
+				Height: 768,
+			},
+		},
+		{
+			name: "image edit missing prompt",
+			body: `{
+				"model": "test-model",
+				"image": "` + testImage + `"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "prompt is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "image edit missing model",
+			body: `{
+				"prompt": "make it blue",
+				"image": "` + testImage + `"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "model is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "image edit missing image",
+			body: `{
+				"model": "test-model",
+				"prompt": "make it blue"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "image is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ImageEditsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/generate", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			defer func() { capturedRequest = nil }()
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if tc.err.Error.Message != "" {
+				var errResp openai.ErrorResponse
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(tc.err, errResp); diff != "" {
+					t.Fatalf("errors did not match:\n%s", diff)
+				}
+				return
+			}
+
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+
+			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+				t.Fatalf("requests did not match:\n%s", diff)
+			}
+		})
+	}
+}

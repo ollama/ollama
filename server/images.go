@@ -75,12 +75,6 @@ type Model struct {
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
-	// Check for image generation model via config capabilities
-	if slices.Contains(m.Config.Capabilities, "image") {
-		return []model.Capability{model.CapabilityImage}
-	}
-
-	// Check for completion capability
 	if m.ModelPath != "" {
 		f, err := gguf.Open(m.ModelPath)
 		if err == nil {

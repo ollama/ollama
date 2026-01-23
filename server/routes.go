@@ -1604,8 +1604,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
-	// OpenAI-compatible image generation endpoint
+	// OpenAI-compatible image generation endpoints
 	r.POST("/v1/images/generations", middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/images/edits", middleware.ImageEditsMiddleware(), s.GenerateHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
@@ -2523,6 +2524,11 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		}
 	}
 
+	var images []llm.ImageData
+	for i, imgData := range req.Images {
+		images = append(images, llm.ImageData{ID: i, Data: imgData})
+	}
+
 	var streamStarted bool
 	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
 		Prompt: req.Prompt,
@@ -2530,6 +2536,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		Height: req.Height,
 		Steps:  req.Steps,
 		Seed:   seed,
+		Images: images,
 	}, func(cr llm.CompletionResponse) {
 		streamStarted = true
 		res := api.GenerateResponse{

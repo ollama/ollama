@@ -794,3 +794,47 @@ func ToImageGenerationResponse(resp api.GenerateResponse) ImageGenerationRespons
 		Data:    data,
 	}
 }
+
+// ImageEditRequest is an OpenAI-compatible image edit request.
+type ImageEditRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Image  string `json:"image"`          // Base64-encoded image data
+	Size   string `json:"size,omitempty"` // e.g., "1024x1024"
+	Seed   *int64 `json:"seed,omitempty"`
+}
+
+// FromImageEditRequest converts an OpenAI image edit request to an Ollama GenerateRequest.
+func FromImageEditRequest(r ImageEditRequest) (api.GenerateRequest, error) {
+	req := api.GenerateRequest{
+		Model:  r.Model,
+		Prompt: r.Prompt,
+	}
+
+	// Decode the input image
+	if r.Image != "" {
+		imgData, err := decodeImageURL(r.Image)
+		if err != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid image: %w", err)
+		}
+		req.Images = append(req.Images, imgData)
+	}
+
+	// Parse size if provided (e.g., "1024x768")
+	if r.Size != "" {
+		var w, h int32
+		if _, err := fmt.Sscanf(r.Size, "%dx%d", &w, &h); err == nil {
+			req.Width = w
+			req.Height = h
+		}
+	}
+
+	if r.Seed != nil {
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+		req.Options["seed"] = *r.Seed
+	}
+
+	return req, nil
+}

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,11 +26,12 @@ import (
 
 // Request is the image generation request format
 type Request struct {
-	Prompt string `json:"prompt"`
-	Width  int32  `json:"width,omitempty"`
-	Height int32  `json:"height,omitempty"`
-	Steps  int    `json:"steps,omitempty"`
-	Seed   int64  `json:"seed,omitempty"`
+	Prompt string   `json:"prompt"`
+	Width  int32    `json:"width,omitempty"`
+	Height int32    `json:"height,omitempty"`
+	Steps  int      `json:"steps,omitempty"`
+	Seed   int64    `json:"seed,omitempty"`
+	Images [][]byte `json:"images,omitempty"` // Input images for image editing/conditioning
 }
 
 // Response is streamed back for each progress update
@@ -44,6 +46,13 @@ type Response struct {
 // ImageModel is the interface for image generation models
 type ImageModel interface {
 	GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error)
+}
+
+// ImageEditModel extends ImageModel with image editing/conditioning capability.
+// Models that support input images for editing should implement this interface.
+type ImageEditModel interface {
+	ImageModel
+	GenerateImageWithInputs(ctx context.Context, prompt string, width, height int32, steps int, seed int64, inputImages []image.Image, progress func(step, total int)) (*mlx.Array, error)
 }
 
 // Server holds the model and handles requests
@@ -153,6 +162,44 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate and decode input images
+	const maxInputImages = 2
+	if len(req.Images) > maxInputImages {
+		http.Error(w, fmt.Sprintf("too many input images, maximum is %d", maxInputImages), http.StatusBadRequest)
+		return
+	}
+
+	var inputImages []image.Image
+	if len(req.Images) > 0 {
+		// TODO: add memory check for input images
+
+		inputImages = make([]image.Image, len(req.Images))
+		for i, imgBytes := range req.Images {
+			img, err := imagegen.DecodeImage(imgBytes)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("invalid image %d: %v", i, err), http.StatusBadRequest)
+				return
+			}
+			inputImages[i] = img
+		}
+		slog.Info("decoded input images", "count", len(inputImages))
+
+		// Default width/height to first input image dimensions, scaled to max 1024
+		bounds := inputImages[0].Bounds()
+		w, h := bounds.Dx(), bounds.Dy()
+		if w > 1024 || h > 1024 {
+			if w > h {
+				h = h * 1024 / w
+				w = 1024
+			} else {
+				w = w * 1024 / h
+				h = 1024
+			}
+		}
+		req.Width = int32(w)
+		req.Height = int32(h)
+	}
+
 	// Serialize generation requests - MLX model may not handle concurrent generation
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -184,7 +231,19 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	img, err := s.model.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	// Use ImageEditModel if available and images provided, otherwise use basic ImageModel
+	var img *mlx.Array
+	var err error
+	if len(inputImages) > 0 {
+		editModel, ok := s.model.(ImageEditModel)
+		if !ok {
+			http.Error(w, "model does not support image editing", http.StatusBadRequest)
+			return
+		}
+		img, err = editModel.GenerateImageWithInputs(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, inputImages, progress)
+	} else {
+		img, err = s.model.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	}
 
 	if err != nil {
 		// Don't send error for cancellation
