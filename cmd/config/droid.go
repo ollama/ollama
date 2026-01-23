@@ -7,14 +7,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 // Droid implements Runner and Editor for Droid integration
 type Droid struct{}
 
-// droidModelEntry represents a custom model entry in Droid's settings.json
-type droidModelEntry struct {
+// droidSettings represents the Droid settings.json file (only fields we use)
+type droidSettings struct {
+	CustomModels           []modelEntry    `json:"customModels"`
+	SessionDefaultSettings sessionSettings `json:"sessionDefaultSettings"`
+}
+
+type sessionSettings struct {
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort"`
+}
+
+type modelEntry struct {
 	Model           string `json:"model"`
 	DisplayName     string `json:"displayName"`
 	BaseURL         string `json:"baseUrl"`
@@ -76,24 +85,36 @@ func (d *Droid) Edit(models []string) error {
 		return err
 	}
 
-	settings := make(map[string]any)
+	// Read file once, unmarshal twice:
+	// map preserves unknown fields for writing back (including extra fields in model entries)
+	settingsMap := make(map[string]any)
+	var settings droidSettings
 	if data, err := os.ReadFile(settingsPath); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
+		if err := json.Unmarshal(data, &settingsMap); err != nil {
 			return fmt.Errorf("failed to parse settings file: %w, at: %s", err, settingsPath)
+		}
+		json.Unmarshal(data, &settings) // ignore error, zero values are fine
+	}
+
+	// Keep only non-Ollama models from the raw map (preserves extra fields)
+	// Rebuild Ollama models
+	var nonOllamaModels []any
+	if rawModels, ok := settingsMap["customModels"].([]any); ok {
+		for _, raw := range rawModels {
+			if m, ok := raw.(map[string]any); ok {
+				if m["apiKey"] != "ollama" {
+					nonOllamaModels = append(nonOllamaModels, raw)
+				}
+			}
 		}
 	}
 
-	customModels, _ := settings["customModels"].([]any)
-
-	// Keep only non-Ollama models (we'll rebuild Ollama models fresh)
-	nonOllamaModels := slices.DeleteFunc(slices.Clone(customModels), isOllamaModelEntry)
-
 	// Build new Ollama model entries with sequential indices (0, 1, 2, ...)
-	var ollamaModels []any
+	var newModels []any
 	var defaultModelID string
 	for i, model := range models {
-		modelID := fmt.Sprintf("custom:%s-[Ollama]-%d", model, i)
-		ollamaModels = append(ollamaModels, droidModelEntry{
+		modelID := fmt.Sprintf("custom:%s-%d", model, i)
+		newModels = append(newModels, modelEntry{
 			Model:           model,
 			DisplayName:     model,
 			BaseURL:         "http://localhost:11434/v1",
@@ -109,21 +130,22 @@ func (d *Droid) Edit(models []string) error {
 		}
 	}
 
-	settings["customModels"] = append(ollamaModels, nonOllamaModels...)
+	settingsMap["customModels"] = append(newModels, nonOllamaModels...)
 
-	sessionSettings, ok := settings["sessionDefaultSettings"].(map[string]any)
+	// Update session default settings (preserve unknown fields in the nested object)
+	sessionSettings, ok := settingsMap["sessionDefaultSettings"].(map[string]any)
 	if !ok {
 		sessionSettings = make(map[string]any)
 	}
 	sessionSettings["model"] = defaultModelID
 
-	if effort, ok := sessionSettings["reasoningEffort"].(string); !ok || !isValidReasoningEffort(effort) {
+	if !isValidReasoningEffort(settings.SessionDefaultSettings.ReasoningEffort) {
 		sessionSettings["reasoningEffort"] = "none"
 	}
 
-	settings["sessionDefaultSettings"] = sessionSettings
+	settingsMap["sessionDefaultSettings"] = sessionSettings
 
-	data, err := json.MarshalIndent(settings, "", "  ")
+	data, err := json.MarshalIndent(settingsMap, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -135,24 +157,21 @@ func (d *Droid) Models() []string {
 	if err != nil {
 		return nil
 	}
-	settings, err := readJSONFile(filepath.Join(home, ".factory", "settings.json"))
+
+	data, err := os.ReadFile(filepath.Join(home, ".factory", "settings.json"))
 	if err != nil {
 		return nil
 	}
 
-	customModels, _ := settings["customModels"].([]any)
+	var settings droidSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil
+	}
 
 	var result []string
-	for _, m := range customModels {
-		if !isOllamaModelEntry(m) {
-			continue
-		}
-		entry, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		if model, _ := entry["model"].(string); model != "" {
-			result = append(result, model)
+	for _, m := range settings.CustomModels {
+		if m.APIKey == "ollama" {
+			result = append(result, m.Model)
 		}
 	}
 	return result
@@ -162,13 +181,4 @@ var validReasoningEfforts = []string{"high", "medium", "low", "none"}
 
 func isValidReasoningEffort(effort string) bool {
 	return slices.Contains(validReasoningEfforts, effort)
-}
-
-func isOllamaModelEntry(m any) bool {
-	entry, ok := m.(map[string]any)
-	if !ok {
-		return false
-	}
-	id, _ := entry["id"].(string)
-	return strings.Contains(id, "-[Ollama]-")
 }
