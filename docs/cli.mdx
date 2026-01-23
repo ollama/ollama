@@ -8,6 +8,47 @@ title: CLI Reference
 ollama run gemma3
 ```
 
+### Configure integrations
+
+```
+ollama config
+```
+
+Configure external applications to use Ollama models. This provides an interactive way to set up integrations with supported apps.
+
+#### Supported integrations
+
+- **OpenCode** - Open-source coding assistant
+- **Claude Code** - Anthropic's agentic coding tool
+- **Codex** - OpenAI's coding assistant
+- **Droid** - Factory's AI coding agent
+
+#### Examples
+
+Configure an integration interactively:
+
+```
+ollama config
+```
+
+Configure a specific integration:
+
+```
+ollama config claude
+```
+
+Configure with a specific model:
+
+```
+ollama config claude --model qwen3-coder
+```
+
+Configure and launch:
+
+```
+ollama config droid --launch
+```
+
 #### Multiline input
 
 For multiline input, you can wrap text with `"""`:

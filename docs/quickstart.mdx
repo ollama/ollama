@@ -101,3 +101,48 @@ This quickstart will walk your through running your first model with Ollama. To 
 </Tabs>
 
 See a full list of available models [here](https://ollama.com/models).
+
+## Configure coding agents
+
+Use `ollama config` to quickly set up coding agents to use Ollama models:
+
+```
+ollama config
+```
+
+This will prompt you to select an integration and choose which models to use.
+
+### Supported integrations
+
+<CardGroup cols={2}>
+  <Card title="OpenCode" icon="laptop-code" href="/integrations/opencode">
+    Open-source coding assistant
+  </Card>
+  <Card title="Claude Code" icon="terminal" href="/integrations/claude-code">
+    Anthropic's agentic coding tool
+  </Card>
+  <Card title="Codex" icon="code" href="/integrations/codex">
+    OpenAI's coding assistant
+  </Card>
+  <Card title="Droid" icon="robot" href="/integrations/droid">
+    Factory's AI coding agent
+  </Card>
+</CardGroup>
+
+### Configure an integration
+
+```
+ollama config claude
+```
+
+### Configure with a specific model
+
+```
+ollama config claude --model qwen3-coder
+```
+
+### Launch an existing configuration
+
+```
+ollama config claude --launch
+```
