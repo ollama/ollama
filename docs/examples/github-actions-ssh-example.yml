@@ -1,0 +1,83 @@
+# Example GitHub Actions Workflow: Using SSH Keys
+# 
+# This is an example workflow demonstrating how to use SSH keys
+# in GitHub Actions for secure Git operations.
+#
+# To use this workflow:
+# 1. Generate an SSH key pair: ssh-keygen -t ed25519 -C "deploy-key@ollama"
+# 2. Add the public key as a deploy key in repository Settings → Deploy keys
+# 3. Add the private key as a secret in Settings → Secrets → SSH_PRIVATE_KEY
+# 4. Copy this file to .github/workflows/ (if needed for your use case)
+
+name: SSH Key Example Workflow
+
+on:
+  # This is just an example - adjust triggers as needed
+  workflow_dispatch:
+
+jobs:
+  ssh-example:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Method 1: Using webfactory/ssh-agent (recommended)
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      
+      # Method 2: Manual SSH setup (alternative)
+      - name: Setup SSH (Manual Method)
+        if: false  # Disabled by default, enable if needed
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_ed25519
+      
+      # Test SSH connection
+      - name: Test SSH Connection
+        run: |
+          ssh -T git@github.com || echo "SSH authentication successful"
+      
+      # Example: Clone a private repository using SSH
+      - name: Clone Private Repository (Example)
+        if: false  # Disabled by default
+        run: |
+          git clone git@github.com:username/private-repo.git
+      
+      # Example: Push changes using SSH
+      - name: Push Changes (Example)
+        if: false  # Disabled by default
+        run: |
+          cd /path/to/repo
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "Automated commit"
+          git push
+
+# Additional Notes:
+#
+# Security Considerations:
+# - Never commit private keys to the repository
+# - Use repository secrets for storing sensitive data
+# - Grant minimal necessary permissions to deploy keys
+# - Rotate keys regularly
+# - Use different keys for different environments (dev, staging, prod)
+#
+# Troubleshooting:
+# - If SSH fails, check that the public key is added to GitHub
+# - Verify the private key is correctly formatted in secrets
+# - Ensure the key has appropriate permissions (600 for private key)
+# - Check GitHub's SSH key fingerprints if getting host verification errors
+#
+# For more information:
+# - SSH Setup Guide: docs/ssh-setup.md
+# - GitHub Actions Documentation: https://docs.github.com/en/actions
+# - SSH Agent Action: https://github.com/webfactory/ssh-agent

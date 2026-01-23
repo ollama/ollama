@@ -19,5 +19,6 @@
 ### Resources
 
 * [Troubleshooting Guide](https://docs.ollama.com/troubleshooting)
+* [SSH Key Setup](./ssh-setup.md)
 * [FAQ](https://docs.ollama.com/faq#faq)
 * [Development guide](./development.md)
