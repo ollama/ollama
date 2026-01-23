@@ -19,7 +19,9 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/types/model"
 )
 
 // testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
@@ -70,6 +72,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 
 	return
 }
+
+func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
 	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
@@ -2346,4 +2350,93 @@ func TestGenerateWithImages(t *testing.T) {
 			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Images))
 		}
 	})
+}
+
+// TestImageGenerateStreamFalse tests that image generation respects stream=false
+// and returns a single JSON response instead of streaming ndjson.
+func TestImageGenerateStreamFalse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+
+	mock := mockRunner{}
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
+		fn(llm.CompletionResponse{Step: 2, TotalSteps: 3, Done: false})
+		fn(llm.CompletionResponse{Step: 3, TotalSteps: 3, Done: true, DoneReason: llm.DoneReasonStop, Image: "base64image"})
+		return nil
+	}
+
+	opts := api.DefaultOptions()
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:  make(chan *LlmRequest, 1),
+			finishedReqCh: make(chan *LlmRequest, 1),
+			expiredCh:     make(chan *runnerRef, 1),
+			unloadedCh:    make(chan any, 1),
+			loaded: map[string]*runnerRef{
+				"": {
+					llama:       &mock,
+					Options:     &opts,
+					model:       &Model{Config: model.ConfigV2{Capabilities: []string{"image"}}},
+					numParallel: 1,
+				},
+			},
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	// Create model manifest with image capability
+	n := model.ParseName("test-image")
+	cfg := model.ConfigV2{Capabilities: []string{"image"}}
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	streamFalse := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-image",
+		Prompt: "test prompt",
+		Stream: &streamFalse,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if ct := w.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+		t.Errorf("expected Content-Type 'application/json; charset=utf-8', got %q", ct)
+	}
+
+	body := w.Body.String()
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 response line, got %d:\n%s", len(lines), body)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.Unmarshal([]byte(lines[0]), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp.Image != "base64image" {
+		t.Errorf("expected image 'base64image', got %q", resp.Image)
+	}
+
+	if !resp.Done {
+		t.Errorf("expected done=true")
+	}
 }
