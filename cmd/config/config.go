@@ -9,16 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
-type integrationConfig struct {
-	Models       []string  `json:"models"`
-	ConfiguredAt time.Time `json:"configured_at"`
+type integration struct {
+	Models []string `json:"models"`
 }
 
 type config struct {
-	Integrations map[string]*integrationConfig `json:"integrations"`
+	Integrations map[string]*integration `json:"integrations"`
 }
 
 func integrationsPath() (string, error) {
@@ -38,7 +36,7 @@ func loadIntegrationsFile() (*config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &config{Integrations: make(map[string]*integrationConfig)}, nil
+			return &config{Integrations: make(map[string]*integration)}, nil
 		}
 		return nil, err
 	}
@@ -48,7 +46,7 @@ func loadIntegrationsFile() (*config, error) {
 		return nil, fmt.Errorf("failed to parse integrations file: %w, at: %s", err, path)
 	}
 	if cfg.Integrations == nil {
-		cfg.Integrations = make(map[string]*integrationConfig)
+		cfg.Integrations = make(map[string]*integration)
 	}
 	return &cfg, nil
 }
@@ -81,15 +79,14 @@ func saveIntegration(appName string, models []string) error {
 		return err
 	}
 
-	cfg.Integrations[strings.ToLower(appName)] = &integrationConfig{
-		Models:       models,
-		ConfiguredAt: time.Now(),
+	cfg.Integrations[strings.ToLower(appName)] = &integration{
+		Models: models,
 	}
 
 	return saveIntegrationsFile(cfg)
 }
 
-func loadIntegration(appName string) (*integrationConfig, error) {
+func loadIntegration(appName string) (*integration, error) {
 	cfg, err := loadIntegrationsFile()
 	if err != nil {
 		return nil, err
@@ -103,13 +100,13 @@ func loadIntegration(appName string) (*integrationConfig, error) {
 	return ic, nil
 }
 
-func listIntegrations() ([]integrationConfig, error) {
+func listIntegrations() ([]integration, error) {
 	cfg, err := loadIntegrationsFile()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]integrationConfig, 0, len(cfg.Integrations))
+	result := make([]integration, 0, len(cfg.Integrations))
 	for _, ic := range cfg.Integrations {
 		result = append(result, *ic)
 	}

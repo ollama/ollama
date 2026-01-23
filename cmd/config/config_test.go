@@ -60,7 +60,7 @@ func TestIntegrationConfig(t *testing.T) {
 	})
 
 	t.Run("defaultModel returns empty for no models", func(t *testing.T) {
-		config := &integrationConfig{Models: []string{}}
+		config := &integration{Models: []string{}}
 		defaultModel := ""
 		if len(config.Models) > 0 {
 			defaultModel = config.Models[0]

@@ -21,20 +21,14 @@ import (
 // They are composable interfaces where in some cases an editor is also a runner - opencode, droid
 // Runner can run an integration with a model.
 
-// Integration is the common interface for all integrations
-type Integration interface {
+type Runner interface {
+	Run(model string) error
 	// String returns the human-readable name of the integration
 	String() string
 }
 
-type Runner interface {
-	Integration
-	Run(model string) error
-}
-
 // Editor can edit config files (supports multi-model selection)
 type Editor interface {
-	Integration
 	// Paths returns the paths to the config files for the integration
 	Paths() []string
 	// Edit updates the config files for the integration with the given models
