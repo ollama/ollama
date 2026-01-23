@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 // Droid implements Runner and Editor for Droid integration
@@ -86,16 +85,22 @@ func (d *Droid) Edit(models []string) error {
 	customModels, _ := settings["customModels"].([]any)
 
 	// Keep only non-Ollama models (we'll rebuild Ollama models fresh)
-	nonOllamaModels := slices.DeleteFunc(slices.Clone(customModels), isOllamaModelEntry)
+	nonOllamaModels := slices.DeleteFunc(slices.Clone(customModels), func(m any) bool {
+		entry, ok := m.(droidModelEntry)
+		if !ok {
+			return false
+		}
+		return entry.APIKey != "ollama"
+	})
 
 	// Build new Ollama model entries with sequential indices (0, 1, 2, ...)
 	var ollamaModels []any
 	var defaultModelID string
 	for i, model := range models {
-		modelID := fmt.Sprintf("custom:%s-[Ollama]-%d", model, i)
+		modelID := fmt.Sprintf("custom:%s-%d", model, i)
 		ollamaModels = append(ollamaModels, droidModelEntry{
 			Model:           model,
-			DisplayName:     fmt.Sprintf("%s-[Ollama]", model),
+			DisplayName:     model,
 			BaseURL:         "http://localhost:11434/v1",
 			APIKey:          "ollama",
 			Provider:        "generic-chat-completion-api",
@@ -140,20 +145,14 @@ func (d *Droid) Models() []string {
 		return nil
 	}
 
-	customModels, _ := settings["customModels"].([]any)
+	customModels, _ := settings["customModels"].([]droidModelEntry)
 
 	var result []string
 	for _, m := range customModels {
-		if !isOllamaModelEntry(m) {
+		if m.APIKey != "ollama" {
 			continue
 		}
-		entry, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		if model, _ := entry["model"].(string); model != "" {
-			result = append(result, model)
-		}
+		result = append(result, m.Model)
 	}
 	return result
 }
@@ -162,13 +161,4 @@ var validReasoningEfforts = []string{"high", "medium", "low", "none"}
 
 func isValidReasoningEffort(effort string) bool {
 	return slices.Contains(validReasoningEfforts, effort)
-}
-
-func isOllamaModelEntry(m any) bool {
-	entry, ok := m.(map[string]any)
-	if !ok {
-		return false
-	}
-	id, _ := entry["id"].(string)
-	return strings.Contains(id, "-[Ollama]-")
 }
