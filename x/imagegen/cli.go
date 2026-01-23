@@ -532,8 +532,10 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	var imgs []api.ImageData
 
 	for _, fp := range filePaths {
-		// Normalize escaped spaces
+		// Normalize shell escapes
 		nfp := strings.ReplaceAll(fp, "\\ ", " ")
+		nfp = strings.ReplaceAll(nfp, "\\(", "(")
+		nfp = strings.ReplaceAll(nfp, "\\)", ")")
 		nfp = strings.ReplaceAll(nfp, "%20", " ")
 
 		data, err := getImageData(nfp)

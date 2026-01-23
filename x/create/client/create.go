@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/progress"
@@ -209,10 +211,23 @@ func newManifestWriter(opts CreateOptions, capabilities []string) create.Manifes
 			return fmt.Errorf("invalid model name: %s", modelName)
 		}
 
+		// TODO: find a better way to detect image input support
+		// For now, hardcode Flux2KleinPipeline as supporting vision (image input)
+		caps := capabilities
+		modelIndex := filepath.Join(opts.ModelDir, "model_index.json")
+		if data, err := os.ReadFile(modelIndex); err == nil {
+			var cfg struct {
+				ClassName string `json:"_class_name"`
+			}
+			if json.Unmarshal(data, &cfg) == nil && cfg.ClassName == "Flux2KleinPipeline" {
+				caps = append(caps, "vision")
+			}
+		}
+
 		// Create config blob with version requirement
 		configData := model.ConfigV2{
 			ModelFormat:  "safetensors",
-			Capabilities: capabilities,
+			Capabilities: caps,
 			Requires:     MinOllamaVersion,
 		}
 		configJSON, err := json.Marshal(configData)
