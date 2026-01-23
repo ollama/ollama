@@ -19,7 +19,7 @@ type config struct {
 	Integrations map[string]*integration `json:"integrations"`
 }
 
-func integrationsPath() (string, error) {
+func configPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -27,8 +27,8 @@ func integrationsPath() (string, error) {
 	return filepath.Join(home, ".ollama", "config", "config.json"), nil
 }
 
-func loadIntegrationsFile() (*config, error) {
-	path, err := integrationsPath()
+func load() (*config, error) {
+	path, err := configPath()
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func loadIntegrationsFile() (*config, error) {
 
 	var cfg config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse integrations file: %w, at: %s", err, path)
+		return nil, fmt.Errorf("failed to parse config: %w, at: %s", err, path)
 	}
 	if cfg.Integrations == nil {
 		cfg.Integrations = make(map[string]*integration)
@@ -51,8 +51,8 @@ func loadIntegrationsFile() (*config, error) {
 	return &cfg, nil
 }
 
-func saveIntegrationsFile(cfg *config) error {
-	path, err := integrationsPath()
+func save(cfg *config) error {
+	path, err := configPath()
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func saveIntegration(appName string, models []string) error {
 		return errors.New("app name cannot be empty")
 	}
 
-	cfg, err := loadIntegrationsFile()
+	cfg, err := load()
 	if err != nil {
 		return err
 	}
@@ -83,11 +83,11 @@ func saveIntegration(appName string, models []string) error {
 		Models: models,
 	}
 
-	return saveIntegrationsFile(cfg)
+	return save(cfg)
 }
 
 func loadIntegration(appName string) (*integration, error) {
-	cfg, err := loadIntegrationsFile()
+	cfg, err := load()
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func loadIntegration(appName string) (*integration, error) {
 }
 
 func listIntegrations() ([]integration, error) {
-	cfg, err := loadIntegrationsFile()
+	cfg, err := load()
 	if err != nil {
 		return nil, err
 	}

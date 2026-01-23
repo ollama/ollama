@@ -258,11 +258,11 @@ func TestLoadIntegration_NonexistentIntegration(t *testing.T) {
 	}
 }
 
-func TestIntegrationsPath(t *testing.T) {
+func TestConfigPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	path, err := integrationsPath()
+	path, err := configPath()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,4 +271,103 @@ func TestIntegrationsPath(t *testing.T) {
 	if path != expected {
 		t.Errorf("expected %s, got %s", expected, path)
 	}
+}
+
+func TestLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	t.Run("returns empty config when file does not exist", func(t *testing.T) {
+		cfg, err := load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg == nil {
+			t.Fatal("expected non-nil config")
+		}
+		if cfg.Integrations == nil {
+			t.Error("expected non-nil Integrations map")
+		}
+		if len(cfg.Integrations) != 0 {
+			t.Errorf("expected empty Integrations, got %d", len(cfg.Integrations))
+		}
+	})
+
+	t.Run("loads existing config", func(t *testing.T) {
+		path, _ := configPath()
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte(`{"integrations":{"test":{"models":["model-a"]}}}`), 0o644)
+
+		cfg, err := load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Integrations["test"] == nil {
+			t.Fatal("expected test integration")
+		}
+		if len(cfg.Integrations["test"].Models) != 1 {
+			t.Errorf("expected 1 model, got %d", len(cfg.Integrations["test"].Models))
+		}
+	})
+
+	t.Run("returns error for corrupted JSON", func(t *testing.T) {
+		path, _ := configPath()
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte(`{corrupted`), 0o644)
+
+		_, err := load()
+		if err == nil {
+			t.Error("expected error for corrupted JSON")
+		}
+	})
+}
+
+func TestSave(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	t.Run("creates config file", func(t *testing.T) {
+		cfg := &config{
+			Integrations: map[string]*integration{
+				"test": {Models: []string{"model-a", "model-b"}},
+			},
+		}
+
+		if err := save(cfg); err != nil {
+			t.Fatal(err)
+		}
+
+		path, _ := configPath()
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Error("config file was not created")
+		}
+	})
+
+	t.Run("round-trip preserves data", func(t *testing.T) {
+		cfg := &config{
+			Integrations: map[string]*integration{
+				"claude": {Models: []string{"llama3.2", "mistral"}},
+				"codex":  {Models: []string{"qwen2.5"}},
+			},
+		}
+
+		if err := save(cfg); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(loaded.Integrations) != 2 {
+			t.Errorf("expected 2 integrations, got %d", len(loaded.Integrations))
+		}
+		if loaded.Integrations["claude"] == nil {
+			t.Error("missing claude integration")
+		}
+		if len(loaded.Integrations["claude"].Models) != 2 {
+			t.Errorf("expected 2 models for claude, got %d", len(loaded.Integrations["claude"].Models))
+		}
+	})
 }

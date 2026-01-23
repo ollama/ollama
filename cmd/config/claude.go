@@ -11,17 +11,19 @@ type Claude struct{}
 
 func (c *Claude) String() string { return "Claude Code" }
 
+func (c *Claude) args(model string) []string {
+	if model != "" {
+		return []string{"--model", model}
+	}
+	return nil
+}
+
 func (c *Claude) Run(model string) error {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
 	}
 
-	var args []string
-	if model != "" {
-		args = []string{"--model", model}
-	}
-
-	cmd := exec.Command("claude", args...)
+	cmd := exec.Command("claude", c.args(model)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
