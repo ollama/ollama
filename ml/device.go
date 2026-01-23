@@ -538,6 +538,14 @@ func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 func (d DeviceInfo) NeedsInitValidation() bool {
 	// ROCm: rocblas will crash on unsupported devices.
 	// CUDA: verify CC is supported by the version of the library
+	//
+	// MIG (Multi-Instance GPU) devices are excluded from validation because:
+	// 1. They are enterprise-grade hardware (A100/H100) unlikely to have CC issues
+	// 2. The validation sets CUDA_VISIBLE_DEVICES to the parent GPU UUID, but MIG
+	//    partitions require MIG-specific UUIDs or index formats which we don't have
+	if d.Library == "CUDA" && strings.Contains(d.Description, " MIG ") {
+		return false
+	}
 	return d.Library == "ROCm" || d.Library == "CUDA"
 }
 
