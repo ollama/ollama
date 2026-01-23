@@ -1,6 +1,7 @@
 package glm4moelite
 
 import (
+	"errors"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -10,6 +11,8 @@ import (
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
+
+var ErrOldModelFormat = errors.New("this model uses a weight format that is no longer supported; please re-download it")
 
 type Options struct {
 	numExpertsUsed      int
@@ -284,6 +287,15 @@ func New(c fs.Config) (model.Model, error) {
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
+}
+
+func (m *Model) Validate() error {
+	for _, layer := range m.Layers {
+		if layer.Attention != nil && (layer.Attention.KB == nil || layer.Attention.VB == nil) {
+			return ErrOldModelFormat
+		}
+	}
+	return nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
