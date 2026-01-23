@@ -2508,8 +2508,14 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		return
 	}
 
-	// Set headers for streaming response
-	c.Header("Content-Type", "application/x-ndjson")
+	// Check streaming preference
+	isStreaming := req.Stream == nil || *req.Stream
+
+	contentType := "application/x-ndjson"
+	if !isStreaming {
+		contentType = "application/json; charset=utf-8"
+	}
+	c.Header("Content-Type", contentType)
 
 	// Get seed from options if provided
 	var seed int64
@@ -2530,6 +2536,8 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	}
 
 	var streamStarted bool
+	var finalResponse api.GenerateResponse
+
 	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
 		Prompt: req.Prompt,
 		Width:  req.Width,
@@ -2560,6 +2568,11 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 			res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 		}
 
+		if !isStreaming {
+			finalResponse = res
+			return
+		}
+
 		data, _ := json.Marshal(res)
 		c.Writer.Write(append(data, '\n'))
 		c.Writer.Flush()
@@ -2569,5 +2582,10 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		if !streamStarted {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
+	}
+
+	if !isStreaming {
+		c.JSON(http.StatusOK, finalResponse)
 	}
 }
