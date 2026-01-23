@@ -200,10 +200,10 @@ func TestLoadIntegration_CorruptedJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	// Create corrupted integrations.json file
+	// Create corrupted config.json file
 	dir := filepath.Join(tmpDir, ".ollama", "config")
 	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "integrations.json"), []byte(`{corrupted json`), 0o644)
+	os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{corrupted json`), 0o644)
 
 	// Corrupted file is treated as empty, so loadIntegration returns not found
 	_, err := loadIntegration("test")
@@ -267,7 +267,7 @@ func TestIntegrationsPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expected := filepath.Join(tmpDir, ".ollama", "config", "integrations.json")
+	expected := filepath.Join(tmpDir, ".ollama", "config", "config.json")
 	if path != expected {
 		t.Errorf("expected %s, got %s", expected, path)
 	}

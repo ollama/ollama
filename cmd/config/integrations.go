@@ -157,9 +157,13 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 	}
 
 	// if any model in selected is a cloud model, ensure signed in
-	if slices.ContainsFunc(selected, func(m string) bool {
-		return cloudModels[m]
-	}) {
+	var selectedCloudModels []string
+	for _, m := range selected {
+		if cloudModels[m] {
+			selectedCloudModels = append(selectedCloudModels, m)
+		}
+	}
+	if len(selectedCloudModels) > 0 {
 		// ensure user is signed in
 		user, err := client.Whoami(ctx)
 		if err == nil && user != nil && user.Name != "" {
@@ -171,9 +175,10 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 			return nil, err
 		}
 
-		yes, err := confirmPrompt("sign in")
+		modelList := strings.Join(selectedCloudModels, ", ")
+		yes, err := confirmPrompt(fmt.Sprintf("sign in to use %s?", modelList))
 		if err != nil || !yes {
-			return nil, fmt.Errorf("the selected model(s) requires sign in")
+			return nil, fmt.Errorf("%s requires sign in", modelList)
 		}
 
 		fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)

@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,15 +17,19 @@ type integrationConfig struct {
 	ConfiguredAt time.Time `json:"configured_at"`
 }
 
+type config struct {
+	Integrations map[string]*integrationConfig `json:"integrations"`
+}
+
 func integrationsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".ollama", "config", "integrations.json"), nil
+	return filepath.Join(home, ".ollama", "config", "config.json"), nil
 }
 
-func loadIntegrationsFile() (map[string]*integrationConfig, error) {
+func loadIntegrationsFile() (*config, error) {
 	path, err := integrationsPath()
 	if err != nil {
 		return nil, err
@@ -33,20 +38,22 @@ func loadIntegrationsFile() (map[string]*integrationConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return make(map[string]*integrationConfig), nil
+			return &config{Integrations: make(map[string]*integrationConfig)}, nil
 		}
 		return nil, err
 	}
 
-	var configs map[string]*integrationConfig
-	_ = json.Unmarshal(data, &configs) // ignore parse errors; treat as empty
-	if configs == nil {
-		configs = make(map[string]*integrationConfig)
+	var cfg config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse integrations file: %w, at: %s", err, path)
 	}
-	return configs, nil
+	if cfg.Integrations == nil {
+		cfg.Integrations = make(map[string]*integrationConfig)
+	}
+	return &cfg, nil
 }
 
-func saveIntegrationsFile(configs map[string]*integrationConfig) error {
+func saveIntegrationsFile(cfg *config) error {
 	path, err := integrationsPath()
 	if err != nil {
 		return err
@@ -56,7 +63,7 @@ func saveIntegrationsFile(configs map[string]*integrationConfig) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(configs, "", "  ")
+	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -69,42 +76,42 @@ func saveIntegration(appName string, models []string) error {
 		return errors.New("app name cannot be empty")
 	}
 
-	configs, err := loadIntegrationsFile()
+	cfg, err := loadIntegrationsFile()
 	if err != nil {
 		return err
 	}
 
-	configs[strings.ToLower(appName)] = &integrationConfig{
+	cfg.Integrations[strings.ToLower(appName)] = &integrationConfig{
 		Models:       models,
 		ConfiguredAt: time.Now(),
 	}
 
-	return saveIntegrationsFile(configs)
+	return saveIntegrationsFile(cfg)
 }
 
 func loadIntegration(appName string) (*integrationConfig, error) {
-	configs, err := loadIntegrationsFile()
+	cfg, err := loadIntegrationsFile()
 	if err != nil {
 		return nil, err
 	}
 
-	config, ok := configs[strings.ToLower(appName)]
+	ic, ok := cfg.Integrations[strings.ToLower(appName)]
 	if !ok {
 		return nil, os.ErrNotExist
 	}
 
-	return config, nil
+	return ic, nil
 }
 
 func listIntegrations() ([]integrationConfig, error) {
-	configs, err := loadIntegrationsFile()
+	cfg, err := loadIntegrationsFile()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]integrationConfig, 0, len(configs))
-	for _, config := range configs {
-		result = append(result, *config)
+	result := make([]integrationConfig, 0, len(cfg.Integrations))
+	for _, ic := range cfg.Integrations {
+		result = append(result, *ic)
 	}
 
 	return result, nil
