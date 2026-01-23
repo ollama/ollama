@@ -34,6 +34,7 @@ type Editor interface {
 	// Edit updates the config files for the integration with the given models
 	Edit(models []string) error
 	// Models returns the models currently configured for the integration
+	// TODO(parthsareen): add error return to Models()
 	Models() []string
 }
 
