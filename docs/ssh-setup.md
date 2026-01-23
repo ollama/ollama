@@ -93,7 +93,7 @@ Hi username! You've successfully authenticated, but GitHub does not provide shel
 
 Clone using the SSH URL:
 ```bash
-git clone git@github.com:AKB0700/ollama.git
+git clone git@github.com:ollama/ollama.git
 ```
 
 ### Change Existing Repository Remote URL
@@ -101,7 +101,7 @@ git clone git@github.com:AKB0700/ollama.git
 If you've already cloned a repository using HTTPS, you can switch to SSH:
 
 ```bash
-git remote set-url origin git@github.com:AKB0700/ollama.git
+git remote set-url origin git@github.com:ollama/ollama.git
 ```
 
 Verify the change:

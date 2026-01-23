@@ -44,6 +44,6 @@ Host github-work
     AddKeysToAgent yes
 
 # Usage examples:
-# git clone git@github.com:AKB0700/ollama.git
+# git clone git@github.com:ollama/ollama.git
 # git clone git@github-personal:username/repo.git
 # git clone git@github-work:company/repo.git

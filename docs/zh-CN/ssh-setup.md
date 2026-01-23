@@ -93,7 +93,7 @@ Hi username! You've successfully authenticated, but GitHub does not provide shel
 
 使用 SSH URL 克隆：
 ```bash
-git clone git@github.com:AKB0700/ollama.git
+git clone git@github.com:ollama/ollama.git
 ```
 
 ### 更改現有存儲庫的遠程 URL
@@ -101,7 +101,7 @@ git clone git@github.com:AKB0700/ollama.git
 如果您已經使用 HTTPS 克隆了存儲庫，可以切換到 SSH：
 
 ```bash
-git remote set-url origin git@github.com:AKB0700/ollama.git
+git remote set-url origin git@github.com:ollama/ollama.git
 ```
 
 驗證更改：
