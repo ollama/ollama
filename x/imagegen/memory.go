@@ -16,17 +16,8 @@ import (
 	"runtime"
 )
 
-// GB is a convenience constant for gigabytes.
-const GB = 1024 * 1024 * 1024
-
 // SupportedBackends lists the backends that support image generation.
 var SupportedBackends = []string{"metal", "cuda", "cpu"}
-
-// modelVRAMEstimates maps pipeline class names to their estimated VRAM requirements.
-var modelVRAMEstimates = map[string]uint64{
-	"ZImagePipeline": 21 * GB, // ~21GB for Z-Image (text encoder + transformer + VAE)
-	"FluxPipeline":   20 * GB, // ~20GB for Flux
-}
 
 // CheckPlatformSupport validates that image generation is supported on the current platform.
 // Returns nil if supported, or an error describing why it's not supported.
@@ -47,17 +38,6 @@ func CheckPlatformSupport() error {
 	}
 }
 
-// CheckMemoryRequirements validates that there's enough memory for image generation.
-// Returns nil if memory is sufficient, or an error if not.
-func CheckMemoryRequirements(modelName string, availableMemory uint64) error {
-	required := EstimateVRAM(modelName)
-	if availableMemory < required {
-		return fmt.Errorf("insufficient memory for image generation: need %d GB, have %d GB",
-			required/GB, availableMemory/GB)
-	}
-	return nil
-}
-
 // ResolveModelName checks if a model name is a known image generation model.
 // Returns the normalized model name if found, empty string otherwise.
 func ResolveModelName(modelName string) string {
@@ -66,16 +46,6 @@ func ResolveModelName(modelName string) string {
 		return modelName
 	}
 	return ""
-}
-
-// EstimateVRAM returns the estimated VRAM needed for an image generation model.
-// Returns a conservative default of 21GB if the model type cannot be determined.
-func EstimateVRAM(modelName string) uint64 {
-	className := DetectModelType(modelName)
-	if estimate, ok := modelVRAMEstimates[className]; ok {
-		return estimate
-	}
-	return 21 * GB
 }
 
 // DetectModelType reads model_index.json and returns the model type.
