@@ -262,9 +262,10 @@ func ShouldQuantize(name, component string) bool {
 	return strings.HasSuffix(name, ".weight")
 }
 
-// ShouldQuantizeTensor returns true if a tensor should be quantized based on name and shape.
+// ShouldQuantizeTensor returns true if a tensor should be quantized based on name, shape, and quantize type.
 // This is a more detailed check that also considers tensor dimensions.
-func ShouldQuantizeTensor(name string, shape []int32) bool {
+// The quantize parameter specifies the quantization type (e.g., "fp4", "nvfp4", "fp8").
+func ShouldQuantizeTensor(name string, shape []int32, quantize string) bool {
 	// Use basic name-based check first
 	if !ShouldQuantize(name, "") {
 		return false
@@ -280,8 +281,13 @@ func ShouldQuantizeTensor(name string, shape []int32) bool {
 		return false
 	}
 
-	// MLX quantization requires last dimension to be divisible by group size (32)
-	if shape[len(shape)-1]%32 != 0 {
+	// MLX quantization requires last dimension to be divisible by group size
+	// NVFP4 uses group_size=16, all other modes use group_size=32
+	groupSize := int32(32)
+	if strings.ToUpper(quantize) == "NVFP4" {
+		groupSize = 16
+	}
+	if shape[len(shape)-1]%groupSize != 0 {
 		return false
 	}
 
@@ -331,7 +337,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 
 			// Determine quantization type for this tensor (empty string if not quantizing)
 			quantizeType := ""
-			if quantize != "" && ShouldQuantizeTensor(tensorName, td.Shape) {
+			if quantize != "" && ShouldQuantizeTensor(tensorName, td.Shape, quantize) {
 				quantizeType = quantize
 			}
 
@@ -386,6 +392,22 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 
 	if configLayer.Digest == "" {
 		return fmt.Errorf("config.json not found in %s", modelDir)
+	}
+
+	// Create model_index.json with quantization info if quantizing
+	if quantize != "" {
+		modelIndex := map[string]any{
+			"quantization": strings.ToUpper(quantize),
+		}
+		indexData, err := json.MarshalIndent(modelIndex, "", "    ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal model_index.json: %w", err)
+		}
+		indexLayer, err := createLayer(strings.NewReader(string(indexData)), "application/vnd.ollama.image.json", "model_index.json")
+		if err != nil {
+			return fmt.Errorf("failed to create model_index.json layer: %w", err)
+		}
+		layers = append(layers, indexLayer)
 	}
 
 	fn(fmt.Sprintf("writing manifest for %s", modelName))

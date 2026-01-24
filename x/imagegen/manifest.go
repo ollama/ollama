@@ -116,6 +116,18 @@ func (m *ModelManifest) GetTensorLayers(component string) []ManifestLayer {
 	return layers
 }
 
+// GetAllTensorLayers returns all tensor layers without component filtering.
+// Used for LLM models where tensors don't have a component prefix.
+func (m *ModelManifest) GetAllTensorLayers() []ManifestLayer {
+	var layers []ManifestLayer
+	for _, layer := range m.Manifest.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+			layers = append(layers, layer)
+		}
+	}
+	return layers
+}
+
 // GetConfigLayer returns the config layer for a given path.
 func (m *ModelManifest) GetConfigLayer(configPath string) *ManifestLayer {
 	for _, layer := range m.Manifest.Layers {

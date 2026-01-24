@@ -536,41 +536,51 @@ func TestShouldQuantize(t *testing.T) {
 
 func TestShouldQuantizeTensor(t *testing.T) {
 	tests := []struct {
-		name   string
-		tensor string
-		shape  []int32
-		want   bool
+		name     string
+		tensor   string
+		shape    []int32
+		quantize string
+		want     bool
 	}{
 		// 2D tensors with sufficient size should be quantized
-		{"large 2D weight", "q_proj.weight", []int32{4096, 4096}, true},
-		{"medium 2D weight", "small_proj.weight", []int32{128, 128}, true},
+		{"large 2D weight fp8", "q_proj.weight", []int32{4096, 4096}, "fp8", true},
+		{"medium 2D weight fp8", "small_proj.weight", []int32{128, 128}, "fp8", true},
+		{"large 2D weight nvfp4", "q_proj.weight", []int32{4096, 4096}, "nvfp4", true},
 
 		// Small tensors should not be quantized (< 1024 elements)
-		{"tiny 2D weight", "tiny.weight", []int32{16, 16}, false},
-		{"small 2D weight", "small.weight", []int32{31, 31}, false},
+		{"tiny 2D weight", "tiny.weight", []int32{16, 16}, "fp8", false},
+		{"small 2D weight", "small.weight", []int32{31, 31}, "fp8", false},
 
 		// 1D tensors should not be quantized
-		{"1D tensor", "layer_norm.weight", []int32{4096}, false},
+		{"1D tensor", "layer_norm.weight", []int32{4096}, "fp8", false},
 
 		// 3D+ tensors should not be quantized
-		{"3D tensor", "conv.weight", []int32{64, 64, 3}, false},
-		{"4D tensor", "conv2d.weight", []int32{64, 64, 3, 3}, false},
+		{"3D tensor", "conv.weight", []int32{64, 64, 3}, "fp8", false},
+		{"4D tensor", "conv2d.weight", []int32{64, 64, 3, 3}, "fp8", false},
 
 		// Embeddings should not be quantized regardless of shape
-		{"embedding 2D", "embed_tokens.weight", []int32{32000, 4096}, false},
+		{"embedding 2D", "embed_tokens.weight", []int32{32000, 4096}, "fp8", false},
 
 		// Norms should not be quantized regardless of shape
-		{"norm 2D", "layer_norm.weight", []int32{4096, 1}, false},
+		{"norm 2D", "layer_norm.weight", []int32{4096, 1}, "fp8", false},
 
 		// Biases should not be quantized
-		{"bias 2D", "proj.bias", []int32{4096, 1}, false},
+		{"bias 2D", "proj.bias", []int32{4096, 1}, "fp8", false},
+
+		// Group size divisibility tests
+		// FP8/FP4 require divisible by 32
+		{"not divisible by 32 fp8", "proj.weight", []int32{128, 48}, "fp8", false},
+		{"divisible by 32 fp8", "proj.weight", []int32{128, 64}, "fp8", true},
+		// NVFP4 requires divisible by 16
+		{"not divisible by 16 nvfp4", "proj.weight", []int32{128, 24}, "nvfp4", false},
+		{"divisible by 16 nvfp4", "proj.weight", []int32{128, 48}, "nvfp4", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ShouldQuantizeTensor(tt.tensor, tt.shape)
+			got := ShouldQuantizeTensor(tt.tensor, tt.shape, tt.quantize)
 			if got != tt.want {
-				t.Errorf("ShouldQuantizeTensor(%q, %v) = %v, want %v", tt.tensor, tt.shape, got, tt.want)
+				t.Errorf("ShouldQuantizeTensor(%q, %v, %q) = %v, want %v", tt.tensor, tt.shape, tt.quantize, got, tt.want)
 			}
 		})
 	}

@@ -17,17 +17,26 @@ type WeightSource interface {
 	GetTensor(name string) (*mlx.Array, error)
 	ListTensors() []string
 	HasTensor(name string) bool
-	Quantization() string // Returns "FP4", "FP8", or ""
+	Quantization() string // Returns "NVFP4", "FP4", "FP8", or ""
 }
 
-// quantizationParams returns groupSize, bits, mode for a quantization type.
-// Returns defaults (32, 8, "affine") for unknown types (backward compatibility).
-func quantizationParams(quantization string) (groupSize, bits int, mode string) {
+// QuantizationParams returns groupSize, bits, mode for a quantization type.
+// MLX quantization modes:
+//   - "affine": scale + zero-point bias, group_size=32/64/128
+//   - "nvfp4": NVIDIA FP4 with E4M3 scales, group_size=16 (no bias)
+func QuantizationParams(quantization string) (groupSize, bits int, mode string) {
 	switch strings.ToUpper(quantization) {
-	case "FP4":
+	case "NVFP4":
+		// NVIDIA FP4: group_size=16, bits=4, E4M3 scales (no qbias)
+		return 16, 4, "nvfp4"
+	case "FP4", "Q4", "INT4":
+		// 4-bit quantization with affine mode (scale + qbias)
 		return 32, 4, "affine"
+	case "FP8", "Q8", "INT8", "":
+		// 8-bit quantization with affine mode (default for quantized models)
+		return 32, 8, "affine"
 	default:
-		return 32, 8, "affine" // FP8 or unknown
+		return 32, 8, "affine" // Default to affine
 	}
 }
 
@@ -122,7 +131,8 @@ func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]st
 		}
 
 		// Handle nn.LinearLayer interface fields specially
-		if field.Type == reflect.TypeOf((*nn.LinearLayer)(nil)).Elem() {
+		linearLayerType := reflect.TypeOf((*nn.LinearLayer)(nil)).Elem()
+		if field.Type == linearLayerType {
 			if !hasTag {
 				continue // no tag = skip
 			}
@@ -217,11 +227,12 @@ func joinPath(prefix, suffix string) string {
 }
 
 // LoadLinearLayer loads a linear layer from weights, automatically detecting if it's quantized.
-// If {path}.weight_scale exists, dequantizes the weights.
+// If {path}.weight_scale exists, creates a QuantizedLinear layer (or dequantizes if no kernel support).
 func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) {
 	// Check if this is a quantized layer by looking for scale tensor
 	scalePath := path + ".weight_scale"
-	if weights.HasTensor(scalePath) {
+	hasScale := weights.HasTensor(scalePath)
+	if hasScale {
 		weight, err := weights.GetTensor(path + ".weight")
 		if err != nil {
 			return nil, fmt.Errorf("failed to load quantized weight %s: %w", path, err)
@@ -245,9 +256,11 @@ func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) 
 			qbiases, _ = weights.GetTensor(qbiasPath)
 		}
 
-		groupSize, bits, mode := quantizationParams(weights.Quantization())
+		groupSize, bits, mode := QuantizationParams(weights.Quantization())
 
-		if mlx.MetalIsAvailable() {
+		// NVFP4 doesn't have native quantized matmul kernels in MLX yet,
+		// so we always dequantize at load time. Affine modes (FP4, FP8) have kernel support.
+		if mlx.MetalIsAvailable() && mode != "nvfp4" {
 			return &nn.QuantizedLinear{
 				Weight:    weight,
 				Scales:    scales,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/nn"
@@ -57,17 +58,17 @@ type Config struct {
 // MLAAttention implements Multi-head Latent Attention
 type MLAAttention struct {
 	// Low-rank query projections
-	QAProj      *nn.Linear  `weight:"self_attn.q_a_proj"`
-	QALayerNorm *nn.RMSNorm `weight:"self_attn.q_a_layernorm"`
-	QBProj      *nn.Linear  `weight:"self_attn.q_b_proj"`
+	QAProj      nn.LinearLayer `weight:"self_attn.q_a_proj"`
+	QALayerNorm *nn.RMSNorm    `weight:"self_attn.q_a_layernorm"`
+	QBProj      nn.LinearLayer `weight:"self_attn.q_b_proj"`
 
 	// Low-rank KV projections (with shared rope component)
-	KVAProjWithMQA *nn.Linear  `weight:"self_attn.kv_a_proj_with_mqa"`
-	KVALayerNorm   *nn.RMSNorm `weight:"self_attn.kv_a_layernorm"`
-	KVBProj        *nn.Linear  `weight:"self_attn.kv_b_proj"`
+	KVAProjWithMQA nn.LinearLayer `weight:"self_attn.kv_a_proj_with_mqa"`
+	KVALayerNorm   *nn.RMSNorm    `weight:"self_attn.kv_a_layernorm"`
+	KVBProj        nn.LinearLayer `weight:"self_attn.kv_b_proj"`
 
 	// Output projection
-	OProj *nn.Linear `weight:"self_attn.o_proj"`
+	OProj nn.LinearLayer `weight:"self_attn.o_proj"`
 }
 
 // Forward computes MLA attention output
@@ -139,9 +140,9 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 
 // DenseMLP implements the standard SwiGLU MLP for dense layers
 type DenseMLP struct {
-	GateProj *nn.Linear `weight:"mlp.gate_proj"`
-	UpProj   *nn.Linear `weight:"mlp.up_proj"`
-	DownProj *nn.Linear `weight:"mlp.down_proj"`
+	GateProj nn.LinearLayer `weight:"mlp.gate_proj"`
+	UpProj   nn.LinearLayer `weight:"mlp.up_proj"`
+	DownProj nn.LinearLayer `weight:"mlp.down_proj"`
 }
 
 // Forward applies the SwiGLU MLP
@@ -153,14 +154,14 @@ func (m *DenseMLP) Forward(x *mlx.Array) *mlx.Array {
 
 // MoEGate implements the expert gating mechanism
 type MoEGate struct {
-	Weight                 *mlx.Array `weight:"mlp.gate.weight"`
-	EScoreCorrectionBias   *mlx.Array `weight:"mlp.gate.e_score_correction_bias,optional"`
+	Gate                   nn.LinearLayer `weight:"mlp.gate"`
+	EScoreCorrectionBias   *mlx.Array     `weight:"mlp.gate.e_score_correction_bias,optional"`
 }
 
 // Forward computes expert selection indices and scores
 func (g *MoEGate) Forward(x *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {
-	// Compute gate logits: x @ weight.T
-	gates := mlx.Linear(x, mlx.Transpose(g.Weight, 1, 0))
+	// Compute gate logits through linear layer (handles both quantized and non-quantized)
+	gates := g.Gate.Forward(x)
 
 	// Sigmoid scoring
 	scores := mlx.Sigmoid(gates)
@@ -256,9 +257,9 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 
 // SharedExperts implements the shared expert MLP
 type SharedExperts struct {
-	GateProj *nn.Linear `weight:"mlp.shared_experts.gate_proj"`
-	UpProj   *nn.Linear `weight:"mlp.shared_experts.up_proj"`
-	DownProj *nn.Linear `weight:"mlp.shared_experts.down_proj"`
+	GateProj nn.LinearLayer `weight:"mlp.shared_experts.gate_proj"`
+	UpProj   nn.LinearLayer `weight:"mlp.shared_experts.up_proj"`
+	DownProj nn.LinearLayer `weight:"mlp.shared_experts.down_proj"`
 }
 
 // Forward applies the shared expert MLP
@@ -343,23 +344,49 @@ type Block interface {
 
 // Model represents the complete GLM4-MoE-Lite model
 type Model struct {
-	EmbedTokens *nn.Embedding `weight:"model.embed_tokens"`
-	Layers      []Block       `weight:"-"` // Loaded manually due to different block types
-	Norm        *nn.RMSNorm   `weight:"model.norm"`
-	LMHead      *nn.Linear    `weight:"lm_head"`
+	EmbedTokens *nn.Embedding  `weight:"model.embed_tokens"`
+	Layers      []Block        `weight:"-"` // Loaded manually due to different block types
+	Norm        *nn.RMSNorm    `weight:"model.norm"`
+	LMHead      nn.LinearLayer `weight:"lm_head"`
 
 	tok *tokenizer.Tokenizer
 	*Config
 }
 
-// sanitizeExpertWeights stacks individual expert weights into a single tensor
-func sanitizeExpertWeights(weights *safetensors.ModelWeights, prefix string, numExperts int32) (*mlx.Array, *mlx.Array, *mlx.Array) {
+// loadExpertWeight loads an expert weight, dequantizing if necessary.
+// GatherMM doesn't support quantized weights, so we must dequantize for MoE.
+func loadExpertWeight(weights safetensors.WeightSource, path string) *mlx.Array {
+	w, _ := weights.GetTensor(path + ".weight")
+	if w == nil {
+		return nil
+	}
+
+	// Check if this is a quantized weight by looking for scales
+	scalePath := path + ".weight_scale"
+	if weights.HasTensor(scalePath) {
+		scales, _ := weights.GetTensor(scalePath)
+		var qbiases *mlx.Array
+		qbiasPath := path + ".weight_qbias"
+		if weights.HasTensor(qbiasPath) {
+			qbiases, _ = weights.GetTensor(qbiasPath)
+		}
+		// Dequantize using the model's quantization parameters
+		groupSize, bits, mode := safetensors.QuantizationParams(weights.Quantization())
+		return mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
+	}
+
+	return w
+}
+
+// sanitizeExpertWeights stacks individual expert weights into a single tensor.
+// For quantized models, expert weights are dequantized since GatherMM doesn't support quantized weights.
+func sanitizeExpertWeights(weights safetensors.WeightSource, prefix string, numExperts int32) (*mlx.Array, *mlx.Array, *mlx.Array) {
 	var gateWeights, upWeights, downWeights []*mlx.Array
 
 	for e := int32(0); e < numExperts; e++ {
-		gw, _ := weights.GetTensor(fmt.Sprintf("%s.mlp.experts.%d.gate_proj.weight", prefix, e))
-		uw, _ := weights.GetTensor(fmt.Sprintf("%s.mlp.experts.%d.up_proj.weight", prefix, e))
-		dw, _ := weights.GetTensor(fmt.Sprintf("%s.mlp.experts.%d.down_proj.weight", prefix, e))
+		gw := loadExpertWeight(weights, fmt.Sprintf("%s.mlp.experts.%d.gate_proj", prefix, e))
+		uw := loadExpertWeight(weights, fmt.Sprintf("%s.mlp.experts.%d.up_proj", prefix, e))
+		dw := loadExpertWeight(weights, fmt.Sprintf("%s.mlp.experts.%d.down_proj", prefix, e))
 
 		if gw != nil {
 			gateWeights = append(gateWeights, gw)
@@ -482,6 +509,138 @@ func Load(modelPath string) (*Model, error) {
 	return m, nil
 }
 
+// LoadFromManifest loads a GLM4-MoE-Lite model from a manifest (Ollama blob storage).
+func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
+	// Read config from manifest
+	configData, err := manifest.ReadConfig("config.json")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(configData, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	// Compute derived fields
+	cfg.QHeadDim = cfg.QKNopeHeadDim + cfg.QKRopeHeadDim
+	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.QHeadDim)))
+
+	// Load weights from manifest blobs
+	weights, err := imagegen.LoadAllWeightsFromManifest(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("load weights: %w", err)
+	}
+
+	// Debug: print quantization info and sample tensor names
+	fmt.Printf("GLM4: quantization=%q, num_tensors=%d\n", weights.Quantization(), len(weights.ListTensors()))
+	tensors := weights.ListTensors()
+	for i, name := range tensors {
+		if i < 20 { // Print first 20 tensor names
+			fmt.Printf("  tensor[%d]: %s\n", i, name)
+		}
+	}
+
+	if err := weights.Load(0); err != nil {
+		return nil, fmt.Errorf("load weight data: %w", err)
+	}
+
+	// Load tokenizer from manifest with config files for EOS token detection
+	tokData, err := manifest.ReadConfig("tokenizer.json")
+	if err != nil {
+		return nil, fmt.Errorf("load tokenizer config: %w", err)
+	}
+
+	// Build tokenizer config with companion files for EOS/BOS token loading
+	tokConfig := &tokenizer.TokenizerConfig{
+		ConfigJSON: configData, // Already loaded above, contains eos_token_id
+	}
+
+	// Try to load generation_config.json if available (preferred source for EOS)
+	if genConfigData, err := manifest.ReadConfig("generation_config.json"); err == nil {
+		tokConfig.GenerationConfigJSON = genConfigData
+	}
+
+	// Try to load tokenizer_config.json if available
+	if tokConfigData, err := manifest.ReadConfig("tokenizer_config.json"); err == nil {
+		tokConfig.TokenizerConfigJSON = tokConfigData
+	}
+
+	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
+	if err != nil {
+		return nil, fmt.Errorf("parse tokenizer: %w", err)
+	}
+
+	m := &Model{
+		Layers: make([]Block, cfg.NumHiddenLayers),
+		Config: &cfg,
+		tok:    tok,
+	}
+
+	// Load embedding, norm, and lm_head
+	if err := safetensors.LoadModule(m, weights, ""); err != nil {
+		return nil, err
+	}
+
+	// Load layers manually due to different block types
+	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+		prefix := fmt.Sprintf("model.layers.%d", i)
+
+		// Load attention (same for both block types)
+		attn := &MLAAttention{}
+		if err := safetensors.LoadModule(attn, weights, prefix); err != nil {
+			return nil, fmt.Errorf("layer %d attention: %w", i, err)
+		}
+
+		if i < cfg.FirstKDenseReplace {
+			// Dense block
+			block := &DenseBlock{Attention: attn}
+			if err := safetensors.LoadModule(block, weights, prefix); err != nil {
+				return nil, fmt.Errorf("layer %d dense: %w", i, err)
+			}
+			m.Layers[i] = block
+		} else {
+			// MoE block
+			block := &MoEBlock{Attention: attn}
+			if err := safetensors.LoadModule(block, weights, prefix); err != nil {
+				return nil, fmt.Errorf("layer %d moe block: %w", i, err)
+			}
+
+			// Stack expert weights
+			gateW, upW, downW := sanitizeExpertWeights(weights, prefix, cfg.NRoutedExperts)
+
+			block.MoE = &MoE{
+				Gate: &MoEGate{},
+				SwitchMLP: &SwitchMLP{
+					GateWeight: gateW,
+					UpWeight:   upW,
+					DownWeight: downW,
+				},
+			}
+
+			// Load gate weights
+			if err := safetensors.LoadModule(block.MoE.Gate, weights, prefix); err != nil {
+				return nil, fmt.Errorf("layer %d gate: %w", i, err)
+			}
+
+			// Load shared experts if present
+			if cfg.NSharedExperts > 0 {
+				block.MoE.SharedExperts = &SharedExperts{}
+				if err := safetensors.LoadModule(block.MoE.SharedExperts, weights, prefix); err != nil {
+					return nil, fmt.Errorf("layer %d shared experts: %w", i, err)
+				}
+			}
+
+			m.Layers[i] = block
+		}
+	}
+
+	mlx.Eval(mlx.Collect(m)...)
+	weights.ReleaseAll()
+
+	return m, nil
+}
+
 // Forward computes the forward pass of the model
 func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
 	B, L := tokens.Shape()[0], tokens.Shape()[1]
@@ -523,7 +682,28 @@ func (m *Model) NewCache(maxSeqLen int32) []cache.Cache {
 	return caches
 }
 
-// FormatPrompt applies the GLM-4 chat template
+// FormatPrompt applies the GLM-4 chat template with thinking enabled by default.
+// This follows the GLM-4.7 format with <think> tag for reasoning mode.
 func (m *Model) FormatPrompt(prompt string) string {
-	return "[gMASK]<sop><|user|>\n" + prompt + "<|assistant|>\n"
+	return "[gMASK]<sop><|user|>" + prompt + "<|assistant|><think>"
+}
+
+// FormatPromptWithThinking applies the GLM-4 chat template with explicit thinking control.
+// When think is true, the prompt ends with <think> to enable reasoning mode.
+// When think is false, the prompt ends with </think> to skip reasoning.
+func (m *Model) FormatPromptWithThinking(prompt string, think bool) string {
+	if think {
+		return "[gMASK]<sop><|user|>" + prompt + "<|assistant|><think>"
+	}
+	return "[gMASK]<sop><|user|>" + prompt + "<|assistant|></think>"
+}
+
+// NewRenderer returns a new Renderer for formatting multi-turn conversations.
+func (m *Model) NewRenderer() *Renderer {
+	return &Renderer{}
+}
+
+// NewParser returns a new Parser for extracting thinking and tool calls from output.
+func (m *Model) NewParser() *Parser {
+	return &Parser{}
 }

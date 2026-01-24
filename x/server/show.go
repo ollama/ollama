@@ -199,7 +199,7 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 }
 
 // GetSafetensorsDtype returns the quantization type for a safetensors model.
-// If the model is quantized (has _scale tensors), returns the quantization type (e.g., "FP8").
+// Reads from model_index.json first, falls back to detection from tensor names.
 // Otherwise returns the torch_dtype from config.json.
 func GetSafetensorsDtype(name model.Name) (string, error) {
 	mf, err := manifest.ParseNamedManifest(name)
@@ -207,14 +207,36 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Check if model is quantized by looking for _scale tensors
+	// First try to read quantization from model_index.json
+	var modelIndex struct {
+		Quantization string `json:"quantization"`
+	}
+	if err := mf.ReadConfigJSON("model_index.json", &modelIndex); err == nil && modelIndex.Quantization != "" {
+		return modelIndex.Quantization, nil
+	}
+
+	// Fallback: detect from tensor names
+	hasScales := false
+	hasQBias := false
 	for _, layer := range mf.Layers {
 		if layer.MediaType == manifest.MediaTypeImageTensor {
 			if strings.HasSuffix(layer.Name, "_scale") {
-				// Model is quantized - return FP8 (affine quantization)
-				return "FP8", nil
+				hasScales = true
+			}
+			if strings.HasSuffix(layer.Name, "_qbias") {
+				hasQBias = true
 			}
 		}
+	}
+
+	if hasScales {
+		if hasQBias {
+			// Affine mode (has scale + qbias) - could be FP4 or FP8
+			// Default to FP4 as it's more common
+			return "FP4", nil
+		}
+		// No qbias = NVFP4
+		return "NVFP4", nil
 	}
 
 	// Not quantized - return torch_dtype from config.json

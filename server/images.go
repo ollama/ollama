@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen/transfer"
+	xserver "github.com/ollama/ollama/x/server"
 )
 
 var (
@@ -127,6 +128,14 @@ func (m *Model) Capabilities() []model.Capability {
 	// Skip the thinking check if it's already set
 	if slices.Contains(capabilities, "thinking") {
 		return capabilities
+	}
+
+	// Check for thinking capability in safetensors LLM models based on architecture
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if xserver.IsSafetensorsThinkingModel(model.ParseName(m.Name)) {
+			capabilities = append(capabilities, model.CapabilityThinking)
+			return capabilities
+		}
 	}
 
 	// Check for thinking capability
