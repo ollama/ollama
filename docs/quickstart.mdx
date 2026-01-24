@@ -18,13 +18,13 @@ This quickstart will walk your through running your first model with Ollama. To 
   <Tab title="CLI">
     Open a terminal and run the command:
 
-    ```
+    ```sh
     ollama run gemma3
     ```
 
   </Tab>
   <Tab title="cURL">
-    ```
+    ```sh
     ollama pull gemma3
     ```
 
@@ -45,13 +45,13 @@ This quickstart will walk your through running your first model with Ollama. To 
   <Tab title="Python">
     Start by downloading a model:
 
-    ```
+    ```sh
     ollama pull gemma3
     ```
 
     Then install Ollama's Python library:
 
-    ```
+    ```sh
     pip install ollama
     ```
 
@@ -102,15 +102,21 @@ This quickstart will walk your through running your first model with Ollama. To 
 
 See a full list of available models [here](https://ollama.com/models).
 
-## Launch an integration
+## Coding 
 
-Use `ollama launch` to quickly set up and launch an integration with Ollama models:
+```sh
+# ~23 GB VRAM required with 64000 tokens context length
+ollama pull glm-4.7-flash 
 
+# or use a cloud model (with full context length)
+ollama pull glm-4.7:cloud
 ```
+
+Use `ollama launch` to quickly set up a coding tool with Ollama models:
+
+```sh
 ollama launch
 ```
-
-This will prompt you to select an integration, choose which models to use, and launch the integration.
 
 ### Supported integrations
 
@@ -131,12 +137,12 @@ This will prompt you to select an integration, choose which models to use, and l
 
 ### Launch with a specific model
 
-```
-ollama launch claude --model qwen3-coder
+```sh
+ollama launch claude --model glm-4.7-flash
 ```
 
 ### Configure without launching
 
-```
+```sh
 ollama launch claude --config
 ```
