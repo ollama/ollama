@@ -20,20 +20,28 @@ type ManifestWeights struct {
 	nativeCache []*mlx.SafetensorsFile        // keep native handles alive
 }
 
-// LoadWeightsFromManifest creates a weight loader for a component from manifest storage.
+// LoadWeightsFromManifest creates a weight loader from manifest storage.
+// If component is empty, loads all tensors (for LLM models).
+// If component is specified, loads only tensors for that component and strips the prefix.
 func LoadWeightsFromManifest(manifest *ModelManifest, component string) (*ManifestWeights, error) {
 	layers := manifest.GetTensorLayers(component)
 	if len(layers) == 0 {
+		if component == "" {
+			return nil, fmt.Errorf("no tensor layers found in manifest")
+		}
 		return nil, fmt.Errorf("no tensor layers found for component %q", component)
 	}
 
 	// Strip component prefix from tensor names for model loading
 	// e.g., "text_encoder/model.embed_tokens.weight" -> "model.embed_tokens.weight"
-	prefix := component + "/"
 	tensors := make(map[string]ManifestLayer, len(layers))
 	for _, layer := range layers {
-		tensorName := strings.TrimPrefix(layer.Name, prefix)
-		tensors[tensorName] = layer
+		if component == "" {
+			tensors[layer.Name] = layer
+		} else {
+			tensorName := strings.TrimPrefix(layer.Name, component+"/")
+			tensors[tensorName] = layer
+		}
 	}
 
 	return &ManifestWeights{
@@ -41,26 +49,6 @@ func LoadWeightsFromManifest(manifest *ModelManifest, component string) (*Manife
 		component: component,
 		tensors:   tensors,
 		cache:     make(map[string]*mlx.Array),
-	}, nil
-}
-
-// LoadAllWeightsFromManifest creates a weight loader for all tensors without component filtering.
-// Used for LLM models where tensors don't have a component prefix.
-func LoadAllWeightsFromManifest(manifest *ModelManifest) (*ManifestWeights, error) {
-	layers := manifest.GetAllTensorLayers()
-	if len(layers) == 0 {
-		return nil, fmt.Errorf("no tensor layers found in manifest")
-	}
-
-	tensors := make(map[string]ManifestLayer, len(layers))
-	for _, layer := range layers {
-		tensors[layer.Name] = layer
-	}
-
-	return &ManifestWeights{
-		manifest: manifest,
-		tensors:  tensors,
-		cache:    make(map[string]*mlx.Array),
 	}, nil
 }
 

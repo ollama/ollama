@@ -527,7 +527,7 @@ func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
 	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.QHeadDim)))
 
 	// Load weights from manifest blobs
-	weights, err := imagegen.LoadAllWeightsFromManifest(manifest)
+	weights, err := imagegen.LoadWeightsFromManifest(manifest, "")
 	if err != nil {
 		return nil, fmt.Errorf("load weights: %w", err)
 	}
