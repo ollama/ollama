@@ -104,11 +104,15 @@ See a full list of available models [here](https://ollama.com/models).
 
 ## Coding 
 
-```sh
-# ~23 GB VRAM required with 64000 tokens context length
-ollama pull glm-4.7-flash 
+For coding use cases, we recommend using the `glm-4.7-flash` model. 
 
-# or use a cloud model (with full context length)
+Note: this model requires 23 GB of VRAM with 64000 tokens context length.
+```sh
+ollama pull glm-4.7-flash 
+```
+
+Alternatively, you can use a more powerful cloud model (with full context length):
+```sh
 ollama pull glm-4.7:cloud
 ```
 
@@ -120,20 +124,10 @@ ollama launch
 
 ### Supported integrations
 
-<CardGroup cols={2}>
-  <Card title="OpenCode" icon="laptop-code" href="/integrations/opencode">
-    Open-source coding assistant
-  </Card>
-  <Card title="Claude Code" icon="terminal" href="/integrations/claude-code">
-    Anthropic's agentic coding tool
-  </Card>
-  <Card title="Codex" icon="code" href="/integrations/codex">
-    OpenAI's coding assistant
-  </Card>
-  <Card title="Droid" icon="robot" href="/integrations/droid">
-    Factory's AI coding agent
-  </Card>
-</CardGroup>
+- [OpenCode](/integrations/opencode) - Open-source coding assistant
+- [Claude Code](/integrations/claude-code) - Anthropic's agentic coding tool
+- [Codex](/integrations/codex) - OpenAI's coding assistant
+- [Droid](/integrations/droid) - Factory's AI coding agent
 
 ### Launch with a specific model
 
