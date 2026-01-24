@@ -2031,7 +2031,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
-		config.ConfigCmd(checkServerHeartbeat),
+		config.LaunchCmd(checkServerHeartbeat),
 	)
 
 	return rootCmd

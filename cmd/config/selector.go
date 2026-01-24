@@ -465,7 +465,7 @@ func confirmPrompt(prompt string) (bool, error) {
 	}
 	defer term.Restore(fd, oldState)
 
-	fmt.Fprintf(os.Stderr, "%s [y/n] ", prompt)
+	fmt.Fprintf(os.Stderr, "%s (\033[1my\033[0m/n) ", prompt)
 
 	buf := make([]byte, 1)
 	for {

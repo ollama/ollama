@@ -81,17 +81,17 @@ func TestHasLocalModel(t *testing.T) {
 	}
 }
 
-func TestConfigCmd(t *testing.T) {
+func TestLaunchCmd(t *testing.T) {
 	// Mock checkServerHeartbeat that always succeeds
 	mockCheck := func(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	cmd := ConfigCmd(mockCheck)
+	cmd := LaunchCmd(mockCheck)
 
 	t.Run("command structure", func(t *testing.T) {
-		if cmd.Use != "config [INTEGRATION]" {
-			t.Errorf("Use = %q, want %q", cmd.Use, "config [INTEGRATION]")
+		if cmd.Use != "launch [INTEGRATION]" {
+			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION]")
 		}
 		if cmd.Short == "" {
 			t.Error("Short description should not be empty")
@@ -107,9 +107,9 @@ func TestConfigCmd(t *testing.T) {
 			t.Error("--model flag should exist")
 		}
 
-		launchFlag := cmd.Flags().Lookup("launch")
-		if launchFlag == nil {
-			t.Error("--launch flag should exist")
+		configFlag := cmd.Flags().Lookup("config")
+		if configFlag == nil {
+			t.Error("--config flag should exist")
 		}
 	})
 
@@ -158,11 +158,11 @@ func TestHasLocalModel_DocumentsHeuristic(t *testing.T) {
 	}
 }
 
-func TestConfigCmd_NilHeartbeat(t *testing.T) {
+func TestLaunchCmd_NilHeartbeat(t *testing.T) {
 	// This should not panic - cmd creation should work even with nil
-	cmd := ConfigCmd(nil)
+	cmd := LaunchCmd(nil)
 	if cmd == nil {
-		t.Fatal("ConfigCmd returned nil")
+		t.Fatal("LaunchCmd returned nil")
 	}
 
 	// PreRunE should be nil when passed nil
