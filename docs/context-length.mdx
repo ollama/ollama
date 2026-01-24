@@ -22,9 +22,45 @@ Change the slider in the Ollama app under settings to your desired context lengt
 ![Context length in Ollama app](./images/ollama-settings.png)
 
 ### CLI
-If editing the context length for Ollama is not possible, the context length can also be updated when serving Ollama.  
+
+#### Environment Variables
+
+You can configure the context length using the `OLLAMA_CONTEXT_LENGTH` environment variable. This variable will set this as the context length for all models you run.
+
+Look at [FAQ](https://docs.ollama.com/faq#how-do-i-configure-ollama-server) to see how to add an environment variable. 
+
+#### Chat Mode
+The context length can also be adjusted while running a model interactively (via `ollama run`), this will set a specific context length per model.
+
+Start the model:
 ```
-OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+ollama run <model>
+```
+
+Inside the interactive prompt, set the context length:
+```
+/set parameter num_ctx 65536
+```
+
+This change applies only to the current session.
+
+#### Saving the configuration permanently
+To persist the updated context length, save the model configuration under a new name:
+
+```
+/save <model>_64k
+```
+
+For example, if your model is named `gemma3:12b`, you could save it as:
+
+```
+/save gemma3:12b_64k
+```
+
+From then on, run the saved model:
+
+```
+ollama run gemma3:12b_64k
 ```
 
 ### Check allocated context length and model offloading
