@@ -348,6 +348,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Dify.AI](https://github.com/langgenius/dify)
 - [MindMac](https://mindmac.app)
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
+- [Neural Nexus UI](https://github.com/ahjavid/neural-nexus-ui) (Modern chat interface with multi-agent peer review, dual provider support, voice mode, and RAG knowledge base)
 - [Msty](https://msty.app)
 - [Chatbox](https://github.com/Bin-Huang/Chatbox)
 - [WinForm Ollama Copilot](https://github.com/tgraupmann/WinForm_Ollama_Copilot)
