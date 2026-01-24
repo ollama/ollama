@@ -102,15 +102,15 @@ This quickstart will walk your through running your first model with Ollama. To 
 
 See a full list of available models [here](https://ollama.com/models).
 
-## Configure coding agents
+## Launch an integration
 
-Use `ollama config` to quickly set up coding agents to use Ollama models:
+Use `ollama launch` to quickly set up and launch an integration with Ollama models:
 
 ```
-ollama config
+ollama launch
 ```
 
-This will prompt you to select an integration and choose which models to use.
+This will prompt you to select an integration, choose which models to use, and launch the integration.
 
 ### Supported integrations
 
@@ -129,20 +129,14 @@ This will prompt you to select an integration and choose which models to use.
   </Card>
 </CardGroup>
 
-### Configure an integration
+### Launch with a specific model
 
 ```
-ollama config claude
+ollama launch claude --model qwen3-coder
 ```
 
-### Configure with a specific model
+### Configure without launching
 
 ```
-ollama config claude --model qwen3-coder
-```
-
-### Launch an existing configuration
-
-```
-ollama config claude --launch
+ollama launch claude --config
 ```

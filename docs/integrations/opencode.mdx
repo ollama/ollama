@@ -19,16 +19,14 @@ curl -fsSL https://opencode.ai/install.sh | bash
 ### Quick setup
 
 ```bash
-ollama config opencode
+ollama launch opencode
 ```
 
-To launch after configuration:
+To configure without launching:
 
 ```shell
-ollama config opencode --launch
+ollama launch opencode --config
 ```
-
-See [Quickstart](/quickstart#configure-coding-agents) for more options.
 
 ### Manual setup
 
@@ -40,13 +38,13 @@ Add a configuration block to `~/.config/opencode/opencode.json`:
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
+      "name": "Ollama",
       "options": {
         "baseURL": "http://localhost:11434/v1"
       },
       "models": {
         "qwen3-coder": {
-          "name": "qwen3-coder [Ollama]"
+          "name": "qwen3-coder"
         }
       }
     }
@@ -66,7 +64,7 @@ Add the cloud configuration to `~/.config/opencode/opencode.json`:
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
+      "name": "Ollama",
       "options": {
         "baseURL": "http://localhost:11434/v1"
       },

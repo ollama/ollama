@@ -8,13 +8,13 @@ title: CLI Reference
 ollama run gemma3
 ```
 
-### Configure integrations
+### Launch integrations
 
 ```
-ollama config
+ollama launch
 ```
 
-Configure external applications to use Ollama models. This provides an interactive way to set up integrations with supported apps.
+Configure and launch external applications to use Ollama models. This provides an interactive way to set up and start integrations with supported apps.
 
 #### Supported integrations
 
@@ -25,28 +25,28 @@ Configure external applications to use Ollama models. This provides an interacti
 
 #### Examples
 
-Configure an integration interactively:
+Launch an integration interactively:
 
 ```
-ollama config
+ollama launch
 ```
 
-Configure a specific integration:
+Launch a specific integration:
 
 ```
-ollama config claude
+ollama launch claude
 ```
 
-Configure with a specific model:
+Launch with a specific model:
 
 ```
-ollama config claude --model qwen3-coder
+ollama launch claude --model qwen3-coder
 ```
 
-Configure and launch:
+Configure without launching:
 
 ```
-ollama config droid --launch
+ollama launch droid --config
 ```
 
 #### Multiline input
