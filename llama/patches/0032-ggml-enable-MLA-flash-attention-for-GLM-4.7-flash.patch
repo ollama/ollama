@@ -17,7 +17,6 @@ CUDA changes:
 - Add tile configs for (576, 512, 4) and (576, 512, 8)
 - Add MMA config cases for ncols 4
 - Add template instances for ncols2=4
-- Fix nbatch_fa values in nvidia_fp32 config (32->64)
 ---
  ggml/src/ggml-cuda/fattn-mma-f16.cuh           | 15 ++++++++++++---
  ggml/src/ggml-cuda/fattn-tile.cuh              | 18 +++++++++++++++++-
@@ -83,19 +82,19 @@ index 7c4d6fe67..6389ba5c4 100644
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 2,  64,  64)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 2,  64,  64)
  
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 256, 2,  64,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 128, 2,  64,  64)
 +    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  64,  64)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  64,  64)
- 
+
      return 0;
 @@ -122,7 +124,9 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_nv
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 2,  32, 128)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 2,  32,  64)
- 
+
 -    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  32,  64)
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 256, 2,  64,  64)
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  64,  64)
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  64,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 128, 2,  32,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  32,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  32,  64)
  
      return 0;
  }
@@ -103,17 +102,17 @@ index 7c4d6fe67..6389ba5c4 100644
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 2,  32, 128)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 2,  32, 128)
  
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 256, 2,  64,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 128, 2,  64,  64)
 +    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  64,  64)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  64,  64)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 32, 512, 1, 128,  64)
- 
+
 @@ -245,6 +251,8 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_am
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 5,  32, 256)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 3,  64, 128)
- 
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 256, 4,  64,  64)
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 4,  64,  64)
+
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 128, 2,  64,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  64,  64)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 4,  64,  64)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 32, 256, 2, 128,  64)
  
