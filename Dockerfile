@@ -169,8 +169,10 @@ COPY . .
 RUN git clone --depth 1 --branch "$(cat MLX_VERSION)" https://github.com/ml-explore/mlx-c.git build/_deps/mlx-c-src
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
-ENV CGO_CFLAGS="-I/go/src/github.com/ollama/ollama/build/_deps/mlx-c-src"
+ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
+ENV CGO_CFLAGS="${CGO_CFLAGS} -I/go/src/github.com/ollama/ollama/build/_deps/mlx-c-src"
+ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -tags mlx -trimpath -buildmode=pie -o /bin/ollama .
 
