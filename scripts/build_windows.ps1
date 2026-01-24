@@ -243,19 +243,33 @@ function mlx {
             }
 
             # Check for cuDNN - required for MLX CUDA backend
-            # Uses CUDNN_ROOT_DIR (standard CMake variable) pointing to versioned cuDNN root
-            $cudnnPath = "C:\Program Files\NVIDIA\CUDNN\v9.15"
-            if (Test-Path "$cudnnPath\include\$cudaMajorVer.0") {
-                $env:CUDNN_ROOT_DIR = "$cudnnPath"
-                $env:CUDNN_INCLUDE_PATH = "$cudnnPath\include\$cudaMajorVer.0"
-                $env:CUDNN_LIBRARY_PATH = "$cudnnPath\lib\$cudaMajorVer.0\x64"
-                write-host "Found cuDNN at $cudnnPath"
-            } elseif ($env:CUDNN_INCLUDE_PATH -and $env:CUDNN_LIBRARY_PATH) {
+            # Supports two layouts:
+            # 1. CI/zip extract: CUDNN\include\cudnn.h, lib\x64\, bin\x64\
+            # 2. Official installer: CUDNN\v*\include\{cuda-ver}\cudnn.h, lib\{cuda-ver}\x64\, bin\{cuda-ver}\
+            if ($env:CUDNN_INCLUDE_PATH -and $env:CUDNN_LIBRARY_PATH) {
                 write-host "Using cuDNN from environment: $env:CUDNN_INCLUDE_PATH"
+            } elseif (Test-Path "C:\Program Files\NVIDIA\CUDNN\include\cudnn.h") {
+                # CI/zip layout (flat)
+                $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
+                $env:CUDNN_ROOT_DIR = $cudnnRoot
+                $env:CUDNN_INCLUDE_PATH = "$cudnnRoot\include"
+                $env:CUDNN_LIBRARY_PATH = "$cudnnRoot\lib\x64"
+                write-host "Found cuDNN at $cudnnRoot (flat layout)"
             } else {
-                write-host "cuDNN not found - set CUDNN_INCLUDE_PATH and CUDNN_LIBRARY_PATH environment variables"
-                write-host "Skipping MLX build"
-                return
+                # Official installer layout (versioned)
+                $cudnnRoot = $null
+                $resolved = Resolve-Path -Path "C:\Program Files\NVIDIA\CUDNN\v*" -ErrorAction SilentlyContinue | Sort-Object -Descending | Select-Object -First 1
+                if ($resolved -and (Test-Path "$($resolved.Path)\include\$cudaMajorVer.0\cudnn.h")) {
+                    $cudnnRoot = $resolved.Path
+                    $env:CUDNN_ROOT_DIR = $cudnnRoot
+                    $env:CUDNN_INCLUDE_PATH = "$cudnnRoot\include\$cudaMajorVer.0"
+                    $env:CUDNN_LIBRARY_PATH = "$cudnnRoot\lib\$cudaMajorVer.0\x64"
+                    write-host "Found cuDNN at $cudnnRoot (official installer, CUDA $cudaMajorVer.0)"
+                } else {
+                    write-host "cuDNN not found - set CUDNN_INCLUDE_PATH and CUDNN_LIBRARY_PATH environment variables"
+                    write-host "Skipping MLX build"
+                    return
+                }
             }
 
             write-host "Building MLX CUDA v$cudaMajorVer backend libraries $cuda"
@@ -277,11 +291,29 @@ function ollama {
     write-host "Building ollama CLI"
 
     # Check if MLX was built and set up CGO flags for mlx tag
+    # Check multiple locations for mlx-c headers:
+    # 1. From a local MLX build (build/mlx_cuda_*/_deps/mlx-c-src)
+    # 2. From CI-provided headers (build/_deps/mlx-c-src)
+    # 3. From OLLAMA_BUILD_MLX env var with CGO_CFLAGS already set
     $mlxBuildDirs = Get-ChildItem -Path "build" -Directory -Filter "mlx_cuda_*" -ErrorAction SilentlyContinue
     $enableMlx = $false
     $savedCgoFlags = $env:CGO_CFLAGS
 
-    if ($mlxBuildDirs) {
+    # Check for OLLAMA_BUILD_MLX environment variable (set by CI)
+    if ($env:OLLAMA_BUILD_MLX -eq "1") {
+        $mlxcIncludeDir = "build\_deps\mlx-c-src"
+        if (Test-Path "$mlxcIncludeDir\mlx\c\mlx.h") {
+            write-host "MLX headers detected at $mlxcIncludeDir (via OLLAMA_BUILD_MLX), enabling mlx tag"
+            $enableMlx = $true
+            # CGO_CFLAGS should already be set by CI, but set it if not
+            if (-not $env:CGO_CFLAGS) {
+                $env:CGO_CFLAGS = "-I$((Get-Location).Path)\$mlxcIncludeDir"
+                write-host "CGO_CFLAGS=$env:CGO_CFLAGS"
+            }
+        } else {
+            write-host "OLLAMA_BUILD_MLX set but mlx-c headers not found at $mlxcIncludeDir"
+        }
+    } elseif ($mlxBuildDirs) {
         $mlxBuildDir = $mlxBuildDirs[0].FullName
         $mlxcIncludeDir = "$mlxBuildDir\_deps\mlx-c-src"
         if (Test-Path "$mlxcIncludeDir\mlx\c\mlx.h") {
