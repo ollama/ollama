@@ -1071,8 +1071,12 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 op->src[0]->ne[0] != 112 &&
                 op->src[0]->ne[0] != 128 &&
                 op->src[0]->ne[0] != 192 &&
-                op->src[0]->ne[0] != 256 &&
-                op->src[0]->ne[0] != 576) {
+                op->src[0]->ne[0] != 256) {
+                return false;
+            }
+            if (op->src[0]->ne[0] == 576) {
+                // DeepSeek sizes
+                // TODO: disabled for now, until optmized
                 return false;
             }
             if (op->src[1]->type != op->src[2]->type) {
