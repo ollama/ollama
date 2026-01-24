@@ -230,15 +230,15 @@ func runIntegration(name, modelName string) error {
 	return r.Run(modelName)
 }
 
-// ConfigCmd returns the cobra command for configuring integrations.
-func ConfigCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error) *cobra.Command {
+// LaunchCmd returns the cobra command for launching integrations.
+func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error) *cobra.Command {
 	var modelFlag string
-	var launchFlag bool
+	var configFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "config [INTEGRATION]",
-		Short: "Configure an external integration to use Ollama",
-		Long: `Configure an external application to use Ollama models.
+		Use:   "launch [INTEGRATION]",
+		Short: "Launch an integration with Ollama",
+		Long: `Launch an integration configured with Ollama models.
 
 Supported integrations:
   claude    Claude Code
@@ -247,9 +247,10 @@ Supported integrations:
   opencode  OpenCode
 
 Examples:
-  ollama config
-  ollama config claude
-  ollama config droid --launch`,
+  ollama launch
+  ollama launch claude
+  ollama launch claude --model <model>
+  ollama launch droid --config (does not auto-launch)`,
 		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -272,8 +273,8 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
-			// If --launch without --model, use saved config if available
-			if launchFlag && modelFlag == "" {
+			// If launching without --model, use saved config if available
+			if !configFlag && modelFlag == "" {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
 					return runIntegration(name, config.Models[0])
 				}
@@ -334,29 +335,19 @@ Examples:
 				}
 			}
 
-			if slices.ContainsFunc(models, func(m string) bool {
-				return !strings.HasSuffix(m, "cloud")
-			}) {
-				fmt.Fprintln(os.Stderr)
-				fmt.Fprintln(os.Stderr, "Coding agents work best with at least 64k context. Either:")
-				fmt.Fprintln(os.Stderr, "  - Set the context slider in Ollama app settings")
-				fmt.Fprintln(os.Stderr, "  - Run: OLLAMA_CONTEXT_LENGTH=64000 ollama serve")
+			if configFlag {
+				if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
+					return runIntegration(name, models[0])
+				}
+				fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start with %s\n", strings.ToLower(name), models[0])
+				return nil
 			}
 
-			if launchFlag {
-				return runIntegration(name, models[0])
-			}
-
-			if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
-				return runIntegration(name, models[0])
-			}
-
-			fmt.Fprintf(os.Stderr, "Run 'ollama config %s --launch' to start with %s\n", strings.ToLower(name), models[0])
-			return nil
+			return runIntegration(name, models[0])
 		},
 	}
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
-	cmd.Flags().BoolVar(&launchFlag, "launch", false, "Launch the integration after configuring")
+	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
 	return cmd
 }
