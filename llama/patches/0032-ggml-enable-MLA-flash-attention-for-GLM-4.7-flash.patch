@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nobody <>
-Date: Fri, 23 Jan 2026 12:42:53 -0800
+Date: Sat, 24 Jan 2026 02:31:01 +0000
 Subject: [PATCH] ggml: enable MLA flash attention for GLM-4.7-flash
 
 Add support for gqa_ratio 4 in MLA flash attention kernels. GLM-4.7-flash
@@ -17,18 +17,19 @@ CUDA changes:
 - Add tile configs for (576, 512, 4) and (576, 512, 8)
 - Add MMA config cases for ncols 4
 - Add template instances for ncols2=4
+- Fix nbatch_fa values in nvidia_fp32 config (32->64)
 ---
- ggml/src/ggml-cuda/fattn-mma-f16.cuh             | 15 ++++++++++++---
- ggml/src/ggml-cuda/fattn-tile.cuh                | 16 ++++++++++++++++
- ggml/src/ggml-cuda/fattn.cu                      | 12 ++++++++----
- .../fattn-mma-f16-instance-ncols1_16-ncols2_4.cu |  1 +
- .../fattn-mma-f16-instance-ncols1_2-ncols2_4.cu  |  1 +
- .../fattn-mma-f16-instance-ncols1_4-ncols2_4.cu  |  1 +
- .../fattn-mma-f16-instance-ncols1_8-ncols2_4.cu  |  1 +
- ggml/src/ggml-metal/ggml-metal-device.m          |  8 ++------
- ggml/src/ggml-metal/ggml-metal-ops.cpp           |  2 +-
- ggml/src/ggml-metal/ggml-metal.metal             |  1 +
- 10 files changed, 44 insertions(+), 14 deletions(-)
+ ggml/src/ggml-cuda/fattn-mma-f16.cuh           | 15 ++++++++++++---
+ ggml/src/ggml-cuda/fattn-tile.cuh              | 18 +++++++++++++++++-
+ ggml/src/ggml-cuda/fattn.cu                    | 12 ++++++++----
+ ...attn-mma-f16-instance-ncols1_16-ncols2_4.cu |  1 +
+ ...fattn-mma-f16-instance-ncols1_2-ncols2_4.cu |  1 +
+ ...fattn-mma-f16-instance-ncols1_4-ncols2_4.cu |  1 +
+ ...fattn-mma-f16-instance-ncols1_8-ncols2_4.cu |  1 +
+ ggml/src/ggml-metal/ggml-metal-device.m        |  8 ++------
+ ggml/src/ggml-metal/ggml-metal-ops.cpp         |  2 +-
+ ggml/src/ggml-metal/ggml-metal.metal           |  1 +
+ 10 files changed, 45 insertions(+), 15 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/fattn-mma-f16.cuh b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
 index 7bd1044c1..a627302f9 100644
@@ -75,7 +76,7 @@ index 7bd1044c1..a627302f9 100644
 +extern DECL_FATTN_MMA_F16_CASE(576, 512, 8,  4);
 +extern DECL_FATTN_MMA_F16_CASE(576, 512, 16, 4);
 diff --git a/ggml/src/ggml-cuda/fattn-tile.cuh b/ggml/src/ggml-cuda/fattn-tile.cuh
-index 7c4d6fe67..682fb366e 100644
+index 7c4d6fe67..6389ba5c4 100644
 --- a/ggml/src/ggml-cuda/fattn-tile.cuh
 +++ b/ggml/src/ggml-cuda/fattn-tile.cuh
 @@ -68,6 +68,8 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_nv
@@ -87,15 +88,17 @@ index 7c4d6fe67..682fb366e 100644
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  64,  64)
  
      return 0;
-@@ -122,6 +124,8 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_nv
+@@ -122,7 +124,9 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_nv
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 2,  32, 128)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 2,  32,  64)
  
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 256, 2,  32,  64)
-+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  32,  64)
-     GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  32,  64)
+-    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  32,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  4, 256, 2,  64,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512,  8, 256, 2,  64,  64)
++    GGML_CUDA_FATTN_TILE_CONFIG_CASE(576, 512, 16, 256, 2,  64,  64)
  
      return 0;
+ }
 @@ -183,6 +187,8 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_am
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 2,  32, 128)
      GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 2,  32, 128)
