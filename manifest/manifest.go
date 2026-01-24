@@ -1,10 +1,9 @@
-package server
+package manifest
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,12 +32,38 @@ func (m *Manifest) Size() (size int64) {
 	return
 }
 
+func (m *Manifest) Digest() string {
+	return m.digest
+}
+
+func (m *Manifest) FileInfo() os.FileInfo {
+	return m.fi
+}
+
+// ReadConfigJSON reads and unmarshals a config layer as JSON.
+func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
+	for _, layer := range m.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.json" && layer.Name == configPath {
+			blobPath, err := BlobsPath(layer.Digest)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(blobPath)
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(data, v)
+		}
+	}
+	return fmt.Errorf("config %q not found in manifest", configPath)
+}
+
 func (m *Manifest) Remove() error {
 	if err := os.Remove(m.filepath); err != nil {
 		return err
 	}
 
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return err
 	}
@@ -70,11 +95,11 @@ func (m *Manifest) RemoveLayers() error {
 		if _, used := inUse[layer.Digest]; used {
 			continue
 		}
-		blob, err := GetBlobsPath(layer.Digest)
+		blob, err := BlobsPath(layer.Digest)
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(blob); errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(blob); os.IsNotExist(err) {
 			slog.Debug("layer does not exist", "digest", layer.Digest)
 		} else if err != nil {
 			return err
@@ -89,7 +114,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, model.Unqualified(n)
 	}
 
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +146,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 }
 
 func WriteManifest(name model.Name, config Layer, layers []Layer) error {
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return err
 	}
@@ -148,7 +173,7 @@ func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 }
 
 func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
-	manifests, err := GetManifestPath()
+	manifests, err := Path()
 	if err != nil {
 		return nil, err
 	}
