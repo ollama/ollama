@@ -223,12 +223,7 @@ func New(c fs.Config) (model.Model, error) {
 
 	keyLength := int(c.Uint("attention.key_length"))
 	valueLength := int(c.Uint("attention.value_length"))
-	kvLoraRank := int(c.Uint("attention.kv_lora_rank"))
-	qkRopeHeadDim := int(c.Uint("rope.dimension_count"))
-
-	// For MLA absorption, the effective key dimension is kvLoraRank + qkRopeHeadDim
-	mlaKeyLength := kvLoraRank + qkRopeHeadDim
-	kqScale := 1.0 / math.Sqrt(float64(mlaKeyLength))
+	kqScale := 1.0 / math.Sqrt(float64(keyLength))
 
 	var pre []string
 	switch c.String("tokenizer.ggml.pre") {
