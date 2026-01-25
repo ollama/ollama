@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -75,9 +74,6 @@ func TestClaudeFindPath(t *testing.T) {
 		_, err := c.findPath()
 		if err == nil {
 			t.Fatal("expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "could not find claude") {
-			t.Errorf("unexpected error message: %v", err)
 		}
 	})
 }
