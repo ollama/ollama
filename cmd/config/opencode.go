@@ -105,17 +105,26 @@ func (o *OpenCode) Edit(modelList []string) error {
 
 	for name, cfg := range models {
 		if cfgMap, ok := cfg.(map[string]any); ok {
-			if displayName, ok := cfgMap["name"].(string); ok {
-				if strings.HasSuffix(displayName, "[Ollama]") && !selectedSet[name] {
-					delete(models, name)
-				}
+			if isOllamaModel(cfgMap) && !selectedSet[name] {
+				delete(models, name)
 			}
 		}
 	}
 
 	for _, model := range modelList {
+		if existing, ok := models[model].(map[string]any); ok {
+			// migrate existing models without _launch marker
+			if isOllamaModel(existing) {
+				existing["_launch"] = true
+				if name, ok := existing["name"].(string); ok {
+					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
+				}
+			}
+			continue
+		}
 		models[model] = map[string]any{
-			"name": fmt.Sprintf("%s [Ollama]", model),
+			"name":    model,
+			"_launch": true,
 		}
 	}
 
@@ -200,4 +209,16 @@ func (o *OpenCode) Models() []string {
 	keys := slices.Collect(maps.Keys(models))
 	slices.Sort(keys)
 	return keys
+}
+
+// isOllamaModel reports whether a model config entry is managed by us
+func isOllamaModel(cfg map[string]any) bool {
+	if v, ok := cfg["_launch"].(bool); ok && v {
+		return true
+	}
+	// previously used [Ollama] as a suffix for the model managed by ollama launch
+	if name, ok := cfg["name"].(string); ok {
+		return strings.HasSuffix(name, "[Ollama]")
+	}
+	return false
 }

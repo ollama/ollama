@@ -161,6 +161,76 @@ func TestOpenCodeEdit(t *testing.T) {
 		assertOpenCodeModelNotExists(t, configPath, "mistral")
 	})
 
+	t.Run("preserve user customizations on managed models", func(t *testing.T) {
+		cleanup()
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Add custom fields to the model entry (simulating user edits)
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		models := ollama["models"].(map[string]any)
+		entry := models["llama3.2"].(map[string]any)
+		entry["_myPref"] = "custom-value"
+		entry["_myNum"] = 42
+		configData, _ := json.MarshalIndent(cfg, "", "  ")
+		os.WriteFile(configPath, configData, 0o644)
+
+		// Re-run Edit — should preserve custom fields
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ = os.ReadFile(configPath)
+		json.Unmarshal(data, &cfg)
+		provider = cfg["provider"].(map[string]any)
+		ollama = provider["ollama"].(map[string]any)
+		models = ollama["models"].(map[string]any)
+		entry = models["llama3.2"].(map[string]any)
+
+		if entry["_myPref"] != "custom-value" {
+			t.Errorf("_myPref was lost: got %v", entry["_myPref"])
+		}
+		if entry["_myNum"] != float64(42) {
+			t.Errorf("_myNum was lost: got %v", entry["_myNum"])
+		}
+		if v, ok := entry["_launch"].(bool); !ok || !v {
+			t.Errorf("_launch marker missing or false: got %v", entry["_launch"])
+		}
+	})
+
+	t.Run("migrate legacy [Ollama] suffix entries", func(t *testing.T) {
+		cleanup()
+		// Write a config with a legacy entry (has [Ollama] suffix but no _launch marker)
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"llama3.2":{"name":"llama3.2 [Ollama]"}}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		models := ollama["models"].(map[string]any)
+		entry := models["llama3.2"].(map[string]any)
+
+		// _launch marker should be added
+		if v, ok := entry["_launch"].(bool); !ok || !v {
+			t.Errorf("_launch marker not added during migration: got %v", entry["_launch"])
+		}
+		// [Ollama] suffix should be stripped
+		if name, ok := entry["name"].(string); !ok || name != "llama3.2" {
+			t.Errorf("name suffix not stripped: got %q", entry["name"])
+		}
+	})
+
 	t.Run("remove model preserves non-ollama models", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
