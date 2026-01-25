@@ -522,20 +522,23 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:      prompt,
-			Images:      images,
-			Format:      req.Format,
-			Options:     opts,
-			Shift:       req.Shift == nil || *req.Shift,
-			Truncate:    req.Truncate == nil || *req.Truncate,
-			Logprobs:    req.Logprobs,
-			TopLogprobs: req.TopLogprobs,
+			Prompt:             prompt,
+			Images:             images,
+			Format:             req.Format,
+			Options:            opts,
+			Shift:              req.Shift == nil || *req.Shift,
+			Truncate:           req.Truncate == nil || *req.Truncate,
+			Logprobs:           req.Logprobs,
+			TopLogprobs:        req.TopLogprobs,
+			PromptEvalProgress: req.PromptEvalProgress,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
 				Response:  cr.Content,
 				Done:      cr.Done,
+				Completed: int64(cr.Completed),
+				Total:     int64(cr.Total),
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
@@ -2226,20 +2229,23 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:      prompt,
-				Images:      images,
-				Format:      currentFormat,
-				Options:     opts,
-				Shift:       req.Shift == nil || *req.Shift,
-				Truncate:    truncate,
-				Logprobs:    req.Logprobs,
-				TopLogprobs: req.TopLogprobs,
+				Prompt:             prompt,
+				Images:             images,
+				Format:             currentFormat,
+				Options:            opts,
+				Shift:              req.Shift == nil || *req.Shift,
+				Truncate:           truncate,
+				Logprobs:           req.Logprobs,
+				TopLogprobs:        req.TopLogprobs,
+				PromptEvalProgress: req.PromptEvalProgress,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
 					Message:   api.Message{Role: "assistant", Content: r.Content},
 					Done:      r.Done,
+					Completed: int64(r.Completed),
+					Total:     int64(r.Total),
 					Metrics: api.Metrics{
 						PromptEvalCount:    r.PromptEvalCount,
 						PromptEvalDuration: r.PromptEvalDuration,
