@@ -23,7 +23,7 @@ func processAll(p *MinistralParser, input string) (content, thinking string, cal
 
 	// Keep calling Add with empty string until parser settles
 	// This allows state transitions to complete
-	for i := 0; i < 10; i++ { // max 10 iterations to prevent infinite loop
+	for range 10 { // max 10 iterations to prevent infinite loop
 		c, th, cl, err := p.Add("", false)
 		if err != nil {
 			return content + c, thinking + th, append(calls, cl...), err
