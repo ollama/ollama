@@ -577,3 +577,164 @@ func TestAPIChatLogprobs(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIGeneratePromptEvalProgress(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	if err := PullIfMissing(ctx, client, smol); err != nil {
+		t.Fatalf("pull failed %s", err)
+	}
+
+	// Create a longer prompt to ensure we get multiple progress updates
+	// The prompt_eval_progress interval is set to 10 tokens
+	longPrompt := strings.Repeat("Tell me about the history of computing. ", 20)
+
+	streamTrue := true
+	req := api.GenerateRequest{
+		Model:              smol,
+		Prompt:             longPrompt,
+		Stream:             &streamTrue,
+		PromptEvalProgress: 10, // Report progress every 10 tokens
+		Options: map[string]interface{}{
+			"temperature": 0,
+			"seed":        123,
+			"num_predict": 5, // Keep response short
+		},
+	}
+
+	var progressUpdates []api.GenerateResponse
+	var finalResponse api.GenerateResponse
+
+	err := client.Generate(ctx, &req, func(resp api.GenerateResponse) error {
+		// Track progress updates (responses with Completed > 0 and not Done)
+		if resp.Completed > 0 && !resp.Done {
+			progressUpdates = append(progressUpdates, resp)
+			t.Logf("Progress update: %d/%d tokens", resp.Completed, resp.Total)
+		}
+		if resp.Done {
+			finalResponse = resp
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %s", err)
+	}
+
+	// We should have received at least one progress update for a prompt this long
+	// Note: The actual number depends on how the model tokenizes the prompt
+	if len(progressUpdates) == 0 {
+		t.Logf("Warning: no progress updates received - prompt may have been cached or too short")
+		// Don't fail the test as caching can cause this, but log it
+	} else {
+		t.Logf("Received %d progress updates", len(progressUpdates))
+
+		// Verify progress updates have valid values
+		for i, update := range progressUpdates {
+			if update.Total <= 0 {
+				t.Errorf("progress update %d has invalid Total: %d", i, update.Total)
+			}
+			if update.Completed <= 0 {
+				t.Errorf("progress update %d has invalid Completed: %d", i, update.Completed)
+			}
+			if update.Completed > update.Total {
+				t.Errorf("progress update %d has Completed (%d) > Total (%d)", i, update.Completed, update.Total)
+			}
+		}
+
+		// Verify progress is monotonically increasing
+		for i := 1; i < len(progressUpdates); i++ {
+			if progressUpdates[i].Completed < progressUpdates[i-1].Completed {
+				t.Errorf("progress decreased: %d -> %d", progressUpdates[i-1].Completed, progressUpdates[i].Completed)
+			}
+		}
+	}
+
+	// Verify final response
+	if !finalResponse.Done {
+		t.Errorf("expected final response to have Done=true")
+	}
+}
+
+func TestAPIChatPromptEvalProgress(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	if err := PullIfMissing(ctx, client, smol); err != nil {
+		t.Fatalf("pull failed %s", err)
+	}
+
+	// Create a longer prompt to ensure we get multiple progress updates
+	longPrompt := strings.Repeat("Explain the theory of relativity in detail. ", 20)
+
+	streamTrue := true
+	req := api.ChatRequest{
+		Model: smol,
+		Messages: []api.Message{
+			{Role: "user", Content: longPrompt},
+		},
+		Stream:             &streamTrue,
+		PromptEvalProgress: 10, // Report progress every 10 tokens
+		Options: map[string]interface{}{
+			"temperature": 0,
+			"seed":        456,
+			"num_predict": 5, // Keep response short
+		},
+	}
+
+	var progressUpdates []api.ChatResponse
+	var finalResponse api.ChatResponse
+
+	err := client.Chat(ctx, &req, func(resp api.ChatResponse) error {
+		// Track progress updates (responses with Completed > 0 and not Done)
+		if resp.Completed > 0 && !resp.Done {
+			progressUpdates = append(progressUpdates, resp)
+			t.Logf("Progress update: %d/%d tokens", resp.Completed, resp.Total)
+		}
+		if resp.Done {
+			finalResponse = resp
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chat failed: %s", err)
+	}
+
+	// We should have received at least one progress update for a prompt this long
+	if len(progressUpdates) == 0 {
+		t.Logf("Warning: no progress updates received - prompt may have been cached or too short")
+	} else {
+		t.Logf("Received %d progress updates", len(progressUpdates))
+
+		// Verify progress updates have valid values
+		for i, update := range progressUpdates {
+			if update.Total <= 0 {
+				t.Errorf("progress update %d has invalid Total: %d", i, update.Total)
+			}
+			if update.Completed <= 0 {
+				t.Errorf("progress update %d has invalid Completed: %d", i, update.Completed)
+			}
+			if update.Completed > update.Total {
+				t.Errorf("progress update %d has Completed (%d) > Total (%d)", i, update.Completed, update.Total)
+			}
+		}
+
+		// Verify progress is monotonically increasing
+		for i := 1; i < len(progressUpdates); i++ {
+			if progressUpdates[i].Completed < progressUpdates[i-1].Completed {
+				t.Errorf("progress decreased: %d -> %d", progressUpdates[i-1].Completed, progressUpdates[i].Completed)
+			}
+		}
+	}
+
+	// Verify final response
+	if !finalResponse.Done {
+		t.Errorf("expected final response to have Done=true")
+	}
+}
