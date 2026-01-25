@@ -218,11 +218,11 @@ static std::string ggml_cuda_parse_uuid(cudaDeviceProp prop, int device_num) {
         (unsigned char)prop.uuid.bytes[15]
         );
 #else
-#ifdef _WIN32
+#if 1
         snprintf(id, sizeof(id), "%d", device_num);
 #else
     try {
-        std::string uuid = std::string(prop.uuid.bytes, 16);
+        std::string uuid = std::to_string(prop.pciBusID);
 
         size_t pos = 0;
         unsigned long long v = stoull(uuid, &pos, 16);
@@ -573,7 +573,7 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
 
                 // reserve virtual address space (if not already reserved)
                 if (pool_addr == 0) {
-                    CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
+                    CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0));
                 }
 
                 // map at the end of the pool
@@ -1783,7 +1783,7 @@ static void ggml_cuda_op_mul_mat(
 
             // wait for main GPU data if necessary
             if (split && (id != ctx.device || is != 0)) {
-                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[ctx.device][0], 0));
+                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[ctx.device][0]));
             }
 
             for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
@@ -1896,7 +1896,7 @@ static void ggml_cuda_op_mul_mat(
                 continue;
             }
             for (int64_t is = 0; is < is_max; ++is) {
-                CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), src0_extra->events[id][is], 0));
+                CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), src0_extra->events[id][is]));
             }
         }
     }
@@ -2967,7 +2967,7 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
         CUDA_CHECK(cudaEventRecord(cuda_ctx_src->copy_event, cuda_ctx_src->stream()));
 
         // wait on dst stream for the copy to complete
-        CUDA_CHECK(cudaStreamWaitEvent(cuda_ctx_dst->stream(), cuda_ctx_src->copy_event, 0));
+        CUDA_CHECK(cudaStreamWaitEvent(cuda_ctx_dst->stream(), cuda_ctx_src->copy_event));
     } else {
         // src and dst are on the same backend
         CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, ggml_nbytes(dst), cudaMemcpyDeviceToDevice, cuda_ctx_src->stream()));
@@ -3156,7 +3156,7 @@ static void update_cuda_graph_executable(ggml_backend_cuda_context * cuda_ctx) {
         (void)cudaGetLastError();
         CUDA_CHECK(cudaGraphExecDestroy(cuda_ctx->cuda_graph->instance));
         cuda_ctx->cuda_graph->instance = nullptr;
-        CUDA_CHECK(cudaGraphInstantiate(&cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, NULL, NULL, 0));
+        CUDA_CHECK(cudaGraphInstantiate(&cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, NULL, NULL));
     } else {
         GGML_ASSERT(stat == cudaSuccess);
     }
@@ -3828,7 +3828,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
 
     if (use_cuda_graph) {
         if (cuda_ctx->cuda_graph->instance == nullptr) { // Create executable graph from captured graph.
-            CUDA_CHECK(cudaGraphInstantiate(&cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, NULL, NULL, 0));
+            CUDA_CHECK(cudaGraphInstantiate(&cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, NULL, NULL));
         }
         if (cuda_graph_update_required) { // Update graph executable
             update_cuda_graph_executable(cuda_ctx);
@@ -4000,7 +4000,7 @@ static void ggml_backend_cuda_event_wait(ggml_backend_t backend, ggml_backend_ev
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
 
     if (ggml_backend_is_cuda(backend)) {
-        CUDA_CHECK(cudaStreamWaitEvent(cuda_ctx->stream(), (cudaEvent_t)event->context, 0));
+        CUDA_CHECK(cudaStreamWaitEvent(cuda_ctx->stream(), (cudaEvent_t)event->context));
     } else {
 #if 0
         // untested

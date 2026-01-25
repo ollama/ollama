@@ -101,7 +101,7 @@
 #define cuMemRelease hipMemRelease
 #define CUmemGenericAllocationHandle hipMemGenericAllocationHandle_t
 #define cuMemCreate hipMemCreate
-#define cuMemAddressReserve hipMemAddressReserve
+#define cuMemAddressReserve(ptr, size, alignment, addr) hipMemAddressReserve(ptr, size, alignment, addr, 0ULL)
 #define cuMemMap hipMemMap
 #define cuMemSetAccess hipMemSetAccess
 #define cuMemGetAllocationGranularity hipMemGetAllocationGranularity
@@ -113,7 +113,7 @@
 #define cudaStreamNonBlocking hipStreamNonBlocking
 #define cudaStreamPerThread hipStreamPerThread
 #define cudaStreamSynchronize hipStreamSynchronize
-#define cudaStreamWaitEvent hipStreamWaitEvent
+#define cudaStreamWaitEvent(stream, event) hipStreamWaitEvent(stream, event, 0)
 #define cudaGraphExec_t hipGraphExec_t
 #define cudaGraphNode_t hipGraphNode_t
 #define cudaKernelNodeParams hipKernelNodeParams
