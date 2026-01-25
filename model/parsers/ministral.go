@@ -108,16 +108,19 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 		}
 		return "", "", calls, nil
 	case ministralCollectingToolArgs:
-		if strings.Contains(p.buffer.String(), "}") {
-			before, _ := splitAtTag(&p.buffer, "}", false)
-			before += "}"
+		bufferString := p.buffer.String()
+		jsonEnd := findJSONEnd(bufferString)
+		if jsonEnd != -1 {
+			jsonStr := bufferString[:jsonEnd+1]
+			remaining := bufferString[jsonEnd+1:]
 
 			var args api.ToolCallFunctionArguments
-			if err := json.Unmarshal([]byte(before), &args); err != nil {
-				// todo - throw a better error
+			if err := json.Unmarshal([]byte(jsonStr), &args); err != nil {
 				return "", "", calls, err
 			}
 
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
 			p.state = ministralCollectingContent
 
 			call := api.ToolCall{
@@ -133,4 +136,48 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 	}
 
 	return p.buffer.String(), thinking, calls, nil
+}
+
+// findJSONEnd finds the index of the closing brace that completes a JSON object.
+// It properly handles nested objects, arrays, and strings (including escaped characters).
+// Returns -1 if the JSON is not yet complete.
+func findJSONEnd(s string) int {
+	depth := 0
+	inString := false
+	escaped := false
+
+	for i, r := range s {
+		if inString {
+			switch {
+			case escaped:
+				// If the previous character was a backslash, skip this character
+				escaped = false
+			case r == '\\':
+				// Mark the next character as escaped
+				escaped = true
+			case r == '"':
+				// End of string literal
+				inString = false
+			}
+			continue
+		}
+
+		switch r {
+		case '"':
+			// Start of string literal
+			inString = true
+		case '{', '[':
+			// Increase nesting level for objects and arrays
+			depth++
+		case '}', ']':
+			// Decrease nesting level
+			depth--
+			if depth == 0 {
+				// Reached the end of the root JSON structure
+				return i
+			}
+		}
+	}
+
+	return -1
 }
