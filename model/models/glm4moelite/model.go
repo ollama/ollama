@@ -246,7 +246,7 @@ func New(c fs.Config) (model.Model, error) {
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
 				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
 				EOS: append(
