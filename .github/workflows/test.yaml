@@ -142,8 +142,7 @@ jobs:
     runs-on: windows
     steps:
       - run: |
-          choco install -y --no-progress ccache ninja
-          ccache -o cache_dir=${{ github.workspace }}\.ccache
+          choco install -y --no-progress ninja
       - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan' || matrix.preset == 'MLX CUDA 13'
         id: cache-install
         uses: actions/cache/restore@v4
