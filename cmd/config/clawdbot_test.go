@@ -340,6 +340,47 @@ func TestClawdbotModelsEdgeCases(t *testing.T) {
 	})
 }
 
+func TestClawdbotEditSchemaFields(t *testing.T) {
+	c := &Clawdbot{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	configPath := filepath.Join(tmpDir, ".clawdbot", "clawdbot.json")
+
+	if err := c.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(configPath)
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	models := cfg["models"].(map[string]any)
+	providers := models["providers"].(map[string]any)
+	ollama := providers["ollama"].(map[string]any)
+	modelList := ollama["models"].([]any)
+	entry := modelList[0].(map[string]any)
+
+	// Verify required schema fields
+	if entry["reasoning"] != false {
+		t.Error("reasoning should be false")
+	}
+	if entry["input"] == nil {
+		t.Error("input should be set")
+	}
+	if entry["contextWindow"] == nil {
+		t.Error("contextWindow should be set")
+	}
+	if entry["maxTokens"] == nil {
+		t.Error("maxTokens should be set")
+	}
+	cost := entry["cost"].(map[string]any)
+	if cost["cacheRead"] == nil {
+		t.Error("cost.cacheRead should be set")
+	}
+	if cost["cacheWrite"] == nil {
+		t.Error("cost.cacheWrite should be set")
+	}
+}
+
 func TestClawdbotEditModelNames(t *testing.T) {
 	c := &Clawdbot{}
 	tmpDir := t.TempDir()
