@@ -126,7 +126,7 @@ func DoUpgrade(interactive bool) error {
 	cmd := exec.Command(runningInstaller, installArgs...)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("unable to start ollama app %w", err)
+		return fmt.Errorf("unable to start Ollama app %w", err)
 	}
 
 	if cmd.Process != nil {
