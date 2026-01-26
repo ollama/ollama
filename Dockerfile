@@ -23,7 +23,7 @@ ARG VULKANVERSION
 RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
     && tar xvf /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
     && dnf -y install ninja-build \
-    && ln -s /usr/bin/python3 /usr/bin/python \  
+    && ln -s /usr/bin/python3 /usr/bin/python \
     && /${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
     && /${VULKANVERSION}/vulkansdk -j 8 shaderc
 RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
@@ -54,8 +54,6 @@ ENV LDFLAGS=-s
 FROM base_rocm7-${TARGETARCH} AS base_rocm7
 ARG CMAKEVERSION
 RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
 
 FROM base AS cpu
@@ -121,6 +119,8 @@ RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
 FROM base_rocm7 AS rocm-7
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 ARG PARALLEL
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 7' \
         && cmake --build --parallel ${PARALLEL} --preset 'ROCm 7' \
@@ -235,7 +235,7 @@ RUN apt-get update \
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama:/usr/lib/ollama/rocm
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/ollama:/usr/lib/ollama/rocm_v7
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
