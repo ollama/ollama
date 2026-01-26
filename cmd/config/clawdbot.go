@@ -1,16 +1,21 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type Clawdbot struct{}
 
 func (c *Clawdbot) String() string { return "Clawdbot" }
+
+const ansiGreen = "\033[32m"
 
 func (c *Clawdbot) Run(model string) error {
 	if _, err := exec.LookPath("clawdbot"); err != nil {
@@ -27,9 +32,18 @@ func (c *Clawdbot) Run(model string) error {
 
 	cmd := exec.Command("clawdbot", "gateway")
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	// Capture output to detect "already running" message
+	var outputBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
+
+	err := cmd.Run()
+	if err != nil && strings.Contains(outputBuf.String(), "Gateway already running") {
+		fmt.Fprintf(os.Stderr, "%sClawdbot has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
+		return nil
+	}
+	return err
 }
 
 func (c *Clawdbot) Paths() []string {
@@ -77,6 +91,8 @@ func (c *Clawdbot) Edit(models []string) error {
 	}
 
 	ollama["baseUrl"] = "http://127.0.0.1:11434/v1"
+	// needed to register provider
+	ollama["apiKey"] = "ollama-local"
 	// TODO(parthsareen): potentially move to responses
 	ollama["api"] = "openai-completions"
 
@@ -94,9 +110,19 @@ func (c *Clawdbot) Edit(models []string) error {
 	var newModels []any
 	for _, model := range models {
 		entry := map[string]any{
-			"id":   model,
-			"name": model,
-			"cost": map[string]any{"input": 0, "output": 0},
+			"id":        model,
+			"name":      model,
+			"reasoning": false,
+			"input":     []any{"text"},
+			"cost": map[string]any{
+				"input":      0,
+				"output":     0,
+				"cacheRead":  0,
+				"cacheWrite": 0,
+			},
+			// TODO(parthsareen): get these values from API
+			"contextWindow": 131072,
+			"maxTokens":     16384,
 		}
 		// Merge existing fields (user customizations)
 		if existing, ok := existingByID[model]; ok {
