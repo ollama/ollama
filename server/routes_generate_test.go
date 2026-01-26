@@ -2447,8 +2447,8 @@ func TestChatPromptEvalProgress(t *testing.T) {
 	// Track the CompletionRequest to verify PromptEvalProgress is passed through
 	var capturedRequest llm.CompletionRequest
 	progressResponses := []llm.CompletionResponse{
-		{Completed: 10, Total: 100},
-		{Completed: 50, Total: 100},
+		{PromptEvalCompleted: 10, PromptEvalTotal: 100},
+		{PromptEvalCompleted: 50, PromptEvalTotal: 100},
 		{Content: "Hello!", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 100, PromptEvalDuration: 1, EvalCount: 1, EvalDuration: 1},
 	}
 
@@ -2557,15 +2557,15 @@ func TestChatPromptEvalProgress(t *testing.T) {
 		}
 
 		// First response should have progress info
-		if responses[0].Completed != 10 || responses[0].Total != 100 {
-			t.Errorf("first response: expected Completed=10, Total=100, got Completed=%d, Total=%d",
-				responses[0].Completed, responses[0].Total)
+		if responses[0].PromptEvalCompleted != 10 || responses[0].PromptEvalTotal != 100 {
+			t.Errorf("first response: expected PromptEvalCompleted=10, PromptEvalTotal=100, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[0].PromptEvalCompleted, responses[0].PromptEvalTotal)
 		}
 
 		// Second response should have more progress
-		if responses[1].Completed != 50 || responses[1].Total != 100 {
-			t.Errorf("second response: expected Completed=50, Total=100, got Completed=%d, Total=%d",
-				responses[1].Completed, responses[1].Total)
+		if responses[1].PromptEvalCompleted != 50 || responses[1].PromptEvalTotal != 100 {
+			t.Errorf("second response: expected PromptEvalCompleted=50, PromptEvalTotal=100, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[1].PromptEvalCompleted, responses[1].PromptEvalTotal)
 		}
 
 		// Final response should be done
@@ -2612,9 +2612,9 @@ func TestGeneratePromptEvalProgress(t *testing.T) {
 
 	var capturedRequest llm.CompletionRequest
 	progressResponses := []llm.CompletionResponse{
-		{Completed: 25, Total: 200},
-		{Completed: 100, Total: 200},
-		{Completed: 200, Total: 200},
+		{PromptEvalCompleted: 25, PromptEvalTotal: 200},
+		{PromptEvalCompleted: 100, PromptEvalTotal: 200},
+		{PromptEvalCompleted: 200, PromptEvalTotal: 200},
 		{Content: "Response text", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 200, PromptEvalDuration: 1, EvalCount: 1, EvalDuration: 1},
 	}
 
@@ -2721,19 +2721,19 @@ func TestGeneratePromptEvalProgress(t *testing.T) {
 		}
 
 		// Check progress values in responses
-		if responses[0].Completed != 25 || responses[0].Total != 200 {
-			t.Errorf("first response: expected Completed=25, Total=200, got Completed=%d, Total=%d",
-				responses[0].Completed, responses[0].Total)
+		if responses[0].PromptEvalCompleted != 25 || responses[0].PromptEvalTotal != 200 {
+			t.Errorf("first response: expected PromptEvalCompleted=25, PromptEvalTotal=200, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[0].PromptEvalCompleted, responses[0].PromptEvalTotal)
 		}
 
-		if responses[1].Completed != 100 || responses[1].Total != 200 {
-			t.Errorf("second response: expected Completed=100, Total=200, got Completed=%d, Total=%d",
-				responses[1].Completed, responses[1].Total)
+		if responses[1].PromptEvalCompleted != 100 || responses[1].PromptEvalTotal != 200 {
+			t.Errorf("second response: expected PromptEvalCompleted=100, PromptEvalTotal=200, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[1].PromptEvalCompleted, responses[1].PromptEvalTotal)
 		}
 
-		if responses[2].Completed != 200 || responses[2].Total != 200 {
-			t.Errorf("third response: expected Completed=200, Total=200, got Completed=%d, Total=%d",
-				responses[2].Completed, responses[2].Total)
+		if responses[2].PromptEvalCompleted != 200 || responses[2].PromptEvalTotal != 200 {
+			t.Errorf("third response: expected PromptEvalCompleted=200, PromptEvalTotal=200, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[2].PromptEvalCompleted, responses[2].PromptEvalTotal)
 		}
 
 		// Final response should be done with content

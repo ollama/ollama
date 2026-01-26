@@ -1531,11 +1531,11 @@ type CompletionResponse struct {
 	// TotalSteps is the total number of steps for image generation
 	TotalSteps int `json:"total_steps,omitempty"`
 
-	// Completed is the number of tokens processed during prompt evaluation
-	Completed int `json:"completed,omitempty"`
+	// PromptEvalCompleted is the number of tokens processed during prompt evaluation
+	PromptEvalCompleted int `json:"prompt_eval_completed,omitempty"`
 
-	// Total is the total number of tokens to process during prompt evaluation
-	Total int `json:"total,omitempty"`
+	// PromptEvalTotal is the total number of tokens to process during prompt evaluation
+	PromptEvalTotal int `json:"prompt_eval_total,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -1669,12 +1669,12 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return ctx.Err()
 			}
 
-			if c.Content != "" || c.Completed > 0 {
+			if c.Content != "" || c.PromptEvalCompleted > 0 {
 				fn(CompletionResponse{
-					Content:   c.Content,
-					Logprobs:  c.Logprobs,
-					Completed: c.Completed,
-					Total:     c.Total,
+					Content:             c.Content,
+					Logprobs:            c.Logprobs,
+					PromptEvalCompleted: c.PromptEvalCompleted,
+					PromptEvalTotal:     c.PromptEvalTotal,
 				})
 			}
 

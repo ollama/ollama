@@ -43,10 +43,10 @@ import (
 
 // response contains a piece of generated text along with optional logprobs
 type response struct {
-	content   string
-	logprobs  []llm.Logprob
-	completed int // prompt eval progress: tokens processed so far
-	total     int // prompt eval progress: total tokens to process
+	content             string
+	logprobs            []llm.Logprob
+	promptEvalCompleted int // prompt eval progress: tokens processed so far
+	promptEvalTotal     int // prompt eval progress: total tokens to process
 }
 
 type Sequence struct {
@@ -719,15 +719,14 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			if seq.promptEvalProgress > 0 {
 				processed := seq.numPromptInputs - len(seq.inputs)
 				if processed-seq.lastProgressSent >= seq.promptEvalProgress {
-					// Non-blocking send to avoid blocking while holding mutex
 					select {
 					case seq.responses <- response{
-						completed: processed,
-						total:     seq.numPromptInputs,
+						promptEvalCompleted: processed,
+						promptEvalTotal:     seq.numPromptInputs,
 					}:
 						seq.lastProgressSent = processed
-					default:
-						// Channel full, skip this update
+					case <-seq.quit:
+						continue
 					}
 				}
 			}
@@ -980,10 +979,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		case resp, ok := <-seq.responses:
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content:   resp.content,
-					Logprobs:  resp.logprobs,
-					Completed: resp.completed,
-					Total:     resp.total,
+					Content:             resp.content,
+					Logprobs:            resp.logprobs,
+					PromptEvalCompleted: resp.promptEvalCompleted,
+					PromptEvalTotal:     resp.promptEvalTotal,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)

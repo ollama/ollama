@@ -568,13 +568,13 @@ type ChatResponse struct {
 	// if requested via the Logprobs parameter.
 	Logprobs []Logprob `json:"logprobs,omitempty"`
 
-	// Completed is the number of tokens processed during prompt evaluation.
+	// PromptEvalCompleted is the number of tokens processed during prompt evaluation.
 	// Only present when prompt_eval_progress is set in the request.
-	Completed int64 `json:"completed,omitempty"`
+	PromptEvalCompleted int64 `json:"prompt_eval_completed,omitempty"`
 
-	// Total is the total number of tokens to process during prompt evaluation.
+	// PromptEvalTotal is the total number of tokens to process during prompt evaluation.
 	// Only present when prompt_eval_progress is set in the request.
-	Total int64 `json:"total,omitempty"`
+	PromptEvalTotal int64 `json:"prompt_eval_total,omitempty"`
 
 	Metrics
 }
@@ -906,6 +906,14 @@ type GenerateResponse struct {
 	// Total is the total number of steps for image generation.
 	// Only present for image generation models during streaming.
 	Total int64 `json:"total,omitempty"`
+
+	// PromptEvalCompleted is the number of tokens processed during prompt evaluation.
+	// Only present when prompt_eval_progress is set in the request.
+	PromptEvalCompleted int64 `json:"prompt_eval_completed,omitempty"`
+
+	// PromptEvalTotal is the total number of tokens to process during prompt evaluation.
+	// Only present when prompt_eval_progress is set in the request.
+	PromptEvalTotal int64 `json:"prompt_eval_total,omitempty"`
 }
 
 // ModelDetails provides details about a model.

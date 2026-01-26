@@ -610,10 +610,10 @@ func TestAPIGeneratePromptEvalProgress(t *testing.T) {
 	var finalResponse api.GenerateResponse
 
 	err := client.Generate(ctx, &req, func(resp api.GenerateResponse) error {
-		// Track progress updates (responses with Completed > 0 and not Done)
-		if resp.Completed > 0 && !resp.Done {
+		// Track progress updates (responses with PromptEvalCompleted > 0 and not Done)
+		if resp.PromptEvalCompleted > 0 && !resp.Done {
 			progressUpdates = append(progressUpdates, resp)
-			t.Logf("Progress update: %d/%d tokens", resp.Completed, resp.Total)
+			t.Logf("Progress update: %d/%d tokens", resp.PromptEvalCompleted, resp.PromptEvalTotal)
 		}
 		if resp.Done {
 			finalResponse = resp
@@ -634,21 +634,21 @@ func TestAPIGeneratePromptEvalProgress(t *testing.T) {
 
 		// Verify progress updates have valid values
 		for i, update := range progressUpdates {
-			if update.Total <= 0 {
-				t.Errorf("progress update %d has invalid Total: %d", i, update.Total)
+			if update.PromptEvalTotal <= 0 {
+				t.Errorf("progress update %d has invalid PromptEvalTotal: %d", i, update.PromptEvalTotal)
 			}
-			if update.Completed <= 0 {
-				t.Errorf("progress update %d has invalid Completed: %d", i, update.Completed)
+			if update.PromptEvalCompleted <= 0 {
+				t.Errorf("progress update %d has invalid PromptEvalCompleted: %d", i, update.PromptEvalCompleted)
 			}
-			if update.Completed > update.Total {
-				t.Errorf("progress update %d has Completed (%d) > Total (%d)", i, update.Completed, update.Total)
+			if update.PromptEvalCompleted > update.PromptEvalTotal {
+				t.Errorf("progress update %d has PromptEvalCompleted (%d) > PromptEvalTotal (%d)", i, update.PromptEvalCompleted, update.PromptEvalTotal)
 			}
 		}
 
 		// Verify progress is monotonically increasing
 		for i := 1; i < len(progressUpdates); i++ {
-			if progressUpdates[i].Completed < progressUpdates[i-1].Completed {
-				t.Errorf("progress decreased: %d -> %d", progressUpdates[i-1].Completed, progressUpdates[i].Completed)
+			if progressUpdates[i].PromptEvalCompleted < progressUpdates[i-1].PromptEvalCompleted {
+				t.Errorf("progress decreased: %d -> %d", progressUpdates[i-1].PromptEvalCompleted, progressUpdates[i].PromptEvalCompleted)
 			}
 		}
 	}
@@ -692,10 +692,10 @@ func TestAPIChatPromptEvalProgress(t *testing.T) {
 	var finalResponse api.ChatResponse
 
 	err := client.Chat(ctx, &req, func(resp api.ChatResponse) error {
-		// Track progress updates (responses with Completed > 0 and not Done)
-		if resp.Completed > 0 && !resp.Done {
+		// Track progress updates (responses with PromptEvalCompleted > 0 and not Done)
+		if resp.PromptEvalCompleted > 0 && !resp.Done {
 			progressUpdates = append(progressUpdates, resp)
-			t.Logf("Progress update: %d/%d tokens", resp.Completed, resp.Total)
+			t.Logf("Progress update: %d/%d tokens", resp.PromptEvalCompleted, resp.PromptEvalTotal)
 		}
 		if resp.Done {
 			finalResponse = resp
@@ -714,21 +714,21 @@ func TestAPIChatPromptEvalProgress(t *testing.T) {
 
 		// Verify progress updates have valid values
 		for i, update := range progressUpdates {
-			if update.Total <= 0 {
-				t.Errorf("progress update %d has invalid Total: %d", i, update.Total)
+			if update.PromptEvalTotal <= 0 {
+				t.Errorf("progress update %d has invalid PromptEvalTotal: %d", i, update.PromptEvalTotal)
 			}
-			if update.Completed <= 0 {
-				t.Errorf("progress update %d has invalid Completed: %d", i, update.Completed)
+			if update.PromptEvalCompleted <= 0 {
+				t.Errorf("progress update %d has invalid PromptEvalCompleted: %d", i, update.PromptEvalCompleted)
 			}
-			if update.Completed > update.Total {
-				t.Errorf("progress update %d has Completed (%d) > Total (%d)", i, update.Completed, update.Total)
+			if update.PromptEvalCompleted > update.PromptEvalTotal {
+				t.Errorf("progress update %d has PromptEvalCompleted (%d) > PromptEvalTotal (%d)", i, update.PromptEvalCompleted, update.PromptEvalTotal)
 			}
 		}
 
 		// Verify progress is monotonically increasing
 		for i := 1; i < len(progressUpdates); i++ {
-			if progressUpdates[i].Completed < progressUpdates[i-1].Completed {
-				t.Errorf("progress decreased: %d -> %d", progressUpdates[i-1].Completed, progressUpdates[i].Completed)
+			if progressUpdates[i].PromptEvalCompleted < progressUpdates[i-1].PromptEvalCompleted {
+				t.Errorf("progress decreased: %d -> %d", progressUpdates[i-1].PromptEvalCompleted, progressUpdates[i].PromptEvalCompleted)
 			}
 		}
 	}

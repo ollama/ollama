@@ -533,12 +533,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			PromptEvalProgress: req.PromptEvalProgress,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Response:  cr.Content,
-				Done:      cr.Done,
-				Completed: int64(cr.Completed),
-				Total:     int64(cr.Total),
+				Model:               req.Model,
+				CreatedAt:           time.Now().UTC(),
+				Response:            cr.Content,
+				Done:                cr.Done,
+				PromptEvalCompleted: int64(cr.PromptEvalCompleted),
+				PromptEvalTotal:     int64(cr.PromptEvalTotal),
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
@@ -2240,12 +2240,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				PromptEvalProgress: req.PromptEvalProgress,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
-					Model:     req.Model,
-					CreatedAt: time.Now().UTC(),
-					Message:   api.Message{Role: "assistant", Content: r.Content},
-					Done:      r.Done,
-					Completed: int64(r.Completed),
-					Total:     int64(r.Total),
+					Model:               req.Model,
+					CreatedAt:           time.Now().UTC(),
+					Message:             api.Message{Role: "assistant", Content: r.Content},
+					Done:                r.Done,
+					PromptEvalCompleted: int64(r.PromptEvalCompleted),
+					PromptEvalTotal:     int64(r.PromptEvalTotal),
 					Metrics: api.Metrics{
 						PromptEvalCount:    r.PromptEvalCount,
 						PromptEvalDuration: r.PromptEvalDuration,
