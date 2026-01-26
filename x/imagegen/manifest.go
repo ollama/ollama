@@ -161,6 +161,17 @@ func (m *ModelManifest) HasTensorLayers() bool {
 	return false
 }
 
+// TotalTensorSize returns the total size in bytes of all tensor layers.
+func (m *ModelManifest) TotalTensorSize() int64 {
+	var total int64
+	for _, layer := range m.Manifest.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+			total += layer.Size
+		}
+	}
+	return total
+}
+
 // ModelInfo contains metadata about an image generation model.
 type ModelInfo struct {
 	Architecture   string

@@ -4,16 +4,6 @@ title: Anthropic compatibility
 
 Ollama provides compatibility with the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) to help connect existing applications to Ollama, including tools like Claude Code.
 
-## Recommended models
-
-For coding use cases, models like `glm-4.7:cloud`, `minimax-m2.1:cloud`, and `qwen3-coder` are recommended.
-
-Pull a model before use:
-```shell
-ollama pull qwen3-coder
-ollama pull glm-4.7:cloud
-```
-
 ## Usage
 
 ### Environment variables
@@ -22,8 +12,8 @@ To use Ollama with tools that expect the Anthropic API (like Claude Code), set t
 
 ```shell
 export ANTHROPIC_AUTH_TOKEN=ollama  # required but ignored
+export ANTHROPIC_API_KEY="" # required but ignored
 export ANTHROPIC_BASE_URL=http://localhost:11434
-export ANTHROPIC_API_KEY=ollama  # required but ignored
 ```
 
 ### Simple `/v1/messages` example
@@ -245,10 +235,41 @@ curl -X POST http://localhost:11434/v1/messages \
 
 ## Using with Claude Code
 
-[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend:
+[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend. 
+
+### Recommended models
+
+For coding use cases, models like `glm-4.7`, `minimax-m2.1`, and `qwen3-coder` are recommended.
+
+Download a model before use:
 
 ```shell
-ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
+ollama pull qwen3-coder
+```
+> Note: Qwen 3 coder is a 30B parameter model requiring at least 24GB of VRAM to run smoothly. More is required for longer context lengths. 
+
+```shell
+ollama pull glm-4.7:cloud
+```
+
+### Quick setup
+
+```shell
+ollama launch claude
+```
+
+This will prompt you to select a model, configure Claude Code automatically, and launch it. To configure without launching:
+
+```shell
+ollama launch claude --config
+```
+
+### Manual setup
+
+Set the environment variables and run Claude Code:
+
+```shell
+ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY="" claude --model qwen3-coder
 ```
 
 Or set the environment variables in your shell profile:
@@ -256,19 +277,13 @@ Or set the environment variables in your shell profile:
 ```shell
 export ANTHROPIC_AUTH_TOKEN=ollama
 export ANTHROPIC_BASE_URL=http://localhost:11434
-export ANTHROPIC_API_KEY=ollama
+export ANTHROPIC_API_KEY=""
 ```
 
 Then run Claude Code with any Ollama model:
 
 ```shell
-# Local models
 claude --model qwen3-coder
-claude --model gpt-oss:20b
-
-# Cloud models
-claude --model glm-4.7:cloud
-claude --model minimax-m2.1:cloud
 ```
 
 ## Endpoints

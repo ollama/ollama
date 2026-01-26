@@ -177,6 +177,20 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 	})
 }
 
+// GenerateImageWithInputs implements runner.ImageEditModel interface.
+// It generates an image conditioned on the provided input images for image editing.
+func (m *Model) GenerateImageWithInputs(ctx context.Context, prompt string, width, height int32, steps int, seed int64, inputImages []image.Image, progress func(step, total int)) (*mlx.Array, error) {
+	return m.GenerateFromConfig(ctx, &GenerateConfig{
+		Prompt:      prompt,
+		Width:       width,
+		Height:      height,
+		Steps:       steps,
+		Seed:        seed,
+		InputImages: inputImages,
+		Progress:    progress,
+	})
+}
+
 // MaxOutputPixels is the maximum output resolution (4 megapixels, ~2048x2048)
 const MaxOutputPixels = 2048 * 2048
 
