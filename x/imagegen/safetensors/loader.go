@@ -24,6 +24,7 @@ type WeightSource interface {
 // MLX quantization modes:
 //   - "affine": scale + zero-point bias, group_size=32/64/128
 //   - "nvfp4": NVIDIA FP4 with E4M3 scales, group_size=16 (no bias)
+//   - "mxfp8": Microsoft MX FP8 with E4M3 scales, group_size=32 (no bias)
 func QuantizationParams(quantization string) (groupSize, bits int, mode string) {
 	switch strings.ToUpper(quantization) {
 	case "NVFP4":
@@ -32,6 +33,9 @@ func QuantizationParams(quantization string) (groupSize, bits int, mode string) 
 	case "FP4", "Q4", "INT4":
 		// 4-bit quantization with affine mode (scale + qbias)
 		return 32, 4, "affine"
+	case "MXFP8":
+		// Microsoft MX FP8: group_size=32, bits=8, E4M3 scales (no qbias)
+		return 32, 8, "mxfp8"
 	case "FP8", "Q8", "INT8", "":
 		// 8-bit quantization with affine mode (default for quantized models)
 		return 32, 8, "affine"
@@ -147,6 +151,23 @@ func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]st
 			continue
 		}
 
+		// Handle nn.MultiLinearLayer interface fields specially
+		multiLinearLayerType := reflect.TypeOf((*nn.MultiLinearLayer)(nil)).Elem()
+		if field.Type == multiLinearLayerType {
+			if !hasTag {
+				continue // no tag = skip
+			}
+			layer, err := LoadMultiLinearLayer(weights, fullPath)
+			if err != nil {
+				if !optional {
+					*errs = append(*errs, fullPath+": "+err.Error())
+				}
+				continue
+			}
+			fieldVal.Set(reflect.ValueOf(layer))
+			continue
+		}
+
 		// Handle by kind
 		switch fieldVal.Kind() {
 		case reflect.Ptr:
@@ -226,6 +247,39 @@ func joinPath(prefix, suffix string) string {
 	return prefix + "." + suffix
 }
 
+// LoadMultiLinearLayer loads a per-head linear layer from weights.
+// Weight shape should be [num_heads, output_dims, input_dims].
+// If quantized, always dequantizes since batched quantized matmul isn't supported.
+func LoadMultiLinearLayer(weights WeightSource, path string) (nn.MultiLinearLayer, error) {
+	// Check if this is a quantized layer by looking for scale tensor
+	scalePath := path + ".weight_scale"
+	hasScale := weights.HasTensor(scalePath)
+
+	weight, err := weights.GetTensor(path + ".weight")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load weight %s: %w", path, err)
+	}
+
+	if hasScale {
+		scales, err := weights.GetTensor(scalePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load scales %s: %w", scalePath, err)
+		}
+
+		var qbiases *mlx.Array
+		qbiasPath := path + ".weight_qbias"
+		if weights.HasTensor(qbiasPath) {
+			qbiases, _ = weights.GetTensor(qbiasPath)
+		}
+
+		// Always dequantize for MultiLinear - no batched quantized matmul support
+		groupSize, bits, mode := QuantizationParams(weights.Quantization())
+		weight = mlx.Dequantize(weight, scales, qbiases, groupSize, bits, mode)
+	}
+
+	return nn.NewMultiLinear(weight), nil
+}
+
 // LoadLinearLayer loads a linear layer from weights, automatically detecting if it's quantized.
 // If {path}.weight_scale exists, creates a QuantizedLinear layer (or dequantizes if no kernel support).
 func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) {
@@ -258,9 +312,9 @@ func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) 
 
 		groupSize, bits, mode := QuantizationParams(weights.Quantization())
 
-		// NVFP4 doesn't have native quantized matmul kernels in MLX yet,
+		// NVFP4 and MXFP8 don't have native quantized matmul kernels in MLX,
 		// so we always dequantize at load time. Affine modes (FP4, FP8) have kernel support.
-		if mlx.MetalIsAvailable() && mode != "nvfp4" {
+		if mlx.MetalIsAvailable() && mode != "nvfp4" && mode != "mxfp8" {
 			return &nn.QuantizedLinear{
 				Weight:    weight,
 				Scales:    scales,

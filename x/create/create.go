@@ -264,7 +264,7 @@ func ShouldQuantize(name, component string) bool {
 
 // ShouldQuantizeTensor returns true if a tensor should be quantized based on name, shape, and quantize type.
 // This is a more detailed check that also considers tensor dimensions.
-// The quantize parameter specifies the quantization type (e.g., "fp4", "nvfp4", "fp8").
+// The quantize parameter specifies the quantization type (e.g., "fp4", "nvfp4", "fp8", "mxfp8").
 func ShouldQuantizeTensor(name string, shape []int32, quantize string) bool {
 	// Use basic name-based check first
 	if !ShouldQuantize(name, "") {
@@ -282,7 +282,7 @@ func ShouldQuantizeTensor(name string, shape []int32, quantize string) bool {
 	}
 
 	// MLX quantization requires last dimension to be divisible by group size
-	// NVFP4 uses group_size=16, all other modes use group_size=32
+	// NVFP4 uses group_size=16, all other modes (fp4, fp8, mxfp8) use group_size=32
 	groupSize := int32(32)
 	if strings.ToUpper(quantize) == "NVFP4" {
 		groupSize = 16

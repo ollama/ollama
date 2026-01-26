@@ -19,6 +19,12 @@ import (
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
 )
 
+// RopeScaling holds RoPE scaling configuration
+type RopeScaling struct {
+	Factor       float32 `json:"factor"`
+	MscaleAllDim float32 `json:"mscale_all_dim"`
+}
+
 // Config holds GLM4-MoE-Lite model configuration
 type Config struct {
 	HiddenSize            int32   `json:"hidden_size"`
@@ -50,12 +56,16 @@ type Config struct {
 	NGroup              int32   `json:"n_group"`
 	TopKGroup           int32   `json:"topk_group"`
 
+	// RoPE scaling
+	RopeScaling *RopeScaling `json:"rope_scaling"`
+
 	// Computed fields
 	QHeadDim int32   `json:"-"` // qk_nope_head_dim + qk_rope_head_dim
-	Scale    float32 `json:"-"` // 1/sqrt(QHeadDim)
+	Scale    float32 `json:"-"` // 1/sqrt(QHeadDim) with mscale adjustment
 }
 
-// MLAAttention implements Multi-head Latent Attention
+// MLAAttention implements Multi-head Latent Attention with absorption.
+// This uses absorbed MLA which operates in latent space for reduced KV cache.
 type MLAAttention struct {
 	// Low-rank query projections
 	QAProj      nn.LinearLayer `weight:"self_attn.q_a_proj"`
@@ -65,13 +75,19 @@ type MLAAttention struct {
 	// Low-rank KV projections (with shared rope component)
 	KVAProjWithMQA nn.LinearLayer `weight:"self_attn.kv_a_proj_with_mqa"`
 	KVALayerNorm   *nn.RMSNorm    `weight:"self_attn.kv_a_layernorm"`
-	KVBProj        nn.LinearLayer `weight:"self_attn.kv_b_proj"`
+
+	// Absorbed MLA projections (derived from kv_b_proj)
+	// EmbedQ: projects q_nope to latent space [num_heads, kv_lora_rank, qk_nope_head_dim]
+	// UnembedOut: projects attention output from latent space [num_heads, v_head_dim, kv_lora_rank]
+	EmbedQ    *nn.MultiLinear `weight:"-"`
+	UnembedOut *nn.MultiLinear `weight:"-"`
 
 	// Output projection
 	OProj nn.LinearLayer `weight:"self_attn.o_proj"`
 }
 
-// Forward computes MLA attention output
+// Forward computes absorbed MLA attention output.
+// This operates in latent space for reduced KV cache memory.
 func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
 	// Query path: q_a_proj -> layernorm -> q_b_proj
 	q := a.QAProj.Forward(x)
@@ -86,7 +102,7 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	qNope := mlx.Slice(q, []int32{0, 0, 0, 0}, []int32{B, cfg.NumAttentionHeads, L, cfg.QKNopeHeadDim})
 	qPE := mlx.Slice(q, []int32{0, 0, 0, cfg.QKNopeHeadDim}, []int32{B, cfg.NumAttentionHeads, L, cfg.QHeadDim})
 
-	// KV path: kv_a_proj_with_mqa -> split -> layernorm -> kv_b_proj
+	// KV path: get compressed KV and k_pe
 	compressedKV := a.KVAProjWithMQA.Forward(x)
 
 	// Split into compressed_kv and k_pe (shared rope component)
@@ -97,19 +113,12 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	kPE = mlx.Reshape(kPE, B, L, 1, cfg.QKRopeHeadDim)
 	kPE = mlx.Transpose(kPE, 0, 2, 1, 3)
 
-	// Apply layernorm and project KV
-	kvCompressed = a.KVALayerNorm.Forward(kvCompressed, cfg.RMSNormEps)
-	kv := a.KVBProj.Forward(kvCompressed)
+	// Apply layernorm to get kv latent representation
+	kvLatent := a.KVALayerNorm.Forward(kvCompressed, cfg.RMSNormEps)
+	// kvLatent: [B, L, kv_lora_rank] -> [B, 1, L, kv_lora_rank] for broadcasting
+	kvLatent = mlx.ExpandDims(kvLatent, 1)
 
-	// Reshape KV: [B, L, num_heads * (qk_nope_head_dim + v_head_dim)]
-	kv = mlx.Reshape(kv, B, L, cfg.NumAttentionHeads, cfg.QKNopeHeadDim+cfg.VHeadDim)
-	kv = mlx.Transpose(kv, 0, 2, 1, 3)
-
-	// Split into k_nope and values
-	kNope := mlx.Slice(kv, []int32{0, 0, 0, 0}, []int32{B, cfg.NumAttentionHeads, L, cfg.QKNopeHeadDim})
-	values := mlx.Slice(kv, []int32{0, 0, 0, cfg.QKNopeHeadDim}, []int32{B, cfg.NumAttentionHeads, L, cfg.QKNopeHeadDim + cfg.VHeadDim})
-
-	// Apply RoPE to the rope parts only
+	// Apply RoPE to the rope parts
 	offset := 0
 	if c != nil {
 		offset = c.Offset()
@@ -117,20 +126,48 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	qPE = mlx.RoPE(qPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
 	kPE = mlx.RoPE(kPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
 
-	// Repeat k_pe across all heads
-	kPE = mlx.Tile(kPE, []int32{1, cfg.NumAttentionHeads, 1, 1})
+	// ABSORBED MLA: project q_nope to latent space
+	// qNope: [B, num_heads, L, qk_nope_head_dim]
+	// EmbedQ: [num_heads, kv_lora_rank, qk_nope_head_dim]
+	// Result: [B, num_heads, L, kv_lora_rank]
+	qLatent := a.EmbedQ.Forward(qNope)
 
-	// Concatenate nope and rope parts
-	queries := mlx.Concatenate([]*mlx.Array{qNope, qPE}, 3)
-	keys := mlx.Concatenate([]*mlx.Array{kNope, kPE}, 3)
+	// Keys = concat(kvLatent, kPE)
+	// kvLatent: [B, 1, L, kv_lora_rank]
+	// kPE: [B, 1, L, qk_rope_head_dim]
+	// keys: [B, 1, L, kv_lora_rank + qk_rope_head_dim]
+	keys := mlx.Concatenate([]*mlx.Array{kvLatent, kPE}, 3)
 
-	// Update KV cache
+	// Cache the smaller latent representation
+	// We cache keys (latent + rope) and use empty values since values are derived from keys
+	cachedL := L
 	if c != nil {
-		keys, values = c.Update(keys, values, int(L))
+		// Create placeholder values with 0 dims for cache (we don't actually use cached values)
+		placeholderValues := mlx.Zeros([]int32{B, 1, L, 0}, mlx.DtypeFloat32)
+		keys, _ = c.Update(keys, placeholderValues, int(L))
+		cachedL = int32(keys.Shape()[2])
 	}
 
-	// Scaled dot product attention
+	// Values are the first kv_lora_rank dims of keys (slice off rope part)
+	values := mlx.Slice(keys, []int32{0, 0, 0, 0}, []int32{B, 1, cachedL, cfg.KVLoraRank})
+
+	// Queries = concat(qLatent, qPE)
+	// qLatent: [B, num_heads, L, kv_lora_rank]
+	// qPE: [B, num_heads, L, qk_rope_head_dim]
+	// queries: [B, num_heads, L, kv_lora_rank + qk_rope_head_dim]
+	queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
+
+	// Attention in latent space
+	// queries: [B, num_heads, L, kv_lora_rank + rope_dim]
+	// keys: [B, 1, cachedL, kv_lora_rank + rope_dim]
+	// values: [B, 1, cachedL, kv_lora_rank]
 	out := mlx.ScaledDotProductAttention(queries, keys, values, cfg.Scale, L > 1)
+
+	// ABSORBED MLA: unembed from latent space
+	// out: [B, num_heads, L, kv_lora_rank]
+	// UnembedOut: [num_heads, v_head_dim, kv_lora_rank]
+	// Result: [B, num_heads, L, v_head_dim]
+	out = a.UnembedOut.Forward(out)
 
 	// Reshape back: [B, num_heads, L, v_head_dim] -> [B, L, num_heads * v_head_dim]
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.VHeadDim)
@@ -353,6 +390,18 @@ type Model struct {
 	*Config
 }
 
+// computeScale computes the attention scale.
+// Uses the full key head dimension (qkNopeHeadDim + qkRopeHeadDim) to match the Ollama runner.
+func computeScale(cfg *Config) float32 {
+	keyLength := cfg.QKNopeHeadDim + cfg.QKRopeHeadDim
+	scale := float32(1.0 / math.Sqrt(float64(keyLength)))
+	if cfg.RopeScaling != nil && cfg.RopeScaling.MscaleAllDim > 0 && cfg.RopeScaling.Factor > 1 {
+		s := 0.1*cfg.RopeScaling.MscaleAllDim*float32(math.Log(float64(cfg.RopeScaling.Factor))) + 1.0
+		scale *= s * s
+	}
+	return scale
+}
+
 // loadExpertWeight loads an expert weight, dequantizing if necessary.
 // GatherMM doesn't support quantized weights, so we must dequantize for MoE.
 func loadExpertWeight(weights safetensors.WeightSource, path string) *mlx.Array {
@@ -376,6 +425,56 @@ func loadExpertWeight(weights safetensors.WeightSource, path string) *mlx.Array 
 	}
 
 	return w
+}
+
+// sanitizeMLAWeights transforms kv_b_proj weights into absorbed MLA format.
+// Returns embed_q and unembed_out weights for per-head projections.
+//
+// kv_b_proj.weight shape: [num_heads * (qk_nope_head_dim + v_head_dim), kv_lora_rank]
+// Output:
+//   - embed_q: [num_heads, kv_lora_rank, qk_nope_head_dim] - projects q_nope to latent
+//   - unembed_out: [num_heads, v_head_dim, kv_lora_rank] - projects latent to output
+func sanitizeMLAWeights(weights safetensors.WeightSource, prefix string, cfg *Config) (*mlx.Array, *mlx.Array) {
+	path := prefix + ".self_attn.kv_b_proj"
+	w, err := weights.GetTensor(path + ".weight")
+	if err != nil || w == nil {
+		return nil, nil
+	}
+
+	// Check if quantized and dequantize
+	scalePath := path + ".weight_scale"
+	if weights.HasTensor(scalePath) {
+		scales, _ := weights.GetTensor(scalePath)
+		var qbiases *mlx.Array
+		qbiasPath := path + ".weight_qbias"
+		if weights.HasTensor(qbiasPath) {
+			qbiases, _ = weights.GetTensor(qbiasPath)
+		}
+		groupSize, bits, mode := safetensors.QuantizationParams(weights.Quantization())
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
+	}
+
+	// w: [num_heads * (qk_nope_head_dim + v_head_dim), kv_lora_rank]
+	// Reshape to [num_heads, qk_nope_head_dim + v_head_dim, kv_lora_rank]
+	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
+	w = mlx.Reshape(w, cfg.NumAttentionHeads, headDim, cfg.KVLoraRank)
+
+	// Split into wk and wv
+	// wk: [num_heads, qk_nope_head_dim, kv_lora_rank]
+	// wv: [num_heads, v_head_dim, kv_lora_rank]
+	wk := mlx.Slice(w, []int32{0, 0, 0}, []int32{cfg.NumAttentionHeads, cfg.QKNopeHeadDim, cfg.KVLoraRank})
+	wv := mlx.Slice(w, []int32{0, cfg.QKNopeHeadDim, 0}, []int32{cfg.NumAttentionHeads, headDim, cfg.KVLoraRank})
+
+	// Transform for absorbed MLA:
+	// embed_q: transpose(wk) -> [num_heads, kv_lora_rank, qk_nope_head_dim]
+	// This allows: q_nope @ embed_q.T = q_nope @ wk (absorbed key projection)
+	embedQ := mlx.Transpose(wk, 0, 2, 1)
+
+	// unembed_out: wv stays [num_heads, v_head_dim, kv_lora_rank]
+	// This allows: latent_out @ unembed_out.T = latent_out @ wv.T (absorbed value projection)
+	unembedOut := wv
+
+	return embedQ, unembedOut
 }
 
 // sanitizeExpertWeights stacks individual expert weights into a single tensor.
@@ -427,7 +526,7 @@ func Load(modelPath string) (*Model, error) {
 
 	// Compute derived fields
 	cfg.QHeadDim = cfg.QKNopeHeadDim + cfg.QKRopeHeadDim
-	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.QHeadDim)))
+	cfg.Scale = computeScale(&cfg)
 
 	weights, err := safetensors.LoadModelWeights(modelPath)
 	if err != nil {
@@ -459,6 +558,11 @@ func Load(modelPath string) (*Model, error) {
 		if err := safetensors.LoadModule(attn, weights, prefix); err != nil {
 			return nil, fmt.Errorf("layer %d attention: %w", i, err)
 		}
+
+		// Sanitize MLA weights for absorbed attention
+		embedQ, unembedOut := sanitizeMLAWeights(weights, prefix, &cfg)
+		attn.EmbedQ = nn.NewMultiLinear(embedQ)
+		attn.UnembedOut = nn.NewMultiLinear(unembedOut)
 
 		if i < cfg.FirstKDenseReplace {
 			// Dense block
@@ -524,7 +628,7 @@ func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
 
 	// Compute derived fields
 	cfg.QHeadDim = cfg.QKNopeHeadDim + cfg.QKRopeHeadDim
-	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.QHeadDim)))
+	cfg.Scale = computeScale(&cfg)
 
 	// Load weights from manifest blobs
 	weights, err := imagegen.LoadWeightsFromManifest(manifest, "")
@@ -591,6 +695,11 @@ func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
 		if err := safetensors.LoadModule(attn, weights, prefix); err != nil {
 			return nil, fmt.Errorf("layer %d attention: %w", i, err)
 		}
+
+		// Sanitize MLA weights for absorbed attention
+		embedQ, unembedOut := sanitizeMLAWeights(weights, prefix, &cfg)
+		attn.EmbedQ = nn.NewMultiLinear(embedQ)
+		attn.UnembedOut = nn.NewMultiLinear(unembedOut)
 
 		if i < cfg.FirstKDenseReplace {
 			// Dense block

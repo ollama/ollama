@@ -229,3 +229,32 @@ func (ln *LayerNorm) Forward(x *mlx.Array) *mlx.Array {
 	}
 	return out
 }
+
+// MultiLinearLayer is an interface for per-head linear layers.
+// This allows swapping between MultiLinear (bf16) and pre-dequantized weights.
+type MultiLinearLayer interface {
+	Forward(x *mlx.Array) *mlx.Array
+}
+
+// MultiLinear performs per-head linear projections.
+// Weight shape: [num_heads, output_dims, input_dims]
+// Input shape: [B, num_heads, L, input_dims]
+// Output shape: [B, num_heads, L, output_dims]
+type MultiLinear struct {
+	Weight *mlx.Array `weight:"weight"`
+}
+
+// NewMultiLinear creates a MultiLinear layer with the given weight.
+func NewMultiLinear(weight *mlx.Array) *MultiLinear {
+	return &MultiLinear{Weight: weight}
+}
+
+// Forward applies per-head linear transformation: x @ weight.T per head via broadcasting.
+func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
+	// Weight: [num_heads, output_dims, input_dims]
+	// x: [B, num_heads, L, input_dims]
+	// wT: [num_heads, input_dims, output_dims]
+	// Result: [B, num_heads, L, output_dims]
+	wT := mlx.Transpose(ml.Weight, 0, 2, 1)
+	return mlx.Matmul(x, wT)
+}

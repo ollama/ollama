@@ -15,15 +15,15 @@ import (
 // CreateImageGenModel imports an image generation model from a directory.
 // Stores each tensor as a separate blob for fine-grained deduplication.
 // If quantize is specified, linear weights in transformer/text_encoder are quantized.
-// Supported quantization types: fp4, fp8 (or empty for no quantization).
+// Supported quantization types: fp4, fp8, nvfp4, mxfp8 (or empty for no quantization).
 // Layer creation and manifest writing are done via callbacks to avoid import cycles.
 func CreateImageGenModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
 	// Validate quantization type
 	switch quantize {
-	case "", "fp4", "fp8", "nvfp4":
+	case "", "fp4", "fp8", "nvfp4", "mxfp8":
 		// valid
 	default:
-		return fmt.Errorf("unsupported quantization type %q: supported types are fp4, fp8, nvfp4", quantize)
+		return fmt.Errorf("unsupported quantization type %q: supported types are fp4, fp8, nvfp4, mxfp8", quantize)
 	}
 
 	var layers []LayerInfo

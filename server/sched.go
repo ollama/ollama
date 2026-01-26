@@ -589,7 +589,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 
 	runner := &runnerRef{
 		model:           req.model,
-		modelPath:       req.model.ModelPath,
+		modelPath:       req.model.Name,
 		llama:           server,
 		Options:         &req.opts,
 		loading:         false,
@@ -599,7 +599,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 	}
 
 	s.loadedMu.Lock()
-	s.loaded[req.model.ModelPath] = runner
+	s.loaded[req.model.Name] = runner
 	s.loadedMu.Unlock()
 
 	// Set up expiration timer

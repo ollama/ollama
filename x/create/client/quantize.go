@@ -17,6 +17,7 @@ import (
 //   - "fp4": affine 4-bit, group_size=32 (with qbiases)
 //   - "nvfp4": NVIDIA FP4, group_size=16 (no qbiases, E4M3 scales)
 //   - "fp8": affine 8-bit, group_size=32 (with qbiases)
+//   - "mxfp8": Microsoft MX FP8, group_size=32 (no qbiases, E4M3 scales)
 // Uses MLX's native SaveSafetensors to ensure correct dtype handling (especially uint32 for quantized weights).
 func quantizeTensor(r io.Reader, name, dtype string, shape []int32, quantize string) (qweightData, scalesData, qbiasData []byte, qweightShape, scalesShape, qbiasShape []int32, err error) {
 	tmpDir := ensureTempDir()
@@ -66,6 +67,9 @@ func quantizeTensor(r io.Reader, name, dtype string, shape []int32, quantize str
 	case "fp8":
 		// affine mode: group_size=32, bits=8 (with qbiases for zero-point offset)
 		qweight, scales, qbiases = mlx.Quantize(arr, 32, 8, "affine")
+	case "mxfp8":
+		// Microsoft MX FP8: group_size=32, bits=8, E4M3 scales (no qbiases)
+		qweight, scales, qbiases = mlx.Quantize(arr, 32, 8, "mxfp8")
 	default:
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf("unsupported quantization type: %s", quantize)
 	}
