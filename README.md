@@ -558,7 +558,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaFarm for Go](https://github.com/presbrey/ollamafarm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
-- [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
+- [Ollama for Ruby](https://github.com/crmne/ruby_llm)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp)
 - [Ollama4j for Java](https://github.com/ollama4j/ollama4j)

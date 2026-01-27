@@ -102,18 +102,20 @@
             "group": "Integrations",
             "pages": [
               "/integrations/claude-code",
-              "/integrations/vscode",
-              "/integrations/jetbrains",
-              "/integrations/codex",
+              "/integrations/clawdbot",
               "/integrations/cline",
+              "/integrations/codex",
               "/integrations/droid",
               "/integrations/goose",
-              "/integrations/zed",
-              "/integrations/roo-code",
+              "/integrations/jetbrains",
+              "/integrations/marimo",
               "/integrations/n8n",
-              "/integrations/xcode",
               "/integrations/onyx",
-              "/integrations/marimo"
+              "/integrations/opencode",
+              "/integrations/roo-code",
+              "/integrations/vscode",
+              "/integrations/xcode",
+              "/integrations/zed"
             ]
           },
           {

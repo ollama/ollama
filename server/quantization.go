@@ -95,6 +95,13 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 			// for the 8-expert model, bumping this to Q8_0 trades just ~128MB
 			newType = fsggml.TensorTypeQ8_0
 		}
+	} else if strings.Contains(name, "attn_k_b.weight") ||
+		strings.Contains(name, "attn_v_b.weight") ||
+		strings.Contains(name, "attn_kv_a_mqa.weight") ||
+		strings.Contains(name, "attn_q_a.weight") ||
+		strings.Contains(name, "attn_q_b.weight") {
+		// MLA tensors need higher precision to avoid quality degradation
+		newType = fsggml.TensorTypeQ8_0
 	} else if strings.Contains(name, "ffn_down") {
 		iLayer := qs.iFfnDown
 		n_layer := qs.nFfnDown
