@@ -4,6 +4,10 @@ include(FetchContent)
 file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_C_GIT_TAG)
 string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
+# Read MLX core version from top-level file
+file(READ "${CMAKE_SOURCE_DIR}/MLX_CORE_VERSION" MLX_GIT_TAG)
+string(STRIP "${MLX_GIT_TAG}" MLX_GIT_TAG)
+
 set(MLX_C_BUILD_EXAMPLES OFF)
 
 set(MLX_BUILD_GGUF OFF)
@@ -51,10 +55,66 @@ elseif(MLX_CUDA_ARCHITECTURES)
     message(WARNING "MLX_CUDA_ARCHITECTURES specified but CUDA compiler not found, CUDA backend will be disabled")
 endif()
 
-FetchContent_Declare(
-  mlx-c
-  GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG ${MLX_C_GIT_TAG})
+# On Windows, we need to apply patches to MLX for MSVC+NVCC compatibility
+# Pre-declare MLX with patches BEFORE mlx-c declares it, so our version takes precedence
+if(WIN32)
+    find_package(Git REQUIRED)
+
+    # Collect all patch files
+    file(GLOB MLX_PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch")
+    list(SORT MLX_PATCHES)
+
+    # Build the patch command - apply each patch in order
+    set(MLX_PATCH_COMMAND ${GIT_EXECUTABLE} -c user.name=ollama -c user.email=ollama@ollama.com am --3way)
+    foreach(patch ${MLX_PATCHES})
+        list(APPEND MLX_PATCH_COMMAND "${patch}")
+    endforeach()
+
+    message(STATUS "MLX Windows patches will be applied: ${MLX_PATCHES}")
+
+    FetchContent_Declare(
+        mlx
+        GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
+        GIT_TAG ${MLX_GIT_TAG}
+        PATCH_COMMAND ${MLX_PATCH_COMMAND}
+    )
+endif()
+
+# On Windows, we need to apply patches to mlx-c for MSVC compatibility
+if(WIN32)
+    # Collect all mlx-c patch files
+    file(GLOB MLX_C_PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/patches-c/*.patch")
+    list(SORT MLX_C_PATCHES)
+
+    if(MLX_C_PATCHES)
+        # Build the patch command - apply each patch in order
+        set(MLX_C_PATCH_COMMAND ${GIT_EXECUTABLE} -c user.name=ollama -c user.email=ollama@ollama.com am --3way)
+        foreach(patch ${MLX_C_PATCHES})
+            list(APPEND MLX_C_PATCH_COMMAND "${patch}")
+        endforeach()
+
+        message(STATUS "MLX-C Windows patches will be applied: ${MLX_C_PATCHES}")
+
+        FetchContent_Declare(
+            mlx-c
+            GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
+            GIT_TAG ${MLX_C_GIT_TAG}
+            PATCH_COMMAND ${MLX_C_PATCH_COMMAND}
+        )
+    else()
+        FetchContent_Declare(
+            mlx-c
+            GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
+            GIT_TAG ${MLX_C_GIT_TAG}
+        )
+    endif()
+else()
+    FetchContent_Declare(
+        mlx-c
+        GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
+        GIT_TAG ${MLX_C_GIT_TAG}
+    )
+endif()
 FetchContent_MakeAvailable(mlx-c)
 
 set_target_output_directory(mlx)

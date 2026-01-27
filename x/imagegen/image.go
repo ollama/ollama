@@ -57,6 +57,10 @@ func EncodeImageBase64(arr *mlx.Array) (string, error) {
 // ArrayToImage converts an MLX array to a Go image.RGBA.
 // Expected format: [B, C, H, W] with values in [0, 1] range and C=3 (RGB).
 func ArrayToImage(arr *mlx.Array) (*image.RGBA, error) {
+	if arr == nil {
+		return nil, fmt.Errorf("input array is nil")
+	}
+
 	shape := arr.Shape()
 	if len(shape) != 4 {
 		return nil, fmt.Errorf("expected 4D array [B, C, H, W], got %v", shape)
@@ -65,10 +69,24 @@ func ArrayToImage(arr *mlx.Array) (*image.RGBA, error) {
 	// Transform to [H, W, C] for image conversion
 	// Free intermediate arrays to avoid memory leak
 	squeezed := mlx.Squeeze(arr, 0)
+	if squeezed == nil {
+		return nil, fmt.Errorf("mlx.Squeeze returned nil")
+	}
+
 	transposed := mlx.Transpose(squeezed, 1, 2, 0)
+	if transposed == nil {
+		squeezed.Free()
+		return nil, fmt.Errorf("mlx.Transpose returned nil")
+	}
 	squeezed.Free()
+
 	img := mlx.Contiguous(transposed)
+	if img == nil {
+		transposed.Free()
+		return nil, fmt.Errorf("mlx.Contiguous returned nil")
+	}
 	transposed.Free()
+
 	mlx.Eval(img)
 
 	imgShape := img.Shape()
@@ -83,7 +101,15 @@ func ArrayToImage(arr *mlx.Array) (*image.RGBA, error) {
 
 	// Copy to CPU and free GPU memory
 	data := img.Data()
+	if data == nil {
+		img.Free()
+		return nil, fmt.Errorf("img.Data() returned nil")
+	}
 	img.Free()
+
+	if len(data) < H*W*C {
+		return nil, fmt.Errorf("data buffer too small: got %d, expected %d", len(data), H*W*C)
+	}
 
 	// Write directly to Pix slice (faster than SetRGBA)
 	goImg := image.NewRGBA(image.Rect(0, 0, W, H))

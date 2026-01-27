@@ -546,42 +546,33 @@ func (m *Transformer) PrepareRoPECache(hTok, wTok, capLen int32) *RoPECache {
 // Forward runs the Z-Image transformer with precomputed RoPE
 func (m *Transformer) Forward(x *mlx.Array, t *mlx.Array, capFeats *mlx.Array, rope *RoPECache) *mlx.Array {
 	imgLen := rope.ImgLen
-
-	// Timestep embedding -> [B, 256]
-	temb := m.TEmbed.Forward(mlx.MulScalar(t, m.TransformerConfig.TScale))
-
-	// Embed image patches -> [B, L_img, dim]
-	x = m.XEmbed.Forward(x)
-
-	// Embed caption features -> [B, L_cap, dim]
-	capEmb := m.CapEmbed.Forward(capFeats)
-
 	eps := m.NormEps
 
-	// Noise refiner: refine image patches with modulation
+	// Embeddings
+	temb := m.TEmbed.Forward(mlx.MulScalar(t, m.TransformerConfig.TScale))
+	x = m.XEmbed.Forward(x)
+	capEmb := m.CapEmbed.Forward(capFeats)
+
+	// Noise refiners
 	for _, refiner := range m.NoiseRefiners {
 		x = refiner.Forward(x, temb, rope.ImgCos, rope.ImgSin, eps)
 	}
 
-	// Context refiner: refine caption (no modulation)
+	// Context refiners
 	for _, refiner := range m.ContextRefiners {
 		capEmb = refiner.Forward(capEmb, nil, rope.CapCos, rope.CapSin, eps)
 	}
 
-	// Concatenate image and caption for joint attention
+	// Main transformer layers
 	unified := mlx.Concatenate([]*mlx.Array{x, capEmb}, 1)
-
-	// Main transformer layers use full unified RoPE
 	for _, layer := range m.Layers {
 		unified = layer.Forward(unified, temb, rope.UnifiedCos, rope.UnifiedSin, eps)
 	}
 
-	// Extract image tokens only
+	// Final layer
 	unifiedShape := unified.Shape()
 	B := unifiedShape[0]
 	imgOut := mlx.Slice(unified, []int32{0, 0, 0}, []int32{B, imgLen, unifiedShape[2]})
-
-	// Final layer
 	return m.FinalLayer.Forward(imgOut, temb)
 }
 

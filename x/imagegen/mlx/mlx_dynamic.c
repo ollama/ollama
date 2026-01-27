@@ -9,14 +9,18 @@
 #ifdef _WIN32
 #include <windows.h>
 typedef HMODULE lib_handle_t;
-#define LOAD_LIB(path) LoadLibraryA(path)
 #define GET_SYMBOL(handle, name) GetProcAddress(handle, name)
 #define CLOSE_LIB(handle) FreeLibrary(handle)
-#define LIB_ERROR() "LoadLibrary failed"
+static char win_error_buffer[256] = {0};
+static const char* get_win_error(void) {
+    DWORD err = GetLastError();
+    snprintf(win_error_buffer, sizeof(win_error_buffer), "error code %lu", err);
+    return win_error_buffer;
+}
+#define LIB_ERROR() get_win_error()
 #else
 #include <dlfcn.h>
 typedef void* lib_handle_t;
-#define LOAD_LIB(path) dlopen(path, RTLD_LAZY | RTLD_GLOBAL)
 #define GET_SYMBOL(handle, name) dlsym(handle, name)
 #define CLOSE_LIB(handle) dlclose(handle)
 #define LIB_ERROR() dlerror()
@@ -46,10 +50,51 @@ static char* get_exe_relative_path(const char* libname) {
 }
 #endif
 
+#ifdef _WIN32
+// Windows: Load library with proper dependency resolution
+// Uses SearchPathA to find the DLL, then SetDllDirectoryA to add the directory
+// to the DLL search path so dependencies (like mlx.dll) are found
+static int try_load_lib_win(const char* libname) {
+    if (!libname) return 0;
+
+    char full_path[MAX_PATH];
+    // Search PATH for the DLL
+    DWORD result = SearchPathA(NULL, libname, NULL, MAX_PATH, full_path, NULL);
+    if (result == 0 || result >= MAX_PATH) {
+        return 0;
+    }
+
+    // Extract directory from full path and add to DLL search path
+    char dir_path[MAX_PATH];
+    strncpy(dir_path, full_path, MAX_PATH - 1);
+    dir_path[MAX_PATH - 1] = '\0';
+
+    // Find last backslash and truncate to get directory
+    char* last_slash = strrchr(dir_path, '\\');
+    if (last_slash) {
+        *last_slash = '\0';
+        // Add directory to DLL search path - this affects dependency resolution
+        SetDllDirectoryA(dir_path);
+    }
+
+    // Now load the library - dependencies will be found in the added directory
+    mlx_handle = LoadLibraryA(full_path);
+
+    // Reset DLL directory to default
+    SetDllDirectoryA(NULL);
+
+    return mlx_handle != NULL;
+}
+#endif
+
 // Try to load library from a specific path
 static int try_load_lib(const char* path) {
     if (!path) return 0;
-    mlx_handle = LOAD_LIB(path);
+#ifdef _WIN32
+    mlx_handle = LoadLibraryA(path);
+#else
+    mlx_handle = dlopen(path, RTLD_LAZY | RTLD_GLOBAL);
+#endif
     return mlx_handle != NULL;
 }
 
@@ -66,10 +111,11 @@ int mlx_dynamic_init(void) {
     int num_tried = 0;
 
 #ifdef _WIN32
-    // Windows: try same directory as executable
-    lib_path = "libmlxc.dll";
+    // Windows: Use SearchPath + LoadLibraryEx to properly resolve dependencies
+    // This ensures mlx.dll (dependency of mlxc.dll) is found in the same directory
+    lib_path = "mlxc.dll";
     tried_paths[num_tried++] = lib_path;
-    if (try_load_lib(lib_path)) goto success;
+    if (try_load_lib_win(lib_path)) goto success;
 #elif defined(__APPLE__)
     // macOS: try executable directory first
     lib_path = get_exe_relative_path("libmlxc.dylib");
