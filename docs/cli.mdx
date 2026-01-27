@@ -50,8 +50,22 @@ ollama launch droid --config
 ```
 
 #### Multiline input
+For multiline input, press <span className="inline-flex items-center gap-1.5">
+  <kbd className="bg-[#0B0C0E] px-1.5 py-0.5 rounded-md border border-white/10 text-xs font-mono font-medium text-[#D4D4D4] shadow-sm">Shift</kbd>
+  <span className="text-xs text-gray-500">+</span>
+  <kbd className="bg-[#0B0C0E] px-1.5 py-0.5 rounded-md border border-white/10 text-xs font-mono font-medium text-[#D4D4D4] shadow-sm">Enter</kbd>
+</span> or <span className="inline-flex items-center gap-1.5">
+  <kbd className="bg-[#0B0C0E] px-1.5 py-0.5 rounded-md border border-white/10 text-xs font-mono font-medium text-[#D4D4D4] shadow-sm">Ctrl</kbd>
+  <span className="text-xs text-gray-500">+</span>
+  <kbd className="bg-[#0B0C0E] px-1.5 py-0.5 rounded-md border border-white/10 text-xs font-mono font-medium text-[#D4D4D4] shadow-sm">J</kbd>
+</span> depending on your terminal.
 
-For multiline input, you can wrap text with `"""`:
+```
+>>> Hello,
+... world!
+I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+Or, you can also wrap text with `"""`:
 
 ```
 >>> """Hello,
@@ -59,7 +73,6 @@ For multiline input, you can wrap text with `"""`:
 ... """
 I'm a basic program that prints the famous "Hello, world!" message to the console.
 ```
-
 #### Multimodal models
 
 ```
