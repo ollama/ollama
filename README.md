@@ -370,6 +370,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [StreamDeploy](https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold) (LLM Application Scaffold)
 - [chat](https://github.com/swuecho/chat) (chat web app for teams)
 - [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
+- [Libre WebUI](https://github.com/libre-webui/libre-webui) (Privacy-first web UI with multi-user support, personas, and plugins)
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
 - [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
