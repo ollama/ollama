@@ -198,7 +198,7 @@ func New(c fs.Config) (model.Model, error) {
 				)),
 			},
 		},
-		false,
+		true,
 	)
 
 	blockCount := int(c.Uint("block_count"))
