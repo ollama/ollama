@@ -18,7 +18,7 @@ jobs:
       VERSION: ${{ steps.goflags.outputs.VERSION }}
       vendorsha: ${{ steps.changes.outputs.vendorsha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set environment
         id: goflags
         run: |
@@ -43,7 +43,7 @@ jobs:
       CGO_CXXFLAGS: '-mmacosx-version-min=14.0 -O3'
       CGO_LDFLAGS: '-mmacosx-version-min=14.0 -O3'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: |
           echo $MACOS_SIGNING_KEY | base64 --decode > certificate.p12
           security create-keychain -p password build.keychain
@@ -52,7 +52,7 @@ jobs:
           security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
           security set-keychain-settings -lut 3600 build.keychain
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -63,7 +63,7 @@ jobs:
       - name: Log build results
         run: |
           ls -l dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: bundles-darwin
           path: |
@@ -187,8 +187,8 @@ jobs:
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
           key: ${{ matrix.install }}
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v6
+      - uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}-${{ needs.setup-environment.outputs.vendorsha }}
@@ -205,7 +205,7 @@ jobs:
       - name: Log build results
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
           path: dist\*
@@ -251,8 +251,8 @@ jobs:
           Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
           $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt*").path
           echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -270,7 +270,7 @@ jobs:
           }
           $ErrorActionPreference='Stop'
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
       - run: |
@@ -278,7 +278,7 @@ jobs:
       - name: Log build results
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-${{ matrix.os }}-${{ matrix.arch }}
           path: |
@@ -293,8 +293,8 @@ jobs:
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v3
         with:
           project_id: ollama
           credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
@@ -308,18 +308,18 @@ jobs:
           & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
 
           echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
             Makefile.sync
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: depends-windows*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: build-windows*
           path: dist
@@ -332,7 +332,7 @@ jobs:
       - name: Log contents after build
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: bundles-windows
           path: |
@@ -358,7 +358,7 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -399,7 +399,7 @@ jobs:
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
             tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
@@ -436,7 +436,7 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -455,7 +455,7 @@ jobs:
           mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
           echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
         working-directory: ${{ runner.temp }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
           path: |
@@ -485,7 +485,7 @@ jobs:
           tags: |
             type=ref,enable=true,priority=600,prefix=pr-,event=pr
             type=semver,pattern={{version}}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: digest-*
           path: ${{ runner.temp }}
@@ -505,8 +505,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
         with:
           pattern: bundles-*
           path: dist
