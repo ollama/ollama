@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
@@ -88,7 +90,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"npm":  "@ai-sdk/openai-compatible",
 			"name": "Ollama (local)",
 			"options": map[string]any{
-				"baseURL": "http://localhost:11434/v1",
+				"baseURL": envconfig.Host().String() + "/v1",
 			},
 		}
 	}

@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 type Clawdbot struct{}
@@ -90,7 +92,7 @@ func (c *Clawdbot) Edit(models []string) error {
 		ollama = make(map[string]any)
 	}
 
-	ollama["baseUrl"] = "http://127.0.0.1:11434/v1"
+	ollama["baseUrl"] = envconfig.Host().String() + "/v1"
 	// needed to register provider
 	ollama["apiKey"] = "ollama-local"
 	// TODO(parthsareen): potentially move to responses

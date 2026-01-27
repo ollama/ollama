@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // Droid implements Runner and Editor for Droid integration
@@ -117,7 +119,7 @@ func (d *Droid) Edit(models []string) error {
 		newModels = append(newModels, modelEntry{
 			Model:           model,
 			DisplayName:     model,
-			BaseURL:         "http://localhost:11434/v1",
+			BaseURL:         envconfig.Host().String() + "/v1",
 			APIKey:          "ollama",
 			Provider:        "generic-chat-completion-api",
 			MaxOutputTokens: 64000,
