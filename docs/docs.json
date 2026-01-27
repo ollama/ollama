@@ -102,6 +102,7 @@
             "group": "Integrations",
             "pages": [
               "/integrations/claude-code",
+              "/integrations/clawdbot",
               "/integrations/cline",
               "/integrations/codex",
               "/integrations/droid",
